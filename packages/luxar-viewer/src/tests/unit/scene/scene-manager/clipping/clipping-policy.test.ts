@@ -1,0 +1,212 @@
+/**
+ * Unit tests for the clipping-policy helpers used by SceneManager.
+ *
+ * The three helpers — applyClippingPlanes, autoAdjustFromBounds,
+ * updateDynamicFromCache — are pure with respect to SceneManager,
+ * consuming a narrow ClippingCtx. These tests pin the validation /
+ * fallback / stability gates that the inline class methods used to
+ * own.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as THREE from 'three';
+import {
+  type ClippingCtx,
+  applyClippingPlanes,
+  autoAdjustFromBounds,
+  updateDynamicFromCache,
+} from '../../../../../scene/scene-manager/clipping/clipping-policy';
+import { SceneBoundsCache } from '../../../../../scene/scene-manager/clipping/scene-bounds-cache';
+import type { ControlsManager } from '../../../../../controls/controls-manager';
+import type { BoundingBox } from '../../../../../scene/scene-manager/clipping/bounds-math';
+
+function makeCamera(
+  position = new THREE.Vector3(0, 0, 100),
+  near = 0.1,
+  far = 1000
+): THREE.PerspectiveCamera {
+  const cam = new THREE.PerspectiveCamera(60, 16 / 9, near, far);
+  cam.position.copy(position);
+  cam.updateProjectionMatrix();
+  return cam;
+}
+
+function makeControlsMock(): {
+  controls: ControlsManager;
+  setSceneScale: ReturnType<typeof vi.fn>;
+} {
+  const setSceneScale = vi.fn();
+  return { controls: { setSceneScale } as unknown as ControlsManager, setSceneScale };
+}
+
+function makeCtx(opts: {
+  camera?: THREE.PerspectiveCamera;
+  scene?: THREE.Scene;
+  metadataBounds?: BoundingBox | null;
+}): {
+  ctx: ClippingCtx;
+  setSceneScale: ReturnType<typeof vi.fn>;
+} {
+  const camera = opts.camera ?? makeCamera();
+  const scene = opts.scene ?? new THREE.Scene();
+  const { controls, setSceneScale } = makeControlsMock();
+  const boundsCache = new SceneBoundsCache();
+  const getSceneBoundsFromMetadata = vi.fn(() => opts.metadataBounds ?? null);
+  return {
+    ctx: { camera, controls, scene, boundsCache, getSceneBoundsFromMetadata },
+    setSceneScale,
+  };
+}
+
+describe('applyClippingPlanes', () => {
+  it('updates camera.near / camera.far and re-runs updateProjectionMatrix', () => {
+    const camera = makeCamera();
+    const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
+
+    applyClippingPlanes(camera, 0.5, 500);
+
+    expect(camera.near).toBe(0.5);
+    expect(camera.far).toBe(500);
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects near >= far without mutating the camera', () => {
+    const camera = makeCamera(new THREE.Vector3(), 1, 1000);
+    applyClippingPlanes(camera, 1000, 1000);
+    expect(camera.near).toBe(1);
+    expect(camera.far).toBe(1000);
+  });
+
+  it('still applies values when far/near > 10000 (warning logged but not rejected)', () => {
+    const camera = makeCamera(new THREE.Vector3(), 1, 1000);
+    applyClippingPlanes(camera, 0.001, 100);
+    expect(camera.near).toBe(0.001);
+    expect(camera.far).toBe(100);
+  });
+});
+
+describe('autoAdjustFromBounds — metadata path', () => {
+  it('applies bounds-derived near/far when metadata bounds are present', () => {
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100));
+    const metadataBounds: BoundingBox = {
+      min: { x: -10, y: -10, z: -10 },
+      max: { x: 10, y: 10, z: 10 },
+    };
+    const { ctx, setSceneScale } = makeCtx({ camera, metadataBounds });
+
+    const result = autoAdjustFromBounds(ctx);
+
+    expect(result.near).toBeGreaterThan(0);
+    expect(result.far).toBeGreaterThan(result.near);
+    expect(camera.near).toBe(result.near);
+    expect(camera.far).toBe(result.far);
+    expect(setSceneScale).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips setSceneScale when metadata bounds have zero extent', () => {
+    const metadataBounds: BoundingBox = {
+      min: { x: 5, y: 5, z: 5 },
+      max: { x: 5, y: 5, z: 5 },
+    };
+    const { ctx, setSceneScale } = makeCtx({ metadataBounds });
+    autoAdjustFromBounds(ctx);
+    expect(setSceneScale).not.toHaveBeenCalled();
+  });
+});
+
+describe('autoAdjustFromBounds — geometry fallback', () => {
+  it('returns configured defaults when scene is empty (no metadata, no geometry)', () => {
+    const camera = makeCamera(new THREE.Vector3(), 1, 1000);
+    const { ctx } = makeCtx({ camera, metadataBounds: null });
+    const { near, far } = autoAdjustFromBounds(ctx);
+    expect(near).toBeGreaterThan(0);
+    expect(far).toBeGreaterThan(near);
+    // Camera not mutated when scene is empty.
+    expect(camera.near).toBe(1);
+    expect(camera.far).toBe(1000);
+  });
+
+  it('derives bounds from loaded geometry when metadata is missing', () => {
+    const scene = new THREE.Scene();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20), new THREE.MeshBasicMaterial());
+    scene.add(mesh);
+    const camera = makeCamera(new THREE.Vector3(0, 0, 50));
+    const { ctx, setSceneScale } = makeCtx({ camera, scene, metadataBounds: null });
+
+    const { near, far } = autoAdjustFromBounds(ctx);
+
+    expect(near).toBeGreaterThan(0);
+    expect(far).toBeGreaterThan(near);
+    expect(camera.near).toBe(near);
+    expect(camera.far).toBe(far);
+    expect(setSceneScale).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('updateDynamicFromCache', () => {
+  beforeEach(() => {
+    // ensure clean state
+  });
+
+  it('is a no-op when the bounds-cache is empty', () => {
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100), 1, 1000);
+    const { ctx } = makeCtx({ camera, metadataBounds: null });
+
+    updateDynamicFromCache(ctx);
+
+    // Cache was empty → no projection matrix update, near/far unchanged.
+    expect(camera.near).toBe(1);
+    expect(camera.far).toBe(1000);
+  });
+
+  it('updates near/far when changes exceed 0.1% threshold', () => {
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [-10, -10, -10], max: [10, 10, 10] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.001, 10000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+
+    // Prime the cache.
+    ctx.boundsCache.ensure(scene);
+
+    updateDynamicFromCache(ctx);
+
+    // Camera position is at distance ~100 from origin with sphere radius ~17;
+    // near should be tight, far should be ~117.
+    expect(camera.near).toBeGreaterThan(0);
+    expect(camera.far).toBeLessThan(10000);
+    expect(camera.far).toBeGreaterThan(camera.near);
+  });
+
+  it('skips projection-matrix update when changes are < 0.1%', () => {
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [-10, -10, -10], max: [10, 10, 10] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.001, 10000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+    ctx.boundsCache.ensure(scene);
+
+    // First call: significant change → update.
+    updateDynamicFromCache(ctx);
+    const nearAfterFirst = camera.near;
+    const farAfterFirst = camera.far;
+
+    // Second call without moving camera: must be a no-op.
+    const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
+    updateDynamicFromCache(ctx);
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(camera.near).toBe(nearAfterFirst);
+    expect(camera.far).toBe(farAfterFirst);
+  });
+
+  it('keeps near positive even when camera is inside the sphere', () => {
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [-100, -100, -100], max: [100, 100, 100] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 0), 0.001, 1000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+    ctx.boundsCache.ensure(scene);
+
+    updateDynamicFromCache(ctx);
+
+    expect(camera.near).toBeGreaterThan(0);
+    expect(camera.far).toBeGreaterThan(camera.near);
+  });
+});

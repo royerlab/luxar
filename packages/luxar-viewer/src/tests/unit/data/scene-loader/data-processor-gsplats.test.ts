@@ -42,10 +42,8 @@ vi.mock('../../../../config', () => ({
 
 import {
   processGSplatsData,
-  commitGSplatsGeometry,
   projectGSplatsTo3DUsingWorker,
-  type StagedGSplatsCommit,
-} from '../../../../data/scene-loader/data-processor-gsplats';
+} from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 
 function makeProcessed(splatCount = 2) {
@@ -107,25 +105,13 @@ beforeEach(() => {
 
 describe('processGSplatsData', () => {
   it('returns null when rootGroup is null', async () => {
-    const result = await processGSplatsData(
-      '/foo',
-      makeData(),
-      makeViewState(),
-      null,
-      1
-    );
+    const result = await processGSplatsData('/foo', makeData(), makeViewState(), null, 1);
     expect(result).toBeNull();
   });
 
   it('returns null when no mesh with the path is found', async () => {
     const root = new THREE.Group();
-    const result = await processGSplatsData(
-      '/missing',
-      makeData(),
-      makeViewState(),
-      root,
-      1
-    );
+    const result = await processGSplatsData('/missing', makeData(), makeViewState(), root, 1);
     expect(result).toBeNull();
   });
 
@@ -178,13 +164,7 @@ describe('processGSplatsData', () => {
       runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
-    const result = await processGSplatsData(
-      '/g',
-      makeData(2000, 4),
-      makeViewState(),
-      root,
-      1
-    );
+    const result = await processGSplatsData('/g', makeData(2000, 4), makeViewState(), root, 1);
     expect(result).not.toBeNull();
     expect(projectGSplatsTo3D).toHaveBeenCalledTimes(1);
     expect(mockProcessGSplats).not.toHaveBeenCalled();
@@ -197,35 +177,6 @@ describe('processGSplatsData', () => {
     expect(result).not.toBeNull();
     expect(mockPackCholesky).toHaveBeenCalledTimes(1);
     expect(result?.cholesky01).toBeDefined();
-  });
-});
-
-describe('commitGSplatsGeometry', () => {
-  function makeStaged(splatCount = 5): StagedGSplatsCommit {
-    return {
-      path: '/g',
-      processed: makeProcessed(splatCount),
-      cholesky01: new Float32Array(),
-      cholesky23: new Float32Array(),
-      cholesky45: new Float32Array(),
-    };
-  }
-
-  it('no-ops when rootGroup is null', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), null, null)).not.toThrow();
-  });
-
-  it('no-ops silently when mesh has gone missing', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), new THREE.Group(), null)).not.toThrow();
-  });
-
-  it('writes visibleSplatCount on the mesh user-data', () => {
-    const root = new THREE.Group();
-    const mesh = makeMesh('/g');
-    root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null);
-    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
-    expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -242,12 +193,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
       runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
-    const result = await projectGSplatsTo3DUsingWorker(
-      makeData(),
-      makeViewState(),
-      3.0,
-      1
-    );
+    const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(1);
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
   });
@@ -260,12 +206,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     });
     mockProcessGSplats.mockReturnValue(makeProcessed(7));
 
-    const result = await projectGSplatsTo3DUsingWorker(
-      makeData(),
-      makeViewState(),
-      3.0,
-      1
-    );
+    const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(7);
     expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
   });

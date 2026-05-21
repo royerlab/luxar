@@ -1,10 +1,10 @@
 /**
- * Zarr-based nD points data loader - Clean Architecture v2
+ * Zarr-based nD scene loader.
  *
- * This is the new implementation that properly handles spatial indices
- * and ensures all attributes are loaded with aligned ranges.
+ * Handles spatial indices and keeps all attribute loads aligned to the
+ * same selected ranges.
  *
- * Key fixes:
+ * Key properties:
  * - Spatial index integration with proper attribute alignment
  * - No cache key collisions
  * - Clean separation of loading strategies
@@ -17,14 +17,13 @@ import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
-import { simpleDimsToViewState } from './utils/dims-to-view-state';
-import { computeSceneStats } from './utils/scene-stats';
+import { simpleDimsToViewState } from './dims-to-view-state';
+import { computeSceneStats } from './stats/scene-stats';
 
 /**
- * Load a complete scene from a Zarr store using the new architecture.
+ * Load a complete scene from a Zarr store.
  *
- * This is the main entry point that replaces the old loadScene function.
- * It uses the new SceneLoader which uses PointsSpatialIndexLoader for all points.
+ * This is the main entry point for SceneLoader-backed loading.
  *
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
@@ -36,12 +35,12 @@ export async function loadScene(
   config?: LoaderConfig,
   loaderId: string = 'default'
 ): Promise<THREE.Group> {
-  log.custom(LogEmoji.START, Modules.LUXAR, 'Loading scene with clean architecture');
+  log.custom(LogEmoji.START, Modules.LUXAR, 'Loading scene');
 
   const manager = SceneLoaderManager.getInstance();
 
-  // Always create a fresh scene loader for each load to ensure clean state
-  // This properly disposes the old loader and its connections if it exists
+  // Always create a fresh scene loader for each load to ensure clean state.
+  // This disposes any existing loader and its connections first.
   const sceneLoader = manager.createLoader(loaderId, config);
 
   try {
@@ -129,7 +128,7 @@ export function dispose(loaderId?: string): void {
 
 /**
  * Log statistics about the loaded scene. The traversal/counting logic is
- * `data/utils/scene-stats.ts::computeSceneStats`; this function is only
+ * `data/stats/scene-stats.ts::computeSceneStats`; this function is only
  * the logging layer.
  */
 function logSceneStats(scene: THREE.Group): void {

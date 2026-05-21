@@ -185,7 +185,8 @@ test.describe('First-Time User Experience', () => {
   test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
     test.info().annotations.push({
       type: 'allow-console-errors',
-      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+      description:
+        'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
     // Regression guard: the Escape path must route through
     // `DatasetBrowser.close()` so `onClose` fires and
@@ -218,12 +219,11 @@ test.describe('First-Time User Experience', () => {
     await expect(browser).toBeVisible({ timeout: 5000 });
   });
 
-  test('Escape closes the dataset browser even when focus is in a text input', async ({
-    page,
-  }) => {
+  test('Escape closes the dataset browser even when focus is in a text input', async ({ page }) => {
     test.info().annotations.push({
       type: 'allow-console-errors',
-      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+      description:
+        'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
     // Regression guard: Escape must reach the context manager even
     // when focus is inside a text input (the dataset-browser's
@@ -260,9 +260,7 @@ test.describe('First-Time User Experience', () => {
 
     // Verify focus actually landed inside the input — `isTypingInInput`
     // should return true from this state.
-    const focusOk = await page.evaluate(
-      () => document.activeElement?.id === '__escape_test_input'
-    );
+    const focusOk = await page.evaluate(() => document.activeElement?.id === '__escape_test_input');
     expect(focusOk).toBe(true);
 
     // Escape from focused input should still close the browser.

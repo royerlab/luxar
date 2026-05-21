@@ -5,9 +5,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { DimensionAnimationManager } from '../../../scene/dimension-animation-manager';
+import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
-import { AnimationController } from '../../../scene/animation-controller';
+import { AnimationController } from '../../../scene/animation/animation-controller';
 import * as THREE from 'three';
 
 describe('DimensionAnimationManager', () => {

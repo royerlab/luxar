@@ -72,7 +72,7 @@ def simple_2d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
-        "result": result,  # New API
+        "result": result,
     }
 
 
@@ -117,7 +117,7 @@ def multi_2d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
-        "result": result,  # New API
+        "result": result,
     }
 
 
@@ -150,7 +150,7 @@ def simple_3d_params():
         "amps": amps,
         "centers": centers,
         "L": L,
-        "result": result,  # New API
+        "result": result,
     }
 
 

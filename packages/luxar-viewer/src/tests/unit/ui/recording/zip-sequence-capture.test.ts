@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { ZipSequenceCapture } from '../../../../ui/recording/zip-sequence-capture';
+import { ZipSequenceCapture } from '../../../../ui/recording-panel/zip-sequence-capture';
 
 function makeWritable(): {
   write: ReturnType<typeof vi.fn>;
@@ -57,7 +57,11 @@ describe('ZipSequenceCapture', () => {
   it('with showSaveFilePicker available, writes to disk handle and closes on finalize', async () => {
     const env = makeWritable();
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -113,7 +117,11 @@ describe('ZipSequenceCapture', () => {
   it('zero captured frames toasts "No frames captured" and aborts disk handle', async () => {
     const env = makeWritable();
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -166,9 +174,7 @@ describe('ZipSequenceCapture', () => {
       showToast,
       downloadBlob: vi.fn(),
     });
-    expect(showToast).toHaveBeenCalledWith(
-      expect.stringContaining('disk storage quota exceeded')
-    );
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('disk storage quota exceeded'));
     expect(logError).toHaveBeenCalled();
   });
 
@@ -230,7 +236,11 @@ describe('ZipSequenceCapture', () => {
       writtenChunks.push(chunk);
     });
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -275,7 +285,11 @@ describe('ZipSequenceCapture', () => {
     );
 
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -308,7 +322,11 @@ describe('ZipSequenceCapture', () => {
     const showToast = vi.fn();
     const downloadBlob = vi.fn();
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -344,7 +362,11 @@ describe('ZipSequenceCapture', () => {
     const showToast = vi.fn();
     const downloadBlob = vi.fn();
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       vi.fn()
     );
     await z.setup({ suggestedName: 'cap.zip' });
@@ -393,7 +415,11 @@ describe('ZipSequenceCapture', () => {
 
     const logError = vi.fn();
     const z = new ZipSequenceCapture(
-      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      {
+        showSaveFilePicker: env.picker as unknown as (
+          opts: unknown
+        ) => Promise<FileSystemFileHandle>,
+      },
       logError
     );
     await z.setup({ suggestedName: 'cap.zip' });

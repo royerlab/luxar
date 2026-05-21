@@ -5,7 +5,7 @@ Luxar is a high-performance Python + WebGL system for compiling and visualizing 
 ## Core Principles
 - **Other agents may be working in this repo**: do not delete, overwrite, stash, or reformat unrelated work.
 - Prefer the minimum viable change; avoid unasked-for features or broad refactors.
-- Keep documentation in sync with code changes (README/SPECIFICATIONS, format docs, CHANGELOG as applicable).
+- Keep documentation in sync with code changes (READMEs, format docs, CHANGELOG as applicable).
 - Never skip or disable tests to make them pass; fix the issue or use proper mocks.
 - Early-stage project: no strong backwards-compatibility burden when a clean change is needed.
 - Ask the user when genuinely unsure about an important decision; when the `AskUserQuestion` tool is available, use it instead of inline prose questions for concrete choices.
@@ -197,12 +197,10 @@ luxar gsplat view splats.gsplats.zarr
 - Never commit `.zarr` directories (ignored by git).
 
 ## Documentation Requirements
-- Every Python subpackage must have:
-  - `README.md` with purpose, key classes, and usage examples.
-  - `SPECIFICATIONS.md` with algorithms, data structures, and behavior; use `docs/templates/SPECIFICATIONS_TEMPLATE.md`.
+- Every Python subpackage must have a `README.md` with purpose, key classes, and usage examples.
 - Every TypeScript package under `packages/luxar-viewer/src/{package}/` has a `README.md`; keep it synced with code.
 - Update `CHANGELOG.md`, `CLAUDE.md`, and `docs/guides/user/LUXAR_ZARR_FORMAT.md` when the change affects them.
-- Update READMEs for functionality changes and `SPECIFICATIONS.md` for algorithm changes.
+- Update READMEs for functionality and algorithm changes.
 
 ## Testing
 - Minimum coverage: 80%.
@@ -235,7 +233,7 @@ npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-datase
 npx playwright test spatial-index-accuracy.spec.ts cache-system.spec.ts nd-transforms.spec.ts position-bounds-clipping.spec.ts
 npx playwright test custom-gui-library.spec.ts layers-panel.spec.ts recording-panel.spec.ts mouse-interactions.spec.ts
 npx playwright test error-recovery.spec.ts webgl-errors.spec.ts
-npx playwright test performance-tracking.spec.ts data-monitor-metrics.spec.ts
+npx playwright test data-monitor-metrics.spec.ts  # perf-tracking moved to `pnpm test:perf:e2e` opt-in suite
 npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts first-time-ux.spec.ts
 ```
 
@@ -332,8 +330,7 @@ cd packages/luxar-viewer && pnpm run format
 ```
 Before PR/merge:
 - Run full E2E: `cd packages/luxar-viewer && pnpm test:e2e`.
-- Update READMEs if functionality changed.
-- Update `SPECIFICATIONS.md` if algorithms changed.
+- Update READMEs if functionality or algorithms changed.
 - Update `docs/guides/user/LUXAR_ZARR_FORMAT.md` if the data format changed.
 - PRs should describe the change, list tests run, and include screenshots for viewer/UI changes.
 - Commit messages follow `<type>: <summary>` (for example `fix: ...`, `refactor: ...`, `docs: ...`).
@@ -348,7 +345,6 @@ Before PR/merge:
 | HDR color guide | `docs/guides/user/HDR_GUIDE.md` |
 | Network simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
 | Console logging style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
-| Spec template | `docs/templates/SPECIFICATIONS_TEMPLATE.md` |
 | Changelog | `CHANGELOG.md` |
 
 ## Architecture and Performance

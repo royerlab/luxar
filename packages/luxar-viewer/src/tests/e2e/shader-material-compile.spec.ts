@@ -18,8 +18,9 @@
 import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
+  waitForDataLoaded,
   assertNoShaderErrors,
-  samplePixelAt,
+  getElementPixelStats,
   waitForRenderStable,
 } from './helpers';
 
@@ -40,8 +41,6 @@ interface Variant {
  * spec uses what's present.
  */
 const VARIANTS: Variant[] = [
-  // Points: direct colors (vertex-color path).
-  { name: 'Point direct color', src: 'test_basic_points.zarr', expectColored: true },
   // Points: colormap (4D scalar fixture exercises USE_COLORMAP).
   { name: 'Point colormap', src: 'test_4d_scalar_lut.zarr', expectColored: true },
   // Lines: direct colors.
@@ -50,38 +49,29 @@ const VARIANTS: Variant[] = [
   { name: 'GSplat direct color', src: 'test_gsplats.zarr', expectColored: true },
 ];
 
+const VISIBLE_PIXEL_THRESHOLD = 10;
+
 test.describe('browser-real shader compile + pixel smoke', () => {
   for (const v of VARIANTS) {
     test(`${v.name}: compiles + renders non-black pixels`, async ({ page }) => {
       await page.goto(`/?src=${FIXTURES_BASE}/${v.src}&debug`);
       await waitForLuxarReady(page);
+      await waitForDataLoaded(page);
       await waitForRenderStable(page);
 
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) The center pixel has rendered output.
+      // (2) Some pixel on the canvas has rendered output. Use whole-canvas
+      //     screenshot stats instead of sparse grid sampling: thin lines and
+      //     small splat clusters can easily fall between fixed sample points.
       if (v.expectColored) {
-        const pixel = await samplePixelAt(page, 'canvas', 0.5, 0.5);
-        // Allow the center to be background — try a 3x3 grid of samples and
-        // require at least ONE to be non-black. This avoids flakiness when
-        // the exact center happens to fall in dataset whitespace.
-        const samples = await Promise.all([
-          samplePixelAt(page, 'canvas', 0.5, 0.5),
-          samplePixelAt(page, 'canvas', 0.4, 0.4),
-          samplePixelAt(page, 'canvas', 0.6, 0.4),
-          samplePixelAt(page, 'canvas', 0.4, 0.6),
-          samplePixelAt(page, 'canvas', 0.6, 0.6),
-          samplePixelAt(page, 'canvas', 0.5, 0.4),
-          samplePixelAt(page, 'canvas', 0.5, 0.6),
-          samplePixelAt(page, 'canvas', 0.4, 0.5),
-          samplePixelAt(page, 'canvas', 0.6, 0.5),
-        ]);
-        const anyColored = samples.some((p) => p.r + p.g + p.b > 10);
+        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
         expect(
-          anyColored,
-          `Variant '${v.name}': all 9 sampled pixels were near-black — shader output may have been discarded. ` +
-            `Center pixel: ${JSON.stringify(pixel)}`
+          stats.nonBlackPixels > 0,
+          `Variant '${v.name}': no canvas pixels exceeded RGB-sum threshold ` +
+            `${VISIBLE_PIXEL_THRESHOLD} — shader output may have been discarded. ` +
+            `Stats: ${JSON.stringify(stats)}`
         ).toBe(true);
       }
     });

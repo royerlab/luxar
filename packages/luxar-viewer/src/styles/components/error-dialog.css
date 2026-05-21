@@ -2,7 +2,7 @@
  * Error Dialog and Loading Indicator Component Styles
  *
  * Styled error messages with guidance and loading spinners.
- * Used by showError() and showLoadingIndicator() in ui/helpers.ts
+ * Used by showError() in ui/error-overlay.ts and showLoadingIndicator() in ui/loading-indicator.ts
  */
 
 /* ========== Loading Indicator ========== */

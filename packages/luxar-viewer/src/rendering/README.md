@@ -1,42 +1,96 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline using pmndrs/postprocessing for high-quality nD scientific visualization
+> Dual-stack WebGL2/WebGPU rendering pipeline (GLSL `ShaderMaterial` default, TSL `NodeMaterial` opt-in via `?renderer=webgpu`) with a custom mega-shader for high-quality nD scientific visualization
 
 ## Overview
 
-The Luxar Rendering package provides a modern, high-performance rendering pipeline powered by the pmndrs/postprocessing library. It delivers professional-grade visual effects with optimized performance for large-scale nD scientific visualization.
+The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Each of the 12 production shaders (3 geometry visual × {GLSL, TSL} + 3 geometry picking × {GLSL, TSL} + mega-shader, FXAA, bloom-threshold × {GLSL, TSL}) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
+
+The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpu-force-webgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
 ### Key Features
 
-- **HDR Rendering Pipeline**: 16-bit float buffers for true HDR support
-- **Modern Post-Processing**: Powered by pmndrs/postprocessing
-- **Professional Effects**: Bloom, SSAO, DOF, tone mapping, and more
+- **HDR Rendering Pipeline**: 16-bit float (HalfFloat) buffers for true HDR support
+- **Mega-shader post-processing**: One fused fragment pass for bloom mix, detector noise, EOG, tone mapping, vignette, chromatic lens distortion, and sRGB encoding
 - **Custom Shader System**: Optimized shaders for Points, Lines, and GSplats
 - **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
 - **Material Management**: Efficient caching and reuse for Points, Lines, and GSplats
 - **World-Space Point Sizing**: Physically accurate scaling
-- **Multiple Anti-Aliasing Options**: FXAA, SMAA, MSAA, and SSAA support
+- **Anti-Aliasing Options**: FXAA, MSAA, and SSAA support
 
 ### Package Architecture
 
 ```
 rendering/
-├── point-material.ts                   # Custom points shaders (per-node GOG + scalar colormaps)
-├── line-material.ts                    # Instanced line rendering with fragment cap math
-├── gsplat-material.ts                  # Gaussian splatting with volumetric rendering
-├── blending-state.ts                   # Complete THREE blending state for every Luxar mode
+├── post-processing-manager.ts          # Public API — HDR pipeline orchestrator
 ├── material-manager.ts                 # Material creation, caching, and global camera updates
-├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
+├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
-├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
+├── adaptive-dpr-manager.ts             # Adaptive resolution
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
+├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
+├── renderer-capabilities.ts            # WebGL2 vs WebGPU capability detection
+├── blending-state.ts                   # THREE blending state for every Luxar mode
+├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
+├── material-sync-helpers.ts            # Geometry-commit material sync helpers
 ├── line-geometry.ts                    # Instanced line mesh creation/update helpers
 ├── gsplat-geometry.ts                  # Instanced GSplat mesh creation/update helpers
-├── shaders/                           # GLSL source for Points, Lines, and GSplats
-├── picking/                           # GPU picking materials and picking-system orchestration
-├── post-processing/                   # pmndrs effects, handlers, HDR capture, and manager
-├── SPECIFICATIONS.md                  # Technical specification
-└── README.md                          # This documentation
+├── point-geometry.ts                   # Point unit-quad base geometry
+├── interleaved-attributes.ts           # InterleavedBufferAttribute helpers
+│
+├── materials/                          # Per-geometry material and shader stacks
+│   ├── point/   { material-glsl, material-tsl, shader-glsl, shader-tsl }
+│   ├── line/    { material-glsl, material-tsl, shader-glsl, shader-tsl }
+│   ├── gsplat/  { material-glsl, material-tsl, shader-glsl, shader-tsl, math }
+│   └── _shared/ { camera-aware-material, colormap-aware-material, camera-uniforms,
+│                  uniform-helpers, material-builder, tsl-helpers, glsl-lib, shader-source }
+│
+├── material-manager/                   # MaterialManager helper modules
+│   ├── factories.ts                    # VISUAL/PICKING/MEGA_SHADER_FACTORIES + cache-key fns
+│   ├── lru-cache.ts                    # Generic lruGet / lruSet
+│   ├── lifecycle.ts                    # subscribeToDispose + removeFromRegistries + SOFT_DISPOSE_FLAG
+│   └── stats.ts                        # getCacheStats snapshot
+│
+├── node-factory/                       # NodeFactory helper modules
+│   ├── validation.ts                   # validateLoadedPointsData / ColorMode / TransformFormat
+│   ├── transforms.ts                   # applyTransform
+│   ├── create-points-node.ts           # createPointsGeometry + createPointsMaterial
+│   ├── create-lines-node.ts            # createLinesNode + createEmptyLinesNode
+│   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
+│
+├── post-processing/                    # Private helpers for post-processing-manager
+│   ├── bloom-chain / bloom-shaders / bloom.tsl
+│   ├── fxaa-pass / fxaa-shaders / fxaa.tsl
+│   ├── fullscreen-pass / fullscreen-geometry / render-target-sizing
+│   ├── mega-shader-material / mega-shader-material-tsl / mega-shader.glsl / mega.tsl
+│   ├── hdr-pixel-utils / hdr-capture
+│   └── post-processing-manager/        # PostProcessingManager helper modules
+│       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
+│       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
+│       ├── pipeline.ts                 # runPipeline (scene → HDR → bloom → mega → FXAA)
+│       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
+│
+├── picking/                            # GPU picking materials + orchestration
+│   ├── picking-system.ts               # Orchestrator
+│   ├── picking-shaders.ts
+│   ├── {point,line,gsplat}-picking-material(-tsl).ts
+│   ├── {point,line,gsplat}-pick.tsl.ts
+│   └── picking-system/                 # PickingSystem helper modules
+│       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
+│       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
+│       ├── pick-render.ts              # voteWinner (brightness-weighted majority over 5×5)
+│       └── settle-loop.ts              # HOVER_SETTLE_MS + evaluateSettle decision logic
+│
+├── gpu-buffer-pool/                    # Per-type adapters + eviction
+│   ├── {points,lines,gsplats}-adapter.ts
+│   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
+│   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
+│
+├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
+│   └── index.ts                        # Keeps the tsl-shader-parity e2e harness's import path stable
+│
+├── index.ts                            # Public-API barrel
+└── README.md                           # This documentation
 ```
 
 ---
@@ -85,20 +139,12 @@ postProcessing.setToneMapping('AgX');
 ### Step 4: Add Anti-Aliasing
 
 ```typescript
-// SMAA: Best quality (recommended for static scenes)
-postProcessing.setSMAAEnabled(true);
-
-// OR FXAA: Faster (better for real-time interaction)
+// FXAA: Single-pass post-process AA (recommended for real-time)
 postProcessing.setFXAAEnabled(true);
-```
 
-### Step 5: Use Quality Presets (Optional)
-
-```typescript
-// Quick setup for different performance targets
-postProcessing.setQualityPreset('high'); // All effects, high settings
-postProcessing.setQualityPreset('medium'); // Balanced
-postProcessing.setQualityPreset('low'); // Performance priority
+// OR MSAA: Hardware-accelerated multisample (sharp, but additive blending caveat)
+postProcessing.setMSAAEnabled(true);
+postProcessing.setMSAASamples(4);
 ```
 
 **You're done!** Your scene now has professional HDR rendering with bloom, tone mapping, and anti-aliasing.
@@ -107,41 +153,31 @@ postProcessing.setQualityPreset('low'); // Performance priority
 
 ## Components
 
-### 1. PostProcessing Manager (pmndrs)
+### 1. PostProcessing Manager (mega-shader)
 
-The `PostProcessingManager` leverages the pmndrs/postprocessing library for state-of-the-art visual effects.
+The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment shader that fuses tone mapping, EOG, vignette, detector noise, chromatic lens distortion, and sRGB encoding into a single fullscreen pass. Bloom is a separate pre-pass (neighbor reads). FXAA is a separate post-pass (edge detection on the LDR output). See `post-processing/README.md` for the full pipeline.
 
 **Key Advantages:**
 
-- Single-pass effect composition for optimal performance
-- Automatic effect merging to minimize draw calls
-- Professional-grade effects out of the box
-- Active community and regular updates
+- One fused fullscreen pass for per-pixel effects: fewer rasterizations, fewer texture binds, no ping-pong target pair
+- No third-party post-processing dependency
+- A single GLSL/TSL shader pair (`mega-shader.glsl.ts` + `mega.tsl.ts`) backs both the WebGL2 and WebGPU backends
 
-**Core Effects:**
+**Core API:**
 
 ```typescript
 // Initialize with HDR support
-const postProcessing = new PostProcessingManager(
-  renderer,
-  scene,
-  camera,
-  { width, height }
-);
+const postProcessing = new PostProcessingManager(renderer, scene, camera, { width, height });
 
 // Configure bloom
-postProcessing.updateBloomSettings(
-  strength: 0.3,
-  radius: 0.85,
-  threshold: 0.01
-);
+postProcessing.updateBloomSettings(/* strength */ 0.3, /* radius */ 0.85, /* threshold */ 0.01);
 
 // Set tone mapping
 postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
 
-// Enable advanced effects
-postProcessing.setAOEnabled(true, 'medium');
+// Enable effects
 postProcessing.setVignetteEnabled(true, 0.5, 0.5);
+postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05);
 ```
 
 ### 2. Point Material
@@ -176,7 +212,7 @@ Specialized shader material for thick lines using instanced quad geometry.
 - **Aspect-Ratio Correct**: Perpendicular direction computed in pixel space for correct line width
 - **Anti-Aliasing for Thin Lines**: Minimum pixel width (1.5px) prevents sub-pixel rendering gaps; intensity scaling preserves visual weight of thin lines; smooth edge falloff using smoothstep
 
-**Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`) to avoid exceeding WebGL's 16 attribute location limit.
+**Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`). All per-instance attributes are packed into a single `InstancedInterleavedBuffer` so the geometry reports one vertex buffer slot — this both fits within WebGL2's 16-attribute-location limit and stays under WebGPU's `maxVertexBuffers` ceiling on compat-mode adapters (Luxar requests the adapter's higher real limits at init; see `scene-manager.ts::setupWebGPURenderer`).
 
 ### 4. GSplat Material
 
@@ -239,7 +275,7 @@ points.geometry.dispose(); // Frees GPU buffers
 // Material manager keeps material alive if other objects use it
 ```
 
-**Global Updates**: When camera settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled by the LuxarToneMappingEffect post-processing pass, not per-material.
+**Global Updates**: When camera settings change, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled inside the mega-shader post-processing pass, not per-material.
 
 ```typescript
 // Updates all materials in the scene automatically
@@ -285,15 +321,15 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 
 `colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime; custom LUT textures are bounded and can be disposed on dataset unload.
 
-### 10. Luxar Tone Mapping Effect
+### 10. Global EOG (Exposure-Offset-Gamma)
 
-Vendored from pmndrs/postprocessing with injected Exposure-Offset-Gamma (EOG) uniforms applied in a single shader pass before tone mapping. Zero extra bandwidth cost.
+Applied inside the mega-shader fragment before the tone-mapping operator, in a single fullscreen pass:
 
 **EOG Uniforms:**
 
-- `exposure`: Log2 stops (`color * 2^exposure`)
-- `global_offset`: Additive shift (`color + offset`)
-- `global_gamma`: Power curve (`pow(color, 1/gamma)`)
+- `uExposure`: Log2 stops (`color * 2^exposure`)
+- `uGlobalOffset`: Additive shift (`color + offset`)
+- `uGlobalGamma`: Power curve (`pow(color, 1/gamma)`)
 
 ---
 
@@ -303,32 +339,21 @@ Vendored from pmndrs/postprocessing with injected Exposure-Offset-Gamma (EOG) un
 
 #### Bloom
 
-Professional bloom effect with HDR support:
+HDR bloom via the separate `BloomChain` pre-pass:
 
-- Luminance threshold for selective blooming
-- Configurable intensity and radius
-- Mipmap blur with adjustable levels (1-12)
-- Multiple kernel sizes
-- Performance/quality tradeoff via mipmap levels
+- Rec.709 luma threshold with soft knee
+- Configurable intensity, radius, and mip-count (1-12)
+- Output texture sampled and additively mixed by the mega-shader
 
 #### Tone Mapping
 
-Multiple tone mapping operators:
+Multiple tone mapping operators (all run inside the mega-shader via THREE's `<tonemapping_pars_fragment>` chunk):
 
 - Neutral (default) - Minimal color shift, preserves hue fidelity for scientific data
 - ACES Filmic - Industry standard cinematic look (used in cinematic mode)
 - AgX - Modern alternative
-- Reinhard - Classic operator
-- Linear - No tone mapping
-
-#### Ambient Occlusion (SSAO)
-
-Screen-space ambient occlusion for depth:
-
-- Multiple quality levels
-- Configurable radius and intensity
-- Luminance-based influence
-- Minimal performance impact
+- Reinhard / Cineon - Classic operators
+- Linear - Clamp/saturate to [0, 1]
 
 ### Anti-Aliasing
 
@@ -342,17 +367,6 @@ Fast Approximate Anti-Aliasing:
 - **Recommended for general use**
 - Works perfectly with additive blending
 
-#### SMAA
-
-Subpixel Morphological Anti-Aliasing:
-
-- Superior edge detection
-- Multiple quality presets (LOW, MEDIUM, HIGH, ULTRA)
-- Better quality than FXAA
-- Moderate performance impact
-- **Best quality/performance balance**
-- Compatible with additive blending
-
 #### MSAA
 
 Multisample Anti-Aliasing:
@@ -362,7 +376,6 @@ Multisample Anti-Aliasing:
 - **⚠️ WARNING**: Incompatible with additive blending
 - Causes brightness multiplication artifacts with points
 - Only use with normal blending mode
-- Automatically validates GPU support
 
 #### SSAA
 
@@ -372,38 +385,25 @@ Super-Sample Anti-Aliasing:
 - Best possible quality
 - **Heavy performance cost**
 - Recommended only for screenshots or high-end GPUs
-- Properly manages renderer and composer sizes
 
 ### Cinematic Effects
 
-#### Depth of Field
-
-Realistic camera focus simulation:
-
-- Configurable focus distance
-- Bokeh scale adjustment
-- Performance-optimized
-
 #### Vignette
 
-Screen edge darkening:
+Screen edge darkening (multiplicative stage in the mega-shader):
 
 - Adjustable darkness
 - Configurable offset
-- Minimal performance cost
-- **Custom Implementation**: Uses `RobustVignetteEffect` to prevent alpha overflow artifacts with additive blending and Float16 HDR buffers
+- No alpha-overflow artifacts (mega-shader forces alpha = 1.0 at the final write)
 
 #### Chromatic Lens Distortion
 
-Physically accurate lens distortion with wavelength-dependent chromatic aberration:
+Physically accurate lens distortion with wavelength-dependent chromatic aberration (per-channel sampling stage in the mega-shader):
 
-- **Combined effect**: Replaces separate lens distortion + chromatic aberration
 - **Wavelength-dependent distortion**: Blue refracts more than red (optical dispersion)
 - **Realistic chromatic fringing**: Follows lens geometry (stronger at edges)
 - Full camera model: Distortion, principal point, focal length, skew
 - Barrel/pincushion distortion for wide angle/telephoto simulation
-- **More efficient**: 3 texture samples in single pass vs separate effects
-- **Custom Implementation**: See `post-processing/chromatic-lens-distortion-effect.ts`
 
 #### Detector Noise (Physics-Based)
 
@@ -445,9 +445,8 @@ postProcessing.updateDetectorNoiseSettings({
 ### For Best Results with Point Clouds
 
 1. **General Use**: Enable **FXAA** - fast and effective
-2. **Quality Priority**: Enable **SMAA** with HIGH preset
-3. **Maximum Quality**: Enable **SSAA** at 2x (heavy performance cost)
-4. **Avoid MSAA**: Due to additive blending incompatibility
+2. **Maximum Quality**: Enable **SSAA** at 2x (heavy performance cost)
+3. **Avoid MSAA with additive blending** (used by Points / GSplats)
 
 ### Troubleshooting
 
@@ -459,14 +458,14 @@ postProcessing.updateDetectorNoiseSettings({
 #### MSAA Not Working
 
 - Check console for GPU support warnings
-- MSAA requires WebGL2 with float buffer extensions
+- Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
+- Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts
 - Will not show effect with additive blending
 - Try switching to normal blending mode to verify
 
 #### Performance Tips
 
 - Start with FXAA for best performance
-- SMAA provides best quality/performance ratio
 - SSAA should only be used for final renders
 - Monitor FPS when enabling AA effects
 
@@ -479,89 +478,42 @@ postProcessing.updateDetectorNoiseSettings({
 ```
 Scene Geometry
     ↓
-Custom Point Shaders (HDR colors)
+Custom Point / Line / GSplat Shaders (HDR colors)
     ↓
-HDR Render Target (HalfFloatType)
+HDR Render Target (HalfFloatType, optional MSAA + SSAA)
     ↓
-Dynamic Pass Assignment Algorithm:
-
-1. Process effects in order: Bloom → DOF → AO → Vignette → ChromaticLensDistortion → DetectorNoise → ToneMapping → AA
-2. Add effects sequentially to Pass A until incompatibility detected
-3. When incompatibility found, switch to Pass B for that effect and ALL remaining effects
-4. Pass A (if exists) → Pass B (if exists) → Final Output
-
-Example Scenarios:
-┌─ No Incompatibilities ─┐     ┌─ Incompatibilities Detected ─┐
-│ Pass A:                │     │ Pass A:                       │
-│ ├── Bloom              │     │ ├── Bloom                     │
-│ ├── Vignette           │     │ └── Vignette                  │
-│ ├── Noise              │     │                               │
-│ └── Tone Mapping       │     │ Pass B:                       │
-│                        │     │ ├── Chromatic Lens Dist (UV) │
-│ Final Output           │     │ ├── Noise                     │
-└────────────────────────┘     │ └── Tone Mapping             │
-                               │                               │
-                               │ Pass A → Pass B → Final       │
-                               └───────────────────────────────┘
+Bloom pre-pass (if enabled): threshold + mip pyramid → bloom texture
+    ↓
+Mega-shader fullscreen pass: fuses
+   ChromaticLensDistortion → Bloom mix (additive) → DetectorNoise →
+   EOG → ToneMapping → Vignette → sRGB encode
+    ↓
+Optional FXAA post-pass on the tone-mapped LDR output
+    ↓
+Canvas backbuffer
 ```
-
-### Dynamic Pass System
-
-The renderer automatically handles effect incompatibilities using a **sequential pass assignment algorithm**:
-
-1. **Sequential Processing**: Effects are processed in their correct visual order
-2. **Simplified Pipeline**: ChromaticLensDistortion combines UV transformation with chromatic effect, eliminating incompatibility issues
-3. **Pass Switching**: Upon incompatibility, all remaining effects (including the incompatible one) are moved to Pass B
-4. **Final Pass Logic**: Pass B always contains tone mapping when it exists, ensuring proper HDR→LDR conversion
-5. **Single vs Dual Pass**: If no incompatibilities exist, only Pass A is used; otherwise Pass A feeds into Pass B
 
 ### Performance Optimizations
 
-1. **Effect Merging**: Multiple effects rendered in single pass
-2. **Smart Rebuilding**: Effect pass only rebuilt when necessary
-3. **Material Caching**: Reuse materials with same properties
+1. **Single fused pass** for per-pixel effects (one rasterization, one set of binds)
+2. **Cached programs**: Toggle defines trigger lazy recompile, then the program is cached by define-set
+3. **Material caching**: Reuse materials with same properties
 4. **Selective AA**: Choose AA method based on performance
-5. **Quality Presets**: Easy performance/quality tradeoffs
 
 ---
 
 ## Configuration
 
-### Quality Presets
-
-```typescript
-// Low quality (60+ FPS target)
-{
-  bloom: { kernelSize: KernelSize.SMALL },
-  ao: null,  // Disabled
-  aa: 'FXAA'
-}
-
-// Medium quality (30+ FPS target)
-{
-  bloom: { kernelSize: KernelSize.MEDIUM },
-  ao: { quality: 'low' },
-  aa: 'SMAA'
-}
-
-// High quality (best visuals)
-{
-  bloom: { kernelSize: KernelSize.LARGE },
-  ao: { quality: 'high' },
-  aa: 'SMAA'
-}
-```
-
 ### HDR Configuration
 
 ```typescript
-// Renderer setup for HDR
+// Renderer setup for HDR (the PostProcessingManager pins these)
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 
-// Composer with HDR buffers
-new EffectComposer(renderer, {
-  frameBufferType: THREE.HalfFloatType,
+// HDR render target (managed by PostProcessingManager)
+new THREE.WebGLRenderTarget(width, height, {
+  type: THREE.HalfFloatType,
 });
 ```
 
@@ -595,11 +547,9 @@ const material = materialManager.getPointMaterial({
 // Enable multiple effects
 postProcessing.updateBloomSettings(0.3, 1.0, 0.01);
 postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
-postProcessing.setAOEnabled(true, 'medium');
 postProcessing.setFXAAEnabled(true);
 
 // Add cinematic effects
-postProcessing.setDOF(true, 10.0, 0.5);
 postProcessing.setVignetteEnabled(true, 0.5, 0.5);
 postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
 ```
@@ -630,18 +580,14 @@ function animate() {
 4. **Use Quality Presets**: Match quality to hardware capability
 5. **Monitor FPS**: Disable effects if FPS drops below target
 
-### Performance Impact (1M points, 1080p)
+### Performance Impact (1M points, 1080p, indicative)
 
-| Effect         | Performance Cost |
-| -------------- | ---------------- |
-| Base Rendering | ~5ms             |
-| Bloom          | ~2ms             |
-| Tone Mapping   | ~0.5ms           |
-| FXAA           | ~0.5ms           |
-| SMAA           | ~1-2ms           |
-| SSAO (medium)  | ~2-3ms           |
-| DOF            | ~2-3ms           |
-| Vignette       | <0.1ms           |
+| Effect                                        | Performance Cost |
+| --------------------------------------------- | ---------------- |
+| Base Rendering                                | ~5ms             |
+| Bloom (BloomChain)                            | ~2ms             |
+| Mega-shader fused pass (everything per-pixel) | ~0.5-1ms         |
+| FXAA                                          | ~0.5ms           |
 
 ---
 
@@ -651,21 +597,18 @@ function animate() {
 
 **Problem: Black screen after enabling effects**
 
-- Check browser console for WebGL errors
-- Verify HDR buffer support: `renderer.capabilities.isWebGL2`
+- Check browser console for WebGL/WebGPU errors (the message prefix tells you which backend is active)
+- Verify HDR buffer support via the backend-agnostic `RendererCapabilities.hdr.floatTextures` (don't probe `renderer.capabilities.isWebGL2` — that's WebGL-only and silently undefined under WebGPU)
 - Try disabling effects one by one to isolate the issue
-- Check if depth buffer is available (required for DOF, SSAO)
-- Verify tone mapping is enabled (required for HDR pipeline)
+- Verify tone mapping mode is set (required for HDR pipeline)
+- See `post-processing/README.md` Troubleshooting for known causes (e.g. missing `toneMapped: false` on a custom material)
 
 **Problem: Poor performance with all effects**
 
-- Use quality presets: `setQualityPreset('medium')` or `'low'`
-- Disable SSAO first (highest cost: ~2-3ms)
-- Use FXAA instead of SMAA (FXAA < 0.5ms, SMAA ~1-2ms)
+- Disable bloom first (~2 ms at 1080p, plus mip allocations)
 - Reduce bloom mipmap levels: `setBloomLevels(3)` instead of default 8
 - Disable detector noise if not needed
 - Lower SSAA multiplier or disable: `setSSAAEnabled(false)`
-- Monitor with: `getPerformanceMetrics()` to identify bottlenecks
 
 **Problem: Colors look wrong**
 
@@ -678,23 +621,20 @@ function animate() {
 **Problem: Effects not visible**
 
 - Check effect enabled state in debug console
-- Verify threshold values (bloom threshold too high, AO intensity too low)
-- Ensure proper effect order (tone mapping must be last)
-- Check if effect is in compatible pass (see incompatibility warnings)
-- Verify camera near/far planes for depth-dependent effects (DOF, SSAO)
+- Verify threshold values (bloom threshold too high will gate everything)
+- Confirm `LUXAR_TONE_MAPPING_MODE` matches the THREE constant you set
+- Confirm the mega-shader is the bound material (capture-mode defines bypass downstream stages)
 
 **Problem: Thin lines have aliasing/gaps**
 
 - Line material automatically handles this with 1.5px minimum width
-- Ensure anti-aliasing is enabled (SMAA or FXAA)
+- Ensure anti-aliasing is enabled (FXAA or SSAA)
 - Check that line widths are properly set (not zero or NaN)
 - For very thin lines, increase width slightly or use higher SSAA
 
 **Problem: Bright artifacts in dark areas (additive blending)**
 
-- This is caused by alpha overflow in Float16 buffers
-- Solution: RobustVignetteEffect is automatically used (prevents this issue)
-- If you see this with custom effects, ensure alpha is clamped to 1.0
+- The mega-shader forces fragColor.a = 1.0 at the final write, so this is unlikely now. If you see it, check that no upstream custom material is propagating NaN/Inf into the HDR target.
 
 **Problem: nD slicing shows no points**
 
@@ -714,7 +654,6 @@ function animate() {
 
 - Enable chunked loading in data loader
 - Reduce bloom mipmap levels
-- Disable SSAO (requires additional buffers)
 - Use lower SSAA multiplier
 - Consider using lower encoding mode (AGGRESSIVE)
 
@@ -724,29 +663,30 @@ function animate() {
 
 ### PostProcessingManager
 
-| Method                                                    | Description                                          |
-| --------------------------------------------------------- | ---------------------------------------------------- |
-| `render()`                                                | Execute rendering pipeline                           |
-| `updateBloomSettings(strength, radius, threshold)`        | Configure bloom                                      |
-| `setToneMapping(type)`                                    | Set tone mapping operator                            |
-| `setDetectorNoiseEnabled(enabled, sigma, gain, fpnSigma)` | Configure physics-based detector noise               |
-| `updateDetectorNoiseSettings(params)`                     | Update detector noise parameters                     |
-| `setFXAAEnabled(enabled)`                                 | Toggle FXAA                                          |
-| `setSMAAEnabled(enabled)`                                 | Toggle SMAA                                          |
-| `setAOEnabled(enabled, quality)`                          | Configure ambient occlusion                          |
-| `setDOF(enabled, focus, strength)`                        | Configure depth of field                             |
-| `setVignetteEnabled(enabled, darkness, offset)`           | Configure vignette                                   |
-| `setChromaticLensDistortionEnabled(enabled, ...params)`   | Configure chromatic lens distortion                  |
-| `updateChromaticLensDistortion(params)`                   | Update chromatic lens distortion params              |
-| `setQualityPreset(preset)`                                | Set quality preset: 'low', 'medium', 'high', 'ultra' |
-| `setBloomLevels(levels)`                                  | Set bloom mipmap levels (1-12)                       |
-| `setSSAAEnabled(enabled)`                                 | Toggle SSAA                                          |
-| `setSSAAMultiplier(multiplier)`                           | Set SSAA multiplier (1.5-4.0)                        |
-| `startDeferRebuild()` / `endDeferRebuild()`               | Defer rebuilds during bulk changes                   |
-| `getPerformanceMetrics()`                                 | Get FPS, frame time, memory usage                    |
-| `needsContinuousAnimation()`                              | Check if effects need animation                      |
-| `resize(width, height)`                                   | Update render size                                   |
-| `dispose()`                                               | Clean up resources                                   |
+| Method                                                       | Description                                                                                                                                                                                                                       |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `render()`                                                   | Execute rendering pipeline                                                                                                                                                                                                        |
+| `setBloomEnabled(enabled, strength?, radius?, threshold?)`   | Enable/disable bloom (and update settings)                                                                                                                                                                                        |
+| `updateBloomSettings(strength?, radius?, threshold?)`        | Update bloom settings                                                                                                                                                                                                             |
+| `setBloomLevels(levels)`                                     | Set bloom mip pyramid depth (1-12)                                                                                                                                                                                                |
+| `setToneMapping(mode)`                                       | Set tone mapping operator (THREE.ToneMapping)                                                                                                                                                                                     |
+| `updateExposure(value)` / `getExposure()`                    | EOG exposure (log2 stops)                                                                                                                                                                                                         |
+| `updateGlobalOffset(value)` / `updateGlobalGamma(value)`     | EOG offset and gamma                                                                                                                                                                                                              |
+| `setFXAAEnabled(enabled)`                                    | Toggle FXAA post-pass                                                                                                                                                                                                             |
+| `setMSAAEnabled(enabled)` / `setMSAASamples(n)`              | Toggle MSAA on the HDR target / set sample count                                                                                                                                                                                  |
+| `setSSAAEnabled(enabled)` / `setSSAAMultiplier(value)`       | Toggle SSAA / set supersampling factor                                                                                                                                                                                            |
+| `setDetectorNoiseEnabled(enabled, sigma?, gain?, fpnSigma?)` | Configure physics-based detector noise                                                                                                                                                                                            |
+| `updateDetectorNoiseSettings(params)`                        | Update detector noise parameters                                                                                                                                                                                                  |
+| `setVignetteEnabled(enabled, darkness?, offset?)`            | Configure vignette                                                                                                                                                                                                                |
+| `setChromaticLensDistortionEnabled(enabled, ...params)`      | Configure chromatic lens distortion                                                                                                                                                                                               |
+| `updateChromaticLensDistortion(params)`                      | Update chromatic lens distortion params                                                                                                                                                                                           |
+| `getLensDistortionParams()`                                  | Read distortion uniforms (cloned, for picking)                                                                                                                                                                                    |
+| `captureHDRPixels(mode?)` / `captureHDRAsEXR(opts?)`         | Read HDR/LDR pixels for EXR export                                                                                                                                                                                                |
+| `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                                                                                                                                                                                     |
+| `rebuildAfterContextRestore()`                               | Rebuild GPU resources after a WebGL2 `webglcontextrestored` event. WebGPU device loss uses a different model (`device.lost` promise) and is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling` |
+| `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                                                                                                                                                                                       |
+| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline)                                                                                                                                                                |
+| `dispose()`                                                  | Clean up resources                                                                                                                                                                                                                |
 
 ---
 
@@ -766,11 +706,11 @@ function animate() {
 
 When extending the rendering system:
 
-1. **Use pmndrs effects** when available
-2. **Create custom effects** following pmndrs patterns
+1. **Add per-pixel effects to the mega-shader** rather than as a new full-screen pass — see `post-processing/mega-shader.glsl.ts` and `post-processing/mega-shader-material.ts`
+2. **Bracket new effects with `#ifdef USE_*` defines** so disabled effects compile out entirely
 3. **Test performance** across different hardware
 4. **Document settings** and performance impact
-5. **Maintain HDR pipeline** integrity
+5. **Maintain HDR pipeline** integrity (custom materials must set `toneMapped: false`)
 
 ---
 

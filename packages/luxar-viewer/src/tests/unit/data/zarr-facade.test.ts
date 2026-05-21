@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
-import { wrapWithCache } from '../../../cache/cached-zarr-array';
+import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
 
 const encoder = new TextEncoder();
 
@@ -275,7 +275,9 @@ describe('Zarr facade contract', () => {
     expect(wrapped.dtype).toBe('float32');
     expect(wrapped.attrs).toEqual(pointsAttrs);
     expect((wrapped as typeof wrapped & { fillValue: unknown }).fillValue).toBe(0);
-    expect((wrapped as typeof wrapped & { dimensionNames?: string[] }).dimensionNames).toBeUndefined();
+    expect(
+      (wrapped as typeof wrapped & { dimensionNames?: string[] }).dimensionNames
+    ).toBeUndefined();
 
     const first = await wrapped.getChunk([0, 0]);
     const readsAfterFirstChunk = rawStore.callsFor('/points/0.0').length;

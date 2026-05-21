@@ -14,7 +14,7 @@
  * coupling growth.
  *
  * Closes the last layer-cruiser known exception
- * (`data/scene-loader.ts → ui/monitors/data-monitor-manager.ts`).
+ * (`data/scene-loader.ts → ui/data-monitor-manager.ts`).
  */
 
 import type {

@@ -6,12 +6,12 @@ specific to the GSplats node type.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload |
-| `projection.ts` | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback. |
-| `gsplats-progressive-loader.ts` | Progressive amplitude-ordered loading — surfaces the brightest splats first while the rest stream in |
-| `chunk-index-loader.ts` | Loads the GSplats chunk-bounds index from zarr metadata |
+| File                              | Role                                                                                                                                                              |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload           |
+| `projection.ts`                   | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback. |
+| `gsplats-progressive-loader.ts`   | Progressive amplitude-ordered loading — surfaces the brightest splats first while the rest stream in                                                              |
+| `chunk-index-loader.ts`           | Loads the GSplats chunk-bounds index from zarr metadata                                                                                                           |
 
 ## Public surface
 
@@ -41,5 +41,5 @@ imports the concrete class — it goes through `loader-factory.ts`.
 - `src/rendering/gsplat-material.ts` — GPU-side rendering
 - `src/wasm/typescript/gsplats-processing.ts` — TypeScript fallback
   that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch / range
+- `src/data/loaders/README.md` — encoding dispatch / range
   loader contract

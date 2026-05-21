@@ -148,7 +148,10 @@ describe('restoreSnapshot', () => {
       },
     };
 
-    const result = restoreSnapshot(sm as unknown as Parameters<typeof restoreSnapshot>[0], snapshot);
+    const result = restoreSnapshot(
+      sm as unknown as Parameters<typeof restoreSnapshot>[0],
+      snapshot
+    );
 
     expect(result.cameraApplied).toBe(true);
     expect(result.dimsApplied).toBe(false);
@@ -203,7 +206,10 @@ describe('restoreSnapshot', () => {
       },
     };
 
-    const result = restoreSnapshot(sm as unknown as Parameters<typeof restoreSnapshot>[0], snapshot);
+    const result = restoreSnapshot(
+      sm as unknown as Parameters<typeof restoreSnapshot>[0],
+      snapshot
+    );
     expect(result.dimsApplied).toBe(false);
   });
 
@@ -228,7 +234,10 @@ describe('restoreSnapshot', () => {
       },
     };
 
-    const result = restoreSnapshot(sm as unknown as Parameters<typeof restoreSnapshot>[0], snapshot);
+    const result = restoreSnapshot(
+      sm as unknown as Parameters<typeof restoreSnapshot>[0],
+      snapshot
+    );
     expect(result.dimsApplied).toBe(true);
     const dims = sceneDimsManager.getDims()!;
     expect(dims.currentStep[3]).toBe(7);
@@ -250,7 +259,10 @@ describe('restoreSnapshot', () => {
       },
     } as ViewerSnapshot;
 
-    const result = restoreSnapshot(sm as unknown as Parameters<typeof restoreSnapshot>[0], snapshot);
+    const result = restoreSnapshot(
+      sm as unknown as Parameters<typeof restoreSnapshot>[0],
+      snapshot
+    );
     expect(result.cameraApplied).toBe(false);
     expect(result.dimsApplied).toBe(false);
     // Camera unchanged.

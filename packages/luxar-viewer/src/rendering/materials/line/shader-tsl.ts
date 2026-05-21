@@ -1,0 +1,462 @@
+/**
+ * Line material TSL factory — NodeMaterial counterpart to the GLSL3
+ * shaders in `shaders/line-shaders.ts`.
+ *
+ * Renders each line segment as a screen-space-thick instanced quad.
+ * Per-vertex `aQuadCorner` (±1) determines:
+ *   - x ∈ {-1, +1}: position along the segment (interpolation t).
+ *   - y ∈ {-1, +1}: perpendicular offset (used for width expansion).
+ *
+ * Per-segment InstancedBufferAttribute data:
+ *   - aStartPos / aEndPos (vec3 world-space endpoints)
+ *   - aStartColor / aEndColor (vec3 RGB; replaced by aStartScalar /
+ *     aEndScalar + LUT under USE_COLORMAP)
+ *   - aStartWidth / aEndWidth (float world-space half-width-ish)
+ *   - aStartSharpness / aEndSharpness (float)
+ *   - aSegmentLength (float, used by the cap-ramp fragment math)
+ *   - aStartClipped / aEndClipped (float ∈ {0, 1})
+ *
+ * Vertex stage projects both endpoints to view/clip space, computes
+ * a per-segment pixel-width with ortho/perspective scaling, clamps
+ * to `[minPixelWidth, uMaxLinePixelWidth]` with an intensity-fading
+ * "vWidthFade" for near-camera degenerate cases, then expands the
+ * quad by perpendicular×pixelWidth in NDC.
+ *
+ * Fragment stage produces a soft parabolic line: (1 - p²)^sharpness
+ * × edgeAA × widthScale × widthFade × capFactor (capFactor ramps to
+ * full intensity inside the body but is 1.0 at clipped endpoints).
+ *
+ * @module rendering/materials/line/shader-tsl
+ */
+
+import * as THREE from 'three';
+import {
+  Fn,
+  If,
+  uniform,
+  attribute,
+  varying,
+  vec2,
+  vec3,
+  vec4,
+  float,
+  max,
+  min,
+  clamp,
+  mix,
+  length,
+  step,
+  smoothstep,
+  texture,
+  modelViewMatrix,
+  cameraProjectionMatrix,
+  Discard,
+} from 'three/tsl';
+import { NodeMaterial } from 'three/webgpu';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../_shared/tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
+
+export interface LineTSLConfig {
+  readonly useColormap?: boolean;
+  /**
+   * When undefined, derived from `blendingMode === 'max'`. Explicit
+   * config still wins.
+   */
+  readonly useMaxRGBContribution?: boolean;
+  /**
+   * Luxar blending mode. Defaults to `'additive'` to match the
+   * GLSL wrapper class.
+   */
+  readonly blendingMode?: BlendingMode;
+  /**
+   * Fast path: skip the `pow(adjusted, vec3(uInvGamma))` call when
+   * the wrapper knows gamma == 1.0. Saves 3 fragment-stage pow()
+   * calls in the default-gamma case (the common case).
+   */
+  readonly gammaOne?: boolean;
+  /**
+   * Fast path: skip the `vColor * uIntensity + uOffset` GOG chain
+   * (and its `max(..., vec3(0))` clamp) when the wrapper knows
+   * intensity == 1 && offset == 0 — the default and most common
+   * configuration. Saves 1 vec3 multiply, 1 vec3 add, and 1 vec3
+   * max per fragment.
+   */
+  readonly noGOG?: boolean;
+  /**
+   * Fast path: replace `pow(max(1-p², 0), max(vSharpness, 0.0001))`
+   * with the closed-form `(max(1-p², 0))²` when the wrapper knows
+   * every per-vertex sharpness in the bound geometry is 2.0 (the
+   * dataset default). One per-fragment transcendental eliminated.
+   */
+  readonly sharpnessTwo?: boolean;
+  /**
+   * Camera projection mode at build time. When `true` (orthographic),
+   * the factory emits only the ortho pixel-width branch; when `false`
+   * or undefined (perspective), only the perspective branch is
+   * emitted. Eliminates the runtime `int(uIsOrtho).select(...)` and
+   * its `.toVar()` materialisation of the unused branch. Wrapper
+   * triggers `rebuildGraph()` whenever the camera mode flips.
+   */
+  readonly isOrtho?: boolean;
+}
+
+/**
+ * Pre-created TSL leaf nodes supplied by a wrapper class. Same
+ * pattern as `LinePickTSLNodes` / `PointPickTSLNodes`: consumers
+ * own the `UniformNode`s and the factory references them directly,
+ * which avoids the `.onUpdate('render')` callback bridge that the
+ * old uniform-record-based path used. Mutations on the wrapper's
+ * `material.uniforms.X.value` (proxied via `proxyIUniform`) land
+ * directly on `node.value`.
+ *
+ * Colormap nodes are optional and bound only when the consumer is
+ * built with `config.useColormap === true`. The factory throws if
+ * the config says yes but the colormap nodes are missing.
+ */
+export interface LineTSLNodes {
+  readonly uResolution: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uMaxLinePixelWidth: TSLNode;
+  readonly uPerspectiveLineScale: TSLNode;
+  readonly uOrthoLineScale: TSLNode;
+  readonly uOpacity: TSLNode;
+  readonly uInvGamma: TSLNode;
+  readonly uIntensity: TSLNode;
+  readonly uOffset: TSLNode;
+  /** Set only when colormap mode is active. */
+  readonly uColormapTex?: TSLNode;
+  readonly uScalarMin?: TSLNode;
+  readonly uScalarScale?: TSLNode;
+}
+
+/**
+ * Line-material TSL factory.
+ *
+ * Consumes pre-created `UniformNode` references via `nodes`; the
+ * wrapper class (`LineTSLMaterial`) owns those nodes and exposes
+ * them through `material.uniforms` as `IUniform`-shaped
+ * getter/setter proxies. The harness / `LINE_SOURCE` ShaderSource
+ * registry constructs the nodes from a plain `uniforms` record via
+ * {@link buildLineTSLNodesFromUniforms}.
+ */
+export function lineWebGPUFactory(
+  nodes: LineTSLNodes,
+  config: LineTSLConfig = {},
+  outMaterial?: NodeMaterial
+): NodeMaterial {
+  // Per-vertex.
+  const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
+  // Per-instance — endpoint pairs.
+  const aStartPos: TSLNode = attribute<'vec3'>('aStartPos', 'vec3');
+  const aEndPos: TSLNode = attribute<'vec3'>('aEndPos', 'vec3');
+  const aStartColor: TSLNode = attribute<'vec3'>('aStartColor', 'vec3');
+  const aEndColor: TSLNode = attribute<'vec3'>('aEndColor', 'vec3');
+  const aStartWidth: TSLNode = attribute<'float'>('aStartWidth', 'float');
+  const aEndWidth: TSLNode = attribute<'float'>('aEndWidth', 'float');
+  const aStartSharpness: TSLNode = attribute<'float'>('aStartSharpness', 'float');
+  const aEndSharpness: TSLNode = attribute<'float'>('aEndSharpness', 'float');
+  const aSegmentLength: TSLNode = attribute<'float'>('aSegmentLength', 'float');
+  const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
+  const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
+  // Colormap (per-endpoint scalars).
+  const aStartScalar: TSLNode = config.useColormap
+    ? attribute<'float'>('aStartScalar', 'float')
+    : null;
+  const aEndScalar: TSLNode = config.useColormap ? attribute<'float'>('aEndScalar', 'float') : null;
+
+  // Bind directly to the persistent `UniformNode`s owned by the
+  // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
+  // harness path). Mutations on `material.uniforms.X.value` go via
+  // `proxyIUniform` straight to `node.value` — no per-render
+  // `.onUpdate` callbacks needed.
+  // uFOV is intentionally absent: the TSL graph reads the CPU-precomputed
+  // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
+  // uIsOrtho is also intentionally absent — projection mode is a
+  // JS-level config branch (`config.isOrtho`), not a runtime uniform.
+  const uResolution = nodes.uResolution;
+  const uNearCull = nodes.uNearCull;
+  const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
+  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
+  const uOrthoLineScale = nodes.uOrthoLineScale;
+  const uOpacity = nodes.uOpacity;
+  const uInvGamma = nodes.uInvGamma;
+  const uIntensity = nodes.uIntensity;
+  const uOffset = nodes.uOffset;
+  if (config.useColormap) {
+    if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
+      throw new Error(
+        'lineWebGPUFactory: config.useColormap=true but nodes.uColormapTex / uScalarMin / uScalarScale are not bound.'
+      );
+    }
+  }
+  const uColormapTex = config.useColormap ? nodes.uColormapTex! : null;
+  const uScalarMin = config.useColormap ? nodes.uScalarMin! : null;
+  const uScalarScale = config.useColormap ? nodes.uScalarScale! : null;
+
+  // RGB premultiplication is driven by the blending mode: `max` mode
+  // routes through CustomBlending + MaxEquation which needs RGB to
+  // already include the soft-kernel contribution. Explicit
+  // `useMaxRGBContribution` still wins.
+  const premultiplyRGB =
+    config.useMaxRGBContribution !== undefined
+      ? config.useMaxRGBContribution
+      : config.blendingMode === 'max';
+
+  // ---- Vertex computation ----
+
+  // t ∈ {0, 1} — position along the segment. Branchless because
+  // aQuadCorner.x ∈ {-1, +1} by construction.
+  const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
+
+  // Per-endpoint colour or LUT lookup.
+  let perPointColor: TSLNode;
+  if (
+    config.useColormap &&
+    aStartScalar &&
+    aEndScalar &&
+    uColormapTex &&
+    uScalarMin &&
+    uScalarScale
+  ) {
+    const s: TSLNode = mix(aStartScalar, aEndScalar, t);
+    const st: TSLNode = clamp(s.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+    perPointColor = uColormapTex.sample(vec2(st, 0.5)).rgb;
+  } else {
+    perPointColor = mix(aStartColor, aEndColor, t);
+  }
+
+  // Sanitised widths / sharpness, interpolated.
+  const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
+  const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
+  const startS: TSLNode = sanitizePositive(aStartSharpness, float(2.0));
+  const endS: TSLNode = sanitizePositive(aEndSharpness, float(2.0));
+  const width: TSLNode = mix(startW, endW, t);
+  const vSharpnessVal: TSLNode = mix(startS, endS, t);
+
+  // Project endpoints to view + clip space.
+  const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0));
+  const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0));
+  const mvPos: TSLNode = mix(mvStart, mvEnd, t);
+
+  // Near-plane / behind-camera safety. View-space depth = -z.
+  const nearCull: TSLNode = max(uNearCull, float(1e-4));
+  const startDepth: TSLNode = mvStart.z.negate();
+  const endDepth: TSLNode = mvEnd.z.negate();
+  const bothBehind: TSLNode = startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+
+  const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
+  const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
+  // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+  const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
+
+  // Convert clip endpoints to pixel space for aspect-correct
+  // perpendicular expansion. Guard tiny .w (near-plane crossings).
+  const wStart: TSLNode = max(clipStart.w, float(1e-4));
+  const wEnd: TSLNode = max(clipEnd.w, float(1e-4));
+  const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
+  const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
+
+  // Direction + perpendicular (pixel space, aspect-correct). The +0.5
+  // in (ndc*0.5+0.5)*resolution cancels under subtraction, so the
+  // pixel-space direction is just (ndcEnd-ndcStart)*(0.5*resolution).
+  const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5)));
+  const pixelLen: TSLNode = length(pixelDir);
+  const lineDir: TSLNode = pixelLen
+    .greaterThan(0.0001)
+    .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
+  const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
+
+  // World-space → pixel conversion. Each camera projection mode is a
+  // separate graph variant (`config.isOrtho`) so the unused branch
+  // never materialises into generated code. The wrapper calls
+  // `rebuildGraph()` whenever the camera mode flips. Perspective uses
+  // view-space depth (-mvPos.z) — drops a sqrt and is more
+  // projection-correct (screen size scales with view-z, not Euclidean
+  // distance from the camera position).
+  let rawPixelWidth: TSLNode;
+  if (config.isOrtho) {
+    rawPixelWidth = width.mul(uOrthoLineScale);
+  } else {
+    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+    rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView);
+  }
+
+  const minPixelWidth = float(1.5);
+  const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0));
+  const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
+
+  // Width fade for clamped extreme cases. `.toVar()` on the
+  // expression branch so select() picks the right concrete value.
+  const vWidthFadeVal: TSLNode = rawPixelWidth
+    .lessThanEqual(maxPW)
+    .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
+
+  // Pathological-segment cull: both endpoints inside near-cull margin
+  // AND rawPixelWidth blows past clamp by 2× → degenerate quad.
+  const pathological: TSLNode = startDepth
+    .lessThan(nearCull.mul(2.0))
+    .and(endDepth.lessThan(nearCull.mul(2.0)))
+    .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+
+  // Final clip-space position with perpendicular expansion.
+  // pixelOffset = perpendicular × aQuadCorner.y × clampedPixelWidth
+  // ndcOffset = pixelOffset / uResolution × 2
+  // clipPos.xy += ndcOffset × clipPos.w
+  const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
+  const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
+  // vec4(vec2, scalar, scalar) — vec4(vec2, vec2) isn't a supported
+  // TSL overload. Pass clipPosBase.z and .w as individual scalars.
+  const expandedClip: TSLNode = vec4(
+    clipPosBase.xy.add(ndcOffset.mul(clipPosBase.w)),
+    clipPosBase.z,
+    clipPosBase.w
+  );
+
+  // Route culled / pathological segments to off-screen via real
+  // TSL control flow. `If(predicate, () => { ... })` emits actual
+  // `if` blocks in the generated WGSL/GLSL so only one branch runs
+  // per vertex — unlike `select(...)` which evaluates both. Default
+  // value `vec4(2,2,2,1)` is outside the clip cube; the rasterizer
+  // drops the segment when the not-culled branch doesn't fire.
+  const culled: TSLNode = bothBehind.or(pathological);
+  const clipPos: TSLNode = Fn(() => {
+    const out = vec4(2.0, 2.0, 2.0, 1.0).toVar('clipPos');
+    If(culled.not(), () => {
+      out.assign(expandedClip);
+    });
+    return out;
+  })();
+
+  // Varyings to the fragment stage. Per-segment-constant values use
+  // `flat` interpolation so the rasterizer skips the perspective
+  // divide — matches the GLSL3 `flat` qualifier on the same fields.
+  const vColor: TSLNode = varying(perPointColor);
+  const vSharpness: TSLNode = varying(vSharpnessVal);
+  const vPerpNorm: TSLNode = varying(aQuadCorner.y);
+  const vT: TSLNode = varying(t);
+  const vSegmentLength: TSLNode = varying(aSegmentLength).setInterpolation('flat');
+  const vWidthAtT: TSLNode = varying(width);
+  const vPixelWidth: TSLNode = varying(rawPixelWidth);
+  const vWidthFade: TSLNode = varying(vWidthFadeVal);
+  // Clipped flags are per-instance — same across all 4 quad verts.
+  const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
+  const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
+
+  // ---- Fragment computation ----
+
+  const colorNode = Fn(() => {
+    const p: TSLNode = vPerpNorm.abs();
+    Discard(p.greaterThanEqual(1.0));
+
+    // Parabolic falloff (1 - p²)^sharpness. Sharpness fast path uses
+    // `x*x` instead of `pow(x, 2)` when the wrapper knows every
+    // segment in the buffer has sharpness == 2.0.
+    const oneMinusPSq: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0));
+    const perpFalloff: TSLNode = config.sharpnessTwo
+      ? oneMinusPSq.mul(oneMinusPSq)
+      : oneMinusPSq.pow(max(vSharpness, float(0.0001)));
+
+    // Edge AA: smoothstep over ~1 pixel.
+    const minPW = float(1.5);
+    const renderedWidth: TSLNode = max(vPixelWidth, minPW);
+    const aaWidth: TSLNode = float(1.0).div(renderedWidth);
+    const edgeAA: TSLNode = float(1.0).sub(smoothstep(float(1.0).sub(aaWidth), float(1.0), p));
+
+    const widthScale: TSLNode = min(vPixelWidth.div(minPW), float(1.0));
+
+    // Cap factor — ramps to 1 inside body, 0.5 at endpoints; full at
+    // clipped endpoints. Mirrors the GLSL implementation.
+    const distFromStart: TSLNode = vT.mul(vSegmentLength);
+    const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
+    const distToNearest: TSLNode = min(distFromStart, distFromEnd);
+    const capRamp: TSLNode = vWidthAtT
+      .greaterThan(float(1e-4))
+      // `.toVar()` on the chained branch — see the vertex-stage
+      // rawPixelWidth select for why this is needed.
+      .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
+    const baseCap: TSLNode = float(0.5).add(capRamp.mul(0.5));
+    // nearestIsStart = step(distFromStart, distFromEnd): 1 when
+    // distFromEnd ≥ distFromStart → start is nearest.
+    const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
+    const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
+    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
+
+    const intensity: TSLNode = capFactor
+      .mul(perpFalloff)
+      .mul(edgeAA)
+      .mul(widthScale)
+      .mul(vWidthFade);
+
+    // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
+    // the mul/add/clamp chain is identity for non-negative vColor.
+    const adjusted: TSLNode = config.noGOG
+      ? vColor
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
+    // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
+    // identity. JS-level branch so the generated WGSL/GLSL omits the
+    // pow entirely when not needed.
+    const gammaColor: TSLNode = config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
+
+    const alpha: TSLNode = intensity.mul(uOpacity);
+    if (premultiplyRGB) {
+      return vec4(gammaColor.mul(alpha), alpha);
+    }
+    return vec4(gammaColor, alpha);
+  });
+
+  const material = outMaterial ?? new NodeMaterial();
+  material.vertexNode = clipPos;
+  material.colorNode = colorNode();
+  material.toneMapped = false;
+
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
+  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
+  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  applyBlendingStateToMaterial(material, blendingState);
+  return material;
+}
+
+/**
+ * Build a `LineTSLNodes` set from a plain `IUniform` record. Used by
+ * the test harness and the `LINE_SOURCE` ShaderSource factory in
+ * `shaders/line-shaders.ts` — callers that don't own persistent
+ * wrapper-side `UniformNode`s. Mirrors
+ * `buildLinePickTSLNodesFromUniforms`.
+ *
+ * Note: the resulting nodes capture the current `iuniform.value` at
+ * build time. Mutations to the host `IUniform`'s `.value` after this
+ * function returns will NOT propagate — appropriate for the harness
+ * (which builds once and renders once) but not for live wrappers
+ * (which must use `proxyIUniform` against persistent nodes).
+ */
+export function buildLineTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>,
+  config: LineTSLConfig = {}
+): LineTSLNodes {
+  const base: LineTSLNodes = {
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
+    uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
+    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
+    uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
+    uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
+    uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
+    uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+  };
+  if (!config.useColormap) return base;
+  return {
+    ...base,
+    uColormapTex: texture(
+      (uniforms.uColormapTex?.value as THREE.Texture | null) ?? new THREE.Texture()
+    ),
+    uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
+    uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+  };
+}

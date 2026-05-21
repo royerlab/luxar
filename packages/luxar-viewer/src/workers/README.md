@@ -1,6 +1,6 @@
 # luxar-viewer/src/workers
 
-Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, projection, clipping, and array decoding from the main thread. See `SPECIFICATIONS.md` for worker-pool invariants and validation rules.
+Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, projection, clipping, and array decoding from the main thread.
 
 ## Architecture
 
@@ -55,10 +55,8 @@ await pool.initialize();
 // picks a worker via load-balanced selection, tracks the call,
 // and applies the configured timeout (visibility / projection /
 // decode kinds map to different default budgets).
-const result = await pool.runWithTimeout(
-  'querySpatialIndex',
-  'visibility',
-  (api) => api.querySpatialIndex(/* ... */)
+const result = await pool.runWithTimeout('querySpatialIndex', 'visibility', (api) =>
+  api.querySpatialIndex(/* ... */)
 );
 
 // Clean up

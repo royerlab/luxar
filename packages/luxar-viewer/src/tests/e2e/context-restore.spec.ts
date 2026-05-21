@@ -48,6 +48,30 @@ async function loseAndRestoreContext(page: import('@playwright/test').Page): Pro
 }
 
 test.describe('WebGL Context Restore (CR-1)', () => {
+  // Context-restore is a WebGL-specific concern: it tests the
+  // `webglcontextlost` / `webglcontextrestored` canvas event cycle
+  // and the `WEBGL_lose_context` extension that fires them. Neither
+  // applies under the default `WebGPURenderer` — Three's WebGPU
+  // backend handles `device.lost` internally and the scene-manager
+  // skips constructing `WebGLContextRecovery` when
+  // `caps.apiSurface !== 'webgl2'`. Run these tests under
+  // `VITE_LUXAR_USE_LEGACY_WEBGL=1` for coverage of the GLSL path.
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/?debug');
+    await waitForLuxarReady(page);
+    const api = await page.evaluate(
+      () =>
+        ((window as any).__luxarDebug?.app?.sceneManager?.capabilities?.apiSurface as
+          | string
+          | undefined) ?? 'unknown'
+    );
+    test.skip(
+      api !== 'webgl2',
+      `context-restore tests require the WebGL path (caps.apiSurface=${api}); ` +
+        'run with ?renderer=webgl to exercise this suite.'
+    );
+  });
+
   test('PostProcessingManager identity is preserved across context restore', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
@@ -141,7 +165,9 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     expect(await loseAndRestoreContext(page)).toBe(true);
 
     const afterRestore = await page.evaluate(() => {
-      const debug = (window as unknown as { __luxarDebug?: { app?: unknown; renderOnce?: () => void } }).__luxarDebug;
+      const debug = (
+        window as unknown as { __luxarDebug?: { app?: unknown; renderOnce?: () => void } }
+      ).__luxarDebug;
       const app = debug?.app as { pickingSystem?: unknown } | undefined;
       if (!app?.pickingSystem) return { reachable: false, rendered: false };
       try {
@@ -171,7 +197,7 @@ test.describe('WebGL Context Restore (CR-1)', () => {
       const pp = debug?.postProcessing;
       if (!pp || typeof pp.updateExposure !== 'function') return false;
       pp.updateExposure(exposure);
-      return pp.toneMappingEffect?.exposure === exposure;
+      return typeof pp.getExposure === 'function' && pp.getExposure() === exposure;
     }, targetExposure);
     expect(targetSetOk).toBe(true);
 
@@ -180,7 +206,7 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     const exposureAfter = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const pp = debug?.postProcessing;
-      return pp?.toneMappingEffect?.exposure ?? null;
+      return typeof pp?.getExposure === 'function' ? pp.getExposure() : null;
     });
     expect(exposureAfter).toBeCloseTo(targetExposure, 5);
 

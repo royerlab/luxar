@@ -20,8 +20,8 @@ import {
   serializeSettings,
   deserializeSettings,
   validateRenderingSettings,
-} from './rendering-controls-utils';
-import { extractRenderingOverrides } from '../../config/viewer-config-utils';
+} from './controls-utils';
+import { extractRenderingOverrides } from '../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 
 /** RenderingSettings with the fly fields narrowed to non-optional concretes. */

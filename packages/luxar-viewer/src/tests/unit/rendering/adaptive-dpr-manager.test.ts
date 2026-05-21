@@ -335,6 +335,42 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
       restore();
     }
   });
+
+  it('skips duplicate manual DPR updates to avoid redundant GPU reallocations', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      m.setManualDPR(1.0);
+      m.setManualDPR(1.0);
+      m.setManualDPR(1.005); // within idempotency epsilon
+
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledTimes(1);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('updates reduced-resolution state for manual DPR changes', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+
+      m.setManualDPR(1.0);
+      expect(m.getState().isReducedResolution).toBe(true);
+
+      m.setManualDPR(2.0);
+      expect(m.getState().isReducedResolution).toBe(false);
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe('AdaptiveDPRManager — dispose', () => {
@@ -381,6 +417,134 @@ describe('AdaptiveDPRManager — getState', () => {
       expect(s.nativeDPR).toBe(1.5);
       expect(s.currentFPS).toBe(0);
       expect(s.isReducedResolution).toBe(false);
+      // U-shape state defaults
+      expect(s.dprFloor).toBe(0.5); // matches mocked config.minDPR
+      expect(s.probing).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// U-shape probe behaviour
+// ---------------------------------------------------------------------
+// Lowering DPR is not monotonically faster on macOS/Chrome (compositor
+// upscale cost grows past a sweet spot). The manager scales down with
+// a probe: it measures FPS before and after a scale-down move and, if
+// the move did not improve FPS, reverts and records a floor so it
+// won't try the same move again until the floor TTL expires.
+
+describe('AdaptiveDPRManager — U-shape probe', () => {
+  let restore: () => void;
+  let renderer: ReturnType<typeof makeRenderer>;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+    renderer = makeRenderer();
+  });
+
+  /**
+   * Fill the FPS window so that an evaluation triggered at `evalAt`
+   * sees roughly `targetFPS`. Pushes `targetFPS` frames evenly spaced
+   * between `evalAt - 1000` and `evalAt`, then a final frame AT
+   * `evalAt` that triggers evaluateAndAdjust. Avoids intermediate
+   * evaluations from firing with random FPS readings by keeping all
+   * pushes within a single 1000ms window past the previous evaluation.
+   */
+  function evaluateWithFPS(m: AdaptiveDPRManager, evalAt: number, targetFPS: number): void {
+    const start = evalAt - 1000;
+    const N = Math.max(2, Math.round(targetFPS));
+    for (let i = 0; i < N; i++) {
+      m.recordFrame(start + (i / (N - 1)) * 1000);
+    }
+  }
+
+  it('keeps the DPR move when post-probe FPS improves enough', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+
+      // Eval at t=1000 with FPS=20 → below minFPS=30 → scaleDown, probe armed.
+      evaluateWithFPS(m, 1000, 20);
+      const dprAfterScaleDown = m.getCurrentDPR();
+      expect(dprAfterScaleDown).toBeLessThan(2.0);
+      expect(m.getState().probing).toBe(true);
+
+      // Eval at t=3000 (2000ms past probe start, well past PROBE_WINDOW_MS).
+      // Build a window of frames giving FPS=80 → 4× improvement, easily
+      // clears the PROBE_IMPROVEMENT (1.05×) threshold.
+      evaluateWithFPS(m, 3000, 80);
+
+      // Probe accepted: DPR stays at the scaled-down value, floor unchanged.
+      expect(m.getState().probing).toBe(false);
+      expect(m.getCurrentDPR()).toBe(dprAfterScaleDown);
+      expect(m.getState().dprFloor).toBe(0.5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('reverts DPR and sets a floor when post-probe FPS did not improve', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+
+      // scaleDown at FPS=20
+      evaluateWithFPS(m, 1000, 20);
+      const previousDPR = 2.0;
+      const probedDPR = m.getCurrentDPR();
+      expect(probedDPR).toBeLessThan(previousDPR);
+      expect(m.getState().probing).toBe(true);
+
+      // Eval past probe window with SAME FPS=20 (ratio = 1.0 < 1.05).
+      evaluateWithFPS(m, 3000, 20);
+
+      // Probe rejected: DPR reverts; floor tightens to probedDPR.
+      expect(m.getState().probing).toBe(false);
+      expect(m.getCurrentDPR()).toBe(previousDPR);
+      expect(m.getState().dprFloor).toBeCloseTo(probedDPR, 5);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses to scale below the dprFloor set by a failed probe', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+
+      // Reject a probe to set a floor at scaleDownFactor*native = 0.7*2 = 1.4
+      evaluateWithFPS(m, 1000, 20);
+      const probedDPR = m.getCurrentDPR();
+      evaluateWithFPS(m, 3000, 20);
+      expect(m.getState().dprFloor).toBeCloseTo(probedDPR, 5);
+      expect(m.getCurrentDPR()).toBe(2.0); // reverted to native
+
+      // Eval again with FPS=20 → would normally trigger scaleDown to 1.4.
+      // The new floor is 1.4, so newDPR = max(1.4, 2.0*0.7) = 1.4 — the
+      // change is exactly to the floor, NOT below. DPR clamps to floor.
+      evaluateWithFPS(m, 5000, 20);
+      expect(m.getCurrentDPR()).toBeGreaterThanOrEqual(probedDPR);
+    } finally {
+      restore();
+    }
+  });
+
+  it('clears probe state and resets floor on setEnabled(false)', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+      // Force a rejected probe to set a floor.
+      evaluateWithFPS(m, 1000, 20);
+      evaluateWithFPS(m, 3000, 20);
+      expect(m.getState().dprFloor).toBeGreaterThan(0.5);
+
+      m.setEnabled(false);
+      const s = m.getState();
+      expect(s.probing).toBe(false);
+      expect(s.dprFloor).toBe(0.5); // back to config minDPR
+      expect(s.currentDPR).toBe(2.0); // back to native
     } finally {
       restore();
     }

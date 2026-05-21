@@ -1,5 +1,5 @@
 /**
- * Unit tests for the pure helpers in data-monitor-templates.ts.
+ * Unit tests for the pure helpers in data-loading-monitor/templates.ts.
  *
  * Targets the small zero-dependency utilities (formatters, color
  * classifiers, percentage math) that live alongside the larger
@@ -23,7 +23,7 @@ import {
   renderMetricCard,
   renderProgressBar,
   renderStatGrid,
-} from '../../../ui/monitors/data-monitor-templates';
+} from '../../../ui/data-loading-monitor/templates';
 
 describe('getColorClass', () => {
   it('prefixes the semantic name with luxar-color--', () => {
@@ -161,9 +161,7 @@ describe('renderMetricCard', () => {
   });
 
   it('applies size modifier to both block class and value class', () => {
-    expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain(
-      'luxar-metric-card--small'
-    );
+    expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain('luxar-metric-card--small');
     expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain(
       'luxar-metric-card__value--small'
     );
@@ -218,9 +216,7 @@ describe('renderStatGrid', () => {
   });
 
   it('applies the per-item colorClass when supplied', () => {
-    const html = renderStatGrid([
-      { label: 'a', value: 1, colorClass: 'luxar-color--success' },
-    ]);
+    const html = renderStatGrid([{ label: 'a', value: 1, colorClass: 'luxar-color--success' }]);
     expect(html).toContain('luxar-color--success');
   });
 });

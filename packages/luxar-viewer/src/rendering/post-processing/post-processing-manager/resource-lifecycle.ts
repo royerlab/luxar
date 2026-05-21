@@ -1,0 +1,244 @@
+/**
+ * Pure helpers for `PostProcessingManager` resource construction +
+ * sizing. The orchestrator stays focused on event dispatch and setter
+ * routing.
+ *
+ * Everything here is a factory or a pure function — no mutation of
+ * external state. The orchestrator owns the resources and assigns
+ * the returned values back to its private fields.
+ *
+ * @module rendering/post-processing/post-processing-manager/resource-lifecycle
+ */
+
+import * as THREE from 'three';
+import { BloomChain } from '../bloom-chain';
+import { FxaaPass } from '../fxaa-pass';
+import { FullscreenPass } from '../fullscreen-pass';
+import { computeEffectiveRenderSize } from '../render-target-sizing';
+import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
+import { config } from '../../../config';
+import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
+
+/** Inputs to the size-derivation pair. */
+export interface SizingInputs {
+  readonly renderer: Renderer;
+  readonly renderSize: { readonly width: number; readonly height: number };
+  readonly ssaaEnabled: boolean;
+  readonly ssaaMultiplier: number;
+}
+
+/** Effective (logical SSAA) render size in CSS pixels. */
+export function computeEffectiveSize(s: SizingInputs): { width: number; height: number } {
+  return computeEffectiveRenderSize(s.renderSize, s.ssaaEnabled, s.ssaaMultiplier);
+}
+
+/**
+ * Physical-pixel framebuffer size = effective × renderer.getPixelRatio().
+ * Render targets and the mega-shader / bloom / FXAA passes are all
+ * sized here so they match the renderer's canvas backbuffer AND what
+ * materials read from `renderer.getDrawingBufferSize()`. At DPR > 1 a
+ * mismatch would silently brighten the scene via over-coverage.
+ */
+export function getPhysicalSize(s: SizingInputs): { width: number; height: number } {
+  const { width, height } = computeEffectiveSize(s);
+  const dpr = s.renderer.getPixelRatio();
+  return {
+    width: Math.max(1, Math.round(width * dpr)),
+    height: Math.max(1, Math.round(height * dpr)),
+  };
+}
+
+/** Map the `renderingControls.defaults.toneMapping` string into the THREE enum. */
+export function resolveToneMappingDefault(): THREE.ToneMapping {
+  const name = config.renderingControls.defaults.toneMapping;
+  switch (name) {
+    case 'None':
+      return THREE.NoToneMapping;
+    case 'Linear':
+      return THREE.LinearToneMapping;
+    case 'Reinhard':
+      return THREE.ReinhardToneMapping;
+    case 'Cineon':
+      return THREE.CineonToneMapping;
+    case 'ACES':
+      return THREE.ACESFilmicToneMapping;
+    case 'AgX':
+      return THREE.AgXToneMapping;
+    case 'Neutral':
+      return THREE.NeutralToneMapping;
+    default:
+      return THREE.NeutralToneMapping;
+  }
+}
+
+/** Allocate the HDR target the scene renders into. */
+export function createHdrTarget(
+  physW: number,
+  physH: number,
+  msaaSamples: number
+): THREE.WebGLRenderTarget {
+  const t = new THREE.WebGLRenderTarget(physW, physH, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+    stencilBuffer: false,
+    samples: msaaSamples,
+  });
+  t.texture.name = 'PostProcessing.hdrTarget';
+  return t;
+}
+
+/** Allocate the LDR intermediate (mega-shader output, HalfFloat for lossless EXR). */
+export function createLdrTarget(physW: number, physH: number): THREE.WebGLRenderTarget {
+  const t = new THREE.WebGLRenderTarget(physW, physH, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+  t.texture.name = 'PostProcessing.ldrTarget';
+  return t;
+}
+
+/** Bundle of mutable resources the orchestrator carries between pipeline calls. */
+export interface PipelineResources {
+  hdrTarget: THREE.WebGLRenderTarget;
+  ldrTarget: THREE.WebGLRenderTarget;
+  megaShader: LuxarMegaShaderMaterial;
+  megaPass: FullscreenPass;
+  bloomChain: BloomChain | null;
+  fxaaPass: FxaaPass | null;
+}
+
+/** Configuration handed in by the orchestrator for resource construction. */
+export interface BuildResourcesConfig {
+  readonly physW: number;
+  readonly physH: number;
+  readonly msaaEnabled: boolean;
+  readonly msaaSamples: number;
+  readonly fxaaEnabled: boolean;
+  readonly capabilities: RendererCapabilities;
+  readonly bloomLevels: number;
+  readonly bloomRadius: number;
+  readonly bloomThreshold: number;
+  readonly bloomIntensity: number;
+  /**
+   * When false (context-restore path), the caller will restore user
+   * toggle state from a snapshot — skip the config-defaults bloom
+   * allocation so we don't override a previously-disabled choice.
+   */
+  readonly allocateBloomFromDefaults: boolean;
+}
+
+/**
+ * Build the full transient-resource set. Returns the bundle; the
+ * orchestrator assigns each field back to its private store.
+ */
+export function buildTransientResources(c: BuildResourcesConfig): PipelineResources {
+  const hdrTarget = createHdrTarget(c.physW, c.physH, c.msaaEnabled ? c.msaaSamples : 0);
+  const ldrTarget = createLdrTarget(c.physW, c.physH);
+
+  // Mega-shader + fullscreen mesh. The materialManager dispatches on
+  // caps.apiSurface so the WebGPU path returns the TSL counterpart.
+  const megaShader = materialManager.createMegaShaderMaterial({
+    exposure: config.renderingControls.defaults.exposure,
+    globalOffset: config.renderingControls.defaults.globalOffset,
+    globalGamma: config.renderingControls.defaults.globalGamma,
+    toneMapping: resolveToneMappingDefault(),
+  });
+  megaShader.setResolution(c.physW, c.physH);
+
+  // FullscreenPass owns the caps-aware triangle geometry so the
+  // orchestrator never has to think about framebuffer-Y orientation.
+  const megaPass = new FullscreenPass(megaShader, c.capabilities);
+
+  // Bloom chain (built only when enabled; on by default per config).
+  // Skip during context-restore rebuilds — the caller restores the
+  // user's bloom-enabled choice from a snapshot.
+  let bloomChain: BloomChain | null = null;
+  if (c.allocateBloomFromDefaults && config.renderingControls.defaults.bloomEnabled) {
+    bloomChain = new BloomChain({
+      levels: c.bloomLevels,
+      threshold: c.bloomThreshold,
+      smoothing: 0.01,
+      radius: c.bloomRadius,
+      width: c.physW,
+      height: c.physH,
+      caps: c.capabilities,
+    });
+    megaShader.toggleBloom(true);
+    megaShader.setBloom(c.bloomIntensity, bloomChain.outputTexture);
+  }
+
+  // FXAA pass (built only when enabled).
+  const fxaaPass = c.fxaaEnabled ? new FxaaPass(c.physW, c.physH, c.capabilities) : null;
+
+  return { hdrTarget, ldrTarget, megaShader, megaPass, bloomChain, fxaaPass };
+}
+
+/** Allocate a fresh bloom chain and bind it to the mega-shader. */
+export function buildBloomChain(
+  width: number,
+  height: number,
+  cfg: {
+    levels: number;
+    threshold: number;
+    radius: number;
+    intensity: number;
+    caps: RendererCapabilities;
+    megaShader: LuxarMegaShaderMaterial;
+  }
+): BloomChain {
+  const chain = new BloomChain({
+    levels: cfg.levels,
+    threshold: cfg.threshold,
+    smoothing: 0.01,
+    radius: cfg.radius,
+    width,
+    height,
+    caps: cfg.caps,
+  });
+  cfg.megaShader.toggleBloom(true);
+  cfg.megaShader.setBloom(cfg.intensity, chain.outputTexture);
+  return chain;
+}
+
+/** Dispose every transient resource in the bundle. */
+export function disposeTransientResources(r: PipelineResources): void {
+  r.hdrTarget?.dispose();
+  r.ldrTarget?.dispose();
+  r.bloomChain?.dispose();
+  r.fxaaPass?.dispose();
+  r.megaShader?.dispose();
+  r.megaPass?.dispose();
+}
+
+/** Inputs for the noise re-scaling helper. */
+export interface ScaledNoiseInputs {
+  readonly megaShader: LuxarMegaShaderMaterial;
+  readonly currentDPRScale: number;
+  readonly baseNoiseSettings: {
+    readonly readoutSigma: number;
+    readonly photonGain: number;
+    readonly fpnSigma: number;
+  };
+}
+
+/**
+ * Re-apply base sigmas through the DPR scaling. When DPR < 1 the
+ * sigma scales linearly with DPR (Gaussian) and photonGain scales
+ * with DPR² (shot noise).
+ */
+export function applyScaledNoiseSettings(s: ScaledNoiseInputs): void {
+  if (!s.megaShader.isDetectorNoiseEnabled()) return;
+  const k = s.currentDPRScale;
+  s.megaShader.setDetectorNoise({
+    readoutSigma: s.baseNoiseSettings.readoutSigma * k,
+    photonGain: s.baseNoiseSettings.photonGain * k * k,
+    fpnSigma: s.baseNoiseSettings.fpnSigma * k,
+  });
+}

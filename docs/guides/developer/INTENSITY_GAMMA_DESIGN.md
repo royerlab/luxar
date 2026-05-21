@@ -216,44 +216,41 @@ and replaced with the new fields. No migration code, no deprecated properties.
 
 ---
 
-## Implementation: Vendored Tone Mapping Effect
+## Implementation: Mega-shader Tone Mapping Stage
 
-### Why vendor instead of a separate pass
+### Why fuse EOG into the mega-shader
 
-The global EOG controls should be **merged into the tone mapping shader**, not
+The global EOG controls are **merged into the post-processing mega-shader**, not
 implemented as a separate post-processing pass.
 
 **Performance rationale:**
 - A separate full-screen pass costs one extra framebuffer read + write of every pixel
 - Memory bandwidth is the primary GPU bottleneck for post-processing
-- The tone mapping pass already reads every pixel — adding `exp2`, `add`, `pow` (3 ALU
-  ops) to that shader is effectively free
-- This avoids an extra render target allocation
+- The mega-shader already reads every pixel — adding `exp2`, `add`, `pow` (3 ALU
+  ops) before tone mapping is effectively free
+- This avoids an extra render target allocation and preserves the fused pipeline
 
-**Approach:** Vendor (copy + extend) the pmndrs `ToneMappingEffect` into a new
-`LuxarToneMappingEffect` that combines EOG + tone mapping in a single shader:
+**Approach:** `MegaShaderMaterial` exposes `uExposure`, `uGlobalOffset`, and
+`uGlobalGamma` uniforms. `mega-shader.glsl.ts` applies EOG immediately before
+calling Three's tone-mapping shader chunks:
 
 ```glsl
-// Single pass: EOG + Tone Mapping (vendored shader)
-vec3 color = texture(inputBuffer, vUv).rgb;
+// Single fused pass: scene/bloom/noise → EOG → tone mapping → vignette
+vec3 color = sampleHdrPlusBloom(vUv);
 
-// Exposure-Offset-Gamma (3 extra ALU ops — negligible)
-color = color * exp2(uExposure);
-color = max(color + uOffset, vec3(0.0));
-color = pow(color, vec3(1.0 / uGamma));
+color *= exp2(uExposure);
+color = max(color + vec3(uGlobalOffset), vec3(0.0));
+color = pow(color, vec3(1.0 / uGlobalGamma));
 
-// Tone mapping (original shader code, unchanged)
-color = ACESFilmic(color);  // or Reinhard, AgX, Neutral, etc.
-
-gl_FragColor = vec4(color, 1.0);
+color = ACESFilmicToneMapping(color);  // or Reinhard, AgX, Neutral, etc.
 ```
 
-**Vendoring strategy:**
-- Copy the pmndrs `ToneMappingEffect` source into the Luxar codebase
-- Add `uExposure`, `uOffset`, `uGamma` uniforms
-- Inject the EOG block before the tone mapping math
-- Keep all existing tone mapping modes (ACES, AgX, Reinhard, etc.)
-- The vendored effect replaces the original in the post-processing pipeline
+**Implementation strategy:**
+- Keep EOG uniforms on `MegaShaderMaterial`
+- Include Three's `<tonemapping_pars_fragment>` once in the custom shader
+- Set `toneMapped: false` on the material so Three does not inject a duplicate chunk
+- Use internal tone-mapping define IDs for Linear/Reinhard/Cineon/ACES/AgX/Neutral
+- Preserve old `NoToneMapping` behavior by routing it to Linear/clamped output
 
 ---
 
@@ -262,7 +259,7 @@ gl_FragColor = vec4(color, 1.0);
 All features described in this document are **fully implemented**:
 
 - Per-node GOG model (`intensity`, `offset`, `gamma`) in all three material shaders
-- Global EOG (`exposure`, `global_offset`, `global_gamma`) in vendored `LuxarToneMappingEffect`
+- Global EOG (`exposure`, `global_offset`, `global_gamma`) in the custom mega-shader
 - `hdrMultiplier` removed from all shaders, MaterialManager, and config
 - Python `ViewerConfig` updated with `exposure`, `global_offset`, `global_gamma`
 - Full config propagation: Python → zarr → TypeScript → UI → post-processing
@@ -284,8 +281,9 @@ All features described in this document are **fully implemented**:
 - `packages/luxar-viewer/src/rendering/gsplat-material.ts` — GOG uniforms
 
 ### TypeScript (post-processing + scene management)
-- `packages/luxar-viewer/src/rendering/luxar-tone-mapping-effect.ts` — vendored ToneMappingEffect with EOG
-- `packages/luxar-viewer/src/rendering/post-processing-manager.ts` — exposure/offset/gamma update methods
+- `packages/luxar-viewer/src/rendering/post-processing/mega-shader-material.ts` — EOG uniforms and tone-mapping mode defines
+- `packages/luxar-viewer/src/rendering/post-processing/mega-shader.glsl.ts` — fused EOG + tone-mapping shader stage
+- `packages/luxar-viewer/src/rendering/post-processing/post-processing-manager.ts` — exposure/offset/gamma update methods
 - `packages/luxar-viewer/src/rendering/material-manager.ts` — per-node GOG uniforms in material creation
 - `packages/luxar-viewer/src/scene/scene-manager.ts` — `updateExposure()`/`updateGlobalOffset()`/`updateGlobalGamma()` routing
 - `packages/luxar-viewer/src/data/scene-loader.ts` — per-node `intensity`/`offset` from zarr attrs

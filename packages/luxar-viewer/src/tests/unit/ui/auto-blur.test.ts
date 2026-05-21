@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyAutoBlur } from '../../../ui/gui/utils/auto-blur';
+import { applyAutoBlur } from '../../../ui/gui/format/auto-blur';
 import { EventManager } from '../../../ui/gui/dom/event-manager';
 
 describe('applyAutoBlur', () => {

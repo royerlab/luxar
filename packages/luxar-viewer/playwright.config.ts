@@ -28,6 +28,12 @@ export default defineConfig({
   // Test directory
   testDir: './src/tests/e2e',
 
+  // Perf benchmarks (*perf-bench.spec.ts) run only under the dedicated
+  // `playwright.perf.config.ts` so their sampling cost — and the
+  // generated `perf-results/<sha>/` JSON they write — stay out of the
+  // default `pnpm test:e2e` run.
+  testIgnore: /.*perf-bench\.spec\.ts$/,
+
   // Run tests in files in parallel
   fullyParallel: false, // WebGL tests can be GPU-intensive, run serially
 
@@ -120,13 +126,26 @@ export default defineConfig({
   // Start BOTH the viewer dev server AND a server for examples/
   webServer: [
     {
-      // TypeScript viewer dev server
+      // TypeScript viewer dev server.
+      // VITE_LUXAR_USE_WEBGPU is forwarded so per-test runs
+      // (e.g. `VITE_LUXAR_USE_WEBGPU=1 pnpm playwright test`) can opt
+      // into the WebGPU path on the dev server. Without forwarding,
+      // Playwright spawns (or reuses) the server in its own env and
+      // the flag is lost. `VITE_LUXAR_USE_LEGACY_WEBGL` (a no-op because
+      // WebGL is the default) and `VITE_LUXAR_USE_WEBGPU_RENDERER` (an
+      // alias for the WebGPU opt-in) are forwarded too so existing CI
+      // invocations keep working harmlessly.
       command: 'pnpm dev',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
       stdout: 'pipe',
       stderr: 'pipe',
+      env: {
+        VITE_LUXAR_USE_WEBGPU: process.env.VITE_LUXAR_USE_WEBGPU ?? '',
+        VITE_LUXAR_USE_LEGACY_WEBGL: process.env.VITE_LUXAR_USE_LEGACY_WEBGL ?? '',
+        VITE_LUXAR_USE_WEBGPU_RENDERER: process.env.VITE_LUXAR_USE_WEBGPU_RENDERER ?? '',
+      },
     },
     {
       // Python HTTP server to serve repository datasets/examples for E2E tests.

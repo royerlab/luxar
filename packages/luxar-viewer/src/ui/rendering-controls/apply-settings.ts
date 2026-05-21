@@ -8,9 +8,9 @@
  */
 
 import type { RenderingSettings } from '../../config';
-import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
-import type { AnimationController } from '../../scene/animation-controller';
+import type { AnimationController } from '../../scene/animation/animation-controller';
 import { TONE_MAPPING_MAP } from './cinematic-mode';
 
 export interface ApplySettingsContext {
@@ -46,20 +46,14 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
   sceneManager.updateGlobalOffset(settings.globalOffset);
   sceneManager.updateGlobalGamma(settings.globalGamma);
 
-  // Anti-aliasing — SSAA + FXAA + MSAA + SMAA.
+  // Anti-aliasing: SSAA, FXAA, MSAA.
   postProcessing.setSSAAEnabled(settings.ssaaEnabled);
   postProcessing.setSSAAMultiplier(settings.ssaaMultiplier);
   postProcessing.setFXAAEnabled(settings.fxaaEnabled);
   postProcessing.setMSAAEnabled(settings.msaaEnabled);
   postProcessing.setMSAASamples(settings.msaaSamples);
-  postProcessing.setSMAAEnabled(settings.smaaEnabled);
-  if (settings.smaaEnabled) {
-    postProcessing.updateSMAASettings();
-  }
 
   postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
-
-  postProcessing.setDOF(settings.dofEnabled, settings.dofFocus, settings.dofStrength);
 
   postProcessing.setDetectorNoiseEnabled(
     settings.detectorNoiseEnabled,
@@ -90,8 +84,6 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
     settings.chromaticLensFocalLengthY,
     settings.chromaticLensSkew
   );
-
-  postProcessing.setAOEnabled(settings.aoEnabled, settings.aoQuality);
 
   sceneManager.setDynamicClipping(settings.dynamicClippingEnabled);
 

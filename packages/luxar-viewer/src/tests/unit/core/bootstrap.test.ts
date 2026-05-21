@@ -49,17 +49,18 @@ vi.mock('../../../config/validation', () => ({
   validateAndLog: mocks.validateAndLog,
 }));
 
-vi.mock('../../../ui/helpers', () => ({
+vi.mock('../../../ui/error-overlay', () => ({
   showError: mocks.showError,
-  // bootstrap.ts also imports the rest to wire setNotifierBackend(...).
-  // The bootstrap unit tests don't exercise the notifier path; stubs
-  // are sufficient.
-  showToast: vi.fn(),
+  clearError: vi.fn(),
+}));
+vi.mock('../../../ui/toast', () => ({ showToast: vi.fn() }));
+vi.mock('../../../ui/help-overlay', () => ({
   showHelpOverlay: vi.fn(),
   hideHelpOverlay: vi.fn(),
+}));
+vi.mock('../../../ui/loading-indicator', () => ({
   showLoadingIndicator: vi.fn(),
   hideLoadingIndicator: vi.fn(),
-  clearError: vi.fn(),
 }));
 
 vi.mock('zarrita', () => ({
@@ -86,6 +87,9 @@ const EMPTY_PARAMS: UrlParams = {
   noPrefetch: false,
   prefetchDebug: false,
   cacheStats: false,
+  renderer: null,
+  webgpuForceWebGL: false,
+  perfTimestamp: false,
 };
 
 describe('bootstrapStandalone', () => {
@@ -229,7 +233,7 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init).toHaveBeenCalledTimes(1);
     });
 
-    it('forwards loader flags from urlParams into LuxarApp.init()', async () => {
+    it('forwards loader and renderer diagnostic flags from urlParams into LuxarApp.init()', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: {
@@ -237,12 +241,18 @@ describe('bootstrapStandalone', () => {
           src: 'https://example.com/data.zarr',
           noCache: true,
           cacheDebug: true,
+          renderer: 'webgpu',
+          webgpuForceWebGL: true,
+          perfTimestamp: true,
         },
       });
       const arg = mocks.init.mock.calls.at(-1)?.[0];
       expect(arg.canvas).toBe(CANVAS);
       expect(arg.src).toBe('https://example.com/data.zarr');
       expect(arg.updateBrowserUrl).toBe(true);
+      expect(arg.renderer).toBe('webgpu');
+      expect(arg.webgpuForceWebGL).toBe(true);
+      expect(arg.perfTimestamp).toBe(true);
       expect(arg.loaderConfig).toMatchObject({
         noCache: true,
         cacheDebug: true,
@@ -250,6 +260,17 @@ describe('bootstrapStandalone', () => {
         noPrefetch: false,
         prefetchDebug: false,
       });
+    });
+
+    it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, perfTimestamp: false },
+      });
+      const arg = mocks.init.mock.calls.at(-1)?.[0];
+      // Field present but explicitly false so SceneManager doesn't
+      // probe WebGPURenderer.backend.trackTimestamp by accident.
+      expect(arg.perfTimestamp).toBe(false);
     });
 
     it('shows a top-level error UI and re-throws when init() fails', async () => {

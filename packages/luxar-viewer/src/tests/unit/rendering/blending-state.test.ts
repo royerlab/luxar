@@ -1,9 +1,9 @@
 /**
  * Unit tests for the blending-state module.
  *
- * F.2 covers the discriminator predicates; H.1 expands with canonical
- * state assertions for each mode (additive/normal/max/opaque/luminous),
- * idempotency, max-mode round-trip, and opacity boundary tests.
+ * Covers discriminator predicates, canonical state assertions for each
+ * mode (additive/normal/max/opaque/luminous), idempotency, max-mode
+ * round-trip, and opacity boundary tests.
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
@@ -17,7 +17,7 @@ import {
 } from '../../../rendering/blending-state';
 import type { BlendingMode } from '../../../rendering/material-manager';
 
-describe('F.2 — BlendingMode predicates', () => {
+describe('BlendingMode predicates', () => {
   const all: BlendingMode[] = ['additive', 'normal', 'max', 'opaque', 'luminous'];
 
   it('isAdditiveMode is true only for additive', () => {
@@ -116,7 +116,7 @@ describe('H.1 — getCompleteBlendingState canonical state per mode', () => {
   });
 
   it('max-mode round-trip: max → additive → max returns identical state', () => {
-    // C.2 regression lock-in for the LineMaterial "stranded OneFactor"
+    // Regression lock-in for the LineMaterial "stranded OneFactor"
     // issue: switching out of max and back must produce the same
     // canonical state, not stranded fields.
     const first = getCompleteBlendingState('max');

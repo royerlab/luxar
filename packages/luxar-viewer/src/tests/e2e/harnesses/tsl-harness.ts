@@ -1,0 +1,849 @@
+/**
+ * TSL ↔ GLSL parity harness.
+ *
+ * Loaded by `tsl-harness.html` (Vite serves it at `/tsl-harness.html`).
+ * Exposes `window.__tslHarness` with primitives that render a fullscreen
+ * pass through both backends and return the result for pixel-diffing in
+ * a Playwright spec.
+ *
+ * Why a dedicated page rather than reusing the main viewer:
+ * - Construction order is explicit and minimal — no app/state machine
+ *   to wait on, no scene graph to mock around.
+ * - Both backends (WebGL2 via `THREE.WebGLRenderer`, WebGPU-via-WebGL2
+ *   via `WebGPURenderer({ forceWebGL: true })`) live side by side; the
+ *   test toggles between them per call rather than per page load.
+ * - The TSL path drives `GLSLNodeBuilder` directly so the generated
+ *   GLSL strings are recoverable for snapshot-diff.
+ *
+ * Not in scope: real WebGPU dispatch. That requires Chrome stable +
+ * `?webgpu=1` and runs in a separate spec. This harness validates
+ * the WebGL2 fallback parity, which is what `forceWebGL: true` covers.
+ *
+ * @module tests/e2e/harnesses/tsl-harness
+ */
+
+import * as THREE from 'three';
+import { vec4 } from 'three/tsl';
+import { NodeMaterial } from 'three/webgpu';
+import { FXAA_SOURCE } from '../../../rendering/post-processing/fxaa-shaders';
+import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom-shaders';
+import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl';
+import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
+import { POINT_SOURCE } from '../../../rendering/materials/point/shader-glsl';
+import { pointWebGPUFactory } from '../../../rendering/materials/point/shader-tsl';
+import { POINT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import {
+  pointPickWebGPUFactory,
+  buildPointPickTSLNodesFromUniforms,
+} from '../../../rendering/picking/point-pick.tsl';
+import { createPointQuadGeometry } from '../../../rendering/point-geometry';
+import { LINE_SOURCE } from '../../../rendering/materials/line/shader-glsl';
+import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/materials/line/shader-tsl';
+import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import {
+  linePickWebGPUFactory,
+  buildLinePickTSLNodesFromUniforms,
+} from '../../../rendering/picking/line-pick.tsl';
+import { createLineQuadGeometry } from '../../../rendering/line-geometry';
+import { GSPLAT_SOURCE } from '../../../rendering/materials/gsplat/shader-glsl';
+import {
+  gsplatWebGPUFactory,
+  buildGSplatTSLNodesFromUniforms,
+} from '../../../rendering/materials/gsplat/shader-tsl';
+import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import {
+  gsplatPickWebGPUFactory,
+  buildGSplatPickTSLNodesFromUniforms,
+} from '../../../rendering/picking/gsplat-pick.tsl';
+import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
+import { requireWebGLSources, type ShaderSource } from '../../../rendering/materials/_shared/shader-source';
+
+/**
+ * Shape of an entry in the shader registry exposed to Playwright.
+ * Adding a new shader to {@link SHADER_REGISTRY} is sufficient to make
+ * it usable from the spec.
+ */
+interface RegistryEntry {
+  readonly source: ShaderSource;
+  /** Default uniforms for this shader's parity test. */
+  readonly buildUniforms: () => Record<string, THREE.IUniform>;
+  /**
+   * GLSL3 `defines` to set on the `THREE.ShaderMaterial`. Needed for
+   * shaders like `mega` that use `#define` gates for feature toggles
+   * + an `LUXAR_TONE_MAPPING_MODE` numeric. Optional; defaults to
+   * empty (no defines).
+   */
+  readonly buildDefines?: () => Record<string, string>;
+  /**
+   * Override for the TSL material constructor. When provided, the
+   * harness calls this directly instead of `source.webgpu(uniforms)`.
+   * Used to pass shader-specific factory configs (e.g.
+   * `megaWebGPUFactory(uniforms, { toneMappingMode: 1 })`).
+   */
+  readonly buildTSLMaterial?: (uniforms: Record<string, THREE.IUniform>) => THREE.Material;
+  /**
+   * Override the mesh built around the material. Defaults to a
+   * fullscreen `THREE.Mesh(PlaneGeometry(2, 2), material)` rendered
+   * with an OrthographicCamera. Override for point-sprite tests
+   * that need `THREE.Points(...)`.
+   */
+  readonly buildMesh?: (material: THREE.Material) => THREE.Object3D;
+  /**
+   * Set on the GLSL3 `ShaderMaterial`. Needed by shaders like
+   * `point` that read the auto-injected `in vec3 color` attribute —
+   * Three only emits the attribute declaration when this is true.
+   * TSL reads the same attribute via `attribute<'vec3'>('color',
+   * 'vec3')` and doesn't need a parallel flag.
+   */
+  readonly vertexColors?: boolean;
+}
+
+/**
+ * Sized 8×8 test texture: gradient horizontally, ramped vertically,
+ * with a single bright pixel near the centre to exercise the FXAA
+ * edge-detection path. Deterministic across both backends.
+ */
+function buildTestTexture(): THREE.DataTexture {
+  const w = 8;
+  const h = 8;
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      data[i] = Math.floor((x / (w - 1)) * 255);
+      data[i + 1] = Math.floor((y / (h - 1)) * 255);
+      data[i + 2] = 128;
+      data[i + 3] = 255;
+    }
+  }
+  // High-contrast pixel for FXAA to bite on.
+  const cx = 4;
+  const cy = 4;
+  const ci = (cy * w + cx) * 4;
+  data[ci] = 255;
+  data[ci + 1] = 255;
+  data[ci + 2] = 255;
+
+  const tex = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Trivial diagnostic shader: outputs a constant RGB. Used to verify
+ * that the harness's two backends produce pixel-identical results
+ * for the simplest possible fragment. If this fails, the divergence
+ * is in the renderer-level setup (color space, output transform),
+ * not in a per-shader port.
+ */
+const CONST_SHADER: ShaderSource = {
+  name: 'const-rgb',
+  webgl: {
+    vertex: /* glsl */ `
+      void main() {
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragment: /* glsl */ `
+      precision highp float;
+      out vec4 fragColor;
+      void main() {
+        fragColor = vec4(0.5, 0.25, 0.75, 1.0);
+      }
+    `,
+  },
+  webgpu: () => {
+    const m = new NodeMaterial();
+    m.fragmentNode = vec4(0.5, 0.25, 0.75, 1.0);
+    m.toneMapped = false;
+    m.depthTest = false;
+    m.depthWrite = false;
+    m.transparent = false;
+    return m;
+  },
+};
+
+/**
+ * Build a real instanced-points mesh for the point parity test.
+ * One point at world origin with realistic attributes; 4-vertex quad
+ * base + InstancedBufferAttribute per-instance data (aCenter etc.).
+ */
+function buildPointInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createPointQuadGeometry();
+  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+  geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
+  geom.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1));
+  geom.setAttribute(
+    'aColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  // Match the production `setupInstancedPointsMesh` contract: the
+  // WebGLRenderer only issues an instanced draw when `instanceCount`
+  // is finite, and the drawRange must cap at the 6 indices that
+  // form the unit quad — otherwise r184 falls back to a single
+  // non-instanced draw call and produces a degenerate parity image.
+  geom.instanceCount = 1;
+  geom.setDrawRange(0, 6);
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Build a single-segment line mesh for parity testing. Horizontal
+ * segment across the viewport in NDC, generous width so it covers
+ * many pixels and exposes both the perpendicular falloff and edge AA.
+ */
+function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createLineQuadGeometry();
+  geom.setAttribute(
+    'aStartPos',
+    new THREE.InstancedBufferAttribute(new Float32Array([-0.5, 0, 0]), 3)
+  );
+  geom.setAttribute(
+    'aEndPos',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.5, 0, 0]), 3)
+  );
+  geom.setAttribute(
+    'aStartColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  geom.setAttribute(
+    'aEndColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  geom.setAttribute('aStartWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
+  geom.setAttribute('aEndWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
+  geom.setAttribute(
+    'aStartSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+  );
+  geom.setAttribute(
+    'aEndSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+  );
+  geom.setAttribute(
+    'aSegmentLength',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1)
+  );
+  geom.setAttribute(
+    'aStartClipped',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
+  );
+  geom.setAttribute('aEndClipped', new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1));
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Build a single-splat gsplat mesh. Isotropic covariance (identity
+ * Cholesky) at world origin, fixed amplitude. Test exercises 3D→2D
+ * covariance projection + Mahalanobis fragment math.
+ */
+function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createGSplatQuadGeometry();
+  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+  // Isotropic: L = 0.1 · I, so packed [L00, L10, L11, L20, L21, L22] = [0.1, 0, 0.1, 0, 0, 0.1].
+  geom.setAttribute(
+    'aCholesky01',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
+  );
+  geom.setAttribute(
+    'aCholesky23',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
+  );
+  geom.setAttribute(
+    'aCholesky45',
+    new THREE.InstancedBufferAttribute(new Float32Array([0, 0.1]), 2)
+  );
+  geom.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1));
+  geom.setAttribute(
+    'aColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+const SHADER_REGISTRY: Record<string, RegistryEntry> = {
+  'const-rgb': {
+    source: CONST_SHADER,
+    buildUniforms: () => ({}),
+  },
+  fxaa: {
+    source: FXAA_SOURCE,
+    buildUniforms: () => ({
+      uInput: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+    }),
+  },
+  'bloom-threshold': {
+    source: BLOOM_THRESHOLD_SOURCE,
+    buildUniforms: () => ({
+      uInput: { value: buildTestTexture() },
+      uTexelSize: { value: new THREE.Vector2(1 / 8, 1 / 8) },
+      uThreshold: { value: 0.5 },
+      uSmoothing: { value: 0.5 },
+    }),
+  },
+  // Mega-shader: default configuration only (no bloom, no lens
+  // distortion, no vignette, no detector noise, mode=Linear). The
+  // tone-mapping mode is pinned to Linear (mode=1) because that's
+  // the simplest path through THREE's toneMapping chunk and
+  // matches TSL's linearToneMapping output.
+  mega: {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      // THREE's tone-mapping chunk reads this; pin to 1.0 so the
+      // GLSL3 ShaderMaterial doesn't double-multiply our exposure.
+      toneMappingExposure: { value: 1.0 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, { toneMappingMode: 1 }) as unknown as THREE.Material,
+  },
+  // Mega + bloom enabled: validates the `USE_BLOOM` JS-side conditional
+  // branch in the TSL factory matches the GLSL `#ifdef USE_BLOOM` path.
+  'mega-bloom': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      // A second texture for bloom — uniform contents differ from the
+      // HDR scene so the test fails if the shader reads the wrong one.
+      uBloomTexture: { value: buildTestTexture() },
+      uBloomIntensity: { value: 0.5 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_BLOOM: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useBloom: true,
+      }) as unknown as THREE.Material,
+  },
+  // Mega + detector noise: validates the Bob Jenkins hash +
+  // Anscombe Poisson + clampedLogistic Gaussian port. The noise is
+  // deterministic per (uv, time) so both backends should agree
+  // bit-for-bit modulo float-precision rounding.
+  'mega-detector-noise': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      uTime: { value: 0.123 }, // fixed value → deterministic
+      uReadoutSigma: { value: 0.02 },
+      uPhotonGain: { value: 0.05 },
+      uFpnSigma: { value: 0.01 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_DETECTOR_NOISE: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useDetectorNoise: true,
+      }) as unknown as THREE.Material,
+  },
+  // Mega + vignette: validates the `USE_VIGNETTE` JS-side branch.
+  'mega-vignette': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      uVignetteDarkness: { value: 0.7 },
+      uVignetteOffset: { value: 0.5 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_VIGNETTE: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useVignette: true,
+      }) as unknown as THREE.Material,
+  },
+  // Point parity: full PointMaterial sprite + GOG + Gaussian falloff.
+  // Uniforms mirror the production PointMaterial constructor; ortho mode
+  // keeps `invDistance = 1` so the test is deterministic across cameras.
+  point: {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      // Disable blending for raw-pixel parity against the harness's
+      // ShaderMaterial path (which uses transparent: false). Production
+      // sets AdditiveBlending; the parity test only checks fragment
+      // output, not blending semantics.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+  },
+  // Line parity: instanced quad line with width, sharpness, GOG.
+  // Ortho camera so screen-space conversion is deterministic.
+  line: {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 }, // ortho frustum height
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      // Pre-baked pixel-width scales for this ortho config:
+      //   uOrthoLineScale = 2 * 64 / 2 = 64 (matches old 2*resY/uFOV)
+      //   uPerspectiveLineScale is unused (uIsOrtho=1) — benign 1.0.
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // Line with the gamma==1 fast path enabled. Same geometry +
+  // uniforms as `line`, but the TSL factory is built with
+  // `gammaOne: true` so the fragment-stage pow() is replaced with an
+  // identity. The codegen snapshot for this variant pins the
+  // pow-free fast path; the parity test compares against a GLSL
+  // shader that has `LUXAR_GAMMA_ONE` defined.
+  'line-gamma-one': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // Line with the sharpness == 2 fast path. The factory uses
+  // `sharpnessTwo: true` so the fragment shader's
+  // `pow(x, max(vSharpness, 0.0001))` is replaced by `x * x`. The GLSL
+  // counterpart defines `LUXAR_SHARPNESS_TWO`.
+  'line-sharpness-two': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_SHARPNESS_TWO: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        sharpnessTwo: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // Line with the no-GOG fast path. Same geometry as `line`,
+  // but the TSL factory is built with `noGOG: true` so the
+  // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced
+  // with `adjusted = vColor`. The GLSL counterpart defines
+  // `LUXAR_NO_GOG`.
+  'line-no-gog': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_NO_GOG: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        noGOG: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // GSplat parity: isotropic Gaussian splat at world origin with
+  // identity Cholesky factor. Ortho camera for deterministic projection.
+  // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
+  // eigendecomposition, oriented-quad expansion, Mahalanobis fragment.
+  gsplat: {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 }, // ortho frustum 2 units → 32 px/unit
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 }, // max projection — no Σ⁻¹ ray-integral path
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) }, // exp(-T²/2) for T=3
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(
+        buildGSplatTSLNodesFromUniforms(uniforms),
+        {}
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat-pick parity: same covariance projection as `gsplat`
+  // but fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. No GOG, no ray-integration boost.
+  'gsplat-pick': {
+    source: GSPLAT_PICK_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 1.5 }, // tighter for picking (vs 3.0 visual)
+      uTruncateSq: { value: 2.25 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uNodeId: { value: 42 },
+      uShiftC: { value: Math.exp(-0.5 * 2.25) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // Line-pick parity: same quad-expansion math as `line` but
+  // fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. No edgeAA, no GOG.
+  'line-pick': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNodeId: { value: 42 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      // Pre-baked pixel-width scales (mirror `line` parity entry).
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: buildLineInstancedMesh,
+  },
+  // Point-pick parity: identical sprite layout to `point` but
+  // the fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. Pick footprint is half-radius (×0.5).
+  'point-pick': {
+    source: POINT_PICK_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uNodeId: { value: 42 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      pointPickWebGPUFactory(
+        buildPointPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildPointInstancedMesh,
+  },
+};
+
+const HARNESS_SIZE = 64;
+
+/**
+ * Render the GLSL3 path of a registered shader to an offscreen target
+ * and return the readback pixel buffer (RGBA8, length = w*h*4).
+ */
+function renderGLSL(shaderName: string): Uint8Array {
+  const entry = SHADER_REGISTRY[shaderName];
+  if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
+
+  // GLSL parity render — the harness can only check parity when the
+  // registry entry ships a GLSL fallback. `requireWebGLSources`
+  // throws with a clear diagnostic if it doesn't (shouldn't happen
+  // for any shader currently in the registry).
+  const glsl = requireWebGLSources(entry.source);
+  const uniforms = entry.buildUniforms();
+  // Build the ShaderMaterial. We pass `defines` only when the
+  // registry entry supplies it — Three.js warns "parameter 'defines'
+  // has value of undefined" otherwise.
+  const materialParams: THREE.ShaderMaterialParameters = {
+    vertexShader: glsl.vertex,
+    fragmentShader: glsl.fragment,
+    uniforms,
+    glslVersion: THREE.GLSL3,
+    depthTest: false,
+    depthWrite: false,
+    transparent: false,
+  };
+  if (entry.buildDefines) {
+    materialParams.defines = entry.buildDefines();
+  }
+  if (entry.vertexColors) {
+    materialParams.vertexColors = true;
+  }
+  const material = new THREE.ShaderMaterial(materialParams);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+  renderer.setPixelRatio(1);
+  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+
+  const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
+    type: THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+  });
+
+  const scene = new THREE.Scene();
+  // OrthographicCamera positioned slightly behind origin so world-
+  // space (0,0,0) projects to NDC (0,0) — viewport centre. Points
+  // shaders depend on this for sprite-centring.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+  camera.position.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+  const mesh = entry.buildMesh
+    ? entry.buildMesh(material)
+    : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  scene.add(mesh);
+
+  renderer.setRenderTarget(target);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+
+  const pixels = new Uint8Array(HARNESS_SIZE * HARNESS_SIZE * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, HARNESS_SIZE, HARNESS_SIZE, pixels);
+
+  target.dispose();
+  if ('geometry' in mesh) (mesh as THREE.Mesh | THREE.Points).geometry.dispose();
+  material.dispose();
+  (uniforms.uInput?.value as THREE.Texture | null | undefined)?.dispose();
+  renderer.dispose();
+
+  return pixels;
+}
+
+/**
+ * Render the TSL path of a registered shader via
+ * `WebGPURenderer({ forceWebGL: true })` and return both the readback
+ * pixels and the generated GLSL strings.
+ *
+ * Capturing the GLSL strings requires walking the `WebGLBackend`'s
+ * pipeline cache after the render completes — there's no public
+ * "give me the source" API, so we read the strings off the
+ * `NodeBuilderState` that the backend stashes per-RenderObject.
+ */
+async function renderTSL(
+  shaderName: string
+): Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }> {
+  const entry = SHADER_REGISTRY[shaderName];
+  if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
+  if (!entry.source.webgpu) {
+    throw new Error(`Shader ${shaderName} has no TSL factory yet`);
+  }
+
+  const uniforms = entry.buildUniforms();
+  const material = entry.buildTSLMaterial
+    ? entry.buildTSLMaterial(uniforms)
+    : (entry.source.webgpu(uniforms) as THREE.Material);
+
+  const { WebGPURenderer } = await import('three/webgpu');
+  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
+  await renderer.init();
+
+  // Capture the generated GLSL / WGSL strings by patching the renderer's
+  // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
+  // both the sync and async build paths and receives a builder whose
+  // `.vertexShader` / `.fragmentShader` strings are fully populated.
+  // We hook it once per renderer instance and restore right after.
+  // (See node_modules/three/src/renderers/common/nodes/NodeManager.js:469.)
+
+  const nodesInstance = (renderer as unknown as { _nodes: any })._nodes;
+
+  const origCreateState = nodesInstance._createNodeBuilderState.bind(nodesInstance);
+  // Ref object so TS doesn't narrow `value` to `null` through the
+  // closure mutation below.
+  const capturedRef: { value: { vertex: string; fragment: string } | null } = {
+    value: null,
+  };
+
+  nodesInstance._createNodeBuilderState = function (nodeBuilder: any) {
+    if (!capturedRef.value && nodeBuilder?.material === material) {
+      capturedRef.value = {
+        vertex: typeof nodeBuilder.vertexShader === 'string' ? nodeBuilder.vertexShader : '',
+        fragment: typeof nodeBuilder.fragmentShader === 'string' ? nodeBuilder.fragmentShader : '',
+      };
+    }
+    return origCreateState(nodeBuilder);
+  };
+
+  const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
+    type: THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+  });
+
+  const scene = new THREE.Scene();
+  // Mirrors the GLSL path's camera setup. See renderGLSL for the
+  // rationale around the slight near-plane offset.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+  camera.position.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+  const mesh = entry.buildMesh
+    ? entry.buildMesh(material)
+    : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  scene.add(mesh);
+
+  renderer.setRenderTarget(target);
+  await renderer.renderAsync(scene, camera);
+  renderer.setRenderTarget(null);
+
+  // Restore the original NodeManager method now that the capture
+  // window is over.
+  nodesInstance._createNodeBuilderState = origCreateState;
+
+  const readback = await renderer.readRenderTargetPixelsAsync(
+    target,
+    0,
+    0,
+    HARNESS_SIZE,
+    HARNESS_SIZE
+  );
+  // The renderer returns its own typed array — copy into Uint8Array so
+  // the rest of the harness treats both paths uniformly.
+  const pixels = new Uint8Array(readback.buffer.slice(0));
+
+  const vertexShader = capturedRef.value?.vertex ?? '';
+  const fragmentShader = capturedRef.value?.fragment ?? '';
+
+  target.dispose();
+  if ('geometry' in mesh) (mesh as THREE.Mesh | THREE.Points).geometry.dispose();
+  material.dispose();
+  (uniforms.uInput?.value as THREE.Texture | null | undefined)?.dispose();
+  renderer.dispose();
+
+  return { pixels, vertexShader, fragmentShader };
+}
+
+declare global {
+  interface Window {
+    __tslHarness?: {
+      ready: Promise<void>;
+      renderGLSL: (shaderName: string) => Uint8Array;
+      renderTSL: (
+        shaderName: string
+      ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
+      listShaders: () => string[];
+    };
+  }
+}
+
+const status = document.getElementById('status');
+const setStatus = (msg: string) => {
+  if (status) status.textContent = msg;
+};
+
+const ready = (async () => {
+  setStatus('tsl-harness ready');
+})();
+
+window.__tslHarness = {
+  ready,
+  renderGLSL,
+  renderTSL,
+  listShaders: () => Object.keys(SHADER_REGISTRY),
+};

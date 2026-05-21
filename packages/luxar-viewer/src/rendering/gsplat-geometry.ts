@@ -1,14 +1,21 @@
 /**
  * GSplat Geometry Creation for Luxar
  *
- * Creates and updates instanced quad geometry for Gaussian splat rendering.
- * Extracted from gsplat-material.ts to separate geometry from material concerns.
+ * Creates and updates instanced quad geometry for Gaussian splat
+ * rendering. Per-splat attributes are packed into a single shared
+ * `InstancedInterleavedBuffer` (with `InterleavedBufferAttribute`
+ * views per attribute) for symmetry with `point-geometry.ts` and
+ * `line-geometry.ts`, and for better vertex-cache locality.
  *
  * @module rendering/gsplat-geometry
  */
 
 import * as THREE from 'three';
-import type { GSplatMaterial } from './gsplat-material';
+import {
+  packInterleavedAttributes,
+  writeInterleavedAttribute,
+  type InterleavedAttributeSpec,
+} from './interleaved-attributes';
 
 /**
  * Create the base quad geometry for gsplat instances.
@@ -116,6 +123,42 @@ export function packCholeskyForShader(
 }
 
 /**
+ * Build the per-instance attribute specs in canonical declaration
+ * order. The shader reads via `attribute('aCenter', 'vec3')` etc.,
+ * so the layout order within the buffer is only relevant for the
+ * stride, but keeping it consistent makes the in-place update path
+ * predictable.
+ */
+function buildGSplatAttributeSpecs(
+  meshConfig: InstancedGSplatsMeshConfig
+): InterleavedAttributeSpec[] {
+  return [
+    { name: 'aCenter', data: meshConfig.centers, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aCholesky01', data: meshConfig.cholesky01, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aCholesky23', data: meshConfig.cholesky23, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aCholesky45', data: meshConfig.cholesky45, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aAmplitude', data: meshConfig.amplitudes, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aColor', data: meshConfig.colors, itemSize: 3, semantic: 'color' },
+  ];
+}
+
+/**
+ * Bind a fresh `InstancedInterleavedBuffer` + per-attribute views to
+ * a geometry. Used by both the create path and the size-change branch
+ * of the update path.
+ */
+function bindInterleavedAttributes(
+  geometry: THREE.InstancedBufferGeometry,
+  meshConfig: InstancedGSplatsMeshConfig
+): void {
+  const specs = buildGSplatAttributeSpecs(meshConfig);
+  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount);
+  for (const spec of specs) {
+    geometry.setAttribute(spec.name, views[spec.name]);
+  }
+}
+
+/**
  * Compute max Cholesky row norm across all splats (for bounding box expansion).
  * The row norms determine the maximum spatial extent of any splat, used to expand
  * the bounding box so frustum culling doesn't clip visible splats at screen edges.
@@ -157,7 +200,7 @@ function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig): numb
  */
 export function createInstancedGSplatsMesh(
   meshConfig: InstancedGSplatsMeshConfig,
-  material: GSplatMaterial
+  material: THREE.Material
 ): THREE.Mesh {
   const baseGeometry = createGSplatQuadGeometry();
 
@@ -166,22 +209,8 @@ export function createInstancedGSplatsMesh(
   geometry.index = baseGeometry.index;
   geometry.setAttribute('aQuadCorner', baseGeometry.getAttribute('aQuadCorner'));
 
-  // Set instanced attributes
-  geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(meshConfig.centers, 3));
-  geometry.setAttribute(
-    'aCholesky01',
-    new THREE.InstancedBufferAttribute(meshConfig.cholesky01, 2)
-  );
-  geometry.setAttribute(
-    'aCholesky23',
-    new THREE.InstancedBufferAttribute(meshConfig.cholesky23, 2)
-  );
-  geometry.setAttribute(
-    'aCholesky45',
-    new THREE.InstancedBufferAttribute(meshConfig.cholesky45, 2)
-  );
-  geometry.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1));
-  geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
+  // Pack all per-instance attributes into one interleaved buffer.
+  bindInterleavedAttributes(geometry, meshConfig);
 
   // Set instance count
   geometry.instanceCount = meshConfig.splatCount;
@@ -194,9 +223,14 @@ export function createInstancedGSplatsMesh(
     box.expandByPoint(v);
   }
 
-  // Expand bounding box by max splat extent for correct frustum culling
+  // Expand bounding box by max splat extent for correct frustum culling.
+  // `material` is either GSplatMaterial or GSplatTSLMaterial; both expose
+  // `uniforms.uTruncate` in identical shape.
   const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
-  const truncationRadius = material.uniforms.uTruncate.value;
+  const matWithUniforms = material as THREE.Material & {
+    uniforms?: { uTruncate?: { value: number } };
+  };
+  const truncationRadius = matWithUniforms.uniforms?.uTruncate?.value ?? 3.0;
   box.expandByScalar(maxRowNorm * truncationRadius);
 
   geometry.boundingBox = box;
@@ -229,25 +263,8 @@ export function updateInstancedGSplatsMesh(
   const currentCount = geometry.instanceCount;
 
   if (meshConfig.splatCount !== currentCount) {
-    // Size changed, recreate attributes
-    geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(meshConfig.centers, 3));
-    geometry.setAttribute(
-      'aCholesky01',
-      new THREE.InstancedBufferAttribute(meshConfig.cholesky01, 2)
-    );
-    geometry.setAttribute(
-      'aCholesky23',
-      new THREE.InstancedBufferAttribute(meshConfig.cholesky23, 2)
-    );
-    geometry.setAttribute(
-      'aCholesky45',
-      new THREE.InstancedBufferAttribute(meshConfig.cholesky45, 2)
-    );
-    geometry.setAttribute(
-      'aAmplitude',
-      new THREE.InstancedBufferAttribute(meshConfig.amplitudes, 1)
-    );
-    geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(meshConfig.colors, 3));
+    // Size changed: rebuild the interleaved buffer + views.
+    bindInterleavedAttributes(geometry, meshConfig);
     geometry.instanceCount = meshConfig.splatCount;
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount from the new attributes.
@@ -255,31 +272,34 @@ export function updateInstancedGSplatsMesh(
     // current time slice), THREE.js caches _maxInstanceCount=0. Later updates that add
     // instances via setAttribute won't trigger recalculation, so the renderer still draws
     // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
-    // on the next render frame. (THREE.js r163+ internal property)
-
+    // on the next render frame.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
-    // Same size, update in place
-    const centerAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
-    const chol01Attr = geometry.getAttribute('aCholesky01') as THREE.InstancedBufferAttribute;
-    const chol23Attr = geometry.getAttribute('aCholesky23') as THREE.InstancedBufferAttribute;
-    const chol45Attr = geometry.getAttribute('aCholesky45') as THREE.InstancedBufferAttribute;
-    const ampAttr = geometry.getAttribute('aAmplitude') as THREE.InstancedBufferAttribute;
-    const colorAttr = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
-
-    centerAttr.set(meshConfig.centers);
-    chol01Attr.set(meshConfig.cholesky01);
-    chol23Attr.set(meshConfig.cholesky23);
-    chol45Attr.set(meshConfig.cholesky45);
-    ampAttr.set(meshConfig.amplitudes);
-    colorAttr.set(meshConfig.colors);
-
-    centerAttr.needsUpdate = true;
-    chol01Attr.needsUpdate = true;
-    chol23Attr.needsUpdate = true;
-    chol45Attr.needsUpdate = true;
-    ampAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    // Same size: write new data into the existing interleaved
+    // buffer at the correct strided offsets. The buffer object is
+    // recovered from any one view (every view points at the same
+    // underlying buffer).
+    const sampleView = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
+    const buffer = sampleView.data as THREE.InstancedInterleavedBuffer;
+    const specs = buildGSplatAttributeSpecs(meshConfig);
+    let offset = 0;
+    for (const spec of specs) {
+      // `spec.data` is typed as `Float32 | Uint16 | Uint8` at the
+      // interface level, but the GSplats spec builder always emits
+      // `Float32Array` today (every semantic resolves to `'float32'`
+      // post Float16 revert — see `interleaved-attributes.ts` module
+      // header). The cast is safe as long as that contract holds; a
+      // future narrowing redesign will widen the update path
+      // alongside flipping the semantic defaults.
+      writeInterleavedAttribute(
+        buffer,
+        offset,
+        spec.itemSize,
+        spec.data as Float32Array,
+        meshConfig.splatCount
+      );
+      offset += spec.itemSize;
+    }
   }
 
   // Update bounding box from centers (direct loop, no temp geometry allocation)
@@ -292,8 +312,12 @@ export function updateInstancedGSplatsMesh(
 
   // Expand by max splat extent (Cholesky row norm × truncation radius)
   const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
-  const material = mesh.material as GSplatMaterial;
-  const truncationRadius = material.uniforms.uTruncate?.value ?? 3.0;
+  // Either GSplatMaterial (ShaderMaterial-backed) or GSplatTSLMaterial
+  // (NodeMaterial-backed) — both expose the same `uniforms.uTruncate`.
+  const material = mesh.material as THREE.Material & {
+    uniforms?: { uTruncate?: { value: number } };
+  };
+  const truncationRadius = material.uniforms?.uTruncate?.value ?? 3.0;
   box.expandByScalar(maxRowNorm * truncationRadius);
 
   geometry.boundingBox = box;

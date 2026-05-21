@@ -29,7 +29,9 @@ VALID_FOV_PRESETS = (
     "135mm Tele",
     "Custom",
 )
-VALID_AO_QUALITIES = ("low", "medium", "high", "ultra")
+# Ambient occlusion is unsupported: SSAO needs surface normals, which
+# point/gsplat/line geometry does not provide. The `ao_*` keys are not
+# accepted.
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
@@ -332,13 +334,6 @@ class ViewerConfig:
     vignette_enabled: Optional[bool] = None
     vignette_darkness: Optional[float] = None
     vignette_offset: Optional[float] = None
-    dof_enabled: Optional[bool] = None
-    dof_focus: Optional[float] = None
-    dof_strength: Optional[float] = None
-
-    # Ambient occlusion
-    ao_enabled: Optional[bool] = None
-    ao_quality: Optional[str] = None
 
     # Detector noise (physics-based: Poisson + Gaussian + FPN)
     detector_noise_enabled: Optional[bool] = None
@@ -346,15 +341,19 @@ class ViewerConfig:
     detector_noise_photon_gain: Optional[float] = None
     detector_noise_fpn_sigma: Optional[float] = None
 
-    # Anti-aliasing
+    # Anti-aliasing. SMAA is unsupported because its 3-pass blend does
+    # not fit Luxar's single-pass post-processing model. FXAA / MSAA /
+    # SSAA remain.
     fxaa_enabled: Optional[bool] = None
-    smaa_enabled: Optional[bool] = None
-    smaa_threshold: Optional[float] = None
-    smaa_search_steps: Optional[int] = None
     msaa_enabled: Optional[bool] = None
     msaa_samples: Optional[int] = None
     ssaa_enabled: Optional[bool] = None
     ssaa_multiplier: Optional[float] = None
+
+    # Depth-of-Field and Ambient Occlusion are unsupported: DoF needs
+    # depth-aware multi-pass blur, and SSAO needs surface normals which
+    # point/gsplat/line geometry does not provide. The corresponding
+    # `dof_*` / `ao_*` keys are not accepted.
 
     # Chromatic lens distortion
     chromatic_lens_distortion_enabled: Optional[bool] = None
@@ -419,11 +418,6 @@ class ViewerConfig:
                 f"control_type must be one of {VALID_CONTROL_TYPES}, got '{self.control_type}'"
             )
 
-        if self.ao_quality is not None and self.ao_quality not in VALID_AO_QUALITIES:
-            raise ValueError(
-                f"ao_quality must be one of {VALID_AO_QUALITIES}, got '{self.ao_quality}'"
-            )
-
         if self.theme is not None and self.theme not in VALID_THEMES:
             raise ValueError(f"theme must be one of {VALID_THEMES}, got '{self.theme}'")
 
@@ -436,7 +430,6 @@ class ViewerConfig:
         if self.bloom_levels is not None and self.bloom_levels < 1:
             raise ValueError(f"bloom_levels must be >= 1, got {self.bloom_levels}")
         _validate_range(self.vignette_darkness, "vignette_darkness", 0, 1)
-        _validate_range(self.dof_strength, "dof_strength", 0, 1)
         _validate_range(
             self.detector_noise_readout_sigma, "detector_noise_readout_sigma", 0, 0.1
         )
@@ -454,7 +447,6 @@ class ViewerConfig:
         _validate_range(self.fly_damping, "fly_damping", 0, 1)
         _validate_range(self.fly_rotation_damping, "fly_rotation_damping", 0, 1)
         _validate_min(self.vignette_offset, "vignette_offset", 0)
-        _validate_min(self.dof_focus, "dof_focus", 0)
 
     # -- Simple field names for sparse serialization --
     _SIMPLE_FIELDS = [
@@ -476,19 +468,11 @@ class ViewerConfig:
         "vignette_enabled",
         "vignette_darkness",
         "vignette_offset",
-        "dof_enabled",
-        "dof_focus",
-        "dof_strength",
-        "ao_enabled",
-        "ao_quality",
         "detector_noise_enabled",
         "detector_noise_readout_sigma",
         "detector_noise_photon_gain",
         "detector_noise_fpn_sigma",
         "fxaa_enabled",
-        "smaa_enabled",
-        "smaa_threshold",
-        "smaa_search_steps",
         "msaa_enabled",
         "msaa_samples",
         "ssaa_enabled",

@@ -17,7 +17,6 @@ function makeStubs() {
   const settings: RenderingSettings = {
     ...config.renderingControls.defaults,
     detectorNoiseEnabled: false,
-    smaaEnabled: false,
   };
   const postProcessing = {
     setBloomEnabled: vi.fn(),
@@ -27,14 +26,10 @@ function makeStubs() {
     setFXAAEnabled: vi.fn(),
     setMSAAEnabled: vi.fn(),
     setMSAASamples: vi.fn(),
-    setSMAAEnabled: vi.fn(),
-    updateSMAASettings: vi.fn(),
     setToneMapping: vi.fn(),
-    setDOF: vi.fn(),
     setDetectorNoiseEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
     setChromaticLensDistortionEnabled: vi.fn(),
-    setAOEnabled: vi.fn(),
   };
   const sceneManager = {
     updateExposure: vi.fn(),
@@ -99,30 +94,18 @@ describe('applyRenderingSettings — global EOG', () => {
 });
 
 describe('applyRenderingSettings — anti-aliasing', () => {
-  it('applies SSAA / FXAA / MSAA / SMAA in order', () => {
+  it('applies SSAA / FXAA / MSAA in order', () => {
     stubs.settings.ssaaEnabled = true;
     stubs.settings.ssaaMultiplier = 2;
     stubs.settings.fxaaEnabled = true;
     stubs.settings.msaaEnabled = true;
     stubs.settings.msaaSamples = 4;
-    stubs.settings.smaaEnabled = false;
     run();
     expect(stubs.postProcessing.setSSAAEnabled).toHaveBeenCalledWith(true);
     expect(stubs.postProcessing.setSSAAMultiplier).toHaveBeenCalledWith(2);
     expect(stubs.postProcessing.setFXAAEnabled).toHaveBeenCalledWith(true);
     expect(stubs.postProcessing.setMSAAEnabled).toHaveBeenCalledWith(true);
     expect(stubs.postProcessing.setMSAASamples).toHaveBeenCalledWith(4);
-    expect(stubs.postProcessing.setSMAAEnabled).toHaveBeenCalledWith(false);
-  });
-
-  it('only calls updateSMAASettings when SMAA is on', () => {
-    stubs.settings.smaaEnabled = false;
-    run();
-    expect(stubs.postProcessing.updateSMAASettings).not.toHaveBeenCalled();
-
-    stubs.settings.smaaEnabled = true;
-    run();
-    expect(stubs.postProcessing.updateSMAASettings).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -131,16 +114,6 @@ describe('applyRenderingSettings — tone mapping', () => {
     stubs.settings.toneMapping = 'ACES';
     run();
     expect(stubs.postProcessing.setToneMapping).toHaveBeenCalledWith(TONE_MAPPING_MAP['ACES']);
-  });
-});
-
-describe('applyRenderingSettings — DOF', () => {
-  it('forwards enabled + focus + strength', () => {
-    stubs.settings.dofEnabled = true;
-    stubs.settings.dofFocus = 5;
-    stubs.settings.dofStrength = 0.3;
-    run();
-    expect(stubs.postProcessing.setDOF).toHaveBeenCalledWith(true, 5, 0.3);
   });
 });
 
@@ -205,15 +178,6 @@ describe('applyRenderingSettings — chromatic lens distortion', () => {
       1.0,
       0.0
     );
-  });
-});
-
-describe('applyRenderingSettings — ambient occlusion', () => {
-  it('forwards enabled + quality always (so disable also propagates)', () => {
-    stubs.settings.aoEnabled = true;
-    stubs.settings.aoQuality = 'high';
-    run();
-    expect(stubs.postProcessing.setAOEnabled).toHaveBeenCalledWith(true, 'high');
   });
 });
 

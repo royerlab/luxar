@@ -293,7 +293,7 @@ When contributing to the CLAHE subpackage:
 
 1. **Maintain nD support**: All functions should work for arbitrary dimensions
 2. **Add tests**: Coverage should remain >95%
-3. **Update docs**: Keep README and SPECIFICATIONS in sync with code
+3. **Update docs**: Keep README examples and behavior notes in sync with code
 4. **Performance**: Profile changes to ensure GPU acceleration is preserved
 
 ## License

@@ -21,17 +21,14 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
   SpatialQueryBuilder,
   type ChunkSpatialIndex,
   type LoadRange,
 } from '../loaders';
-import {
-  loadGSplatsChunkIndex,
-  registerGSplatsArrayBounds,
-} from './chunk-index-loader';
+import { loadGSplatsChunkIndex, registerGSplatsArrayBounds } from './chunk-index-loader';
 import { createEmptyGSplatsData } from './projection';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
@@ -48,10 +45,12 @@ import {
   announceExtendToAllOnce,
 } from '../loaders/extend-to-all-preflight';
 import { choleskyPackedSize } from '../../types/gsplats';
-import { GSplatsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.
@@ -606,7 +605,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return output;
   }
 
-
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
    *
@@ -726,8 +724,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const queryTime = Date.now() - startTime;
     if (this.metrics.queries > 0) {
       this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
-        this.metrics.queries;
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
     }
   }
 

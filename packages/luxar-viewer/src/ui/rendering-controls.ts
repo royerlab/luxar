@@ -2,18 +2,18 @@
 // Provides real-time control over post-processing and rendering parameters
 
 import GUI, { Folder } from './gui';
-import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import { PostProcessingManager } from '../rendering';
 import { SceneManager } from '../scene/scene-manager';
-import { AnimationController } from '../scene/animation-controller';
+import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';
 
 import type { RenderingControllers } from '../controls/types';
 import { log, Modules } from '../utils/log';
-import { setupNavigationControls } from './rendering-controls/navigation-setup';
-import { setupCameraControls } from './rendering-controls/camera-setup';
-import { setupHDRControls } from './rendering-controls/hdr-setup';
-import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
-import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
+import { setupNavigationControls } from './rendering-controls/setup/navigation-setup';
+import { setupCameraControls } from './rendering-controls/setup/camera-setup';
+import { setupHDRControls } from './rendering-controls/setup/hdr-setup';
+import { setupAntiAliasingControls } from './rendering-controls/setup/anti-aliasing-setup';
+import { setupPostProcessingControls } from './rendering-controls/setup/post-processing-setup';
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
 import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
@@ -25,13 +25,13 @@ import {
   saveSettingsToStorage,
   loadSettingsFromStorage,
 } from './rendering-controls/settings-persistence';
-import { setupPerformanceControls } from './rendering-controls/performance-setup';
-import { setupThemeControls } from './rendering-controls/theme-setup';
+import { setupPerformanceControls } from './rendering-controls/setup/performance-setup';
+import { setupThemeControls } from './rendering-controls/setup/theme-setup';
 import { ClippingDisplay } from './rendering-controls/clipping-display';
-import { validateRenderingSettings } from './rendering-controls/rendering-controls-utils';
+import { validateRenderingSettings } from './rendering-controls/controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { extractRenderingOverrides } from '../config/viewer-config-utils';
+import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 
 export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
 
@@ -41,7 +41,7 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  * Provides comprehensive UI for controlling:
  * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
  * - HDR intensity and tone mapping
- * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
+ * - Anti-aliasing options (FXAA, MSAA, SSAA)
  * - Camera controls (orbit, fly, ortho modes with physics parameters)
  * - Point rendering (base size, near/far size, sharpness, saturation)
  * - Dynamic clipping planes for nD visualization
@@ -849,7 +849,7 @@ export class RenderingControls {
    * Setup auto-blur for all GUI controls
    *
    * NOTE: The custom GUI library now handles auto-blur internally via
-   * src/ui/gui/utils/auto-blur.ts. This method is kept for backwards
+   * src/ui/gui/format/auto-blur.ts. This method is kept for backwards
    * compatibility but does nothing - all auto-blur logic is in the GUI library.
    */
   private setupAutoBlur(): void {

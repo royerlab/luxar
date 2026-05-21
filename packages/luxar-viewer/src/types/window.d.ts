@@ -14,12 +14,12 @@
 import type { LuxarApp } from '../core/app';
 import type { ConsoleInterceptor } from '../utils/console-interceptor';
 import type { LuxarCamera } from '../utils/camera-utils';
-import type { AnimationController } from '../scene/animation-controller';
+import type { AnimationController } from '../scene/animation/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { ControlsManager } from '../controls/controls-manager';
-import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../rendering';
 import type { SceneDimsManager } from '../scene/scene-dims-manager';
 import type * as THREE from 'three';
 
@@ -44,7 +44,13 @@ declare global {
       // Populated by LuxarApp.setupDebugInterface (post-init).
       scene?: THREE.Scene;
       camera?: LuxarCamera;
-      renderer?: THREE.WebGLRenderer;
+      // Either backend may be active — `THREE.WebGLRenderer` under
+      // the production default, or `WebGPURenderer` when opted in via
+      // `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`. Typed loosely
+      // as `unknown` so the window declaration doesn't import from
+      // `three/webgpu`; callers narrow via the `isWebGLRenderer`
+      // helper or `caps.apiSurface`.
+      renderer?: unknown;
       controls?: ControlsManager;
       postProcessing?: PostProcessingManager;
       animationController?: AnimationController;
@@ -60,6 +66,16 @@ declare global {
       getState?: () => unknown;
       renderOnce?: () => void;
       getSceneLoader?: () => unknown;
+
+      /**
+       * Live accessors for the picking and overlay subsystems. Both are
+       * disposed and reconstructed across dataset reloads, so callers must
+       * re-read after a load. Returns `undefined` before init / between
+       * disposals. Returned as `unknown` to avoid pulling the runtime
+       * classes into the window type and to force narrowing on consumers.
+       */
+      getPickingSystem?: () => unknown;
+      getOverlayManager?: () => unknown;
 
       /**
        * Render the error dialog directly with the supplied message, without
@@ -95,6 +111,23 @@ declare global {
        * Playwright agent flows that want a stable reference across runs.
        */
       lastExportedState?: unknown;
+
+      /**
+       * Inject a synthetic line scene (debug / perf-bench only). Builds
+       * an `InstancedLinesMeshConfig` in JS via
+       * `scene/synthetic-scene.ts`, wires it through the existing
+       * material-manager + node-factory pipeline, and adds the resulting
+       * mesh to the scene. Returns `{type, segmentCount, mesh}` so the
+       * caller can capture the actual instance count it ran against.
+       *
+       * Not present in production bundles when `?debug` is unset.
+       */
+      injectSyntheticScene?: (spec: {
+        type: 'lines';
+        count: number;
+        bounds?: number;
+        seed?: number;
+      }) => Promise<{ type: 'lines'; segmentCount: number; mesh: THREE.Mesh }>;
     };
   }
 }

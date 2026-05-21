@@ -29,22 +29,45 @@ The config package provides a centralized configuration system that manages all 
 
 ## Architecture
 
-```typescript
+```text
 config/
-├── index.ts                 # Main configuration object (`config`) and type exports
-├── types.ts                 # TypeScript interfaces for all config sections
-├── validation.ts            # Runtime validation of configuration values
-├── viewer-config-utils.ts   # snake_case ↔ camelCase conversion for zarr viewer_config
-└── viewer-state-capture.ts  # Captures complete viewer state for export (Ctrl+Shift+S)
+├── index.ts                       # Composes section literals into the `config` AppConfig
+├── types.ts                       # Barrel re-exports of section types + AppConfig interface
+├── validation.ts                  # Dispatcher; imports per-section validators
+├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── constants.ts                   # WASM ABI constants
+├── sections/
+│   ├── camera/             {data,types,validate}.ts
+│   ├── animation/          {data,types}.ts
+│   ├── adaptive-dpr/       {data,types}.ts
+│   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
+│   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
+│   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
+│   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange/ConfigValue
+│   ├── input/              {data,types,validate}.ts
+│   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
+│   │   ├── spatial/        {data,types}.ts
+│   │   ├── network/        {data,types,validate}.ts
+│   │   ├── memory/         {data,types,validate}.ts
+│   │   ├── monitor/        {data,types}.ts
+│   │   └── performance/    {data,types,validate}.ts
+│   ├── webgl/              {data,types,validate}.ts
+│   ├── cache/              {data,types,validate}.ts
+│   └── dimension-animation/{data,types}.ts
+└── zarr-bridge/
+    ├── viewer-config-utils.ts     # snake_case ↔ camelCase conversion for zarr viewer_config
+    └── viewer-state-capture.ts    # Captures complete viewer state for export (Ctrl+Shift+S)
 ```
 
-The architecture follows a separation of concerns approach:
+The architecture groups each configuration section's data + types + validator into a `sections/<name>/` triplet:
 
-- `index.ts` contains the actual configuration values and imports
-- `types.ts` defines all TypeScript interfaces
-- `validation.ts` provides runtime validation of configuration values
-- `viewer-config-utils.ts` converts between zarr `viewer_config` (snake_case) and TypeScript `RenderingSettings` (camelCase), extracts camera overrides and background color
-- `viewer-state-capture.ts` captures the live viewer state (camera, rendering settings, theme, dimensions, animation) as a `ZarrViewerConfig` JSON object for clipboard export
+- `index.ts` is a thin orchestrator (~60 lines) that imports each section's `Config` literal and composes them into the `AppConfig` object.
+- `types.ts` is a re-export barrel: every section type is imported then re-exported, plus the `AppConfig` interface that ties them together.
+- `validation.ts` is a dispatcher: it imports each section's `validate<Section>` function and calls them in `validateConfig`.
+- `zarr-bridge/viewer-config-utils.ts` converts between zarr `viewer_config` (snake_case) and TypeScript `RenderingSettings` (camelCase), extracts camera overrides and background color.
+- `zarr-bridge/viewer-state-capture.ts` captures the live viewer state (camera, rendering settings, theme, dimensions, animation) as a `ZarrViewerConfig` JSON object for clipboard export.
+
+Each `sections/<name>/data.ts` exports a single `<name>Config` constant; the public type symbols (e.g. `CameraConfig`, `RenderingSettings`) are re-exported through the root `types.ts` barrel, so external consumers continue to `import type { CameraConfig } from 'src/config/types'`.
 
 ## Configuration Sections
 
@@ -64,7 +87,7 @@ camera: {
 
 ### Shader Configuration
 
-Point rendering uses `falloff * opacity` for alpha, matching line material behavior. Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied in the `LuxarToneMappingEffect` post-processing pass.
+Point rendering uses `falloff * opacity` for alpha, matching line material behavior. Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied inside the mega-shader post-processing pass.
 
 ### User Interface Configuration
 
@@ -128,7 +151,7 @@ renderingControls: {
     bloomStrength: 0.25,
     bloomRadius: 1.0,
     bloomLevels: 8,
-    // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
+    // Global EOG (Exposure-Offset-Gamma) applied in the mega-shader
     exposure: 0.0,
     globalOffset: 0.0,
     globalGamma: 1.0,
@@ -136,17 +159,14 @@ renderingControls: {
     fxaaEnabled: false,
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
-    smaaEnabled: false,
     ssaaEnabled: false,
     toneMapping: 'Neutral',
-    dofEnabled: false,          // Depth of field
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
     detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise
     detectorNoisePhotonGain: 0.002,    // Shot noise visibility
     detectorNoiseFpnSigma: 0.001,     // Fixed pattern noise
     vignetteEnabled: false,
-    aoEnabled: false,           // Ambient occlusion
     controlType: 'orbit',       // vs 'fly' or 'ortho'
     autoRotate: false
   }
@@ -320,12 +340,13 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 // In PostProcessing
-const bloomEffect = new BloomEffect({
-  intensity: config.renderingControls.defaults.bloomStrength,
-  luminanceThreshold: config.renderingControls.defaults.bloomThreshold,
-  levels: config.renderingControls.defaults.bloomLevels,
-  // radius is set on mipmapBlurPass after creation
-});
+postProcessing.setBloomEnabled(
+  config.renderingControls.defaults.bloomEnabled,
+  config.renderingControls.defaults.bloomStrength,
+  config.renderingControls.defaults.bloomRadius,
+  config.renderingControls.defaults.bloomThreshold
+);
+postProcessing.setBloomLevels(config.renderingControls.defaults.bloomLevels);
 ```
 
 ### Customizing Configuration
@@ -382,7 +403,7 @@ interface RenderingSettings {
 
 - Compile-time validation of configuration values
 - IntelliSense support in IDEs
-- Refactoring safety when changing configuration structure
+- Safer changes when configuration structure evolves
 - Self-documenting configuration interface
 
 ## Best Practices
@@ -438,12 +459,12 @@ const panelWidth = config.ui.debugConsole.panel.defaultWidth;
 const bufferSize = config.ui.debugConsole.interceptor.maxBufferSize;
 ```
 
-### Migration and Versioning
+### Versioning
 
 When updating configuration:
 
-1. **Backwards Compatibility**: Consider existing users
-2. **Deprecation Strategy**: Gradual migration for breaking changes
+1. **Compatibility**: Consider existing users
+2. **Deprecation Strategy**: Stage breaking changes clearly when needed
 3. **Validation**: Ensure new values are within acceptable ranges
 4. **Documentation**: Update comments and examples
 

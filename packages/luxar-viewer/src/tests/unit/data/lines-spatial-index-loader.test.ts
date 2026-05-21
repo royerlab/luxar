@@ -21,10 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as zarr from 'zarrita';
 import { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { SceneNode, ViewState } from '../../../data';
-import type {
-  MonitorEvent,
-  MonitorEventListener,
-} from '../../../types/data-monitor-types';
+import type { MonitorEvent, MonitorEventListener } from '../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../builders/spatial-loader-fixtures';
 
 vi.mock('zarrita', () => ({
@@ -286,14 +283,16 @@ describe('LinesSpatialIndexLoader', () => {
 
       it('should handle missing optional arrays gracefully', async () => {
         // Re-mock open to fail the optional widths/colors/sharpness opens.
-        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation((location: unknown) => {
-          const path = String(location);
-          if (path.includes('vertex_chunk_bounds')) return Promise.resolve(vertexBoundsArray);
-          if (path.includes('segment_chunk_bounds')) return Promise.resolve(segmentBoundsArray);
-          if (path.includes('vertices')) return Promise.resolve(mockArrays.vertices);
-          if (path.includes('segments')) return Promise.resolve(mockArrays.segments);
-          return Promise.reject(new Error('Not found'));
-        });
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('vertex_chunk_bounds')) return Promise.resolve(vertexBoundsArray);
+            if (path.includes('segment_chunk_bounds')) return Promise.resolve(segmentBoundsArray);
+            if (path.includes('vertices')) return Promise.resolve(mockArrays.vertices);
+            if (path.includes('segments')) return Promise.resolve(mockArrays.segments);
+            return Promise.reject(new Error('Not found'));
+          }
+        );
 
         bodyLoader.dispose();
         bodyLoader = new LinesSpatialIndexLoader(
@@ -330,9 +329,9 @@ describe('LinesSpatialIndexLoader', () => {
           bodyLoader.loadLines(viewState),
         ]);
 
-        const vertexBoundsOpens = (zarr.open as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
-          (c) => String(c[0]).includes('vertex_chunk_bounds')
-        ).length;
+        const vertexBoundsOpens = (
+          zarr.open as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.filter((c) => String(c[0]).includes('vertex_chunk_bounds')).length;
         expect(vertexBoundsOpens).toBe(1);
       });
     });
@@ -464,16 +463,18 @@ describe('LinesSpatialIndexLoader', () => {
       });
 
       it('should fill default widths when widths array is absent', async () => {
-        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation((location: unknown) => {
-          const path = String(location);
-          if (path.includes('vertex_chunk_bounds')) return Promise.resolve(vertexBoundsArray);
-          if (path.includes('segment_chunk_bounds')) return Promise.resolve(segmentBoundsArray);
-          if (path.includes('vertices')) return Promise.resolve(mockArrays.vertices);
-          if (path.includes('segments')) return Promise.resolve(mockArrays.segments);
-          if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
-          // widths/sharpness rejected
-          return Promise.reject(new Error('Not found'));
-        });
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('vertex_chunk_bounds')) return Promise.resolve(vertexBoundsArray);
+            if (path.includes('segment_chunk_bounds')) return Promise.resolve(segmentBoundsArray);
+            if (path.includes('vertices')) return Promise.resolve(mockArrays.vertices);
+            if (path.includes('segments')) return Promise.resolve(mockArrays.segments);
+            if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+            // widths/sharpness rejected
+            return Promise.reject(new Error('Not found'));
+          }
+        );
 
         bodyLoader.dispose();
         bodyLoader = new LinesSpatialIndexLoader(
@@ -530,9 +531,7 @@ describe('LinesSpatialIndexLoader', () => {
         // Make zarr.get slower so we can observe activeQueries mid-flight.
         (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
           () =>
-            new Promise((resolve) =>
-              setTimeout(() => resolve({ data: new Uint32Array(0) }), 10)
-            )
+            new Promise((resolve) => setTimeout(() => resolve({ data: new Uint32Array(0) }), 10))
         );
 
         const viewState: ViewState = {
@@ -684,9 +683,7 @@ describe('LinesSpatialIndexLoader', () => {
 
         expect((bodyLoader as unknown as { chunkIndex: unknown }).chunkIndex).toBeNull();
         expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
-        expect(
-          (bodyLoader as unknown as { events: { size: number } }).events.size
-        ).toBe(0);
+        expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);
       });
     });
 

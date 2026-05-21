@@ -31,7 +31,7 @@ import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import { type ChunkSpatialIndex } from '../loaders';
-import type { ChunkPrefetcher } from '../../cache';
+import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { LinesMetadata, SegmentRange } from '../../types/lines';
 
 /**
@@ -55,7 +55,7 @@ export interface LinesDualChunkIndex {
  *   - `attrs.vertex_ordering` or `attrs.segment_ordering` missing —
  *     metadata incomplete, full load fallback;
  *   - either `chunk_bounds` array is missing on disk — full load
- *     fallback (legacy datasets without spatial indexing).
+ *     fallback (datasets without spatial indexing).
  *
  * Logs warnings (does not raise) on size mismatches between the
  * blob's element count and the expected `chunkCount × ndim × 2`.

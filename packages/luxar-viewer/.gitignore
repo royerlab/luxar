@@ -8,3 +8,11 @@ docs/
 # Per-machine performance baselines (test self-rewrites this on every
 # passing run; should not be tracked across hardware).
 performance-baselines.json
+points-rendering-perf.json
+line-renderer-compare-perf.json
+test-results-perf/
+
+# Line perf-bench writes per-commit results to perf-results/<sha>/...
+# Keep the README (it's the directory's docs) but ignore generated runs.
+perf-results/*
+!perf-results/README.md

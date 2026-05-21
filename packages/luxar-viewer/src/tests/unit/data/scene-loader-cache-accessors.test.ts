@@ -89,7 +89,7 @@ describe('SceneLoader cache accessors', () => {
         },
       };
 
-      // Inject via a private-field cast rather than refactoring the loader's
+      // Inject via a private-field cast rather than widening the loader's
       // public surface for testing — these tests live alongside the private
       // members they exercise.
       const loaderAny = loader as unknown as { l0Cache: unknown; cachingStore: unknown };

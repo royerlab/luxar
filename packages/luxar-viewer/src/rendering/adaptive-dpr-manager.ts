@@ -8,9 +8,34 @@
  * Algorithm:
  * - Sample FPS using a 1-second sliding window of frame timestamps
  * - Evaluate every 500ms (configurable)
- * - If FPS < minFPS: Scale DPR down by scaleDownFactor immediately
+ * - If FPS < minFPS: Scale DPR down by scaleDownFactor (probe-and-verify;
+ *   see U-shape section below)
  * - If FPS > maxFPS for hysteresisSeconds: Scale DPR up by scaleUpFactor
  * - DPR is clamped between minDPR and window.devicePixelRatio
+ *
+ * # U-shape awareness
+ *
+ * Lowering DPR is NOT monotonically faster. On macOS/Chrome a small
+ * backbuffer must be upscaled by the OS compositor to display at CSS
+ * pixel size, and that upscale cost grows as the DPR mismatch grows.
+ * The result is a U-shape: render cost drops, hits a minimum around
+ * the host's "sweet spot" DPR, then rises again as the upscale cost
+ * dominates. Many small render passes (bloom mips, MSAA targets) make
+ * the rise sharper.
+ *
+ * Naive adaptive DPR assumes lower = faster and walks straight past
+ * the sweet spot into the slow zone. This manager guards against
+ * that:
+ *
+ * - After each scaleDown, enter a probe window. Remember the
+ *   pre-change DPR and FPS.
+ * - When the probe window expires, compare the post-change FPS to
+ *   the baseline.
+ * - If FPS did not improve by a meaningful margin (PROBE_IMPROVEMENT
+ *   threshold), revert to the previous DPR and record it as a floor.
+ *   Further scaleDown is blocked from crossing the floor.
+ * - The floor decays after `floorTTL` so the manager re-probes when
+ *   scene content changes.
  */
 
 import { config } from '../config';
@@ -35,6 +60,10 @@ export interface AdaptiveDPRState {
   currentFPS: number;
   isReducedResolution: boolean;
   nativeDPR: number;
+  /** Lowest DPR scaleDown will accept right now (tightens via U-shape probes). */
+  dprFloor: number;
+  /** True while a scaleDown move is being verified for U-shape improvement. */
+  probing: boolean;
 }
 
 /**
@@ -62,6 +91,40 @@ export class AdaptiveDPRManager {
   private highFPSStartTime: number | null = null;
   private isReducedResolution: boolean = false;
 
+  // U-shape probe state. Set whenever scaleDown moves to a smaller
+  // DPR; cleared once the probe verifies the move helped (or reverts
+  // it if not).
+  private pendingProbe: {
+    previousDPR: number;
+    previousFPS: number;
+    probedDPR: number;
+    startTime: number;
+  } | null = null;
+
+  // Lowest DPR known to actually improve FPS. scaleDown will not
+  // cross this floor. Initialised to config.minDPR and tightened when
+  // a probe reveals lower-DPR was unhelpful. `floorSetAt` lets us
+  // decay the floor so the manager re-probes after a while (scene
+  // content may have changed enough to move the U-shape minimum).
+  private dprFloor: number;
+  private floorSetAt: number = 0;
+
+  // How long to wait after a scaleDown before evaluating its effect.
+  // Needs to be long enough that the renderer/post-processing reallocation
+  // costs are out of the FPS window. The FPS window itself is 1000ms,
+  // so we wait somewhat longer for a representative sample.
+  private readonly PROBE_WINDOW_MS = 1500;
+
+  // Required relative FPS improvement to consider a scaleDown
+  // successful (5%). Anything less and we treat the move as
+  // ineffective: at best a wash, at worst a step backward.
+  private readonly PROBE_IMPROVEMENT = 1.05;
+
+  // How long the U-shape floor stays sticky before we allow another
+  // downward probe. Scene content changes (new layers, camera moves,
+  // dimension switches) can shift the U-shape minimum.
+  private readonly FLOOR_TTL_MS = 30_000;
+
   // Callback for UI updates
   private onDPRChange: DPRChangeCallback | null = null;
 
@@ -79,6 +142,7 @@ export class AdaptiveDPRManager {
 
     this.nativeDPR = window.devicePixelRatio || 1;
     this.currentDPR = this.nativeDPR;
+    this.dprFloor = this.config.minDPR;
     // Initial enabled state from config. At runtime, this is overridden by
     // renderingControls.defaults.adaptiveDPREnabled (persisted per-scene in localStorage).
     this.isEnabled = this.config.enabled;
@@ -159,9 +223,31 @@ export class AdaptiveDPRManager {
     // Need at least some frames to make a decision
     if (fps === 0) return;
 
+    // If a probe is in flight, settle it first. We don't trigger
+    // another scaleDown while a probe is pending — we need a clean
+    // FPS sample of the just-applied DPR before deciding anything else.
+    if (this.pendingProbe) {
+      if (timestamp - this.pendingProbe.startTime < this.PROBE_WINDOW_MS) {
+        return; // probe still gathering samples
+      }
+      this.settleProbe(timestamp, fps);
+      return;
+    }
+
+    // Floor decays so we re-probe after the configured TTL. Scene
+    // content can change enough to shift the U-shape minimum.
+    if (this.dprFloor > this.config.minDPR && timestamp - this.floorSetAt > this.FLOOR_TTL_MS) {
+      log.info(
+        Modules.ADAPTIVE_DPR,
+        `DPR floor ${this.dprFloor.toFixed(2)} expired — re-enabling scale-down probes`
+      );
+      this.dprFloor = this.config.minDPR;
+    }
+
     if (fps < this.config.minFPS) {
-      // Performance is poor - scale down immediately
-      this.scaleDown(fps);
+      // Performance is poor - scale down (and arm a probe so we can
+      // verify the move actually helped).
+      this.scaleDown(timestamp, fps);
       this.highFPSStartTime = null; // Reset hysteresis
     } else if (fps > this.config.maxFPS) {
       // Performance is good - track duration for hysteresis
@@ -179,14 +265,70 @@ export class AdaptiveDPRManager {
   }
 
   /**
-   * Scale DPR down for better performance
+   * Look at the FPS measured after a scaleDown probe. If it improved
+   * by at least PROBE_IMPROVEMENT, the move was useful — keep it. If
+   * not, revert and record the probed DPR as a floor so we don't try
+   * to dip below it again until the TTL expires.
+   *
+   * `timestamp` is the frame timestamp that triggered the settle —
+   * we use it (not `performance.now()`) for floorSetAt so the TTL
+   * decay is consistent with the rest of the FPS-window timing.
    */
-  private scaleDown(fps: number): void {
-    const newDPR = Math.max(this.config.minDPR, this.currentDPR * this.config.scaleDownFactor);
+  private settleProbe(timestamp: number, currentFPS: number): void {
+    if (!this.pendingProbe) return;
+    const probe = this.pendingProbe;
+    this.pendingProbe = null;
+
+    const fpsRatio = probe.previousFPS > 0 ? currentFPS / probe.previousFPS : 0;
+    if (fpsRatio >= this.PROBE_IMPROVEMENT) {
+      // The move helped — keep it and let normal scaling decisions resume.
+      log.custom(
+        LogEmoji.PERFORMANCE,
+        Modules.ADAPTIVE_DPR,
+        `Probe accepted at DPR ${probe.probedDPR.toFixed(2)}: ` +
+          `${probe.previousFPS.toFixed(1)} → ${currentFPS.toFixed(1)} FPS` +
+          ` (×${fpsRatio.toFixed(2)})`
+      );
+      return;
+    }
+
+    // The move did not help. Revert to the previous DPR and set a
+    // floor at the probed level so future scaleDown calls skip it.
+    log.warning(
+      Modules.ADAPTIVE_DPR,
+      `Probe rejected at DPR ${probe.probedDPR.toFixed(2)}: ` +
+        `FPS ${probe.previousFPS.toFixed(1)} → ${currentFPS.toFixed(1)} ` +
+        `(×${fpsRatio.toFixed(2)}, want ≥${this.PROBE_IMPROVEMENT.toFixed(2)}). ` +
+        `Reverting to DPR ${probe.previousDPR.toFixed(2)}; ` +
+        `floor set, will retry in ${(this.FLOOR_TTL_MS / 1000).toFixed(0)}s.`
+    );
+
+    this.currentDPR = probe.previousDPR;
+    this.isReducedResolution = this.currentDPR < this.nativeDPR * 0.95;
+    this.applyDPR();
+    this.dprFloor = probe.probedDPR;
+    this.floorSetAt = timestamp;
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
+  }
+
+  /**
+   * Scale DPR down for better performance, arming a probe so we
+   * verify the move actually helped (see U-shape comment at the top
+   * of this file).
+   */
+  private scaleDown(timestamp: number, fps: number): void {
+    const proposed = this.currentDPR * this.config.scaleDownFactor;
+    // Block scaleDown from crossing the U-shape floor. The floor
+    // starts at config.minDPR and is tightened whenever a probe fails.
+    const newDPR = Math.max(this.dprFloor, proposed);
 
     // Only apply if there's a meaningful change
     if (Math.abs(newDPR - this.currentDPR) < 0.01) return;
 
+    const previousDPR = this.currentDPR;
     this.currentDPR = newDPR;
     this.applyDPR();
 
@@ -196,8 +338,18 @@ export class AdaptiveDPRManager {
     log.custom(
       LogEmoji.PERFORMANCE,
       Modules.ADAPTIVE_DPR,
-      `Scaled down: DPR ${newDPR.toFixed(2)} (FPS: ${fps.toFixed(1)})`
+      `Scaled down: DPR ${previousDPR.toFixed(2)} → ${newDPR.toFixed(2)} ` +
+        `(FPS: ${fps.toFixed(1)}, probing for U-shape)`
     );
+
+    // Arm the probe so the next evaluateAndAdjust pass after
+    // PROBE_WINDOW_MS judges whether this move helped.
+    this.pendingProbe = {
+      previousDPR,
+      previousFPS: fps,
+      probedDPR: newDPR,
+      startTime: timestamp,
+    };
 
     // Notify callback
     if (this.onDPRChange) {
@@ -259,6 +411,9 @@ export class AdaptiveDPRManager {
       this.applyDPR();
       this.isReducedResolution = false;
       this.highFPSStartTime = null;
+      this.pendingProbe = null;
+      this.dprFloor = this.config.minDPR;
+      this.floorSetAt = 0;
       this.frameTimestamps = [];
       this.frameStartIndex = 0;
 
@@ -300,6 +455,8 @@ export class AdaptiveDPRManager {
       currentFPS: this.getCurrentFPS(),
       isReducedResolution: this.isReducedResolution,
       nativeDPR: this.nativeDPR,
+      dprFloor: this.dprFloor,
+      probing: this.pendingProbe !== null,
     };
   }
 
@@ -334,7 +491,13 @@ export class AdaptiveDPRManager {
     // Clamp DPR to reasonable range
     const minDPR = 0.25;
     const clampedDPR = clamp(dpr, minDPR, this.nativeDPR);
+
+    // DPR changes force renderer/post-processing target reallocations, so
+    // avoid repeating that expensive path for duplicate slider/input events.
+    if (Math.abs(clampedDPR - this.currentDPR) < 0.01) return;
+
     this.currentDPR = clampedDPR;
+    this.isReducedResolution = clampedDPR < this.nativeDPR * 0.95;
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);

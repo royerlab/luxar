@@ -16,8 +16,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // PanelCoordinator now goes through `notifier` for help/error UI; mock
-// the notifier surface instead of the underlying ui/helpers. Spies
-// must come from vi.hoisted to be defined when the mock factory runs.
+// the notifier surface instead of the underlying ui/ helper modules.
+// Spies must come from vi.hoisted to be defined when the mock factory runs.
 const notifierMocks = vi.hoisted(() => ({
   hideHelp: vi.fn(),
   clearError: vi.fn(),
@@ -42,8 +42,8 @@ import { eventBus } from '../../../../utils/event-bus';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../../ui/recording-panel';
-import type { DimensionSliders } from '../../../../ui/panels/dimension-sliders';
-import type { DebugConsole } from '../../../../ui/panels/debug-console';
+import type { DimensionSliders } from '../../../../ui/dimension-sliders';
+import type { DebugConsole } from '../../../../ui/debug-console';
 
 function makeRenderingControls(initiallyVisible = true): {
   controls: RenderingControls;
@@ -76,10 +76,12 @@ function makeDebugConsole(initiallyVisible = true): {
   return { console, hide };
 }
 
-function makeRecordingPanel(opts: {
-  isVisible?: boolean;
-  isRecording?: boolean;
-} = {}): {
+function makeRecordingPanel(
+  opts: {
+    isVisible?: boolean;
+    isRecording?: boolean;
+  } = {}
+): {
   panel: RecordingPanel;
   hide: ReturnType<typeof vi.fn>;
   stopVideoRecording: ReturnType<typeof vi.fn>;
@@ -112,7 +114,6 @@ describe('PanelCoordinator.closeAll', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event
   });
 
   afterEach(() => {
@@ -305,7 +306,6 @@ describe('PanelCoordinator.handleEscape', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event
     // Default: not in fullscreen.
     Object.defineProperty(document, 'fullscreenElement', {
       configurable: true,

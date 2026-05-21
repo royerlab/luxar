@@ -1,0 +1,89 @@
+/**
+ * GSplats geometry-type handler — per-type wiring for the scene-loader's
+ * load + stage phase. Mirrors `data/points/handler.ts` and
+ * `data/lines/handler.ts` so all first-class geometry kinds share the
+ * same loader/update shape.
+ *
+ * @module data/gsplats/handler
+ */
+
+import * as THREE from 'three';
+import type { GeometryKind, ViewState } from '../data-loader-types';
+import type {
+  GSplatsDataLoader,
+  GSplatsMetadata,
+  GSplatsViewState,
+  LoadedGSplatsData,
+} from '../../types/gsplats';
+import { log, Modules } from '../../utils/log';
+import type { UpdateSession } from '../../profiling/update-profiler';
+import type { ViewStateQueue } from '../scene-loader/view-state-queue';
+import {
+  processGSplatsData,
+  type StagedGSplatsCommit,
+} from '../scene-loader/process/data-processor-gsplats';
+
+export const kind: GeometryKind = 'gsplats';
+export const label = 'GSplats' as const;
+
+export interface GSplatsHandlerCtx {
+  rootGroup: THREE.Group | null;
+  viewStateQueue: ViewStateQueue;
+  clearFailure(path: string): void;
+  currentVersion: number;
+  updateVersion: number;
+  extendedToleranceCache: Map<string, number[]>;
+  deriveNodeViewState(
+    path: string,
+    attrs: { extend_to_all?: string[] } | undefined,
+    opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
+  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+}
+
+/**
+ * Async load + project + stage step for one GSplats node. Mirrors the
+ * prior inline gsplats-branch of `updateView`.
+ *
+ * Like Points (and unlike Lines) gsplats uses
+ * applyPartialExtendTolerance: true — verbatim from the original
+ * behaviour.
+ */
+export async function loadAndStage(
+  path: string,
+  loader: GSplatsDataLoader,
+  session: UpdateSession,
+  ctx: GSplatsHandlerCtx
+): Promise<StagedGSplatsCommit | null> {
+  const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+  const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+  const derived = ctx.deriveNodeViewState(path, attrs, {
+    applyPartialExtendTolerance: true,
+    extendedToleranceCache: ctx.extendedToleranceCache,
+  });
+  if (derived.skip) {
+    log.info(
+      Modules.SCENE_LOADER,
+      `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+    );
+    session.markSkipped(derived.skip);
+    // S6: see Points handler — drop prev to avoid stale extrap.
+    ctx.viewStateQueue.forgetPath(path);
+    return null;
+  }
+  const gsplatsViewState: GSplatsViewState = derived.viewState;
+  const data: LoadedGSplatsData | null = await loader.updateView(gsplatsViewState, session);
+  ctx.clearFailure(path);
+  if (!data) return null;
+  const staged = await processGSplatsData(
+    path,
+    data,
+    gsplatsViewState,
+    ctx.rootGroup,
+    ctx.updateVersion,
+    session
+  );
+  session.setMetadata({ splats: data.splatCount });
+  // S6: per-loader predictive prefetch using the derived view-state.
+  ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
+  return staged;
+}

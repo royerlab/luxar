@@ -197,7 +197,6 @@ dynamic_ops/
 ├── peak_finding.py     # Global and tiled peak finding with NMS
 ├── operations.py       # RecentlyRelocatedTracker, apply_dynamic_operations, relocation logic
 ├── README.md           # This file
-├── SPECIFICATIONS.md   # Technical specification
 └── tests/
     ├── test_dynamic_ops.py         # Config, peak finding, importance, relocation tests
     └── test_relocation_tracker.py  # Cooldown mechanism tests
@@ -212,7 +211,6 @@ dynamic_ops/
 
 ## References
 
-- See `SPECIFICATIONS.md` for complete algorithm details
 - See `operations.py` for relocation logic
 - See `peak_finding.py` for tiling algorithm implementation
 - See `tests/test_dynamic_ops.py` for usage examples

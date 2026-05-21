@@ -84,20 +84,6 @@ class DocumentationChecker:
         else:
             self._check_readme_quality(readme, package_name)
 
-        # Check for SPECIFICATIONS.md
-        specs = package_dir / "SPECIFICATIONS.md"
-        if not specs.exists():
-            self.results.append(
-                CheckResult(
-                    passed=False,
-                    file_path=str(specs),
-                    check_name="SPECIFICATIONS existence",
-                    message=f"Missing SPECIFICATIONS.md for package: {package_name}",
-                )
-            )
-        else:
-            self._check_specifications_quality(specs, package_name)
-
         # Check Python files for docstrings
         for py_file in package_dir.glob("*.py"):
             if not py_file.name.startswith("_") or py_file.name == "__init__.py":
@@ -107,7 +93,7 @@ class DocumentationChecker:
         """Check README.md quality."""
         content = readme.read_text()
 
-        # Check for Quick Start section (Phase 3 enhancement)
+        # Check for a Quick Start or Getting Started section.
         if "## Quick Start" not in content and "## Getting Started" not in content:
             self.results.append(
                 CheckResult(
@@ -148,56 +134,6 @@ class DocumentationChecker:
                     message=f"README missing code examples: {package_name}",
                 )
             )
-
-    def _check_specifications_quality(self, specs: Path, package_name: str):
-        """Check SPECIFICATIONS.md quality."""
-        content = specs.read_text()
-
-        # Check for required sections
-        required_sections = [
-            "## Purpose",
-            "## Core Concepts",
-            "## Data Structures",
-            "## Algorithms",
-        ]
-
-        for section in required_sections:
-            if section not in content:
-                self.results.append(
-                    CheckResult(
-                        passed=False,
-                        file_path=str(specs),
-                        check_name=f"Required section: {section}",
-                        message=f"SPECIFICATIONS missing {section}: {package_name}",
-                    )
-                )
-
-        # Check for changelog
-        if "## Changelog" not in content and "# Changelog" not in content:
-            self.results.append(
-                CheckResult(
-                    passed=False,
-                    file_path=str(specs),
-                    check_name="Changelog",
-                    message=f"SPECIFICATIONS missing Changelog: {package_name}",
-                )
-            )
-
-        # Check for complexity analysis in algorithms (Phase 3 enhancement)
-        if "## Algorithms" in content:
-            # Look for algorithm sections
-            algorithm_sections = re.findall(r"###\s+(.+)", content)
-            has_complexity = bool(re.search(r"\*\*Complexity\*\*:", content))
-
-            if algorithm_sections and not has_complexity:
-                self.results.append(
-                    CheckResult(
-                        passed=False,
-                        file_path=str(specs),
-                        check_name="Algorithm complexity",
-                        message=f"SPECIFICATIONS has algorithms but missing complexity analysis: {package_name}",
-                    )
-                )
 
     def _check_python_file_docstrings(self, py_file: Path, package_name: str):
         """Check Python file for docstring coverage."""

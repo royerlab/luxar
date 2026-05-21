@@ -32,7 +32,7 @@ test.describe('Blending Modes', () => {
         [];
 
       debug.scene.traverse((obj: any) => {
-        if ((obj.type === 'Points' || obj.type === 'Mesh') && obj.material) {
+        if ((obj.userData?.nodeType === 'points' || obj.type === 'Mesh') && obj.material) {
           states.push({
             name: obj.name || 'unnamed',
             blending: obj.material.blending,
@@ -66,7 +66,9 @@ test.describe('Blending Modes', () => {
       let normal: any = null;
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type !== 'Points' || !obj.material) return;
+        // Points render as `THREE.Mesh + userData.nodeType === 'points'`.
+        const isPoints = obj.userData?.nodeType === 'points';
+        if (!isPoints || !obj.material) return;
 
         // THREE.AdditiveBlending = 2
         if (obj.material.blending === 2 && !additive) {
@@ -135,7 +137,8 @@ test.describe('Blending Modes', () => {
       const modes = new Set<number>();
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && obj.material) {
+        // Points are Mesh + nodeType='points'.
+        if (obj.userData?.nodeType === 'points' && obj.material) {
           modes.add(obj.material.blending);
         }
       });

@@ -42,12 +42,6 @@ class TestSceneMethods:
         assert ".zmetadata" in store.store
         assert "points" in store
 
-    # Test removed: groups property was removed in new API
-    # The Scene class no longer maintains a separate groups list
-
-    # Test removed: _validate_scene_dimensions is no longer part of the public API
-    # Dimension validation is now handled internally during point addition
-
     def test_scene_dimensions_always_set(self, tmp_path) -> None:
         """Test that Scene always has dimensions from creation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:

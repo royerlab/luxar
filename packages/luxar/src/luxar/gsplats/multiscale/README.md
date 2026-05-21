@@ -726,6 +726,5 @@ If you use this package in your research, please cite:
 
 ## See Also
 
-- [SPECIFICATIONS.md](SPECIFICATIONS.md) - Detailed technical specifications
 - [Main Luxar Documentation](../../README.md) - Luxar Python package
 - [Gaussian Splat Fitting](../README.md) - Core fitting algorithms

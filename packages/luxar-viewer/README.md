@@ -16,7 +16,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🎛️ nD Navigation**: Beautiful dimension sliders UI for exploring higher-dimensional data
 - **🔍 Radius-Based Slicing**: Natural visualization of nD data using hypersphere intersection
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
-- **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
+- **⚙️ Anti-Aliasing**: FXAA / MSAA / SSAA with known compatibility notes
 - **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
 - **📸 Recording Panel**: Screenshots (PNG/WebP/JPEG/EXR), image-sequence ZIPs, EXR-sequence ZIPs, and video capture (WebM/MP4/MKV via mediabunny) with turntable mode
 - **📏 Scale Bar**: Physical scale bar overlay using dimension unit metadata
@@ -263,7 +263,6 @@ The advanced rendering controls panel (located on the left side) provides real-t
 ### Anti-Aliasing Options
 - **FXAA**: Fast approximate anti-aliasing (recommended for additive blending)
 - **MSAA**: Multi-sample anti-aliasing with sample count selection (2x, 4x, 8x)
-- **SMAA**: Subpixel morphological anti-aliasing with preset quality levels
 - **SSAA**: Super-sample anti-aliasing with resolution multipliers (1.5x, 2x, 4x)
 
 ### Performance Features
@@ -282,15 +281,24 @@ src/
 │   ├── main.ts                    # Application entry point
 │   └── app.ts                     # Main application class
 ├── cache/
-│   ├── index.ts                   # Cache module exports
-│   ├── cached-zarr-array.ts       # Cached zarr array access
-│   ├── chunk-prefetcher.ts        # Chunk prefetching logic
-│   ├── decompressed-chunk-cache.ts # Decompressed chunk caching
-│   ├── lru-cache.ts               # LRU cache implementation
-│   ├── opfs-store.ts              # Origin Private File System store
-│   ├── segmented-lru-cache.ts     # Segmented LRU cache
-│   ├── two-level-caching-store.ts # Two-level caching store
-│   └── types.ts                   # Cache type definitions
+│   ├── index.ts                       # Public-API barrel
+│   ├── multi-level-caching-store.ts   # L1+L2 cascade orchestrator
+│   ├── chunk-prefetcher.ts            # Background prefetch loop
+│   ├── decompressed-chunk-cache.ts    # L0 decompressed chunk cache
+│   ├── lru-cache.ts                   # Generic LRU
+│   ├── types.ts                       # Shared cache types
+│   ├── decompressed-chunk-cache/
+│   │   └── cached-zarr-array.ts       # zarrita proxy wrapping L0
+│   └── multi-level-caching-store/
+│       ├── opfs-store.ts              # L2 OPFS persistence
+│       ├── segmented-lru-cache.ts     # L1 segmented LRU
+│       ├── bandwidth-window.ts        # Sliding-window throughput tracker
+│       ├── fetch-retry.ts             # fetchWithRetry + abort/URL helpers
+│       ├── validation-queue.ts        # Cross-instance validation serializer
+│       └── opfs-store/
+│           ├── buckets.ts             # Bucket-handle cache
+│           ├── metadata.ts            # _cache_meta.json lifecycle
+│           └── opfs-timeout.ts        # I/O timeout race helper
 ├── config/
 │   ├── index.ts                   # Unified configuration system
 │   ├── types.ts                   # Configuration type definitions
@@ -349,19 +357,15 @@ src/
 │   ├── gpu-buffer-pool.ts         # GPU buffer pooling and reuse
 │   ├── gsplat-material.ts         # Gaussian splat material
 │   ├── line-material.ts           # Line material
-│   ├── luxar-tone-mapping-effect.ts # Custom tone mapping effect
 │   ├── material-manager.ts        # Material caching and optimization
 │   ├── point-material.ts          # Point material with custom shaders
-│   ├── post-processing-manager.ts # HDR pipeline and bloom effects
-│   ├── postprocessing-types.ts    # Post-processing type definitions
-│   └── robust-vignette-effect.ts  # Vignette effect
+│   └── post-processing/           # Mega-shader post-processing pipeline
+│                                  # (bloom + FXAA + fused per-pixel effects)
 ├── scene/
-│   ├── animation-controller.ts    # Render loop and performance
-│   ├── camera-utils.ts            # Camera type union, type guards, and projection helpers
-│   ├── dimension-animation-manager.ts # Dimension animation management
+│   ├── animation/                 # Animation controller + dimension animation manager
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   ├── scene-manager.ts           # 3D scene and renderer setup
-│   └── scene-manager-utils.ts     # Scene manager utilities
+│   ├── scene-manager.ts           # 3D scene and renderer setup (orchestrator)
+│   └── scene-manager/             # Extracted helpers — camera/, clipping/, render-pipeline/, viewport/
 ├── styles/                        # CSS styles
 │   ├── index.css                  # Main stylesheet
 │   ├── reset.css                  # CSS reset
@@ -620,7 +624,6 @@ renderingControls: {
     fxaaEnabled: false,         // FXAA: Fast post-process AA (disabled by default)
     msaaEnabled: false,         // MSAA: Hardware-accelerated, fast and sharp
     msaaSamples: 4,             // MSAA sample count (2, 4, 8)
-    smaaEnabled: false,         // SMAA: Advanced edge-detection AA
     ssaaEnabled: false,         // SSAA: Supersampling, highest quality, heavy cost
     ssaaMultiplier: 2.0,        // SSAA resolution multiplier (1.5x, 2x, 4x)
   },
@@ -628,9 +631,8 @@ renderingControls: {
 ```
 
 **Anti-Aliasing Notes:**
-- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA or SMAA for scenes with Gaussian splats
+- **MSAA**: Hardware-accelerated, fast and sharp — great default for most scenes. Note: MSAA has limitations with additive blending (used by GSplats); consider FXAA for scenes with Gaussian splats
 - **FXAA**: Fastest post-process AA, may slightly blur the image
-- **SMAA**: Advanced edge detection with preset quality levels (LOW/MEDIUM/HIGH/ULTRA)
 - **SSAA**: Highest quality (supersampling), significant performance cost
 
 ### Performance Optimization
@@ -694,7 +696,7 @@ monitor.toggle();   // Toggle visibility
 
 **Anti-aliasing selection**
 - Try MSAA first (fast, sharp, hardware-accelerated)
-- Use FXAA or SMAA for lightweight post-process smoothing
+- Use FXAA for lightweight post-process smoothing
 - Use SSAA only for final renders (heavy performance cost)
 
 **nD navigation not working**

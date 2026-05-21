@@ -29,9 +29,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InputHandler } from '../../../input/input-handler';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { AnimationController } from '../../../scene/animation-controller';
-import type { PerformanceMonitor } from '../../../ui/monitors/performance-monitor';
-import type { DebugConsole } from '../../../ui/panels/debug-console';
+import type { AnimationController } from '../../../scene/animation/animation-controller';
+import type { PerformanceMonitor } from '../../../ui/performance-monitor';
+import type { DebugConsole } from '../../../ui/debug-console';
 
 function makeSceneManagerStub(): SceneManager {
   // The InputHandler constructor passes sceneManager to
@@ -95,21 +95,22 @@ describe('InputHandler — construction', () => {
   });
 
   it('constructor accepts the four required deps and does not throw', () => {
-    expect(() =>
-      new InputHandler(sceneManager, animationController, performanceMonitor, debugConsole)
+    expect(
+      () => new InputHandler(sceneManager, animationController, performanceMonitor, debugConsole)
     ).not.toThrow();
   });
 
   it('constructor accepts an optional dimensionSlidersFactory', () => {
     const factory = vi.fn();
-    expect(() =>
-      new InputHandler(
-        sceneManager,
-        animationController,
-        performanceMonitor,
-        debugConsole,
-        factory
-      )
+    expect(
+      () =>
+        new InputHandler(
+          sceneManager,
+          animationController,
+          performanceMonitor,
+          debugConsole,
+          factory
+        )
     ).not.toThrow();
   });
 });
@@ -310,9 +311,8 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
   });
 
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {
-    // Sanity: these setters only store local references; if a future
-    // refactor adds panelCoordinator forwarding, this test should be
-    // updated alongside.
+    // Sanity: these setters only store local references. If
+    // panelCoordinator forwarding is added, update this test alongside.
     const handler = makeHandler();
     const coordinator = (
       handler as unknown as {

@@ -162,7 +162,7 @@ cuda/
 │   └── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
 ├── gsplat_model_cuda.py                   # Python model class (GaussianSplatModelCUDA)
 ├── build.py                               # Build script (torch.utils.cpp_extension)
-├── setup.py                               # Legacy setuptools config (optional)
+├── setup.py                               # Optional setuptools config
 ├── benchmark.py                           # Performance benchmarks
 ├── __init__.py
 ├── tests/
@@ -178,22 +178,9 @@ cuda/
 │   ├── test_cuda_fp16.py                  # FP16 mode tests
 │   ├── test_cuda_performance.py           # Performance benchmarks
 │   └── test_cuda_review_fixes.py          # Regression tests
-├── SPECIFICATIONS.md                      # Core algorithms spec
-├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # PyTorch integration spec
-├── SPECIFICATIONS_TESTING.md              # Testing strategy spec
-├── OPTIMIZATION_REPORT.md                 # Tile-based -> splat-centric transition
-├── OPTIMIZATION_ROADMAP.md                # Future optimization plans
-├── EXTENDED_SMEM_PLAN.md                  # Extended shared memory optimization plan
+├── OPTIMIZATION_REPORT.md                 # CUDA optimization results
 └── README.md                              # This file
 ```
-
-## Documentation
-
-The technical specification is split into three files:
-
-- **[SPECIFICATIONS.md](SPECIFICATIONS.md)** - Core algorithms: architecture, kernel designs, memory optimization, gradient computation
-- **[SPECIFICATIONS_PYTORCH_INTEGRATION.md](SPECIFICATIONS_PYTORCH_INTEGRATION.md)** - PyTorch integration, performance targets, implementation phases, references
-- **[SPECIFICATIONS_TESTING.md](SPECIFICATIONS_TESTING.md)** - Comprehensive testing strategy, unit tests, benchmarks
 
 ## References
 
@@ -215,7 +202,6 @@ Key implementations studied:
 - [x] FP16 support (true FP16 kernels with direct global memory load)
 - [x] Splat-centric architecture (3.16x speedup, see OPTIMIZATION_REPORT.md)
 - [x] torch.compile fusion for L->conic conversion
-- [ ] Additional performance optimizations (see OPTIMIZATION_ROADMAP.md)
 
 ## Known Limitations
 

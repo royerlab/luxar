@@ -23,12 +23,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { SceneNode } from '../../../../data/data-loader-types';
-import type { AnimationController } from '../../../../scene/animation-controller';
+import type { AnimationController } from '../../../../scene/animation/animation-controller';
 
-// `showToast` lives in src/ui/helpers; mock so the empty-scene branch
+// `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
 const showToastMock = vi.fn();
-vi.mock('../../../../ui/helpers', () => ({
+vi.mock('../../../../ui/toast', () => ({
   showToast: (msg: string) => showToastMock(msg),
 }));
 
@@ -228,8 +228,7 @@ describe('LayersPanel.dispose', () => {
   });
 
   it('dispose tears down all event listeners attached to row buttons', () => {
-    // Regression for the LayersPanel EventGroup migration: every
-    // addEventListener now goes through this.events.on(...), and
+    // Every addEventListener goes through this.events.on(...), and
     // clear() / dispose() drains the group. After dispose, click
     // events on the (still-rooted) eye button should NOT trigger
     // visibility toggle handlers.
@@ -243,7 +242,7 @@ describe('LayersPanel.dispose', () => {
     expect(eyeBtn).not.toBeNull();
 
     // Internal event group should have non-zero size before dispose.
-     
+
     const events = (panel as any).events as { size: number };
     expect(events.size).toBeGreaterThan(0);
 
@@ -252,7 +251,7 @@ describe('LayersPanel.dispose', () => {
     // After dispose, the group is replaced with a fresh empty one
     // (so a subsequent show()/initFromScene doesn't reuse a disposed
     // group). Either size === 0 OR the group reference changed.
-     
+
     const eventsAfter = (panel as any).events as { size: number };
     expect(eventsAfter.size).toBe(0);
 

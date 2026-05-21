@@ -262,8 +262,8 @@ export interface MonitorUIState {
  *                           wired yet (e.g. mid-scene-transition).
  *
  * Lives in `types/` so the data layer (cache-setup.ts) and the UI
- * layer (cache-metrics-aggregator.ts) can both reference it without
- * crossing the layer boundary.
+ * layer (ui/data-loading-monitor/metrics/cache.ts) can both reference
+ * it without crossing the layer boundary.
  */
 export type CacheTelemetryState =
   | { kind: 'enabled' }

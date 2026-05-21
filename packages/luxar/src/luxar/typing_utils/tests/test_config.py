@@ -71,8 +71,7 @@ class TestConfigConstants:
 class TestValidateChunkBytes:
     """Tests for validate_chunk_bytes function (was validate_chunk_size).
 
-    The constants and function names migrated from "size" (element counts)
-    to "bytes" in commit 9f284ff2; the alias under the old function name is
+    The public API uses byte-sized chunks. The old "size" function name is
     kept as a deprecated shim with a one-release deprecation warning.
     """
 

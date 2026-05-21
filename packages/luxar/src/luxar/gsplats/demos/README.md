@@ -602,9 +602,7 @@ done
 ## Related Documentation
 
 - **Main gsplats README**: `../README.md` - Full package overview
-- **SPECIFICATIONS**: `../SPECIFICATIONS.md` - Mathematical specifications
 - **GLOSSARY**: `../GLOSSARY.md` - Terminology reference
-- **Demo SPECIFICATIONS**: `./SPECIFICATIONS.md` - Detailed demo standards
 
 ---
 
@@ -618,8 +616,6 @@ When adding new demos, follow these standards:
 4. **Headless**: Support `--no-napari` flag via `sys.argv`
 5. **Documentation**: Update this README with new demo entry
 6. **Cross-refs**: Add "Related demos" section in docstring
-
-See `SPECIFICATIONS.md` for complete demo development guidelines.
 
 ---
 

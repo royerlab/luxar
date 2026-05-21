@@ -2,7 +2,7 @@
  * Unit tests for EventQueue
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { EventQueue } from '../../../ui/components/event-queue';
+import { EventQueue } from '../../../ui/data-loading-monitor/event-queue';
 
 interface TestEvent {
   type: string;

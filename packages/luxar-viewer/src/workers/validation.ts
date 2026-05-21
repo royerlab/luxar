@@ -282,8 +282,6 @@ export function validateChunkQueryInputs(
     );
   }
   if (tolerance.length < ndim) {
-    throw new Error(
-      `${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
-    );
+    throw new Error(`${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`);
   }
 }

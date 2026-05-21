@@ -84,12 +84,7 @@ describe('getOrComputeExtendedTolerance', () => {
   });
 
   it('handles multiple extended dims in one call', () => {
-    const result = getOrComputeExtendedTolerance(
-      [0.1, 0.1, 0.1],
-      ['time', 'z'],
-      dims,
-      new Map()
-    );
+    const result = getOrComputeExtendedTolerance([0.1, 0.1, 0.1], ['time', 'z'], dims, new Map());
     expect(result).toEqual([EXTEND_TO_ALL_TOLERANCE, 0.1, EXTEND_TO_ALL_TOLERANCE]);
   });
 
@@ -102,25 +97,15 @@ describe('getOrComputeExtendedTolerance', () => {
 
   it('cache key is order-independent (sorted set semantics)', () => {
     const cache = new Map<string, number[]>();
-    const a = getOrComputeExtendedTolerance(
-      [0.1, 0.1, 0.1],
-      ['time', 'z'],
-      dims,
-      cache
-    );
-    const b = getOrComputeExtendedTolerance(
-      [0.1, 0.1, 0.1],
-      ['z', 'time'],
-      dims,
-      cache
-    );
+    const a = getOrComputeExtendedTolerance([0.1, 0.1, 0.1], ['time', 'z'], dims, cache);
+    const b = getOrComputeExtendedTolerance([0.1, 0.1, 0.1], ['z', 'time'], dims, cache);
     expect(a).toBe(b);
   });
 
   it('throws via the validate path when an extendDim is unknown', () => {
-    expect(() =>
-      getOrComputeExtendedTolerance([0.1, 0.1, 0.1], ['oops'], dims, new Map())
-    ).toThrow(/Invalid extend_to_all/);
+    expect(() => getOrComputeExtendedTolerance([0.1, 0.1, 0.1], ['oops'], dims, new Map())).toThrow(
+      /Invalid extend_to_all/
+    );
   });
 
   it('silently ignores extendDims whose index is out of range for tolerance length', () => {

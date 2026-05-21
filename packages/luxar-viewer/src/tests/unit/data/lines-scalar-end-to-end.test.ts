@@ -16,7 +16,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { LinesDataAccumulator } from '../../../data/utils/data-accumulator';
+import { LinesDataAccumulator } from '../../../data/accumulators/lines';
 import { projectLinesTo3D } from '../../../data/lines/projection';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import {
@@ -24,7 +24,7 @@ import {
   updateInstancedLinesMesh,
   type InstancedLinesMeshConfig,
 } from '../../../rendering/line-geometry';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 
@@ -54,10 +54,7 @@ function loadedLines({
   };
 }
 
-function meshConfig(
-  data: ProcessedLinesData,
-  withScalars: boolean
-): InstancedLinesMeshConfig {
+function meshConfig(data: ProcessedLinesData, withScalars: boolean): InstancedLinesMeshConfig {
   const base: InstancedLinesMeshConfig = {
     startPositions: data.startPositions,
     endPositions: data.endPositions,
@@ -288,9 +285,13 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     pool.updateLinesGeometry(g, processed, 2);
     expect(g.hasAttribute('aStartScalar')).toBe(true);
     expect(g.hasAttribute('aEndScalar')).toBe(true);
-    const startAttr = g.getAttribute('aStartScalar') as THREE.BufferAttribute;
-    expect((startAttr.array as Float32Array)[0]).toBeCloseTo(0.1);
-    expect((startAttr.array as Float32Array)[1]).toBeCloseTo(0.9);
+    // Pooled attributes are now `InterleavedBufferAttribute` views
+    // over a shared `InstancedInterleavedBuffer` — `.array[0]` reads
+    // the first float of the stride (not necessarily this attribute's
+    // first value). Use the semantic `getX(i)` API instead.
+    const startAttr = g.getAttribute('aStartScalar');
+    expect(startAttr.getX(0)).toBeCloseTo(0.1);
+    expect(startAttr.getX(1)).toBeCloseTo(0.9);
   });
 
   it('growLinesGeometry preserves scalar attribute contents on resize', () => {
@@ -314,22 +315,36 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
       segmentCount: 2,
     };
     pool.updateLinesGeometry(g, small, 2);
-    const startBefore = g.getAttribute('aStartScalar') as THREE.BufferAttribute;
-    const endBefore = g.getAttribute('aEndScalar') as THREE.BufferAttribute;
-    const startCapacityBefore = (startBefore.array as Float32Array).length;
-    const endCapacityBefore = (endBefore.array as Float32Array).length;
+    // Pre-grow capacity = floor(buffer.array.length / stride), reads
+    // through the interleaved view (every per-instance attribute on a
+    // pooled line geometry shares one buffer).
+    const startBefore = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
+    const endBefore = g.getAttribute('aEndScalar') as THREE.InterleavedBufferAttribute;
+    const capacityBefore = Math.floor(
+      (startBefore.data.array as Float32Array).length / startBefore.data.stride
+    );
+    const endCapacityBefore = Math.floor(
+      (endBefore.data.array as Float32Array).length / endBefore.data.stride
+    );
 
     // Force growth by acquiring with a much larger count for the same nodeId.
     pool.acquireLinesGeometry('l-grow', 200);
-    const startAfter = g.getAttribute('aStartScalar') as THREE.BufferAttribute;
-    const endAfter = g.getAttribute('aEndScalar') as THREE.BufferAttribute;
-    expect((startAfter.array as Float32Array).length).toBeGreaterThan(startCapacityBefore);
-    expect((endAfter.array as Float32Array).length).toBeGreaterThan(endCapacityBefore);
-    // Preserved contents at indices [0, 1].
-    expect((startAfter.array as Float32Array)[0]).toBeCloseTo(0.25);
-    expect((startAfter.array as Float32Array)[1]).toBeCloseTo(0.75);
-    expect((endAfter.array as Float32Array)[0]).toBeCloseTo(0.5);
-    expect((endAfter.array as Float32Array)[1]).toBeCloseTo(1.0);
+    const startAfter = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
+    const endAfter = g.getAttribute('aEndScalar') as THREE.InterleavedBufferAttribute;
+    const capacityAfter = Math.floor(
+      (startAfter.data.array as Float32Array).length / startAfter.data.stride
+    );
+    const endCapacityAfter = Math.floor(
+      (endAfter.data.array as Float32Array).length / endAfter.data.stride
+    );
+    expect(capacityAfter).toBeGreaterThan(capacityBefore);
+    expect(endCapacityAfter).toBeGreaterThan(endCapacityBefore);
+    // Preserved contents at indices [0, 1] — semantic accessors handle
+    // the new strided storage transparently.
+    expect(startAfter.getX(0)).toBeCloseTo(0.25);
+    expect(startAfter.getX(1)).toBeCloseTo(0.75);
+    expect(endAfter.getX(0)).toBeCloseTo(0.5);
+    expect(endAfter.getX(1)).toBeCloseTo(1.0);
   });
 
   it('reuses scalar attributes on subsequent commits', () => {
@@ -352,12 +367,11 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
       segmentCount: 1,
     });
     pool.updateLinesGeometry(g, make(0.1, 0.2), 1);
-    const attr1 = g.getAttribute('aStartScalar');
+    const attr1 = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
     pool.updateLinesGeometry(g, make(0.5, 0.6), 1);
-    const attr2 = g.getAttribute('aStartScalar');
-    expect(attr2).toBe(attr1); // same instance — buffer reused
-    const arr = attr2.array as Float32Array;
-    expect(arr[0]).toBeCloseTo(0.5);
+    const attr2 = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
+    expect(attr2).toBe(attr1); // same view instance — interleaved buffer reused
+    expect(attr2.getX(0)).toBeCloseTo(0.5);
   });
 });
 
@@ -390,10 +404,10 @@ describe('line-geometry mesh creation/update', () => {
       endScalars: new Float32Array([0.75]),
     };
     updateInstancedLinesMesh(mesh, updated);
-    const startAttr = mesh.geometry.getAttribute(
-      'aStartScalar'
-    ) as THREE.InstancedBufferAttribute;
-    expect((startAttr.array as Float32Array)[0]).toBeCloseTo(0.25);
+    const startAttr = mesh.geometry.getAttribute('aStartScalar');
+    // Pooled / standalone line attributes are now interleaved views —
+    // use `getX(i)` for semantic per-instance reads.
+    expect(startAttr.getX(0)).toBeCloseTo(0.25);
   });
 });
 

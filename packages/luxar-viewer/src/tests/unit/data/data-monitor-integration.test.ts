@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DataMonitorManager, cycleDataMonitor } from '../../../ui/monitors/data-monitor-manager';
+import { DataMonitorManager, cycleDataMonitor } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import type { LoaderMonitor, MonitorEvent } from '../../../types/data-monitor-types';
 
@@ -102,7 +102,7 @@ vi.mock('three', () => ({
   AgXToneMapping: 5,
   NeutralToneMapping: 6,
   CustomToneMapping: 7,
-  PCFSoftShadowMap: 2,
+  PCFShadowMap: 1,
   // Blending modes
   NormalBlending: 'NormalBlending',
   AdditiveBlending: 'AdditiveBlending',

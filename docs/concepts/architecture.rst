@@ -629,6 +629,5 @@ Next Steps
 ----------
 
 * **Try it**: Start with a Quick Start from any package README
-* **Read specs**: SPECIFICATIONS.md files explain algorithms in depth
 * **Explore code**: Well-documented with extensive examples
 * **Ask questions**: GitHub issues/discussions

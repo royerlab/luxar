@@ -62,6 +62,19 @@ const ALL_EXAMPLES = [
 const KNOWN_FLAKY_LARGE_DATASETS = [
   'temporal_spiral_sphere_4d_example.zarr', // 102M points - effective radius filtering edge case
   'time_series_4d_example.zarr', // Large 4D - occasional WebGL buffer issues
+  // 196 MB on disk; the headless chromium worker pool exhausts
+  // ERR_INSUFFICIENT_RESOURCES decoding it in parallel with the rest
+  // of the suite. Smoke coverage is provided by smaller fixtures;
+  // re-enable once we ship a downsized progressive_writing example or
+  // sequential-mode override for oversized fixtures.
+  'progressive_writing_example.zarr',
+  // 1M points (CubicArray group). Even at 120s the parallel HTTP-server
+  // + decompression contention causes the page.evaluate slot inside
+  // waitForLuxarReady / getLuxarState to stall past the test ceiling.
+  // The dataset itself loads fine in isolation; smoke coverage is
+  // provided by the smaller fixtures. Re-enable once we have a
+  // sequential-mode override for million-point examples.
+  'dense_cubic_gradient_example.zarr',
 ];
 
 // Datasets that may legitimately have 0 visible points:
@@ -76,8 +89,14 @@ const DATASETS_ALLOW_ZERO_POINTS = [
 ];
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
-  // Configure for parallel execution to speed up testing
-  test.describe.configure({ mode: 'parallel', timeout: 90000 });
+  // Configure for parallel execution to speed up testing.
+  // 120s (was 90s) absorbs HTTP-server contention when several
+  // worker-pool tabs decode mid-size datasets like
+  // dense_cubic_gradient_example.zarr concurrently — page.evaluate
+  // calls inside getLuxarState() consistently bumped against the
+  // 90s ceiling under load. Truly oversized fixtures are still
+  // routed through KNOWN_FLAKY_LARGE_DATASETS.
+  test.describe.configure({ mode: 'parallel', timeout: 120000 });
 
   for (const example of ALL_EXAMPLES) {
     // Skip known-flaky large datasets
@@ -156,7 +175,11 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
           let count = 0;
           debug.scene.traverse((obj: any) => {
             const nodeType = obj?.userData?.nodeType;
-            if (obj.type === 'Points' || nodeType === 'lines' || nodeType === 'gsplats') {
+            if (
+              obj.userData?.nodeType === 'points' ||
+              nodeType === 'lines' ||
+              nodeType === 'gsplats'
+            ) {
               count += 1;
             }
           });

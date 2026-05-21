@@ -130,10 +130,10 @@ describe('colormap-textures', () => {
   });
 
   // ==========================================================================
-  // B.2 — scoped disposal + bounded LRU for custom LUT cache
+  // Scoped disposal + bounded LRU for custom LUT cache
   // ==========================================================================
 
-  describe('B.2: custom LUT cache is bounded LRU', () => {
+  describe('custom LUT cache is bounded LRU', () => {
     function makeLut(seed: number): Uint8Array {
       const lut = new Uint8Array(768);
       for (let i = 0; i < 768; i++) {
@@ -146,7 +146,10 @@ describe('colormap-textures', () => {
       disposeColormapTextures(); // clean slate
       // Load 20 unique LUTs; cache must not exceed 16, and the first 4 should
       // have been disposed.
-      const created: { tex: ReturnType<typeof createCustomColormapTexture>; disposed: () => boolean }[] = [];
+      const created: {
+        tex: ReturnType<typeof createCustomColormapTexture>;
+        disposed: () => boolean;
+      }[] = [];
       for (let i = 0; i < 20; i++) {
         const tex = createCustomColormapTexture(makeLut(i));
         // Detect disposed state by spying on the dispose method post-hoc.
@@ -176,7 +179,7 @@ describe('colormap-textures', () => {
     });
   });
 
-  describe('B.2: scoped disposal', () => {
+  describe('scoped disposal', () => {
     function makeLut(seed: number): Uint8Array {
       const lut = new Uint8Array(768);
       for (let i = 0; i < 768; i++) lut[i] = (seed + i) % 256;

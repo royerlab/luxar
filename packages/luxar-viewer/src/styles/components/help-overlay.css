@@ -2,7 +2,7 @@
  * Help Overlay Component Styles
  *
  * Keyboard shortcuts and controls reference panel.
- * Used by showHelpOverlay() in ui/helpers.ts
+ * Used by showHelpOverlay() in ui/help-overlay.ts
  */
 
 .luxar-help-overlay {

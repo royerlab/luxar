@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/navigation-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/navigation-setup.ts.
  *
  * Stubs the GUI/Folder + sceneManager + animationController + the two
  * setup-context callbacks, then verifies that setupNavigationControls
@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SetupContext } from '../../../../ui/rendering-controls/types';
-import { setupNavigationControls } from '../../../../ui/rendering-controls/navigation-setup';
+import { setupNavigationControls } from '../../../../ui/rendering-controls/setup/navigation-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

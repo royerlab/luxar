@@ -3,10 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  extractBaseUrl,
-  extractPath,
-} from '../../../ui/panels/dataset-url-utils';
+import { extractBaseUrl, extractPath } from '../../../ui/dataset-browser/url-utils';
 
 const ORIGIN = 'http://example.test:8000';
 
@@ -40,7 +37,7 @@ describe('extractBaseUrl', () => {
 
   it('handles a top-level .zarr by returning the bare origin', () => {
     // Stripping the dataset segment leaves an empty path; the result is
-    // origin + '/' (one slash), not the historical '//' double-slash.
+    // origin + '/' (one slash), not a '//' double-slash.
     expect(extractBaseUrl('http://x.test/foo.zarr', ORIGIN)).toBe('http://x.test/');
   });
 });

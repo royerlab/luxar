@@ -20,10 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CSS_PATH = resolve(
-  HERE,
-  '../../../styles/components/data-loading-monitor.css'
-);
+const CSS_PATH = resolve(HERE, '../../../styles/components/data-loading-monitor.css');
 
 /**
  * Strip every `@media (...) { ... }` block. The cache layout rules

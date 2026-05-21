@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Folder } from '../../../../../ui/gui/core/folder';
+import { Folder } from '../../../../../ui/gui/folder';
 
 describe('Folder', () => {
   let folder: Folder;

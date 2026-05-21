@@ -93,37 +93,6 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 ---
 
-### Sharpness (s)
-
-> **Note:** Per-splat sharpness was removed from the model. These entries are retained for historical context.
-
-**Definition**: Controls edge falloff in generalized Gaussian: `exp(-0.5 * ||y||^s)`
-
-**Shape**: `(,)` for single splat (scalar), `(N,)` for batch
-
-**Parameter names**:
-- `sharpness_offsets_raw`: Learnable parameter (s' where `s = 2 * exp(s')`)
-- `sharpness` or `s`: Transformed parameter (always positive)
-
-**Values**:
-- `s = 2`: Standard Gaussian (default)
-- `s > 2`: Sharper edges, more compact support
-- `s < 2`: Softer edges, heavier tails
-
-**Standard terms**:
-- ✅ **Sharpness** (preferred)
-- ✅ **s** (mathematical notation)
-- ✅ **Sharpness offset s'** (for learnable parameter)
-
-**Avoid**:
-- ❌ Shape parameter
-- ❌ Falloff rate
-- ❌ Edge parameter
-
-**Rationale**: "Sharpness" intuitively describes the visual effect (sharp vs soft edges).
-
----
-
 ## Operations
 
 ### Seeding
@@ -214,7 +183,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ❌ LR adjustment (doesn't explain why)
 - ❌ Dimensional compensation (unclear)
 
-**Related**: See [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → `calculate_gradient_dilution_factor()`
+**Related**: See [utils/README.md](./utils/README.md) → `calculate_gradient_dilution_factor()`
 
 ---
 
@@ -237,7 +206,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 **Benefit**: 50x+ faster optimization with simpler architecture
 
-**Related**: See [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → create_optimizer_and_scheduler
+**Related**: See [optim/README.md](./optim/README.md) → create_optimizer_and_scheduler
 
 ---
 
@@ -256,7 +225,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ❌ Peak performance (vague)
 - ❌ Checkpoint (implies persistence)
 
-**Related**: See [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) → Best State Tracking
+**Related**: See [fitting/README.md](./fitting/README.md) → Best State Tracking
 
 ---
 
@@ -388,7 +357,6 @@ These are the actual `nn.Parameter` objects that PyTorch optimizes:
 - **`raw_L_diag`**: Diagonal elements → `σ_min + softplus(raw_L_diag)` gives positive diagonals
 - **`L_off`**: Off-diagonal elements (unconstrained, no activation needed)
 - **`raw_a`**: Amplitudes → `softplus(raw_a)` gives non-negative amplitudes
-- **`sharpness_offsets_raw`**: Sharpness offsets (s') → `2 * exp(s')` gives sharpness s
 
 **Convention**: Use `raw_` prefix for parameters that need activation functions
 
@@ -400,7 +368,6 @@ These are the actual values used in rendering and returned by `current_params()`
 - **`centers`** or **`μ`**: Center positions in voxel coordinates, shape `(N, d)`
 - **`L`** or **`Ls`**: Cholesky factors (lower-triangular), shape `(N, d, d)`
 - **`amps`** or **`a`**: Amplitudes (non-negative), shape `(N,)`
-- **`sharpness`** or **`s`**: Sharpness values (positive), shape `(N,)`
 
 **Convention**: Use descriptive names without `raw_` prefix
 
@@ -449,32 +416,6 @@ These are user-facing configuration options:
 
 ---
 
-### s (sharpness)
-
-> **Note:** Per-splat sharpness was removed from the model. These entries are retained for historical context.
-
-**Meaning**: Generalized Gaussian exponent
-
-**Formula**: `I(x) = a * scale * max(0, exp(-0.5 * ||y||^s) - C)` (shifted truncation, C⁰ continuous)
-
-**Range**: s > 0 (positive real numbers)
-- s=2: Standard Gaussian
-- s>2: Sharper edges
-- s<2: Softer edges
-
----
-
-### s' (sharpness offset)
-**Meaning**: Learnable parameter for sharpness
-
-**Relationship**: `s = 2 * exp(s')`
-
-**Zero-centered**: s'=0 → s=2 (standard Gaussian is natural default)
-
-**Range**: s' ∈ ℝ (unconstrained real numbers)
-
----
-
 ## Optimization Concepts
 
 ### Gradient Dilution Compensation
@@ -489,7 +430,7 @@ These are user-facing configuration options:
 
 **Formula**: `effective_lr = base_lr × gradient_dilution_factor`
 
-**See**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → `calculate_gradient_dilution_factor()`
+**See**: [utils/README.md](./utils/README.md) → `calculate_gradient_dilution_factor()`
 
 ---
 
@@ -518,12 +459,10 @@ These are user-facing configuration options:
 **Parameter names**:
 - `l1_amp`: L1 on amplitudes
 - `l1_diag`: L1 on diagonal elements
-- `l1_sharpness`: L1 on sharpness offsets
 
 **Proportional defaults**: All default to proportion of base learning rate
 - `l1_amp = 0.1 * lr` (10% of base LR)
 - `l1_diag = 0.01 * lr` (1% of base LR)
-- `l1_sharpness = 0.01 * lr` (1% of base LR)
 
 ---
 
@@ -557,7 +496,7 @@ These are user-facing configuration options:
 
 **Default**: 3.0σ (captures ~99.7% of Gaussian mass)
 
-**Effect on sharpness**: Adjusted by `effective_truncate = truncate^(2/s)`
+**Effect**: Limits evaluation to the radius where the Gaussian contribution is negligible.
 
 ---
 
@@ -610,27 +549,27 @@ When referencing modules in documentation:
 ---
 
 ### Package Paths
-When referencing package specifications:
+When referencing other packages:
 
-**Format**: `[Package Name](./relative/path/SPECIFICATIONS.md)`
+**Format**: `[Package Name](./relative/path/README.md)`
 
 **Examples**:
-- [Main SPECIFICATIONS.md](../SPECIFICATIONS.md)
-- [fitting/SPECIFICATIONS.md](../fitting/SPECIFICATIONS.md)
-- [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
+- [Main README](../README.md)
+- [fitting/README.md](../fitting/README.md)
+- [optim/README.md](../optim/README.md)
 
-**Convention**: Always use relative paths from current spec location
+**Convention**: Always use relative paths from the current document.
 
 ---
 
 ## Usage Guidelines
 
-### When Writing Specifications
+### When Writing Documentation
 
 1. **Use standard terms** from this glossary
 2. **Avoid synonyms** (pick one term and stick with it)
 3. **Define on first use** if not in glossary
-4. **Cross-reference** other specs using standard format
+4. **Cross-reference** other docs using standard format
 5. **Update glossary** when introducing new concepts
 
 ### When Writing Code
@@ -659,7 +598,6 @@ When referencing package specifications:
 | Centers (μ) | Positions, means, locations |
 | Amplitudes (a) | Weights, intensities |
 | Cholesky factors (L) | Covariance matrices |
-| Sharpness (s) | Shape parameter |
 | Seeding | Initialization, spawning |
 | Pruning | Deleting, culling |
 | Dynamic operations | Splat management |
@@ -676,16 +614,15 @@ When referencing package specifications:
 | Diagonal | `raw_L_diag` | `L` (diagonal) | `sigma_min_diag`, `sigma_max_diag` |
 | Off-diagonal | `L_off` | `L` (off-diag) | - |
 | Amplitude | `raw_a` | `amps`, `a` | - |
-| Sharpness | `sharpness_offsets_raw` | `sharpness`, `s` | - |
 
 ---
 
 ## See Also
 
-- **Main Specification**: [SPECIFICATIONS.md](./SPECIFICATIONS.md) - Complete technical specification
-- **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) - Pipeline architecture
-- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Standard Adam with gradient dilution
-- **Dynamic Operations**: [fitting/dynamic_ops/SPECIFICATIONS.md](./fitting/dynamic_ops/SPECIFICATIONS.md) - Fixed-pool relocation
-- **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch models
-- **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Mathematical utilities
-- **Multi-Scale**: [multiscale/SPECIFICATIONS.md](./multiscale/SPECIFICATIONS.md) - Image decomposition
+- **Main package**: [README.md](./README.md)
+- **Fitting Pipeline**: [fitting/README.md](./fitting/README.md)
+- **Optimizers**: [optim/README.md](./optim/README.md) - Standard Adam with gradient dilution
+- **Dynamic Operations**: [fitting/dynamic_ops/README.md](./fitting/dynamic_ops/README.md) - Fixed-pool relocation
+- **Models**: [models/README.md](./models/README.md) - PyTorch models
+- **Utilities**: [utils/README.md](./utils/README.md) - Mathematical utilities
+- **Multi-Scale**: [multiscale/README.md](./multiscale/README.md) - Image decomposition

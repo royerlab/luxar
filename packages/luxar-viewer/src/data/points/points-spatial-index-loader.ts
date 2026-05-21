@@ -45,7 +45,7 @@ import type {
   LoaderMetrics,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from '../loaders';
 import { loadColorRanges } from '../loaders/color-attribute-utils';
 import { OnceInit } from '../loaders/once-init';
@@ -55,10 +55,12 @@ import {
 } from '../loaders/extend-to-all-preflight';
 import type { ZarrSceneAttrs } from '../../types/zarr';
 import type { PointsMetadata } from '../../types/points';
-import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../accumulators/points';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 type WritableNumericArray = {
   length: number;
@@ -826,8 +828,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     warnExtendToAllNoDimensions({
       extendDims,
-      hasResolvedDimensions:
-        !!viewState.dimensions && viewState.dimensions.length > 0,
+      hasResolvedDimensions: !!viewState.dimensions && viewState.dimensions.length > 0,
       nodePath: this.node.path,
       logModule: Modules.SPATIAL_INDEX_LOADER,
     });
@@ -973,7 +974,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // The synthetic array_ref attrs has no usable .arrays handle of its own —
     // pass the same Float32Array-shaped placeholder the original code did
     // and let the helper switch into ref-resolution.
-    const placeholder = {} as zarr.Array<zarr.DataType, zarr.FetchStore>;
+    const placeholder = {} as zarr.Array<zarr.DataType, zarr.Readable>;
     const storeToUse = this.zarrStore || this.zarrLocation.store;
     return this.rangeLoader.loadRangesResolvingRef(
       placeholder,
@@ -1338,7 +1339,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private createEmptyPointsData(viewState: ViewState): LoadedPointsData {
     return createEmptyPointsDataHelper(this.buildProjectionContext(), viewState);
   }
-
 
   // LoaderMonitor implementation
 

@@ -78,7 +78,7 @@ exclude_patterns = [
     "Thumbs.db",
     ".DS_Store",
     "templates",
-    # Historical/internal docs not part of the main documentation build
+    # Archived/internal docs not part of the main documentation build
     "archive/**",
     "benchmarks/**",
     "bugs/**",

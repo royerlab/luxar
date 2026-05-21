@@ -420,7 +420,6 @@ The Makefile follows consistent naming conventions with **action-first** pattern
     /user/                 # User guides (format, HDR, testing)
     /developer/            # Developer guides (style, console, network)
     /specs/                # Technical specs (cache, dimensions, lines)
-  /templates/              # Templates (SPECIFICATIONS_TEMPLATE.md)
   /api/                    # Sphinx API reference files (.rst)
   /concepts/               # Architecture and concepts (.rst)
   /tutorials/              # Step-by-step tutorials (.rst)
@@ -431,7 +430,6 @@ The Makefile follows consistent naming conventions with **action-first** pattern
 
 **Every Python subpackage MUST have**:
 - `README.md` - Purpose, key classes, usage examples
-- `SPECIFICATIONS.md` - Algorithms, data structures, behavior specification (use template in `docs/templates/`)
 
 **Every TypeScript package has**:
 - `README.md` in `/src/{package}/` - Keep in sync with code changes
@@ -538,7 +536,8 @@ npx playwright test custom-gui-library.spec.ts layers-panel.spec.ts recording-pa
 npx playwright test error-recovery.spec.ts webgl-errors.spec.ts
 
 # Performance & monitoring
-npx playwright test performance-tracking.spec.ts data-monitor-metrics.spec.ts
+# (performance-tracking now lives in the opt-in perf suite — see `pnpm test:perf:e2e`)
+npx playwright test data-monitor-metrics.spec.ts
 
 # Demos & first-time UX
 npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts first-time-ux.spec.ts
@@ -767,7 +766,6 @@ pnpm run format                  # Format TypeScript (from luxar-viewer/)
 Before PR/merge:
 - Full E2E suite: `cd packages/luxar-viewer && pnpm test:e2e`
 - Update READMEs if functionality changed
-- Update SPECIFICATIONS.md if algorithms changed
 - Update LUXAR_ZARR_FORMAT.md if data format changed
 
 ---
@@ -778,7 +776,7 @@ Before PR/merge:
 2. **Complete before perfect** - Avoid over-engineering
 3. **Minimum viable solution** - Don't add features/refactoring beyond what's asked
 4. **Test everything** - Never skip tests, fix or mock them properly
-5. **Keep docs in sync** - Update READMEs and specs with code changes
+5. **Keep docs in sync** - Update READMEs with code changes
 6. **Use existing patterns** - Follow codebase conventions
 7. **Multiple Agents at Work** - Other agents are likely at work on the same codebase and files, be mindful and careful to not delete/destroy/stash the work of the other agents.
 8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action. **ALWAYS use the `AskUserQuestion` interactive tool** for any decision point — never pose choices as inline prose. If the tool isn't loaded, load it via `ToolSearch` first.
@@ -804,7 +802,6 @@ Before PR/merge:
 | Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
 | Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
 | Changelog | `CHANGELOG.md` |
-| Spec Template | `docs/templates/SPECIFICATIONS_TEMPLATE.md` |
 
 ---
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { OPFSStore } from '../../../cache/opfs-store';
+import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
 // Mock File System Access API
 const createMockFileSystem = () => {
@@ -444,7 +444,11 @@ describe('OPFSStore', () => {
         async getFileHandle() {
           return {
             async getFile() {
-              return { async arrayBuffer() { return new ArrayBuffer(0); } };
+              return {
+                async arrayBuffer() {
+                  return new ArrayBuffer(0);
+                },
+              };
             },
             async createWritable() {
               throw new Error('ENOSPC: simulated I/O failure');
@@ -849,9 +853,7 @@ describe('OPFSStore', () => {
             };
           },
           async estimate() {
-            return quotaReportsFull
-              ? { quota: 100, usage: 100 }
-              : { quota: 10e9, usage: 1e9 };
+            return quotaReportsFull ? { quota: 100, usage: 100 } : { quota: 10e9, usage: 1e9 };
           },
         },
       });
@@ -942,11 +944,7 @@ describe('OPFSStore', () => {
           },
         },
       });
-      const noOpfsStore = new OPFSStore(
-        'no-opfs-id',
-        'https://example.com',
-        100 * 1024 * 1024
-      );
+      const noOpfsStore = new OPFSStore('no-opfs-id', 'https://example.com', 100 * 1024 * 1024);
       // init() should swallow the failure and leave opfsRoot null.
       await noOpfsStore.init();
       expect(noOpfsStore.getStats().available).toBe(false);

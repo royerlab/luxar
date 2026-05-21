@@ -13,52 +13,57 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/notifier';
 import { config } from '../config';
-import { extractCameraOverrides } from '../config/viewer-config-utils';
+import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
+import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
+import { BoundingBox } from './scene-manager/clipping/bounds-math';
 import {
-  detectHDRCapabilities,
-  configureHDRRenderer,
-  logHDRCapabilities,
-} from '../utils/hdr-detection';
+  SceneBoundsCache,
+  computeBoundsFromMetadata,
+} from './scene-manager/clipping/scene-bounds-cache';
 import {
-  validateFOV,
-  getBoundingBoxDiagonal,
-  getBoundingBoxCenter,
-  BoundingBox,
-  BoundingSphere,
-  boundingBoxToSphere,
-  calculateClippingPlanesFromSphere,
-  projectBoundsToDisplayDims,
-  SPHERE_SAFETY_EXPANSION,
-  MIN_NEAR_PLANE,
-} from './scene-manager-utils';
+  type ClippingCtx,
+  applyClippingPlanes,
+  autoAdjustFromBounds,
+  updateDynamicFromCache,
+} from './scene-manager/clipping/clipping-policy';
+import {
+  type CameraMaterialsCtx,
+  updateMaterialsForCurrentCamera as updateCameraMaterials,
+  adjustFOV,
+} from './scene-manager/camera/camera-materials';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { sceneDimsManager } from './scene-dims-manager';
 import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
-} from './scene-setup/scene-disposal';
+} from './scene-manager/render-pipeline/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
-} from './scene-setup/camera-setup';
+} from './scene-manager/camera/camera-setup';
 import {
-  computeSceneBoundingBox,
-  fitCameraToBounds,
-} from './scene-setup/camera-framing';
-import { WebGLContextRecovery } from './scene-setup/webgl-context-recovery';
+  autoFrameCamera,
+  centerCameraOnScene,
+  centerOnOrigin,
+} from './scene-manager/camera/camera-framing';
 import {
-  type LuxarCamera,
-  isPerspectiveCamera,
-  isOrthographicCamera,
-  getCameraFovRadians,
-  updateCameraAspect,
-  getOrthoFrustumHeight,
-} from '../utils/camera-utils';
+  type CameraModeCtx,
+  setControlType as cameraModeSetControlType,
+} from './scene-manager/camera/camera-mode';
+import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  createWebGLRenderer,
+  createWebGPURenderer,
+  selectBackend,
+} from './scene-manager/render-pipeline/renderer-setup';
+import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
+import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
+import { computePixelRatioOverride } from './scene-manager/viewport/dpr-policy';
+import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
 
 /**
@@ -92,9 +97,42 @@ export class SceneManager extends THREE.EventDispatcher<{
    * post-processing + material cache before dispatching.
    */
   'webgl-context-restored': {};
+  /**
+   * Fired when the WebGPU device.lost Promise resolves. Treated as
+   * **unrecoverable** in this release — Luxar does not rebuild GPU
+   * resources after WebGPU device loss; the host application is
+   * expected to prompt for a reload. See
+   * `setupContextLossHandling` for the rationale.
+   *
+   * Payload carries the diagnostic reason / message returned by the
+   * browser's `GPUDevice.lost` info struct (both may be undefined
+   * when the browser doesn't supply them).
+   */
+  'webgpu-device-lost': { reason?: string; message?: string };
 }> {
-  /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
-  public renderer!: THREE.WebGLRenderer;
+  /**
+   * The graphics-API renderer. Holds the `Renderer` union honestly:
+   * a `THREE.WebGLRenderer` on the default path, or a `WebGPURenderer`
+   * when opted in via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`
+   * (which itself may dispatch to a real WebGPU adapter or transparently
+   * fall back to its internal WebGL2 backend depending on browser support).
+   *
+   * Every method called on this field across the codebase
+   * (`PostProcessingManager`, `picking-system`, `BloomChain`,
+   * `FxaaPass`, UI panels) is part of the common `Renderer` surface
+   * in Three r184 — no `WebGLRenderer`-only API is used
+   * unconditionally. The discriminator for callers that genuinely
+   * must branch is `this.capabilities.apiSurface` (see
+   * `RendererCapabilities`).
+   */
+  public renderer!: Renderer;
+
+  /**
+   * Capabilities snapshot for the active renderer. Hides raw-GL queries
+   * behind a typed interface so the eventual WebGPU port has a single
+   * implementation seam.
+   */
+  public capabilities!: RendererCapabilities;
 
   /** Three.js scene graph - container for all 3D objects and lights */
   public scene!: THREE.Scene;
@@ -118,8 +156,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   private lastBoundingBoxCenter: THREE.Vector3 = new THREE.Vector3();
 
   /** Resize debouncing with requestAnimationFrame for smooth resizing */
-  private resizeRAF: number | null = null;
-  private pendingResize: { width: number; height: number } | null = null;
+  private resizer = new ResizeOrchestrator();
 
   /**
    * WebGL context-loss / restoration concern. Constructed lazily in
@@ -129,8 +166,18 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   private contextRecovery: WebGLContextRecovery | null = null;
 
-  /** When true, resize events are suppressed (used during recording to prevent resolution changes) */
-  public resizeLocked: boolean = false;
+  /**
+   * When true, resize events are suppressed (used during recording to
+   * prevent resolution changes). Delegated to ResizeOrchestrator —
+   * exposed as a getter/setter so recording-panel.ts continues to read
+   * + write `sceneManager.resizeLocked` directly.
+   */
+  get resizeLocked(): boolean {
+    return this.resizer.resizeLocked;
+  }
+  set resizeLocked(v: boolean) {
+    this.resizer.resizeLocked = v;
+  }
 
   /** Cached ortho zoom level to avoid redundant material updates during panning */
   private lastOrthoZoom: number = 1;
@@ -139,13 +186,26 @@ export class SceneManager extends THREE.EventDispatcher<{
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
 
-  /** Cached scene bounds (invalidated on scene load/clear, lazily recomputed) */
-  private _cachedBounds: BoundingBox | null = null;
-  private _cachedSphere: BoundingSphere | null = null;
-  private _cachedNearCull: number = 0.1;
+  /**
+   * Cached scene bounds + bounding sphere + near-cull margin.
+   * Invalidated on scene load/clear; lazily recomputed by
+   * `boundsCache.ensure(scene)`.
+   */
+  private readonly boundsCache = new SceneBoundsCache();
 
   /** Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation) */
   private readonly _bufferSize = new THREE.Vector2();
+
+  /**
+   * Explicit DPR selected by adaptive/manual resolution control.
+   *
+   * `null` means "track the browser's native `window.devicePixelRatio`".
+   * Non-null values must survive ordinary window resizes; otherwise a
+   * resize event immediately after a manual DPR change silently restores
+   * native resolution while the AdaptiveDPRManager/UI still reports the
+   * reduced DPR.
+   */
+  private pixelRatioOverride: number | null = null;
 
   /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
   get currentFov(): number {
@@ -203,6 +263,25 @@ export class SceneManager extends THREE.EventDispatcher<{
   private debug: boolean = false;
 
   /**
+   * Optional per-instance backend override. When set, `setupRenderer`
+   * uses it instead of consulting the env var. Threaded from the
+   * `?renderer=webgl|webgpu` URL parameter through `LuxarAppOptions`.
+   */
+  private rendererOverride: 'webgl' | 'webgpu' | undefined;
+  /**
+   * Diagnostic WebGPURenderer mode. When true and the selected renderer is
+   * WebGPURenderer, pass `{ forceWebGL: true }` so Three.js uses its
+   * internal WebGL2 backend while Luxar still dispatches TSL materials.
+   */
+  private webgpuForceWebGL = false;
+
+  /**
+   * Opt-in to `WebGPURenderer({ trackTimestamp: true })` for the perf
+   * bench. Off by default; flipped via `?perf-timestamp` URL param.
+   */
+  private perfTimestamp = false;
+
+  /**
    * Initialize the renderer pipeline.
    *
    * @param options.canvas - The HTMLCanvasElement to render into. Callers
@@ -211,19 +290,44 @@ export class SceneManager extends THREE.EventDispatcher<{
    *   SceneManager performs no DOM lookups of its own.
    * @param options.debug - Verbose hardware/runtime logging.
    */
-  async init(options: { canvas: HTMLCanvasElement; debug?: boolean }): Promise<void> {
+  async init(options: {
+    canvas: HTMLCanvasElement;
+    debug?: boolean;
+    /**
+     * Optional backend override. When provided, wins over the
+     * `VITE_LUXAR_USE_WEBGPU` / `VITE_LUXAR_USE_LEGACY_WEBGL` env vars
+     * and the WebGL default. Threaded from `LuxarAppOptions.renderer`,
+     * ultimately from the `?renderer=webgl|webgpu` URL parameter.
+     */
+    renderer?: 'webgl' | 'webgpu';
+    /**
+     * Diagnostic flag for `WebGPURenderer({ forceWebGL: true })`.
+     * Threaded from `LuxarAppOptions.webgpuForceWebGL`, ultimately from
+     * the `?webgpu-force-webgl` URL parameter.
+     */
+    webgpuForceWebGL?: boolean;
+    /**
+     * Opt-in to GPU timestamp queries. Threaded from
+     * `LuxarAppOptions.perfTimestamp`, ultimately from the
+     * `?perf-timestamp` URL flag set by the perf bench.
+     */
+    perfTimestamp?: boolean;
+  }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
-    this.setupRenderer();
+    this.rendererOverride = options.renderer;
+    this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
+    this.perfTimestamp = options.perfTimestamp ?? false;
+    await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
     this.setupCamera();
     this.setupControls();
     this.setupPostProcessing();
 
-    // Call doUpdateSize() directly during initialization (no debounce needed)
-    // This ensures immediate sizing without waiting for requestAnimationFrame
-    this.doUpdateSize(window.innerWidth, window.innerHeight);
+    // Apply resize directly during initialization (no rAF coalescing) so
+    // dimensions are available before the first render.
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
   }
 
   /**
@@ -237,94 +341,153 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Accessibility attributes for screen readers
    * - Fullscreen immersive experience
    */
-  private setupRenderer(): void {
-    // Try to get HDR canvas context first using config values
-    let gl: WebGLRenderingContext | null = null;
-    try {
-      gl = this.canvasElement.getContext(
-        'webgl2',
-        config.webgl.context
-      ) as WebGLRenderingContext | null;
-
-      if (!gl) {
-        log.warning(
-          Modules.SCENE_MANAGER,
-          'WebGL2 context creation failed, falling back to default'
-        );
-      }
-    } catch (error) {
-      log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
-      notifier.error('Failed to create WebGL2 context. Your browser may not support WebGL2.');
+  private async setupRenderer(): Promise<void> {
+    const { backend, source } = selectBackend(this.rendererOverride);
+    log.info(
+      Modules.RENDERER,
+      `Backend selection: ${backend === 'webgl' ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
+        `[source: ${source}${backend === 'webgpu' && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
+    );
+    if (backend === 'webgl') {
+      await this.setupWebGLRenderer();
+      return;
     }
+    await this.setupWebGPURenderer();
+  }
 
-    // Create WebGL renderer using configuration values.
-    // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
-    // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvasElement, // Use the scene manager's canvas element
-      context: gl || undefined, // Use our HDR context if available
-      // Shared attributes from context config
-      alpha: config.webgl.context.alpha,
-      antialias: config.webgl.context.antialias,
-      depth: config.webgl.context.depth,
-      stencil: config.webgl.context.stencil,
-      powerPreference: config.webgl.context.powerPreference,
-      preserveDrawingBuffer: config.webgl.context.preserveDrawingBuffer,
-      premultipliedAlpha: config.webgl.context.premultipliedAlpha,
-      // Renderer-specific settings
-      ...config.webgl.renderer,
-    });
+  private async setupWebGLRenderer(): Promise<void> {
+    const { renderer, capabilities } = await createWebGLRenderer(this.canvasElement);
+    this.renderer = renderer;
+    this.capabilities = capabilities;
 
-    // NOTE: We don't append renderer.domElement because we're using the
-    // existing HTML canvas. Page-chrome styling (body margin/overflow,
-    // background) is the responsibility of the host page (index.html for
-    // the standalone app), not of SceneManager.
+    // Hand the capabilities to the material manager so its
+    // getPoint/Line/GSplatMaterial dispatch can pick the GLSL or TSL
+    // backend. Must precede any node-factory material requests.
+    materialManager.setCaps(this.capabilities);
 
-    // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
-      const glContext = this.renderer.getContext();
-      const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
-      log.info(
-        Modules.RENDERER,
-        `Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`
-      );
+      const [minPt, maxPt] = this.capabilities.pointSizeRange;
+      log.info(Modules.RENDERER, `Hardware point size limits: ${minPt}-${maxPt} pixels`);
     }
-    // This allows for better integration into complex HTML pages
 
-    // Configure renderer dimensions and high-DPI support
-    this.updateRendererSize();
+    // Configure renderer dimensions and high-DPI support.
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
 
-    // Detect and configure HDR capabilities
-    const hdrCapabilities = detectHDRCapabilities(this.renderer);
-    logHDRCapabilities(hdrCapabilities);
-    configureHDRRenderer(this.renderer, hdrCapabilities);
+    // Clear immediately to the scene background color to avoid the
+    // brief white flash before the first frame renders.
+    this.renderer.setClearColor(config.scene.backgroundColor);
+    this.renderer.clear();
+  }
 
-    // Immediately clear to the scene background color to avoid a white flash
-    // before the first frame renders (alpha:false makes the canvas opaque white by default)
+  /**
+   * Opt-in renderer setup — selected via `?renderer=webgpu` URL flag
+   * or `VITE_LUXAR_USE_WEBGPU=1`. Constructs a `WebGPURenderer` and
+   * runs its async `init()`. On browsers with WebGPU support, the
+   * renderer acquires a WebGPU adapter and dispatches TSL graphs
+   * to WGSL. On browsers without WebGPU (Firefox today, older
+   * Safari), Three's WebGPURenderer transparently falls back to a
+   * WebGL2 backend — the TSL graphs target both from one source.
+   *
+   * NOTE: WebGL is the **production default**; this method is
+   * reached only when the user explicitly opts into WebGPU.
+   * See `BROWSER_SUPPORT_POLICY.md` for the policy.
+   */
+  private async setupWebGPURenderer(): Promise<void> {
+    const result = await createWebGPURenderer(this.canvasElement, {
+      debug: this.debug,
+      webgpuForceWebGL: this.webgpuForceWebGL,
+      perfTimestamp: this.perfTimestamp,
+      rendererOverride: this.rendererOverride,
+    });
+    if (result.fallback) {
+      // Adapter below the WebGPU spec minimum (< 8 vertex buffers)
+      // and the user didn't force the path; drop to WebGL.
+      await this.setupWebGLRenderer();
+      return;
+    }
+    this.renderer = result.renderer;
+    this.capabilities = result.capabilities;
+
+    // Hand the capabilities to the material manager so its
+    // getPoint/Line/GSplatMaterial dispatch picks the TSL backend.
+    // Must precede any node-factory or post-processing material
+    // requests — without this, the WebGPU path silently dispatches
+    // GLSL ShaderMaterial and the NodeBuilder rejects it.
+    materialManager.setCaps(this.capabilities);
+
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
     this.renderer.setClearColor(config.scene.backgroundColor);
     this.renderer.clear();
   }
 
   /**
    * Construct the WebGLContextRecovery concern and attach its
-   * canvas listeners. Thin delegate over scene-setup/webgl-context-recovery.
-   * The recovery instance owns the loss/restored handlers, the
-   * `isContextLost` flag, and the deterministic rebuild order.
+   * canvas listeners (WebGL2 path), OR attach a `device.lost`
+   * observer that surfaces the failure as an event (WebGPU path).
+   *
+   * **WebGL2 path.** The recovery instance owns the loss/restored
+   * handlers, the `isContextLost` flag, and the deterministic
+   * rebuild order. Bound here because `webglcontextlost` /
+   * `webglcontextrestored` canvas events fire only on WebGL
+   * contexts.
+   *
+   * **WebGPU path.** Three's `WebGPURenderer` recreates its own
+   * GPU device internally when `device.lost` resolves, but it does
+   * **not** rebuild Luxar-owned resources (post-processing render
+   * targets, picking buffers, material caches, interleaved geometry
+   * buffers). A full rebuild path mirroring WebGL2 is non-trivial
+   * and untested in CI today, so for now we treat WebGPU device
+   * loss as **unrecoverable**: log it loudly and dispatch a
+   * `webgpu-device-lost` event so the host application can prompt
+   * for a reload. The event payload carries the device-loss reason
+   * for diagnostics.
    */
   private setupContextLossHandling(): void {
-    this.contextRecovery = new WebGLContextRecovery({
-      canvas: this.canvasElement,
-      // Lazy lookup — `setupContextLossHandling` runs before
-      // `setupScene` in init() order; capturing `this.scene` at
-      // construction would freeze in `undefined`.
-      getScene: () => this.scene,
-      renderer: this.renderer,
-      getPostProcessing: () => this.postProcessing ?? null,
-      updateRendererSize: () => this.updateRendererSize(),
-      onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
-      triggerChange: () => this.dispatchEvent({ type: 'change' }),
+    if (this.capabilities.apiSurface === 'webgl2') {
+      this.contextRecovery = new WebGLContextRecovery({
+        canvas: this.canvasElement,
+        // Lazy lookup — `setupContextLossHandling` runs before
+        // `setupScene` in init() order; capturing `this.scene` at
+        // construction would freeze in `undefined`.
+        getScene: () => this.scene,
+        renderer: this.renderer as THREE.WebGLRenderer,
+        getPostProcessing: () => this.postProcessing ?? null,
+        updateRendererSize: () =>
+          this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx()),
+        onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+        triggerChange: () => this.dispatchEvent({ type: 'change' }),
+      });
+      this.contextRecovery.attach();
+      return;
+    }
+
+    // WebGPU: attach a best-effort device.lost observer. The
+    // backend's `device` is created during `gpuRenderer.init()`,
+    // so by the time `setupContextLossHandling` runs the device is
+    // either present or we accept "device.lost reporting unavailable
+    // on this Three.js build" silently. Structural typing avoids the
+    // @webgpu/types dependency on consumers that don't enable WebGPU
+    // in TypeScript's lib.
+    type DeviceLostInfo = { reason?: string; message?: string };
+    type GpuDeviceLike = { lost: Promise<DeviceLostInfo> };
+    const backend = (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend;
+    const device = backend?.device;
+    if (!device || typeof device.lost !== 'object') {
+      return;
+    }
+    void device.lost.then((info: DeviceLostInfo) => {
+      log.error(
+        Modules.RENDERER,
+        `WebGPU device lost (reason=${info.reason ?? 'unknown'}). ` +
+          'Luxar does not auto-recover WebGPU device loss in this release — ' +
+          `please reload the page. Message: ${info.message ?? '(none)'}`
+      );
+      this.dispatchEvent({
+        type: 'webgpu-device-lost',
+        reason: info.reason,
+        message: info.message,
+      });
     });
-    this.contextRecovery.attach();
   }
 
   /**
@@ -346,8 +509,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Initialize the perspective camera. Thin delegate over
-   * `createDefaultPerspectiveCamera` in scene-setup/camera-setup so
-   * the FOV/clip/initial-position pose is unit-testable in isolation.
+   * `createDefaultPerspectiveCamera` in scene-manager/camera/camera-setup
+   * so the FOV/clip/initial-position pose is unit-testable in isolation.
    */
   private setupCamera(): void {
     this.camera = createDefaultPerspectiveCamera(this.renderer.domElement);
@@ -404,24 +567,20 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize the HDR post-processing pipeline (pmndrs/postprocessing).
-   *
-   * Creates an EffectComposer with 16-bit float buffers, bloom, tone mapping,
-   * and optional AA effects. See PostProcessingManager for the full pipeline.
+   * Initialize the HDR post-processing pipeline. Wires the manager's
+   * resize callback to refresh material uniforms that cache the
+   * drawing-buffer size.
    */
   private setupPostProcessing(): void {
-    // Get canvas dimensions for proper HDR render target sizing
-    const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || window.innerWidth;
-    const height = canvas.clientHeight || window.innerHeight;
-
-    // Create post-processing manager with actual canvas dimensions
-    this.postProcessing = new PostProcessingManager(this.renderer, this.scene, this.camera, {
-      width,
-      height,
+    this.postProcessing = createPostProcessing({
+      renderer: this.renderer,
+      capabilities: this.capabilities,
+      scene: this.scene,
+      camera: this.camera,
+      onResize: () => {
+        if (this.camera) this.updateMaterialsForCurrentCamera();
+      },
     });
-
-    log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
   }
 
   /**
@@ -455,17 +614,19 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
 
-      // Apply viewer config from zarr (camera position, background color)
-      this.applyZarrViewerConfig(root);
-
-      // Auto-frame camera to fit scene contents, unless the zarr author specified a camera position.
-      // Only an explicit position suppresses auto-framing — a target/targetNode alone means the
-      // author wants the orbit pivot set but still expects the camera to be at a sensible distance.
+      // Apply viewer config from zarr (camera position, background color).
+      // The helper returns whether an explicit camera position was applied;
+      // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+      const { positionApplied } = this.applyZarrViewerConfig(root);
       const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
       const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
 
-      if (!camOverrides.position) {
+      // Auto-frame camera to fit scene contents, unless the zarr author specified
+      // a camera position. Only an explicit position suppresses auto-framing — a
+      // target/targetNode alone means the author wants the orbit pivot set but
+      // still expects the camera to be at a sensible distance.
+      if (!positionApplied) {
         // No author camera position — auto-frame using metadata bounds.
         // If the author set a target, preserve it as the look-at point
         // instead of overwriting with bounding box center.
@@ -496,17 +657,18 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Apply viewer config from zarr (camera position/target/up, background
    * color). Thin delegate over `applyZarrViewerConfig` in
-   * scene-setup/camera-setup; the helper returns whether an explicit
-   * camera position was applied so `loadSceneData` can suppress
-   * auto-framing. (Author target alone does NOT suppress auto-framing.)
+   * scene-manager/camera/camera-setup; forwards the helper's
+   * `positionApplied` flag so `loadSceneData` can suppress auto-framing.
+   * (Author target alone does NOT suppress auto-framing.)
    */
-  private applyZarrViewerConfig(root: THREE.Group): void {
-    applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
+  private applyZarrViewerConfig(root: THREE.Group): { positionApplied: boolean } {
+    return applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
   }
 
   /**
    * Clear all loaded content from the scene, keeping lights and background.
-   * Thin delegate over `clearLoadedSceneContent` in scene-setup/scene-disposal.
+   * Thin delegate over `clearLoadedSceneContent` in
+   * scene-manager/render-pipeline/scene-disposal.
    */
   private clearSceneContent(): void {
     this.invalidateBoundsCache();
@@ -533,28 +695,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
-    // Ensure world matrices are up to date before computing bounds.
-    this.scene.updateMatrixWorld(true);
-
-    const { box, primitiveCount } = computeSceneBoundingBox(this.scene);
-    if (box.isEmpty() || primitiveCount === 0) {
-      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
-      return;
-    }
-
-    const center = box.getCenter(new THREE.Vector3());
-    this.lastBoundingBoxCenter.copy(center);
-
-    fitCameraToBounds(
-      this.camera,
-      this.controls,
-      {
-        min: { x: box.min.x, y: box.min.y, z: box.min.z },
-        max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      },
-      { lookAtTarget: center, logLabel: 'Camera centered on scene' }
-    );
-    log.success(Modules.CONTROLS, 'Controls target updated and state saved');
+    const center = centerCameraOnScene(this.scene, this.camera, this.controls);
+    if (center) this.lastBoundingBoxCenter.copy(center);
   }
 
   /**
@@ -615,34 +757,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
-  /**
-   * Center camera and controls on the origin
-   */
+  /** Center camera and controls on the origin. */
   private centerOnOrigin(): void {
-    // Get current camera distance from target. getFocusTarget() returns a
-    // clone, so it is safe to use as a one-shot read.
-    const currentDistance = this.camera.position.distanceTo(this.controls.getFocusTarget());
-
-    // Reset target to origin
-    const origin = new THREE.Vector3(0, 0, 0);
-
-    // Position camera at same distance from origin
-    this.camera.position.set(0, 0, currentDistance);
-    this.camera.lookAt(origin);
-    this.camera.updateMatrixWorld(true);
-
-    // Update controls target through the typed setter.
-    this.controls.setTarget(origin);
-    this.controls.update();
-
-    // Save the new origin-centered state as the default
-    // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
-    this.controls.saveState();
-
-    log.success(
-      Modules.SCENE_MANAGER,
-      `Camera reset to origin with distance: ${currentDistance.toFixed(2)}`
-    );
+    centerOnOrigin(this.camera, this.controls);
   }
 
   /**
@@ -665,82 +782,28 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   updateSize(): void {
-    // Suppress resize during recording to prevent resolution changes mid-capture
-    if (this.resizeLocked) return;
+    this.resizer.scheduleResize(() => this.makeResizeCtx());
+  }
 
-    // Store the latest dimensions
-    this.pendingResize = {
-      width: window.innerWidth,
-      height: window.innerHeight,
+  /** Build the per-call ResizeCtx snapshot used by the resize orchestrator. */
+  private makeResizeCtx() {
+    return {
+      renderer: this.renderer,
+      camera: this.camera,
+      postProcessing: this.postProcessing,
+      pixelRatioOverride: this.pixelRatioOverride,
+      updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
     };
-
-    // Cancel any pending resize
-    if (this.resizeRAF !== null) {
-      cancelAnimationFrame(this.resizeRAF);
-    }
-
-    // Schedule resize for next frame (coalesces multiple events)
-    this.resizeRAF = requestAnimationFrame(() => {
-      if (!this.pendingResize) return;
-
-      this.doUpdateSize(this.pendingResize.width, this.pendingResize.height);
-      this.pendingResize = null;
-      this.resizeRAF = null;
-    });
   }
 
   /**
-   * Actual resize logic (called once per frame at most)
+   * Store/clear the explicit DPR override and return the effective DPR.
+   * Delegates the math to dpr-policy.computePixelRatioOverride.
    */
-  private doUpdateSize(width: number, height: number): void {
-    if (document.fullscreenElement) {
-      log.success(Modules.SCENE_MANAGER, `Using fullscreen dimensions: ${width}x${height}`);
-    } else {
-      log.success(Modules.SCENE_MANAGER, `Using windowed dimensions: ${width}x${height}`);
-    }
-
-    // Only update camera if it exists (might be called during init)
-    if (this.camera) {
-      updateCameraAspect(this.camera, width, height);
-    }
-
-    // Ensure pixel ratio stays current (matters when dragging between monitors
-    // with different DPI — devicePixelRatio changes and a resize fires).
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-
-    // PostProcessingManager owns renderer + composer sizing — it calls
-    // renderer.setSize() and composer.setSize() internally via resize().
-    // Only fall back to direct updateRendererSize() during early init
-    // before PostProcessingManager has been created.
-    if (this.postProcessing) {
-      this.postProcessing.resize(width, height);
-    } else {
-      this.updateRendererSize(width, height);
-    }
-
-    // Update material uniforms for world-space point sizing
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
-  }
-
-  /**
-   * Update renderer size and pixel ratio
-   */
-  private updateRendererSize(width?: number, height?: number): void {
-    // Use provided dimensions or fall back to window dimensions
-    const w = width || window.innerWidth;
-    const h = height || window.innerHeight;
-
-    // Set pixel ratio BEFORE size for correct buffer calculations
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    // Let Three.js handle CSS sizing normally
-    this.renderer.setSize(w, h); // Allow Three.js to set CSS size
-
-    // Update material uniforms for world-space point sizing (only if camera exists)
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
+  private setPixelRatioOverride(dpr: number): number {
+    const { override, active } = computePixelRatioOverride(dpr);
+    this.pixelRatioOverride = override;
+    return active;
   }
 
   /**
@@ -750,225 +813,79 @@ export class SceneManager extends THREE.EventDispatcher<{
    * while reducing the internal buffer resolution for better performance.
    *
    * This method is called by the AdaptiveDPRManager when FPS drops below
-   * acceptable thresholds.
+   * acceptable thresholds, and by the manual DPR control when adaptive
+   * mode is disabled.
    *
    * @param dpr - The new device pixel ratio to use
    */
   public setAdaptivePixelRatio(dpr: number): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const canvas = this.renderer.domElement;
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    const activeDPR = this.setPixelRatioOverride(dpr);
 
-    // Set new pixel ratio — PostProcessingManager's updateRendererSize()
-    // will pick this up when it calls renderer.setSize().
-    this.renderer.setPixelRatio(dpr);
-
-    // PostProcessingManager owns renderer + composer sizing.
-    // Its resize() → updateRendererSize() calls renderer.setSize(w, h, false)
-    // which keeps CSS dimensions constant while reducing the render buffer.
-    if (this.postProcessing) {
-      this.postProcessing.resize(w, h);
-
-      // Scale noise parameters based on DPR to maintain perceptual consistency
-      // At lower DPR, each pixel covers more area, so noise should be scaled down
-      const nativeDPR = window.devicePixelRatio;
-      const normalizedDPR = dpr / nativeDPR; // 1.0 at native, <1.0 when reduced
-      this.postProcessing.setDPRScale(normalizedDPR);
-    }
-
-    // Update material uniforms for world-space point sizing
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
+    // Resize through the orchestrator so the renderer / post-processing /
+    // material-uniform pipeline stays in lockstep with the normal resize
+    // path. resizeNow() is synchronous (no rAF coalescing), matching the
+    // frame-level granularity AdaptiveDPRManager already runs at.
+    this.resizer.resizeNow(w, h, this.makeResizeCtx());
 
     log.update(
       Modules.SCENE_MANAGER,
-      `Adaptive DPR: ${dpr.toFixed(2)} (buffer: ${Math.round(w * dpr)}x${Math.round(h * dpr)})`
+      `Adaptive DPR: ${activeDPR.toFixed(2)} (buffer: ${Math.round(w * activeDPR)}x${Math.round(
+        h * activeDPR
+      )})`
     );
   }
 
-  /**
-   * Update camera FOV with bounds checking
-   */
+  /** Update perspective camera FOV with bounds checking. No-op for orthographic. */
   updateFOV(deltaY: number): void {
-    if (!isPerspectiveCamera(this.camera)) return; // No FOV in orthographic mode
-    const fovChange = deltaY * config.camera.fovSensitivity;
-    this.camera.fov = validateFOV(
-      this.camera.fov + fovChange,
-      config.camera.fovMin,
-      config.camera.fovMax
-    );
-    this.camera.updateProjectionMatrix();
-
-    // Update material uniforms for world-space point sizing
-    this.updateMaterialsForCurrentCamera();
+    adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
   }
 
-  /**
-   * Update camera clipping planes with validation
-   */
+  /** Update camera clipping planes with validation. */
   updateClippingPlanes(near: number, far: number): void {
-    // Validate near/far relationship
-    if (near >= far) {
-      log.warning(Modules.SCENE_MANAGER, 'Near plane must be less than far plane');
-      return;
-    }
-
-    // Warn about Z-buffer precision if ratio is too high
-    const ratio = far / near;
-    if (ratio > 10000) {
-      log.warning(
-        Modules.SCENE_MANAGER,
-        `High near/far ratio (${ratio.toFixed(0)}:1) may cause Z-buffer precision issues. Consider adjusting clipping planes.`
-      );
-    }
-
-    // Update camera clipping planes
-    this.camera.near = near;
-    this.camera.far = far;
-    this.camera.updateProjectionMatrix();
-
-    log.info(
-      Modules.SCENE_MANAGER,
-      `Clipping planes updated - Near: ${near < 0.001 ? near.toExponential(1) : near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
-    );
+    applyClippingPlanes(this.camera, near, far);
   }
 
   /**
-   * Auto-adjust clipping planes based on scene bounds from metadata.
-   *
-   * This uses the position_bounds stored in zarr metadata, which represents
-   * the full dataset extent computed at compile time. This is more reliable
-   * than computing bounds from loaded geometry because:
-   * 1. It includes the full dataset, not just currently loaded points
-   * 2. It works correctly for nD data (we project to display dimensions)
-   * 3. It's available immediately without waiting for data to load
-   *
-   * Falls back to geometry-based calculation if metadata bounds are not available.
+   * Auto-adjust clipping planes from scene bounds (metadata first,
+   * geometry fallback). Also feeds the bounding-box diagonal into
+   * the scale-aware controls.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
-    // Get camera position for distance calculations
-    const cameraPos = {
-      x: this.camera.position.x,
-      y: this.camera.position.y,
-      z: this.camera.position.z,
-    };
-
-    // Try to get scene bounds from metadata first
-    const sceneBounds = this.getSceneBoundsFromMetadata();
-
-    if (sceneBounds) {
-      // Update scale-aware controls from metadata bounds (available before geometry loads)
-      const diagonal = getBoundingBoxDiagonal(sceneBounds);
-      if (diagonal > 0) {
-        this.controls.setSceneScale(diagonal);
-      }
-
-      // Use bounding sphere for smooth clipping (no box-edge discontinuities)
-      const sphere = boundingBoxToSphere(sceneBounds);
-      const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
-
-      // Apply the calculated planes
-      this.updateClippingPlanes(near, far);
-
-      log.success(
-        Modules.SCENE_MANAGER,
-        `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
-      );
-
-      return { near, far };
-    }
-
-    // Fallback: Calculate scene bounding box from loaded geometry
-    const box = new THREE.Box3().setFromObject(this.scene);
-
-    if (box.isEmpty()) {
-      log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
-      return {
-        near: config.renderingControls.defaults.near,
-        far: config.renderingControls.defaults.far,
-      };
-    }
-
-    // Use unified utility function with camera position
-    const fallbackBounds = {
-      min: { x: box.min.x, y: box.min.y, z: box.min.z },
-      max: { x: box.max.x, y: box.max.y, z: box.max.z },
-    };
-
-    // Update scale-aware controls from geometry bounds as fallback
-    const diagonal = getBoundingBoxDiagonal(fallbackBounds);
-    if (diagonal > 0) {
-      this.controls.setSceneScale(diagonal);
-    }
-
-    const sphere = boundingBoxToSphere(fallbackBounds);
-    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
-
-    // Apply the calculated planes
-    this.updateClippingPlanes(near, far);
-
-    return { near, far };
+    return autoAdjustFromBounds(this.makeClippingCtx());
   }
 
   /**
-   * Auto-frame the camera to fit the scene contents using metadata bounds.
+   * Auto-frame the camera to fit the scene contents using metadata
+   * bounds. Delegates to the camera-framing helper. Updates the
+   * centering-state tracking fields when framing succeeds.
    *
-   * Uses position_bounds from zarr metadata (available immediately, no geometry load needed)
-   * to compute the optimal camera distance via FOV-aware calculation. This ensures
-   * the initial view fits the scene regardless of its physical scale.
-   *
-   * For orthographic cameras, adjusts zoom instead of distance.
-   *
-   * @param preserveTarget - If true, keep the current controls target (set by zarr viewer_config)
-   *   instead of overwriting it with the bounding box center.
+   * @param preserveTarget If true, keep the current controls target
+   *   (set by zarr viewer_config) instead of overwriting it with
+   *   the bounding box center.
    */
   private autoFrameCamera(preserveTarget: boolean = false): void {
-    const bounds = this.getSceneBoundsFromMetadata();
-    if (!bounds) {
-      log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
-      return;
+    const result = autoFrameCamera(
+      this.camera,
+      this.controls,
+      this.getSceneBoundsFromMetadata(),
+      preserveTarget
+    );
+    if (result.framed && result.center) {
+      this.isCenteredOnBoundingBox = !preserveTarget;
+      this.lastBoundingBoxCenter.copy(result.center);
     }
-
-    // Determine the look-at target: author's target if set, otherwise bounding box center.
-    const center = getBoundingBoxCenter(bounds);
-    const lookAtTarget = preserveTarget
-      ? this.controls.getFocusTarget()
-      : new THREE.Vector3(center.x, center.y, center.z);
-
-    const diagonal = fitCameraToBounds(this.camera, this.controls, bounds, {
-      lookAtTarget,
-      preserveControlsTarget: preserveTarget,
-      logLabel: 'Auto-framed camera on scene',
-    });
-    if (diagonal === 0) {
-      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
-      return;
-    }
-
-    // Track centering state
-    this.isCenteredOnBoundingBox = !preserveTarget;
-    this.lastBoundingBoxCenter.set(center.x, center.y, center.z);
   }
 
   /**
-   * Invalidate cached scene bounds. Called on scene load and scene clear.
-   * Display dims (sceneDimsManager.getDims().displayed) are immutable per scene,
-   * so no invalidation is needed for dimension navigation.
+   * Invalidate cached scene bounds. Called on scene load / clear.
+   * Display dims are immutable per scene, so no invalidation is
+   * needed for dimension navigation.
    */
   private invalidateBoundsCache(): void {
-    this._cachedBounds = null;
-    this._cachedSphere = null;
-    this._cachedNearCull = 0.1;
-  }
-
-  /** Lazily recompute cached bounds/sphere/nearCull from scene metadata. */
-  private ensureBoundsCache(): void {
-    if (this._cachedBounds !== null) return;
-    const bounds = this.getSceneBoundsFromMetadata();
-    if (!bounds) return;
-    this._cachedBounds = bounds;
-    this._cachedSphere = boundingBoxToSphere(bounds);
-    this._cachedNearCull = getBoundingBoxDiagonal(bounds) * 0.001;
+    this.boundsCache.invalidate();
   }
 
   /**
@@ -980,30 +897,22 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
+    updateDynamicFromCache(this.makeClippingCtx());
+  }
 
-    this.ensureBoundsCache();
-    const s = this._cachedSphere;
-    if (!s) return;
-
-    // Inline sphere-based clipping math (no intermediate object allocations)
-    const cam = this.camera.position;
-    const dx = cam.x - s.center.x;
-    const dy = cam.y - s.center.y;
-    const dz = cam.z - s.center.z;
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const R = s.radius * SPHERE_SAFETY_EXPANSION;
-    const far = dist + R;
-    const near = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
-
-    // Only update camera if values changed significantly (>0.1%)
-    const nearChanged = Math.abs(this.camera.near - near) / this.camera.near > 0.001;
-    const farChanged = Math.abs(this.camera.far - far) / this.camera.far > 0.001;
-
-    if (nearChanged || farChanged) {
-      this.camera.near = near;
-      this.camera.far = far;
-      this.camera.updateProjectionMatrix();
-    }
+  /**
+   * Build the narrow ctx that the clipping-policy helpers consume.
+   * Created on demand to keep helper signatures stable as
+   * subsystem fields evolve.
+   */
+  private makeClippingCtx(): ClippingCtx {
+    return {
+      camera: this.camera,
+      controls: this.controls,
+      scene: this.scene,
+      boundsCache: this.boundsCache,
+      getSceneBoundsFromMetadata: () => this.getSceneBoundsFromMetadata(),
+    };
   }
 
   /**
@@ -1026,36 +935,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Get 3D bounding box from scene metadata, projecting nD bounds to display dimensions.
+   * Get 3D bounding box from scene metadata, projecting nD bounds
+   * to display dimensions. Delegates to the bounds-cache helper.
    *
    * @returns 3D bounding box or null if metadata bounds not available
    */
   private getSceneBoundsFromMetadata(): BoundingBox | null {
-    const foundBounds = this.findPositionBoundsInScene();
-    if (!foundBounds) return null;
-
-    const dims = sceneDimsManager.getDims();
-    const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
-
-    return projectBoundsToDisplayDims(foundBounds.min, foundBounds.max, displayDims);
-  }
-
-  /**
-   * Search for position bounds in the scene graph
-   */
-  private findPositionBoundsInScene(): { min: number[]; max: number[] } | null {
-    let result: { min: number[]; max: number[] } | null = null;
-
-    this.scene.traverse((object) => {
-      if (result) return; // Already found
-
-      const bounds = object.userData?.positionBounds;
-      if (bounds && Array.isArray(bounds.min) && Array.isArray(bounds.max)) {
-        result = { min: bounds.min, max: bounds.max };
-      }
-    });
-
-    return result;
+    return computeBoundsFromMetadata(this.scene);
   }
 
   // ======================================================================
@@ -1102,12 +988,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * After calling dispose(), the scene manager cannot be reused.
    */
   dispose(): void {
-    // Cancel any pending resize operations to prevent memory leaks
-    if (this.resizeRAF !== null) {
-      cancelAnimationFrame(this.resizeRAF);
-      this.resizeRAF = null;
-    }
-    this.pendingResize = null;
+    // Cancel any pending resize operations to prevent memory leaks.
+    this.resizer.dispose();
 
     // Tear down the WebGL context-recovery listeners.
     if (this.contextRecovery) {
@@ -1140,8 +1022,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Traverse scene graph and dispose all geometry and material resources
     // (WebGL resources are not garbage collected). Delegated to
-    // scene-setup/scene-disposal so the same one-shot final-dispose pass
-    // is unit-testable in isolation.
+    // scene-manager/render-pipeline/scene-disposal so the same one-shot
+    // final-dispose pass is unit-testable in isolation.
     disposeSceneGraphResources(this.scene);
   }
 
@@ -1188,127 +1070,61 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Switch camera control type. Handles camera swap for ortho mode.
-   * @param type - Control type ('orbit', 'fly', or 'ortho')
+   * Switch camera control type. Handles camera swap for ortho mode and
+   * dispatches `camera-changed` at this public call site.
+   *
+   * @param type Control type ('orbit', 'fly', or 'ortho')
    */
   setControlType(type: ControlType): void {
-    const needsOrtho = type === 'ortho';
-    const hasOrtho = isOrthographicCamera(this.camera);
-    const cameraChanged = needsOrtho !== hasOrtho;
-
-    // Swap camera if projection mode changes
-    if (needsOrtho && !hasOrtho) {
-      this.swapToOrthographic();
-    } else if (!needsOrtho && hasOrtho) {
-      this.swapToPerspective();
-    }
-
-    // Update controls with new camera reference (may have changed)
-    this.controls.setCamera(this.camera);
-    this.controls.setControlType(type);
-
-    // Update materials for new projection mode
-    this.updateMaterialsForCurrentCamera();
-
-    // Notify listeners that the camera object was replaced (picking system, etc.)
+    const { cameraChanged } = cameraModeSetControlType(type, this.makeCameraModeCtx());
     if (cameraChanged) {
       this.dispatchEvent({ type: 'camera-changed' });
     }
   }
 
-  /**
-   * Get current control type
-   */
+  /** Get current control type. */
   getControlType(): ControlType {
     return this.controls.getControlType();
   }
 
-  /**
-   * Swap from perspective to orthographic camera, matching the current view.
-   * Frustum is computed to show the same visible area at the target distance.
-   */
-  private swapToOrthographic(): void {
-    if (!isPerspectiveCamera(this.camera)) return;
-
-    const focusTarget = this.controls.getFocusTarget();
-    const distance = Math.max(this.camera.position.distanceTo(focusTarget), 0.001);
-    const fovRad = (this.camera.fov * Math.PI) / 180;
-    const frustumHeight = 2 * distance * Math.tan(fovRad / 2);
-    const aspect = this.camera.aspect || 1;
-
-    const ortho = new THREE.OrthographicCamera(
-      (-frustumHeight * aspect) / 2,
-      (frustumHeight * aspect) / 2,
-      frustumHeight / 2,
-      -frustumHeight / 2,
-      this.camera.near,
-      this.camera.far
-    );
-
-    // Reset to a clean front view (looking along -Z, up = Y)
-    // Ortho is for 2D viewing — carrying over a tilted 3D orientation is confusing
-    ortho.position.set(focusTarget.x, focusTarget.y, focusTarget.z + distance);
-    ortho.up.set(0, 1, 0);
-    ortho.lookAt(focusTarget);
-    ortho.updateMatrixWorld();
-
-    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
-    this.camera = ortho;
-    this.lastOrthoZoom = ortho.zoom;
-    this.postProcessing.setCamera(ortho);
-  }
-
-  /**
-   * Swap from orthographic back to perspective camera.
-   * Restores the default FOV.
-   */
-  private swapToPerspective(): void {
-    if (isPerspectiveCamera(this.camera)) return;
-
-    const canvas = this.renderer.domElement;
-    const aspect =
-      (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight);
-
-    const persp = new THREE.PerspectiveCamera(
-      config.renderingControls.defaults.fov,
-      aspect,
-      this.camera.near,
-      this.camera.far
-    );
-
-    persp.position.copy(this.camera.position);
-    persp.quaternion.copy(this.camera.quaternion);
-    persp.up.copy(this.camera.up);
-    persp.updateMatrixWorld();
-
-    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
-    this.camera = persp;
-    this.postProcessing.setCamera(persp);
+  /** Build the narrow ctx that the camera-mode helpers consume. */
+  private makeCameraModeCtx(): CameraModeCtx {
+    return {
+      getCamera: () => this.camera,
+      setCamera: (camera) => {
+        this.camera = camera;
+      },
+      controls: this.controls,
+      renderer: this.renderer,
+      postProcessing: this.postProcessing,
+      updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
+      setLastOrthoZoom: (zoom) => {
+        this.lastOrthoZoom = zoom;
+      },
+    };
   }
 
   /**
    * Update all materials with current camera projection parameters.
-   * Handles both perspective (FOV-based) and orthographic (frustum-based) modes.
+   * Perspective: FOV-based. Orthographic: frustum-based.
    *
-   * Called internally on resize and camera changes. Also used by
-   * RecordingPanel when the renderer is resized for offline capture.
+   * Called internally on resize and camera changes. Also called
+   * by RecordingPanel when the renderer is resized for offline
+   * capture.
    */
   updateMaterialsForCurrentCamera(): void {
-    this.renderer.getDrawingBufferSize(this._bufferSize);
-    this.ensureBoundsCache();
-    const nearCull = this._cachedNearCull;
+    updateCameraMaterials(this.makeCameraMaterialsCtx());
+  }
 
-    if (isOrthographicCamera(this.camera)) {
-      const frustumHeight = getOrthoFrustumHeight(this.camera);
-      materialManager.updateCameraParams(frustumHeight, this._bufferSize, true, nearCull);
-    } else {
-      materialManager.updateCameraParams(
-        getCameraFovRadians(this.camera),
-        this._bufferSize,
-        false,
-        nearCull
-      );
-    }
+  /** Build the narrow ctx that the camera-materials helpers consume. */
+  private makeCameraMaterialsCtx(): CameraMaterialsCtx {
+    return {
+      renderer: this.renderer,
+      camera: this.camera,
+      scene: this.scene,
+      boundsCache: this.boundsCache,
+      bufferSize: this._bufferSize,
+    };
   }
 
   /**

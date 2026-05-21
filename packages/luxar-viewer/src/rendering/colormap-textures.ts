@@ -183,7 +183,7 @@ export function getColormapTexture(
  * @returns THREE.DataTexture
  */
 /**
- * G.5: capture a small fingerprint (first/last 16 bytes + length) of
+ * Capture a small fingerprint (first/last 16 bytes + length) of
  * the LUT so a cache hit can be content-validated before being
  * returned. Defends against the (unlikely but possible) DJB2 hash
  * collision that would otherwise map two distinct LUTs to the same
@@ -223,11 +223,10 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
 
   const cached = customCacheLruGet(key);
   if (cached) {
-    // G.5: validate cache hit against fingerprint. If two distinct LUTs
+    // Validate cache hit against fingerprint. If two distinct LUTs
     // hashed to the same key, the fingerprints will (with overwhelming
     // probability) diverge — dispose the stale entry and re-create.
-    const cachedFp = (cached.userData as { originalLutSample?: Uint8Array })
-      .originalLutSample;
+    const cachedFp = (cached.userData as { originalLutSample?: Uint8Array }).originalLutSample;
     if (cachedFp && fingerprintMatches(cachedFp, incomingFp)) {
       customCacheStats.hits++;
       return cached;
@@ -262,7 +261,7 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
   } else {
     texture = createTexture(lut);
   }
-  // G.5: stash the fingerprint on userData so future lookups can
+  // Stash the fingerprint on userData so future lookups can
   // validate. ~33 B per cache entry is negligible vs the 1024 B LUT.
   (texture.userData as { originalLutSample?: Uint8Array }).originalLutSample = incomingFp;
   customCacheLruSet(key, texture);

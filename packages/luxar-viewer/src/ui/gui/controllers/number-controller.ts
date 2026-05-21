@@ -8,10 +8,10 @@
  * - Custom display override support (for logarithmic sliders)
  */
 
-import { Controller } from '../core/controller';
-import { ControllerType, type ControllerOptions } from '../core/types';
-import { clamp, formatNumber } from '../utils/value-formatting';
-import { applyAutoBlur } from '../utils/auto-blur';
+import { Controller } from '../controller';
+import { ControllerType, type ControllerOptions } from '../types';
+import { clamp, formatNumber } from '../format/value-formatting';
+import { applyAutoBlur } from '../format/auto-blur';
 
 export class NumberController extends Controller<number> {
   protected type = ControllerType.NUMBER;

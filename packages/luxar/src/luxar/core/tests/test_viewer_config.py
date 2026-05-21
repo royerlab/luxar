@@ -206,15 +206,11 @@ class TestViewerConfig:
             cinematic_mode=True,
             vignette_enabled=True,
             vignette_darkness=0.6,
-            dof_enabled=True,
-            dof_focus=10.0,
-            dof_strength=0.5,
             detector_noise_enabled=True,
             detector_noise_readout_sigma=0.005,
             detector_noise_photon_gain=0.003,
             detector_noise_fpn_sigma=0.001,
             fxaa_enabled=True,
-            smaa_enabled=False,
         )
         assert vc.bloom_strength == 0.5
         assert vc.detector_noise_enabled is True
@@ -282,10 +278,6 @@ class TestViewerConfig:
         with pytest.raises(ValueError, match="detector_noise_photon_gain"):
             ViewerConfig(detector_noise_photon_gain=0.00001)
 
-    def test_invalid_ao_quality(self) -> None:
-        with pytest.raises(ValueError, match="ao_quality must be one of"):
-            ViewerConfig(ao_quality="extreme")
-
     def test_invalid_theme(self) -> None:
         with pytest.raises(ValueError, match="theme must be one of"):
             ViewerConfig(theme="neon")
@@ -302,8 +294,6 @@ class TestViewerConfig:
             msaa_samples=4,
             ssaa_enabled=False,
             ssaa_multiplier=2.0,
-            smaa_threshold=0.1,
-            smaa_search_steps=16,
         )
         assert vc.msaa_samples == 4
 
@@ -405,7 +395,7 @@ class TestViewerConfig:
         assert vc2.cinematic_mode is True
         # Unset fields remain None
         assert vc2.bloom_enabled is None
-        assert vc2.dof_enabled is None
+        assert vc2.fxaa_enabled is None
 
     def test_round_trip_all_new_fields(self) -> None:
         """Round-trip with all new fields."""
@@ -419,14 +409,10 @@ class TestViewerConfig:
             ),
             bloom_levels=8,
             vignette_offset=0.3,
-            ao_enabled=True,
-            ao_quality="high",
             msaa_enabled=True,
             msaa_samples=4,
             ssaa_enabled=False,
             ssaa_multiplier=2.0,
-            smaa_threshold=0.1,
-            smaa_search_steps=16,
             chromatic_lens_distortion_enabled=True,
             chromatic_lens_distortion_x=0.1,
             fly_movement_speed=2.0,
@@ -443,7 +429,6 @@ class TestViewerConfig:
         assert vc2.camera is not None
         assert vc2.camera.target_node == "my_node"
         assert vc2.bloom_levels == 8
-        assert vc2.ao_quality == "high"
         assert vc2.msaa_samples == 4
         assert vc2.chromatic_lens_distortion_enabled is True
         assert vc2.fly_movement_speed == 2.0

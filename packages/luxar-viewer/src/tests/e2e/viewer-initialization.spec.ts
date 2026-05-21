@@ -62,15 +62,15 @@ test.describe('Viewer Initialization', () => {
 
       const clouds: any[] = [];
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
           clouds.push({
             name: obj.name,
-            pointCount: geom.attributes.position?.count || 0,
-            hasPosition: !!geom.attributes.position,
-            hasColor: !!geom.attributes.color,
-            hasRadius: !!geom.attributes.radius,
-            hasSharpness: !!geom.attributes.sharpness,
+            pointCount: geom.attributes.aCenter?.count || 0,
+            hasPosition: !!geom.attributes.aCenter,
+            hasColor: !!geom.attributes.aColor,
+            hasRadius: !!geom.attributes.aRadius,
+            hasSharpness: !!geom.attributes.aSharpness,
             visible: obj.visible,
             material: obj.material?.type,
           });
@@ -85,7 +85,10 @@ test.describe('Viewer Initialization', () => {
         expect(cloud.hasPosition).toBe(true); // Position is mandatory
         expect(cloud.pointCount).toBeGreaterThan(0);
         expect(cloud.visible).toBe(true);
-        expect(cloud.material).toBe('ShaderMaterial'); // Should use custom shader
+        // GLSL path uses ShaderMaterial; WebGPU default path uses
+        // NodeMaterial. Both are "custom shader" wrappers from
+        // Luxar's perspective.
+        expect(['ShaderMaterial', 'NodeMaterial']).toContain(cloud.material);
       }
     }
   });
@@ -99,20 +102,26 @@ test.describe('Viewer Initialization', () => {
       (window as any).__luxarDebug.renderOnce();
     });
 
-    // Wait for render to complete
+    // Wait for render to complete. WebGLRenderer exposes
+    // `info.render.frame`; WebGPURenderer exposes `info.frame`
+    // (and `info.render.calls`/`.triangles` for the per-frame draw
+    // stats). Probe both so the test stays renderer-agnostic.
     await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 0,
+      () => {
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        return (info?.render?.frame ?? info?.frame ?? 0) > 0;
+      },
       { timeout: 10000 }
     );
 
     // Verify renderer has processed frames
     const rendererInfo = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
+      const info = (window as any).__luxarDebug.renderer.info;
       return {
-        frames: debug.renderer.info.render.frame,
-        triangles: debug.renderer.info.render.triangles,
-        points: debug.renderer.info.render.points,
-        calls: debug.renderer.info.render.calls,
+        frames: info.render?.frame ?? info.frame ?? 0,
+        triangles: info.render?.triangles ?? 0,
+        points: info.render?.points ?? 0,
+        calls: info.render?.calls ?? 0,
       };
     });
 

@@ -8,11 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  isFlyControls,
-  isOrbitControls,
-  type ControlInstance,
-} from '../../../controls/types';
+import { isFlyControls, isOrbitControls, type ControlInstance } from '../../../controls/types';
 
 // Test fixtures use type assertion because the guard reads properties
 // off a duck-typed object — the actual classes pull in THREE which

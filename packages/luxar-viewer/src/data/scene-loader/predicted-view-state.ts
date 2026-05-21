@@ -83,10 +83,7 @@ export function dispatchPredictivePrefetch(
   return true;
 }
 
-export function predictNextViewState(
-  prev: ViewState | null,
-  current: ViewState
-): ViewState {
+export function predictNextViewState(prev: ViewState | null, current: ViewState): ViewState {
   const predicted: ViewState = {
     displayDims: [...current.displayDims],
     slicePosition: [...current.slicePosition],

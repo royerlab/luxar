@@ -28,7 +28,7 @@
 @import './components/colormap-legend.css';
 @import './components/toast.css';
 @import './components/overlay-layer.css';
-/* (More components will be added as they are migrated) */
+/* Add additional component styles here as needed. */
 /* @import './components/performance-monitor.css'; */
 
 /* Custom GUI Library Styles (replaces lil-gui) */

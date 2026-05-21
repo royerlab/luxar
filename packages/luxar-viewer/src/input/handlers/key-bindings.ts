@@ -26,17 +26,14 @@
 
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
-import {
-  InputContext,
-  type InputContextManager,
-} from '../input-context-manager';
+import { InputContext, type InputContextManager } from '../input-context-manager';
 import type { SceneManager } from '../../scene/scene-manager';
-import type { ScaleBar } from '../../ui/components/scale-bar';
-import type { ColormapLegend } from '../../ui/components/colormap-legend';
-import type { OverlayManager } from '../../ui/helpers/overlay-manager';
+import type { ScaleBar } from '../../ui/scale-bar';
+import type { ColormapLegend } from '../../ui/colormap-legend';
+import type { OverlayManager } from '../../ui/overlay-manager';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { LayersPanel } from '../../ui/layers';
-import type { DebugConsole } from '../../ui/panels/debug-console';
+import type { DebugConsole } from '../../ui/debug-console';
 
 /**
  * Command implementations the InputHandler still owns. Every binding

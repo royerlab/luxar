@@ -1,0 +1,409 @@
+/**
+ * Unit tests for the retry helpers (`retryFailedLoaderUnlocked` and
+ * `retryAllFailedLoadersUnlocked`) in `scene-loader/retry.ts`.
+ *
+ * The retry path's three load-bearing invariants:
+ *   1. Verify-and-clear guard — if the named scene object has been
+ *      removed between failure and retry, the data fetch is allowed
+ *      to complete but the failure entry is NOT cleared from the
+ *      registry. Without this guard, retry would falsely report
+ *      success while the data has nowhere to land.
+ *   2. extend_to_all skip uses the BASE viewState (not the derived
+ *      one) — same fallback the initial-load path uses, so retry
+ *      doesn't render an incorrect query region for fully-extended
+ *      nodes.
+ *   3. Per-attempt retryCount accounting — when a retry itself throws,
+ *      the failedLoaders entry is updated with retryCount + 1 so the
+ *      UI can surface "tried N times" diagnostics.
+ *
+ * All tests exercise the helper directly via a stub `RetryCtx` — the
+ * orchestrator's `_updateInProgress` lock dance lives one layer above
+ * and is out of scope here.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import * as THREE from 'three';
+import {
+  retryFailedLoaderUnlocked,
+  retryAllFailedLoadersUnlocked,
+  type RetryCtx,
+} from '../../../../data/scene-loader/retry';
+import { LoaderRegistry } from '../../../../data/scene-loader/loader-registry';
+import type { DataLoader, LoadedPointsData, ViewState } from '../../../../data/data-loader-types';
+import type { LinesDataLoader, LoadedLinesData } from '../../../../types/lines';
+import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../types/gsplats';
+
+// ============================================================================
+// Local fixtures — flat ctx-stubbing per the data/scene-loader test pattern.
+// ============================================================================
+
+function makeViewState(): ViewState {
+  return {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 0],
+    tolerance: [0, 0, 0, 1],
+    dimensions: undefined,
+  };
+}
+
+/**
+ * Build a real `THREE.Group` containing a single named Mesh, so the
+ * helper's `rootGroup.getObjectByName(path)` lookups exercise real
+ * scene-graph traversal rather than a mocked getter.
+ */
+function makeRootGroupWith(path: string, attrs?: { extend_to_all?: string[] }): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'LuxarScene';
+  const mesh = new THREE.Mesh();
+  mesh.name = path;
+  if (attrs) mesh.userData.attrs = attrs;
+  root.add(mesh);
+  return root;
+}
+
+/**
+ * Build a `RetryCtx` whose registry, viewState, and rootGroup are real,
+ * and whose callbacks are individual vi.fn() spies that the test can
+ * assert against.
+ */
+function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
+  // Surface the spies for easy assertion.
+  spies: {
+    deriveNodeViewState: ReturnType<typeof vi.fn>;
+    updatePointsGeometry: ReturnType<typeof vi.fn>;
+    processLinesData: ReturnType<typeof vi.fn>;
+    commitLinesGeometry: ReturnType<typeof vi.fn>;
+    processGSplatsData: ReturnType<typeof vi.fn>;
+    commitGSplatsGeometry: ReturnType<typeof vi.fn>;
+  };
+} {
+  const viewState = makeViewState();
+  const deriveNodeViewState = vi.fn(
+    (_path: string, _attrs: unknown, _opts: { applyPartialExtendTolerance: boolean }) => ({
+      skip: false as const,
+      viewState,
+    })
+  );
+  const updatePointsGeometry = vi.fn();
+  const processLinesData = vi.fn().mockResolvedValue(null);
+  const commitLinesGeometry = vi.fn();
+  const processGSplatsData = vi.fn().mockResolvedValue(null);
+  const commitGSplatsGeometry = vi.fn();
+
+  const ctx: RetryCtx = {
+    registry: new LoaderRegistry(),
+    rootGroup: null,
+    viewState,
+    deriveNodeViewState,
+    updatePointsGeometry,
+    processLinesData,
+    commitLinesGeometry,
+    processGSplatsData,
+    commitGSplatsGeometry,
+    ...overrides,
+  };
+  return Object.assign(ctx, {
+    spies: {
+      deriveNodeViewState,
+      updatePointsGeometry,
+      processLinesData,
+      commitLinesGeometry,
+      processGSplatsData,
+      commitGSplatsGeometry,
+    },
+  });
+}
+
+/** Minimal loader stubs — only the surface the helper actually calls. */
+function makePointsLoader(
+  updateView: (vs: ViewState) => Promise<LoadedPointsData | null>
+): DataLoader {
+  return { updateView } as unknown as DataLoader;
+}
+function makeLinesLoader(
+  updateView: (vs: ViewState) => Promise<LoadedLinesData | null>
+): LinesDataLoader {
+  return { updateView } as unknown as LinesDataLoader;
+}
+function makeGSplatsLoader(
+  updateView: (vs: ViewState) => Promise<LoadedGSplatsData | null>
+): GSplatsDataLoader {
+  return { updateView } as unknown as GSplatsDataLoader;
+}
+
+const PATH = '/scene/node';
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+describe('retryFailedLoaderUnlocked — path-not-in-failed-loaders', () => {
+  it('returns false immediately when the path is not in registry.failedLoaders', async () => {
+    const ctx = makeRetryCtx();
+    // Registry empty; no failure recorded.
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+    expect(ok).toBe(false);
+    expect(ctx.spies.deriveNodeViewState).not.toHaveBeenCalled();
+  });
+});
+
+describe('retryFailedLoaderUnlocked — Points loader success path', () => {
+  it('updates geometry and clears the failure on success', async () => {
+    const data = { pointCount: 7 } as unknown as LoadedPointsData;
+    const updateView = vi.fn().mockResolvedValue(data);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    ctx.registry.registerPointsLoader(PATH, makePointsLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith(PATH, data);
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+    // Points uses applyPartialExtendTolerance: true (matches initial-load path).
+    expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, undefined, {
+      applyPartialExtendTolerance: true,
+    });
+  });
+
+  it('does not call updatePointsGeometry when loader.updateView resolves null', async () => {
+    const updateView = vi.fn().mockResolvedValue(null);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    ctx.registry.registerPointsLoader(PATH, makePointsLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    // verifyAndClear still runs — fetched (null) data still counts as a successful retry.
+    expect(ok).toBe(true);
+    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+  });
+});
+
+describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
+  it('runs process → commit on a successful fetch', async () => {
+    const linesData = { segmentCount: 4 } as unknown as LoadedLinesData;
+    const stagedFromProcess = { path: PATH } as never;
+    const updateView = vi.fn().mockResolvedValue(linesData);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    ctx.spies.processLinesData.mockResolvedValue(stagedFromProcess);
+    ctx.registry.registerLinesLoader(PATH, makeLinesLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    expect(ctx.spies.processLinesData).toHaveBeenCalledWith(PATH, linesData, ctx.viewState);
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(stagedFromProcess);
+    // Lines variant: applyPartialExtendTolerance: false.
+    expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, undefined, {
+      applyPartialExtendTolerance: false,
+    });
+  });
+
+  it('skips commit when processLinesData returns null but still clears the failure', async () => {
+    const linesData = { segmentCount: 4 } as unknown as LoadedLinesData;
+    const updateView = vi.fn().mockResolvedValue(linesData);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    // processLinesData defaults to resolving null (set in makeRetryCtx).
+    ctx.registry.registerLinesLoader(PATH, makeLinesLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('x'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    expect(ctx.spies.processLinesData).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+  });
+});
+
+describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallback', () => {
+  it('builds gsplatsViewState from base viewState fields when derive returns skip', async () => {
+    const splatsData = { splatCount: 9 } as unknown as LoadedGSplatsData;
+    const updateView = vi.fn().mockResolvedValue(splatsData);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH, { extend_to_all: ['t', 'c'] }),
+    });
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    ctx.registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    // The 4-field spread fallback (NOT the derived viewState) — same shape
+    // loadGSplats() initial-load uses. Verify by checking what loader.updateView received.
+    expect(updateView).toHaveBeenCalledTimes(1);
+    const passedViewState = updateView.mock.calls[0][0];
+    expect(passedViewState).toEqual({
+      displayDims: ctx.viewState.displayDims,
+      slicePosition: ctx.viewState.slicePosition,
+      tolerance: ctx.viewState.tolerance,
+      dimensions: ctx.viewState.dimensions,
+    });
+    // Confirm derive was passed the node's extend_to_all attrs from the rootGroup mesh.
+    expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(
+      PATH,
+      { extend_to_all: ['t', 'c'] },
+      { applyPartialExtendTolerance: true }
+    );
+  });
+});
+
+describe('retryFailedLoaderUnlocked — verifyAndClear stale-scene guard', () => {
+  it('returns false WITHOUT clearing the failure when the scene object is gone', async () => {
+    const data = { pointCount: 7 } as unknown as LoadedPointsData;
+    const updateView = vi.fn().mockResolvedValue(data);
+    // rootGroup is a real group but does NOT contain a mesh named PATH —
+    // the scene was reloaded or the node was programmatically removed
+    // between failure and retry.
+    const ctx = makeRetryCtx({
+      rootGroup: new THREE.Group(),
+    });
+    ctx.registry.registerPointsLoader(PATH, makePointsLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(false);
+    // Data was fetched (the fetch is async + completes), commit was attempted...
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(1);
+    // ...but the failure stays — verifyAndClear refused to clear it.
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(true);
+  });
+});
+
+describe('retryFailedLoaderUnlocked — no loader registered', () => {
+  it('logs warning, deletes the stale failedLoaders entry, returns false', async () => {
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    // failedLoaders has an entry but no registry map has a loader for this path —
+    // can happen if the loader was disposed mid-flight.
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(false);
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+    // None of the per-type paths ran.
+    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.processLinesData).not.toHaveBeenCalled();
+    expect(ctx.spies.processGSplatsData).not.toHaveBeenCalled();
+  });
+});
+
+describe('retryFailedLoaderUnlocked — per-attempt retryCount accounting', () => {
+  it('increments retryCount when the retry itself throws', async () => {
+    const updateView = vi.fn().mockRejectedValue(new Error('network down'));
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+    });
+    ctx.registry.registerPointsLoader(PATH, makePointsLoader(updateView));
+    // First failure recorded with retryCount 0; the retry's catch block
+    // bumps that to retryCount 1.
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+    const initial = ctx.registry.failedLoaders.get(PATH);
+    expect(initial?.retryCount).toBe(0);
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(false);
+    const updated = ctx.registry.failedLoaders.get(PATH);
+    expect(updated?.retryCount).toBe(1);
+    expect(updated?.error.message).toBe('network down');
+  });
+});
+
+describe('retryAllFailedLoadersUnlocked — partition', () => {
+  it('returns empty buckets when given no paths', async () => {
+    const ctx = makeRetryCtx();
+    const result = await retryAllFailedLoadersUnlocked([], ctx);
+    expect(result).toEqual({ succeeded: [], failed: [] });
+  });
+
+  it('partitions a mixed batch into succeeded / failed', async () => {
+    const okData = { pointCount: 1 } as unknown as LoadedPointsData;
+    const okLoader = makePointsLoader(vi.fn().mockResolvedValue(okData));
+    const failLoader = makePointsLoader(vi.fn().mockRejectedValue(new Error('boom')));
+
+    const ctx = makeRetryCtx({
+      rootGroup: (() => {
+        // Group containing both paths so verifyAndClear succeeds for the
+        // ok path.
+        const root = new THREE.Group();
+        for (const p of ['/a', '/b', '/c']) {
+          const m = new THREE.Mesh();
+          m.name = p;
+          root.add(m);
+        }
+        return root;
+      })(),
+    });
+    ctx.registry.registerPointsLoader('/a', okLoader);
+    ctx.registry.registerPointsLoader('/b', failLoader);
+    ctx.registry.registerPointsLoader('/c', okLoader);
+    ctx.registry.recordFailure('/a', new Error('e'));
+    ctx.registry.recordFailure('/b', new Error('e'));
+    ctx.registry.recordFailure('/c', new Error('e'));
+
+    const result = await retryAllFailedLoadersUnlocked(['/a', '/b', '/c'], ctx);
+
+    expect(result.succeeded.sort()).toEqual(['/a', '/c']);
+    expect(result.failed).toEqual(['/b']);
+    // The failing path keeps its failure entry with retryCount bumped.
+    expect(ctx.registry.failedLoaders.get('/b')?.retryCount).toBe(1);
+    // The succeeded paths have their failure entries cleared.
+    expect(ctx.registry.failedLoaders.has('/a')).toBe(false);
+    expect(ctx.registry.failedLoaders.has('/c')).toBe(false);
+  });
+
+  it('starts every retry before any settles (Promise.all parallelism)', async () => {
+    // Each retry's updateView resolves AFTER the next microtask, so if the
+    // retries were sequential we'd see them start one-at-a-time. We assert
+    // all three are entered before any resolves by recording call order.
+    const callOrder: string[] = [];
+    const makeSlowLoader = (p: string) =>
+      makePointsLoader(async () => {
+        callOrder.push(`enter:${p}`);
+        await Promise.resolve(); // microtask yield
+        callOrder.push(`resolve:${p}`);
+        return { pointCount: 0 } as unknown as LoadedPointsData;
+      });
+
+    const ctx = makeRetryCtx({
+      rootGroup: (() => {
+        const root = new THREE.Group();
+        for (const p of ['/x', '/y', '/z']) {
+          const m = new THREE.Mesh();
+          m.name = p;
+          root.add(m);
+        }
+        return root;
+      })(),
+    });
+    for (const p of ['/x', '/y', '/z']) {
+      ctx.registry.registerPointsLoader(p, makeSlowLoader(p));
+      ctx.registry.recordFailure(p, new Error('e'));
+    }
+
+    await retryAllFailedLoadersUnlocked(['/x', '/y', '/z'], ctx);
+
+    // All three `enter:*` events come before any `resolve:*`.
+    const firstResolveIdx = callOrder.findIndex((s) => s.startsWith('resolve:'));
+    expect(firstResolveIdx).toBe(3);
+    expect(callOrder.slice(0, 3).sort()).toEqual(['enter:/x', 'enter:/y', 'enter:/z']);
+  });
+});

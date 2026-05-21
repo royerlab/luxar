@@ -18,7 +18,7 @@ vi.mock('../../../rendering/post-processing-manager', () => ({
   PostProcessingManager: vi.fn(),
 }));
 
-vi.mock('../../../ui/monitors/performance-monitor', () => {
+vi.mock('../../../ui/performance-monitor', () => {
   return {
     PerformanceMonitor: class MockPerformanceMonitor {
       begin = vi.fn();
@@ -32,7 +32,7 @@ vi.mock('../../../rendering/adaptive-dpr-manager', () => ({
   AdaptiveDPRManager: vi.fn(),
 }));
 
-import { AnimationController } from '../../../scene/animation-controller';
+import { AnimationController } from '../../../scene/animation/animation-controller';
 
 describe('AnimationController', () => {
   let controller: AnimationController;

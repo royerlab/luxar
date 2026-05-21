@@ -29,10 +29,11 @@ import { GSplatsProgressiveLoader } from '../gsplats/gsplats-progressive-loader'
 import type { SceneNode } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
-import { ArrayRefRegistry } from '../utils/array-decoder';
+import { ArrayRefRegistry } from '../array-decoder/decoder';
 import { log, Modules } from '../../utils/log';
 import { UpdateProfiler } from '../../profiling/update-profiler';
-import type { DecompressedChunkCache, MultiLevelCachingStore } from '../../cache';
+import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
 
 /** Common dependencies needed by every loader factory call. */
 export interface LoaderFactoryDeps {
@@ -139,9 +140,7 @@ export async function createProgressiveGSplatsLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<GSplatsDataLoader> {
-  const parentLoc = zarr
-    .root(deps.zarrStore)
-    .resolve(node.path === '/' ? '' : node.path.slice(1));
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
   const subLoc = parentLoc.resolve(`substitutive_${defaultSub}`);
 
   log.query(

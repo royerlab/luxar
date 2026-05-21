@@ -572,7 +572,7 @@ check-all:  ## Run all quality checks (Python and TypeScript)
 	fi
 	cd packages/luxar-viewer && pnpm run check:ci
 
-# Documentation checks (Phase 4 automation)
+# Documentation checks
 check-docs:  ## Check documentation quality and coverage
 	@echo "📚 Checking Python documentation..."
 	hatch run python scripts/check_documentation.py
@@ -1426,7 +1426,7 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 	cd $(CURDIR) && cd packages/luxar-viewer && pnpm build; \
 	echo "✅ Viewer rebuild complete!"
 
-# WASM/Rust setup and build (Phase 3)
+# WASM/Rust setup and build
 install-rust:  ## Install Rust and wasm-pack for WASM development
 	@# This must be a SINGLE shell command so PATH updates persist after Rust install
 	@echo "🦀 Setting up Rust/WASM development environment..."; \
@@ -1615,7 +1615,7 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 	@# (or with a CGO cross-toolchain like Zig). This target builds for
 	@# the host OS only; CI will produce the other binaries on their
 	@# respective runners. Set LUXAR_LAUNCHER_NO_WEBVIEW=1 at runtime if
-	@# you want the legacy "open default browser" behavior.
+	@# you want the launcher to open the default browser instead.
 	@GO_BIN=""; \
 	if command -v go >/dev/null 2>&1; then \
 		GO_BIN=go; \

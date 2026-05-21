@@ -62,7 +62,11 @@ test.describe('Lines Geometry Rendering', () => {
     expect(line.nodeType).toBe('lines');
     expect(line.isInstancedGeometry).toBe(true);
     expect(line.visible).toBe(true);
-    expect(line.materialType).toBe('ShaderMaterial');
+    // Either GLSL `ShaderMaterial` (default WebGL2 path) or
+    // `NodeMaterial` (TSL path under `WebGPURenderer`). Both surface
+    // the same Luxar wrapper API; the discriminator that matters at
+    // this level is `nodeType === 'lines'` (asserted above).
+    expect(['ShaderMaterial', 'NodeMaterial']).toContain(line.materialType);
   });
 });
 
@@ -110,6 +114,6 @@ test.describe('GSplats Geometry Rendering', () => {
     expect(splat.nodeType).toBe('gsplats');
     expect(splat.isInstancedGeometry).toBe(true);
     expect(splat.visible).toBe(true);
-    expect(splat.materialType).toBe('ShaderMaterial');
+    expect(['ShaderMaterial', 'NodeMaterial']).toContain(splat.materialType);
   });
 });

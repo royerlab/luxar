@@ -21,7 +21,7 @@
 
 import * as zarr from '../zarr';
 import { get, slice } from '../zarr';
-import { ArrayDecoder, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import type { RangeLoader, LoadRange } from './range-loader';
 import { clamp } from '../../utils/clamp';
 
@@ -86,7 +86,7 @@ export function colorBufferTypeMatches(buffer: ColorBuffer, expected: ColorBuffe
  * loaders; widen this if a future dataset uses RGBA.
  */
 export async function loadDirectColorRanges(
-  array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
   ranges: ColorRange[],
   output: ColorBuffer
 ): Promise<void> {
@@ -180,7 +180,7 @@ export function restoreOriginalDtype(
  * @param targetBuffer - Optional pre-allocated buffer (zero-allocation path).
  */
 export async function loadColorRanges(
-  array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
   ranges: ColorRange[],
   rangeLoader: RangeLoader,
   zarrStore: zarr.Readable,

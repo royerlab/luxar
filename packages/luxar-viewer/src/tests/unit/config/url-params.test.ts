@@ -19,6 +19,9 @@ describe('readUrlParams', () => {
       noPrefetch: false,
       prefetchDebug: false,
       cacheStats: false,
+      renderer: null,
+      webgpuForceWebGL: false,
+      perfTimestamp: false,
     });
   });
 
@@ -90,7 +93,7 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats'
+      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats&webgpu-force-webgl'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
@@ -99,6 +102,7 @@ describe('readUrlParams', () => {
     expect(params.noPrefetch).toBe(true);
     expect(params.prefetchDebug).toBe(true);
     expect(params.cacheStats).toBe(true);
+    expect(params.webgpuForceWebGL).toBe(true);
   });
 
   it('cache-stats is independent of cache-debug (different concerns)', () => {
@@ -117,6 +121,58 @@ describe('readUrlParams', () => {
     const params = readUrlParams('?unknown=foo');
     expect(params.src).toBeNull();
     expect(params.debug).toBe(false);
+  });
+
+  describe('?webgpu-force-webgl', () => {
+    it('parses the diagnostic WebGPURenderer WebGL-backend flag', () => {
+      expect(readUrlParams('').webgpuForceWebGL).toBe(false);
+      expect(readUrlParams('?webgpu-force-webgl').webgpuForceWebGL).toBe(true);
+      expect(readUrlParams('?renderer=webgpu&webgpu-force-webgl').webgpuForceWebGL).toBe(true);
+    });
+  });
+
+  describe('?perf-timestamp', () => {
+    it('parses the GPU timestamp-query opt-in flag', () => {
+      expect(readUrlParams('').perfTimestamp).toBe(false);
+      expect(readUrlParams('?perf-timestamp').perfTimestamp).toBe(true);
+      expect(readUrlParams('?renderer=webgpu&perf-timestamp').perfTimestamp).toBe(true);
+    });
+
+    it('does not affect other flags when present alone', () => {
+      const params = readUrlParams('?perf-timestamp');
+      expect(params.perfTimestamp).toBe(true);
+      expect(params.debug).toBe(false);
+      expect(params.webgpuForceWebGL).toBe(false);
+    });
+  });
+
+  describe('?renderer=', () => {
+    it('returns null when absent', () => {
+      expect(readUrlParams('').renderer).toBeNull();
+      expect(readUrlParams('?src=foo').renderer).toBeNull();
+    });
+
+    it('parses webgl / webgpu case-insensitively', () => {
+      expect(readUrlParams('?renderer=webgl').renderer).toBe('webgl');
+      expect(readUrlParams('?renderer=WebGL').renderer).toBe('webgl');
+      expect(readUrlParams('?renderer=webgpu').renderer).toBe('webgpu');
+      expect(readUrlParams('?renderer=WEBGPU').renderer).toBe('webgpu');
+    });
+
+    it('accepts webgl2 as an alias for webgl', () => {
+      // Some users may type `?renderer=webgl2` since the underlying
+      // backend is WebGL2 — accept it as a synonym.
+      expect(readUrlParams('?renderer=webgl2').renderer).toBe('webgl');
+    });
+
+    it('treats unrecognized values as null (no override)', () => {
+      // Defer-to-env behaviour for typos / future values we don't
+      // know about yet. Avoids breaking the env-var precedence chain
+      // when the URL is misspelled.
+      expect(readUrlParams('?renderer=opengl').renderer).toBeNull();
+      expect(readUrlParams('?renderer=').renderer).toBeNull();
+      expect(readUrlParams('?renderer').renderer).toBeNull();
+    });
   });
 });
 

@@ -18,7 +18,7 @@ import {
   waitForLuxarReady,
   waitForRenderStable,
   assertNoShaderErrors,
-  samplePixelAt,
+  getElementPixelStats,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -36,15 +36,14 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Sample a 3x3 grid; require at least one pixel to be visible.
-    const samples: Array<{ r: number; g: number; b: number; a: number }> = [];
-    for (let i = 0; i < 9; i++) {
-      const x = 0.35 + (i % 3) * 0.15;
-      const y = 0.35 + Math.floor(i / 3) * 0.15;
-      samples.push(await samplePixelAt(page, 'canvas', x, y));
-    }
-    const totalLit = samples.reduce((s, p) => s + p.r + p.g + p.b, 0);
-    expect(totalLit).toBeGreaterThan(0);
+    // Require actual visible output, not just the 1/255 clear color.
+    // Whole-canvas stats are more robust than sparse grid sampling for
+    // small splat clusters.
+    const stats = await getElementPixelStats(page, 'canvas', 10);
+    expect(
+      stats.nonBlackPixels,
+      `Expected visible GSplat output; stats=${JSON.stringify(stats)}`
+    ).toBeGreaterThan(0);
   });
 
   test('Camera rotation does not produce shader errors (precision-based ray integral)', async ({

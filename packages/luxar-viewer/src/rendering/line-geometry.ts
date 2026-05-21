@@ -2,13 +2,23 @@
  * Line Geometry Creation for Luxar
  *
  * Creates and updates instanced quad geometry for line rendering.
- * Extracted from line-material.ts to separate geometry from material concerns.
+ * Per-segment attributes are packed into a single
+ * `InstancedInterleavedBuffer` (shared with `InterleavedBufferAttribute`
+ * views) so the WebGPU backend reports one vertex-buffer slot
+ * instead of 12+. This is what lets the line material's pipeline
+ * compile under Chrome's compat-mode adapter (`maxVertexBuffers=8`)
+ * AND yields better cache locality on every backend (all 12 attrs
+ * for one segment live in one contiguous stride).
  *
  * @module rendering/line-geometry
  */
 
 import * as THREE from 'three';
-import type { LineMaterial } from './line-material';
+import {
+  packInterleavedAttributes,
+  writeInterleavedAttribute,
+  type InterleavedAttributeSpec,
+} from './interleaved-attributes';
 
 /**
  * Create the base quad geometry for line instances.
@@ -94,6 +104,91 @@ export interface InstancedLinesMeshConfig {
 }
 
 /**
+ * Scan the per-vertex sharpness arrays once and return true iff every
+ * value is within `±1e-4` of 2.0 (the dataset default). Used by the
+ * line node-factory to decide whether to stamp the
+ * `LUXAR_SHARPNESS_TWO` fragment-stage fast-path define on the
+ * material — replacing `pow(x, vSharpness)` with `x * x`.
+ *
+ * O(N) over the segment count; runs once at upload time.
+ */
+export function isAllSharpnessTwo(meshConfig: InstancedLinesMeshConfig): boolean {
+  const eps = 1e-4;
+  const { startSharpness, endSharpness, segmentCount } = meshConfig;
+  for (let i = 0; i < segmentCount; i++) {
+    if (Math.abs(startSharpness[i] - 2.0) > eps) return false;
+    if (Math.abs(endSharpness[i] - 2.0) > eps) return false;
+  }
+  return true;
+}
+
+/**
+ * Build the per-instance attribute specs in canonical declaration
+ * order. The line shader reads via `attribute('aStartPos', 'vec3')`
+ * etc., so layout order within the buffer doesn't affect the shader,
+ * but staying consistent across create + update keeps the stride
+ * predictable and makes the in-place update path simple.
+ *
+ * Uint8 clipped flags are widened to Float32 here (one allocation
+ * per update) so the interleaved buffer is uniformly Float32.
+ */
+function buildLineAttributeSpecs(meshConfig: InstancedLinesMeshConfig): InterleavedAttributeSpec[] {
+  const specs: InterleavedAttributeSpec[] = [
+    { name: 'aStartPos', data: meshConfig.startPositions, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aEndPos', data: meshConfig.endPositions, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aStartColor', data: meshConfig.startColors, itemSize: 3, semantic: 'color' },
+    { name: 'aEndColor', data: meshConfig.endColors, itemSize: 3, semantic: 'color' },
+    { name: 'aStartWidth', data: meshConfig.startWidths, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aEndWidth', data: meshConfig.endWidths, itemSize: 1, semantic: 'positive_scalar' },
+    {
+      name: 'aStartSharpness',
+      data: meshConfig.startSharpness,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aEndSharpness',
+      data: meshConfig.endSharpness,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aSegmentLength',
+      data: meshConfig.segmentLengths,
+      itemSize: 1,
+      semantic: 'positive_scalar',
+    },
+    {
+      name: 'aStartClipped',
+      data: new Float32Array(meshConfig.startClipped),
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aEndClipped',
+      data: new Float32Array(meshConfig.endClipped),
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+  ];
+  if (meshConfig.startScalars && meshConfig.endScalars) {
+    specs.push({
+      name: 'aStartScalar',
+      data: meshConfig.startScalars,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    });
+    specs.push({
+      name: 'aEndScalar',
+      data: meshConfig.endScalars,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    });
+  }
+  return specs;
+}
+
+/**
  * Compute bounding box and sphere from line segment start/end positions.
  * Uses a direct min/max pass without temporary geometry or array allocations.
  *
@@ -150,9 +245,29 @@ function computeLineBounds(
 }
 
 /**
+ * Bind a fresh `InstancedInterleavedBuffer` + `InterleavedBufferAttribute`
+ * views to a geometry. Used by both the create path and the size-change
+ * branch of the update path.
+ */
+function bindInterleavedAttributes(
+  geometry: THREE.InstancedBufferGeometry,
+  meshConfig: InstancedLinesMeshConfig
+): void {
+  const specs = buildLineAttributeSpecs(meshConfig);
+  const { views } = packInterleavedAttributes(specs, meshConfig.segmentCount);
+  for (const spec of specs) {
+    geometry.setAttribute(spec.name, views[spec.name]);
+  }
+}
+
+/**
  * Create an instanced mesh for lines rendering.
  *
- * Sets up the instanced geometry with all per-segment attributes.
+ * Sets up the instanced geometry with all per-segment attributes
+ * interleaved into a single `InstancedInterleavedBuffer`. Three.js's
+ * WebGPU backend collapses the 11 (or 13 with colormap)
+ * `InterleavedBufferAttribute` views into a single vertex-buffer
+ * slot — see `interleaved-attributes.ts` for rationale.
  *
  * Note: We use THREE.Mesh instead of THREE.InstancedMesh because:
  * - InstancedMesh adds instanceMatrix (mat4 = 4 attribute locations)
@@ -166,7 +281,7 @@ function computeLineBounds(
  */
 export function createInstancedLinesMesh(
   meshConfig: InstancedLinesMeshConfig,
-  material: LineMaterial
+  material: THREE.Material
 ): THREE.Mesh {
   const baseGeometry = createLineQuadGeometry();
 
@@ -175,56 +290,8 @@ export function createInstancedLinesMesh(
   geometry.index = baseGeometry.index;
   geometry.setAttribute('aQuadCorner', baseGeometry.getAttribute('aQuadCorner'));
 
-  // Set instanced attributes
-  geometry.setAttribute(
-    'aStartPos',
-    new THREE.InstancedBufferAttribute(meshConfig.startPositions, 3)
-  );
-  geometry.setAttribute('aEndPos', new THREE.InstancedBufferAttribute(meshConfig.endPositions, 3));
-  geometry.setAttribute(
-    'aStartColor',
-    new THREE.InstancedBufferAttribute(meshConfig.startColors, 3)
-  );
-  geometry.setAttribute('aEndColor', new THREE.InstancedBufferAttribute(meshConfig.endColors, 3));
-  geometry.setAttribute(
-    'aStartWidth',
-    new THREE.InstancedBufferAttribute(meshConfig.startWidths, 1)
-  );
-  geometry.setAttribute('aEndWidth', new THREE.InstancedBufferAttribute(meshConfig.endWidths, 1));
-  geometry.setAttribute(
-    'aStartSharpness',
-    new THREE.InstancedBufferAttribute(meshConfig.startSharpness, 1)
-  );
-  geometry.setAttribute(
-    'aEndSharpness',
-    new THREE.InstancedBufferAttribute(meshConfig.endSharpness, 1)
-  );
-  geometry.setAttribute(
-    'aSegmentLength',
-    new THREE.InstancedBufferAttribute(meshConfig.segmentLengths, 1)
-  );
-
-  // Convert Uint8Array to Float32Array for clipped flags (shader expects float)
-  const startClippedFloat = new Float32Array(meshConfig.startClipped);
-  const endClippedFloat = new Float32Array(meshConfig.endClipped);
-
-  geometry.setAttribute('aStartClipped', new THREE.InstancedBufferAttribute(startClippedFloat, 1));
-  geometry.setAttribute('aEndClipped', new THREE.InstancedBufferAttribute(endClippedFloat, 1));
-
-  // bind aStartScalar/aEndScalar when both are present so the
-  // shader's USE_COLORMAP path can compile. Single-side absence is
-  // treated as "not ready" (fail-closed) to avoid an
-  // attribute-mismatch shader compile.
-  if (meshConfig.startScalars && meshConfig.endScalars) {
-    geometry.setAttribute(
-      'aStartScalar',
-      new THREE.InstancedBufferAttribute(meshConfig.startScalars, 1)
-    );
-    geometry.setAttribute(
-      'aEndScalar',
-      new THREE.InstancedBufferAttribute(meshConfig.endScalars, 1)
-    );
-  }
+  // Pack all per-instance attributes into one interleaved buffer.
+  bindInterleavedAttributes(geometry, meshConfig);
 
   // Set instance count
   geometry.instanceCount = meshConfig.segmentCount;
@@ -245,9 +312,13 @@ export function createInstancedLinesMesh(
  * Update an existing instanced lines mesh with new segment data.
  *
  * Mirrors the pattern in `updateInstancedGSplatsMesh` (gsplat-geometry.ts):
- * - Same count: in-place `.set()` on existing attributes (zero GPU allocation)
- * - Different count: `setAttribute` with new InstancedBufferAttribute + `_maxInstanceCount` fix
- * - Always: recompute bounding box/sphere from segment positions
+ * - Same count: in-place writes into the shared interleaved buffer
+ *   (zero GPU re-allocation; the typed array is reused).
+ * - Different count: rebuild the interleaved buffer and rebind every
+ *   view; force `_maxInstanceCount` cache invalidation.
+ * - Colormap toggle (scalars present vs absent): treated like a
+ *   size change because the spec-set changed.
+ * - Always: recompute bounding box/sphere from segment positions.
  *
  * @param mesh - Existing mesh to update (must have InstancedBufferGeometry)
  * @param meshConfig - New segment data
@@ -258,48 +329,58 @@ export function updateInstancedLinesMesh(
 ): void {
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   const currentCount = geometry.instanceCount;
+  const hasScalars = !!(meshConfig.startScalars && meshConfig.endScalars);
 
-  // Attribute layout: [name, source data, components per instance, needsFloat32Convert]
-  const attrSpecs: Array<[string, Float32Array | Uint8Array, number, boolean]> = [
-    ['aStartPos', meshConfig.startPositions, 3, false],
-    ['aEndPos', meshConfig.endPositions, 3, false],
-    ['aStartColor', meshConfig.startColors, 3, false],
-    ['aEndColor', meshConfig.endColors, 3, false],
-    ['aStartWidth', meshConfig.startWidths, 1, false],
-    ['aEndWidth', meshConfig.endWidths, 1, false],
-    ['aStartSharpness', meshConfig.startSharpness, 1, false],
-    ['aEndSharpness', meshConfig.endSharpness, 1, false],
-    ['aSegmentLength', meshConfig.segmentLengths, 1, false],
-    ['aStartClipped', meshConfig.startClipped, 1, true], // Uint8 → Float32
-    ['aEndClipped', meshConfig.endClipped, 1, true], // Uint8 → Float32
-  ];
+  // Detect a spec-set change (colormap toggle): the geometry has
+  // 'aStartScalar' iff the prior config supplied scalars.
+  const hadScalars = geometry.getAttribute('aStartScalar') !== undefined;
 
-  // Include scalar attributes when both endpoints provide them, matching
-  // the createInstancedLinesMesh both-or-nothing pattern.
-  if (meshConfig.startScalars && meshConfig.endScalars) {
-    attrSpecs.push(['aStartScalar', meshConfig.startScalars, 1, false]);
-    attrSpecs.push(['aEndScalar', meshConfig.endScalars, 1, false]);
-  }
-
-  if (meshConfig.segmentCount !== currentCount) {
-    // Size changed: recreate attributes
-    for (const [name, data, size, needsFloat32Convert] of attrSpecs) {
-      const arrayData = needsFloat32Convert ? new Float32Array(data) : (data as Float32Array);
-      geometry.setAttribute(name, new THREE.InstancedBufferAttribute(arrayData, size));
+  if (meshConfig.segmentCount !== currentCount || hasScalars !== hadScalars) {
+    // Size changed OR spec-set changed (colormap toggle). Rebuild
+    // the interleaved buffer from scratch — it gets a fresh stride
+    // (when toggling scalars on/off) and a fresh `.array` (when
+    // resizing).
+    //
+    // If the prior buffer had scalar views the new buffer omits,
+    // remove them explicitly so they don't dangle on the geometry.
+    if (hadScalars && !hasScalars) {
+      geometry.deleteAttribute('aStartScalar');
+      geometry.deleteAttribute('aEndScalar');
     }
+    bindInterleavedAttributes(geometry, meshConfig);
     geometry.instanceCount = meshConfig.segmentCount;
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-    // Same issue as gsplats: meshes created with 0 instances cache _maxInstanceCount=0.
-    // (THREE.js r163+ internal property)
+    // Meshes created with 0 instances cache _maxInstanceCount=0
+    // and subsequent attribute replacements don't invalidate it,
+    // so the renderer keeps drawing 0 instances. Mirrors the same
+    // workaround in gsplat-geometry.ts.
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
-    // Same size: update in place (zero GPU allocation)
-    for (const [name, data, , needsFloat32Convert] of attrSpecs) {
-      const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
-      const arrayData = needsFloat32Convert ? new Float32Array(data) : data;
-      attr.set(arrayData);
-      attr.needsUpdate = true;
+    // Same size + same spec-set: write the new data into the
+    // existing interleaved buffer at the correct strided offsets.
+    // The buffer object is recovered from any one view (every view
+    // points at the same underlying buffer).
+    const sampleView = geometry.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
+    const buffer = sampleView.data as THREE.InstancedInterleavedBuffer;
+    const specs = buildLineAttributeSpecs(meshConfig);
+    let offset = 0;
+    for (const spec of specs) {
+      // `spec.data` is typed as `Float32 | Uint16 | Uint8` at the
+      // interface level, but the Lines spec builder always emits
+      // `Float32Array` today (every semantic resolves to `'float32'`
+      // post Float16 revert — see `interleaved-attributes.ts` module
+      // header). The cast is safe as long as that contract holds; a
+      // future narrowing redesign will widen the update path
+      // alongside flipping the semantic defaults.
+      writeInterleavedAttribute(
+        buffer,
+        offset,
+        spec.itemSize,
+        spec.data as Float32Array,
+        meshConfig.segmentCount
+      );
+      offset += spec.itemSize;
     }
   }
 
