@@ -1,0 +1,74 @@
+import * as zarr from '../../../zarr';
+import { get } from '../../../zarr';
+import { log } from '../../../../utils/log';
+import { config as appConfig } from '../../../../config';
+import { getWorkerPool } from '../../../../workers/worker-pool';
+import { ArrayDecoder, type ArrayMetadata } from '../../../array-decoder/decoder';
+import type { LoadRange } from '../../base-types';
+import { firstAxisRangeSlice, type ResolvedRangeLoaderConfig } from './encoding-types';
+
+export interface LUTCtx {
+  config: ResolvedRangeLoaderConfig;
+  verbose: boolean;
+  decoder: ArrayDecoder;
+}
+
+export async function loadLUT(
+  ctx: LUTCtx,
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
+  attrs: ArrayMetadata,
+  ranges: LoadRange[],
+  output: Float32Array
+): Promise<number> {
+  const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
+  if (!lutMetadata) throw new Error('[RangeLoader] LUT metadata missing');
+
+  const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+  const useWorkers = appConfig.dataLoading.performance.useWebWorkers;
+  const shouldUseWorkers = useWorkers && totalPoints > ctx.config.workerThreshold;
+
+  if (ctx.verbose) {
+    log.info(
+      ctx.config.logModule,
+      `LUT: ${totalPoints} indices, k=${lutMetadata.k}, mode=${lutMetadata.lutMode} (worker=${shouldUseWorkers})`
+    );
+  }
+
+  const flatLUT: number[] = Array.isArray(lutMetadata.lut[0])
+    ? (lutMetadata.lut as number[][]).flat()
+    : (lutMetadata.lut as number[]);
+
+  let destOffset = 0;
+  const shape = array.shape;
+
+  for (const range of ranges) {
+    const sliceSpec = firstAxisRangeSlice(shape, range);
+    const chunkData = await get(array, sliceSpec);
+    const indices = chunkData.data as Uint8Array | Uint16Array;
+
+    let decoded: Float32Array;
+    if (shouldUseWorkers) {
+      try {
+        decoded = await getWorkerPool().runWithTimeout('decodeLUT', 'decode', (api) =>
+          api.decodeLUT({
+            indices,
+            lut: flatLUT,
+            k: lutMetadata.k,
+            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+          })
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
+        log.warning(ctx.config.logModule, 'Worker LUT decode failed, falling back to main thread:', error);
+        decoded = ctx.decoder.decodeLUTIndices(indices, lutMetadata);
+      }
+    } else {
+      decoded = ctx.decoder.decodeLUTIndices(indices, lutMetadata);
+    }
+
+    output.set(decoded, destOffset);
+    destOffset += decoded.length;
+  }
+
+  return destOffset;
+}
