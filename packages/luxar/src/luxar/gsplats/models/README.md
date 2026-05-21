@@ -10,7 +10,6 @@ PyTorch model implementations and rendering engines for n-dimensional oriented G
 models/
 ├── __init__.py
 ├── README.md               # This file
-├── SPECIFICATIONS.md        # Technical specification
 ├── gsplats/                 # Core model and rendering
 │   ├── gsplat_model.py      # GaussianSplatModel (nn.Module)
 │   ├── rendering_core.py    # Rendering engine (2D/3D fast paths, nD generic)
@@ -164,7 +163,6 @@ hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/tests/test_gspl
 
 ## References
 
-- [SPECIFICATIONS.md](SPECIFICATIONS.md) -- Complete technical specification
 - [Main Gaussian Splats Package](../README.md) -- Higher-level fitting API
-- [Utils Package](../utils/SPECIFICATIONS.md) -- Matrix utilities (pack/unpack)
-- [Optimization Package](../optim/SPECIFICATIONS.md) -- Optimizer integration
+- [Utils Package](../utils/README.md) -- Matrix utilities (pack/unpack)
+- [Optimization Package](../optim/README.md) -- Optimizer integration

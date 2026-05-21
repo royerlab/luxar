@@ -2,13 +2,13 @@
 """
 Human mitosis image Gaussian splatting demo with EXPLICIT seed initialization.
 
-This demo showcases the new seeding API where seeds are generated explicitly
-using `seed_from_decomposition()`, `seed_from_grid()`, or `seed_from_edges()`,
+This demo showcases explicit seeding where seeds are generated with
+`seed_from_decomposition()`, `seed_from_grid()`, or `seed_from_edges()`,
 which return GSplatData with scale-informed Gaussian shapes. The seeds are then
 passed to `fit_gaussian_splats()` for optimization.
 
 Key difference from demo_splats_mitosis.py:
-- Seeds are generated EXPLICITLY using the new API
+- Seeds are generated explicitly before fitting
 - Shows how scale information flows from seeding to fitting
 - Demonstrates direct control over seed generation parameters
 """
@@ -84,9 +84,9 @@ with asection("Human Mitosis Demo with Explicit Seeding"):
         aprint(f"Preprocessed human mitosis image: {V.shape}")
         aprint(f"Data range: [{V.min():.4f}, {V.max():.4f}]")
 
-    # ========== NEW: Explicit seed generation ==========
+    # ========== Explicit seed generation ==========
     with asection(f"Generating seeds using '{SEED_METHOD}' method"):
-        # The new API returns GSplatData with scale-informed shapes!
+        # Seeding returns GSplatData with scale-informed shapes.
         if SEED_METHOD == "grid":
             # Uniform grid seeding for baseline coverage
             seeds = seed_from_grid(

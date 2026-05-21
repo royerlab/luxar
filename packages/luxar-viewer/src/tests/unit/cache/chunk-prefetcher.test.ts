@@ -324,9 +324,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
   describe('Error Handling', () => {
     it('should propagate Missing results without throwing', async () => {
       const errorMockStore = {
-        getResult: vi
-          .fn()
-          .mockResolvedValue({ ok: false, error: { kind: 'Missing' } }),
+        getResult: vi.fn().mockResolvedValue({ ok: false, error: { kind: 'Missing' } }),
         setPrefetcher: vi.fn(),
       };
 
@@ -487,16 +485,12 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         enabled: true,
         maxConcurrent: 1,
       });
-      localPrefetcher.registerArrayBounds(
-        'data',
-        [10240, 10240],
-        [1024, 1024]
-      );
+      localPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
       localPrefetcher.onAccess('data/1.1');
       // Yield once so processQueue dispatches the first fetch.
       await new Promise((r) => setTimeout(r, 0));
-      const callsBeforeDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } }).mock
-        .calls.length;
+      const callsBeforeDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } })
+        .mock.calls.length;
       expect(callsBeforeDispose).toBeGreaterThanOrEqual(1);
 
       localPrefetcher.dispose();
@@ -505,8 +499,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       // Yield through microtasks to let .finally() complete.
       await new Promise((r) => setTimeout(r, 10));
 
-      const callsAfterDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } }).mock
-        .calls.length;
+      const callsAfterDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } })
+        .mock.calls.length;
       // The .finally() must NOT re-enter processQueue and dispatch the
       // remaining queued chunks.
       expect(callsAfterDispose).toBe(callsBeforeDispose);
@@ -535,9 +529,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       blocking.getResult = vi.fn((key: string) => {
         dispatched.push(key);
         return new Promise((resolve) => {
-          resolvers.push(() =>
-            resolve({ ok: true as const, value: new Uint8Array([1]) })
-          );
+          resolvers.push(() => resolve({ ok: true as const, value: new Uint8Array([1]) }));
         });
       }) as unknown as typeof blocking.getResult;
 
@@ -583,7 +575,9 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
     it('priority queue: normal-then-high re-enqueue promotes the entry (commit 8.3)', async () => {
       const blocking = new MockStore();
-      blocking.getResult = vi.fn(() => new Promise(() => {})) as unknown as typeof blocking.getResult;
+      blocking.getResult = vi.fn(
+        () => new Promise(() => {})
+      ) as unknown as typeof blocking.getResult;
       const local = new ChunkPrefetcher(blocking as any, {
         enabled: true,
         maxConcurrent: 0, // Block dispatch entirely so we can read tier state.
@@ -641,8 +635,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
           await new Promise((r) => setTimeout(r, 0));
         }
 
-        const callsAfterFinally = (slow.getResult as unknown as { mock: { calls: unknown[] } })
-          .mock.calls.length;
+        const callsAfterFinally = (slow.getResult as unknown as { mock: { calls: unknown[] } }).mock
+          .calls.length;
         // The .finally() must not re-enter processQueue and add new dispatches.
         expect(callsAfterFinally).toBe(callsAtDispatch);
       }

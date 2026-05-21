@@ -11,19 +11,15 @@
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
-import {
-  LayerStateManager,
-  type LayerInfo,
-  type SelectionMode,
-} from './layer-state';
+import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
 import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/event-group';
-import { showToast } from '../helpers';
-import type { AnimationController } from '../../scene/animation-controller';
+import { showToast } from '../toast';
+import type { AnimationController } from '../../scene/animation/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
@@ -33,13 +29,13 @@ import {
   collectDataDescendants,
   type ComposableAttrs,
   type EffectiveAttrs,
-} from '../../data/utils/attrs-composer';
+} from '../../data/attrs-composer';
 import {
   clampGamma,
   getBlendingState,
   liveLayerAttrs as deriveLiveLayerAttrs,
-} from './layer-attrs-utils';
-import { clamp } from '../gui/utils/value-formatting';
+} from './attrs-utils';
+import { clamp } from '../gui/format/value-formatting';
 
 // Type guard: does this material have our update* methods?
 export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
@@ -450,9 +446,7 @@ export class LayersPanel {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         const nextIdx =
-          e.key === 'ArrowDown'
-            ? Math.min(layers.length - 1, idx + 1)
-            : Math.max(0, idx - 1);
+          e.key === 'ArrowDown' ? Math.min(layers.length - 1, idx + 1) : Math.max(0, idx - 1);
         const next = layers[nextIdx];
         const nextRow = this.rowElements.get(next.path);
         if (nextRow) {
@@ -752,11 +746,12 @@ export class LayersPanel {
       return;
     }
 
-    const opacityUniform = (mat as unknown as {
-      uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
-    }).uniforms;
-    const liveOpacity =
-      opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
+    const opacityUniform = (
+      mat as unknown as {
+        uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
+      }
+    ).uniforms;
+    const liveOpacity = opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
     const state = getBlendingState(mode, liveOpacity);
     mat.blending = state.blending;
     mat.depthTest = state.depthTest;

@@ -19,13 +19,15 @@ The Luxar Scene package provides comprehensive scene management, animation contr
 
 ```
 scene/
-├── scene-manager.ts              # Main scene orchestrator
-├── scene-manager-utils.ts        # Pure utility functions (bounding box, camera distance, clipping)
-├── animation-controller.ts        # Render loop management
-├── scene-dims-manager.ts         # nD dimension coordination
-├── dimension-animation-manager.ts # Dimension playback automation
-├── camera-utils.ts              # Camera type union, type guards, projection helpers
-└── README.md                     # This documentation
+├── scene-manager.ts                # Main scene orchestrator
+├── scene-manager/                  # Focused helpers owned by SceneManager
+│   ├── camera/                     # camera-framing, camera-setup, camera-materials, camera-mode
+│   ├── clipping/                   # bounds-math, scene-bounds-cache, clipping-policy
+│   ├── render-pipeline/            # renderer-setup, post-processing-setup, scene-disposal, webgl-context-recovery
+│   └── viewport/                   # dpr-policy, resize-orchestrator
+├── animation/                      # animation-controller, dimension-animation-manager
+├── scene-dims-manager.ts           # nD dimension coordination
+└── README.md                       # This documentation
 ```
 
 ---

@@ -158,7 +158,7 @@ vi.mock('three', () => ({
   NoToneMapping: 0,
   SRGBColorSpace: 'srgb',
   ACESFilmicToneMapping: 4,
-  PCFSoftShadowMap: 2,
+  PCFShadowMap: 1,
 }));
 
 // Store mock setup

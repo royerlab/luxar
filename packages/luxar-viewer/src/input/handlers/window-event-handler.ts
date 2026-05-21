@@ -28,7 +28,7 @@
  */
 
 import type { SceneManager } from '../../scene/scene-manager';
-import type { AnimationController } from '../../scene/animation-controller';
+import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../ui/rendering-controls';
 
 export class WindowEventHandler {

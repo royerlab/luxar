@@ -296,7 +296,7 @@ void rasterize_forward_splat_centric_kernel(
         // (truncate²) can be tighter than the amplitude-based cutoff. This
         // may reject ~4 borderline pixels per volume (intensity within 42% of
         // floor threshold). Sum accuracy remains within 0.001% of reference.
-        // See SPECIFICATIONS.md for details.
+        // See README.md for current accuracy notes.
         float dist_sq = mahalanobis_distance_sq<DIM>(d_vec, conic_reg);
         if (dist_sq > truncate_sq) continue;
 

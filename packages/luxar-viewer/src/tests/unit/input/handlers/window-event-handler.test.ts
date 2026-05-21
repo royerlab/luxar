@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WindowEventHandler } from '../../../../input/handlers/window-event-handler';
 import type { SceneManager } from '../../../../scene/scene-manager';
-import type { AnimationController } from '../../../../scene/animation-controller';
+import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
 
 function makeSceneManager(): {

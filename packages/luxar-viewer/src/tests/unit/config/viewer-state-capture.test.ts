@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { captureViewerState } from '../../../config/viewer-state-capture';
+import { captureViewerState } from '../../../config/zarr-bridge/viewer-state-capture';
 
 // Mock ThemeManager
 vi.mock('../../../themes/theme-manager', () => ({
@@ -59,19 +59,11 @@ function createMockRenderingControls() {
       vignetteEnabled: false,
       vignetteDarkness: 0.5,
       vignetteOffset: 0.5,
-      dofEnabled: false,
-      dofFocus: 10,
-      dofStrength: 0.5,
-      aoEnabled: false,
-      aoQuality: 'medium' as const,
       detectorNoiseEnabled: false,
       detectorNoiseReadoutSigma: 0.005,
       detectorNoisePhotonGain: 0.003,
       detectorNoiseFpnSigma: 0.001,
       fxaaEnabled: true,
-      smaaEnabled: false,
-      smaaThreshold: 0.1,
-      smaaSearchSteps: 16,
       msaaEnabled: false,
       msaaSamples: 4,
       ssaaEnabled: false,

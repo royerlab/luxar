@@ -3,14 +3,14 @@
  *
  * The original logic was inline in `recording-panel.ts`'s 432-LOC
  * runOfflineCaptureLoop and untestable in isolation. Now lives in
- * `recording/video-codec-selection.ts`.
+ * `recording-panel/video-codec-selection.ts`.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import {
   selectVideoCodec,
   type MediabunnyCodec,
-} from '../../../../ui/recording/video-codec-selection';
+} from '../../../../ui/recording-panel/video-codec-selection';
 
 const ENC_OPTS = { width: 1920, height: 1080, bitrate: 8_000_000 };
 

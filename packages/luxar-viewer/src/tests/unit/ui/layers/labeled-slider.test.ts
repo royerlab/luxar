@@ -29,7 +29,9 @@ describe('LabeledSlider', () => {
       onChange: () => {},
     });
 
-    const labelText = container.querySelector('.luxar-layers-panel__control-label > span:first-child');
+    const labelText = container.querySelector(
+      '.luxar-layers-panel__control-label > span:first-child'
+    );
     expect(labelText?.textContent).toBe('Gamma');
 
     const input = findInput();

@@ -16,7 +16,7 @@ export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 // State management
 export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
 // Note: DataMonitorManager (and the cycleDataMonitor accessor) lives
-// in `../ui/monitors/data-monitor-manager` — it's a UI panel
+// in `../ui/data-monitor-manager` — it's a UI panel
 // manager, not a data-loading concern. Import from there directly.
 // The show/hide/toggle accessors were removed; production code uses
 // the 'panel-cycle' / 'panel-hide' event bus instead.
@@ -45,12 +45,12 @@ export {
 } from './loaders';
 
 // Directory navigation
-export { DirectoryNavigator } from './utils/directory-navigator';
-export type { DirectoryEntry, NavigationResult } from './utils/directory-navigator';
+export { DirectoryNavigator } from './nav/directory-navigator';
+export type { DirectoryEntry, NavigationResult } from './nav/directory-navigator';
 
 // Array decoding (for Python luxar.encoding compatibility)
-export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './utils/array-decoder';
-export type { ArrayMetadata } from './utils/array-decoder';
+export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './array-decoder/decoder';
+export type { ArrayMetadata } from './array-decoder/decoder';
 
 // Lines data loading
 export { LinesSpatialIndexLoader } from './lines/lines-spatial-index-loader';
@@ -62,15 +62,15 @@ export {
   distance3D,
 } from './lines/projection';
 
-// Scene graph builder (extracted from SceneLoader for modularity)
-export { SceneGraphBuilder } from './utils/scene-graph-builder';
-export type { StoreEntry } from './utils/scene-graph-builder';
-
 // Extracted modules (decomposed from SceneLoader)
 export {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from './utils/stats-aggregator';
-export { LoaderRegistry, type FailedLoaderInfo } from './loaders/loader-registry';
-export { computeTolerance, type GeometryType, type ToleranceOptions } from './utils/tolerance-computer';
+} from './stats/aggregator';
+export { LoaderRegistry, type FailedLoaderInfo } from './scene-loader/loader-registry';
+export {
+  computeTolerance,
+  type GeometryType,
+  type ToleranceOptions,
+} from './loaders/tolerance-computer';

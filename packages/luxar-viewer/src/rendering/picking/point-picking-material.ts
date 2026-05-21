@@ -4,104 +4,24 @@
  * Renders points to an RGBA32F pick buffer encoding:
  *   R = nodeId, G = elementId (gl_VertexID), B = brightness, A = 1.0
  *
- * Vertex shader is based on POINT_VERTEX_SHADER (rendering/shaders/point-shaders.ts)
- * with additions for nodeId/elementId output. Keep in sync with that shader.
- *
- * Fragment uses tighter truncation (50% radius) and brightness-as-depth
- * so the brightest element at each pixel wins the depth test.
+ * Shader source-of-truth lives in `./picking-shaders.ts`.
  */
 
 import * as THREE from 'three';
-import type { CameraAwareMaterial } from '../camera-aware-material';
-import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
-import { materialManager } from '../material-manager';
+import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from '../materials/_shared/camera-uniforms';
+import { POINT_PICK_SOURCE } from './picking-shaders';
+import { requireWebGLSources } from '../materials/_shared/shader-source';
+
+// Module-load assertion: the GLSL wrapper requires the GLSL source.
+// Captured once so the constructor can splice the strings into super().
+const POINT_PICK_GLSL = requireWebGLSources(POINT_PICK_SOURCE);
 
 export interface PointPickingMaterialConfig {
   nodeId: number;
   radiusScale?: number;
   sharpnessScale?: number;
 }
-
-/**
- * Picking vertex shader for points.
- * Based on POINT_VERTEX_SHADER — adds uNodeId uniform and vNodeId/vElementId outputs.
- */
-const POINT_PICK_VERTEX_SHADER = /* glsl */ `
-    precision highp float;
-
-    in float radius;
-    in float sharpness;
-
-    uniform float pointSizeFactor;
-    uniform float maxPointSize;
-    uniform float radiusScale;
-    uniform float sharpnessScale;
-    uniform int uIsOrtho;
-    uniform float uNodeId;
-
-    out highp float vRadius;
-    out mediump float vSharpness;
-    flat out highp float vNodeId;
-    flat out highp float vElementId;
-
-    void main() {
-      float normalizedSharpness = sharpness * sharpnessScale;
-      vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
-
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-
-      float normalizedRadius = radius * radiusScale;
-      vRadius = normalizedRadius;
-
-      float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
-      float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
-
-      // Tighter truncation for picking: 50% of visual radius
-      // Use sharpness compensation * 0.5 so we only pick the bright core
-      float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
-      float pointSize = basePointSize * sharpnessCompensation * 0.5;
-
-      gl_PointSize = max(1.0, min(pointSize, maxPointSize));
-
-      vNodeId = uNodeId;
-      vElementId = float(gl_VertexID);
-    }
-`;
-
-/**
- * Picking fragment shader for points.
- * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth.
- */
-const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
-    precision highp float;
-
-    in highp float vRadius;
-    in mediump float vSharpness;
-    flat in highp float vNodeId;
-    flat in highp float vElementId;
-
-    out vec4 fragColor;
-
-    void main() {
-      if (vRadius < 0.0001) discard;
-
-      vec2 centered = gl_PointCoord - 0.5;
-      float r2 = dot(centered, centered);
-
-      // Full circle discard (gl_PointSize is already halved in vertex shader for tighter picking)
-      if (r2 > 0.25) discard;
-
-      float normalizedR = sqrt(4.0 * r2);
-      float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
-
-      float brightness = falloff;
-      if (brightness < 1e-4) discard;
-
-      fragColor = vec4(vNodeId, vElementId, brightness, 1.0);
-      gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0);
-    }
-`;
 
 export class PointPickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
   constructor(config: PointPickingMaterialConfig) {
@@ -117,9 +37,12 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         sharpnessScale: { value: config.sharpnessScale ?? 1.0 },
         uIsOrtho: { value: 0 },
         uNodeId: { value: config.nodeId },
+        // Resolution needed for instanced-quad expansion (matches
+        // PointMaterial). Defaults overwritten by updateCameraParams.
+        uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
       },
-      vertexShader: POINT_PICK_VERTEX_SHADER,
-      fragmentShader: POINT_PICK_FRAGMENT_SHADER,
+      vertexShader: POINT_PICK_GLSL.vertex,
+      fragmentShader: POINT_PICK_GLSL.fragment,
       glslVersion: THREE.GLSL3,
       // Picking settings: opaque, depth test, no blending
       transparent: false,
@@ -139,6 +62,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 
   /**
@@ -152,10 +76,5 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
   }
   updateSharpnessScale(scale: number): void {
     this.uniforms.sharpnessScale.value = scale;
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }

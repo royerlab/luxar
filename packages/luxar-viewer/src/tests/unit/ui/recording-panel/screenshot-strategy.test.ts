@@ -1,0 +1,332 @@
+/**
+ * Tests for ScreenshotStrategy — the screenshot capture pipeline.
+ *
+ * Covers: SDR capture, EXR capture, debounce, format fallbacks
+ * (JPEG-no-alpha auto-switch), transparent background restore, max-DPR
+ * mode, panel-state save/restore, refusal during active recording.
+ *
+ * The strategy is exercised through `panel.captureScreenshot()` because
+ * the strategy is constructed by the Panel with all its hooks wired up;
+ * standalone construction would duplicate that wiring without
+ * additional coverage.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// jsdom polyfill for ImageData (not provided by default).
+if (typeof globalThis.ImageData === 'undefined') {
+  (globalThis as any).ImageData = class ImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    constructor(widthOrData: number | Uint8ClampedArray, heightOrWidth: number, height?: number) {
+      if (widthOrData instanceof Uint8ClampedArray) {
+        this.data = widthOrData;
+        this.width = heightOrWidth;
+        this.height = height ?? widthOrData.length / (4 * heightOrWidth);
+      } else {
+        this.width = widthOrData;
+        this.height = heightOrWidth;
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      }
+    }
+  };
+}
+
+// Mock canvas 2D context for offscreen canvases (jsdom doesn't support getContext('2d')).
+let canvasToBlobOverride: ((cb: any) => void) | null = null;
+const origCreateElement = document.createElement.bind(document);
+vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
+  const el = origCreateElement(tag, options);
+  if (tag === 'canvas') {
+    const canvasEl = el as HTMLCanvasElement;
+    const origGetContext = canvasEl.getContext.bind(canvasEl);
+    (canvasEl as any).getContext = (type: string, ...args: any[]) => {
+      if (type === '2d') {
+        return { putImageData: vi.fn(), drawImage: vi.fn() };
+      }
+      return origGetContext(type, ...args);
+    };
+    (el as HTMLCanvasElement).toBlob = vi.fn((cb: any) => {
+      if (canvasToBlobOverride) {
+        canvasToBlobOverride(cb);
+      } else {
+        cb(new Blob(['test'], { type: 'image/png' }));
+      }
+    });
+  }
+  return el;
+});
+
+vi.mock('../../../../ui/gui', async () => {
+  const { createMockController, createMockFolder, createMockGUI } = await import('./_helpers');
+  const MockGUI = vi.fn().mockImplementation(() => createMockGUI());
+  return { default: MockGUI, GUI: MockGUI, Controller: vi.fn(), createMockController, createMockFolder };
+});
+vi.mock('../../../../config', () => ({ config: { ui: { zIndex: { recordingPanel: 1500 } } } }));
+vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
+vi.mock('../../../../utils/log', () => ({
+  log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  Modules: { RECORDING: 'Recording' },
+}));
+vi.mock('../../../../scene/scene-dims-manager', () => ({
+  sceneDimsManager: {
+    getDims: vi.fn().mockReturnValue({ ndim: 4, displayed: [0, 1, 2] }),
+    getDimensionNames: vi.fn().mockReturnValue(['x', 'y', 'z', 'time']),
+    getDimensionRanges: vi.fn().mockReturnValue([
+      [0, 100], [0, 100], [0, 100], [0, 50],
+    ]),
+    setDimensionValue: vi.fn(),
+    hasNonDisplayedDimensions: vi.fn().mockReturnValue(true),
+  },
+}));
+
+import { RecordingPanel } from '../../../../ui/recording-panel';
+import { showToast } from '../../../../ui/toast';
+import { createMockSceneManager, createMockAnimationController } from './_helpers';
+
+URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+URL.revokeObjectURL = vi.fn();
+
+describe('ScreenshotStrategy', () => {
+  let panel: RecordingPanel;
+  let mockSceneManager: any;
+  let mockAnimController: any;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mockSceneManager = createMockSceneManager();
+    mockAnimController = createMockAnimationController();
+    panel = new RecordingPanel(mockSceneManager, mockAnimController);
+  });
+
+  afterEach(() => {
+    panel.dispose();
+    document.body.innerHTML = '';
+  });
+
+  describe('SDR capture', () => {
+    it('calls renderToImageData for non-EXR formats', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      await panel.captureScreenshot();
+
+      expect(mockSceneManager.postProcessing.renderToImageData).toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith('Screenshot saved');
+
+      rafSpy.mockRestore();
+    });
+
+    it('debounces concurrent screenshot requests', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      const p1 = panel.captureScreenshot();
+      const p2 = panel.captureScreenshot();
+      await Promise.all([p1, p2]);
+
+      // Second call is blocked by the inProgress lock.
+      expect(mockSceneManager.postProcessing.renderToImageData).toHaveBeenCalledTimes(1);
+
+      rafSpy.mockRestore();
+    });
+
+    it('surfaces a "Screenshot failed" toast when encoding returns null', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      canvasToBlobOverride = (cb: any) => cb(null);
+
+      await panel.captureScreenshot();
+
+      expect(showToast).toHaveBeenCalledWith('Screenshot failed');
+
+      canvasToBlobOverride = null;
+      rafSpy.mockRestore();
+    });
+
+    it('saves and restores panel states around capture', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      const mockStates = new Map([['renderingControls', true]]);
+      const getStates = vi.fn().mockReturnValue(mockStates);
+      const restoreStates = vi.fn();
+
+      panel.setPanelStateCallbacks(getStates, restoreStates);
+
+      await panel.captureScreenshot();
+
+      expect(getStates).toHaveBeenCalled();
+      // Once to hide-all, once to restore.
+      expect(restoreStates).toHaveBeenCalledTimes(2);
+
+      rafSpy.mockRestore();
+    });
+  });
+
+  describe('mutual exclusion', () => {
+    it('refuses screenshot while real-time recording is active and preserves savedRecordingState', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      const recordingSavedState = {
+        dprEnabled: true,
+        dpr: 1,
+        rendererSize: null,
+        resizeLocked: false,
+      };
+      (panel as any).session.isRecording = true;
+      (panel as any).session.savedRecordingState = recordingSavedState;
+
+      const saveStateSpy = vi.spyOn((panel as any).session, 'saveRecordingState');
+      const restoreStateSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
+
+      vi.mocked(showToast).mockClear();
+      try {
+        await panel.captureScreenshot();
+
+        expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
+        expect((panel as any).session.savedRecordingState).toBe(recordingSavedState);
+        expect(saveStateSpy).not.toHaveBeenCalled();
+        expect(restoreStateSpy).not.toHaveBeenCalled();
+      } finally {
+        (panel as any).session.isRecording = false;
+        (panel as any).session.savedRecordingState = null;
+        rafSpy.mockRestore();
+      }
+    });
+
+    it('refuses screenshot while offline capture is active', async () => {
+      const recordingSavedState = {
+        dprEnabled: false,
+        dpr: 2,
+        rendererSize: { width: 1920, height: 1080 },
+        resizeLocked: true,
+      };
+      (panel as any).session.isOfflineCaptureActive = true;
+      (panel as any).session.savedRecordingState = recordingSavedState;
+
+      const saveStateSpy = vi.spyOn((panel as any).session, 'saveRecordingState');
+
+      vi.mocked(showToast).mockClear();
+      try {
+        await panel.captureScreenshot();
+
+        expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
+        expect((panel as any).session.savedRecordingState).toBe(recordingSavedState);
+        expect(saveStateSpy).not.toHaveBeenCalled();
+      } finally {
+        (panel as any).session.isOfflineCaptureActive = false;
+        (panel as any).session.savedRecordingState = null;
+      }
+    });
+  });
+
+  describe('transparent background', () => {
+    it('sets scene.background to null during capture then restores', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.transparentBackground = true;
+      const originalBg = mockSceneManager.scene.background;
+
+      await panel.captureScreenshot();
+
+      expect(mockSceneManager.scene.background).toBe(originalBg);
+
+      rafSpy.mockRestore();
+    });
+
+    it('auto-switches from JPEG to PNG when transparent', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.transparentBackground = true;
+      (panel as any).options.outputFormat = 'jpeg';
+
+      await panel.captureScreenshot();
+
+      expect(showToast).toHaveBeenCalledWith('Switched to PNG (JPEG has no alpha)');
+
+      rafSpy.mockRestore();
+    });
+  });
+
+  describe('max DPR', () => {
+    it('disables adaptive DPR during screenshot then re-enables', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      const mockDPRManager = {
+        isActive: vi.fn().mockReturnValue(true),
+        getCurrentDPR: vi.fn().mockReturnValue(1.0),
+        getNativeDPR: vi.fn().mockReturnValue(2.0),
+        setEnabled: vi.fn(),
+      };
+      panel.setAdaptiveDPRManager(mockDPRManager as any);
+      (panel as any).options.maxDPR = true;
+
+      await panel.captureScreenshot();
+
+      expect(mockDPRManager.setEnabled).toHaveBeenCalledWith(false);
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+      expect(mockDPRManager.setEnabled).toHaveBeenCalledWith(true);
+
+      rafSpy.mockRestore();
+    });
+  });
+
+  describe('EXR HDR path', () => {
+    it('calls captureHDRAsEXR instead of toBlob for EXR format', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.outputFormat = 'exr';
+
+      await panel.captureScreenshot();
+
+      expect(mockSceneManager.postProcessing.captureHDRAsEXR).toHaveBeenCalled();
+      expect(mockSceneManager.postProcessing.renderToImageData).not.toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith('HDR screenshot saved (EXR)');
+
+      rafSpy.mockRestore();
+    });
+
+    it('generates filename with .exr extension', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.outputFormat = 'exr';
+
+      const downloadSpy = vi.spyOn(panel as any, 'downloadBlob');
+
+      await panel.captureScreenshot();
+
+      expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.exr$/));
+
+      rafSpy.mockRestore();
+    });
+  });
+});

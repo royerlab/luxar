@@ -21,15 +21,10 @@ import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { StorageKeys } from '../utils/storage-keys';
-import {
-  showError,
-  showToast,
-  showHelpOverlay,
-  hideHelpOverlay,
-  showLoadingIndicator,
-  hideLoadingIndicator,
-  clearError,
-} from '../ui/helpers';
+import { showError, clearError } from '../ui/error-overlay';
+import { showToast } from '../ui/toast';
+import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
+import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
 import { setNotifierBackend } from '../utils/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
@@ -109,8 +104,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
 
   // Wire the cross-layer notifier surface to the concrete UI helpers.
   // Lower layers (data, scene, input) call notifier.toast / .error /
-  // .showHelp etc. without importing ui/helpers directly — that's what
-  // keeps the dependency-cruiser layer order clean.
+  // .showHelp etc. without importing the ui/ helper modules directly —
+  // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
     showError,
     showToast,
@@ -179,6 +174,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       noPrefetch: urlParams.noPrefetch,
       prefetchDebug: urlParams.prefetchDebug,
     },
+    // `?renderer=webgl|webgpu` forces a backend regardless of the
+    // build-time env. Undefined → SceneManager falls back to the env
+    // var, then the WebGL default. See `setupRenderer` for the
+    // precedence chain.
+    renderer: urlParams.renderer ?? undefined,
+    webgpuForceWebGL: urlParams.webgpuForceWebGL,
+    perfTimestamp: urlParams.perfTimestamp,
   };
 
   const app = new LuxarApp();

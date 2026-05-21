@@ -76,18 +76,12 @@ describe('WorkerPool — AbortSignal', () => {
     pool.setAbortSignal(controller.signal);
     controller.abort();
     await expect(
-      (pool as any).runWithTimeout(
-        'pool-signal-op',
-        'visibility',
-        (api: any) => api.handle()
-      )
+      (pool as any).runWithTimeout('pool-signal-op', 'visibility', (api: any) => api.handle())
     ).rejects.toMatchObject({ name: 'WorkerAbortError' });
     // Clearing the pool signal restores normal behavior.
     pool.setAbortSignal(undefined);
-    const result = await (pool as any).runWithTimeout(
-      'after-clear-op',
-      'visibility',
-      (api: any) => api.handle()
+    const result = await (pool as any).runWithTimeout('after-clear-op', 'visibility', (api: any) =>
+      api.handle()
     );
     expect(result).toBe('A');
   });
@@ -129,11 +123,7 @@ describe('WorkerPool — load balancing', () => {
     const w0 = makeFakeWorker('A', 5);
     const w1 = makeFakeWorker('B', 0);
     const pool = makePool([w0, w1]);
-    const result = await pool.runWithTimeout(
-      'test-op',
-      'visibility',
-      (api: any) => api.handle()
-    );
+    const result = await pool.runWithTimeout('test-op', 'visibility', (api: any) => api.handle());
     expect(result).toBe('B');
     expect(w0.api.handle).not.toHaveBeenCalled();
     expect(w1.api.handle).toHaveBeenCalledTimes(1);
@@ -146,11 +136,7 @@ describe('WorkerPool — load balancing', () => {
       activeDuring = w0.activeQueries;
       return Promise.resolve('A');
     });
-    await pool.runWithTimeout(
-      'test-op',
-      'visibility',
-      (api: any) => api.handle()
-    );
+    await pool.runWithTimeout('test-op', 'visibility', (api: any) => api.handle());
     expect(activeDuring).toBe(1);
     expect(w0.activeQueries).toBe(0);
   });
@@ -159,11 +145,7 @@ describe('WorkerPool — load balancing', () => {
     const pool = makePool([w0]);
     w0.api.handle.mockRejectedValue(new Error('worker boom'));
     await expect(
-      pool.runWithTimeout(
-        'test-op',
-        'visibility',
-        (api: any) => api.handle()
-      )
+      pool.runWithTimeout('test-op', 'visibility', (api: any) => api.handle())
     ).rejects.toThrow('worker boom');
     expect(w0.activeQueries).toBe(0);
   });
@@ -172,22 +154,14 @@ describe('WorkerPool — load balancing', () => {
     const w1 = makeFakeWorker('B', 1); // least
     const w2 = makeFakeWorker('C', 2);
     const pool = makePool([w0, w1, w2]);
-    const result = await pool.runWithTimeout(
-      'test-op',
-      'visibility',
-      (api: any) => api.handle()
-    );
+    const result = await pool.runWithTimeout('test-op', 'visibility', (api: any) => api.handle());
     expect(result).toBe('B');
   });
   it('with all workers tied, picks index 0 (deterministic tie-break)', async () => {
     const w0 = makeFakeWorker('A', 2);
     const w1 = makeFakeWorker('B', 2);
     const pool = makePool([w0, w1]);
-    const result = await pool.runWithTimeout(
-      'test-op',
-      'visibility',
-      (api: any) => api.handle()
-    );
+    const result = await pool.runWithTimeout('test-op', 'visibility', (api: any) => api.handle());
     expect(result).toBe('A');
   });
 });

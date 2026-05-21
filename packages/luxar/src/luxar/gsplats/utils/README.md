@@ -160,8 +160,8 @@ factor_4d = calculate_gradient_dilution_factor(4)
 **Integration**: Used by `create_optimizer_and_scheduler()` to automatically scale learning rates based on dimensionality. The function multiplies the base learning rate by the dilution factor before creating the standard PyTorch Adam optimizer.
 
 **See Also**:
-- `../optim/SPECIFICATIONS.md` - Optimizer factory and gradient dilution integration
-- `../SPECIFICATIONS.md` - Gradient dilution rationale
+- `../optim/README.md` - Optimizer factory and gradient dilution integration
+- `../README.md` - Gradient dilution rationale
 
 ---
 
@@ -323,7 +323,6 @@ gsplats/utils/
 ├── tests/
 │   ├── test_device.py       # Device-resolution tests
 │   └── test_trils.py        # Comprehensive trils test suite
-├── SPECIFICATIONS.md        # Technical specification
 └── README.md                # This file
 ```
 
@@ -369,7 +368,6 @@ All functions are implemented in pure NumPy:
 
 ## See Also
 
-- **Detailed Specification**: [SPECIFICATIONS.md](./SPECIFICATIONS.md)
 - **Optimization Integration**: [../optim/README.md](../optim/README.md)
 - **Main Gsplats Package**: [../README.md](../README.md)
 - **Test Suite**: [tests/test_trils.py](./tests/test_trils.py)

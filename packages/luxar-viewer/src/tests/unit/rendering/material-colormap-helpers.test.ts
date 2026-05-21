@@ -15,12 +15,41 @@ import {
 } from '../../../rendering/material-colormap-helpers';
 
 function makeMockMaterial(): THREE.ShaderMaterial {
-  // Lightweight stand-in: real ShaderMaterial in jsdom is fine for the
-  // uniform/define manipulation we exercise here.
+  // Lightweight stand-in: a real ShaderMaterial with the
+  // ColormapAwareMaterial setters bolted on. The helper delegates
+  // uniform / define mutation to these setters; without them the
+  // helper would be a no-op (correct for materials like picking
+  // that don't implement the interface).
   const m = new THREE.ShaderMaterial({
     uniforms: {},
     defines: {},
   });
+  (
+    m as unknown as { setColormapTexture: (t: THREE.DataTexture | null) => void }
+  ).setColormapTexture = function setColormapTexture(texture: THREE.DataTexture | null): void {
+    if (texture) {
+      m.defines.USE_COLORMAP = '';
+      if (!m.uniforms.uColormapTex) {
+        m.uniforms.uColormapTex = { value: texture };
+        m.uniforms.uScalarMin = { value: 0.0 };
+        m.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        m.uniforms.uColormapTex.value = texture;
+      }
+    } else {
+      delete m.defines.USE_COLORMAP;
+      if (m.uniforms.uColormapTex) m.uniforms.uColormapTex.value = null;
+      if (m.uniforms.uScalarMin) m.uniforms.uScalarMin.value = 0.0;
+      if (m.uniforms.uScalarScale) m.uniforms.uScalarScale.value = 1.0;
+    }
+  };
+  (m as unknown as { setScalarRange: (min: number, max: number) => void }).setScalarRange =
+    function setScalarRange(min: number, max: number): void {
+      if (m.uniforms.uScalarMin) m.uniforms.uScalarMin.value = min;
+      if (m.uniforms.uScalarScale) {
+        m.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+      }
+    };
   return m;
 }
 
@@ -36,10 +65,12 @@ describe('supportsScalarColormap', () => {
     expect(supportsScalarColormap('points', g)).toBe(false);
   });
 
-  it('returns true for points with a `scalar` attribute', () => {
+  it('returns true for points with an `aScalar` attribute', () => {
+    // Per-instance scalar attribute is named `aScalar` and lives on an
+    // InstancedBufferAttribute.
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(3, 3));
-    g.setAttribute('scalar', new THREE.Float32BufferAttribute(1, 1));
+    g.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(3), 3));
+    g.setAttribute('aScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 

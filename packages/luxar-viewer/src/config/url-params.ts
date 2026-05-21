@@ -104,6 +104,41 @@ export interface UrlParams {
    * having to find the monitor's keyboard shortcut first.
    */
   cacheStats: boolean;
+  /**
+   * Force a specific rendering backend regardless of the default
+   * resolution. Useful for per-load A/B comparisons and for diagnosing
+   * TSL-vs-GLSL divergences without restarting the dev server.
+   *
+   * - `?renderer=webgl` — `THREE.WebGLRenderer` + GLSL `ShaderMaterial`
+   *   (the production default).
+   * - `?renderer=webgpu` — opt into `WebGPURenderer` + TSL
+   *   `NodeMaterial`. The renderer internally dispatches to a real
+   *   WebGPU adapter when available or falls back to its WebGL2
+   *   backend otherwise.
+   * - Unset (`null`) — fall back to the build-time
+   *   `VITE_LUXAR_USE_WEBGPU` env var (opt-in to WebGPU); if that is
+   *   also unset, the default is `webgl`.
+   *
+   * Any other value is normalized to `null` (defer to env / default).
+   */
+  renderer: 'webgl' | 'webgpu' | null;
+  /**
+   * Diagnostic flag (`?webgpu-force-webgl`) that keeps the
+   * `WebGPURenderer` / TSL `NodeMaterial` pipeline selected but asks
+   * Three.js to back it with its internal WebGL2 backend instead of a
+   * native WebGPU adapter. Ignored when `renderer` resolves to `webgl`.
+   */
+  webgpuForceWebGL: boolean;
+  /**
+   * Opt-in to GPU timestamp queries (`?perf-timestamp`). Only honored
+   * under WebGPURenderer with a backend that exposes the
+   * `timestamp-query` feature. When set, the renderer is constructed
+   * with `{ trackTimestamp: true }` and the perf bench reads
+   * per-frame GPU time via `renderer.resolveTimestampsAsync('render')`.
+   * Has a small runtime cost so the perf bench is the only intended
+   * caller; never set on the production viewer URL.
+   */
+  perfTimestamp: boolean;
 }
 
 /**
@@ -127,7 +162,23 @@ export function readUrlParams(search?: string): UrlParams {
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),
+    renderer: normalizeRendererParam(params.get('renderer')),
+    webgpuForceWebGL: params.has('webgpu-force-webgl'),
+    perfTimestamp: params.has('perf-timestamp'),
   };
+}
+
+/**
+ * Validate the `?renderer=` query value. Accept `webgl` and `webgpu`
+ * case-insensitively; everything else (including the empty
+ * `?renderer` flag-only form) is treated as "no override".
+ */
+function normalizeRendererParam(raw: string | null): 'webgl' | 'webgpu' | null {
+  if (raw === null) return null;
+  const v = raw.trim().toLowerCase();
+  if (v === 'webgl' || v === 'webgl2') return 'webgl';
+  if (v === 'webgpu') return 'webgpu';
+  return null;
 }
 
 export interface BrowserUrlLocation {

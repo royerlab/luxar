@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RenderingControls } from '../../../ui/rendering-controls';
-import type { AnimationController } from '../../../scene/animation-controller';
+import type { AnimationController } from '../../../scene/animation/animation-controller';
 
 // Note: PostProcessingManager and SceneManager are not imported because we use
 // duck-typed mocks (any type) to avoid loading the actual modules which have
@@ -161,16 +161,11 @@ describe('RenderingControls', () => {
       setFXAAEnabled: vi.fn(),
       setMSAAEnabled: vi.fn(),
       setMSAASamples: vi.fn(),
-      setSMAAEnabled: vi.fn(),
-      updateSMAASettings: vi.fn(),
       setToneMapping: vi.fn(),
-      setDOF: vi.fn(),
-      updateDOF: vi.fn(),
       setDetectorNoiseEnabled: vi.fn(),
       setVignetteEnabled: vi.fn(),
       setChromaticLensDistortionEnabled: vi.fn(),
       updateChromaticLensDistortion: vi.fn(),
-      setAOEnabled: vi.fn(),
       startDeferRebuild: vi.fn(),
       endDeferRebuild: vi.fn(),
     };
@@ -265,27 +260,7 @@ describe('RenderingControls', () => {
     });
   });
 
-  describe('Bug Fix #2: AO Disable', () => {
-    it('should disable AO when aoEnabled is false', () => {
-      const controls = renderingControls as any;
-
-      // Setup: Enable AO
-      controls.settings.aoEnabled = true;
-      controls.settings.aoQuality = 'high';
-      controls.applySettings();
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(true, 'high');
-
-      // Action: Disable AO
-      mockPostProcessing.setAOEnabled.mockClear();
-      controls.settings.aoEnabled = false;
-      controls.applySettings();
-
-      // Verify: setAOEnabled called with false
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(false, 'high');
-    });
-  });
-
-  describe('Bug Fix #4: Initialization Sync', () => {
+  describe('Initialization Sync', () => {
     it('should apply camera settings after loading from localStorage', () => {
       const controls = renderingControls as any;
 
@@ -437,7 +412,7 @@ describe('RenderingControls', () => {
       // Setup: Modify various settings
       controls.settings.fov = 85;
       controls.settings.bloomStrength = 1.5;
-      controls.settings.aoEnabled = true;
+      controls.settings.vignetteEnabled = true;
       controls.settings.controlType = 'fly';
       controls.settings.flyMovementSpeed = 3.0;
       controls.settings.flyRotationSpeed = 2.0;
@@ -448,7 +423,7 @@ describe('RenderingControls', () => {
       // Reset to different values
       controls.settings.fov = 47;
       controls.settings.bloomStrength = 0.5;
-      controls.settings.aoEnabled = false;
+      controls.settings.vignetteEnabled = false;
 
       // Load back
       controls.loadSettings();
@@ -456,7 +431,7 @@ describe('RenderingControls', () => {
       // Verify: All settings restored
       expect(controls.settings.fov).toBe(85);
       expect(controls.settings.bloomStrength).toBe(1.5);
-      expect(controls.settings.aoEnabled).toBe(true);
+      expect(controls.settings.vignetteEnabled).toBe(true);
       expect(controls.settings.controlType).toBe('fly');
       expect(controls.settings.flyMovementSpeed).toBe(3.0);
       expect(controls.settings.flyRotationSpeed).toBe(2.0);
@@ -486,7 +461,6 @@ describe('RenderingControls', () => {
       // Setup: Change many settings to non-default values
       controls.settings.fov = 120;
       controls.settings.bloomStrength = 2.0;
-      controls.settings.aoEnabled = true;
       controls.settings.vignetteEnabled = true;
       controls.settings.controlType = 'fly';
       controls.settings.flyInertialMode = true;
@@ -506,7 +480,6 @@ describe('RenderingControls', () => {
       // Verify: Settings reset to defaults
       expect(controls.settings.fov).toBe(47);
       expect(controls.settings.bloomStrength).toBe(0.25);
-      expect(controls.settings.aoEnabled).toBe(false);
       expect(controls.settings.vignetteEnabled).toBe(false);
       expect(controls.settings.controlType).toBe('orbit');
 
@@ -524,7 +497,6 @@ describe('RenderingControls', () => {
 
       // Verify: Post-processing settings applied
       expect(mockPostProcessing.setBloomEnabled).toHaveBeenCalled();
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(false, expect.any(String));
     });
   });
 

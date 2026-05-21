@@ -51,25 +51,31 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.sharpness) {
+      if (!points || !points.geometry.attributes.aSharpness) {
         return null;
       }
 
       const geometry = points.geometry;
-      const sharpnessAttr = geometry.attributes.sharpness;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, sharpnessAttr.count)
-          : sharpnessAttr.count;
-      // Only sample values within the draw range
-      const array = Array.from(sharpnessAttr.array.subarray(0, actualCount)) as number[];
+      const sharpnessAttr = geometry.attributes.aSharpness;
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : sharpnessAttr.count;
+      const actualCount = Math.min(instanceCount, sharpnessAttr.count);
+      // aSharpness is an InterleavedBufferAttribute; .array would return
+      // the shared interleaved buffer. Use getX(i) to read the actual
+      // per-instance sharpness values.
+      const array: number[] = [];
+      for (let i = 0; i < actualCount; i++) {
+        array.push(sharpnessAttr.getX(i));
+      }
       return {
         count: actualCount,
         min: Math.min(...array),
@@ -118,35 +124,36 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
-      const posAttr = geometry.attributes.position;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
-      const colorArr = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
-      // The fixture stores points along the X axis with index == x-position, so
-      // sort by x to recover the input ordering (the loader/spatial index does
-      // not preserve insertion order).
-      const itemsPerVertex = posAttr.itemSize ?? 3;
-      const posArr = Array.from(
-        posAttr.array.subarray(0, actualCount * itemsPerVertex)
-      ) as number[];
-      const indices = Array.from({ length: actualCount }, (_, i) => i);
-      indices.sort((a, b) => posArr[a * itemsPerVertex] - posArr[b * itemsPerVertex]);
-      const redChannels = indices.map((i) => colorArr[i * 3]);
+      const colorAttr = geometry.attributes.aColor;
+      const posAttr = geometry.attributes.aCenter;
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      // aColor/aCenter are InterleavedBufferAttribute views over a shared
+      // buffer; read per-instance components via getX/getY/getZ.
+      // The fixture stores points along the X axis with index == x-position,
+      // so sort by x to recover the input ordering (the loader/spatial
+      // index does not preserve insertion order).
+      const positions: { index: number; x: number }[] = [];
+      for (let i = 0; i < actualCount; i++) {
+        positions.push({ index: i, x: posAttr.getX(i) });
+      }
+      positions.sort((a, b) => a.x - b.x);
+      const redChannels = positions.map((p) => colorAttr.getX(p.index));
 
       return {
         count: actualCount,
@@ -319,34 +326,36 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
-      // Only sample color values within the draw range
-      const colors = colorAttr.array.subarray(0, actualCount * 3);
-      const firstColor = [colors[0], colors[1], colors[2]];
+      const colorAttr = geometry.attributes.aColor;
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      // aColor is an InterleavedBufferAttribute view; .array would return
+      // the shared interleaved buffer mixing positions/radii/colors/etc.
+      // Use getX/getY/getZ to read the actual per-instance RGB triplet.
+      const firstColor = [colorAttr.getX(0), colorAttr.getY(0), colorAttr.getZ(0)];
 
       // Check if all colors match the first color
       let allSame = true;
-      for (let i = 0; i < colors.length; i += 3) {
+      for (let i = 0; i < actualCount; i++) {
         if (
-          Math.abs(colors[i] - firstColor[0]) > 0.01 ||
-          Math.abs(colors[i + 1] - firstColor[1]) > 0.01 ||
-          Math.abs(colors[i + 2] - firstColor[2]) > 0.01
+          Math.abs(colorAttr.getX(i) - firstColor[0]) > 0.01 ||
+          Math.abs(colorAttr.getY(i) - firstColor[1]) > 0.01 ||
+          Math.abs(colorAttr.getZ(i) - firstColor[2]) > 0.01
         ) {
           allSame = false;
           break;
@@ -390,30 +399,34 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
-      // Only sample color values within the draw range
-      const colors = colorAttr.array.subarray(0, actualCount * 3);
+      const colorAttr = geometry.attributes.aColor;
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      // aColor is an InterleavedBufferAttribute view; iterate per instance
+      // via getX/getY/getZ to read the actual decoded LUT colors instead
+      // of mixed stride-misaligned values from the shared buffer.
       const uniqueColors = new Set<string>();
 
-      for (let i = 0; i < colors.length; i += 3) {
-        const colorKey = `${colors[i].toFixed(2)},${colors[i + 1].toFixed(2)},${colors[i + 2].toFixed(2)}`;
-        uniqueColors.add(colorKey);
+      for (let i = 0; i < actualCount; i++) {
+        const r = colorAttr.getX(i).toFixed(2);
+        const g = colorAttr.getY(i).toFixed(2);
+        const b = colorAttr.getZ(i).toFixed(2);
+        uniqueColors.add(`${r},${g},${b}`);
       }
 
       return {
@@ -465,9 +478,7 @@ test.describe('Console Error Detection', () => {
           const debug = (window as any).__luxarDebug;
           if (!debug?.consoleInterceptor?.getBufferedMessages) return false;
           const msgs = debug.consoleInterceptor.getBufferedMessages();
-          return msgs.some(
-            (m: { type?: string }) => m.type === 'error' || m.type === 'warning'
-          );
+          return msgs.some((m: { type?: string }) => m.type === 'error' || m.type === 'warning');
         },
         null,
         { timeout: 8000 }

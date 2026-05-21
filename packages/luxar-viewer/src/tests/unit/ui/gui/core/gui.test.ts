@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { GUI } from '../../../../../ui/gui/core/gui';
+import { GUI } from '../../../../../ui/gui/gui';
 
 describe('GUI', () => {
   let gui: GUI;

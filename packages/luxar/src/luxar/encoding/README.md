@@ -114,9 +114,8 @@ Decoding reverses: decompress → dequantize → reconstruct float32
 **Main entry point for encoding arrays.** Writes directly to zarr groups and follows a strict priority order.
 
 **See Also:**
-- `../io/SPECIFICATIONS.md` - How encoding integrates with I/O layer
-- `../core/SPECIFICATIONS.md` - Points, Lines, GSplats data structures that use encoding
-- `SPECIFICATIONS.md` (this package) - Detailed encoding algorithms
+- `../io/README.md` - How encoding integrates with I/O layer
+- `../core/README.md` - Points, Lines, GSplats data structures that use encoding
 
 **Purpose:**
 Unified encoding system with automatic deduplication and intelligent encoding selection.
@@ -804,7 +803,6 @@ When AUTO mode selects a lower-precision dtype, it ensures:
 
 ## See Also
 
-- [SPECIFICATIONS.md](SPECIFICATIONS.md) - Complete technical specification
 - [core/README.md](../core/README.md) - Core data structures
 - [io/README.md](../io/README.md) - I/O operations
 - [validation/README.md](../validation/README.md) - Validation utilities

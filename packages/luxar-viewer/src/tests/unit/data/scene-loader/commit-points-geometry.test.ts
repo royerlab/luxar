@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { commitPointsGeometry } from '../../../../data/scene-loader/commit-points-geometry';
+import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
@@ -20,19 +20,18 @@ function makeData(pointCount: number, withRadii = false): LoadedPointsData {
     sharpness: undefined,
     pointCount,
     metadata: {
-      bounds: new THREE.Box3(
-        new THREE.Vector3(-1, -1, -1),
-        new THREE.Vector3(1, 1, 1)
-      ),
+      bounds: new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1)),
     },
   } as unknown as LoadedPointsData;
 }
 
-function makePoints(name: string): THREE.Points {
+function makePoints(name: string): THREE.Mesh {
+  // Points are THREE.Mesh with instanced quad geometry. Per-instance
+  // attribute is `aCenter` (InstancedBufferAttribute).
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
-  const material = new THREE.PointsMaterial();
-  const points = new THREE.Points(geometry, material);
+  geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(0), 3));
+  const material = new THREE.MeshBasicMaterial();
+  const points = new THREE.Mesh(geometry, material);
   points.name = name;
   points.userData = { nodeType: 'points', visiblePointCount: 0 };
   return points;
@@ -40,7 +39,7 @@ function makePoints(name: string): THREE.Points {
 
 const mockCreatePointsGeometry = vi.fn(() => {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+  g.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(9), 3));
   return g;
 });
 const mockNodeFactory = {
@@ -70,9 +69,7 @@ describe('commitPointsGeometry', () => {
     const points = makePoints('/p');
     root.add(points);
     commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory);
-    expect(
-      (points.userData as { visiblePointCount: number }).visiblePointCount
-    ).toBe(0);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(0);
   });
 
   it('uses GPU buffer pool when supplied', () => {
@@ -84,15 +81,10 @@ describe('commitPointsGeometry', () => {
     const gpuBufferPool = {
       acquirePointsGeometry: vi.fn(() => newGeometry),
       updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
 
-    commitPointsGeometry(
-      '/p',
-      makeData(3),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory
-    );
+    commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory);
     expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledTimes(1);
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
@@ -114,15 +106,21 @@ describe('commitPointsGeometry', () => {
 
   it('updates attributes in place when pool disabled and counts match', () => {
     const root = new THREE.Group();
-    const points = new THREE.Points();
+    const points = new THREE.Mesh();
     points.name = '/p';
     points.userData = { nodeType: 'points', visiblePointCount: 0 };
-    // 3-point geometry to match the 3-point data.
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array(9), 3)
+    // 3-point geometry: production points geometries pack per-instance
+    // attributes into one `InstancedInterleavedBuffer` with views per
+    // attribute. The in-place commit path writes through these views,
+    // so the test fixture must mirror that shape.
+    const geom = new THREE.InstancedBufferGeometry();
+    const stride = 3; // aCenter only — minimal layout for this test.
+    const interleaved = new THREE.InstancedInterleavedBuffer(
+      new Float32Array(3 * stride),
+      stride,
+      1
     );
+    geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
     points.geometry = geom;
     root.add(points);
 
@@ -131,8 +129,6 @@ describe('commitPointsGeometry', () => {
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
     // The same geometry instance is preserved.
     expect(points.geometry).toBe(geom);
-    expect(
-      (points.userData as { visiblePointCount: number }).visiblePointCount
-    ).toBe(3);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
   });
 });

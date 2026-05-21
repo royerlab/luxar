@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DirectoryNavigator } from '../../../data/utils/directory-navigator';
+import { DirectoryNavigator } from '../../../data/nav/directory-navigator';
 
 // Mock fetch globally
 (globalThis as any).fetch = vi.fn();

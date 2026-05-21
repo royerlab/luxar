@@ -11,7 +11,7 @@
  * The kernels themselves are in kernels_core.cuh.
  * Launch wrappers are in kernel_launchers.cuh (already templated on InputDType).
  *
- * See SPECIFICATIONS.md for detailed algorithm descriptions.
+ * See README.md and OPTIMIZATION_REPORT.md for algorithm details.
  */
 
 #include "cuda_splatting.h"

@@ -13,7 +13,7 @@
  * ```
  */
 
-import type { EventListenerRecord } from '../core/types';
+import type { EventListenerRecord } from '../types';
 
 export class EventManager {
   private listeners: EventListenerRecord[] = [];

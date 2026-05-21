@@ -26,7 +26,7 @@ Two modes are available
     means "remove splats that contribute less than 1% of the local signal
     everywhere."
 
-Both modes include a **Phase 2 compounding check** that verifies the joint
+Both modes include a **joint compounding check** that verifies the joint
 removal of all candidates does not exceed the budget.  If it does, a binary
 search tightens the per-splat threshold until the joint constraint holds.
 
@@ -80,9 +80,9 @@ class CullResult:
         mode this is ``percentile(|R|) * tolerance``; in redundancy mode it
         equals the ``redundancy_threshold``.
     phase1_candidates : int
-        Number of candidates identified in Phase 1 (before compounding check).
+        Number of individually safe candidates before the joint compounding check.
     phase2_iterations : int
-        Number of binary-search iterations in Phase 2.
+        Number of binary-search iterations in the joint compounding check.
     max_joint_error : float
         The max ``|R_joint|`` (error-budget) or max fractional contribution
         (redundancy) after removing the final set of culled splats.
@@ -587,7 +587,7 @@ def cull_by_contribution(
         pre-computed splat datasets), but it cannot account for fitting
         error and may be slightly more conservative.
 
-    Both modes include a **Phase 2 compounding check**: after identifying
+    Both modes include a **joint compounding check**: after identifying
     individual candidates, the function verifies that their *joint*
     removal does not exceed the budget.  If it does (because overlapping
     candidates compound), the threshold is tightened via binary search.
@@ -617,7 +617,7 @@ def cull_by_contribution(
         which a splat is considered redundant (0--1).  E.g. 0.01 means
         "remove splats contributing < 1% of the local signal everywhere."
     max_binary_search_iters : int
-        Maximum binary-search iterations for Phase 2.
+        Maximum binary-search iterations for the joint compounding check.
     intensity_floor : float
         Minimum intensity threshold for AABB computation.
     chunk_size : int, optional
@@ -705,7 +705,7 @@ def cull_by_contribution(
                         f"mean={V_pred.mean().item():.6f}"
                     )
 
-        # --- Step 2: Phase 1 — per-splat metric ---
+        # --- Candidate metric pass ---
         per_splat_errors = _compute_per_splat_error(
             centers,
             Ls,
@@ -722,7 +722,7 @@ def cull_by_contribution(
         n_phase1 = int(safe_mask.sum().item())
 
         if verbose:
-            aprint(f"Phase 1: {n_phase1}/{N} candidates safe to remove")
+            aprint(f"Candidates: {n_phase1}/{N} individually safe to remove")
 
         if n_phase1 == 0:
             max_ref = (
@@ -740,7 +740,7 @@ def cull_by_contribution(
                 mode=mode,
             )
 
-        # --- Step 3: Phase 2 — compounding check ---
+        # --- Joint compounding check ---
         # Full binary search: find the MAXIMUM multiplier on tau whose
         # joint removal satisfies the constraint.  The old code stopped
         # at the first passing multiplier, which could overshoot (tighten
@@ -794,7 +794,7 @@ def cull_by_contribution(
             if verbose:
                 n_s = int(best_safe_mask.sum().item())
                 aprint(
-                    f"Phase 2: PASS at full threshold — "
+                    f"Joint check: PASS at full threshold — "
                     f"max_joint={max_err:.6f} <= tau={tau:.6f}, "
                     f"removing {n_s} splats"
                 )
@@ -812,7 +812,7 @@ def cull_by_contribution(
                 if verbose:
                     status = "PASS" if ok else "FAIL"
                     aprint(
-                        f"Phase 2 (iter {iteration}): {status} — "
+                        f"Joint check (iter {iteration}): {status} — "
                         f"mult={mid:.4f}, {n_at_mid} splats, "
                         f"max_joint={max_err:.6f}"
                     )

@@ -47,6 +47,181 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Removed — Per-package `SPECIFICATIONS.md` files (2026-05-19)
+
+Deleted every `SPECIFICATIONS*.md` across the repository — per-package
+specs, the `docs/templates/SPECIFICATIONS_TEMPLATE.md`, and stragglers
+under `gsplats/models/gsplats/cuda/`. The files had drifted from the
+code and were not pulling their weight. References were cleaned from
+`CLAUDE.md`, `AGENTS.md`, all package READMEs, `scripts/check_documentation.py`,
+`scripts/README.md`, `packages/luxar-viewer/CONVENTIONS.md`, the
+gsplats `GLOSSARY.md`, `docs/concepts/architecture.rst`,
+`docs/guides/user/HDR_GUIDE.md`, `docs/guides/developer/BUILD_SYSTEM_SPEC.md`,
+`docs/specs/GSPLATS_ZARR_FORMAT.md`, and inline code comments. READMEs
+remain the canonical per-package documentation; `docs/guides/specs/` is
+unaffected.
+
+#### Changed — Production default renderer flipped back to WebGL (2026-05-16)
+
+The viewer's production rendering path now defaults to
+`THREE.WebGLRenderer` (GLSL `ShaderMaterial`) again. Per-scene
+performance measurements on the WebGPU path landed below the WebGL
+baseline, so WebGL stays the safe choice until those gaps close.
+`WebGPURenderer` (TSL `NodeMaterial`) remains a fully-supported
+second backend behind `?renderer=webgpu` URL flag or
+`VITE_LUXAR_USE_WEBGPU=1` env var; the TSL ↔ GLSL parity harness
+keeps both stacks in sync and per-shader GLSL3 sources are retained
+as the reference.
+
+The compatibility `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var is now a
+no-op alias (WebGL is the default), and
+`VITE_LUXAR_USE_WEBGPU_RENDERER=1` is accepted as a synonym for
+`VITE_LUXAR_USE_WEBGPU=1` so existing CI invocations keep working.
+
+#### Added — WebGPURenderer WebGL-backend diagnostic flag (2026-05-16)
+
+- Added `?webgpu-force-webgl` for line-rendering performance triage.
+  When combined with `?renderer=webgpu`, Luxar still constructs
+  Three.js `WebGPURenderer` and dispatches TSL `NodeMaterial` shaders,
+  but passes `{ forceWebGL: true }` so Three.js uses its internal
+  WebGL2 backend instead of a native WebGPU adapter. This isolates
+  TSL/generated-shader overhead from native WebGPU/Dawn/backend costs.
+
+#### Fixed — Multi-agent review fixes for WebGPU/r184 renderer work (2026-05-16)
+
+Landed a batch of correctness, performance, and architecture fixes
+surfaced by a multi-agent review of the dual-stack rendering branch.
+The batch ships with full unit/lint/type/layer checks green.
+
+- **WebGPU readback row padding.** Added
+  `compactWebGPUReadbackRows` to `hdr-pixel-utils.ts` and wired it
+  into `PostProcessingManager.readTarget` (RGBA16F + RGBA32F),
+  `PostProcessingManager.renderToImageData` (RGBA8), and
+  `PickingSystem.readbackAndVote`. Previously the post-processing
+  capture and screenshot paths assumed compact rows under WebGPU
+  and produced corrupt / slanted output whenever
+  `width × bytesPerTexel` wasn't a multiple of 256 (the WebGPU
+  spec-mandated `bytesPerRow` alignment).
+- **TSL HDR/LDR capture toggles.** `MegaShaderTSLMaterial.toggleRawHdrCapture`
+  / `toggleLinearLdrCapture` now flip state and rebuild the TSL
+  graph, threading `captureRawHDR` / `captureLinearLDR` flags into
+  `megaWebGPUFactory` (which already had the early-exit support).
+  EXR exports under WebGPU now produce the documented
+  `hdr-effects-pre-tone` and `visible-ldr` outputs instead of
+  silently falling through to the full pipeline.
+- **GSplat picking `nearFade`.** Changed from
+  `depthFade.mul(coverageFade)` to `min(depthFade, coverageFade)`
+  in `gsplat-pick.tsl.ts` — matches visual TSL/GLSL gsplat and
+  GLSL gsplat picking. Restores correct splat picking near
+  coverage limits.
+- **`material-manager.ts` ↔ picking-material cycles.** Removed the
+  back-import of the `materialManager` singleton from all six
+  picking-material classes and the manual `unregister(this)` calls
+  in their `dispose()` methods. Cleanup now flows through the
+  existing `subscribeToDispose` listener that `MaterialManager.register`
+  attaches. `pnpm run check:layers` now reports 0 violations (was 6).
+- **Picking sharpness/radius sanitization parity.** Point picking
+  shaders (GLSL + TSL) now use the same `sanitizePositive` /
+  `sanitizeNonNegative` helpers as the visual path, so malformed
+  NaN/Inf sharpness can no longer make the pick footprint diverge
+  from the visible footprint.
+- **GSplat TSL invalid-value guards.** `gsplat.tsl.ts` and
+  `gsplat-pick.tsl.ts` now reject NaN/Inf 2D covariance elements
+  and amplitudes before the Cholesky / eigendecomposition,
+  matching the GLSL `invalidCov2D || invalidFloat` guard. New
+  `invalidFloatTSL` helper in `tsl-helpers.ts`.
+- **`RendererCapabilities.api` semantics clarified.** JSDoc now
+  states explicitly that `api` reports the **renderer API surface**
+  (which signatures to call), not the physical GPU backend.
+  Exported `isWebGLRenderer` and added a symmetric `isWebGPURenderer`
+  type guard. `BROWSER_SUPPORT_POLICY.md` rewrites the
+  previously-contradicting "honestly reports the backend"
+  paragraph.
+- **WebGPU device-loss signal.** `SceneManager.setupContextLossHandling`
+  now observes `renderer.backend.device.lost` and dispatches a
+  `webgpu-device-lost` event so host applications can prompt for
+  a reload. WebGPU device loss is treated as **unrecoverable** in
+  this release; a full rebuild path mirroring WebGL2's
+  `WebGLContextRecovery` is deferred until there's
+  WebGPU-native test infrastructure.
+- **GSplat TSL cofactor gating.** `gsplatWebGPUFactory` now
+  JS-conditionally emits the Σ_cam⁻¹ cofactor / ray-integration
+  block only in sum-projection mode. TSL `.select()` does not
+  short-circuit, so the previous factory paid the ~25-op cofactor
+  expansion on every vertex even in max projection. The wrapper
+  rebuilds the graph on sum↔max boundary crossings (same one-time
+  cost as a bloom/vignette toggle).
+- **GSplat picking Mahalanobis dedup.** Materialised the per-fragment
+  Mahalanobis forward-substitution + intensity via `.toVar()`
+  outside both `colorNode` and `depthNode` Fn bodies so the TSL
+  builder can fold the shared subexpression into a single local
+  if it supports CSE. Worst case is equivalent to before.
+- **Docs refresh.** Rendering docs and `picking/PICKING_DESIGN.md`
+  updated to describe the shipped dual-stack pipeline, including renderer
+  dispatch, readback signatures, WebGPU row-padding, interleaved attributes,
+  and the device-loss policy. Line cap-factor pseudocode rewritten to
+  match the fragment-shader implementation (the original
+  vertex-side `vCapFactor` design didn't survive the
+  4-vertex-quad layout).
+
+#### Changed — WebGPU renderer work: TSL ports + point container update (2026-05-13)
+
+Infrastructure step toward the WebGPU rendering backend. What
+landed at this commit (production rendering path was still on
+`WebGLRenderer` here):
+
+- **All 12 shaders ported to TSL / NodeMaterial**: scene materials
+  (`point`, `line`, `gsplat`), picking variants (`point-pick`,
+  `line-pick`, `gsplat-pick`), and post-processing (`fxaa`,
+  `bloom-{threshold,downsample,upsample}`, `mega` including
+  detector noise). Each lives in a `*.tsl.ts` file alongside the
+  GLSL3 source, sharing the same `ShaderSource` registry and
+  blending-state helper. Pixel parity vs. GLSL3 verified by
+  `tsl-shader-parity.spec.ts` under
+  `WebGPURenderer({ forceWebGL: true })`.
+- **Point container update**: points are now rendered as a
+  `THREE.Mesh + InstancedBufferGeometry` (matching the existing
+  line/gsplat container shape) instead of `THREE.Points`. Required
+  because r184's `GLSLNodeBuilder` hardcodes `gl_PointSize = 1.0`
+  for `THREE.Points`, blocking the TSL point port. Per-instance
+  attributes renamed to a shared convention (`aCenter`, `aRadius`,
+  `aSharpness`, `aColor`, `aScalar`).
+- **Async picking readback**: `picking-system.ts::readbackAndVote`
+  is now `async` and uses `readRenderTargetPixelsAsync` (works on
+  both WebGLRenderer and WebGPURenderer in r184). Stale-tooltip
+  suppression added in `core/app.ts` so an in-flight readback
+  doesn't blank the tooltip prematurely.
+- **`renderToImageData` readback path**: capture now renders through an
+  offscreen `WebGLRenderTarget` and reads via
+  `readRenderTargetPixelsAsync`. Backbuffer readback fallback is
+  retained on `RendererCapabilities` for WebGL2-only tests.
+- **Renderer union widening**: `RendererCapabilities.Renderer` is
+  now `WebGLRenderer | WebGPURenderer`; `setupRenderer` is
+  `async` and selects between the two via
+  `VITE_LUXAR_USE_WEBGPU_RENDERER=1`.
+- **Shared TSL helpers**: new `tsl-helpers.ts` deduplicates the
+  `sanitizePositive` / `sanitizeNonNegative` / `TSLNode` definitions
+  that the per-shader files had each carried locally. Each visual
+  TSL factory now accepts a `blendingMode` config field and applies
+  the matching THREE blending state via the existing
+  `blending-state.ts` helper.
+
+#### Changed — Three.js r184 and custom post-processing pipeline (2026-05-12)
+
+- **Breaking viewer dependency change**: the TypeScript viewer now targets
+  `three@~0.184.x` and removes the `postprocessing` package dependency.
+- Replaced the old pmndrs `EffectComposer` chain with Luxar's custom
+  post-processing pipeline: scene → HDR half-float target → BloomChain →
+  fused mega-shader → optional FXAA.
+- Preserved core effects in the new pipeline: bloom, global exposure/offset/gamma,
+  tone mapping, detector noise, vignette, chromatic lens distortion, FXAA, MSAA,
+  and SSAA.
+- Removed SMAA, Depth of Field, and SSAO controls. SMAA's 3-pass algorithm does
+  not fit the fused pipeline; DoF needs depth-aware multi-pass blur; SSAO requires
+  surface normals that Luxar's point/line/gsplat primitives do not provide.
+- Restored HDR/EXR capture semantics with explicit modes (`hdr-effects-pre-tone`,
+  `visible-ldr`, and `raw-scene-hdr`) and browser shader smoke coverage.
+
 #### Changed — Cache final polish after S1–S7 (2026-05-10)
 
 - Added browser screenshot artifact coverage for the Cache tab's status
@@ -61,10 +236,8 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 
 #### Changed — Cache recheck polish S1–S7 (2026-05-10)
 
-Follow-up to the cache recheck at
-`delme/viewer-cache-rereview-20260510-200308/`, which confirmed R1–R7
-closed most prior gaps and flagged seven concrete remaining items.
-S1–S7 close those.
+Follow-up cache polish for UI styling, predictive prefetch behavior,
+cache metrics cleanup, and additional edge-case coverage.
 
 - **S1 — CSS for the new cache UI classes.** `data-loading-monitor.css`
   gains rules for `.luxar-cache-section__metrics--cols-4` (the L2
@@ -121,12 +294,9 @@ path. Tests: 89 cache unit + 86 monitor unit + 1 strengthened E2E.
 
 #### Changed — Cache re-review remediation R1–R7 (2026-05-10)
 
-Follow-up to the cache re-review at
-`delme/viewer-cache-rereview-20260510-140614/`. The Phase 1–8
-hardening had already landed (lifecycle/dispose, OPFS races,
-in-flight coalescing, content-hash/TTL validation, Points/Lines
-prefetch parity); the re-review surfaced remaining UI/observability
-gaps and a handful of edge-case test holes. R1–R7 close those.
+Cache hardening pass for lifecycle/dispose, OPFS races, in-flight
+coalescing, content-hash/TTL validation, Points/Lines prefetch parity,
+UI/observability gaps, and edge-case test coverage.
 
 - **R1 — config validation for new cache fields.**
   `validateConfig` rejects bad `cache.opfsOperationTimeoutMs` (NaN
@@ -191,9 +361,8 @@ cache manager UI.
 
 #### Changed — Viewer code-review recheck hardening (2026-05-10)
 
-Follow-up pass against the recheck reports under
-`delme/viewer-code-review-recheck/`. Addresses W-tier findings still
-open after the prior pass:
+Follow-up hardening pass for findings still open after the prior viewer
+code review:
 
 - **Constants**: `MAX_SUPPORTED_DIMS` consolidated into
   `src/config/constants.ts`; `wasm/typescript/gsplats-processing.ts`,
@@ -218,8 +387,8 @@ open after the prior pass:
   Math.max(min, x))`.
 - **Lines TS fallback note**: `data/lines/projection.ts` documents the
   TS fallback path's allocation profile as an accepted trade-off.
-- **Docs**: `src/data/SPECIFICATIONS.md`, `src/data/loaders/README.md`
-  rewritten to show the `runWithTimeout(name, kind, fn)` pattern
+- **Docs**: data-loader docs rewritten to show the
+  `runWithTimeout(name, kind, fn)` pattern
   instead of raw `getWorker()` access. `CONVENTIONS.md` gains §§12-14
   for dependency-inversion ports, error-handling discipline, and the
   disposal pattern. `packages/luxar-viewer/README.md` documents
@@ -227,11 +396,10 @@ open after the prior pass:
 
 #### Changed — Viewer code-review rerun hardening pass (2026-05-10)
 
-Multi-phase hardening of the scalar-colormap + GPU pool + blending-state
-feature work, addressing every actionable finding from a six-agent code
-review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
+Hardening of the scalar-colormap + GPU pool + blending-state feature
+work, addressing actionable findings from a six-agent code review rerun.
 
-**Type-safety (Phase A):**
+**Type-safety:**
 - `PointsAttributeTypes.scalar` is now optional (`undefined` when absent)
   instead of a `'none'` sentinel; Float16Array gets a first-class dtype tag.
 - `LoadedLinesData.scalars` aligned with `ScalarArray` (Float32/Float16/
@@ -241,7 +409,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - `growLinesGeometry` preserves optional `aStartScalar`/`aEndScalar`
   attributes on resize.
 
-**Lifecycle (Phase B):**
+**Lifecycle:**
 - Material clone-vs-pool registration bug: pooled materials are
   detached from global updates before NodeFactory clone sites; clones
   take the global slot, pooled stays in the LRU cache.
@@ -255,7 +423,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Data accumulators expose `isDisposed()`; `fill`/`ensureCapacity`
   throw with a descriptive error post-dispose.
 
-**Performance (Phases C–D):**
+**Performance:**
 - Lines worker scalar fallback now emits a one-shot warning so users
   notice the main-thread cliff.
 - Accumulator growth copies only the live prefix
@@ -270,7 +438,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - `estimateGeometryBytes` cached on `geometry.userData.cachedByteSize`;
   invalidated on grow.
 
-**Shaders (Phase E):**
+**Shaders:**
 - Line shader: pathological near-camera wide-quad segments now early-
   discard instead of rasterizing a half-viewport quad at reduced
   intensity.
@@ -280,7 +448,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Documented `LUXAR_MAX_RGB_CONTRIBUTION` and `USE_COLORMAP` defines
   in the line shader header.
 
-**API surface (Phase F):**
+**API surface:**
 - Public exports for `getCompleteBlendingState`,
   `applyBlendingStateToMaterial`, `supportsScalarColormap`,
   `applyColormapTextureToMaterial`, `applyScalarRangeToMaterial`,
@@ -289,14 +457,14 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
   centralize the mode discriminators across materials.
 - `syncPointMaterialWithGeometry` moved to `rendering/material-sync-helpers.ts`.
 
-**Diagnostics (Phase G):**
+**Diagnostics:**
 - Array decoder broadcast-encoding error includes zarr path + encoding shape.
 - `captureHDRPixels` validates the mode at runtime, falls back with a warning.
 - `updateView` log differentiates supersede vs first-queue.
 - Custom LUT cache validates content fingerprint on hit (defends
   against DJB2 collisions).
 
-**Tests + Docs (Phases H–I):**
+**Tests + Docs:**
 - New `blending-state.test.ts` with predicate + canonical-state tests
   including max-mode round-trip lock-in.
 - Accumulator dispose/usedCount tests, scalar buffer lazy-alloc tests,
@@ -304,8 +472,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Byte-budget eviction tests for the pure selector + pool integration.
 - `LUXAR_ZARR_FORMAT.md` documents `has_scalars`, `scalar_data_range`,
   `colormap`, and the `colormap_lut` sibling array.
-- `rendering/SPECIFICATIONS.md` documents the byte-cache + bounded
-  eviction policy.
+- Rendering docs describe the byte-cache + bounded eviction policy.
 
 #### Changed — Viewer shader/material follow-through (2026-05-10)
 
@@ -493,12 +660,12 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
   Gaussian noise, JSON round-trip, and a CPU smoke test of the full
   driver. Plus 4 CLI smoke tests in
   `cli/tests/test_gsplat_cli_extended.py::TestCalibrateCommand`.
-- Docs: `gsplats/README.md` Calibration section, `gsplats/SPECIFICATIONS.md`
-  §8, Sphinx page `docs/api/gsplats.rst`, and CLAUDE.md examples block.
+- Docs: `gsplats/README.md` Calibration section, Sphinx page
+  `docs/api/gsplats.rst`, and CLAUDE.md examples block.
 
 #### Changed — GSplats default device on macOS
 
-- `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pre-rewrite, MPS was never auto-selected. Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.
+- `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.
 - Centralized device selection in `luxar.gsplats.utils.device.resolve_torch_device(...)`; remaining hand-rolled `torch.cuda.is_available()` / `torch.backends.mps.is_available()` ternaries in `utils/demos.py`, `gsplats/multiscale/decompose.py`, `gsplats/seeds/gpu_ops.py`, `gsplats/preprocessing/denoise_pipeline.py`, and `gsplats/fitting/preprocessing.py` (FPS GPU gate) now route through it. The denoise and FPS paths consequently honor MPS where they previously ignored it.
 
 #### Fixed — Encoding, viewer, and GSplats hardening
@@ -618,7 +785,7 @@ updated to assert `"l1"`.
 - Points and Lines retain their sharpness attribute
 - GSplats now use the standard Gaussian falloff (equivalent to sharpness=2.0) without per-splat configurability
 - Affected formats: `.gsplats.zarr` standalone format and embedded Luxar scene format
-- Migration: existing `.gsplats.zarr` files with sharpness arrays will ignore the sharpness data on load
+- Compatibility: existing `.gsplats.zarr` files with sharpness arrays ignore the sharpness data on load
 
 #### Major Features
 
@@ -669,7 +836,7 @@ updated to assert `"l1"`.
 
 - Added `luxar[gsplats]` optional dependency group and lazy imports for gsplats tooling
 - Standardized Python console output on `arbol` and viewer output on `utils/log`
-- Filled missing package `README.md` and `SPECIFICATIONS.md` files across Python and viewer packages
+- Filled missing package documentation across Python and viewer packages
 
 ### December 2025
 
@@ -726,8 +893,8 @@ updated to assert `"l1"`.
 
 #### Code Cleanup
 
-**Legacy Code Removed**
-- Eliminated unused "legacy mode" from Node class (~40 lines dead code)
+**Dead Code Removed**
+- Eliminated unused mode handling from Node class (~40 lines dead code)
 - Removed `group` parameter and all `if self._group is not None:` branches
 - Node now only supports progressive writing mode (simpler, clearer)
 
@@ -739,7 +906,7 @@ updated to assert `"l1"`.
 
 #### Quality Improvements
 
-**Compiler Refactoring**
+**Compiler Cleanup**
 - Reduced `write_points()` from 432 to 117 lines (73% reduction)
 - Extracted 8 focused helper methods with single responsibilities
 
@@ -790,7 +957,7 @@ updated to assert `"l1"`.
 - Keyboard Navigation: Simple 2-step: select dimension (1-9), navigate ([/])
 - TypeScript Integration: Scene dimensions loaded from zarr attrs, used for step sizes
 
-**Data Loading Architecture Refactor**
+**Data Loading Architecture Cleanup**
 - Removed Lazy Loading: Eliminated LazyDataManager in favor of spatial index-based loading
 - Spatial Index Required: All datasets now require spatial indices for efficient loading
 - Range-Based Caching: New RangeCache system for intelligent memory management

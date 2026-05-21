@@ -2,8 +2,8 @@
  * FunctionController - Button for function calls
  */
 
-import { Controller } from '../core/controller';
-import { ControllerType } from '../core/types';
+import { Controller } from '../controller';
+import { ControllerType } from '../types';
 
 export class FunctionController extends Controller<Function> {
   protected type = ControllerType.FUNCTION;

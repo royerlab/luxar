@@ -13,9 +13,9 @@
  */
 
 // Materials
-export { PointMaterial } from './point-material';
-export { LineMaterial } from './line-material';
-export { GSplatMaterial } from './gsplat-material';
+export { PointMaterial } from './materials/point/material-glsl';
+export { LineMaterial } from './materials/line/material-glsl';
+export { GSplatMaterial } from './materials/gsplat/material-glsl';
 export { MaterialManager, materialManager } from './material-manager';
 
 // GPU buffer pooling
@@ -25,7 +25,7 @@ export { GPUBufferPool } from './gpu-buffer-pool';
 export { AdaptiveDPRManager } from './adaptive-dpr-manager';
 
 // Post-processing entry point
-export { PostProcessingManager } from './post-processing/post-processing-manager';
+export { PostProcessingManager } from './post-processing-manager';
 
 // Blending helpers (public API; mirrors src/index.ts re-exports).
 export {
@@ -47,5 +47,5 @@ export {
 } from './material-colormap-helpers';
 
 // Shared rendering types / utilities that consumers commonly need.
-export type { CameraAwareMaterial } from './camera-aware-material';
+export type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
 export type { BlendingMode } from './material-manager';

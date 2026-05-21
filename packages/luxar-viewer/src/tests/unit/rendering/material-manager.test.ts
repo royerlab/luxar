@@ -11,8 +11,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MaterialManager, type PointMaterialProperties } from '../../../rendering/material-manager';
-import { PointMaterial } from '../../../rendering/point-material';
+import {
+  MaterialManager,
+  resolveMaterialBackend,
+  type PointMaterialProperties,
+} from '../../../rendering/material-manager';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
+import type { RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import * as THREE from 'three';
 
 // Mock only THREE.js (dependency), NOT PointMaterial (system under test)
@@ -94,14 +99,17 @@ describe('MaterialManager', () => {
         offset: 0.0,
       };
 
-      const material = manager.getPointMaterial(props);
+      const material = manager.getPointMaterial(props) as PointMaterial;
 
-      // Verify it's a real PointMaterial instance
+      // Verify it's a real PointMaterial instance (WebGL2 default path —
+      // caps is unset in this test, so the dispatch picks GLSL).
       expect(material).toBeInstanceOf(PointMaterial);
 
-      // Test REAL vertex shader content (GLSL ES 3.0 uses "in" instead of "attribute")
-      expect(material.vertexShader).toContain('in float radius');
-      expect(material.vertexShader).toContain('in float sharpness');
+      // Test REAL vertex shader content: per-instance attributes
+      // prefixed `a*`, plus the per-vertex `aQuadCorner`.
+      expect(material.vertexShader).toContain('in float aRadius');
+      expect(material.vertexShader).toContain('in float aSharpness');
+      expect(material.vertexShader).toContain('in vec2 aQuadCorner');
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
       expect(material.vertexShader).toContain('uniform float maxPointSize');
       expect(material.vertexShader).toContain('out mediump vec3 vColor');
@@ -710,6 +718,12 @@ describe('MaterialManager', () => {
   // =========================================================================
 
   describe('Shader Content Verification', () => {
+    // These tests probe GLSL3 shader strings, which only the
+    // `PointMaterial` (ShaderMaterial-backed) path exposes. The TSL
+    // wrapper compiles its graph through Three.js's NodeBuilder and
+    // doesn't surface a `vertexShader` / `fragmentShader` string — so
+    // each test casts to the GLSL class, relying on the dispatch
+    // default (caps unset → GLSL) inside the manager.
     it('should generate shaders with optimized world-space sizing', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
@@ -717,7 +731,7 @@ describe('MaterialManager', () => {
         gamma: 1.0,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify optimized world-space sizing formula using inversesqrt and pre-computed pointSizeFactor
       expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
@@ -731,7 +745,7 @@ describe('MaterialManager', () => {
         gamma: 1.0,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify sharpness compensation exists
       expect(material.vertexShader).toContain('sharpnessCompensation');
@@ -745,7 +759,7 @@ describe('MaterialManager', () => {
         gamma: 2.2,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify GOG model in fragment shader
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
@@ -848,10 +862,10 @@ describe('MaterialManager', () => {
   });
 
   // =========================================================================
-  // B.1 — detachFromGlobalUpdates: clone-vs-pool safety
+  // detachFromGlobalUpdates: clone-vs-pool safety
   // =========================================================================
 
-  describe('B.1 detachFromGlobalUpdates', () => {
+  describe('detachFromGlobalUpdates', () => {
     const props: PointMaterialProperties = {
       blendingMode: 'additive',
       opacity: 1.0,
@@ -888,5 +902,21 @@ describe('MaterialManager', () => {
       expect(pooledDispose).not.toHaveBeenCalled();
       expect(cloneLike.dispose).toHaveBeenCalled();
     });
+  });
+});
+
+describe('resolveMaterialBackend', () => {
+  // Casts are stub-typed: only `api` is read by the helper; the rest of
+  // RendererCapabilities is irrelevant to this dispatch decision.
+  it('returns glsl when caps is null (pre-renderer default)', () => {
+    expect(resolveMaterialBackend(null)).toBe('glsl');
+  });
+
+  it('returns glsl when caps reports the WebGL2 surface', () => {
+    expect(resolveMaterialBackend({ apiSurface: 'webgl2' } as RendererCapabilities)).toBe('glsl');
+  });
+
+  it('returns tsl when caps reports the WebGPU surface', () => {
+    expect(resolveMaterialBackend({ apiSurface: 'webgpu' } as RendererCapabilities)).toBe('tsl');
   });
 });

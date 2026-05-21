@@ -397,8 +397,9 @@ test.describe('Layers Panel', () => {
 
     // Snapshot which row is selected initially. The panel auto-
     // selects the first layer at init time.
-    const initiallySelected = await rows
-      .evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-selected') === 'true'));
+    const initiallySelected = await rows.evaluateAll((els) =>
+      els.findIndex((el) => el.getAttribute('aria-selected') === 'true')
+    );
     expect(initiallySelected).toBeGreaterThanOrEqual(0);
 
     // Focus the initially-selected row (the tabIndex=0 anchor) so the
@@ -410,8 +411,9 @@ test.describe('Layers Panel', () => {
     await page.keyboard.press('ArrowDown');
 
     // The next row should now be selected.
-    const nextSelected = await rows
-      .evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-selected') === 'true'));
+    const nextSelected = await rows.evaluateAll((els) =>
+      els.findIndex((el) => el.getAttribute('aria-selected') === 'true')
+    );
     expect(nextSelected).toBe(initiallySelected + 1);
 
     // Verify selection-state class flipped (visual rendering + state

@@ -35,17 +35,17 @@
 
 import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
-import { AnimationController } from '../scene/animation-controller';
-import { DimensionAnimationManager } from '../scene/dimension-animation-manager';
+import { AnimationController } from '../scene/animation/animation-controller';
+import { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
-import type { ScaleBar } from '../ui/components/scale-bar';
-import type { ColormapLegend } from '../ui/components/colormap-legend';
-import type { OverlayManager } from '../ui/helpers/overlay-manager';
+import type { ScaleBar } from '../ui/scale-bar';
+import type { ColormapLegend } from '../ui/colormap-legend';
+import type { OverlayManager } from '../ui/overlay-manager';
 import { notifier } from '../utils/notifier';
-import { captureViewerState } from '../config/viewer-state-capture';
-import type { DimensionSliders, SliderConfig } from '../ui/panels/dimension-sliders';
+import { captureViewerState } from '../config/zarr-bridge/viewer-state-capture';
+import type { DimensionSliders, SliderConfig } from '../ui/dimension-sliders';
 
 /**
  * Factory used by `InputHandler.initDimensionSliders()` to construct
@@ -56,8 +56,8 @@ import type { DimensionSliders, SliderConfig } from '../ui/panels/dimension-slid
  */
 export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import type { DebugConsole } from '../ui/panels/debug-console';
-import type { PerformanceMonitor } from '../ui/monitors/performance-monitor';
+import type { DebugConsole } from '../ui/debug-console';
+import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
 import { PanelCoordinator } from './handlers/panel-coordinator';
@@ -206,10 +206,7 @@ export class InputHandler {
       performanceStats: this.performanceMonitor,
     });
 
-    this.windowEvents = new WindowEventHandler(
-      this.sceneManager,
-      this.animationController
-    );
+    this.windowEvents = new WindowEventHandler(this.sceneManager, this.animationController);
   }
 
   /**
@@ -512,7 +509,6 @@ export class InputHandler {
       shortcuts.register();
     }
   }
-
 
   /**
    * Update all nD nodes (points, lines, splats) with current dimension values.
@@ -1053,7 +1049,6 @@ export class InputHandler {
   private handleEscapeKey(): void {
     this.panelCoordinator.handleEscape();
   }
-
 
   /**
    * Frame camera to fit the entire scene.

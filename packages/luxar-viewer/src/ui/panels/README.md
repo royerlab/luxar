@@ -5,13 +5,13 @@ browser, dimension sliders, debug console.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `dataset-browser.ts` | "Open dataset" modal — file-system browse + URL paste + recent list |
-| `dataset-url-utils.ts` | Pure helpers for URL normalization and validation used by the browser |
-| `dimension-sliders.ts` | nD navigation UI — per-dimension slider with step / range / unit |
-| `debug-console.ts` | Floating debug console panel (toggled by `Ctrl+L`) |
-| `debug-console-formatters.ts` | Pure formatters for log lines (timestamp, level coloring, etc.) |
+| File                          | Role                                                                  |
+| ----------------------------- | --------------------------------------------------------------------- |
+| `dataset-browser.ts`          | "Open dataset" modal — file-system browse + URL paste + recent list   |
+| `dataset-url-utils.ts`        | Pure helpers for URL normalization and validation used by the browser |
+| `dimension-sliders.ts`        | nD navigation UI — per-dimension slider with step / range / unit      |
+| `debug-console.ts`            | Floating debug console panel (toggled by `Ctrl+L`)                    |
+| `debug-console-formatters.ts` | Pure formatters for log lines (timestamp, level coloring, etc.)       |
 
 ## Public surface
 

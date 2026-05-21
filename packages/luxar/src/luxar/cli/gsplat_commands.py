@@ -736,8 +736,8 @@ def cull_dataset(
         8,
         "--max-iters",
         help="[error_budget / redundancy] Max binary-search iterations for "
-        "Phase 2, which tightens the threshold if joint removal of all "
-        "candidates exceeds the budget due to compounding overlap.",
+        "the joint compounding check, which tightens the threshold if "
+        "joint removal of all candidates exceeds the budget due to overlap.",
     ),
     device: Optional[str] = typer.Option(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
@@ -877,7 +877,7 @@ def cull_dataset(
                         f"  Error budget: {culled_data.stats.get('error_budget', 'N/A')}"
                     )
                     aprint(
-                        f"  Phase 2 iters: {culled_data.stats.get('phase2_iterations', 'N/A')}"
+                        f"  Joint check iters: {culled_data.stats.get('phase2_iterations', 'N/A')}"
                     )
                 if resolved in ("cumulative", "amplitude_percentile", "combined"):
                     amp_ret = culled_data.stats.get("amplitude_retention")

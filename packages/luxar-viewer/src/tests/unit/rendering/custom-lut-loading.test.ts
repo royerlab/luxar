@@ -21,8 +21,8 @@ import {
   _resetCustomColormapCacheStatsForTests,
 } from '../../../rendering/colormap-textures';
 import { NodeFactory } from '../../../rendering/node-factory';
-import { GSplatMaterial } from '../../../rendering/gsplat-material';
-import { LineMaterial } from '../../../rendering/line-material';
+import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import {
   createInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,
@@ -202,8 +202,15 @@ describe('custom LUT byte-loading', () => {
       const lut = makeRgbLut(13);
       // Build a stub geometry with `scalar` so the colormap guard passes.
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-      geometry.setAttribute('scalar', new THREE.Float32BufferAttribute([0.5], 1));
+      // Per-instance attributes (aCenter, aScalar).
+      geometry.setAttribute(
+        'aCenter',
+        new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)
+      );
+      geometry.setAttribute(
+        'aScalar',
+        new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
+      );
       const mat = factory.createPointsMaterial(
         {
           colormap: 'custom',
@@ -223,8 +230,15 @@ describe('custom LUT byte-loading', () => {
     it('createPointsMaterial without customLutBytes falls back to viridis', () => {
       const factory = new NodeFactory();
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-      geometry.setAttribute('scalar', new THREE.Float32BufferAttribute([0.5], 1));
+      // Per-instance attributes (aCenter, aScalar).
+      geometry.setAttribute(
+        'aCenter',
+        new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)
+      );
+      geometry.setAttribute(
+        'aScalar',
+        new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
+      );
       const mat = factory.createPointsMaterial(
         {
           colormap: 'custom',

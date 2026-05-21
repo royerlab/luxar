@@ -54,13 +54,10 @@ export type { LoaderConfig } from './data/data-loader-types';
 // own viewer_config metadata against this).
 export type { ZarrViewerConfig } from './types/zarr';
 
-// F.1 — rendering helpers exposed for embedders that build custom
-// materials or want to author bespoke colormap pipelines on top of
-// Luxar's geometry. These are stable, side-effect-free utilities.
-export {
-  getCompleteBlendingState,
-  applyBlendingStateToMaterial,
-} from './rendering/blending-state';
+// Rendering helpers exposed for embedders that build custom materials
+// or bespoke colormap pipelines on top of Luxar's geometry. These are
+// stable, side-effect-free utilities.
+export { getCompleteBlendingState, applyBlendingStateToMaterial } from './rendering/blending-state';
 export type { CompleteBlendingState } from './rendering/blending-state';
 export type { BlendingMode } from './rendering/material-manager';
 export {

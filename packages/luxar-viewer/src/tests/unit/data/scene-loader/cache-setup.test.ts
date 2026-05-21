@@ -103,4 +103,3 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(result.l0Cache).not.toBeNull();
   });
 });
-

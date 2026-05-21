@@ -6,12 +6,12 @@ to the Points node type.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `DataAccumulator` for the zero-allocation hot path. |
-| `projection.ts` | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical. |
-| `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline. |
-| `chunk-index-loader.ts` | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`. |
+| File                             | Role                                                                                                                                                                                                                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `DataAccumulator` for the zero-allocation hot path.                                                     |
+| `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical. |
+| `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                           |
+| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                    |
 
 ## Public surface
 
@@ -56,5 +56,5 @@ main-thread use (worker-disabled environments, unit tests).
   `syncPointMaterialWithGeometry` propagates dtype scales
 - `src/wasm/typescript/points.ts` and `effective-radii.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch /
+- `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract

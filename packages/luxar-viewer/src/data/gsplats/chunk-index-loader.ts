@@ -25,7 +25,7 @@ import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import { type ChunkSpatialIndex } from '../loaders';
-import type { ChunkPrefetcher } from '../../cache';
+import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { GSplatsMetadata } from '../../types/gsplats';
 
 /**
@@ -35,7 +35,7 @@ import type { GSplatsMetadata } from '../../types/gsplats';
  *   - `attrs.ordering === 'none'` — no spatial ordering, full load
  *     fallback;
  *   - the `chunk_bounds` array is missing on disk — full load
- *     fallback (legacy datasets without spatial indexing).
+ *     fallback (datasets without spatial indexing).
  *
  * Logs a warning (does not raise) on chunk-count mismatches between
  * `Math.ceil(n_splats / chunk_size)` and the array's element-count

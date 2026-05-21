@@ -118,7 +118,9 @@ describe('SceneLoader lifecycle stress', () => {
       tolerance: [0, 0, 0, 1],
     };
 
-    (sceneLoader as any)._prevPerNodeViewState.set(path, previousViewState);
+    // viewStateQueue owns the per-node previous-view-state map; seed it
+    // directly for this lifecycle test.
+    (sceneLoader as any).viewStateQueue._prevPerNodeViewState.set(path, previousViewState);
 
     const result = await (sceneLoader as any).runLoaderUpdates(
       new Map([[path, loader]]),
@@ -135,7 +137,7 @@ describe('SceneLoader lifecycle stress', () => {
     expect(result).toHaveLength(1);
     expect(result[0].staged).toBeNull();
     expect(typeof result[0].session?.end).toBe('function');
-    expect((sceneLoader as any)._prevPerNodeViewState.has(path)).toBe(false);
+    expect((sceneLoader as any).viewStateQueue._prevPerNodeViewState.has(path)).toBe(false);
     expect((sceneLoader as any).failedLoaders.has(path)).toBe(true);
   });
 

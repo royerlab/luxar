@@ -23,7 +23,8 @@
  * @module data/scene-loader/cache-api
  */
 
-import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache';
+import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 
 /**
  * Snapshot of all three cache levels exposed by
@@ -107,9 +108,7 @@ export function clearL1Cache(cachingStore: MultiLevelCachingStore | null): void 
 }
 
 /** Clear the persistent L2 OPFS cache. No-op if absent. */
-export async function clearL2Cache(
-  cachingStore: MultiLevelCachingStore | null
-): Promise<void> {
+export async function clearL2Cache(cachingStore: MultiLevelCachingStore | null): Promise<void> {
   await cachingStore?.clearL2();
 }
 

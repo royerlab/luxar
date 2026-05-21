@@ -143,11 +143,11 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
     .. note::
         Earlier versions of this function were named ``validate_chunk_size``
         and operated on element counts; the units flipped to bytes when the
-        chunking heuristic became byte-targeted (commit 9f284ff2). Callers
-        passing pre-migration element counts (e.g. 1024) will now hit the
-        "too small" branch. The legacy name is preserved as a deprecated
-        alias that emits ``DeprecationWarning`` — update call sites at your
-        earliest convenience.
+        chunking heuristic became byte-targeted. Callers passing element
+        counts (e.g. 1024) will now hit the "too small" branch. The older
+        function name is preserved as a deprecated alias that emits
+        ``DeprecationWarning`` — update call sites at your earliest
+        convenience.
 
     Args:
         chunk_bytes: Chunk size in bytes.
@@ -180,9 +180,8 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
 def validate_chunk_size(chunk_size: Any) -> int:
     """Deprecated alias for :func:`validate_chunk_bytes`.
 
-    The unit flipped from elements to bytes in commit 9f284ff2; the new name
-    makes that explicit. This shim emits ``DeprecationWarning`` and
-    forwards.
+    The unit is bytes; the explicit function name makes that clear. This
+    shim emits ``DeprecationWarning`` and forwards.
     """
     import warnings
 

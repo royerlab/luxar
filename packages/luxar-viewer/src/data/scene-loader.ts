@@ -7,10 +7,7 @@
 
 import * as zarr from './zarr';
 import * as THREE from 'three';
-import { getWorkerPool } from '../workers/worker-pool';
 import { normalizeURL } from './scene-loader/url-normalization';
-import { setupCaches } from './scene-loader/cache-setup';
-import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -25,27 +22,22 @@ import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
   type StagedLinesCommit,
-} from './scene-loader/data-processor-lines';
+} from './scene-loader/process/data-processor-lines';
 import {
   processGSplatsData as processGSplatsDataHelper,
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
-} from './scene-loader/data-processor-gsplats';
-import {
-  createPointsLoader as createPointsLoaderHelper,
-  createLinesLoader as createLinesLoaderHelper,
-  createGSplatsLoader as createGSplatsLoaderHelper,
-  createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
-  type LoaderFactoryDeps,
-} from './scene-loader/loader-factory';
-import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
-import {
-  dispatchPredictivePrefetch,
-  type PrefetchableLoader,
-} from './scene-loader/predicted-view-state';
+} from './scene-loader/process/data-processor-gsplats';
+import type { LoaderFactoryDeps } from './scene-loader/loader-factory';
+import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
+import { ViewStateQueue } from './scene-loader/view-state-queue';
+import { runGSplatsRefinement } from './gsplats/lod-refinement';
+import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
+import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
+import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
 
-export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
-export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
+export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
+export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
 import {
   DataLoader,
   ViewState,
@@ -53,48 +45,29 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import type { LoaderMonitor } from '../types/data-monitor-types';
-import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
 } from './scene-loader-monitor-port';
-import { ArrayRefRegistry } from './utils/array-decoder';
-import { ViewStateManager } from './view-state-manager';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { ArrayRefRegistry } from './array-decoder/decoder';
+import { log, Modules } from '../utils/log';
 import { config as appConfig } from '../config';
-import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
-import { disposeCustomColormapTextures } from '../rendering/colormap-textures';
-import type { PointsMetadata } from '../types/points';
+import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
+import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import type {
-  LinesMetadata,
   LinesDataLoader,
   LinesViewState,
   LoadedLinesData,
 } from '../types/lines';
-import { isLinesUserData } from '../types/lines';
 import type {
-  GSplatsMetadata,
   GSplatsDataLoader,
-  GSplatsUserData,
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
-import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import { LoaderRegistry } from './loaders/loader-registry';
-import { loadOverlayConfigs } from './loaders/overlay-loader';
-import { notifier } from '../utils/notifier';
-
-/** Check if an object has any own properties (avoids Object.keys() allocation). */
-import {
-  hasOwnProperties,
-  getOrComputeExtendedTolerance,
-  isSceneDimensions,
-  validateExtendDims,
-} from './scene-loader/extend-tolerance';
+import { LoaderRegistry } from './scene-loader/loader-registry';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -103,11 +76,8 @@ import {
 // to prevent flickering. These types hold processed data between the async
 // load/process stage and the synchronous commit stage.
 
-/** Staged points data ready for GPU commit */
-interface StagedPointsCommit {
-  path: string;
-  data: LoadedPointsData;
-}
+// StagedPointsCommit is defined in ./points/handler and imported above.
+// It stays internal to scene-loader + data-processor wiring.
 
 /**
  * Classification of a per-node load failure. The actual policy in
@@ -118,55 +88,22 @@ interface StagedPointsCommit {
  * `LoaderError`. The `kind` field drives the user-visible severity
  * and message, not control flow.
  */
-type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
-
-/**
- * Thrown by `loadPoints` / `loadLines` / `loadGSplats` when a node
- * fails to load for an unexpected reason. The `kind` field tells
- * `loadSceneNodes` how to handle the failure.
- *
- * Note: validation skips (missing attr, ndim mismatch, etc.) still
- * `return null` from the loader — only genuine errors throw this.
- */
-class LoaderError extends Error {
-  constructor(
-    readonly kind: LoaderErrorKind,
-    readonly path: string,
-    cause: unknown
-  ) {
-    const causeMsg = cause instanceof Error ? cause.message : String(cause);
-    super(`${kind} loading ${path}: ${causeMsg}`);
-    this.name = 'LoaderError';
-    this.cause = cause;
-  }
-}
-
-/** Heuristic classifier for raw thrown errors. */
-function classifyLoaderError(error: unknown): LoaderErrorKind {
-  if (!(error instanceof Error)) return 'Unexpected';
-  if (error.name === 'AbortError') return 'Network';
-  const msg = error.message.toLowerCase();
-  if (
-    msg.includes('fetch') ||
-    msg.includes('network') ||
-    msg.includes('timeout') ||
-    msg.includes('http ')
-  ) {
-    return 'Network';
-  }
-  if (
-    msg.includes('decode') ||
-    msg.includes('parse') ||
-    msg.includes('invalid') ||
-    msg.includes('corrupt')
-  ) {
-    return 'Decode';
-  }
-  if (msg.includes('validation') || msg.includes('expected') || msg.includes('required')) {
-    return 'Validation';
-  }
-  return 'Unexpected';
-}
+import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
+import {
+  retryFailedLoaderUnlocked,
+  retryAllFailedLoadersUnlocked,
+  type RetryCtx,
+} from './scene-loader/retry';
+import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
+import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
+import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
+import { disposeSceneLoader } from './scene-loader/dispose';
+import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
+import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
+import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
+import { queueNext } from './scene-loader/update-view/queue-next';
+import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
+import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -198,7 +135,7 @@ export class SceneLoader {
   private l0Cache: DecompressedChunkCache | null = null;
   private registry = new LoaderRegistry();
 
-  // Delegate to registry for backwards compatibility within this class
+  // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
     return this.registry.loaders;
   }
@@ -236,19 +173,21 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
-  private _pendingViewState: Partial<ViewState> | null = null;
   private _updateVersion = 0; // For logging/debugging
   private _sceneGraph: SceneNode | null = null;
 
-  // R4 + S6: per-loader previous view state for predictive prefetch.
-  // Indexed by node path so each loader's prefetch uses its own
-  // `derived.viewState` (which has per-node tolerance extension and
-  // `extend_to_all` skip semantics applied) rather than a single
-  // global view-state shared across all loaders. The Map is reset on
-  // dataset switch (loadScene) and dispose. Skipped paths are
-  // deleted from the Map so the next non-skip update re-baselines
-  // instead of extrapolating from a stale snapshot.
-  private _prevPerNodeViewState: Map<string, ViewState> = new Map();
+  /**
+   * View-state queue: owns `_pendingViewState` (set/take/has + drain)
+   * and the per-loader previous view-state map used by predictive
+   * prefetch. See ./scene-loader/view-state-queue.ts.
+   *
+   * The pending-state slot is overwritten on every queued update, so a
+   * burst of view changes during an in-flight retry collapses to a
+   * single drained call (latest-wins). The per-node prev-state map is
+   * reset on dataset switch (loadScene) and dispose; skipped paths
+   * forget their snapshot so the next non-skip update re-baselines.
+   */
+  private viewStateQueue = new ViewStateQueue();
 
   /**
    * Per-dataset AbortController. Created on every `loadScene` and
@@ -314,8 +253,7 @@ export class SceneLoader {
   /**
    * Return a node-attrs record with rendering attributes replaced by the
    * effective values composed along the scene-graph ancestry (root → leaf).
-   * This implements the hierarchical composition described in the Python
-   * core/SPECIFICATIONS.md: opacity/gamma/intensity multiply, offset adds,
+   * Hierarchical composition: opacity/gamma/intensity multiply, offset adds,
    * blending_mode uses the nearest ancestor's choice.
    *
    * If the scene graph is unavailable, falls back to the node's raw attrs.
@@ -341,11 +279,7 @@ export class SceneLoader {
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
-    //
-    // B.5: defensively guard against double-init. The current call path
-    // is sequential (constructor only), so this branch runs once today —
-    // but matching the OnceInit pattern used elsewhere prevents a future
-    // re-init refactor from silently leaking the previous pool.
+    // Guard against double-init so repeated setup cannot leak a previous pool.
     if (appConfig.dataLoading.performance.useGPUBufferPool && !this._gpuBufferPool) {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
@@ -435,171 +369,52 @@ export class SceneLoader {
    * ```
    *
    * @see {@link MultiLevelCachingStore} for caching implementation
-   * @see SPECIFICATIONS.md - Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
-    log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+    return loadSceneHelper(url, this.makeLoadSceneCtx());
+  }
 
-    // Clear any existing loaders from monitor before loading new scene
-    this.monitor?.disconnectAllLoaders();
-
-    // Abort any in-flight worker tasks queued by the previous dataset.
-    // Doing this BEFORE `dispose()` settles already-racing
-    // `runWithTimeout` callers immediately so they unwind without
-    // waiting for the worker tasks to complete — the worker keeps
-    // executing the WASM kernels to completion (no WASM cancellation),
-    // but the results are dropped.
-    if (this._datasetAbortController) {
-      this._datasetAbortController.abort();
-      this._datasetAbortController = null;
-    }
-    getWorkerPool().setAbortSignal(undefined);
-
-    // Dispose of any existing loaders. Awaited so the previous caching
-    // store fully drains (prefetcher tear-down, OPFS metadata flush,
-    // validation cancellation) before we construct the next one — without
-    // this, rapid dataset switches let an old store's writes land after
-    // the new store starts initialising.
-    if (this.loaders.size > 0) {
-      await this.dispose();
-    }
-
-    // Fresh abort source for THIS dataset; wire into the worker pool so
-    // every subsequent `runWithTimeout` races against it.
-    this._datasetAbortController = new AbortController();
-    getWorkerPool().setAbortSignal(this._datasetAbortController.signal);
-
-    // S6: reset per-loader prefetch predictor state. Without this,
-    // the first updateView on a new dataset would extrapolate from
-    // the prior dataset's slicePosition, producing wild prefetch
-    // targets.
-    this._prevPerNodeViewState.clear();
-
-    const cacheResult = await setupCaches(this.normalizeURL(url), {
-      noCache: this.config.noCache,
-      cacheDebug: this.config.cacheDebug,
-      clearCache: this.config.clearCache,
-      noPrefetch: this.config.noPrefetch,
-      prefetchDebug: this.config.prefetchDebug,
-    });
-    this.l0Cache = cacheResult.l0Cache;
-    this.cachingStore = cacheResult.cachingStore;
-    this._zarrStore = (await zarr.openStore(cacheResult.rawStore)) as zarr.Readable;
-
-    // Create root THREE.js group
-    this.rootGroup = new THREE.Group();
-    this.rootGroup.name = 'LuxarScene';
-
-    // Load scene metadata
-    const rootLoc = zarr.root(this._zarrStore);
-    const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
-    const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
-
-    // Initialize scene dimensions - CRITICAL for extend_to_all feature
-    if (sceneAttrs?.scene_dimensions) {
-      this.initializeSceneDimensions(sceneAttrs.scene_dimensions);
-      this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
-
-      // Log dimension initialization status for debugging
-      const ndim = this.viewState.dimensions?.length ?? 0;
-      if (ndim > 0) {
-        log.success(
-          Modules.SCENE_LOADER,
-          `Scene dimensions initialized: ${ndim} dimensions, ` +
-            `displayed=[${this.viewState.displayDims.join(', ')}]`
-        );
-      }
-
-      // Surface a user-facing toast when the scene exceeds the WASM
-      // 16-dim ceiling — the worker auto-falls-back to TS, which is
-      // correct but slower, and silent fallback can confuse users
-      // wondering why interaction feels sluggish.
-      if (ndim > 16) {
-        notifier.toast(
-          `Scene has ${ndim} dimensions — WASM acceleration limited to 16D, using TypeScript fallback. ` +
-            'Consider reducing dimensions for better performance.',
-          5000
-        );
-      }
-    } else {
-      log.warning(
-        Modules.SCENE_LOADER,
-        'No scene_dimensions found in scene metadata. extend_to_all features will not work.'
-      );
-    }
-
-    // Extract viewer_config if present (Python API scene defaults)
-    if (sceneAttrs?.viewer_config) {
-      this.rootGroup.userData.viewerConfig = sceneAttrs.viewer_config;
-      log.info(
-        Modules.SCENE_LOADER,
-        `Viewer config found in zarr: ${Object.keys(sceneAttrs.viewer_config).join(', ')}`
-      );
-    }
-
-    // Store scene-level position bounds (from Python compiler)
-    // These bounds represent the full dataset extent, available immediately without loading points
-    if (sceneAttrs?.position_bounds) {
-      this.rootGroup.userData.positionBounds = sceneAttrs.position_bounds;
-      log.info(
-        Modules.SCENE_LOADER,
-        `Scene bounds loaded: min=[${sceneAttrs.position_bounds.min.join(', ')}], ` +
-          `max=[${sceneAttrs.position_bounds.max.join(', ')}]`
-      );
-    }
-
-    // Build scene graph
-    const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
-    this._sceneGraph = sceneGraph;
-
-    // Load points
-    await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
-
-    // Load overlay configs (screen-space annotations)
-    const overlayConfigs = await loadOverlayConfigs(this._zarrStore, rootLoc);
-    if (overlayConfigs.length > 0) {
-      this.rootGroup.userData.overlayConfigs = overlayConfigs;
-      // Store base URL for image fetching
-      this.rootGroup.userData.zarrBaseUrl = this.normalizeURL(url);
-    }
-
-    // Post-load monitor-tab provider wiring (extracted to
-    // scene-loader/monitor-wiring.ts).
-    wireMonitorAfterLoad({
-      monitor: this.monitor,
-      cachingStore: this.cachingStore,
-      l0Cache: this.l0Cache,
-      cacheTelemetryState: cacheResult.telemetryState,
-      gpuBufferPool: this._gpuBufferPool,
-      profiler: this.profiler,
+  /** Build the per-call LoadSceneCtx. Never passes `this` to the helper. */
+  private makeLoadSceneCtx(): LoadSceneCtx {
+    return {
+      config: this.config,
+      viewState: () => this.viewState,
       loaders: this.loaders,
       linesLoaders: this.linesLoaders,
       gsplatLoaders: this.gsplatLoaders,
-      sceneGraph,
-      updateVisibleCounts: () => this.updateVisibleCountsInMonitor(),
-    });
-
-    log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
-
-    // Schedule progressive GSplats LOD refinement after initial load.
-    // loadGSplats() loads LOD 0 for each progressive loader, but LODs 1-N
-    // are only loaded by the refinement loop. Without this trigger, higher
-    // LODs would not load until the first updateView() call (user interaction).
-    const needsPostLoadRefinement = [...this.gsplatLoaders.values()].some(
-      (l) => l.hasMoreLODs === true
-    );
-    if (needsPostLoadRefinement) {
-      log.info(
-        Modules.SCENE_LOADER,
-        'Scheduling post-load GSplats LOD refinement (higher LODs pending)'
-      );
-      // Hold the serialization lock during refinement so any updateView() calls
-      // queue as _pendingViewState (which naturally cancels the refinement loop)
-      this._updateInProgress = true;
-      this.scheduleGSplatsRefinement();
-    }
-
-    return this.rootGroup;
+      gpuBufferPool: () => this._gpuBufferPool,
+      monitor: () => this.monitor,
+      profiler: this.profiler,
+      normalizeURL: (u) => this.normalizeURL(u),
+      dispose: () => this.dispose(),
+      clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
+      initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
+      makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+      setDatasetAbortController: (c) => {
+        this._datasetAbortController = c;
+      },
+      setCachingStore: (s) => {
+        this.cachingStore = s;
+      },
+      setL0Cache: (c) => {
+        this.l0Cache = c;
+      },
+      setZarrStore: (s) => {
+        this._zarrStore = s;
+      },
+      setRootGroup: (g) => {
+        this.rootGroup = g;
+      },
+      setSceneGraph: (g) => {
+        this._sceneGraph = g;
+      },
+      setUpdateInProgress: (v) => {
+        this._updateInProgress = v;
+      },
+      getDatasetAbortController: () => this._datasetAbortController,
+    };
   }
 
   /**
@@ -638,60 +453,7 @@ export class SceneLoader {
       extendedToleranceCache?: Map<string, number[]>;
     }
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState } {
-    const extendDims: string[] = attrs?.extend_to_all ?? [];
-
-    let derived: ViewState = {
-      displayDims: this.viewState.displayDims,
-      slicePosition: this.viewState.slicePosition,
-      tolerance: this.viewState.tolerance,
-      dimensions: this.viewState.dimensions,
-    };
-
-    // Step 1: full-extend skip check.
-    if (extendDims.length > 0 && this.viewState.dimensions) {
-      const dims = this.viewState.dimensions;
-      validateExtendDims(extendDims, dims);
-      const nonDisplayedDims = dims
-        .filter((_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx))
-        .map((d: { name?: string }) => d.name)
-        .filter((name: string | undefined): name is string => !!name);
-
-      const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-        extendDims.includes(dimName)
-      );
-      if (isFullyExtended) {
-        return { skip: 'extend_to_all' };
-      }
-
-      // Step 2: partial-extend tolerance override (Points + GSplats only).
-      if (opts.applyPartialExtendTolerance) {
-        const tolerance = getOrComputeExtendedTolerance(
-          this.viewState.tolerance,
-          extendDims,
-          this.viewState.dimensions,
-          opts.extendedToleranceCache ?? new Map<string, number[]>()
-        );
-        derived = { ...derived, tolerance };
-      }
-    }
-
-    // Step 3: nd_transform inverse for world→local query mapping.
-    if (this._sceneGraph && derived.dimensions) {
-      const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-      if (hasOwnProperties(worldNdT)) {
-        const dimNames = derived.dimensions.map((d: { name?: string }) => d.name ?? '');
-        const inverted = invertNdTransformForQuery(
-          derived.slicePosition,
-          derived.tolerance,
-          worldNdT,
-          dimNames,
-          derived.displayDims
-        );
-        derived = { ...derived, ...inverted };
-      }
-    }
-
-    return { skip: false, viewState: derived };
+    return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneGraph, opts);
   }
 
   /**
@@ -713,48 +475,11 @@ export class SceneLoader {
     loaderType: 'Points' | 'Lines' | 'GSplats',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
-    const noopSession: UpdateSession = {
-      begin: () => noopSession,
-      end: () => {},
-      setMetadata: () => {},
-      markSkipped: () => {},
-    };
-
-    const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
-      // Open a top-level session per node and keep it alive across the
-      // atomic commit stage so the per-node "Update Buffers" child entry
-      // nests under this session. The caller is responsible for calling
-      // session.end() once the commit has run.
-      const session = this.profiler
-        ? this.profiler.beginTopLevel(`${loaderType} (${path})`)
-        : noopSession;
-      try {
-        const staged = await updateFn(path, loader, session);
-        return { staged, session };
-      } catch (error) {
-        // Predictive prefetch is keyed by the previous successful
-        // derived view-state for this path. If the demand update
-        // fails, discard that baseline so the next success
-        // re-baselines instead of extrapolating across a stale/error
-        // gap and warming irrelevant chunks.
-        this._prevPerNodeViewState.delete(path);
-
-        const errorInfo = this.failedLoaders.get(path);
-        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-        this.failedLoaders.set(path, {
-          error: error as Error,
-          timestamp: Date.now(),
-          retryCount,
-        });
-        const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
-        log.error(
-          Modules.SCENE_LOADER,
-          `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-        );
-        return { staged: null, session };
-      }
+    return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
+      profiler: this.profiler,
+      viewStateQueue: this.viewStateQueue,
+      failedLoaders: this.failedLoaders,
     });
-    return Promise.all(tasks);
   }
 
   /**
@@ -768,12 +493,12 @@ export class SceneLoader {
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
-      // Store the latest pending state (supersedes any previous pending state).
-      // G.3: log the supersede when a previous pending was already queued so
-      // rapid slider drags surface as "v5 superseded v4, in flight v3"
-      // rather than three identical "Update queued" lines.
-      const supersededPrevious = this._pendingViewState !== null;
-      this._pendingViewState = viewState;
+      // Store the latest pending state (supersedes any previous pending
+      // state). Log supersedes so rapid slider drags surface as
+      // "v5 superseded v4, in flight v3" rather than three identical
+      // "Update queued" lines.
+      const supersededPrevious = this.viewStateQueue.hasPending();
+      this.viewStateQueue.setPending(viewState);
       const newVersion = this._updateVersion + 1;
       if (supersededPrevious) {
         log.info(
@@ -832,116 +557,32 @@ export class SceneLoader {
       // only the type-specific work.
       // ================================================================
 
-      // Points: no post-processing, data goes directly to staged commit.
-      // Note: skip path returns null WITHOUT delete (preserve any existing
-      // failure record); success path deletes regardless of data presence.
-      const pointsTask = this.runLoaderUpdates(
-        this.loaders,
-        'Points',
-        async (path, loader, session) => {
-          const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
-          const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: true,
-            extendedToleranceCache,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: drop the path from prev state so the next non-skip
-            // update re-baselines rather than extrapolating from a
-            // stale snapshot.
-            this._prevPerNodeViewState.delete(path);
-            return null;
-          }
-          const points = await loader.updateView(derived.viewState, session);
-          this.failedLoaders.delete(path);
-          if (!points) return null;
-          if (currentVersion <= 1) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
-            );
-          }
-          session.setMetadata({ points: points.metadata.loadedPoints });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, derived.viewState, loader);
-          return { path, data: points } as StagedPointsCommit;
-        }
+      // Per-type handler-ctx construction lives in
+      // scene-loader/update-view/build-update-ctxs.ts.
+      const { pointsCtx, linesCtx, gsplatsCtx } = buildUpdateCtxs({
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        clearFailure: (path) => this.failedLoaders.delete(path),
+        currentVersion,
+        updateVersion: this._updateVersion,
+        extendedToleranceCache,
+        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      });
+
+      const pointsTask = this.runLoaderUpdates(this.loaders, pointsLabel, (path, loader, session) =>
+        pointsLoadAndStage(path, loader, session, pointsCtx)
       );
 
-      // Lines: includes async worker projection.
       const linesTask = this.runLoaderUpdates(
         this.linesLoaders,
-        'Lines',
-        async (path, loader, session) => {
-          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: false,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: see Points branch — drop prev to avoid stale extrap.
-            this._prevPerNodeViewState.delete(path);
-            return null;
-          }
-          const linesViewState = derived.viewState;
-          const data = await loader.updateView(linesViewState, session);
-          this.failedLoaders.delete(path);
-          if (!data) return null;
-          if (currentVersion <= 1) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
-            );
-          }
-          const staged = await this.processLinesData(path, data, linesViewState, session);
-          session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, linesViewState, loader);
-          return staged;
-        }
+        linesLabel,
+        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx)
       );
 
-      // GSplats: includes async worker projection + Cholesky packing.
       const gsplatsTask = this.runLoaderUpdates(
         this.gsplatLoaders,
-        'GSplats',
-        async (path, loader, session) => {
-          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: true,
-            extendedToleranceCache,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: see Points branch — drop prev to avoid stale extrap.
-            this._prevPerNodeViewState.delete(path);
-            return null;
-          }
-          const gsplatsViewState: GSplatsViewState = derived.viewState;
-          const data = await loader.updateView(gsplatsViewState, session);
-          this.failedLoaders.delete(path);
-          if (!data) return null;
-          const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
-          session.setMetadata({ splats: data.splatCount });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, gsplatsViewState, loader);
-          return staged;
-        }
+        gsplatsLabel,
+        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx)
       );
 
       // Wait for ALL loaders to complete (load + process)
@@ -959,61 +600,16 @@ export class SceneLoader {
 
       // ================================================================
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
-      // Since JS is single-threaded, no requestAnimationFrame can fire
-      // during this block, so all meshes update in the same rendered frame.
+      // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-
-      // Advance GPU buffer pool frame counter once per update cycle
-      // (not per-acquire) so eviction timing reflects actual frames
-      if (this._gpuBufferPool) {
-        this._gpuBufferPool.beginFrame();
-      }
-
-      // Commits run inside each per-node session so the GPU-upload step
-      // ("Update Buffers") shows up under Points/Lines/GSplats in the
-      // Performance tab. Always end the session afterwards — including
-      // the staged === null case (loader failed or marked skipped) so
-      // every opened session is closed exactly once.
-      //
-      // Belt-and-braces: if a commit throws synchronously, the
-      // remaining iterations and the later geometry-type loops never
-      // run, leaving their sessions un-ended. The outer `finally`
-      // sweeps every staged session afterwards. `SessionImpl.end()`
-      // is idempotent (no-ops on already-ended sessions), so this is
-      // safe to overlay on the per-iteration end() calls that record
-      // accurate per-node timings on the happy path.
-      try {
-        for (const { staged, session } of pointsStaged) {
-          try {
-            if (staged) this.updatePointsGeometry(staged.path, staged.data, session);
-          } finally {
-            session.end();
-          }
-        }
-        for (const { staged, session } of linesStaged) {
-          try {
-            if (staged) this.commitLinesGeometry(staged, session);
-          } finally {
-            session.end();
-          }
-        }
-        for (const { staged, session } of gsplatsStaged) {
-          try {
-            if (staged) this.commitGSplatsGeometry(staged, session);
-          } finally {
-            session.end();
-          }
-        }
-      } finally {
-        for (const { session } of pointsStaged) session.end();
-        for (const { session } of linesStaged) session.end();
-        for (const { session } of gsplatsStaged) session.end();
-      }
-
-      // Invalidate cached pick buffer after geometry changes
-      if (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0) {
-        this.nodeFactory.markPickingDirty();
-      }
+      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, {
+        gpuBufferPool: this._gpuBufferPool,
+        nodeFactory: this.nodeFactory,
+        updatePointsGeometry: (path, data, session) =>
+          this.updatePointsGeometry(path, data, session),
+        commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+        commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+      });
 
       // Update monitor with total visible segments across all lines nodes
       this.updateVisibleCountsInMonitor();
@@ -1035,144 +631,52 @@ export class SceneLoader {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
 
-      // SERIALIZATION: Process pending update if one was queued
-      // CRITICAL: Keep _updateInProgress = true until the rAF callback fires!
-      // This prevents new slider events from starting updates during the yield.
-      if (this._pendingViewState !== null) {
-        const pendingState = this._pendingViewState;
-        this._pendingViewState = null;
-
-        // Yield to render loop: ensure at least one frame is painted before next update
-        // This prevents the "updates faster than renders" problem that causes black screen
-        if (typeof requestAnimationFrame !== 'undefined') {
-          requestAnimationFrame(() => {
-            // Release the lock right before starting the next update
-            // Any slider events during the yield were queued (because lock was held)
-            this._updateInProgress = false;
-            this.updateView(pendingState);
-          });
-        } else {
-          // Fallback for non-browser environments (e.g., tests)
-          this._updateInProgress = false;
-          this.updateView(pendingState);
-        }
-      } else {
-        // No pending update — check if progressive GSplats loaders need refinement
-        const needsRefinement = [...this.gsplatLoaders.values()].some(
-          (l) => l.hasMoreLODs === true
-        );
-
-        if (needsRefinement) {
-          // Keep _updateInProgress = true during refinement so slider/animation
-          // events queue as _pendingViewState (which naturally cancels refinement)
-          log.info(
-            Modules.SCENE_LOADER,
-            'Scheduling GSplats LOD refinement (hasMoreLODs=true after update)'
-          );
-          this.scheduleGSplatsRefinement();
-        } else {
-          // No pending update, no refinement needed - release the lock now
-          this._updateInProgress = false;
-        }
-      }
+      // Decide what runs next — pending state, GSplats refinement, or
+      // lock release. Implementation in scene-loader/update-view/queue-next.ts.
+      queueNext({
+        viewStateQueue: this.viewStateQueue,
+        gsplatLoaders: this.gsplatLoaders,
+        updateView: (state) => this.updateView(state),
+        setUpdateInProgress: (v) => {
+          this._updateInProgress = v;
+        },
+        scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+      });
     }
   }
 
   /**
    * Schedule progressive GSplats LOD refinement.
    *
-   * Runs after the main updateView() commits LOD 0, loading additional LODs
-   * one pass at a time with a rAF yield between each pass (so each LOD level
-   * is painted as a separate frame, giving visible progressive refinement).
-   *
-   * Cancellation: if _pendingViewState is set (user navigated), the loop
-   * aborts and drains the pending state via the normal serialization path.
-   *
-   * IMPORTANT: This method does NOT go through the updateView() entry point
-   * (which has the serialization lock). It directly calls loader.updateView()
-   * + process + commit for GSplats loaders only.
+   * Thin wrapper around `runGSplatsRefinement` in
+   * `data/gsplats/lod-refinement.ts`. The full timing semantics — rAF
+   * yield per pass, cancellation hand-off on pending view-state, and
+   * lock release on normal completion — live in that module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
-    // Track whether cancellation has taken ownership of the lock
-    let lockHandedOff = false;
-    try {
-      while (true) {
-        // Yield to let browser paint the current LOD level
-        await new Promise<void>((resolve) => {
-          if (typeof requestAnimationFrame !== 'undefined') {
-            requestAnimationFrame(() => resolve());
-          } else {
-            resolve(); // Test environment: proceed immediately
-          }
-        });
-
-        // Check cancellation: did the user navigate?
-        if (this._pendingViewState !== null) {
-          const pendingState = this._pendingViewState;
-          this._pendingViewState = null;
-
-          // Drain pending state via the normal path.
-          // The rAF branch keeps the lock until the callback fires,
-          // so we must not release it in finally.
-          lockHandedOff = true;
-          if (typeof requestAnimationFrame !== 'undefined') {
-            requestAnimationFrame(() => {
-              this._updateInProgress = false;
-              this.updateView(pendingState);
-            });
-          } else {
+    return runGSplatsRefinement({
+      rootGroup: this.rootGroup,
+      viewStateQueue: this.viewStateQueue,
+      gsplatLoaders: this.gsplatLoaders,
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      processGSplats: (path, data, viewState) => this.processGSplatsData(path, data, viewState),
+      commitGSplats: (staged) => this.commitGSplatsGeometry(staged),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      releaseLock: () => {
+        this._updateInProgress = false;
+      },
+      retriggerUpdate: (pendingState) => {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          requestAnimationFrame(() => {
             this._updateInProgress = false;
             this.updateView(pendingState);
-          }
-          return;
+          });
+        } else {
+          this._updateInProgress = false;
+          this.updateView(pendingState);
         }
-
-        // Load next LOD level for each progressive loader
-        for (const [path, loader] of this.gsplatLoaders) {
-          if (loader.hasMoreLODs !== true) continue;
-
-          try {
-            // GSplats refinement runs the same query-state derivation
-            // as main update / retry / initial-load — open-coding it here
-            // would have to repeat extend_to_all dim-name validation.
-            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-            const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-            const refinedDerived = this.deriveNodeViewState(path, nodeAttrs, {
-              applyPartialExtendTolerance: true,
-            });
-            if (refinedDerived.skip) {
-              // Full extend_to_all coverage: nothing to refine for
-              // this loader. Skip ahead to the next.
-              continue;
-            }
-            const gsplatsViewState: GSplatsViewState = refinedDerived.viewState;
-
-            const data = await loader.updateView(gsplatsViewState);
-            if (data) {
-              const staged = await this.processGSplatsData(path, data, gsplatsViewState);
-              if (staged) this.commitGSplatsGeometry(staged);
-            }
-          } catch (error) {
-            log.error(
-              Modules.SCENE_LOADER,
-              `GSplats refinement failed for ${path}: ${(error as Error).message}`
-            );
-          }
-        }
-
-        // Update monitor after refinement commit
-        this.updateVisibleCountsInMonitor();
-
-        // Check if any progressive loaders still have more LODs after this pass
-        const anyMore = [...this.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true);
-        if (!anyMore) break; // All LODs loaded
-      }
-    } finally {
-      // Release the lock unless cancellation handed it off to a rAF callback
-      if (!lockHandedOff) {
-        this._updateInProgress = false;
-      }
-    }
+      },
+    });
   }
 
   /**
@@ -1180,31 +684,14 @@ export class SceneLoader {
    * This should be called after view updates to report accurate visible counts.
    */
   private updateVisibleCountsInMonitor(): void {
-    if (!this.rootGroup || !this.monitor) return;
-
-    let totalVisibleSegments = 0;
-    let totalVisibleSplats = 0;
-
-    // Traverse all objects in the scene graph
-    this.rootGroup.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        if (isLinesUserData(object.userData)) {
-          totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
-        } else if (object.userData?.nodeType === 'gsplats') {
-          totalVisibleSplats += (object.userData as GSplatsUserData).visibleSplatCount ?? 0;
-        }
-      }
-    });
-
-    this.monitor.updateVisibleSegments(totalVisibleSegments);
-    this.monitor.updateVisibleSplats(totalVisibleSplats);
+    updateVisibleCountsInMonitorHelper(this.rootGroup, this.monitor);
   }
 
   /**
    * Process lines data: compute tolerance, project to 3D (async).
    * Returns staged commit data without mutating any mesh geometry.
    *
-   * Implementation lives in `scene-loader/data-processor-lines.ts`; this
+   * Implementation lives in `scene-loader/process/data-processor-lines.ts`; this
    * method is a thin delegate so the pipeline can be tested in isolation
    * without instantiating a SceneLoader.
    */
@@ -1239,7 +726,7 @@ export class SceneLoader {
    * Process gsplats data: project nD to 3D, pack Cholesky factors (async).
    * Returns staged commit data without mutating any mesh geometry.
    *
-   * Implementation lives in `scene-loader/data-processor-gsplats.ts`.
+   * Implementation lives in `scene-loader/process/data-processor-gsplats.ts`.
    */
   private async processGSplatsData(
     path: string,
@@ -1269,349 +756,30 @@ export class SceneLoader {
   }
 
   /**
-   * Build the scene graph structure
+   * Build the per-call NodeBuildCtx for the initial-load leaf helpers.
+   * Snapshots viewState + factoryDeps so a concurrent updateView can't
+   * mutate state mid-flight. Never passes `this`.
    */
-  private async buildSceneGraph(
-    rootLoc: zarr.Location<zarr.Readable>,
-    rootAttrs: ZarrSceneAttrs
-  ): Promise<SceneNode> {
-    // Enumerate all groups in the store
-    const listing = await this.enumerateStore();
-
-    // Build hierarchical structure
-    const root: SceneNode = {
-      path: '/',
-      type: 'scene',
-      attrs: rootAttrs,
-      hasSpatialIndex: false,
-      children: [],
+  private makeNodeBuildCtx(): NodeBuildCtx {
+    return {
+      registry: this.registry,
+      nodeFactory: this.nodeFactory,
+      viewState: this.viewState,
+      factoryDeps: this.factoryDeps(),
+      applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
+      updatePointsGeometry: (path, data, session) =>
+        this.updatePointsGeometry(path, data, session),
+      processLinesData: (path, data, viewState, session) =>
+        this.processLinesData(path, data, viewState, session),
+      commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+      processGSplatsData: (path, data, viewState, session) =>
+        this.processGSplatsData(path, data, viewState, session),
+      commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
     };
-
-    // Build node map
-    const nodeMap = new Map<string, SceneNode>();
-    nodeMap.set('/', root);
-
-    // Sort by path depth to ensure parents are created before children
-    const sortedPaths = listing
-      .filter((e) => e.kind === 'group' && e.path !== '/')
-      .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
-
-    for (const entry of sortedPaths) {
-      // Skip overlays group — screen-space overlays are not part of the 3D scene graph
-      if (entry.path === '/overlays' || entry.path.startsWith('/overlays/')) {
-        continue;
-      }
-
-      const loc = rootLoc.resolve(entry.path.slice(1)); // Remove leading /
-      const group = await zarr.open(loc, { kind: 'group' });
-      const attrs = group.attrs as ZarrNodeAttrs;
-
-      // We no longer check for spatial index here - PointsSpatialIndexLoader handles it
-      const node: SceneNode = {
-        path: entry.path,
-        type: attrs?.type || 'group',
-        attrs: attrs || {},
-        hasSpatialIndex: false, // Will be determined by the loader
-        children: [],
-      };
-
-      // when a node's metadata declares colormap='custom', load its
-      // colormap_lut zarr array (if present) and attach the bytes to the
-      // node's attrs so NodeFactory can pass them into
-      // getColormapTexture('custom', lut). Without this step the viewer
-      // falls back to the viridis built-in (handled by getColormapTexture).
-      if (attrs && (attrs as ZarrNodeAttrs).colormap === 'custom') {
-        try {
-          const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
-          const lutResult = await zarr.get(lutArr);
-          const data = lutResult.data;
-          // Promote whatever typed-array we got into a tightly-typed Uint8Array.
-          // The Python writer stores LUTs as uint8 of shape [256,3] or [256,4].
-          let bytes: Uint8Array;
-          if (data instanceof Uint8Array) {
-            bytes = data;
-          } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
-            bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-          } else {
-            // Float / int16 etc. — unexpected for a LUT but recover by copying bytes view.
-            bytes = new Uint8Array((data as ArrayBufferView).buffer);
-          }
-          (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
-          log.info(
-            Modules.SCENE_LOADER,
-            `${entry.path}: loaded custom colormap LUT (${bytes.length} bytes)`
-          );
-        } catch (e: unknown) {
-          // colormap_lut may not exist if a node declared colormap='custom'
-          // by mistake. getColormapTexture will fall back to viridis with a
-          // warning. We don't fail the scene load.
-          log.warning(
-            Modules.SCENE_LOADER,
-            `${entry.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
-          );
-        }
-      }
-
-      // Log if extend_to_all is present
-      if (attrs?.extend_to_all) {
-        log.data(
-          Modules.SCENE_LOADER,
-          `Node ${entry.path} has extend_to_all: ${attrs.extend_to_all.join(', ')}`
-        );
-      }
-
-      // Find parent and add as child
-      const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
-      const parent = nodeMap.get(parentPath);
-      if (parent) {
-        parent.children = parent.children || [];
-        parent.children.push(node);
-      }
-
-      nodeMap.set(entry.path, node);
-    }
-
-    return root;
   }
 
-  /**
-   * Load all nodes in the scene graph. Each leaf node is wrapped in a
-   * per-node try/catch so a single failing node does not abort loading
-   * sibling nodes — the user gets a partial scene plus a per-failure
-   * log entry instead of an empty scene with no actionable signal.
-   *
-   * `LoaderError` thrown from `loadX` is dispatched on `kind`:
-   * - Network → log warning + skip (transient, retry path will handle)
-   * - Decode / Validation → log error + toast (real data problem)
-   * - Unexpected → log error + toast (programmer bug; doesn't re-throw
-   *   because we still want sibling nodes to render)
-   */
-  private async loadSceneNodes(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    parentLoc: zarr.Location<zarr.Readable>
-  ): Promise<void> {
-    if (node.type === 'points') {
-      // loadPoints attaches its own placeholder to parentThree before
-      // fetching data; no caller-side `if (points) add(points)` is needed.
-      // The placeholder stays in the scene even on failure so retry can
-      // populate it.
-      await this.loadLeafNode(() => this.loadPoints(node, parentThree, parentLoc), node.path);
-    } else if (node.type === 'lines') {
-      await this.loadLeafNode(() => this.loadLines(node, parentThree, parentLoc), node.path);
-    } else if (node.type === 'gsplats') {
-      await this.loadLeafNode(() => this.loadGSplats(node, parentThree, parentLoc), node.path);
-    } else if (node.children) {
-      // Create group and recurse
-      const group = new THREE.Group();
-      group.name = node.path;
-
-      // Apply transform if present
-      if (node.attrs.transform) {
-        this.nodeFactory.applyTransform(group, node.attrs.transform);
-      }
-
-      parentThree.add(group);
-
-      // Load children
-      for (const child of node.children) {
-        const childLoc = parentLoc.resolve(child.path.slice(1));
-        await this.loadSceneNodes(child, group, childLoc);
-      }
-    }
-  }
-
-  /**
-   * Run a leaf-node loader, dispatching {@link LoaderError} by kind so
-   * one bad node doesn't sink the whole scene. Returns the mesh on
-   * success, `null` on intentional skip (validation early-exit), or
-   * `null` after a logged/toasted error.
-   */
-  private async loadLeafNode<T extends THREE.Object3D>(
-    load: () => Promise<T | null>,
-    path: string
-  ): Promise<T | null> {
-    try {
-      return await load();
-    } catch (error) {
-      if (!(error instanceof LoaderError)) throw error;
-      const causeStack = error.cause instanceof Error ? error.cause.stack : undefined;
-      switch (error.kind) {
-        case 'Network':
-          log.warning(Modules.SCENE_LOADER, `Network error loading ${path}: ${error.message}`);
-          break;
-        case 'Decode':
-        case 'Validation':
-        case 'Unexpected':
-          log.error(Modules.SCENE_LOADER, `Failed to load ${path}: ${error.message}`);
-          if (causeStack) log.error(Modules.SCENE_LOADER, `Stack trace for ${path}`, causeStack);
-          notifier.toast(`Failed to load ${path}: ${error.kind.toLowerCase()} error`, 5000);
-          break;
-      }
-      return null;
-    }
-  }
-
-  /**
-   * Load a single points node
-   */
-  private async loadPoints(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Points | null> {
-    log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
-    log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
-    log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
-
-    // Create appropriate loader
-    const loader = this.createLoader(node, loc);
-
-    // Store loader for updates (route through the registry's
-    // register* methods rather than mutating its internal map).
-    this.registry.registerPointsLoader(node.path, loader);
-
-    // Construct + attach an empty placeholder before fetching data, so an
-    // initial-load failure leaves a recoverable scene state.
-    // commit-points-geometry finds the placeholder by name and populates
-    // it once data arrives (initial fetch or future retry/update); the
-    // 0-points → N-points transition naturally takes the "different size"
-    // branch in commitPointsGeometry. retryFailedLoader() reads the
-    // placeholder's `userData.attrs` to derive the retry view state.
-    const attrs = this.applyEffectiveAttrs(node) as unknown as PointsMetadata;
-    const placeholder = this.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
-    parentThree.add(placeholder);
-
-    try {
-      // Load points data
-      log.info(Modules.SCENE_LOADER, 'Initial ViewState for loading:');
-      log.info(Modules.SCENE_LOADER, `  displayDims: [${this.viewState.displayDims.join(', ')}]`);
-      log.info(
-        Modules.SCENE_LOADER,
-        `  slicePosition: [${this.viewState.slicePosition.join(', ')}]`
-      );
-      log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
-
-      // Route initial load through deriveNodeViewState (same helper as
-      // the main update path and retry) so initial / update / retry can
-      // never silently load different query regions. Initial load doesn't
-      // apply the full-extend skip — we still want to construct the THREE
-      // node so future slice changes can populate it; the skip return only
-      // happens on update/retry where there's an existing node to leave
-      // alone.
-      const derived = this.deriveNodeViewState(node.path, node.attrs, {
-        applyPartialExtendTolerance: true,
-      });
-      let pointsViewState: ViewState;
-      if (derived.skip) {
-        // Full-extend on initial load: behave as if extend_to_all
-        // weren't set (load with the base view state) so the empty
-        // node still gets constructed.
-        pointsViewState = this.viewState;
-      } else {
-        pointsViewState = derived.viewState;
-      }
-
-      const data = await loader.loadPoints(pointsViewState);
-
-      // Log if no initial points are visible (this is normal for nD slicing)
-      if (data.pointCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible points for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Commit data into the placeholder via the same path future
-      // updateView() / retry calls use. Unifies initial-load and update
-      // through one geometry-commit code path.
-      this.updatePointsGeometry(node.path, data);
-
-      log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
-
-      return placeholder;
-    } catch (error) {
-      // Record the failure so `retryFailedLoader(path)` can target this
-      // node. The placeholder stays attached to the scene (added before
-      // this try/catch), so retry can populate it.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
-  }
-
-  /**
-   * Load a single lines node
-   */
-  private async loadLines(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Mesh | null> {
-    log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
-
-    const attrs = node.attrs as unknown as LinesMetadata;
-    log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
-    log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
-
-    // Create lines loader
-    const loader = this.createLinesLoader(node, loc);
-
-    // Store loader for updates (route through registry).
-    this.registry.registerLinesLoader(node.path, loader);
-
-    // Construct + attach empty placeholder before fetching.
-    // processLinesData / commitLinesGeometry look up the mesh by name
-    // and populate it on success; on failure the placeholder remains
-    // for retry to target. Same path is used by every future update.
-    const placeholder = this.nodeFactory.createEmptyLinesNode(
-      node.path,
-      this.applyEffectiveAttrs(node),
-      attrs,
-      loader
-    );
-    parentThree.add(placeholder);
-
-    try {
-      // Lines path does not apply the partial-extend tolerance override
-      // during the data fetch (only during clipping below), so
-      // applyPartialExtendTolerance=false. This call still validates
-      // extend_to_all dim names and applies the inverse nd_transform.
-      const derivedLines = this.deriveNodeViewState(node.path, attrs, {
-        applyPartialExtendTolerance: false,
-      });
-      const linesViewState: LinesViewState = derivedLines.skip
-        ? this.viewState
-        : derivedLines.viewState;
-
-      const data = await loader.loadLines(linesViewState);
-
-      if (data.segmentCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible segments for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Project + commit through the same helpers used by every update
-      // and retry. processLinesData reads the placeholder's userData
-      // (extend_to_all etc.) and finds the mesh by name; commit step
-      // writes into the existing geometry.
-      const staged = await this.processLinesData(node.path, data, linesViewState);
-      if (staged) this.commitLinesGeometry(staged);
-
-      log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
-
-      return placeholder;
-    } catch (error) {
-      // See loadPoints catch — same record-failure-then-throw shape.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
-  }
-
-  /**
-   * Create a lines loader for a node
-   */
   /** Build the per-call dependency snapshot for the loader factory. */
   private factoryDeps(): LoaderFactoryDeps {
     return {
@@ -1623,174 +791,15 @@ export class SceneLoader {
     };
   }
 
-  private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    const loader = createLinesLoaderHelper(node, loc, this.factoryDeps());
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
   /**
-   * Load a single gsplats node
-   */
-  private async loadGSplats(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Mesh | null> {
-    const attrs = node.attrs as unknown as GSplatsMetadata;
-    // v2.0 surfaces the default substitutive level's additive sub-LOD count
-    // as `n_additive_sublods_default` on the splats group attrs. Progressive
-    // loading kicks in when that count > 1.
-    const nAdditive = attrs.n_additive_sublods_default ?? 0;
-    const defaultSub = attrs.default_substitutive ?? 0;
-    log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-    log.info(
-      Modules.SCENE_LOADER,
-      `  Splats: ${(nAdditive > 1 ? (attrs.n_splats_total ?? attrs.n_splats) : attrs.n_splats)?.toLocaleString() || 'unknown'}`
-    );
-    log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
-    if ((attrs.n_substitutive ?? 1) > 1) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `  Substitutive levels: ${attrs.n_substitutive} (rendering default level ${defaultSub})`
-      );
-    }
-    if (nAdditive > 1) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
-      );
-    }
-
-    // Create gsplats loader — progressive for multi-additive, standard otherwise
-    const loader =
-      nAdditive > 1
-        ? await this.createProgressiveGSplatsLoader(node, loc, nAdditive, defaultSub)
-        : this.createGSplatsLoader(node, loc);
-
-    // Store loader for updates (route through registry).
-    this.registry.registerGSplatsLoader(node.path, loader);
-
-    // Empty placeholder + same-flow commit. See loadPoints/loadLines
-    // for the rationale.
-    const placeholder = this.nodeFactory.createEmptyGSplatsNode(
-      node.path,
-      this.applyEffectiveAttrs(node),
-      attrs,
-      loader
-    );
-    parentThree.add(placeholder);
-
-    try {
-      // GSplats path mirrors Points: applyPartialExtendTolerance=true so
-      // tolerance overrides + nd_transform inversion both happen up front.
-      const derivedGSplats = this.deriveNodeViewState(node.path, node.attrs, {
-        applyPartialExtendTolerance: true,
-      });
-      const gsplatsViewState: GSplatsViewState = derivedGSplats.skip
-        ? {
-            displayDims: this.viewState.displayDims,
-            slicePosition: this.viewState.slicePosition,
-            tolerance: this.viewState.tolerance,
-            dimensions: this.viewState.dimensions,
-          }
-        : derivedGSplats.viewState;
-
-      // Load gsplats data
-      const data = await loader.loadGSplats(gsplatsViewState);
-
-      if (data.splatCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible gsplats for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Process + commit through the same helpers used by every update
-      // and retry. Helpers find the placeholder by name and read its
-      // userData for truncate/attrs.
-      const staged = await this.processGSplatsData(node.path, data, gsplatsViewState);
-      if (staged) this.commitGSplatsGeometry(staged);
-
-      log.success(
-        Modules.SCENE_LOADER,
-        `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
-      );
-
-      return placeholder;
-    } catch (error) {
-      // See loadPoints catch.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
-  }
-
-  /** Create a single-LOD gsplats loader for a node. */
-  private createGSplatsLoader(
-    node: SceneNode,
-    loc: zarr.Location<zarr.Readable>
-  ): GSplatsDataLoader {
-    const loader = createGSplatsLoaderHelper(node, loc, this.factoryDeps());
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
-  /**
-   * Create a progressive gsplats loader for a multi-LOD node. The
-   * parent's effective rendering attrs are composed up the scene-graph
-   * ancestry here (not in the helper) so the LOD synthetic nodes see
-   * ancestor opacity/intensity/etc.
-   */
-  private async createProgressiveGSplatsLoader(
-    node: SceneNode,
-    _loc: zarr.Location<zarr.Readable>,
-    nAdditive: number,
-    defaultSub: number
-  ): Promise<GSplatsDataLoader> {
-    const loader = await createProgressiveGSplatsLoaderHelper(
-      node,
-      nAdditive,
-      defaultSub,
-      this.applyEffectiveAttrs(node),
-      this.factoryDeps()
-    );
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
-  /**
-   * Create the points spatial index loader for a node and connect it to
-   * the data monitor (the monitor wiring stays here because it touches
-   * SceneManager-only state — the factory only constructs the loader).
-   */
-  private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
-    const loader = createPointsLoaderHelper(node, loc, this.factoryDeps());
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
-  /**
-   * Connect a loader to the data-loading monitor when the monitor is active
-   * and the loader implements the {@link LoaderMonitor} surface (lines and
-   * gsplats expose the surface as optional methods, points always defines
-   * them). Same wiring is used for all three geometry types.
+   * Connect a loader to the data-loading monitor. Implementation lives
+   * in `scene-loader/nodes/connect-loader-to-monitor.ts`.
    */
   private connectLoaderToMonitor(
     path: string,
     loader: DataLoader | LinesDataLoader | GSplatsDataLoader
   ): void {
-    const monitor = this.monitor;
-    if (!monitor) return;
-
-    const candidate = loader as Partial<LoaderMonitor>;
-    if (
-      typeof candidate.addEventListener === 'function' &&
-      typeof candidate.removeEventListener === 'function' &&
-      typeof candidate.getMetrics === 'function' &&
-      typeof candidate.getActiveQueries === 'function'
-    ) {
-      monitor.connectLoader(path, candidate as LoaderMonitor);
-    }
+    connectLoaderToMonitorHelper(path, loader, this.monitor);
   }
 
   /**
@@ -1814,48 +823,13 @@ export class SceneLoader {
   }
 
   /**
-   * Initialize scene dimensions from metadata using ViewStateManager
+   * Initialize scene dimensions from metadata. Implementation lives in
+   * `scene-loader/nodes/initialize-scene-dimensions.ts`; null return
+   * means validation failed and the existing viewState stays.
    */
   private initializeSceneDimensions(sceneDims: unknown): void {
-    // Validate sceneDims structure
-    if (!isSceneDimensions(sceneDims)) {
-      log.warning(Modules.SCENE_LOADER, 'Invalid scene_dimensions format, skipping');
-      return;
-    }
-
-    // Validate dimensions using ViewStateManager
-    const validation = ViewStateManager.validateDimensions(sceneDims.dimensions);
-
-    // Log validation results
-    const displayedCount = sceneDims.dimensions.filter((d) => d.display === true).length;
-    ViewStateManager.logValidationResults(validation, sceneDims.dimensions.length, displayedCount);
-
-    // Stop if validation failed with errors
-    if (!validation.isValid) {
-      log.error(Modules.SCENE_LOADER, 'Scene dimensions validation failed, cannot initialize');
-      return;
-    }
-
-    // Initialize ViewState using ViewStateManager
-    this.viewState = ViewStateManager.initializeFromDimensions(sceneDims);
-  }
-
-  /**
-   * Enumerate all groups and arrays in the store
-   */
-  private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
-    if (!this._zarrStore) return [];
-
-    // Try to use consolidated metadata
-    if (hasContentsMethod(this._zarrStore)) {
-      const contents = await this._zarrStore.contents();
-      log.custom('📋', Modules.SCENE_LOADER, `Found ${contents.length} items in store`);
-      return contents;
-    }
-
-    // Fallback enumeration
-    log.warning(Modules.SCENE_LOADER, 'Store does not support contents(), using fallback');
-    return [{ path: '/', kind: 'group' }];
+    const next = initializeSceneDimensionsHelper(sceneDims);
+    if (next) this.viewState = next;
   }
 
   /**
@@ -1956,128 +930,26 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
-      return await this._retryFailedLoaderUnlocked(path);
+      return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
       this._updateInProgress = false;
-      this._drainPendingViewState();
+      this.viewStateQueue.drain((state) => this.updateView(state));
     }
   }
 
-  /**
-   * Internal retry body without the `_updateInProgress` lock dance.
-   * Used by both `retryFailedLoader` (which takes the lock once) and
-   * `retryAllFailedLoaders` (which takes the lock once and runs
-   * multiple retries inside it).
-   */
-  private async _retryFailedLoaderUnlocked(path: string): Promise<boolean> {
-    if (!this.failedLoaders.has(path)) return false;
-
-    log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
-
-    // Determine which loader type this path belongs to
-    const pointsLoader = this.loaders.get(path);
-    const linesLoader = this.linesLoaders.get(path);
-    const gsplatsLoader = this.gsplatLoaders.get(path);
-
-    try {
-      // Look up the per-node attrs so retry applies the same
-      // extend_to_all / nd_transform adjustments as the main update path.
-      // Passing a raw view state here silently renders an incorrect query
-      // region for transformed or extended nodes.
-      const obj = this.rootGroup?.getObjectByName(path) as
-        | THREE.Object3D
-        | THREE.Mesh
-        | THREE.Points
-        | undefined;
-      const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-
-      // Defensive guard — only clear `failedLoaders` if the named object
-      // still exists in the scene. The placeholder model should make
-      // commit always succeed when retry runs in normal conditions, but
-      // a scene reload or programmatic node removal between failure and
-      // retry could leave us fetching data that has nowhere to land.
-      // Without this guard, retry would falsely report success ("data
-      // fetched + commit silently no-op'd") and clear the failure,
-      // hiding the broken state from `hasFailures()`.
-      const verifyAndClear = (kind: string): boolean => {
-        if (!this.rootGroup?.getObjectByName(path)) {
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Retry of ${path} fetched data but no scene object exists; not clearing failure`
-          );
-          return false;
-        }
-        this.failedLoaders.delete(path);
-        log.success(Modules.SCENE_LOADER, `Successfully retried ${kind} loader: ${path}`);
-        return true;
-      };
-
-      if (pointsLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: true,
-        });
-        // Mirror loadPoints() initial-load fallback. When derived.skip
-        // is true (extend_to_all fully covers), the placeholder still
-        // needs data committed — skipping the load and clearing
-        // failedLoaders would falsely report success against an empty
-        // placeholder.
-        const pointsViewState = derived.skip ? this.viewState : derived.viewState;
-        const points = await pointsLoader.updateView(pointsViewState);
-        if (points) this.updatePointsGeometry(path, points);
-        return verifyAndClear('points');
-      } else if (linesLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: false,
-        });
-        // See Points branch.
-        const linesViewState: LinesViewState = derived.skip ? this.viewState : derived.viewState;
-        const data = await linesLoader.updateView(linesViewState);
-        if (data) {
-          const staged = await this.processLinesData(path, data, linesViewState);
-          if (staged) this.commitLinesGeometry(staged);
-        }
-        return verifyAndClear('lines');
-      } else if (gsplatsLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: true,
-        });
-        // Mirror loadGSplats() initial-load fallback shape (explicit
-        // object spread to match LinesViewState/GSplatsViewState).
-        const gsplatsViewState: GSplatsViewState = derived.skip
-          ? {
-              displayDims: this.viewState.displayDims,
-              slicePosition: this.viewState.slicePosition,
-              tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions,
-            }
-          : derived.viewState;
-        const data = await gsplatsLoader.updateView(gsplatsViewState);
-        if (data) {
-          const staged = await this.processGSplatsData(path, data, gsplatsViewState);
-          if (staged) this.commitGSplatsGeometry(staged);
-        }
-        return verifyAndClear('gsplats');
-      } else {
-        // Loader not found - it may have been disposed
-        log.warning(Modules.SCENE_LOADER, `No loader found for path: ${path}`);
-        this.failedLoaders.delete(path); // Clean up stale entry
-        return false;
-      }
-    } catch (error) {
-      // Update error tracking with new attempt
-      const errorInfo = this.failedLoaders.get(path);
-      const retryCount = errorInfo ? errorInfo.retryCount + 1 : 1;
-      this.failedLoaders.set(path, {
-        error: error as Error,
-        timestamp: Date.now(),
-        retryCount,
-      });
-      log.error(
-        Modules.SCENE_LOADER,
-        `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`
-      );
-      return false;
-    }
+  /** Build the per-call RetryCtx. Never passes `this` to the helper. */
+  private makeRetryCtx(): RetryCtx {
+    return {
+      registry: this.registry,
+      rootGroup: this.rootGroup,
+      viewState: this.viewState,
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      processLinesData: (path, data, vs) => this.processLinesData(path, data, vs),
+      commitLinesGeometry: (staged) => this.commitLinesGeometry(staged),
+      processGSplatsData: (path, data, vs) => this.processGSplatsData(path, data, vs),
+      commitGSplatsGeometry: (staged) => this.commitGSplatsGeometry(staged),
+    };
   }
 
   /**
@@ -2117,92 +989,19 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
-      const succeeded: string[] = [];
-      const failed: string[] = [];
-
-      const results = await Promise.all(
-        failedPaths.map(async (path) => {
-          const success = await this._retryFailedLoaderUnlocked(path);
-          return { path, success };
-        })
+      const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
+        failedPaths,
+        this.makeRetryCtx()
       );
-
-      for (const { path, success } of results) {
-        if (success) {
-          succeeded.push(path);
-        } else {
-          failed.push(path);
-        }
-      }
-
       log.info(
         Modules.SCENE_LOADER,
         `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`
       );
-
       return { succeeded, failed };
     } finally {
       this._updateInProgress = false;
-      this._drainPendingViewState();
+      this.viewStateQueue.drain((state) => this.updateView(state));
     }
-  }
-
-  /**
-   * Process any `_pendingViewState` queued during a retry. The retry
-   * path sets `_updateInProgress = true`, which causes a concurrent
-   * `updateView()` call to queue its state rather than start. After
-   * retry releases the lock, this helper drains that queued state via a
-   * fresh `updateView()` call. Fired asynchronously so the retry's own
-   * promise resolves first.
-   */
-  private _drainPendingViewState(): void {
-    if (this._pendingViewState === null) return;
-    const pendingState = this._pendingViewState;
-    this._pendingViewState = null;
-    Promise.resolve().then(() => {
-      this.updateView(pendingState).catch((err) => {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Drained updateView after retry failed: ${(err as Error).message}`
-        );
-      });
-    });
-  }
-
-  /**
-   * S6: per-loader predictive prefetch. Extrapolates the next-frame
-   * view state from the path's previous `derived.viewState` to its
-   * current one and fires `prefetchChunks(predicted)` on the loader.
-   * Honors per-node tolerance extension + extend_to_all skip
-   * semantics by using the *derived* view-state rather than the
-   * global one — extended/skipped nodes don't get over-prefetched.
-   *
-   * Called from each loader-task branch after the demand load
-   * completes; fire-and-forget in a microtask so a slow prefetch
-   * cannot delay the commit path.
-   */
-  private _dispatchPerLoaderPrefetch(path: string, current: ViewState, loader: unknown): void {
-    const prev = this._prevPerNodeViewState.get(path) ?? null;
-    // Snapshot current — keeps the saved value immune to later
-    // in-place mutation by downstream loader work.
-    const snapshot: ViewState = {
-      displayDims: [...current.displayDims],
-      slicePosition: [...current.slicePosition],
-      tolerance: [...current.tolerance],
-      dimensions: current.dimensions,
-    };
-    this._prevPerNodeViewState.set(path, snapshot);
-
-    // First call for this path (no prev) — there's nothing to
-    // extrapolate, the dispatcher would return `false`. Skip the
-    // microtask so we don't pay queue overhead for a guaranteed no-op.
-    // The next updateView observes this snapshot as `prev` and the
-    // user's first scrub-direction delta is captured then.
-    if (prev === null) return;
-
-    queueMicrotask(() => {
-      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader]);
-    });
   }
 
   /**
@@ -2218,9 +1017,9 @@ export class SceneLoader {
    * `SceneLoaderManager.destroyLoaderAsync` (added in a follow-up
    * commit).
    *
-   * B.7 — worker pool policy: Web Workers used for projection/decoding
-   * live in a MODULE-LEVEL singleton (`workers/worker-pool.ts:
-   * getWorkerPool`), not per-SceneLoader. Dataset switches deliberately
+   * Worker pool policy: Web Workers used for projection/decoding live
+   * in a MODULE-LEVEL singleton (`workers/worker-pool.ts:getWorkerPool`),
+   * not per-SceneLoader. Dataset switches deliberately
    * do NOT terminate workers — the pool is bounded, and tearing it down
    * per switch would force a fresh worker spin-up on the next load
    * (10s of ms of WASM re-init on each cycle). Workers are terminated
@@ -2228,85 +1027,26 @@ export class SceneLoader {
    * which is the right scope for that lifecycle.
    */
   async dispose(): Promise<void> {
-    // Abort the dataset-scoped signal first so any in-flight worker
-    // `runWithTimeout` callers settle immediately instead of waiting
-    // for their tasks to complete (WASM tasks themselves keep running
-    // but their results are discarded). Clear the pool's reference
-    // afterwards so future workers don't get an already-aborted
-    // signal from this disposed loader.
-    if (this._datasetAbortController) {
-      this._datasetAbortController.abort();
-      this._datasetAbortController = null;
-    }
-    getWorkerPool().setAbortSignal(undefined);
+    await disposeSceneLoader({
+      datasetAbortController: this._datasetAbortController,
+      registry: this.registry,
+      gpuBufferPool: this._gpuBufferPool,
+      cachingStore: this.cachingStore,
+      l0Cache: this.l0Cache,
+      viewStateQueue: this.viewStateQueue,
+      monitor: this.monitor,
+    });
 
-    // Dispose all geometry loaders via registry
-    this.registry.disposeAll();
-
-    // dispose GPU buffer pool. Without this, the pool retains
-    // active+pooled InstancedBufferGeometry references after a dataset
-    // switch — at million-element scale this can leak hundreds of MB
-    // of GPU memory until the page is refreshed. The pool's internal
-    // dispose() is idempotent.
-    if (this._gpuBufferPool) {
-      try {
-        this._gpuBufferPool.dispose();
-      } catch (error) {
-        log.warning(Modules.SCENE_LOADER, 'GPU buffer pool disposal failed', error);
-      }
-      this._gpuBufferPool = null;
-    }
-
-    // Dispose caching store (flushes L2 metadata, clears L1).
-    // Awaited so a dataset switch sees the previous L2 fully drained
-    // before the next caching store is constructed.
-    if (this.cachingStore) {
-      try {
-        await this.cachingStore.dispose();
-      } catch (error) {
-        log.warning(Modules.SCENE_LOADER, 'Caching store disposal failed', error);
-      }
-      this.cachingStore = null;
-    }
-
-    // Clear L0 decompressed chunk cache
-    if (this.l0Cache) {
-      const stats = this.l0Cache.getStats();
-      log.info(
-        Modules.SCENE_LOADER,
-        `L0 cache stats at dispose: ${stats.count} chunks, ${(stats.size / 1024 / 1024).toFixed(1)}MB, ` +
-          `hit rate: ${(stats.hitRate * 100).toFixed(1)}%`
-      );
-      this.l0Cache.clear();
-      this.l0Cache = null;
-    }
-
+    // Clear the orchestrator's nullable fields. The helper handled the
+    // actual resource-release work; the references stay live across the
+    // await so the helper can address them.
+    this._datasetAbortController = null;
+    this._gpuBufferPool = null;
+    this.cachingStore = null;
+    this.l0Cache = null;
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
-
-    // S6: clear per-loader prefetch predictor state on dispose so a
-    // reused SceneLoader doesn't extrapolate from a prior dataset.
-    this._prevPerNodeViewState.clear();
-
-    // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
-    // is keyed by content hash and shared across all scenes, but entries
-    // from an unloaded dataset have no value and would accumulate in a
-    // long-lived app that swaps many unique LUTs. Built-ins survive
-    // because they're shared with all scenes and cheap to keep.
-    try {
-      disposeCustomColormapTextures();
-    } catch (error) {
-      log.warning(Modules.SCENE_LOADER, 'Custom colormap disposal failed', error);
-    }
-
-    // Tell the monitor to drop its scene-loader-bound closures (cache
-    // stats, L0 cache, GPU buffer pool, accumulators, profiler) before
-    // we release our reference. Without this, the monitor outlives the
-    // loader with closures that capture our nulled-out fields and NPE
-    // on the next stats poll. The monitor's lifecycle itself is owned
-    // by core/app.ts via DataMonitorManager.
-    this.monitor?.disconnectAllLoaders();
     this.monitor = null;
   }
 }

@@ -11,11 +11,7 @@
  */
 
 import type { ViewState } from '../data/data-loader-types';
-import type {
-  LoaderMetrics,
-  MonitorEventListener,
-  QueryInfo,
-} from './data-monitor-types';
+import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)

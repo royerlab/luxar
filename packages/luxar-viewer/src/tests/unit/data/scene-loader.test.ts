@@ -44,6 +44,10 @@ vi.mock('../../../rendering/material-manager', () => ({
       updateCameraParams: vi.fn(),
     }),
   },
+  // `invalidate-render-object.ts` imports this symbol to tag soft-
+  // dispose events; supply a unique Symbol so the import resolves
+  // in jsdom even though MaterialManager itself is mocked away.
+  SOFT_DISPOSE_FLAG: Symbol.for('luxar.material.softDispose.test-mock'),
 }));
 
 // SceneLoader now uses `notifier.toast` for the >16D scene-dimensions
@@ -792,27 +796,31 @@ describe('SceneLoader', () => {
     });
 
     /**
-     * Drop a real `THREE.Points` into the loader's rootGroup so the
+     * Drop a real point mesh into the loader's rootGroup so the
      * `getObjectByName(path)` lookup inside `commitPointsGeometry`
-     * returns it. The Points instance carries pre-sized buffer
-     * attributes so the same-size in-place update branch can reuse
-     * them; an `oldCount` mismatch sends commit through the
-     * dispose+recreate branch, which still works against real THREE.
+     * returns it. Per-instance attributes are `InstancedBufferAttribute`s
+     * named `aCenter`, `aColor`, `aRadius`, `aSharpness`.
      */
-    function attachPointsChild(name: string, oldCount: number): THREE.Points {
+    function attachPointsChild(name: string, oldCount: number): THREE.Mesh {
       const root = (sceneLoader as any).rootGroup as THREE.Group;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute(
-        'position',
-        new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3)
+        'aCenter',
+        new THREE.InstancedBufferAttribute(new Float32Array(oldCount * 3), 3)
       );
-      geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3));
-      geom.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(oldCount), 1));
       geom.setAttribute(
-        'sharpness',
-        new THREE.BufferAttribute(new Float32Array(oldCount), 1)
+        'aColor',
+        new THREE.InstancedBufferAttribute(new Float32Array(oldCount * 3), 3)
       );
-      const points = new THREE.Points(geom);
+      geom.setAttribute(
+        'aRadius',
+        new THREE.InstancedBufferAttribute(new Float32Array(oldCount), 1)
+      );
+      geom.setAttribute(
+        'aSharpness',
+        new THREE.InstancedBufferAttribute(new Float32Array(oldCount), 1)
+      );
+      const points = new THREE.Mesh(geom);
       points.name = name;
       // commitPointsGeometry only writes `visiblePointCount` when the
       // node passes `isPointsUserData` (nodeType === 'points'). Mirror
@@ -870,17 +878,16 @@ describe('SceneLoader', () => {
       // Whether commit takes the buffer-pool path or the in-place path
       // (depends on whether _gpuBufferPool is wired up in this fixture),
       // the live position attribute must reflect the new payload.
-      const afterPositions = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const afterPositions = points.geometry.getAttribute(
+        'aCenter'
+      ) as THREE.InstancedBufferAttribute;
       expect(Array.from(afterPositions.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
       expect(points.userData.visiblePointCount).toBe(1);
     });
 
     it('should update bounding box from metadata', () => {
       const points = attachPointsChild('/test_points', 1);
-      const newBounds = new THREE.Box3(
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(10, 10, 10)
-      );
+      const newBounds = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(10, 10, 10));
       const newData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),

@@ -79,10 +79,7 @@ describe('createEmptyPointsData', () => {
   });
 
   it('returns ndim from chunkIndex.metadata when present', () => {
-    const data = createEmptyPointsData(
-      makeCtx({ chunkIndex: makeChunkIndex(7) }),
-      makeViewState()
-    );
+    const data = createEmptyPointsData(makeCtx({ chunkIndex: makeChunkIndex(7) }), makeViewState());
     expect(data.ndim).toBe(7);
   });
 
@@ -373,7 +370,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   });
 });
 
-describe('A.3 — scalar length validation', () => {
+describe('scalar length validation', () => {
   it('suppresses scalars when scalars.length !== point count', () => {
     const result = projectPointsTo3D(
       new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),

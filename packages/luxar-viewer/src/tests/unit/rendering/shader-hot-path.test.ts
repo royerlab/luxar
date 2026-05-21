@@ -4,8 +4,8 @@
  * These tests are intentionally string-grep assertions over the
  * generated GLSL. The recheck report (`performance-memory.md` §W5, §W6)
  * flagged that several deliberate optimizations and visual-correctness
- * patterns have no test coverage and can silently regress during a
- * shader refactor:
+ * patterns have no test coverage and can silently regress when shader
+ * code changes:
  *
  * - Point vertex uses `inversesqrt(dot(...))` — a native GPU
  *   instruction; replacing it with `1.0 / sqrt(...)` is a real cost.
@@ -28,12 +28,12 @@ import { describe, it, expect } from 'vitest';
 import {
   POINT_VERTEX_SHADER,
   POINT_FRAGMENT_SHADER,
-} from '../../../rendering/shaders/point-shaders';
+} from '../../../rendering/materials/point/shader-glsl';
 import {
   GSPLAT_VERTEX_SHADER,
   GSPLAT_FRAGMENT_SHADER,
-} from '../../../rendering/shaders/gsplat-shaders';
-import { LINE_VERTEX_SHADER } from '../../../rendering/shaders/line-shaders';
+} from '../../../rendering/materials/gsplat/shader-glsl';
+import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-glsl';
 
 describe('Shader hot-path string regressions', () => {
   describe('Point vertex', () => {
@@ -78,8 +78,8 @@ describe('Shader hot-path string regressions', () => {
       // The shader assembles the per-axis pre-multiplied vector
       // (prx/pry/prz = Σ⁻¹·r) and then folds it with `rayDir` to form
       // the scalar quadratic that feeds `inversesqrt(quad)`. Locking
-      // the rayDir × pr* assembly guards against a refactor that
-      // accidentally drops the cross terms (which would produce wrong
+      // the rayDir × pr* assembly guards against accidentally dropping
+      // the cross terms (which would produce wrong
       // splat sizes that look "almost right" — the worst kind of
       // regression).
       expect(GSPLAT_VERTEX_SHADER).toMatch(/rayDir\.x\s*\*\s*prx/);
@@ -92,8 +92,8 @@ describe('Shader hot-path string regressions', () => {
     it("writes opaque alpha (1.0) in 'normal' blending mode", () => {
       // The 'normal' mode is dimmed-opaque: fragColor.a is 1.0 and
       // finalColor is pre-dimmed by opacity. See material-manager.ts
-      // header note. Locking this string prevents a refactor from
-      // turning 'normal' into transparent-additive by accident.
+      // header note. Locking this string prevents turning 'normal' into
+      // transparent-additive by accident.
       expect(GSPLAT_FRAGMENT_SHADER).toMatch(
         /fragColor\s*=\s*vec4\s*\(\s*finalColor\s*,\s*1\.0\s*\)/
       );

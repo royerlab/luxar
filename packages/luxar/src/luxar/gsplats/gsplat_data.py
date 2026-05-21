@@ -266,12 +266,12 @@ class GSplatData(_SplatArrayMixin):
     Every ``GSplatData`` holds one or more LOD levels (``AdditiveSubLOD`` instances).
     A single-LOD dataset is simply ``additive_sublods=[one_lod]``.
 
-    **Construction styles** (convenience constructor preserves old API)::
+    **Construction styles**::
 
-        # Old-style (wraps into single LOD internally):
+        # Convenience constructor (wraps into single LOD internally):
         GSplatData(centers=c, amplitudes=a, cholesky_factors=cf)
 
-        # New-style (explicit LODs):
+        # Explicit LOD construction:
         GSplatData.from_additive_sublods([lod0, lod1, lod2])
 
     Top-level ``centers``, ``amplitudes``, ``cholesky_factors``, and ``colors``
@@ -1873,8 +1873,8 @@ class GSplatData(_SplatArrayMixin):
         ``"error_budget"`` if *target* is provided, ``"redundancy"`` if
         *shape* is provided, ``"cumulative"`` otherwise.
 
-        Phase 2 compounding check (error_budget and redundancy only)
-        ------------------------------------------------------------
+        Joint compounding check (error_budget and redundancy only)
+        ----------------------------------------------------------
         After identifying individual candidates, verifies that their
         *joint* removal does not exceed the budget.  If it does, a binary
         search tightens the per-splat threshold until the joint constraint
@@ -1896,7 +1896,7 @@ class GSplatData(_SplatArrayMixin):
             redundancy_threshold: *redundancy only.*  Max fractional
                 contribution (0--1) below which a splat is redundant.
             max_binary_search_iters: *error_budget / redundancy only.*
-                Max iterations for Phase 2 binary search.
+                Max iterations for the joint compounding binary search.
             device: Device for GPU computation.  Auto-detected if None.
             intensity_floor: Min intensity threshold for AABB computation.
             retention: *cumulative only.*  Fraction of total amplitude to

@@ -49,7 +49,7 @@ imports. New specs should follow:
 import { test, expect } from './fixtures';
 ```
 
-For specs that *intentionally* trigger console errors (e.g.
+For specs that _intentionally_ trigger console errors (e.g.
 `error-recovery.spec.ts`, `webgl-errors.spec.ts`), opt out per
 test via the `allow-console-errors` annotation:
 
@@ -71,6 +71,7 @@ to direct `@playwright/test` if the spec has a specific reason to
 manage its own per-test console-error allow-list (none currently do).
 
 The fixture combines two signal sources before the assertion fires:
+
 - Luxar's debug-console interceptor (in-app, formatted, polled via
   `assertNoConsoleErrors`)
 - Playwright's `page.on('console')` + `page.on('pageerror')`
@@ -199,7 +200,6 @@ installAllMocks(); // Sets up all mocks at once
 
 - Core classes: `Scene`, `Camera`, `Renderer`, `Mesh`, `Geometry`, `Material`
 - Point rendering: `Points`, `PointsMaterial`, `BufferGeometry`, `BufferAttribute`
-- Post-processing: `EffectComposer`, `RenderPass`, `ShaderPass`
 - Controls: Orbit/fly controls (see `orbit-controls.mock.ts`)
 
 **Key features**:
@@ -434,7 +434,7 @@ Tests for scene graph and state management.
   - Node hierarchy
   - Transform composition
 
-- `scene-manager-utils.test.ts` - Scene utility functions
+- `scene-manager/clipping/bounds-math.test.ts` - Scene utility functions
   - Transform helpers
   - Node traversal
   - Bounds calculation

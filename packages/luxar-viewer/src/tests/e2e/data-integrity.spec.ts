@@ -67,13 +67,21 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type !== 'Points' || !obj.geometry?.attributes?.color) return;
-        const col = obj.geometry.attributes.color;
-        const count = Math.min(col.count * col.itemSize, 3000);
-        for (let i = 0; i < count; i++) {
-          const v = col.array[i];
-          if (!Number.isFinite(v)) issues.push(`${obj.name}: color[${i}] = ${v} (not finite)`);
-          if (v < 0) issues.push(`${obj.name}: color[${i}] = ${v} (negative)`);
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aColor) return;
+        const col = obj.geometry.attributes.aColor;
+        // aColor is an InterleavedBufferAttribute; .array is the shared
+        // interleaved buffer (positions/radii/colors/sharpness all live in
+        // it). Read per-instance components with getX/getY/getZ so we
+        // validate actual colors instead of a stride-misaligned mix.
+        const sampleCount = Math.min(col.count, 1000);
+        for (let i = 0; i < sampleCount; i++) {
+          const r = col.getX(i);
+          const g = col.getY(i);
+          const b = col.getZ(i);
+          if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b))
+            issues.push(`${obj.name}: color[${i}] = [${r}, ${g}, ${b}] (not finite)`);
+          if (r < 0 || g < 0 || b < 0)
+            issues.push(`${obj.name}: color[${i}] = [${r}, ${g}, ${b}] (negative)`);
         }
       });
 
@@ -93,12 +101,14 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type !== 'Points' || !obj.geometry?.attributes?.radius) return;
-        const rad = obj.geometry.attributes.radius;
-        const dr = obj.geometry.drawRange;
-        const count = dr.count < Infinity ? Math.min(dr.count, rad.count) : rad.count;
-        for (let i = 0; i < count; i++) {
-          const v = rad.array[i];
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aRadius) return;
+        const rad = obj.geometry.attributes.aRadius;
+        // aRadius is an InterleavedBufferAttribute view; reading .array[i]
+        // would hit unrelated attributes (positions, colors, sharpness).
+        // Use getX(i) so we validate the actual per-instance radius.
+        const instanceCount = rad.count;
+        for (let i = 0; i < instanceCount; i++) {
+          const v = rad.getX(i);
           if (v < 0) issues.push(`${obj.name}: radius[${i}] = ${v} (negative)`);
           if (!Number.isFinite(v)) issues.push(`${obj.name}: radius[${i}] = ${v} (not finite)`);
         }
@@ -110,7 +120,9 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(radiusCheck).toEqual([]);
   });
 
-  test('should have drawRange.count <= attribute.count for all geometry', async ({ page }) => {
+  test('should have visible instance count <= attribute count for all points geometry', async ({
+    page,
+  }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
@@ -119,6 +131,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(results.length).toBeGreaterThan(0);
 
     for (const cloud of results) {
+      expect(cloud.visibleInstanceCount).toBeLessThanOrEqual(cloud.positionCount);
       expect(cloud.drawRangeCount).toBeLessThanOrEqual(cloud.positionCount);
     }
   });
@@ -149,6 +162,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     for (const cloud of after) {
       expect(cloud.aligned).toBe(true);
       expect(cloud.hasNaN).toBe(false);
+      expect(cloud.visibleInstanceCount).toBeLessThanOrEqual(cloud.positionCount);
       expect(cloud.drawRangeCount).toBeLessThanOrEqual(cloud.positionCount);
     }
   });

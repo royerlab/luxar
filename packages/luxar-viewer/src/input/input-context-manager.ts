@@ -533,10 +533,7 @@ export class InputContextManager {
    * default current context), so excluding the current context like
    * `tryLowerContexts` does would skip it.
    */
-  private dispatchEscapeFromTypingContext(
-    event: KeyboardEvent,
-    type: 'down' | 'up'
-  ): boolean {
+  private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
       (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
     );

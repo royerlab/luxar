@@ -50,7 +50,10 @@ test.describe('WebGL Error Detection - Critical', () => {
 
     // Wait for initial render
     await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+      () => {
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        return (info?.render?.frame ?? info?.frame ?? 0) > 2;
+      },
       {
         timeout: 10000,
       }
@@ -89,7 +92,10 @@ test.describe('WebGL Error Detection - Critical', () => {
       await waitForLuxarReady(page);
 
       await page.waitForFunction(
-        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 1,
+        () => {
+          const info = (window as any).__luxarDebug?.renderer?.info;
+          return (info?.render?.frame ?? info?.frame ?? 0) > 1;
+        },
         { timeout: 10000 }
       );
 
@@ -194,58 +200,58 @@ test.describe('WebGL Error Detection - Critical', () => {
       const issues: Array<{ name: string; issue: string }> = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
-          const posCount = geom.attributes.position?.count || 0;
+          const posCount = geom.attributes.aCenter?.count || 0;
 
           // Check all attributes have same count
-          if (geom.attributes.color && geom.attributes.color.count !== posCount) {
+          if (geom.attributes.aColor && geom.attributes.aColor.count !== posCount) {
             issues.push({
               name: obj.name,
-              issue: `Color count (${geom.attributes.color.count}) != position count (${posCount})`,
+              issue: `Color count (${geom.attributes.aColor.count}) != position count (${posCount})`,
             });
           }
 
-          if (geom.attributes.radius && geom.attributes.radius.count !== posCount) {
+          if (geom.attributes.aRadius && geom.attributes.aRadius.count !== posCount) {
             issues.push({
               name: obj.name,
-              issue: `Radius count (${geom.attributes.radius.count}) != position count (${posCount})`,
+              issue: `Radius count (${geom.attributes.aRadius.count}) != position count (${posCount})`,
             });
           }
 
-          if (geom.attributes.sharpness && geom.attributes.sharpness.count !== posCount) {
+          if (geom.attributes.aSharpness && geom.attributes.aSharpness.count !== posCount) {
             issues.push({
               name: obj.name,
-              issue: `Sharpness count (${geom.attributes.sharpness.count}) != position count (${posCount})`,
+              issue: `Sharpness count (${geom.attributes.aSharpness.count}) != position count (${posCount})`,
             });
           }
 
           // Check itemSize is correct
-          if (geom.attributes.position?.itemSize !== 3) {
+          if (geom.attributes.aCenter?.itemSize !== 3) {
             issues.push({
               name: obj.name,
-              issue: `Position itemSize is ${geom.attributes.position.itemSize}, expected 3`,
+              issue: `Position itemSize is ${geom.attributes.aCenter.itemSize}, expected 3`,
             });
           }
 
-          if (geom.attributes.color && geom.attributes.color.itemSize !== 3) {
+          if (geom.attributes.aColor && geom.attributes.aColor.itemSize !== 3) {
             issues.push({
               name: obj.name,
-              issue: `Color itemSize is ${geom.attributes.color.itemSize}, expected 3`,
+              issue: `Color itemSize is ${geom.attributes.aColor.itemSize}, expected 3`,
             });
           }
 
-          if (geom.attributes.radius && geom.attributes.radius.itemSize !== 1) {
+          if (geom.attributes.aRadius && geom.attributes.aRadius.itemSize !== 1) {
             issues.push({
               name: obj.name,
-              issue: `Radius itemSize is ${geom.attributes.radius.itemSize}, expected 1`,
+              issue: `Radius itemSize is ${geom.attributes.aRadius.itemSize}, expected 1`,
             });
           }
 
-          if (geom.attributes.sharpness && geom.attributes.sharpness.itemSize !== 1) {
+          if (geom.attributes.aSharpness && geom.attributes.aSharpness.itemSize !== 1) {
             issues.push({
               name: obj.name,
-              issue: `Sharpness itemSize is ${geom.attributes.sharpness.itemSize}, expected 1`,
+              issue: `Sharpness itemSize is ${geom.attributes.aSharpness.itemSize}, expected 1`,
             });
           }
         }
@@ -284,7 +290,10 @@ test.describe('WebGL Error Detection - All Datasets', () => {
       await waitForLuxarReady(page);
 
       await page.waitForFunction(
-        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+        () => {
+          const info = (window as any).__luxarDebug?.renderer?.info;
+          return (info?.render?.frame ?? info?.frame ?? 0) > 2;
+        },
         { timeout: 10000 }
       );
 

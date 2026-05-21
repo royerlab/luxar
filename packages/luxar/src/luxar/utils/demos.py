@@ -487,7 +487,7 @@ def create_lorenz_attractor(
     # Add match value to get final RGB (adjust for brightness)
     colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
 
-    # Create scene with new API
+    # Create scene.
     with LuxarZarrCompiler(store_path) as compiler:
         # Define 3D dimensions
         dims = Dimensions(

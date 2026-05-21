@@ -1,11 +1,22 @@
 import type { AsyncReadable } from '../data/zarr';
-import { SegmentedLRUCache } from './segmented-lru-cache';
-import { OPFSStore } from './opfs-store';
+import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
+import { OPFSStore, type CachedDatasetSummary } from './multi-level-caching-store/opfs-store';
+import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
+import {
+  buildUrl,
+  fetchWithRetry,
+  hashUrl,
+  mergeAbortSignals,
+} from './multi-level-caching-store/fetch-retry';
+import {
+  ValidationQueue,
+  getRemoteContentHash,
+} from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
-import type { CacheValidationMode } from './types';
+import type { MultiLevelCacheStats } from './types';
 
 /**
  * Structured failure modes from {@link MultiLevelCachingStore.getResult}.
@@ -17,44 +28,6 @@ export type CacheError =
   | { readonly kind: 'Missing' }
   | { readonly kind: 'NetworkError'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
-
-type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
-  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
-};
-
-/**
- * Merge a primary `AbortSignal` (e.g. per-attempt timeout) with an optional
- * caller signal (e.g. dispose-cancellation) so abort wins immediately on
- * either path.
- *
- * Uses native `AbortSignal.any` when available (Node 22+, modern browsers);
- * falls back to a hand-rolled relay otherwise.
- */
-function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignal {
-  if (!caller) return primary;
-  type StaticAny = { any?: (signals: AbortSignal[]) => AbortSignal };
-  const anyImpl = (AbortSignal as unknown as StaticAny).any;
-  if (typeof anyImpl === 'function') {
-    return anyImpl([primary, caller]);
-  }
-  // Fallback: relay aborts onto a fresh controller.
-  const relay = new AbortController();
-  const onAbort = (): void => relay.abort();
-  if (primary.aborted || caller.aborted) {
-    relay.abort();
-  } else {
-    primary.addEventListener('abort', onAbort, { once: true });
-    caller.addEventListener('abort', onAbort, { once: true });
-  }
-  return relay.signal;
-}
-
-interface CacheMetadataFile {
-  baseUrl?: string;
-  contentHash?: string;
-  totalSize?: number;
-  entries?: unknown[];
-}
 
 export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
@@ -91,22 +64,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
-  /**
-   * Per-dataset validation queue keyed by `datasetId` (URL hash). Two stores
-   * pointing at the same URL serialize their validations across instances so
-   * a slower-finishing older validation cannot overwrite a newer
-   * content-hash. Each entry carries an `AbortController` so `dispose()`
-   * can both cancel the in-flight fetch AND remove the queue entry,
-   * preventing a closure that captured `this` from running
-   * `setContentHash()` against a disposed L2 store.
-   */
-  private static readonly validationQueues = new Map<
-    string,
-    { promise: Promise<void>; abort: AbortController }
-  >();
-  private static readonly INITIAL_RETRY_DELAY_MS = 50;
-  private static readonly MAX_RETRY_DELAY_MS = 500;
-
   // Captured during init() so dispose() can find this instance's queue entry.
   private datasetId?: string;
 
@@ -153,14 +110,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private l2HitCount = 0;
   private demandNetworkRequestCount = 0;
 
-  // Sliding window bandwidth tracking (last ~10 seconds).
-  // R5: pruning advances `bandwidthWindowStart` rather than calling
-  // Array.shift() (O(n) per pop). When the dead prefix exceeds half the
-  // array, we slice off the dead portion in one O(n) hit — amortized
-  // O(1) per push instead of O(n²) under high fetch rates.
-  private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
-  private bandwidthWindowStart = 0;
+  // Sliding-window bandwidth tracking (last ~10 seconds).
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
+  private bandwidth = new BandwidthWindow(MultiLevelCachingStore.BANDWIDTH_WINDOW_MS);
 
   constructor(baseUrl: string, options?: MultiLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
@@ -247,7 +199,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * ```
    *
    * @see {@link validateCache} for cache validation algorithm
-   * @see SPECIFICATIONS.md - Section 4 for OPFS architecture
+   * @see README.md for OPFS architecture
    * @remarks Performance: First init: ~100ms (OPFS setup + validation), Subsequent: ~10ms (validation only)
    */
   async init(): Promise<void> {
@@ -257,7 +209,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     }
 
     // Generate dataset ID from URL and create L2 store
-    const datasetId = await this.hashUrl(this.baseUrl);
+    const datasetId = await hashUrl(this.baseUrl);
     this.datasetId = datasetId;
     this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
 
@@ -361,7 +313,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
-   * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
   async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
     // zarrita's AsyncReadable contract is `Uint8Array | undefined`; both
@@ -370,10 +321,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const result = await this.getResult(key);
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
-        log.warning(
-          Modules.CACHE,
-          `Network error fetching ${key}: ${result.error.cause.message}`
-        );
+        log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
       }
       return undefined;
     }
@@ -512,7 +460,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const fetchSignal = mergeAbortSignals(this.dataAbort.signal, callerSignal);
     let response: Response | undefined;
     try {
-      response = await this.fetchWithRetry(this.buildUrl(key), { signal: fetchSignal });
+      response = await fetchWithRetry(buildUrl(this.baseUrl, key), { signal: fetchSignal });
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
@@ -543,18 +491,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // ensures this body runs at most once per key per concurrent wave).
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
-    this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
-    // R5: amortized compaction. When the dead prefix (anything before
-    // bandwidthWindowStart) is bigger than the live tail, slice it
-    // off in one allocation rather than letting the array grow
-    // unbounded.
-    if (
-      this.bandwidthWindowStart > 0 &&
-      this.bandwidthWindowStart > this.bandwidthWindow.length / 2
-    ) {
-      this.bandwidthWindow = this.bandwidthWindow.slice(this.bandwidthWindowStart);
-      this.bandwidthWindowStart = 0;
-    }
+    this.bandwidth.record(data.byteLength);
 
     // Populate caches once.
     if (this.enabled) {
@@ -586,35 +523,15 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * captured `this`.
    */
   private async validateCache(datasetId: string): Promise<void> {
-    const abort = new AbortController();
-    const previous = MultiLevelCachingStore.validationQueues.get(datasetId);
-    const validation = (previous?.promise ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => {
-        // Skip the validation entirely if dispose() aborted while we were
-        // waiting in line. The closure captured `this`, so running
-        // doValidateCache() now would write into a disposed l2Store.
-        if (abort.signal.aborted) return;
-        return this.doValidateCache(abort.signal);
-      });
-
-    const entry = { promise: validation, abort };
-    MultiLevelCachingStore.validationQueues.set(datasetId, entry);
-    try {
-      await validation;
-    } finally {
-      // Only delete the entry if it's still ours — a newer validation may
-      // have replaced it after we started.
-      if (MultiLevelCachingStore.validationQueues.get(datasetId) === entry) {
-        MultiLevelCachingStore.validationQueues.delete(datasetId);
-      }
-    }
+    await ValidationQueue.serialize(datasetId, (signal) => this.doValidateCache(signal));
   }
 
   private async doValidateCache(signal: AbortSignal): Promise<void> {
     try {
-      // Fetch current content_hash directly from server (bypass cache)
-      const remoteHash = await this.getRemoteContentHash(signal);
+      const remoteHash = await getRemoteContentHash(this.baseUrl, {
+        signal,
+        timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
+      });
 
       if (signal.aborted) {
         this.log('Validation aborted (caller disposed)');
@@ -668,269 +585,21 @@ export class MultiLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Get content_hash directly from remote server, bypassing cache.
-   * Used for cache validation to detect dataset changes.
-   * This ensures we always check the TRUE current hash, not a cached one.
-   *
-   * Uses the dedicated `validationTimeoutMs` budget (default 5 s) so a flaky
-   * network never blocks scene loading for the full data-fetch timeout.
+   * List all cached datasets in OPFS. Thin wrapper around
+   * {@link OPFSStore.listAll} — kept on the orchestrator so external
+   * callers keep importing through the package's public API.
    */
-  private async getRemoteContentHash(signal?: AbortSignal): Promise<string | null> {
-    try {
-      // Direct HTTP fetch, no cache lookup
-      const response = await this.fetchWithRetry(this.buildUrl('.zattrs'), {
-        timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
-        signal,
-      });
-      if (!response?.ok) return null;
-
-      const data = await response.arrayBuffer();
-      const attrs = JSON.parse(new TextDecoder().decode(data));
-      return attrs?.content_hash ?? null;
-    } catch (error) {
-      // Network error or parse error
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
-      return null;
-    }
+  async listDatasets(): Promise<CachedDatasetSummary[]> {
+    return OPFSStore.listAll();
   }
 
   /**
-   * Build a remote URL without producing duplicate slashes.
+   * Get cache statistics. Returns the aggregated multi-tier snapshot
+   * (`MultiLevelCacheStats`) consumed by the data-loading monitor,
+   * debug overlay, and cache E2E suite.
    */
-  private buildUrl(key: string): string {
-    const cleanBase = this.baseUrl.replace(/\/+$/, '');
-    const cleanKey = key.replace(/^\/+/, '');
-    return `${cleanBase}/${cleanKey}`;
-  }
-
-  /**
-   * Fetch with retries for transient failures.
-   *
-   * 4xx responses are returned immediately because retrying cannot fix a
-   * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
-   * retried using the configured retry budget. The configured timeout is
-   * treated as a total budget across attempts so retries do not multiply
-   * worst-case load time.
-   *
-   * @param url - URL to fetch.
-   * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
-   *   probes that want a shorter budget than the data-fetch timeout) and a
-   *   caller `signal` for dispose-cancel propagation. The caller signal is
-   *   merged with the per-attempt timeout signal so either abort source
-   *   wins immediately. A caller-aborted call exits without consuming
-   *   retry budget.
-   */
-  private async fetchWithRetry(
-    url: string,
-    options?: { timeoutMsOverride?: number; signal?: AbortSignal }
-  ): Promise<Response | undefined> {
-    const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
-    const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
-    const timeoutPerAttemptMs = Math.max(1, Math.ceil(totalTimeoutMs / maxAttempts));
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Caller-aborted requests must not be retried; bail out before the
-      // next attempt.
-      if (options?.signal?.aborted) {
-        return undefined;
-      }
-
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
-      const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
-
-      try {
-        const response = await fetch(url, { signal });
-        if (response.ok || (response.status < 500 && response.status !== 429)) {
-          return response;
-        }
-        lastError = new Error(`HTTP ${response.status} for ${url}`);
-      } catch (error) {
-        lastError = error;
-        // Caller-aborted: exit immediately rather than retrying.
-        if (options?.signal?.aborted) {
-          return undefined;
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      if (attempt < maxAttempts - 1) {
-        // Exponential backoff with ±25% jitter so two stores that started
-        // a retry simultaneously (e.g. two browser tabs sharing a CDN)
-        // do not synchronize their next attempts. Jitter is bounded by
-        // MAX_RETRY_DELAY_MS so the worst-case wait stays predictable.
-        const base = MultiLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt;
-        const jitter = (Math.random() - 0.5) * 0.5 * base; // [-12.5%, +12.5%]
-        const delayMs = Math.min(
-          Math.max(0, base + jitter),
-          MultiLevelCachingStore.MAX_RETRY_DELAY_MS
-        );
-        await this.sleep(delayMs);
-      }
-    }
-
-    if (lastError) {
-      const message = lastError instanceof Error ? lastError.message : String(lastError);
-      log.warning(Modules.CACHE, `Fetch failed after ${maxAttempts} attempt(s): ${message}`);
-    }
-    return undefined;
-  }
-
-  private sleep(delayMs: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-
-  /**
-   * Generate a unique, collision-resistant hash for the dataset URL.
-   */
-  private async hashUrl(url: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(url);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    return `zarr-cache-${hashHex.slice(0, 16)}`; // First 16 chars = 64 bits
-  }
-
-  /**
-   * List all cached datasets in OPFS.
-   */
-  async listDatasets(): Promise<Array<{ url: string; hash: string; size: number; count: number }>> {
-    const datasets = [];
-
-    try {
-      const opfsRoot = await navigator.storage.getDirectory();
-
-      // Iterate all zarr-cache-* directories
-      const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
-      for await (const [name, handle] of iterableRoot.entries()) {
-        if (name.startsWith('zarr-cache-') && handle.kind === 'directory') {
-          try {
-            // Read _cache_meta.json from this dataset
-            const directoryHandle = handle as FileSystemDirectoryHandle;
-            const metaHandle = await directoryHandle.getFileHandle('_cache_meta.json');
-            const file = await metaHandle.getFile();
-            const meta = JSON.parse(await file.text()) as CacheMetadataFile;
-
-            datasets.push({
-              url: meta.baseUrl || 'unknown',
-              hash: meta.contentHash?.slice(0, 16) || 'none',
-              size: meta.totalSize || 0,
-              count: meta.entries?.length || 0,
-            });
-          } catch {
-            // Skip corrupted/invalid cache directories
-          }
-        }
-      }
-    } catch {
-      // OPFS not available
-    }
-
-    return datasets;
-  }
-
-  /**
-   * Get cache statistics.
-   * Returns extended stats compatible with CacheStatsProvider interface.
-   */
-  getStats(): {
-    l1: {
-      metadataSize: number;
-      chunksSize: number;
-      metadataCount: number;
-      chunksCount: number;
-      hits: number;
-      misses: number;
-      evictions: number;
-    };
-    l2: {
-      size: number;
-      count: number;
-      reads: number;
-      writes: number;
-      misses: number;
-      oversizedWriteSkipped?: number;
-      quotaWriteSkipped?: number;
-      evictions?: number;
-      writeFailures?: number;
-      corruptedEntries?: number;
-      metadataParseFailures?: number;
-      orphanedFilesRemoved?: number;
-    };
-    network: { bytesTransferred: number; requestCount: number; bandwidth: number };
-    /**
-     * Per-tier demand-hit counters (user demand only — prefetch
-     * traffic is excluded). Each user-demand call to `getResult`
-     * increments exactly one of `l1Hits`, `l2Hits`, or
-     * `networkRequests`. Combined with the L0 provider's stats, this
-     * lets the monitor surface an effective demand hit-rate rather
-     * than the L1-only ratio.
-     */
-    demand: { l1Hits: number; l2Hits: number; networkRequests: number };
-    /**
-     * Cache health snapshot. Surfaced by the data monitor status badges
-     * and debug diagnostics.
-     */
-    health: {
-      /** Validation mode the dataset is using (or 'none' if external + no TTL). */
-      validationMode: CacheValidationMode;
-      /** Wall-clock millis at last successful validation, or null. */
-      lastValidatedAt: number | null;
-      /**
-       * `true` when the dataset has no `content_hash` AND no TTL is
-       * configured — surfaced as a UI warning since the cache may be
-       * stale indefinitely.
-       */
-      unvalidatedExternalDataset: boolean;
-      /**
-       * S2: `true` when OPFS is available and L2 is operational, or
-       * when caching is disabled (no L2 expected). `false` only when
-       * caching is enabled but OPFS could not be acquired — drives
-       * the `opfs-unavailable` status badge.
-       */
-      opfsAvailable: boolean;
-    };
-    /**
-     * S4: number of times `?clear-cache` triggered a clearAll on
-     * init for this store. Increments at most once per store
-     * lifetime today but typed as a counter so future re-init paths
-     * stay observable.
-     */
-    clearOnInitCount: number;
-  } {
-    // Calculate bandwidth using sliding window (last ~10 seconds)
-    const now = Date.now();
-    const windowStart = now - MultiLevelCachingStore.BANDWIDTH_WINDOW_MS;
-
-    // R5: advance the start index past expired entries instead of
-    // shifting them off. Amortized compaction happens in the push
-    // path (above); here we just walk the index forward.
-    while (
-      this.bandwidthWindowStart < this.bandwidthWindow.length &&
-      this.bandwidthWindow[this.bandwidthWindowStart].timestamp < windowStart
-    ) {
-      this.bandwidthWindowStart++;
-    }
-
-    let bandwidth: number;
-    const liveCount = this.bandwidthWindow.length - this.bandwidthWindowStart;
-    if (liveCount === 0) {
-      bandwidth = 0;
-    } else {
-      let windowBytes = 0;
-      for (let i = this.bandwidthWindowStart; i < this.bandwidthWindow.length; i++) {
-        windowBytes += this.bandwidthWindow[i].bytes;
-      }
-      const windowSpan = Math.max(
-        1,
-        (now - this.bandwidthWindow[this.bandwidthWindowStart].timestamp) / 1000
-      );
-      bandwidth = windowBytes / windowSpan;
-    }
+  getStats(): MultiLevelCacheStats {
+    const bandwidth = this.bandwidth.rate();
 
     const validationState = this.l2Store?.getValidationState() ?? {
       mode: 'none' as const,
@@ -946,7 +615,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     return {
       l1: this.l1Cache.getStats(),
-      l2: this.l2Store?.getStats() ?? {
+      l2: l2Stats ?? {
         size: 0,
         count: 0,
         reads: 0,
@@ -1031,11 +700,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Cancel any in-flight or queued validation belonging to this instance.
     if (this.datasetId !== undefined) {
-      const queued = MultiLevelCachingStore.validationQueues.get(this.datasetId);
-      if (queued) {
-        queued.abort.abort();
-        MultiLevelCachingStore.validationQueues.delete(this.datasetId);
-      }
+      ValidationQueue.cancel(this.datasetId);
     }
 
     if (this.l2Store) {

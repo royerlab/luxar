@@ -55,23 +55,36 @@ data/
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
 │
-├── utils/                         # Pure data utilities (no I/O, no GPU state)
-│   ├── array-decoder.ts           # Decodes Python luxar.encoding arrays
-│   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
-│   ├── data-accumulator.ts        # Zero-allocation buffer pooling
-│   ├── directory-navigator.ts     # Multi-strategy server directory browsing
-│   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
-│   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
-│   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
-│                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
-│                                  #   for lines projection clipping.
+├── accumulators/                  # Per-geometry zero-allocation buffer pooling
+│   ├── types.ts                   # Shared DataAccumulator<T> + AccumulatorStats
+│   ├── points.ts                  # LoadedPointsDataAccumulator
+│   ├── lines.ts                   # LinesDataAccumulator (flat per-vertex buffers)
+│   └── gsplats.ts                 # GSplatsDataAccumulator
+│
+├── array-decoder/                 # Decodes Python luxar.encoding arrays
+│   ├── decoder.ts                 # ArrayDecoder priority-dispatch body
+│   ├── ref-registry.ts            # ArrayRefRegistry (array_ref dedup)
+│   ├── load-and-decode.ts         # loadAndDecodeOptionalArray helper
+│   └── types.ts                   # ArrayMetadata + EncodingMetadata
+│
+├── attrs-composer.ts              # Composes per-layer attributes along the scene graph
+│                                  #   (used by SceneLoader and UI panels)
+│
+├── nav/                           # Multi-strategy server directory browsing
+│   └── directory-navigator.ts
+│
+├── stats/                         # Scene + per-loader statistics
+│   ├── scene-stats.ts             # Roll up loaded geometry per type
+│   └── aggregator.ts              # Accumulator stats aggregation across loaders
+│
+├── dims-to-view-state.ts          # SimpleDims → ViewState (zarr-loader entry helper)
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── range-loader.ts            # Unified encoding dispatch
 │   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
-│   │                              #   tolerance to `utils/tolerance-computer.computeTolerance`) or a
+│   │                              #   tolerance to `loaders/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
 │   ├── transferable-accumulator.ts # Zero-allocation buffer management
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
@@ -126,9 +139,9 @@ The data package uses a **clean singleton pattern** for instance management, com
 
 **Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
 
-### Architecture Refactoring (Modular Design)
+### Modular Architecture
 
-The SceneLoader has been refactored into focused, testable modules:
+SceneLoader is split into focused, testable modules:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -144,12 +157,6 @@ The SceneLoader has been refactored into focused, testable modules:
 │ Builder │ │         │ │                 │ │             │
 └─────────┘ └─────────┘ └─────────────────┘ └─────────────┘
 ```
-
-**SceneGraphBuilder** (`scene-graph-builder.ts`):
-
-- Builds hierarchical scene structure from Zarr metadata
-- Pure data structure building (no THREE.js dependencies)
-- Enumerates store contents
 
 **NodeFactory** (`node-factory.ts`):
 
@@ -190,7 +197,7 @@ unit that does not span multiple geometry types:
   dependency.
 - `attrs-applier.ts` — extract `applyEffectiveAttrs()` (~60 LOC). It
   composes parent + node attrs and delegates to
-  `data/utils/attrs-composer.ts`.
+  `data/attrs-composer.ts`.
 - `view-updater.ts` — pull the `updateView()` orchestration shell
   (~100 LOC) leaving the per-geometry data-processor calls in place.
 
@@ -474,8 +481,8 @@ Benefits:
 ### Attribute Composition
 
 Rendering attributes **compose** along the scene-graph hierarchy (root → leaf),
-as specified in `packages/luxar/src/luxar/core/SPECIFICATIONS.md`. Unset values
-are treated as identity:
+as implemented in `packages/luxar/src/luxar/core/`. Unset values are treated
+as identity:
 
 ```typescript
 effective_opacity   = clamp(∏ opacity_i,   0, 1)
@@ -852,7 +859,7 @@ clearCaches();
 import { SceneLoaderManager } from 'luxar-viewer/data';
 // DataMonitorManager lives in ui/ now; only import it from there if you
 // truly need to inspect the monitor singleton (rare).
-import { DataMonitorManager } from 'luxar-viewer/ui/monitors';
+import { DataMonitorManager } from 'luxar-viewer/ui/data-monitor-manager';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();
@@ -1002,16 +1009,16 @@ location /data/ {
 
 ### Instance Management (scene-loader-manager.ts)
 
-| Class/Method                               | Description                                 |
-| ------------------------------------------ | ------------------------------------------- |
-| `SceneLoaderManager`                       | Singleton manager for SceneLoader instances |
-| `getInstance()`                            | Get the singleton manager instance          |
-| `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                |
-| `getLoader(id)`                            | Get a specific loader by ID                 |
-| `getDefaultLoader()`                       | Get the default loader instance             |
-| `getAllLoaders()`                          | Get all active loader instances             |
-| `destroyLoader(id)`                        | Dispose and remove a specific loader        |
-| `destroyAll()`                             | Dispose all loaders and reset manager       |
+| Class/Method                               | Description                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `SceneLoaderManager`                       | Singleton manager for SceneLoader instances                          |
+| `getInstance()`                            | Get the singleton manager instance                                   |
+| `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                                         |
+| `getLoader(id)`                            | Get a specific loader by ID                                          |
+| `getDefaultLoader()`                       | Get the default loader instance                                      |
+| `getAllLoaders()`                          | Get all active loader instances                                      |
+| `destroyLoader(id)`                        | Dispose and remove a specific loader                                 |
+| `destroyAll()`                             | Dispose all loaders and reset manager                                |
 | `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
 ### Scene Loading (scene-loader.ts)
@@ -1030,15 +1037,6 @@ location /data/ {
 | `retryFailedLoader(nodeId)` | Retry a failed loader                     |
 | `retryAllFailedLoaders()`   | Retry all failed loaders                  |
 | `dispose()`                 | Clean up all resources                    |
-
-### Scene Graph Builder (scene-graph-builder.ts)
-
-| Class/Method                  | Description                            |
-| ----------------------------- | -------------------------------------- |
-| `SceneGraphBuilder`           | Builds scene hierarchy from Zarr       |
-| `constructor(store, rootLoc)` | Create builder with store and location |
-| `buildSceneGraph(rootAttrs)`  | Build complete scene graph             |
-| `getNodesOfType(node, type)`  | Get all nodes of a specific type       |
 
 ### Node Factory (node-factory.ts)
 
@@ -1085,17 +1083,17 @@ location /data/ {
 
 ### Monitoring Management (data-monitor-manager.ts)
 
-| Class/Method                            | Description                                |
-| --------------------------------------- | ------------------------------------------ |
-| `DataMonitorManager`                    | Singleton manager for monitor UI instances |
-| `getInstance()`                         | Get the singleton manager instance         |
-| `createMonitor(id, container, config?)` | Create a new monitor UI instance           |
-| `getMonitor(id)`                        | Get a specific monitor by ID               |
-| `getDefaultMonitor()`                   | Get the default monitor instance           |
-| `showMonitor(id?)`                      | Show specific or default monitor           |
-| `hideMonitor(id?)`                      | Hide specific or default monitor           |
-| `toggleMonitor(id?)`                    | Toggle specific or default monitor         |
-| `destroyMonitor(id)`                    | Dispose and remove a specific monitor      |
+| Class/Method                            | Description                                     |
+| --------------------------------------- | ----------------------------------------------- |
+| `DataMonitorManager`                    | Singleton manager for monitor UI instances      |
+| `getInstance()`                         | Get the singleton manager instance              |
+| `createMonitor(id, container, config?)` | Create a new monitor UI instance                |
+| `getMonitor(id)`                        | Get a specific monitor by ID                    |
+| `getDefaultMonitor()`                   | Get the default monitor instance                |
+| `showMonitor(id?)`                      | Show specific or default monitor                |
+| `hideMonitor(id?)`                      | Hide specific or default monitor                |
+| `toggleMonitor(id?)`                    | Toggle specific or default monitor              |
+| `destroyMonitor(id)`                    | Dispose and remove a specific monitor           |
 | `disposeInstance()`                     | Dispose the singleton (called from app dispose) |
 
 ### Directory Navigation (directory-navigator.ts)

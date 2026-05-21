@@ -1,0 +1,72 @@
+/**
+ * User-adjustable rendering settings that can be persisted
+ */
+export interface RenderingSettings {
+  // Camera settings
+  fov: number;
+  fovPreset: '28mm Wide' | '35mm' | '50mm Normal' | '85mm Portrait' | '135mm Tele' | 'Custom';
+  near: number;
+  far: number;
+  // Dynamic clipping planes
+  dynamicClippingEnabled: boolean;
+  // Rendering effects (bloom is now the single source of truth)
+  bloomEnabled: boolean;
+  bloomThreshold: number;
+  bloomStrength: number;
+  bloomRadius: number;
+  bloomLevels: number;
+  exposure: number; // Log2 stops, default 0.0
+  globalOffset: number; // Additive shift, default 0.0
+  globalGamma: number; // Midtone curve, default 1.0
+  fxaaEnabled: boolean;
+  msaaEnabled: boolean;
+  msaaSamples: number;
+  ssaaEnabled: boolean;
+  ssaaMultiplier: number;
+  toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
+  vignetteEnabled: boolean;
+  vignetteDarkness: number;
+  vignetteOffset: number;
+  // Detector noise effect (physics-based: Poisson + Gaussian + FPN)
+  detectorNoiseEnabled: boolean;
+  detectorNoiseReadoutSigma: number;
+  detectorNoisePhotonGain: number;
+  detectorNoiseFpnSigma: number;
+  // Chromatic lens distortion effect
+  chromaticLensDistortionEnabled: boolean;
+  chromaticLensDistortionX: number;
+  chromaticLensDistortionY: number;
+  chromaticLensDispersion: number;
+  chromaticLensPrincipalPointX: number;
+  chromaticLensPrincipalPointY: number;
+  chromaticLensFocalLengthX: number;
+  chromaticLensFocalLengthY: number;
+  chromaticLensSkew: number;
+  // Navigation controls
+  controlType: 'orbit' | 'fly' | 'ortho';
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+  /**
+   * "Natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so a
+   * one-finger touchpad drag rotates (and two-finger / right-drag pans).
+   * Defaults to true on macOS. Orbit (3D) only; ortho and fly modes ignore.
+   */
+  naturalDrag: boolean;
+  // Fly controls - these are added at runtime from config.controls.fly
+  flyMovementSpeed?: number;
+  flyRotationSpeed?: number;
+  flyInertialMode?: boolean;
+  flyDamping?: number;
+  flyRotationDamping?: number;
+  // Adaptive resolution
+  adaptiveDPREnabled: boolean;
+  // Cinematic mode toggle (for UI only, actual state determined by effects)
+  cinematicMode: boolean;
+}
+
+/**
+ * Rendering controls configuration
+ */
+export interface RenderingControlsConfig {
+  defaults: RenderingSettings;
+}

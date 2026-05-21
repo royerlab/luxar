@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointPickingMaterial } from '../../../rendering/picking/point-picking-material';
 import { LinePickingMaterial } from '../../../rendering/picking/line-picking-material';
+import { LinePickingTSLMaterial } from '../../../rendering/picking/line-picking-material-tsl';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat-picking-material';
 import {
   MAX_PICK_BUFFER_DIM,
@@ -109,9 +110,12 @@ describe('GSplatPickingMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode for picking', () => {
+  it('uses max projection mode for picking (no uProjectionMode uniform; shader hard-codes max)', () => {
+    // The picking shader hard-codes max projection — it has no
+    // sum-projection ray-integral path — so neither the GLSL nor the
+    // TSL picking materials bind a `uProjectionMode` uniform.
     const material = new GSplatPickingMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode.value).toBe(1); // Max mode
+    expect(material.uniforms.uProjectionMode).toBeUndefined();
     material.dispose();
   });
 
@@ -123,6 +127,55 @@ describe('GSplatPickingMaterial', () => {
 
     expect(material.uniforms.uNearCull.value).toBe(0.5);
     expect(material.uniforms.uFx.value).toBeGreaterThan(0);
+    material.dispose();
+  });
+});
+
+describe('LinePickingTSLMaterial sharpness fast path', () => {
+  // Pins the LUXAR_SHARPNESS_TWO contract: `setSharpnessAllTwo(true)`
+  // stores the define as an empty string (matching the GLSL3 `#define`
+  // shape), so `_currentConfig` must use `'KEY' in defines`, not
+  // truthiness. Before the fix, the truthy check disabled the
+  // advertised TSL sharpness=2 fast path even though the define was
+  // present.
+
+  it('setSharpnessAllTwo(true) sets the define AND rebuilds the graph', () => {
+    const material = new LinePickingTSLMaterial({ nodeId: 1 });
+    const v0 = material.version;
+
+    material.setSharpnessAllTwo(true);
+
+    expect(material.defines).toBeDefined();
+    expect('LUXAR_SHARPNESS_TWO' in (material.defines as Record<string, unknown>)).toBe(true);
+    // The set value is '' (falsey) — what matters is its presence.
+    expect((material.defines as Record<string, string>).LUXAR_SHARPNESS_TWO).toBe('');
+    // Graph rebuild bumps version (set via `this.needsUpdate = true`).
+    expect(material.version).toBeGreaterThan(v0);
+
+    material.dispose();
+  });
+
+  it('setSharpnessAllTwo(true)→(false) clears the define and rebuilds', () => {
+    const material = new LinePickingTSLMaterial({ nodeId: 1 });
+    material.setSharpnessAllTwo(true);
+    const v1 = material.version;
+
+    material.setSharpnessAllTwo(false);
+
+    expect('LUXAR_SHARPNESS_TWO' in (material.defines as Record<string, unknown>)).toBe(false);
+    expect(material.version).toBeGreaterThan(v1);
+
+    material.dispose();
+  });
+
+  it('setSharpnessAllTwo(true) twice is idempotent (no second rebuild)', () => {
+    const material = new LinePickingTSLMaterial({ nodeId: 1 });
+    material.setSharpnessAllTwo(true);
+    const v1 = material.version;
+
+    material.setSharpnessAllTwo(true);
+    expect(material.version).toBe(v1);
+
     material.dispose();
   });
 });

@@ -1,0 +1,197 @@
+/**
+ * Shared vertex shader for point rendering.
+ *
+ * Used by both PointMaterial (main rendering) and PointPickingMaterial (GPU picking).
+ * Renders one screen-space-sized soft sprite per point using instanced
+ * quad expansion (matching the line + gsplat rendering pattern).
+ *
+ * Per-vertex attribute (4 entries, shared by ALL points):
+ *   - aQuadCorner (vec2, ±1)  — unit-quad corner, vertex shader
+ *     expands to a sprite of size `pointSize` pixels in screen space.
+ *
+ * Per-instance attributes (one entry per point, supplied by
+ * `setupInstancedPointsMesh` in `point-geometry.ts`):
+ *   - aCenter    (vec3) — world-space centre position
+ *   - aRadius    (float)
+ *   - aSharpness (float)
+ *   - aColor     (vec3) — always present (instead of Three.js'
+ *     vertexColors=true auto-injected `color` attribute)
+ *   - aScalar    (float, USE_COLORMAP only)
+ */
+import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import type { ShaderSource } from '../_shared/shader-source';
+import { pointWebGPUFactory } from './shader-tsl';
+
+export const POINT_VERTEX_SHADER = /* glsl */ `
+    precision highp float;
+
+    ${GLSL_SANITIZE_FUNCTIONS}
+
+    // Per-vertex (4 corners): -1..1 normalised quad coordinates.
+    in vec2 aQuadCorner;
+
+    // Per-instance (one per point) — all read once per instance, cached
+    // by the GPU across the 4 quad corners of the same instance.
+    in vec3 aCenter;
+    in float aRadius;
+    in float aSharpness;
+    in vec3 aColor;
+    #ifdef USE_COLORMAP
+    in float aScalar;                  // Per-point scalar for colormap lookup
+    uniform sampler2D uColormapTex;    // 256x1 LUT texture
+    uniform float uScalarMin;          // Scalar range minimum
+    uniform float uScalarScale;        // 1.0 / (max - min)
+    #endif
+
+    uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
+    uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
+    uniform float radiusScale;
+    uniform float sharpnessScale;
+    uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
+    uniform vec2 uResolution;      // Physical framebuffer size in pixels
+
+    out mediump vec3 vColor;
+    out mediump float vSharpness;
+    out highp float vRadius;       // Pass radius to fragment for zero-check (needs precision)
+    out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
+
+    void main() {
+      // Pass vertex color — either from attribute or colormap LUT
+      #ifdef USE_COLORMAP
+      float t = clamp((aScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
+      vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
+      #else
+      vColor = aColor;
+      #endif
+
+      // Apply sharpness scale for dtype normalization and use 2.0 as default.
+      // Guard NaN/Inf from malformed data so pow() below cannot poison pointSize.
+      float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
+      vSharpness = normalizedSharpness;
+
+      // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
+      float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale, 0.0);
+      vRadius = normalizedRadius; // Pass to fragment shader
+
+      // Transform per-instance centre from world space to view + clip space.
+      vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
+      vec4 projCenter = projectionMatrix * mvPosition;
+
+      // OPTIMIZED world-space point sizing:
+      // - inversesqrt is a native GPU instruction (faster than sqrt + divide)
+      // - pointSizeFactor pre-computed in JS: 2.0 * resolution.y / tanHalfFov
+      float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
+      float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
+
+      // Sharpness compensation based on visibility threshold
+      // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
+      // r_vis = 1 - 0.01^(1/s)
+      // We need to scale the point size by 1/r_vis to maintain consistent visible size
+      // Exact formula: compensation = 1 / (1 - 0.01^(1/s)), guarded against s=0
+      float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
+      float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
+      float pointSize = basePointSize * sharpnessCompensation;
+
+      // Clamp: minimum 1.0 (avoids degenerate quads) and maxPointSize cap.
+      // Zero-radius filtering happens in fragment shader.
+      pointSize = max(1.0, min(pointSize, maxPointSize));
+
+      // Expand the unit quad to a screen-space sprite. aQuadCorner is
+      // in [-1, 1] per axis, so aQuadCorner * (pointSize / uResolution)
+      // is the half-extent in NDC space. Multiply by projCenter.w to
+      // convert NDC delta to clip-space delta (compensating for the
+      // upcoming perspective divide).
+      vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w;
+      gl_Position = projCenter + vec4(offsetClip, 0.0, 0.0);
+
+      // Sprite UV in [0, 1]² — fragment shader uses this in place of
+      // gl_PointCoord (which is unavailable under THREE.Mesh).
+      vSpriteCoord = (aQuadCorner + 1.0) * 0.5;
+    }
+  `;
+
+/**
+ * Fragment shader for standard point rendering.
+ *
+ * Computes Gaussian falloff, GOG color adjustment, and alpha output.
+ * The picking system uses a different fragment shader (see picking/point-picking-material.ts).
+ */
+export const POINT_FRAGMENT_SHADER = /* glsl */ `
+    precision highp float;
+
+    uniform mediump float opacity;
+    uniform mediump float invGamma; // Pre-computed 1/gamma for performance
+    uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
+    uniform mediump float uOffset; // Per-node additive brightness shift (black level)
+
+    in mediump vec3 vColor;
+    in mediump float vSharpness;
+    in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
+    in mediump vec2 vSpriteCoord; // [0,1] sprite UV (replaces gl_PointCoord)
+
+    out vec4 fragColor;
+
+    void main() {
+      // Discard zero-radius points (from nD slicing where points don't intersect hyperplane)
+      if (vRadius < 0.0001) {
+        discard;
+      }
+
+      // OPTIMIZATION: Use dot product for squared distance calculation
+      vec2 centered = vSpriteCoord - 0.5;
+      float r2 = dot(centered, centered);
+
+      // OPTIMIZATION: Compare squared distances to avoid sqrt in discard check
+      if (r2 > 0.25) {
+        discard;
+      }
+
+      // OPTIMIZATION: sqrt(4.0 * r2) combines sqrt and multiply into one operation
+      // normalizedR is in 0-1 range (gl_PointCoord is 0-1, centered is -0.5 to 0.5)
+      mediump float normalizedR = sqrt(4.0 * r2);
+
+      // Simple power function for falloff - modern GPUs optimize pow() well
+      mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
+
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment
+      mediump vec3 adjusted = vColor * uIntensity + uOffset;
+      adjusted = max(adjusted, vec3(0.0));
+
+      // Early discard for zero-contribution fragments after offset
+      if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
+
+      mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
+
+      // Calculate alpha (intensity) for additive blending
+      mediump float alpha = falloff * opacity;
+
+      // max-mode RGB premultiplication.
+      //
+      // In max blending the framebuffer uses CustomBlending +
+      // MaxEquation + OneFactor/OneFactor. With that state, source RGB
+      // is NOT multiplied by alpha at composite time, so a soft point
+      // with alpha=0.1 still contributes its full bright RGB → max
+      // captures a flat colored disk instead of the intended soft
+      // contribution. The fix is to premultiply RGB in the shader so
+      // the framebuffer max sees contribution-weighted colour. The
+      // LUXAR_MAX_RGB_CONTRIBUTION define is set by
+      // PointMaterial.applyBlendingMode('max').
+      #ifdef LUXAR_MAX_RGB_CONTRIBUTION
+      fragColor = vec4(finalColor * alpha, alpha);
+      #else
+      // Output final color with alpha for AdditiveBlending (SrcAlpha, One)
+      fragColor = vec4(finalColor, alpha);
+      #endif
+    }
+  `;
+
+export const POINT_SOURCE: ShaderSource = {
+  name: 'point',
+  webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
+  // TSL NodeMaterial that owns vertexNode (sprite expansion)
+  // and colorNode (Gaussian falloff + GOG). Default config — no
+  // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
+  // call `pointWebGPUFactory(uniforms, { ...flags })` directly.
+  webgpu: (uniforms: Record<string, unknown>) =>
+    pointWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+};

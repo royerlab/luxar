@@ -22,10 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as zarr from 'zarrita';
 import { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { SceneNode, ViewState } from '../../../data';
-import type {
-  MonitorEvent,
-  MonitorEventListener,
-} from '../../../types/data-monitor-types';
+import type { MonitorEvent, MonitorEventListener } from '../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../builders/spatial-loader-fixtures';
 
 vi.mock('zarrita', () => ({
@@ -171,8 +168,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
         if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
         if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-        if (path.includes('cholesky_factors'))
-          return Promise.resolve(mockArrays.cholesky_factors);
+        if (path.includes('cholesky_factors')) return Promise.resolve(mockArrays.cholesky_factors);
         if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
         return Promise.reject(new Error(`Unknown array: ${path}`));
       });
@@ -193,9 +189,7 @@ describe('GSplatsSpatialIndexLoader', () => {
       );
 
       bodyLoader = new GSplatsSpatialIndexLoader(
-        mockZarrLocation as unknown as ConstructorParameters<
-          typeof GSplatsSpatialIndexLoader
-        >[0],
+        mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
         mockNode
       );
     });
@@ -228,9 +222,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         };
         bodyLoader.dispose();
         bodyLoader = new GSplatsSpatialIndexLoader(
-          mockZarrLocation as unknown as ConstructorParameters<
-            typeof GSplatsSpatialIndexLoader
-          >[0],
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
           noOrderingNode
         );
 
@@ -246,22 +238,22 @@ describe('GSplatsSpatialIndexLoader', () => {
       });
 
       it('should handle missing colors array gracefully', async () => {
-        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation((location: unknown) => {
-          const path = String(location);
-          if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
-          if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
-          if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-          if (path.includes('cholesky_factors'))
-            return Promise.resolve(mockArrays.cholesky_factors);
-          // colors rejected
-          return Promise.reject(new Error('Not found'));
-        });
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+            if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
+            if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
+            if (path.includes('cholesky_factors'))
+              return Promise.resolve(mockArrays.cholesky_factors);
+            // colors rejected
+            return Promise.reject(new Error('Not found'));
+          }
+        );
 
         bodyLoader.dispose();
         bodyLoader = new GSplatsSpatialIndexLoader(
-          mockZarrLocation as unknown as ConstructorParameters<
-            typeof GSplatsSpatialIndexLoader
-          >[0],
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
           mockNode
         );
 
@@ -291,9 +283,9 @@ describe('GSplatsSpatialIndexLoader', () => {
           bodyLoader.loadGSplats(viewState),
         ]);
 
-        const chunkBoundsOpens = (zarr.open as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
-          (c) => String(c[0]).includes('chunk_bounds')
-        ).length;
+        const chunkBoundsOpens = (
+          zarr.open as unknown as ReturnType<typeof vi.fn>
+        ).mock.calls.filter((c) => String(c[0]).includes('chunk_bounds')).length;
         expect(chunkBoundsOpens).toBe(1);
       });
     });
@@ -438,9 +430,7 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         bodyLoader.dispose();
         bodyLoader = new GSplatsSpatialIndexLoader(
-          mockZarrLocation as unknown as ConstructorParameters<
-            typeof GSplatsSpatialIndexLoader
-          >[0],
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
           fourDNode
         );
 
@@ -514,9 +504,7 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         bodyLoader.dispose();
         bodyLoader = new GSplatsSpatialIndexLoader(
-          mockZarrLocation as unknown as ConstructorParameters<
-            typeof GSplatsSpatialIndexLoader
-          >[0],
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
           mockNode
         );
 
@@ -617,9 +605,7 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         expect((bodyLoader as unknown as { chunkIndex: unknown }).chunkIndex).toBeNull();
         expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
-        expect(
-          (bodyLoader as unknown as { events: { size: number } }).events.size
-        ).toBe(0);
+        expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);
       });
     });
 

@@ -222,7 +222,7 @@ The `provenance/` group records information about the source image:
 
 GSplats arrays are spatially ordered for compression and efficient spatial queries using the same algorithms as Points.
 
-**Algorithm Reference**: See `../../io/SPECIFICATIONS.md` → "Spatial Index Specification" for complete details on:
+**Algorithm Reference**: See `packages/luxar/src/luxar/io/README.md` and the implementation under `luxar.io` for complete details on:
 - Morton/Hilbert ordering algorithms
 - Compound ordering (discrete dimensions first, then Morton)
 - Chunk bounds calculation
@@ -360,7 +360,7 @@ result.save(
 )
 ```
 
-See `luxar.encoding.SPECIFICATIONS.md` for complete quantization details and precision guarantees.
+See `packages/luxar/src/luxar/encoding/README.md` for complete quantization details and precision guarantees.
 
 **Research note**: [OMG](https://arxiv.org/html/2503.16924) achieves 100-300× compression with quantization while maintaining quality.
 
@@ -412,7 +412,7 @@ compressor = Blosc(
 
 **Strategy**: Byte-based target converted to element counts (Zarr chunks by elements, not bytes).
 
-**Constants** (from `../../typing_utils/SPECIFICATIONS.md` - single source of truth):
+**Constants** (from `luxar.typing_utils.constants` - single source of truth):
 - `TARGET_CHUNK_BYTES = 65536` (64KB) - target chunk size
 
 **IMPORTANT**: Zarr's chunking system operates on **element counts**, not byte counts. Therefore:
@@ -518,7 +518,7 @@ When loading `.gsplats.zarr`:
 
 **Transparency**: Encoding is a storage detail - users always work with float32 arrays. Quantization and broadcasting are transparent.
 
-**Implementation**: Uses `luxar.encoding.ArrayDecoder` (see `../../encoding/SPECIFICATIONS.md` Section 11.4).
+**Implementation**: Uses `luxar.encoding.ArrayDecoder` (see `packages/luxar/src/luxar/encoding/README.md`).
 
 ---
 
@@ -553,7 +553,7 @@ result.save(
 )
 ```
 
-**Encoding modes** (see `luxar.encoding.SPECIFICATIONS.md` Section 9):
+**Encoding modes** (see `packages/luxar/src/luxar/encoding/README.md`):
 - `AUTO`: Analyze data and select encoding (may be lossy for some types, e.g., SDR colors → uint8)
 - `PRECISION`: Full float32, lossless only (broadcasting still allowed)
 - `MEMORY`: Aggressive quantization for minimum storage (uses float16 only if float16_allowed=True)
@@ -619,7 +619,7 @@ There are two ways to store Gaussian splats, serving different purposes:
 
 **Purpose**: Multi-object visualization with scene graph
 
-**Structure**: See `../../core/SPECIFICATIONS.md` Section 7
+**Structure**: See `packages/luxar/src/luxar/core/README.md`
 - GSplats as node in scene hierarchy
 - Same arrays: centers, amplitudes, cholesky_factors, colors
 - Spatially ordered with `chunk_bounds`
@@ -775,7 +775,7 @@ incrementally for progressive rendering.
   - Clarified that `chunk_size` in metadata is an element count (Zarr's requirement)
 
 - **v1.0.0** (2025-11-28): Initial versioned specification
-  - Moved from `gsplats/GSPLATS_ZARR_FORMAT.md` to `gsplats/io/SPECIFICATIONS.md`
+  - Relocated from the old `gsplats/GSPLATS_ZARR_FORMAT.md` path
   - Converted from design document to technical specification format
   - Updated sharpness bounds from [0, 32] to [0, 31] for consistency
   - **Spatial ordering**: Added Morton/Hilbert ordering with chunk_bounds (aligned with embedded format)

@@ -11,7 +11,7 @@ import {
   generateFilename,
   generateTimestampSuffix,
   getSupportedMimeType,
-} from '../../../../ui/recording/media-utilities';
+} from '../../../../ui/recording-panel/media-utilities';
 
 describe('computeVideoBitrate', () => {
   it('uses bpp from the quality preset', () => {

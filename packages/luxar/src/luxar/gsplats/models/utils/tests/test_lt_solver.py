@@ -230,7 +230,7 @@ class TestCrossVersionCompatibility:
     """Test compatibility across different PyTorch versions."""
 
     def test_both_api_paths(self) -> None:
-        """Test that both new and old API paths produce same results."""
+        """Test that both PyTorch solve paths produce same results."""
         L = torch.tensor([[2.0, 0.0], [1.0, 3.0]], dtype=torch.float32)
         b = torch.tensor([[4.0], [7.0]], dtype=torch.float32)
 
@@ -246,7 +246,7 @@ class TestCrossVersionCompatibility:
         assert x.dtype == torch.float32
 
     def test_fallback_behavior(self) -> None:
-        """Test that fallback to old API works correctly."""
+        """Test fallback behavior across supported PyTorch versions."""
         # This is hard to test directly without mocking, but we can at least
         # ensure the function works in various scenarios
         test_cases = [

@@ -70,7 +70,7 @@ fly mode is active.
 UI components attach their own listeners for genuinely _local_ concerns
 that have no business going through a viewer-wide handler:
 
-- `ui/helpers.ts` — close help overlay on outside-click.
+- `ui/help-overlay.ts` — close help overlay on outside-click.
 - `ui/dimension-sliders.ts` — context-menu close on outside-click /
   Escape inside a popup.
 - `ui/rendering-controls.ts` — mousedown-capture for click-outside-panel.
@@ -467,9 +467,9 @@ inputElement.addEventListener('blur', () => {
 ```typescript
 import { InputHandler } from './input/input-handler';
 import { SceneManager } from './scene/scene-manager';
-import { AnimationController } from './scene/animation-controller';
-import { PerformanceMonitor } from './ui/monitors/performance-monitor';
-import { DebugConsole } from './ui/panels/debug-console';
+import { AnimationController } from './scene/animation/animation-controller';
+import { PerformanceMonitor } from './ui/performance-monitor';
+import { DebugConsole } from './ui/debug-console';
 
 // Create input handler. PerformanceMonitor and DebugConsole are owned
 // by LuxarApp and passed in here. The optional dimensionSlidersFactory
@@ -479,7 +479,7 @@ const inputHandler = new InputHandler(
   sceneManager,
   animationController,
   performanceMonitor,
-  debugConsole,
+  debugConsole
   // optional: dimension sliders factory
 );
 inputHandler.init();

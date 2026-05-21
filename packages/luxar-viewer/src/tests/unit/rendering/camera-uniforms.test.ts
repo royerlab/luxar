@@ -3,7 +3,7 @@ import {
   computePointSizeFactor,
   computeMaxPointSize,
   computeFocalLength,
-} from '../../../rendering/camera-uniforms';
+} from '../../../rendering/materials/_shared/camera-uniforms';
 
 const PI = Math.PI;
 

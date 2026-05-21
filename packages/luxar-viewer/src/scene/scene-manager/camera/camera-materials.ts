@@ -1,0 +1,96 @@
+/**
+ * Camera-aware material updates extracted from SceneManager.
+ *
+ * Two helpers:
+ *
+ *   - `updateMaterialsForCurrentCamera` — push current camera
+ *     projection (FOV-based for perspective, frustum-based for
+ *     orthographic) + drawing-buffer size + near-cull margin into
+ *     the global materialManager. Called on resize, camera swap,
+ *     and FOV change.
+ *
+ *   - `adjustFOV` — mutate `camera.fov` with clamping, refresh the
+ *     projection matrix, and push the new value into materials.
+ *     No-op for orthographic cameras.
+ *
+ * Both helpers are pure with respect to SceneManager — they read
+ * everything they need from the supplied ctx.
+ *
+ * @module scene/scene-manager/camera/camera-materials
+ */
+
+import * as THREE from 'three';
+import { config } from '../../../config';
+import { materialManager } from '../../../rendering/material-manager';
+import type { Renderer } from '../../../rendering/renderer-capabilities';
+import {
+  type LuxarCamera,
+  getCameraFovRadians,
+  getOrthoFrustumHeight,
+  isOrthographicCamera,
+  isPerspectiveCamera,
+} from '../../../utils/camera-utils';
+import { validateFOV } from '../clipping/bounds-math';
+import type { SceneBoundsCache } from '../clipping/scene-bounds-cache';
+
+/**
+ * Ctx supplied by SceneManager. The materials helpers read these
+ * refs but never mutate the host class. `_bufferSize` is a
+ * pre-allocated Vector2 owned by SceneManager so resize callbacks
+ * don't allocate on every frame.
+ */
+export interface CameraMaterialsCtx {
+  readonly renderer: Renderer;
+  readonly camera: LuxarCamera;
+  readonly scene: THREE.Scene;
+  readonly boundsCache: SceneBoundsCache;
+  /** Pre-allocated Vector2 receiver for getDrawingBufferSize. */
+  readonly bufferSize: THREE.Vector2;
+}
+
+/**
+ * Push current camera projection into the global material manager.
+ *
+ * Perspective: projection = FOV radians, orthographic flag = false.
+ * Orthographic: projection = frustum height, orthographic flag = true.
+ *
+ * Always ensures the bounds cache is populated (so the materials
+ * see a consistent near-cull margin) and uses the supplied
+ * pre-allocated Vector2 to avoid per-call allocation.
+ */
+export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
+  ctx.renderer.getDrawingBufferSize(ctx.bufferSize);
+  ctx.boundsCache.ensure(ctx.scene);
+  const nearCull = ctx.boundsCache.getNearCull();
+
+  if (isOrthographicCamera(ctx.camera)) {
+    const frustumHeight = getOrthoFrustumHeight(ctx.camera);
+    materialManager.updateCameraParams(frustumHeight, ctx.bufferSize, true, nearCull);
+  } else {
+    materialManager.updateCameraParams(
+      getCameraFovRadians(ctx.camera),
+      ctx.bufferSize,
+      false,
+      nearCull
+    );
+  }
+}
+
+/**
+ * Adjust the perspective camera FOV by `deltaY * fovSensitivity`,
+ * clamped to `[fovMin, fovMax]`. Updates the projection matrix and
+ * pushes the new projection into materials.
+ *
+ * No-op for orthographic cameras.
+ */
+export function adjustFOV(ctx: CameraMaterialsCtx, deltaY: number): void {
+  if (!isPerspectiveCamera(ctx.camera)) return;
+  const fovChange = deltaY * config.camera.fovSensitivity;
+  ctx.camera.fov = validateFOV(
+    ctx.camera.fov + fovChange,
+    config.camera.fovMin,
+    config.camera.fovMax
+  );
+  ctx.camera.updateProjectionMatrix();
+  updateMaterialsForCurrentCamera(ctx);
+}

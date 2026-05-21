@@ -16,7 +16,7 @@ class TestCompilerIntegration:
     """Test the LuxarZarrCompiler progressive writing API integration."""
 
     def test_simple_scene_creation(self, tmp_path) -> None:
-        """Test basic scene creation with new API."""
+        """Test basic scene creation."""
         output_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
@@ -205,8 +205,6 @@ class TestCompilerIntegration:
         assert attrs["opacity"] == 1.0
         assert attrs["gamma"] == 1.0
         assert attrs["blending_mode"] == "additive"
-
-    # Legacy API compatibility test removed - we no longer support the old API
 
     def test_memory_efficiency(self, tmp_path) -> None:
         """Test that large data doesn't accumulate in memory."""

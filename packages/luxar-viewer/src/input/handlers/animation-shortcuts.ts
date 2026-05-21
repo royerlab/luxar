@@ -25,7 +25,7 @@
  */
 
 import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import type { DimensionAnimationManager } from '../../scene/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { InputContext, type InputContextManager } from '../input-context-manager';
 import { getSelectedDimensionIndex } from './dimension-navigation';
 import { log, Modules } from '../../utils/log';
@@ -145,9 +145,6 @@ export class AnimationShortcuts {
       animManager.decreaseSpeed(dimIndex);
     }
     const fps = animManager.getState(dimIndex)?.targetFPS;
-    log.info(
-      Modules.ANIMATION,
-      `${direction > 0 ? 'Increased' : 'Decreased'} speed to ${fps} FPS`
-    );
+    log.info(Modules.ANIMATION, `${direction > 0 ? 'Increased' : 'Decreased'} speed to ${fps} FPS`);
   }
 }

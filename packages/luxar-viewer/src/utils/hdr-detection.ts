@@ -1,8 +1,11 @@
 /**
  * HDR Detection and Configuration Utilities
  *
- * Provides functions to detect HDR display capabilities and configure
- * Three.js for optimal HDR rendering including 10-bit color depth.
+ * Display-side capability detection (CSS media queries) plus pure
+ * decision logic over an `HDRCapabilities` snapshot. The renderer-
+ * side probes (`gl.getExtension`, color-buffer bit-depth) live in
+ * `src/rendering/renderer-capabilities.ts` — the single seam where
+ * raw GL is allowed.
  */
 
 import * as THREE from 'three';
@@ -33,9 +36,17 @@ export interface HDRCapabilities {
 }
 
 /**
- * Detect HDR and wide gamut display capabilities
+ * Detect *display-side* HDR / wide-gamut capabilities via CSS media
+ * queries. Renderer-side probes (float-texture extension, color
+ * buffer bit depth) are NOT done here — they live in
+ * `createRendererCapabilities` so the raw-GL surface stays
+ * concentrated in one module.
+ *
+ * Returned values for `floatTextures` and `colorDepth` are
+ * defaults; `createRendererCapabilities` overwrites them with real
+ * probes.
  */
-export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabilities {
+export function detectDisplayCapabilities(): HDRCapabilities {
   // Check CSS media queries for display capabilities
   const p3Gamut = window.matchMedia('(color-gamut: p3)').matches;
   const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches;
@@ -51,28 +62,6 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
   const deepColor =
     window.matchMedia('(color: 48)').matches || window.matchMedia('(color: 30)').matches;
 
-  // Check WebGL capabilities if renderer is provided
-  let floatTextures = false;
-  let colorDepth = { red: 8, green: 8, blue: 8 };
-
-  if (renderer) {
-    const gl = renderer.getContext();
-
-    // Check for float texture extension (required for HDR)
-    floatTextures = !!(
-      gl.getExtension('EXT_color_buffer_float') ||
-      gl.getExtension('EXT_color_buffer_half_float') ||
-      gl.getExtension('WEBGL_color_buffer_float')
-    );
-
-    // Get actual color buffer bit depth
-    colorDepth = {
-      red: gl.getParameter(gl.RED_BITS),
-      green: gl.getParameter(gl.GREEN_BITS),
-      blue: gl.getParameter(gl.BLUE_BITS),
-    };
-  }
-
   // Determine recommended color space
   let recommendedColorSpace: 'srgb' | 'display-p3' | 'rec2020' = 'srgb';
   if (rec2020Gamut && hdr) {
@@ -86,29 +75,27 @@ export function detectHDRCapabilities(renderer?: THREE.WebGLRenderer): HDRCapabi
     rec2020Gamut,
     hdr,
     deepColor,
-    floatTextures,
-    colorDepth,
+    floatTextures: false, // overwritten by createRendererCapabilities
+    colorDepth: { red: 8, green: 8, blue: 8 }, // overwritten by createRendererCapabilities
     recommendedColorSpace,
   };
 }
 
 /**
- * Configure Three.js renderer for HDR output
+ * Configure Three.js renderer for HDR output.
+ *
+ * Param `_renderer` is kept for the (future) case where the
+ * function needs to read renderer-specific HDR capability fields;
+ * today it consults the capabilities snapshot only. Typed loosely
+ * as `unknown` to avoid coupling the signature to either
+ * `WebGLRenderer` or `WebGPURenderer`.
  */
-export function configureHDRRenderer(
-  _renderer: THREE.WebGLRenderer,
-  capabilities: HDRCapabilities
-): void {
-  // IMPORTANT: When using pmndrs/postprocessing library, we should NOT set
-  // outputColorSpace or toneMapping on the renderer here. The post-processing
-  // library handles these internally. Setting them here causes conflicts.
-  //
-  // The PostProcessingManager will:
-  // 1. Set renderer.outputColorSpace = THREE.SRGBColorSpace
-  // 2. Set renderer.toneMapping = THREE.NoToneMapping
-  // 3. Handle all color space conversions and tone mapping in its pipeline
-
-  // Log detected capabilities for informational purposes only
+export function configureHDRRenderer(_renderer: unknown, capabilities: HDRCapabilities): void {
+  // Do NOT set renderer.outputColorSpace or renderer.toneMapping here.
+  // The post-processing pipeline owns both: the mega-shader applies
+  // tone mapping internally and the host pins
+  // outputColorSpace = SRGB / toneMapping = NoToneMapping at
+  // PostProcessingManager construction.
   if (capabilities.rec2020Gamut && capabilities.hdr) {
     log.success(
       Modules.HDR,
@@ -122,10 +109,6 @@ export function configureHDRRenderer(
   } else {
     log.info(Modules.HDR, 'Standard sRGB display detected');
   }
-
-  // Note: The actual tone mapping and color space configuration is handled by
-  // PostProcessingManager to avoid conflicts with the pmndrs library.
-  // These settings will be overridden when PostProcessingManager is initialized.
 }
 
 /**

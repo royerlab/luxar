@@ -120,15 +120,6 @@ export interface ZarrViewerConfig {
   vignette_darkness?: number;
   vignette_offset?: number;
 
-  // Depth of field
-  dof_enabled?: boolean;
-  dof_focus?: number;
-  dof_strength?: number;
-
-  // Ambient occlusion
-  ao_enabled?: boolean;
-  ao_quality?: string;
-
   // Detector noise
   detector_noise_enabled?: boolean;
   detector_noise_readout_sigma?: number;
@@ -137,9 +128,6 @@ export interface ZarrViewerConfig {
 
   // Anti-aliasing
   fxaa_enabled?: boolean;
-  smaa_enabled?: boolean;
-  smaa_threshold?: number;
-  smaa_search_steps?: number;
   msaa_enabled?: boolean;
   msaa_samples?: number;
   ssaa_enabled?: boolean;

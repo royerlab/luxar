@@ -252,7 +252,7 @@ export function projectLinesTo3D(
   displayDims: readonly number[]
 ): ProcessedLinesData {
   const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
-  // A.3: validate per-vertex scalar length matches vertex count. Mismatch
+  // Validate per-vertex scalar length matches vertex count. Mismatch
   // suppresses the scalar branch (fail-closed) — line geometry renders
   // without colormap rather than carrying mismatched per-vertex values
   // through the WASM batch interpolator (which would silently read OOB).
@@ -328,9 +328,7 @@ export function projectLinesTo3D(
   const endScalars = scalars ? new Float32Array(maxSegments) : null;
 
   // Shared with the worker projection path; Float32 inputs pass through
-  // (zero alloc), Uint8/Uint16 trigger an upfront normalization. Audited
-  // for sparse-visible-segment alloc cost — sub-1ms at 100k segments;
-  // (Historical benchmark file removed in J.1 of viewer-code-review-rerun.)
+  // (zero alloc), Uint8/Uint16 trigger an upfront normalization.
   const colorsF32 = colors ? coerceColorsToFloat32(colors) : null;
 
   let outIdx = 0;
@@ -498,9 +496,9 @@ export function projectLinesTo3DWASM(
   displayDims: number[]
 ): ProcessedLinesData {
   const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
-  // A.3: same fail-closed scalar length validation as the synchronous
-  // path. Mismatch suppresses scalar projection; WASM path otherwise
-  // would read OOB inside interpolate_scalars_batch.
+  // Same fail-closed scalar length validation as the synchronous path.
+  // Mismatch suppresses scalar projection; WASM path otherwise would read
+  // OOB inside interpolate_scalars_batch.
   const vertexCount = ndim > 0 ? Math.floor(positions.length / ndim) : 0;
   let scalars: typeof loadedData.scalars = loadedData.scalars;
   if (scalars && scalars.length !== vertexCount) {
@@ -636,9 +634,9 @@ export function projectLinesTo3DWASM(
   // batch helper as widths/sharpness — the WASM op is type-agnostic
   // and treats each per-vertex value identically.
   //
-  // A.2: source scalars may be Uint8 / Float16 / Float32. The WASM
-  // signature requires Float32, so widen up front for non-Float32
-  // sources. Float32 inputs pass through (zero alloc).
+  // Source scalars may be Uint8 / Float16 / Float32. The WASM signature
+  // requires Float32, so widen up front for non-Float32 sources. Float32
+  // inputs pass through (zero alloc).
   let startScalars: Float32Array | null = null;
   let endScalars: Float32Array | null = null;
   if (scalars) {

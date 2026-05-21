@@ -38,13 +38,13 @@ test.describe('Python→TypeScript Integration', () => {
       const points: any[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
           points.push({
             name: obj.name,
-            count: geom.attributes.position.count,
-            hasColors: !!geom.attributes.color,
-            hasRadii: !!geom.attributes.radius,
+            count: geom.attributes.aCenter.count,
+            hasColors: !!geom.attributes.aColor,
+            hasRadii: !!geom.attributes.aRadius,
           });
         }
       });

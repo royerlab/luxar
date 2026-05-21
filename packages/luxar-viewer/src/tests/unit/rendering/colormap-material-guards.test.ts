@@ -8,9 +8,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PointMaterial } from '../../../rendering/point-material';
-import { GSplatMaterial } from '../../../rendering/gsplat-material';
-import { LineMaterial } from '../../../rendering/line-material';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
+import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 
 describe('Material colormap guards', () => {
   describe('PointMaterial', () => {
@@ -50,7 +50,9 @@ describe('Material colormap guards', () => {
     it('updateColormapTexture enables colormap and sets needsUpdate', () => {
       const mat = new PointMaterial();
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
-      expect(mat.vertexColors).toBe(true);
+      // vertexColors is unconditionally false — the shader reads aColor
+      // as an explicit attribute and toggles USE_COLORMAP independently.
+      expect(mat.vertexColors).toBe(false);
 
       const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
       mat.updateColormapTexture(tex);
@@ -67,7 +69,8 @@ describe('Material colormap guards', () => {
 
       mat.updateColormapTexture(null);
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
-      expect(mat.vertexColors).toBe(true);
+      // Stays false; vertexColors is not toggled by colormap state.
+      expect(mat.vertexColors).toBe(false);
     });
 
     it('updateColormapTexture(null) clears uColormapTex.value and userData.scalarRange', () => {
@@ -94,7 +97,8 @@ describe('Material colormap guards', () => {
       // depending on which path the constructor took, but its value must not
       // resurrect the disabled texture.
       expect(cloned.uniforms.uColormapTex?.value ?? null).toBeNull();
-      expect(cloned.vertexColors).toBe(true);
+      // vertexColors is unconditionally false.
+      expect(cloned.vertexColors).toBe(false);
     });
 
     it('vertex shader contains #ifdef USE_COLORMAP guard', () => {
@@ -106,11 +110,10 @@ describe('Material colormap guards', () => {
 
     it('vertex shader does NOT have unconditional scalar attribute', () => {
       const mat = new PointMaterial();
-      // The scalar attribute should only appear inside #ifdef USE_COLORMAP
+      // aScalar attribute should only appear inside #ifdef USE_COLORMAP.
       const lines = mat.vertexShader.split('\n');
       for (const line of lines) {
-        if (line.trim().startsWith('in float scalar') && !line.includes('//')) {
-          // This line must be preceded by #ifdef USE_COLORMAP
+        if (line.trim().startsWith('in float aScalar') && !line.includes('//')) {
           const idx = lines.indexOf(line);
           const before = lines.slice(Math.max(0, idx - 5), idx).join('\n');
           expect(before).toContain('#ifdef USE_COLORMAP');

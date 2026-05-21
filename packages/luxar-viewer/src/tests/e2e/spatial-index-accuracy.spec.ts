@@ -163,20 +163,22 @@ test.describe('Spatial Index Query Accuracy', () => {
       }[] = [];
 
       debug.scene.traverse((object: any) => {
-        if (object.type === 'Points' && object.geometry?.attributes?.radius) {
-          const radiusAttr = object.geometry.attributes.radius;
-          const arr = radiusAttr.array;
-          // Use drawRange to only check active points (buffer may be oversized)
-          const drawCount = object.geometry.drawRange.count;
-          const count =
-            drawCount < Infinity ? Math.min(drawCount, radiusAttr.count) : radiusAttr.count;
+        if (object.userData?.nodeType === 'points' && object.geometry?.attributes?.aRadius) {
+          const radiusAttr = object.geometry.attributes.aRadius;
+          // aRadius is an InterleavedBufferAttribute. .array would return
+          // the shared interleaved buffer; use getX(i) for the per-instance
+          // scalar radius.
+          const instanceCount = object.geometry.isInstancedBufferGeometry
+            ? object.geometry.instanceCount
+            : radiusAttr.count;
+          const count = Math.min(instanceCount, radiusAttr.count);
           if (count === 0) return;
 
           let min = Infinity;
           let max = -Infinity;
           let allFinite = true;
           for (let i = 0; i < count; i++) {
-            const v = arr[i];
+            const v = radiusAttr.getX(i);
             if (!isFinite(v)) allFinite = false;
             if (v < min) min = v;
             if (v > max) max = v;

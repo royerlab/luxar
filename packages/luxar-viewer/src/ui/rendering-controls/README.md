@@ -4,7 +4,7 @@ Modular setup functions for the rendering controls UI. Each module is responsibl
 
 ## Overview
 
-The rendering controls UI was refactored from a monolithic 2,514-line file into focused, maintainable modules. This improves code organization, testability, and makes the codebase easier to navigate.
+The rendering controls UI is split into focused, maintainable modules for better organization, testability, and navigation.
 
 ### Architecture
 
@@ -14,8 +14,8 @@ rendering-controls/
 ├── navigation-setup.ts         # Navigation controls (orbit, fly, ortho)
 ├── camera-setup.ts             # Camera settings (FOV, clipping)
 ├── hdr-setup.ts                # HDR intensity & tone mapping
-├── anti-aliasing-setup.ts      # AA techniques (FXAA, SMAA, MSAA, SSAA)
-└── post-processing-setup.ts    # Effects (bloom, noise, DoF, etc.)
+├── anti-aliasing-setup.ts      # AA techniques (FXAA, MSAA, SSAA)
+└── post-processing-setup.ts    # Effects (bloom, noise, vignette, lens distortion)
 ```
 
 Each module exports a setup function that:
@@ -85,7 +85,7 @@ Creates controls for:
 - Global Gamma (linear slider, 0.1 to 10.0)
 - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 
-Global EOG is applied in the vendored `LuxarToneMappingEffect` before tone mapping in a single shader pass.
+Global EOG is applied inside the mega-shader fragment immediately before the tone-mapping operator.
 
 ### anti-aliasing-setup.ts
 
@@ -96,7 +96,6 @@ Creates controls for:
 - SSAA (Supersampling) with resolution multiplier
 - FXAA (Fast Approximate AA)
 - MSAA (Multisample AA) with sample count
-- SMAA (Subpixel Morphological AA)
 
 Includes dynamic subfolder showing/hiding based on AA enablement.
 
@@ -104,13 +103,11 @@ Includes dynamic subfolder showing/hiding based on AA enablement.
 
 **Post-processing visual effects**
 
-Creates controls for 7 effects:
+Creates controls for:
 
 - **Bloom**: Glow/light bleeding (threshold, strength, radius, mipmap levels)
 - **Detector Noise**: Physics-based noise (shot, readout, FPN)
-- **Depth of Field**: Bokeh blur (focus, strength)
-- **Chromatic Aberration**: Lens color fringing
-- **Ambient Occlusion**: Contact shadows (quality presets)
+- **Chromatic Lens Distortion**: Brown-Conrady + camera intrinsics + per-channel dispersion
 - **Vignette**: Edge darkening (darkness, offset)
 - **Lens Distortion**: Full camera model (distortion, principal point, focal length, skew)
 
@@ -226,5 +223,4 @@ See the main rendering-controls tests for examples of testing the integrated sys
 ## Related Documentation
 
 - Parent: `../README.md` - UI package overview
-- Specifications: `./SPECIFICATIONS.md` - Technical specifications for setup modules
 - Main class: `../rendering-controls.ts` - RenderingControls class that uses these modules

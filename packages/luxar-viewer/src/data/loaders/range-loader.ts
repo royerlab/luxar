@@ -18,7 +18,7 @@ import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { config as appConfig } from '../../config';
 import { getWorkerPool } from '../../workers/worker-pool';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 
 /**
  * Range specification for loading array subsets
@@ -132,7 +132,7 @@ export class RangeLoader {
    * @returns Number of elements written to output
    */
   async loadRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata | undefined,
     ranges: LoadRange[],
     output: Float32Array,
@@ -188,7 +188,7 @@ export class RangeLoader {
    *   (e.g. "Points", "Lines"). Falls back to "RangeLoader" when omitted.
    */
   async loadRangesResolvingRef(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata | undefined,
     ranges: LoadRange[],
     output: Float32Array,
@@ -216,7 +216,7 @@ export class RangeLoader {
           : 1;
 
       return this.loadRanges(
-        targetArray as zarr.Array<zarr.DataType, zarr.FetchStore>,
+        targetArray as zarr.Array<zarr.DataType, zarr.Readable>,
         targetAttrs,
         ranges,
         output,
@@ -232,7 +232,7 @@ export class RangeLoader {
    * Load broadcasted array (single value replicated to all elements)
    */
   private async loadBroadcasted(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
     output: Float32Array,
     totalElements: number,
@@ -292,7 +292,7 @@ export class RangeLoader {
    * Load quantized array ranges and dequantize
    */
   private async loadQuantized(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
     ranges: LoadRange[],
     output: Float32Array
@@ -373,7 +373,7 @@ export class RangeLoader {
    * Load LUT-encoded array ranges and decode
    */
   private async loadLUT(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
     ranges: LoadRange[],
     output: Float32Array
@@ -459,7 +459,7 @@ export class RangeLoader {
    * loaders' array_ref resolution. Check the call stack to find the missing resolution.
    */
   private async loadArrayRef(
-    _array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    _array: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
     _ranges: LoadRange[],
     _output: Float32Array,
@@ -491,7 +491,7 @@ export class RangeLoader {
    * Load direct (unencoded) array ranges
    */
   private async loadDirect(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
     ranges: LoadRange[],
     output: Float32Array
   ): Promise<number> {

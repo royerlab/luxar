@@ -99,9 +99,9 @@ export interface DebugStateContext {
 /**
  * Walk the scene graph and report cumulative point/gsplat counts plus
  * per-mesh detail. The traversal:
- *   - Counts every `THREE.Points` mesh; uses `geometry.drawRange.count`
- *     when set (the GPU buffer pool uses drawRange to limit rendering
- *     after relocation), falling back to the position-attribute count.
+ *   - Counts every points mesh (`userData.nodeType === 'points'`); uses
+ *     `InstancedBufferGeometry.instanceCount` because pooled attributes are
+ *     over-allocated and drawRange only covers the 6-index base quad.
  *   - Counts every `THREE.Mesh` with `userData.nodeType === 'gsplats'`
  *     and an `InstancedBufferGeometry`; uses `instanceCount` directly.
  *
@@ -117,23 +117,31 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   const lineMeshes: LineMeshInfo[] = [];
 
   ctx.scene.traverse((object) => {
-    if (object instanceof THREE.Points) {
-      const geometry = object.geometry;
-      const drawRangeCount = geometry?.drawRange?.count;
-      const bufferCount = geometry?.attributes?.position?.count || 0;
-      // Infinity means "draw all" — fall back to the buffer count.
+    // Points render as THREE.Mesh + InstancedBufferGeometry.
+    // `instanceCount` is the source of truth for visible-point count;
+    // attribute count can be pooled capacity.
+    if (
+      object instanceof THREE.Mesh &&
+      (object.userData as { nodeType?: string })?.nodeType === 'points'
+    ) {
+      const geometry = object.geometry as THREE.InstancedBufferGeometry;
+      const bufferCount = geometry?.attributes?.aCenter?.count || 0;
+      const visiblePointCount = (object.userData as { visiblePointCount?: number })
+        ?.visiblePointCount;
       const pointCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, bufferCount)
-          : bufferCount;
+        geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
+          ? geometry.instanceCount
+          : visiblePointCount != null
+            ? visiblePointCount
+            : bufferCount;
       totalPoints += pointCount;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,
         visible: object.visible,
-        hasColors: !!geometry?.attributes?.color,
-        hasRadii: !!geometry?.attributes?.radius,
-        hasSharpness: !!geometry?.attributes?.sharpness,
+        hasColors: !!geometry?.attributes?.aColor,
+        hasRadii: !!geometry?.attributes?.aRadius,
+        hasSharpness: !!geometry?.attributes?.aSharpness,
       });
     }
 
@@ -159,7 +167,12 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     ) {
       const segmentCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
       totalLines += segmentCount;
-      const mat = object.material as THREE.ShaderMaterial | THREE.ShaderMaterial[] | undefined;
+      // ShaderMaterial (GLSL) and NodeMaterial (TSL) both expose
+      // `defines` — read structurally so this works on either backend.
+      const mat = object.material as
+        | (THREE.Material & { defines?: Record<string, unknown> })
+        | (THREE.Material & { defines?: Record<string, unknown> })[]
+        | undefined;
       const firstMat = Array.isArray(mat) ? mat[0] : mat;
       const hasColormap = !!firstMat?.defines?.USE_COLORMAP;
       lineMeshes.push({

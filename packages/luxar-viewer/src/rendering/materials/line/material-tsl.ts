@@ -1,0 +1,446 @@
+/**
+ * TSL / NodeMaterial counterpart to `LineMaterial`.
+ *
+ * Mirrors the GLSL `LineMaterial` wrapper one-for-one — same
+ * constructor signature (`LineMaterialConfig`), same update methods,
+ * same `applyBlendingMode` + `clone` semantics, same
+ * `CameraAwareMaterial` / `ColormapAwareMaterial` interfaces. The
+ * host dispatch in `MaterialManager.getLineMaterial` picks one or
+ * the other based on `caps.apiSurface`, so call sites never see the
+ * divergence.
+ *
+ * **Uniform plumbing.** This class owns one persistent `UniformNode`
+ * per shader input via the `tslNodes` table. The public `uniforms`
+ * record exposes each node as an `IUniform`-shaped getter/setter
+ * proxy (see `proxyIUniform` in `tsl-helpers.ts`), so mutations to
+ * `material.uniforms.uX.value` land directly on `node.value` — no
+ * per-render `.onUpdate('render')` callback bridge. Matches the
+ * pattern already in use by `LinePickingTSLMaterial`,
+ * `GSplatTSLMaterial`, and `PointPickingTSLMaterial`.
+ *
+ * @module rendering/materials/line/material-tsl
+ */
+
+import * as THREE from 'three';
+import { uniform, texture } from 'three/tsl';
+import { NodeMaterial } from 'three/webgpu';
+import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
+import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
+import { clampGamma } from '../_shared/uniform-helpers';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from '../../material-colormap-helpers';
+import {
+  applyBlendingStateToMaterial,
+  getCompleteBlendingState,
+  type CompleteBlendingState,
+} from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
+import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
+
+/**
+ * Persistent TSL node table owned by the wrapper. Colormap nodes are
+ * (re)created lazily inside `rebuildGraph()` when colormap mode
+ * toggles — the `LineTSLNodes` factory contract treats them as
+ * optional.
+ */
+interface LineMaterialTSLNodeTable {
+  uResolution: TSLNode;
+  uIsOrtho: TSLNode;
+  uNearCull: TSLNode;
+  uMaxLinePixelWidth: TSLNode;
+  uPerspectiveLineScale: TSLNode;
+  uOrthoLineScale: TSLNode;
+  uOpacity: TSLNode;
+  uInvGamma: TSLNode;
+  uIntensity: TSLNode;
+  uOffset: TSLNode;
+  uColormapTex?: TSLNode;
+  uScalarMin?: TSLNode;
+  uScalarScale?: TSLNode;
+}
+
+export class LineTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial
+{
+  /** Public uniforms table, same shape as `LineMaterial.uniforms`. */
+  uniforms: Record<string, THREE.IUniform>;
+
+  private tslNodes: LineMaterialTSLNodeTable;
+
+  constructor(materialConfig: LineMaterialConfig = {}) {
+    super();
+
+    const gammaValue = clampGamma(materialConfig.gamma);
+
+    this.tslNodes = {
+      uResolution: uniform(new THREE.Vector2(1, 1)),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.05),
+      uMaxLinePixelWidth: uniform(540),
+      uPerspectiveLineScale: uniform(1.0),
+      uOrthoLineScale: uniform(1.0),
+      uOpacity: uniform(materialConfig.opacity ?? 1.0),
+      uInvGamma: uniform(1.0 / gammaValue),
+      uIntensity: uniform(materialConfig.intensity ?? 1.0),
+      uOffset: uniform(materialConfig.offset ?? 0.0),
+    };
+
+    // Build the public IUniform-proxy table. Mutations to
+    // `material.uniforms.X.value` land directly on the TSL node's
+    // value via `proxyIUniform`, so the GPU sees the new value on the
+    // next frame without any `.onUpdate('render')` callback.
+    //
+    // `uFOV` stays as a plain IUniform because the TSL graph no
+    // longer reads it (the CPU precomputes `uPerspectiveLineScale` /
+    // `uOrthoLineScale`); we keep the slot for downstream consumers
+    // (clone(), direct uniform reads).
+    this.uniforms = {
+      uFOV: { value: (60 * Math.PI) / 180 },
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
+      uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
+      uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
+      uOpacity: proxyIUniform(this.tslNodes.uOpacity),
+      uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
+      uIntensity: proxyIUniform(this.tslNodes.uIntensity),
+      uOffset: proxyIUniform(this.tslNodes.uOffset),
+    };
+
+    // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
+    if (materialConfig.colormapTexture) {
+      this.uniforms.uColormapTex = { value: materialConfig.colormapTexture };
+      this.uniforms.uScalarMin = { value: materialConfig.scalarRange?.[0] ?? 0.0 };
+      this.uniforms.uScalarScale = {
+        value: materialConfig.scalarRange
+          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+          : 1.0,
+      };
+    }
+
+    // Variant `defines` — same shape as the GLSL wrapper. Reading
+    // these in `rebuildGraph()` selects fragment-stage fast paths in
+    // the TSL factory (gamma==1 here; more flags arrive in subsequent
+    // commits).
+    this.defines = {
+      ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+      ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+      ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+        ? { LUXAR_NO_GOG: '' }
+        : {}),
+    };
+    this.toneMapped = false;
+    this.side = THREE.DoubleSide;
+    // Line quads are screen-space billboards, not physically two-sided
+    // surfaces. The renderer's two-pass guard
+    // (`renderers/common/Renderer.js:3452`) trips only when
+    // `transparent && side===DoubleSide && forceSinglePass===false`,
+    // so forcing single-pass skips a redundant back-face render pass
+    // per line layer.
+    this.forceSinglePass = true;
+
+    this.userData.gamma = gammaValue;
+    this.userData.depthTest = materialConfig.depthTest ?? true;
+    this.userData.scalarRange = materialConfig.scalarRange;
+
+    // Stamp the requested mode on userData BEFORE rebuildGraph so the
+    // factory reads the correct value through
+    // `userData.blendingMode` — otherwise the factory defaults to
+    // 'additive', wires `premultiplyRGB=false`, and `max` mode
+    // rendering is wrong. Mirrors the GLSL `LineMaterial`
+    // constructor body where `this.applyBlendingMode(blendingMode)`
+    // runs after `super()`.
+    this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
+
+    this.rebuildGraph();
+  }
+
+  /**
+   * Refresh the colormap TSL nodes so they bind to the current
+   * `this.uniforms.uColormap*.value`. `TextureNode` is bound to a
+   * specific `Texture` instance at construction; a texture swap
+   * requires a fresh node, hence this lives in `rebuildGraph()`.
+   */
+  private rebuildColormapNodes(useColormap: boolean): void {
+    if (useColormap) {
+      const tex =
+        (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
+        new THREE.Texture();
+      this.tslNodes.uColormapTex = texture(tex);
+      this.tslNodes.uScalarMin = uniform((this.uniforms.uScalarMin?.value as number) ?? 0.0);
+      this.tslNodes.uScalarScale = uniform((this.uniforms.uScalarScale?.value as number) ?? 1.0);
+      // Re-point the IUniform proxies at the new nodes so updates
+      // flow through. (For the texture, we keep the plain IUniform
+      // because TextureNode value mutations don't propagate without a
+      // rebuild — `setColormapTexture` triggers rebuild explicitly.)
+      this.uniforms.uScalarMin = proxyIUniform(this.tslNodes.uScalarMin);
+      this.uniforms.uScalarScale = proxyIUniform(this.tslNodes.uScalarScale);
+      // Restore uColormapTex.value pointer to the texture we just bound.
+      this.uniforms.uColormapTex = { value: tex };
+    } else {
+      this.tslNodes.uColormapTex = undefined;
+      this.tslNodes.uScalarMin = undefined;
+      this.tslNodes.uScalarScale = undefined;
+    }
+  }
+
+  /**
+   * Re-run the TSL factory and attach the resulting nodes + blending
+   * state to ourselves. `useColormap` reads `defines.USE_COLORMAP`,
+   * not the IUniform presence (mirrors GSplatTSLMaterial /
+   * PointTSLMaterial).
+   */
+  private rebuildGraph(): void {
+    const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
+    const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
+    const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
+    const sharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
+    // Camera mode lives on the uniform itself, not in defines: the
+    // factory reads `tslNodes.uIsOrtho.value` at build time so a fresh
+    // rebuild after `updateCameraParams` flips the flag picks up the
+    // change. (Defines are also TextureNode-trigger; uniform numeric
+    // value is the simpler source of truth here.)
+    const isOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
+    this.rebuildColormapNodes(useColormap);
+    lineWebGPUFactory(
+      this.tslNodes as LineTSLNodes,
+      {
+        useColormap,
+        gammaOne,
+        noGOG,
+        sharpnessTwo,
+        isOrtho,
+        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
+      },
+      this
+    );
+    this.needsUpdate = true;
+  }
+
+  /**
+   * Toggle the sharpness-fast-path define + rebuild the TSL graph.
+   * Called by the line node-factory after inspecting the per-vertex
+   * sharpness arrays at upload time.
+   */
+  setSharpnessAllTwo(active: boolean): void {
+    if (!this.defines) this.defines = {};
+    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
+    if (active && !had) {
+      this.defines.LUXAR_SHARPNESS_TWO = '';
+      this.rebuildGraph();
+    } else if (!active && had) {
+      delete this.defines.LUXAR_SHARPNESS_TWO;
+      this.rebuildGraph();
+    }
+  }
+
+  /** Same toggle helper as `LineMaterial._refreshNoGOGDefine` — see there. */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
+    const prevIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
+    this.uniforms.uFOV.value = fov;
+    (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined && nearCull > 0) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
+    this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
+    const safeFov = Math.max(fov, 1e-4);
+    if (isOrtho) {
+      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
+    } else {
+      this.uniforms.uPerspectiveLineScale.value =
+        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
+    // Each projection mode is a separate TSL graph variant. Rebuild
+    // when the mode flips so the unused branch is dropped from the
+    // generated WGSL/GLSL.
+    if (isOrtho !== prevIsOrtho) {
+      this.rebuildGraph();
+    }
+  }
+
+  updateOpacity(opacity: number): void {
+    this.uniforms.uOpacity.value = opacity;
+  }
+
+  updateGamma(gamma: number): void {
+    const safeGamma = clampGamma(gamma);
+    this.userData.gamma = safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+
+    // Toggle `LUXAR_GAMMA_ONE` define when crossing the threshold and
+    // rebuild the TSL graph so the factory picks the new fast-path
+    // branch.
+    if (!this.defines) this.defines = {};
+    const wantGammaOne = isGammaOne(safeGamma);
+    const hadGammaOne = 'LUXAR_GAMMA_ONE' in this.defines;
+    if (wantGammaOne && !hadGammaOne) {
+      this.defines.LUXAR_GAMMA_ONE = '';
+      this.rebuildGraph();
+    } else if (!wantGammaOne && hadGammaOne) {
+      delete this.defines.LUXAR_GAMMA_ONE;
+      this.rebuildGraph();
+    }
+  }
+
+  updateIntensity(intensity: number): void {
+    this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
+  }
+
+  updateOffset(offset: number): void {
+    this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
+  }
+
+  updateColormapTexture(tex: THREE.DataTexture | null): void {
+    const oldTexture =
+      (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, tex);
+    const textureChanged = oldTexture !== tex;
+    if (wasEnabled !== nowEnabled || textureChanged) {
+      this.rebuildGraph();
+    }
+  }
+
+  applyBlendingMode(mode: BlendingMode): void {
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+
+    if (!this.defines) {
+      this.defines = {};
+    }
+
+    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
+    const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
+    const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const stateChanged = applyBlendingStateToMaterial(this, state);
+    let definesChanged = false;
+    if (wantsContrib && !hasContrib) {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsContrib && hasContrib) {
+      delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = state.depthTest;
+
+    if (definesChanged) {
+      this.rebuildGraph();
+    } else if (previousMode !== mode && stateChanged) {
+      this.needsUpdate = true;
+    }
+  }
+
+  updateScalarRange(min: number, max: number): void {
+    applyScalarRangeToMaterial(this, min, max);
+  }
+
+  clone(): this {
+    const cloned = new LineTSLMaterial({
+      opacity: this.uniforms.uOpacity.value,
+      gamma: this.userData.gamma ?? 1.0,
+      intensity: this.uniforms.uIntensity.value,
+      offset: this.uniforms.uOffset.value,
+      blendingMode:
+        (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
+      depthTest: this.userData.depthTest ?? true,
+      transparent: this.transparent,
+      colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
+      scalarRange: this.userData.scalarRange ?? undefined,
+    });
+
+    if (this.blending === THREE.CustomBlending) {
+      cloned.blendEquation = this.blendEquation;
+      cloned.blendSrc = this.blendSrc;
+      cloned.blendDst = this.blendDst;
+    }
+
+    cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
+    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
+      this.uniforms.uResolution.value as THREE.Vector2
+    );
+    // `uIsOrtho` is a graph-specialized config — the constructor's
+    // `rebuildGraph` ran against the default value 0 (perspective).
+    // The `LUXAR_SHARPNESS_TWO` define is also graph-specialized
+    // (selects an `x*x` fragment fast path) and the constructor
+    // doesn't carry it either. Compute both source flags up front,
+    // copy uniforms, then re-apply the flags so the final rebuild
+    // picks up BOTH at once. If only sharpnessTwo applies, its
+    // setter rebuilds (which also sees the now-correct uIsOrtho);
+    // if only ortho applies, do an explicit rebuild; if both, the
+    // setter call subsumes the ortho rebuild.
+    const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
+    const sourceSharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
+    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
+    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    if (sourceSharpnessTwo) {
+      cloned.setSharpnessAllTwo(true);
+    } else if (sourceIsOrtho) {
+      cloned.rebuildGraph();
+    }
+
+    return cloned as this;
+  }
+
+  setColormapTexture(tex: THREE.DataTexture | null): void {
+    if (!this.defines) this.defines = {};
+    if (tex) {
+      this.defines.USE_COLORMAP = '';
+      if (!this.uniforms.uColormapTex) {
+        this.uniforms.uColormapTex = { value: tex };
+        this.uniforms.uScalarMin = { value: 0.0 };
+        this.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        this.uniforms.uColormapTex.value = tex;
+      }
+    } else {
+      delete this.defines.USE_COLORMAP;
+      if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
+      if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
+      if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
+    }
+  }
+
+  setScalarRange(min: number, max: number): void {
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    if (this.uniforms.uScalarScale) {
+      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+    }
+  }
+}

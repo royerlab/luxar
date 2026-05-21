@@ -18,11 +18,7 @@ import {
 describe('extract_3d_positions', () => {
   it('selects the displayed dimensions from each nD position', () => {
     // 3 points in 4D; show dims [0, 1, 2].
-    const positionsNd = new Float32Array([
-      1, 2, 3, 99,
-      4, 5, 6, 99,
-      7, 8, 9, 99,
-    ]);
+    const positionsNd = new Float32Array([1, 2, 3, 99, 4, 5, 6, 99, 7, 8, 9, 99]);
     const displayDims = new Uint32Array([0, 1, 2]);
     const output = new Float32Array(9);
     extract_3d_positions(positionsNd, displayDims, 4, 3, output);
@@ -58,13 +54,7 @@ describe('extract_3d_positions', () => {
 
   it('handles numPoints=0 by leaving output untouched (no iteration)', () => {
     const output = new Float32Array(3).fill(42);
-    extract_3d_positions(
-      new Float32Array(0),
-      new Uint32Array([0, 1, 2]),
-      3,
-      0,
-      output
-    );
+    extract_3d_positions(new Float32Array(0), new Uint32Array([0, 1, 2]), 3, 0, output);
     expect(Array.from(output)).toEqual([42, 42, 42]);
   });
 });

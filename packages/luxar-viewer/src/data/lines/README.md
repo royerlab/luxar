@@ -6,11 +6,11 @@ to the Lines node type.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `lines-spatial-index-loader.ts` | Spatial-index loader for Lines: dual chunk index (segment ordering + vertex ordering), two-stage load (segment chunks → unique vertex set → vertex-attr ranges). Emits a `LoadedLinesData` payload with optional per-vertex scalars for colormap mode. |
-| `projection.ts` | Main-thread `projectLinesTo3D`: clips segments to the nD slice, interpolates per-vertex attributes (colors, widths, sharpness, scalars) at clipped endpoints, and emits per-segment GPU instance buffers. Used as the fallback when the worker is unavailable. The primary path is the WASM batch projection in `workers/data-worker.ts::projectLinesTo3D`. |
-| `chunk-index-loader.ts` | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`. |
+| File                            | Role                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lines-spatial-index-loader.ts` | Spatial-index loader for Lines: dual chunk index (segment ordering + vertex ordering), two-stage load (segment chunks → unique vertex set → vertex-attr ranges). Emits a `LoadedLinesData` payload with optional per-vertex scalars for colormap mode.                                                                                                      |
+| `projection.ts`                 | Main-thread `projectLinesTo3D`: clips segments to the nD slice, interpolates per-vertex attributes (colors, widths, sharpness, scalars) at clipped endpoints, and emits per-segment GPU instance buffers. Used as the fallback when the worker is unavailable. The primary path is the WASM batch projection in `workers/data-worker.ts::projectLinesTo3D`. |
+| `chunk-index-loader.ts`         | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                |
 
 ## Public surface
 
@@ -35,7 +35,7 @@ WASM context.
   per range.
 - **Per-vertex scalars ride the worker path.** Since `873690c3` the
   worker payload carries `scalars: Float32Array | Float16Array |
-  Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
+Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
   kernel that handles widths and sharpness) produces compacted
   `startScalars` / `endScalars`. Uint8 inputs are normalized by
   `1/255` to match the colormap shader's `[0, 1]` contract.
@@ -60,9 +60,8 @@ WASM context.
   update helpers
 - `src/wasm/typescript/lines.ts` and `lines-clipping.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch /
+- `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract
-- `src/data/SPECIFICATIONS.md` §7 — full Lines spatial-index spec
-  including the worker scalar path and the dual chunk index
+- `src/data/README.md` — Lines spatial-index overview
 - `src/tests/benchmarks/lines-ts-fallback-alloc-bench.ts` —
   performance benchmark for the main-thread fallback

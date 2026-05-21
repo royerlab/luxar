@@ -1,7 +1,7 @@
 """
 Fitting pipeline components for Gaussian splatting.
 
-This package contains the refactored components of the Gaussian splat fitting pipeline:
+This package contains the Gaussian splat fitting pipeline components:
 - Configuration dataclasses
 - Input validation and preprocessing
 - Model and optimizer initialization

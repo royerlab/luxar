@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
-import { wrapWithCache } from '../../../cache/cached-zarr-array';
+import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
 
 describe('L0 read-only chunk contract (commit 6.1)', () => {
   let cache: DecompressedChunkCache;

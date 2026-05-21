@@ -13,6 +13,13 @@ vi.mock('three', async () => {
   const actual = await vi.importActual<typeof import('three')>('three');
 
   class MockWebGLRenderer {
+    // Positive flag that the real `THREE.WebGLRenderer` sets on
+    // `this`. `renderer-capabilities.ts::isWebGLRenderer` reads it
+    // to pick the WebGL2 vs WebGPU branch for the `api` field;
+    // without this, the api detection mis-classifies the mock as WebGPU
+    // and the WebGL-specific code (`setupContextLossHandling`, raw-GL
+    // probes) silently skips.
+    isWebGLRenderer = true;
     domElement = (() => {
       const canvas = document.createElement('canvas') as any;
       // Ensure canvas has required methods for OrbitControls
@@ -23,12 +30,15 @@ vi.mock('three', async () => {
         vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }));
       return canvas;
     })();
-    shadowMap = { enabled: false, type: actual.PCFSoftShadowMap };
+    shadowMap = { enabled: false, type: actual.PCFShadowMap };
     outputColorSpace = actual.SRGBColorSpace;
     toneMapping = actual.NoToneMapping;
 
     setSize() {}
     setPixelRatio() {}
+    getPixelRatio() {
+      return 1;
+    }
     setClearColor() {}
     clear() {}
     render() {}
@@ -325,18 +335,36 @@ const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
 
 vi.mock('../../../utils/hdr-detection', () => ({
-  detectHDRCapabilities: vi.fn(() => ({
-    hasHDRCanvas: false,
-    hasFloatTextures: true,
-    hasHalfFloatTextures: true,
+  detectDisplayCapabilities: vi.fn(() => ({
+    p3Gamut: false,
+    rec2020Gamut: false,
+    hdr: false,
+    deepColor: false,
+    floatTextures: false,
+    colorDepth: { red: 8, green: 8, blue: 8 },
+    recommendedColorSpace: 'srgb',
   })),
   configureHDRRenderer: vi.fn(),
   logHDRCapabilities: vi.fn(),
 }));
 
+// Wrap renderer-setup with importActual so the real helpers pass through
+// by default, but make createWebGPURenderer a vi.fn() that tests can
+// override (e.g. to force the WebGPU→WebGL fallback path).
+vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../scene/scene-manager/render-pipeline/renderer-setup')
+  >('../../../scene/scene-manager/render-pipeline/renderer-setup');
+  return {
+    ...actual,
+    createWebGPURenderer: vi.fn(actual.createWebGPURenderer),
+  };
+});
+
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
 const mockShowLoadingIndicator = mockShowLoading;
 const mockHideLoadingIndicator = mockHideLoading;
 
@@ -345,6 +373,14 @@ describe('SceneManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pin the unit tests to the WebGL path. This is the production
+    // default — these tests exercise scene composition / disposal /
+    // position bounds and are renderer-agnostic in intent. Stubbing
+    // the env flag keeps the test hermetic against any future change
+    // that introduces a new opt-in to WebGPU, and the GLSL path is
+    // the well-mocked one (`THREE.WebGLRenderer` is stubbed in this
+    // file; the `three/webgpu` `WebGPURenderer` is not).
+    vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '1');
     sceneManager = new SceneManager();
   });
 
@@ -352,6 +388,7 @@ describe('SceneManager', () => {
     if (sceneManager && sceneManager.renderer) {
       sceneManager.dispose();
     }
+    vi.unstubAllEnvs();
   });
 
   describe('initialization', () => {
@@ -381,14 +418,20 @@ describe('SceneManager', () => {
       expect(sceneManager.camera.far).toBe(1000);
     });
 
-    it('should call doUpdateSize directly during initialization (no debounce)', async () => {
-      // Spy on private doUpdateSize method using type assertion
-      const doUpdateSizeSpy = vi.spyOn(sceneManager as any, 'doUpdateSize');
+    it('applies size directly during initialization (no debounce)', async () => {
+      // The init path calls resizer.resizeNow() so the renderer is sized
+      // before the first paint, bypassing the rAF coalescing path that
+      // updateSize() uses.
+      const resizer = (sceneManager as unknown as { resizer: { resizeNow: () => void } }).resizer;
+      const resizeNowSpy = vi.spyOn(resizer, 'resizeNow');
 
       await sceneManager.init({ canvas: mockCanvas as any });
 
-      // Should call doUpdateSize directly (immediate sizing, no debounce)
-      expect(doUpdateSizeSpy).toHaveBeenCalledWith(window.innerWidth, window.innerHeight);
+      expect(resizeNowSpy).toHaveBeenCalled();
+      // First arg is width, second is height; verify against window dims.
+      const [width, height] = resizeNowSpy.mock.calls[0] as unknown as [number, number];
+      expect(width).toBe(window.innerWidth);
+      expect(height).toBe(window.innerHeight);
     });
   });
 
@@ -433,6 +476,231 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('loadSceneData orchestration', () => {
+    // Pin the 7-step call chain and the positionApplied conditional. These
+    // tests complement the basic smoke tests in `scene loading` — they spy
+    // on the private collaborators that loadSceneData orchestrates and
+    // assert ordering / conditional branches that aren't visible through
+    // the public-method assertions above.
+
+    beforeEach(async () => {
+      // Reset the loadScene mock back to its default success behaviour
+      // (the error test in the previous block leaves it in rejected
+      // state across cases otherwise).
+      (mockLoadScene as any).mockImplementation(async () => {
+        const T = await import('three');
+        const group = new T.Group();
+        group.name = 'LuxarScene';
+        return group;
+      });
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    /**
+     * Set up the seven spies the orchestration tests share. If
+     * `opts.viewerConfig` is provided, it's attached to the root group
+     * returned by `mockLoadScene` so that the `viewerConfig` read in
+     * `loadSceneData` picks it up *before* `applyZarrViewerConfig` is
+     * called (the production order is: capture viewerConfig, then call
+     * the helper, then read camOverrides from the captured value).
+     */
+    function installSpies(opts: { positionApplied?: boolean; viewerConfig?: unknown } = {}) {
+      const internals = sceneManager as unknown as {
+        clearSceneContent(): void;
+        resetControls(): void;
+        applyZarrViewerConfig(root: THREE.Group): { positionApplied: boolean };
+        autoFrameCamera(preserveTarget?: boolean): void;
+      };
+      if (opts.viewerConfig !== undefined) {
+        (mockLoadScene as any).mockImplementationOnce(async () => {
+          const T = await import('three');
+          const group = new T.Group();
+          group.name = 'LuxarScene';
+          group.userData.viewerConfig = opts.viewerConfig;
+          return group;
+        });
+      }
+      const clearSceneContent = vi.spyOn(internals, 'clearSceneContent');
+      const resetControls = vi.spyOn(internals, 'resetControls');
+      const updateMaterialsForCurrentCamera = vi.spyOn(
+        sceneManager,
+        'updateMaterialsForCurrentCamera'
+      );
+      const applyZarrViewerConfig = vi
+        .spyOn(internals, 'applyZarrViewerConfig')
+        .mockImplementation(() => ({ positionApplied: opts.positionApplied ?? false }));
+      const autoFrameCamera = vi.spyOn(internals, 'autoFrameCamera').mockImplementation(() => {});
+      const autoAdjustClippingPlanes = vi
+        .spyOn(sceneManager, 'autoAdjustClippingPlanes')
+        .mockImplementation(() => ({ near: 0.1, far: 1000 }));
+      return {
+        clearSceneContent,
+        resetControls,
+        updateMaterialsForCurrentCamera,
+        applyZarrViewerConfig,
+        autoFrameCamera,
+        autoAdjustClippingPlanes,
+      };
+    }
+
+    it('invokes collaborators in the documented order', async () => {
+      const spies = installSpies();
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // Expected sequence: clearSceneContent → resetControls →
+      // updateMaterialsForCurrentCamera → loadScene → applyZarrViewerConfig →
+      // autoFrameCamera (because positionApplied=false by default) →
+      // autoAdjustClippingPlanes.
+      const order = [
+        spies.clearSceneContent.mock.invocationCallOrder[0],
+        spies.resetControls.mock.invocationCallOrder[0],
+        spies.updateMaterialsForCurrentCamera.mock.invocationCallOrder[0],
+        (mockLoadScene as unknown as { mock: { invocationCallOrder: number[] } }).mock
+          .invocationCallOrder[0],
+        spies.applyZarrViewerConfig.mock.invocationCallOrder[0],
+        spies.autoFrameCamera.mock.invocationCallOrder[0],
+        spies.autoAdjustClippingPlanes.mock.invocationCallOrder[0],
+      ];
+      for (let i = 1; i < order.length; i++) {
+        expect(order[i]).toBeGreaterThan(order[i - 1]);
+      }
+    });
+
+    it('skips autoFrameCamera when applyZarrViewerConfig reports positionApplied=true', async () => {
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: { camera: { position: [10, 20, 30] } },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // Author specified an explicit camera position — auto-framing must
+      // not overwrite it. Clipping still runs (it follows camera position
+      // regardless of source).
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(spies.autoAdjustClippingPlanes).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls autoFrameCamera(true) when author set target/targetNode but no position', async () => {
+      const spies = installSpies({
+        positionApplied: false,
+        viewerConfig: { camera: { target: [5, 5, 5] } },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      expect(spies.autoFrameCamera).toHaveBeenCalledTimes(1);
+      // preserveTarget=true → the helper preserves the author's look-at
+      // point instead of overwriting it with bounding-box center.
+      expect(spies.autoFrameCamera).toHaveBeenCalledWith(true);
+    });
+
+    it('error path: skips autoFrame/autoAdjust + reports through notifier + rethrows', async () => {
+      const spies = installSpies();
+      const error = new Error('synthetic load failure');
+      (mockLoadScene as any).mockRejectedValueOnce(error);
+
+      await expect(sceneManager.loadSceneData('http://example.com/data.zarr')).rejects.toThrow(
+        'synthetic load failure'
+      );
+
+      // Pre-load steps still ran...
+      expect(spies.clearSceneContent).toHaveBeenCalledTimes(1);
+      expect(spies.resetControls).toHaveBeenCalledTimes(1);
+      // ...but the post-load orchestration was skipped after the throw.
+      expect(spies.applyZarrViewerConfig).not.toHaveBeenCalled();
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(spies.autoAdjustClippingPlanes).not.toHaveBeenCalled();
+      // notifier surface was invoked correctly.
+      expect(mockHideLoadingIndicator).toHaveBeenCalled();
+      expect(mockShowError).toHaveBeenCalledWith(expect.stringContaining('Failed to load'));
+    });
+  });
+
+  describe('setControlType', () => {
+    // Event dispatch is contractual: the 'camera-changed' event must
+    // fire from the SceneManager call site when (and only when) the
+    // projection mode swaps. The camera-mode helper's swap logic is
+    // covered separately in camera-mode.test.ts.
+
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it("dispatches 'camera-changed' when switching to ortho swaps the camera", () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('camera-changed', listener);
+      // Start in perspective (the default after init).
+      expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+
+      sceneManager.setControlType('ortho');
+
+      expect(sceneManager.camera).toBeInstanceOf(THREE.OrthographicCamera);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT dispatch 'camera-changed' when control type changes without a projection swap", () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('camera-changed', listener);
+
+      // 'fly' uses the existing perspective camera — no swap.
+      sceneManager.setControlType('fly');
+
+      expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toggleCentering', () => {
+    // toggleCentering is a 2-state machine: bbox-center ↔ origin. Each
+    // toggle invokes the matching centering helper (private) and flips
+    // the internal isCenteredOnBoundingBox flag. The flag isn't directly
+    // observable, but a second toggle's behaviour proves the state flip.
+
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it('first toggle from default (origin) calls centerCameraOnScene and flips to bbox', () => {
+      const internals = sceneManager as unknown as {
+        centerOnOrigin(): void;
+        isCenteredOnBoundingBox: boolean;
+      };
+      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onSceneSpy = vi
+        .spyOn(sceneManager, 'centerCameraOnScene')
+        .mockImplementation(() => {});
+      // Default after construction is isCenteredOnBoundingBox=false.
+      expect(internals.isCenteredOnBoundingBox).toBe(false);
+
+      sceneManager.toggleCentering();
+
+      expect(onSceneSpy).toHaveBeenCalledTimes(1);
+      expect(onOriginSpy).not.toHaveBeenCalled();
+      expect(internals.isCenteredOnBoundingBox).toBe(true);
+    });
+
+    it('second toggle from bbox calls centerOnOrigin and flips back to origin', () => {
+      const internals = sceneManager as unknown as {
+        centerOnOrigin(): void;
+        isCenteredOnBoundingBox: boolean;
+      };
+      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onSceneSpy = vi
+        .spyOn(sceneManager, 'centerCameraOnScene')
+        .mockImplementation(() => {});
+      // Force the bbox-centered state directly.
+      internals.isCenteredOnBoundingBox = true;
+
+      sceneManager.toggleCentering();
+
+      expect(onOriginSpy).toHaveBeenCalledTimes(1);
+      expect(onSceneSpy).not.toHaveBeenCalled();
+      expect(internals.isCenteredOnBoundingBox).toBe(false);
+    });
+  });
+
   describe('rendering', () => {
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
@@ -445,6 +713,22 @@ describe('SceneManager', () => {
       sceneManager.updateSize();
 
       expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600);
+    });
+
+    it('preserves manual/adaptive DPR override across window resize', () => {
+      const setPixelRatioSpy = vi.spyOn(sceneManager.renderer, 'setPixelRatio');
+
+      sceneManager.setAdaptivePixelRatio(0.5);
+      setPixelRatioSpy.mockClear();
+
+      // Drive the resize path via the orchestrator's synchronous entry point.
+      const internals = sceneManager as unknown as {
+        resizer: { resizeNow: (w: number, h: number, ctx: unknown) => void };
+        makeResizeCtx: () => unknown;
+      };
+      internals.resizer.resizeNow(800, 600, internals.makeResizeCtx());
+
+      expect(setPixelRatioSpy).toHaveBeenCalledWith(0.5);
     });
   });
 
@@ -767,6 +1051,35 @@ describe('SceneManager', () => {
       expect(bounds.max.x).toBe(5);
       expect(bounds.max.y).toBe(15);
       expect(bounds.max.z).toBe(25);
+    });
+  });
+
+  describe('WebGPU → WebGL fallback wiring', () => {
+    // When createWebGPURenderer returns { fallback: true } (adapter below
+    // the WebGPU spec minimum and no explicit override), SceneManager's
+    // setupWebGPURenderer must drop down to setupWebGLRenderer and the
+    // final this.renderer must be a THREE.WebGLRenderer.
+    //
+    // The createWebGPURenderer import is wrapped in a vi.fn() at the top
+    // of this file (see vi.mock for renderer-setup) so individual tests
+    // can override its resolution per case.
+
+    it('setupWebGPURenderer delegates to setupWebGLRenderer when createWebGPURenderer reports fallback', async () => {
+      // Force the fallback signal.
+      vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+
+      // Pass renderer:'webgpu' so selectBackend picks the WebGPU branch.
+      // The mock immediately returns fallback, so setupWebGPURenderer
+      // recurses into setupWebGLRenderer.
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+
+      // After the fallback path, the renderer is the WebGL mock — the
+      // same one the rest of the suite exercises.
+      expect(sceneManager.renderer).toBeDefined();
+      expect((sceneManager.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer).toBe(true);
+      // And createWebGPURenderer was called exactly once before falling
+      // through; setupWebGPURenderer doesn't re-attempt the WebGPU path.
+      expect(mockedCreateWebGPURenderer).toHaveBeenCalledTimes(1);
     });
   });
 });

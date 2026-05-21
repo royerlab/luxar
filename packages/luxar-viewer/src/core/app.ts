@@ -7,31 +7,34 @@ import {
   restoreSnapshot as restoreViewerSnapshot,
   type ViewerSnapshot,
 } from './viewer-snapshot';
-import { AnimationController } from '../scene/animation-controller';
+import { AnimationController } from '../scene/animation/animation-controller';
 import { InputHandler } from '../input/input-handler';
-import { DimensionSliders } from '../ui/panels/dimension-sliders';
+import { DimensionSliders } from '../ui/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
-import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers';
+import { cleanupUI } from '../ui/ui-cleanup';
+import { clearError, showError } from '../ui/error-overlay';
+import { showHelpOverlay } from '../ui/help-overlay';
+import { notifier } from '../utils/notifier';
 import { config } from '../config';
-import { DatasetBrowser } from '../ui/panels/dataset-browser';
+import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { ResolutionIndicator } from '../ui/components/resolution-indicator';
-import { PerformanceMonitor } from '../ui/monitors/performance-monitor';
-import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
-import { DebugConsole } from '../ui/panels/debug-console';
+import { ResolutionIndicator } from '../ui/resolution-indicator';
+import { PerformanceMonitor } from '../ui/performance-monitor';
+import { DataMonitorManager } from '../ui/data-monitor-manager';
+import { DebugConsole } from '../ui/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
-import { ScaleBar } from '../ui/components/scale-bar';
-import { ColormapLegend } from '../ui/components/colormap-legend';
+import { ScaleBar } from '../ui/scale-bar';
+import { ColormapLegend } from '../ui/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { type AppFactories, resolveFactories } from './app-factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { OverlayManager } from '../ui/helpers/overlay-manager';
+import { OverlayManager } from '../ui/overlay-manager';
 import * as zarr from '../data/zarr';
-import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
+import { PickingSystem } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';
 import { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
@@ -44,6 +47,7 @@ import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
+import { buildPickResultHandler } from './pick-result-handler';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
@@ -114,6 +118,41 @@ export interface LuxarAppOptions {
    * See `app-factories.ts`.
    */
   factories?: AppFactories;
+
+  /**
+   * Force a specific rendering backend, overriding the default
+   * resolution. Mirrors `UrlParams.renderer` — the standalone
+   * bootstrap reads `?renderer=webgl|webgpu` and threads it here
+   * so per-load A/B testing doesn't need a dev-server restart.
+   *
+   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial` (the
+   *   production default).
+   * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial`. Internally
+   *   falls back to WebGL2 when no WebGPU adapter.
+   * - Undefined: fall back to `VITE_LUXAR_USE_WEBGPU` (opt-in to
+   *   WebGPU) / `VITE_LUXAR_USE_LEGACY_WEBGL` (no-op, matches default)
+   *   env vars, then the WebGL default.
+   */
+  renderer?: 'webgl' | 'webgpu';
+
+  /**
+   * Diagnostic mode for `renderer: 'webgpu'`: construct
+   * `WebGPURenderer({ forceWebGL: true })` so Three.js still uses the
+   * WebGPURenderer API surface and TSL `NodeMaterial` shaders, but routes
+   * rendering through its internal WebGL2 backend. Mirrors the
+   * `?webgpu-force-webgl` URL flag.
+   */
+  webgpuForceWebGL?: boolean;
+
+  /**
+   * Opt-in to WebGPU `timestamp-query` profiling. Construct
+   * `WebGPURenderer({ trackTimestamp: true })` so the perf bench can
+   * read per-frame GPU duration via
+   * `renderer.resolveTimestampsAsync('render')`. Tiny runtime cost
+   * (~1-2% per Three.js docs); intended only for the perf-bench spec
+   * (`?perf-timestamp` URL flag). Ignored under `WebGLRenderer`.
+   */
+  perfTimestamp?: boolean;
 }
 
 export class LuxarApp {
@@ -225,14 +264,15 @@ export class LuxarApp {
     }
 
     // THREE.js peer-dep version guard. The package.json declares
-    // `three@^0.163.0` as a peer; embedders that install an older
-    // (or far-newer breaking) version hit cryptic errors deep in
-    // material construction. Fail fast with a clear message instead.
-    // We check `REVISION` (THREE's published revision string, e.g. `"163"`).
+    // `three@^0.184.0` as a peer; we use APIs (Timer, current
+    // postprocessing ToneMappingEffect shape) that are not present
+    // in older revisions. Fail fast with a clear message instead of a
+    // cryptic "X is not a constructor" deep in initialization.
+    // We check `REVISION` (THREE's published revision string, e.g. `"184"`).
     const threeRevision = parseInt(THREE.REVISION ?? '0', 10);
-    if (!Number.isFinite(threeRevision) || threeRevision < 163) {
+    if (!Number.isFinite(threeRevision) || threeRevision < 184) {
       throw new Error(
-        `Luxar requires three@>=0.163.0 (found r${THREE.REVISION ?? '?'}). ` +
+        `Luxar requires three@>=0.184.0 (found r${THREE.REVISION ?? '?'}). ` +
           'Update the three peer dependency in your embedder.'
       );
     }
@@ -274,6 +314,9 @@ export class LuxarApp {
       await this.sceneManager.init({
         canvas: this.options.canvas,
         debug: this.options.debug,
+        renderer: this.options.renderer,
+        webgpuForceWebGL: this.options.webgpuForceWebGL,
+        perfTimestamp: this.options.perfTimestamp,
       });
 
       // Initialize animation controller with HDR post-processing.
@@ -340,6 +383,24 @@ export class LuxarApp {
         this.sceneManager.addEventListener('webgl-context-restored', onContextRestored);
         this.events.add(() =>
           this.sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
+        );
+
+        // WebGPU device-loss is unrecoverable in this release (see
+        // `scene-manager.setupContextLossHandling`). Surface it as a
+        // user-facing error dialog with reload guidance — the only
+        // remediation. Console diagnostics are already emitted by the
+        // scene-manager handler; this listener exists to make sure the
+        // user is told too.
+        const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
+          const reason = event.reason ? ` (${event.reason})` : '';
+          const detail = event.message ? `: ${event.message}` : '';
+          notifier.error(
+            `WebGPU device lost${reason}${detail}. ` + 'Please reload the page to continue.'
+          );
+        };
+        this.sceneManager.addEventListener('webgpu-device-lost', onWebGPUDeviceLost);
+        this.events.add(() =>
+          this.sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost)
         );
       }
 
@@ -615,7 +676,7 @@ export class LuxarApp {
   /**
    * Apply zarr viewer_config state that isn't handled by RenderingControls.
    *
-   * RenderingControls handles the 47 rendering settings (bloom, AO, AA, etc.).
+   * RenderingControls handles rendering settings (bloom, AA, tone mapping, etc.).
    * This method handles everything else: UI panel visibility, theme,
    * dimension navigation state, and animation state.
    *
@@ -700,7 +761,12 @@ export class LuxarApp {
 
   /**
    * Initialize screen-space overlays from zarr metadata.
-   * Creates an OverlayManager if the loaded scene contains overlays.
+   *
+   * Always constructs an `OverlayManager` (even when the scene declares
+   * no overlays) so the rest of the app — input handler, recording panel,
+   * `__luxarDebug.getOverlayManager()` probe — sees a stable, non-null
+   * collaborator. The manager just stays empty until `loadOverlays` (or a
+   * runtime caller, e.g. a test) populates it.
    */
   private async initOverlays(): Promise<void> {
     // Defensive: loadDataset() already disposes overlays upfront, but keep
@@ -714,12 +780,12 @@ export class LuxarApp {
     const overlayConfigs = root?.userData?.overlayConfigs;
     const zarrBaseUrl = root?.userData?.zarrBaseUrl;
 
+    this.overlayManager = new OverlayManager();
     if (overlayConfigs?.length > 0 && zarrBaseUrl) {
-      this.overlayManager = new OverlayManager();
       await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
-      this.inputHandler.setOverlayManager(this.overlayManager);
-      this.recordingPanel?.setOverlayManager(this.overlayManager);
     }
+    this.inputHandler.setOverlayManager(this.overlayManager);
+    this.recordingPanel?.setOverlayManager(this.overlayManager);
   }
 
   /**
@@ -777,34 +843,19 @@ export class LuxarApp {
       this.imageLabelLoader = new ImageLabelLoader(store, rootLoc);
     }
 
-    // Create picking system with result callback
+    // Create picking system with result callback. The handler closure
+    // lives in `pick-result-handler.ts` so its branch logic (null /
+    // label-only / image-only / both / neither / fetch reject /
+    // missing loaders) can be unit-tested with stub ports.
     this.pickingSystem = new PickingSystem(
       this.sceneManager.renderer,
+      this.sceneManager.capabilities,
       this.sceneManager.camera,
-      async (result: PickResult | null) => {
-        try {
-          if (!result) {
-            this.overlayManager?.updateHoverContent(null);
-            return;
-          }
-          const nodePath = result.mainNode.name;
-          // Fetch text label and image URL in parallel
-          const [label, imageUrl] = await Promise.all([
-            this.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
-            this.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ?? Promise.resolve(null),
-          ]);
-          const hasContent = label || imageUrl;
-          this.overlayManager?.updateHoverContent(
-            hasContent
-              ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId }
-              : null
-          );
-        } catch (err) {
-          // Don't let label loading errors kill the hover loop
-          log.warning(Modules.APP, `Picking callback error: ${err}`);
-          this.overlayManager?.updateHoverContent(null);
-        }
-      }
+      buildPickResultHandler({
+        labelLoader: this.labelLoader,
+        imageLabelLoader: this.imageLabelLoader,
+        overlayManager: this.overlayManager,
+      })
     );
 
     // Wire NodeFactory to create pick nodes for future scene loads
@@ -818,12 +869,22 @@ export class LuxarApp {
       sceneLoader.nodeFactory.registerExistingSceneNodes(root);
     }
 
+    // Gate picks on overlay visibility — if no hover overlay is visible,
+    // there's no consumer for the pick result, so skip the work entirely.
+    this.pickingSystem.setShouldPick(() => this.overlayManager?.hasVisibleHoverOverlay() ?? false);
+
     // DOM events go through EventGroup.on(); Three.js EventDispatcher events
     // (controls, sceneManager) use add() with a manual remove closure since
     // their addEventListener/removeEventListener signatures aren't EventTarget.
+    // The picking handler never preventDefaults, so register the mousemove
+    // listener as `passive: true` (browser-hint optimization).
     const canvas = this.sceneManager.renderer.domElement;
     const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
-    this.pickingEvents.on(canvas, 'mousemove', handler);
+    this.pickingEvents.on(canvas, 'mousemove', handler, { passive: true });
+    // mouseleave drops the pending cursor so the camera-settle re-pick
+    // path doesn't fire when the cursor isn't over the viewer.
+    const leaveHandler = (): void => this.pickingSystem?.onMouseLeave();
+    this.pickingEvents.on(canvas, 'mouseleave', leaveHandler, { passive: true });
 
     const dirtyHandler = () => this.pickingSystem?.markDirty();
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
@@ -983,19 +1044,72 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
+      // Live accessors for the picking + overlay subsystems. Both are
+      // disposed and reconstructed across dataset reloads, so a direct
+      // snapshot would go stale; the accessor pattern always returns
+      // the current instance (or undefined before init / between
+      // disposals).
+      getPickingSystem: () => this.pickingSystem,
+      getOverlayManager: () => this.overlayManager,
+
       // Cache-specific helpers — thin wrappers over the SceneLoader cache
       // API. Implementation lives in `core/debug-cache-helpers.ts` so the
       // not-found / no-cache / success branches can be unit-tested
       // directly with a stub loader.
-      cache: buildDebugCacheHelpers(() =>
-        SceneLoaderManager.getInstance().getDefaultLoader()
-      ),
+      cache: buildDebugCacheHelpers(() => SceneLoaderManager.getInstance().getDefaultLoader()),
 
       // Test-friendly hook for the error-dialog component. Lets
       // visual-regression specs render the dialog directly without going
       // through URL-routing failure paths (whose semantics evolve
       // independently of the dialog's appearance).
       showError,
+
+      // Debug-only synthetic-scene injector for the perf bench. Builds
+      // a large `InstancedLinesMeshConfig` purely in JS, wires it
+      // through the existing material-manager + node-factory pipeline,
+      // and adds the resulting mesh to the scene. Returns `{type,
+      // segmentCount, mesh}` so the bench can capture the actual
+      // instance count it ran against. Importing `synthetic-scene.ts`
+      // dynamically keeps it out of the production bundle's main
+      // chunk; tree-shaking trims the entry when `__luxarDebug` isn't
+      // referenced.
+      injectSyntheticScene: async (spec: {
+        type: 'lines';
+        count: number;
+        bounds?: number;
+        seed?: number;
+      }) => {
+        const { generateSyntheticLines } = await import('../scene/synthetic-scene');
+        const { createInstancedLinesMesh, isAllSharpnessTwo } =
+          await import('../rendering/line-geometry');
+        const { materialManager } = await import('../rendering/material-manager');
+        const cfg = generateSyntheticLines(spec);
+        // Build the visual material directly through the
+        // material-manager so the same blending / dispatch logic
+        // production uses applies. Picking material is intentionally
+        // skipped — the synthetic scenarios don't exercise picking.
+        const material = materialManager.getLineMaterial({
+          blendingMode: 'additive',
+          opacity: 1.0,
+          gamma: 1.0,
+          intensity: 1.0,
+          offset: 0.0,
+        });
+        material.setSharpnessAllTwo(isAllSharpnessTwo(cfg));
+        const mesh = createInstancedLinesMesh(cfg, material);
+        mesh.userData = {
+          nodeType: 'lines',
+          attrs: {},
+          maxWidth: 1.0,
+          visibleSegmentCount: cfg.segmentCount,
+          synthetic: true,
+        };
+        this.sceneManager.scene.add(mesh);
+        // Kick the renderer so the new mesh is uploaded before the
+        // bench's first measurement frame.
+        this.animationController.startAnimation();
+        return { type: spec.type, segmentCount: cfg.segmentCount, mesh };
+      },
 
       // Mark that runtime components are now available
       runtimeReady: true,

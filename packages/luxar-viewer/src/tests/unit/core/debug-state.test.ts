@@ -9,10 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import {
-  computeDebugState,
-  type DebugStateContext,
-} from '../../../core/debug-state';
+import { computeDebugState, type DebugStateContext } from '../../../core/debug-state';
 import type { SimpleDims } from '../../../types/dims';
 
 function makePointCloud(
@@ -21,38 +18,44 @@ function makePointCloud(
     name?: string;
     visible?: boolean;
     drawRange?: number;
+    instanceCount?: number;
     hasColors?: boolean;
     hasRadii?: boolean;
     hasSharpness?: boolean;
   } = {}
-): THREE.Points {
-  const geometry = new THREE.BufferGeometry();
+): THREE.Mesh {
+  // Point clouds are THREE.Mesh with instanced quad geometry and
+  // per-instance attributes prefixed `a*`. `computeDebugState` selects
+  // on `userData.nodeType === 'points'`.
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.instanceCount = options.instanceCount ?? count;
   geometry.setAttribute(
-    'position',
-    new THREE.BufferAttribute(new Float32Array(count * 3), 3)
+    'aCenter',
+    new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
   );
   if (options.hasColors) {
     geometry.setAttribute(
-      'color',
-      new THREE.BufferAttribute(new Float32Array(count * 3), 3)
+      'aColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
     );
   }
   if (options.hasRadii) {
     geometry.setAttribute(
-      'radius',
-      new THREE.BufferAttribute(new Float32Array(count), 1)
+      'aRadius',
+      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
     );
   }
   if (options.hasSharpness) {
     geometry.setAttribute(
-      'sharpness',
-      new THREE.BufferAttribute(new Float32Array(count), 1)
+      'aSharpness',
+      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
     );
   }
   if (options.drawRange !== undefined) {
     geometry.setDrawRange(0, options.drawRange);
   }
-  const points = new THREE.Points(geometry);
+  const points = new THREE.Mesh(geometry);
+  points.userData = { nodeType: 'points' };
   if (options.name !== undefined) points.name = options.name;
   if (options.visible !== undefined) points.visible = options.visible;
   return points;
@@ -104,7 +107,7 @@ describe('computeDebugState', () => {
   });
 
   describe('point cloud counting', () => {
-    it('counts a single point cloud by buffer position count', () => {
+    it('counts a single point cloud by instance count', () => {
       const scene = new THREE.Scene();
       scene.add(makePointCloud(100, { name: 'a' }));
 
@@ -115,15 +118,15 @@ describe('computeDebugState', () => {
       expect(state.pointClouds[0].pointCount).toBe(100);
     });
 
-    it('honours geometry.drawRange.count when set', () => {
+    it('honours geometry.instanceCount when pooled buffers are over-allocated', () => {
       const scene = new THREE.Scene();
-      scene.add(makePointCloud(1000, { drawRange: 250 }));
+      scene.add(makePointCloud(1000, { instanceCount: 250 }));
 
       const state = computeDebugState(makeContext(scene));
       expect(state.totalPoints).toBe(250);
     });
 
-    it('falls back to buffer count when drawRange.count is Infinity', () => {
+    it('uses instanceCount even when drawRange is Infinity', () => {
       const scene = new THREE.Scene();
       const points = makePointCloud(500);
       // Three.js default drawRange is { start: 0, count: Infinity } — keep that.
@@ -134,12 +137,11 @@ describe('computeDebugState', () => {
       expect(state.totalPoints).toBe(500);
     });
 
-    it('caps drawRange.count by buffer count when drawRange exceeds it', () => {
+    it('does not mistake base-quad drawRange.count for point count', () => {
       const scene = new THREE.Scene();
-      scene.add(makePointCloud(100, { drawRange: 1000 }));
+      scene.add(makePointCloud(100, { drawRange: 6 }));
 
       const state = computeDebugState(makeContext(scene));
-      // Math.min(drawRange, bufferCount) = min(1000, 100) = 100.
       expect(state.totalPoints).toBe(100);
     });
 
@@ -245,16 +247,14 @@ describe('computeDebugState', () => {
       const state = computeDebugState(ctx);
       expect(state.camera.position).toEqual({ x: 10, y: 20, z: 30 });
       expect(state.camera.fov).toBe(35);
-      // Legacy mirror.
+      // Top-level mirror for compatibility.
       expect(state.cameraPosition).toEqual({ x: 10, y: 20, z: 30 });
       expect(state.cameraFov).toBe(35);
     });
 
     it('reports isAnimating + initialized flags', () => {
       const scene = new THREE.Scene();
-      const state = computeDebugState(
-        makeContext(scene, { isAnimating: true, initialized: true })
-      );
+      const state = computeDebugState(makeContext(scene, { isAnimating: true, initialized: true }));
       expect(state.isAnimating).toBe(true);
       expect(state.initialized).toBe(true);
     });

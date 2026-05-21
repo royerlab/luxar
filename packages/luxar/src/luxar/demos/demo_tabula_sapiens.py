@@ -232,7 +232,7 @@ def load_tabula_sapiens(
         1. Processed NPZ cache (instant)
         2. CELLxGENE Census API (fast streaming, needs cellxgene-census)
         3. Auto-download tissue h5ad files from CELLxGENE (needs only requests+h5py)
-        4. Local h5ad file via anndata (legacy fallback)
+        4. Local h5ad file via anndata (manual fallback)
 
     Returns:
         Tuple of (umap_2d, pca_or_scvi, cell_types, tissues)
@@ -270,7 +270,7 @@ def load_tabula_sapiens(
 
         traceback.print_exc()
 
-    # --- Path 3: Local h5ad via anndata (legacy) ---
+    # --- Path 3: Local h5ad via anndata ---
     try:
         return _load_via_h5ad(cache_dir, sample_size, processed_cache)
     except (ImportError, FileNotFoundError):
@@ -490,7 +490,7 @@ def _load_via_h5ad(
     sample_size: int,
     processed_cache: Path,
 ) -> tuple[np.ndarray, list[str], list[str]]:
-    """Load from a local h5ad file via anndata (legacy fallback)."""
+    """Load from a local h5ad file via anndata."""
     import anndata as ad
 
     h5ad_path = cache_dir / "tabula_sapiens.h5ad"

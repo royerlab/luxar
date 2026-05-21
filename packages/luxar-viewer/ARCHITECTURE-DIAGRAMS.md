@@ -60,7 +60,7 @@ graph TB
         M[THREE.BufferGeometry<br/>GPU buffers]
         N[Point/Line/GSplat materials<br/>Camera-aware, HDR]
         O[MaterialManager<br/>Cache, registration, dispose]
-        P[PostProcessingManager<br/>HDR + EffectComposer]
+        P[PostProcessingManager<br/>HDR + mega-shader pipeline]
     end
 
     subgraph "Display"
@@ -146,7 +146,7 @@ graph TB
     end
 
     subgraph "rendering/ + cache/"
-        PostProc[PostProcessingManager<br/>EffectComposer]
+        PostProc[PostProcessingManager<br/>Mega-shader + bloom + FXAA]
         Materials[MaterialManager<br/>register/unregister]
         Cache[MultiLevelCachingStore<br/>L0 → L1 → L2 → network]
     end
@@ -346,10 +346,10 @@ graph LR
         E[HalfFloatType<br/>16-bit float<br/>Range: 0-65504]
     end
 
-    subgraph "Post-Processing (postprocessing)"
-        F[Pass A<br/>Compatible effects]
-        G[Pass B?<br/>If UV-transform present]
-        H[Final Pass<br/>Tone mapping + AA]
+    subgraph "Post-Processing (mega-shader)"
+        F[Bloom pre-pass<br/>threshold + mip pyramid]
+        H[MegaShader fullscreen pass<br/>fused per-pixel effects]
+        I0[Optional FXAA<br/>edge-detect on LDR]
     end
 
     subgraph "Display"
@@ -357,51 +357,29 @@ graph LR
     end
 
     A --> B --> C --> D --> E
-    E --> F --> G --> H --> I
+    E --> F --> H --> I0 --> I
 
     style E fill:#ffeeaa
     style H fill:#aaffee
     style I fill:#aaffaa
 ```
 
-### Effect Pass Assignment
+### Effect Ordering
 
-**Dynamic 3-Pass Architecture**:
+Single fused fragment shader. The mega-shader runs the per-pixel
+effects in canonical order:
 
 ```
-Effects in order: Bloom → DOF → AO → Vignette → ChromaticAberration
-                  → LensDistortion → DetectorNoise → ToneMapping → AA
-
-Algorithm:
-1. Try adding each effect to Pass A
-2. If incompatibility detected (UV transform + Convolution):
-   - Switch to Pass B for this effect and ALL remaining
-3. Pass A (if has effects) → Pass B (if needed) → Final output
-
-Example Scenario:
-┌─ Compatible Effects Only ─┐
-│ Pass A:                    │
-│ ├─ Bloom                   │
-│ ├─ Vignette                │
-│ ├─ DetectorNoise           │
-│ └─ ToneMapping             │
-│                            │
-│ Final Output               │
-└────────────────────────────┘
-
-┌─ With Incompatibilities ───┐
-│ Pass A:                     │
-│ ├─ Bloom                    │
-│ └─ Vignette                 │
-│                             │
-│ Pass B:                     │
-│ ├─ LensDistortion (UV)     │
-│ ├─ DetectorNoise            │
-│ └─ ToneMapping              │
-│                             │
-│ Pass A → Pass B → Output    │
-└─────────────────────────────┘
+ChromaticLensDistortion → Bloom (additive) → DetectorNoise →
+ToneMapping (with EOG) → Vignette → sRGB encode
 ```
+
+Bloom remains a separate pre-pass (neighbor reads needed for
+threshold + downsample/upsample). FXAA remains a separate post-pass
+(edge detection runs on the tone-mapped LDR output). SMAA, DoF, and
+SSAO are intentionally absent: SMAA and DoF need additional passes,
+and SSAO needs surface normals that Luxar's point, line, and gsplat
+primitives do not provide.
 
 ---
 
@@ -1073,6 +1051,6 @@ mmdc -i ARCHITECTURE-DIAGRAMS.md -o diagrams.pdf
 - Adding new packages
 - Changing initialization order
 - Modifying data flow
-- Refactoring architecture
+- Changing architecture
 
-**Keep aligned with**: SPECIFICATIONS.md files in each package
+**Keep aligned with**: each package's README.md

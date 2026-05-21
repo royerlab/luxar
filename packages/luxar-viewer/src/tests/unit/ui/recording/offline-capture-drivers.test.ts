@@ -9,9 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ImageSequenceDriver } from '../../../../ui/recording/image-sequence-driver';
-import { ExrSequenceDriver } from '../../../../ui/recording/exr-sequence-driver';
-import type { CaptureContext } from '../../../../ui/recording/offline-capture-driver';
+import { ImageSequenceDriver } from '../../../../ui/recording-panel/drivers/image-sequence-driver';
+import { ExrSequenceDriver } from '../../../../ui/recording-panel/drivers/exr-sequence-driver';
+import type { CaptureContext } from '../../../../ui/recording-panel/drivers/offline-capture-driver';
 
 function makeProgress(): {
   setLabel: ReturnType<typeof vi.fn> & ((text: string) => void);
@@ -36,12 +36,10 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
   const fakeCanvas = {
     width: 1920,
     height: 1080,
-    toBlob: vi.fn(
-      (cb: BlobCallback, _type?: string, _quality?: number) => {
-        // Resolve asynchronously to mimic the browser behaviour.
-        Promise.resolve().then(() => cb(blobStub));
-      }
-    ),
+    toBlob: vi.fn((cb: BlobCallback, _type?: string, _quality?: number) => {
+      // Resolve asynchronously to mimic the browser behaviour.
+      Promise.resolve().then(() => cb(blobStub));
+    }),
   } as unknown as HTMLCanvasElement;
 
   return {
@@ -52,7 +50,7 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
       },
     } as never,
     fps: 30,
-    renderFrameToCanvas: vi.fn(() => fakeCanvas),
+    renderFrameToCanvas: vi.fn(async () => fakeCanvas),
     generateFilename: (ext: string) => `cap.${ext}`,
     generateFfmpegScript: (rate, frames, ext) =>
       `ffmpeg -framerate ${rate} -i frame_%06d.${ext} -frames:v ${frames} out.mp4`,
@@ -93,13 +91,9 @@ describe('ImageSequenceDriver', () => {
     await driver.setup(ctx);
     await driver.captureFrame(ctx, 0, progress);
 
-    const canvas = (ctx.renderFrameToCanvas as ReturnType<typeof vi.fn>).mock.results[0]
-      .value as HTMLCanvasElement & { toBlob: ReturnType<typeof vi.fn> };
-    expect(canvas.toBlob).toHaveBeenCalledWith(
-      expect.any(Function),
-      'image/jpeg',
-      0.7
-    );
+    const canvas = (await (ctx.renderFrameToCanvas as ReturnType<typeof vi.fn>).mock.results[0]
+      .value) as HTMLCanvasElement & { toBlob: ReturnType<typeof vi.fn> };
+    expect(canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.7);
   });
 
   it('shouldAbort is false by default and after a normal capture', async () => {
@@ -115,7 +109,7 @@ describe('ImageSequenceDriver', () => {
       height: 100,
       toBlob: vi.fn((cb: BlobCallback) => Promise.resolve().then(() => cb(null))),
     } as unknown as HTMLCanvasElement;
-    const ctx = makeCtx({ renderFrameToCanvas: () => fakeCanvas });
+    const ctx = makeCtx({ renderFrameToCanvas: async () => fakeCanvas });
     const driver = new ImageSequenceDriver('png');
     await driver.setup(ctx);
 
@@ -202,7 +196,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/drivers/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx();
     expect(await driver.setup(ctx)).toBe(false);
@@ -223,7 +217,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/drivers/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     expect(await driver.setup(ctx)).toBe(true);
@@ -246,7 +240,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/drivers/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     await driver.setup(ctx);
@@ -273,7 +267,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/drivers/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     await driver.setup(ctx);

@@ -54,9 +54,7 @@ describe('ray integral sigma', () => {
     expect(rayIntegralSigma([0, 1, 0], sigma)).toBeCloseTo(2);
     expect(rayIntegralSigma([0, 0, 1], sigma)).toBeCloseTo(2);
     const oneOverRoot3 = 1 / Math.sqrt(3);
-    expect(
-      rayIntegralSigma([oneOverRoot3, oneOverRoot3, oneOverRoot3], sigma)
-    ).toBeCloseTo(2);
+    expect(rayIntegralSigma([oneOverRoot3, oneOverRoot3, oneOverRoot3], sigma)).toBeCloseTo(2);
   });
 
   it('diagonal anisotropic Σ along an eigenaxis: returns that axis std-dev', () => {

@@ -22,13 +22,8 @@ import type {
   SegmentRange,
 } from '../../types/lines';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
-import {
-  RangeLoader,
-  SpatialQueryBuilder,
-  mergeRanges,
-  type LoadRange,
-} from '../loaders';
+import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
+import { RangeLoader, SpatialQueryBuilder, mergeRanges, type LoadRange } from '../loaders';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
 import { LoaderEventEmitter } from '../loaders/monitor-events';
@@ -43,10 +38,12 @@ import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
 } from '../loaders/extend-to-all-preflight';
-import { LinesDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/lines';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import {
   type LinesDualChunkIndex,
   loadLinesDualChunkIndex,
@@ -887,7 +884,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     return widths;
   }
 
-
   /**
    * Get accumulator stats for memory monitoring
    */
@@ -967,8 +963,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const queryTime = Date.now() - startTime;
     if (this.metrics.queries > 0) {
       this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
-        this.metrics.queries;
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
     }
   }
 
@@ -989,4 +984,3 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
   }
 }
-

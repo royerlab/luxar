@@ -46,11 +46,13 @@ describe('GPUBufferPool', () => {
     it('should allocate new geometry on first request', () => {
       const data = createMockLoadedPointsData(1000);
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
-      expect(geom).toBeInstanceOf(THREE.BufferGeometry);
-      expect(geom.getAttribute('position')).toBeDefined();
-      expect(geom.getAttribute('color')).toBeDefined();
-      expect(geom.getAttribute('radius')).toBeDefined();
-      expect(geom.getAttribute('sharpness')).toBeDefined();
+      expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      expect((geom as THREE.InstancedBufferGeometry).instanceCount).toBe(1000);
+      expect(geom.drawRange.count).toBe(6);
+      expect(geom.getAttribute('aCenter')).toBeDefined();
+      expect(geom.getAttribute('aColor')).toBeDefined();
+      expect(geom.getAttribute('aRadius')).toBeDefined();
+      expect(geom.getAttribute('aSharpness')).toBeDefined();
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1);
@@ -78,6 +80,30 @@ describe('GPUBufferPool', () => {
       expect(geom2).toBe(geom1); // Same geometry, grown
       const stats = pool.getStats();
       expect(stats.capacityGrowths).toBe(1);
+    });
+
+    it('didLastAcquireRebuildAttributes is false on in-place reuse, true on grow', () => {
+      const data1 = createMockLoadedPointsData(1000);
+      pool.acquirePointsGeometry('node1', data1, 1000);
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true); // First allocation
+
+      const data2 = createMockLoadedPointsData(900);
+      pool.acquirePointsGeometry('node1', data2, 900); // reuse, no grow
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(false);
+
+      const data3 = createMockLoadedPointsData(2000);
+      pool.acquirePointsGeometry('node1', data3, 2000); // grow
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
+    });
+
+    it('didLastAcquireRebuildAttributes is true when pooled candidate is reclaimed for a new node', () => {
+      const data1 = createMockLoadedPointsData(1000);
+      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.releasePointsGeometry('node1'); // back into the pool
+
+      // Same data shape → matching attribute types; pool reclaims.
+      pool.acquirePointsGeometry('node2', data1, 1000);
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
     });
 
     it('should release geometry back to pool', () => {
@@ -117,18 +143,20 @@ describe('GPUBufferPool', () => {
       const geom = pool.acquirePointsGeometry('p1', positionsOnly, 3);
       pool.updatePointsGeometry(geom, positionsOnly, 3);
 
-      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
-      const sharpAttr = geom.getAttribute('sharpness') as THREE.BufferAttribute;
-      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const radAttr = geom.getAttribute('aRadius');
+      const sharpAttr = geom.getAttribute('aSharpness');
+      const colAttr = geom.getAttribute('aColor');
 
-      // Active range filled with defaults — not zeros
+      // Active range filled with defaults — not zeros. Use the
+      // semantic per-instance accessors so the test works regardless
+      // of whether the underlying storage is standalone or interleaved.
       for (let i = 0; i < 3; i++) {
-        expect((radAttr.array as Float32Array)[i]).toBeCloseTo(0.5);
-        expect((sharpAttr.array as Float32Array)[i]).toBeCloseTo(2.0);
-      }
-      // White default color (positions-only path uses Float32 buffer)
-      for (let i = 0; i < 9; i++) {
-        expect((colAttr.array as Float32Array)[i]).toBeCloseTo(1.0);
+        expect(radAttr.getX(i)).toBeCloseTo(0.5);
+        expect(sharpAttr.getX(i)).toBeCloseTo(2.0);
+        // White default color (R, G, B = 1.0).
+        expect(colAttr.getX(i)).toBeCloseTo(1.0);
+        expect(colAttr.getY(i)).toBeCloseTo(1.0);
+        expect(colAttr.getZ(i)).toBeCloseTo(1.0);
       }
     });
 
@@ -154,14 +182,15 @@ describe('GPUBufferPool', () => {
       };
       pool.updatePointsGeometry(geom, sparse, 4);
 
-      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
-      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const radAttr = geom.getAttribute('aRadius');
+      const colAttr = geom.getAttribute('aColor');
       // Defaults overwrite values left in the reused buffer from `full`.
+      // Semantic accessors handle the interleaved storage transparently.
       for (let i = 0; i < 4; i++) {
-        expect((radAttr.array as Float32Array)[i]).toBeCloseTo(0.5);
-      }
-      for (let i = 0; i < 12; i++) {
-        expect((colAttr.array as Float32Array)[i]).toBeCloseTo(1.0);
+        expect(radAttr.getX(i)).toBeCloseTo(0.5);
+        expect(colAttr.getX(i)).toBeCloseTo(1.0);
+        expect(colAttr.getY(i)).toBeCloseTo(1.0);
+        expect(colAttr.getZ(i)).toBeCloseTo(1.0);
       }
     });
   });
@@ -264,7 +293,7 @@ describe('GPUBufferPool', () => {
       // releases to trigger eviction, then asserts the next acquire
       // returns a valid, undisposed geometry. A dispose-during-pool-
       // churn bug would surface as either a thrown error inside
-      // acquire or as an already-disposed `attributes.position`.
+      // acquire or as an already-disposed `attributes.aCenter`.
       const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
       const dataA = createMockLoadedPointsData(1000);
       const dataB = createMockLoadedPointsData(2000);
@@ -281,7 +310,7 @@ describe('GPUBufferPool', () => {
       const geomC = tinyPool.acquirePointsGeometry('nodeC', dataC, 100000);
 
       expect(geomC).toBeDefined();
-      expect(geomC.attributes.position).toBeDefined();
+      expect(geomC.attributes.aCenter).toBeDefined();
       expect(() => tinyPool.releasePointsGeometry('nodeC')).not.toThrow();
     });
   });
@@ -341,22 +370,36 @@ describe('GPUBufferPool', () => {
   });
 
   describe('Multi-Type Support', () => {
-    it('should create geometry with Uint8Array colors', () => {
+    it('widens Uint8Array color source to Float32 [0,1] in interleaved storage', () => {
+      // Post-interleaving, the pool stores ALL per-instance attributes
+      // as Float32 in a shared `InstancedInterleavedBuffer` so multiple
+      // attributes collapse to one vertex-buffer slot under WebGPU.
+      // Uint8 source data (range [0, 255]) is widened with the
+      // `normalized: true` divisor (255) at upload time so the shader
+      // sees the same [0, 1] range as before. Memory cost: 4× the
+      // color buffer; trivially small in absolute terms.
       const data = createMockLoadedPointsData(1000, 'Uint8Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
+      pool.updatePointsGeometry(geom, data, 1000);
 
-      const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
-      expect(colorAttr.array).toBeInstanceOf(Uint8Array);
-      expect(colorAttr.normalized).toBe(true); // Should be normalized
+      const colorAttr = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+      // Underlying storage is the shared Float32 interleaved buffer.
+      expect(colorAttr.data.array).toBeInstanceOf(Float32Array);
+      // First instance's R/G/B should be in [0, 1].
+      expect(colorAttr.getX(0)).toBeGreaterThanOrEqual(0);
+      expect(colorAttr.getX(0)).toBeLessThanOrEqual(1);
     });
 
-    it('should create geometry with Uint16Array colors', () => {
+    it('widens Uint16Array color source to Float32 [0,1] in interleaved storage', () => {
       const data = createMockLoadedPointsData(1000, 'Uint16Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
+      pool.updatePointsGeometry(geom, data, 1000);
 
-      const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
-      expect(colorAttr.array).toBeInstanceOf(Uint16Array);
-      expect(colorAttr.normalized).toBe(true); // Should be normalized
+      const colorAttr = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+      expect(colorAttr.data.array).toBeInstanceOf(Float32Array);
+      // Verify in-range — divisor is 65535 for Uint16 normalized.
+      expect(colorAttr.getX(0)).toBeGreaterThanOrEqual(0);
+      expect(colorAttr.getX(0)).toBeLessThanOrEqual(1);
     });
 
     it('should NOT reuse geometry when types differ', () => {

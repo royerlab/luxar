@@ -16,11 +16,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { wireMonitorAfterLoad } from '../../../../data/scene-loader/monitor-wiring';
 import type { SceneLoaderMonitorPort } from '../../../../data/scene-loader-monitor-port';
-import type {
-  WireMonitorAfterLoadParams,
-} from '../../../../data/scene-loader/monitor-wiring';
+import type { WireMonitorAfterLoadParams } from '../../../../data/scene-loader/monitor-wiring';
 import type { SceneNode } from '../../../../data/data-loader-types';
-import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../../../cache';
+import type { MultiLevelCachingStore } from '../../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../../cache/decompressed-chunk-cache';
 import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../../profiling/update-profiler';
 
@@ -38,9 +37,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
       callOrder.push(`setAccumulatorProvider:${type}`)
     ),
     setProfiler: vi.fn(() => callOrder.push('setProfiler')),
-    setCacheTelemetryState: vi.fn(() =>
-      callOrder.push('setCacheTelemetryState')
-    ),
+    setCacheTelemetryState: vi.fn(() => callOrder.push('setCacheTelemetryState')),
     setSceneGraph: vi.fn(() => callOrder.push('setSceneGraph')),
     forceUpdate: vi.fn(() => callOrder.push('forceUpdate')),
     updateVisibleSegments: vi.fn(),
@@ -62,9 +59,7 @@ function makeSceneGraph(): SceneNode {
   } as unknown as SceneNode;
 }
 
-function makeBaseParams(
-  monitor: SceneLoaderMonitorPort | null
-): WireMonitorAfterLoadParams {
+function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfterLoadParams {
   return {
     monitor,
     cachingStore: null,
@@ -155,8 +150,10 @@ describe('wireMonitorAfterLoad — cache providers', () => {
       l0Cache,
     });
 
-    const provider = (monitor.setL0CacheProvider as ReturnType<typeof vi.fn>)
-      .mock.calls[0][0] as { getStats: () => unknown; clear: () => void };
+    const provider = (monitor.setL0CacheProvider as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      getStats: () => unknown;
+      clear: () => void;
+    };
     provider.getStats();
     provider.clear();
     expect(getStats).toHaveBeenCalledTimes(1);
@@ -176,9 +173,7 @@ describe('wireMonitorAfterLoad — cache providers', () => {
       ...makeBaseParams(monitor),
       cacheTelemetryState,
     });
-    expect(monitor.setCacheTelemetryState).toHaveBeenCalledWith(
-      cacheTelemetryState
-    );
+    expect(monitor.setCacheTelemetryState).toHaveBeenCalledWith(cacheTelemetryState);
   });
 });
 
@@ -190,9 +185,7 @@ describe('wireMonitorAfterLoad — GPU pool + accumulators', () => {
       ...makeBaseParams(monitor),
       gpuBufferPool,
     });
-    expect(monitor.setGPUBufferPoolProvider).toHaveBeenCalledWith(
-      gpuBufferPool
-    );
+    expect(monitor.setGPUBufferPoolProvider).toHaveBeenCalledWith(gpuBufferPool);
   });
 
   it('setGPUBufferPoolProvider skipped when gpuBufferPool is null', () => {
@@ -204,9 +197,9 @@ describe('wireMonitorAfterLoad — GPU pool + accumulators', () => {
   it('registers a setAccumulatorProvider for each of points/lines/gsplats', () => {
     const monitor = makeMonitor();
     wireMonitorAfterLoad(makeBaseParams(monitor));
-    const calls = (
-      monitor.setAccumulatorProvider as ReturnType<typeof vi.fn>
-    ).mock.calls.map((c) => c[0]);
+    const calls = (monitor.setAccumulatorProvider as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[0]
+    );
     expect(calls).toEqual(['points', 'lines', 'gsplats']);
   });
 });
@@ -244,8 +237,7 @@ describe('wireMonitorAfterLoad — scene graph + visible counts', () => {
       sceneGraph,
     });
 
-    const arg = (monitor.setSceneGraph as ReturnType<typeof vi.fn>).mock
-      .calls[0][0];
+    const arg = (monitor.setSceneGraph as ReturnType<typeof vi.fn>).mock.calls[0][0];
     // Root SceneNode with path '/' converts to display name 'Scene'.
     expect(arg).toMatchObject({ name: 'Scene' });
   });
