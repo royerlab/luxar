@@ -606,7 +606,7 @@ Translation is at `[3,7,11]` in NumPy but `[12,13,14]` in THREE.js.
 
 The viewer loader **refuses to load** scenes whose 4x4 transforms look
 row-major (translation at indices [3,7,11] with [12,13,14] zero) — see
-`packages/luxar-viewer/src/data/node-factory.ts::validateTransformFormat`.
+`packages/luxar-viewer/src/rendering/node-factory/validation.ts::validateTransformFormat`.
 A producer that forgets to transpose now fails the load instead of
 silently rendering in the wrong place.
 

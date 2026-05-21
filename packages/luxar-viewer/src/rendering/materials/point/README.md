@@ -1,0 +1,235 @@
+# Point Material
+
+> Soft-edged sprite shader for Luxar's first-class **Points** geometry — one instanced unit-quad per point, world-space sizing, per-point sharpness, optional colormap, per-node Gain/Offset/Gamma. Ships as a GLSL3 `ShaderMaterial` + TSL `NodeMaterial` pair behind a single `ShaderSource`.
+
+This folder is the Point half of the per-geometry material stack
+(`materials/point/`, `materials/line/`, `materials/gsplat/`). It mirrors the
+shape of its siblings one-for-one: the four-file layout, the wrapper-class
+surface (`updateOpacity`, `updateGamma`, `applyBlendingMode`, `clone`, …), the
+`CameraAwareMaterial` / `ColormapAwareMaterial` interface implementations, and
+the GLSL ↔ TSL parity contract — see the
+[three-geometry symmetry note](../../README.md) in the rendering README and
+the [shared infrastructure README](../_shared/README.md).
+
+## Module map
+
+| File              | Role                                                                                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`  | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                    |
+| `shader-tsl.ts`   | `pointWebGPUFactory(uniforms, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Builds `vertexNode` + `colorNode` and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
+| `material-glsl.ts`| `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                |
+| `material-tsl.ts` | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; the constructor calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.             |
+
+`MaterialManager.getPointMaterial` dispatches on `caps.apiSurface` so callers
+(`NodeFactory.createPointsMaterial`, `LayersPanel`, …) never see the
+divergence.
+
+## The point sprite
+
+Each point is one instance of a 4-vertex unit-quad (`aQuadCorner ∈ [-1, 1]²`,
+the base geometry from `../../point-geometry.ts`). Per-instance attributes —
+supplied as `InstancedBufferAttribute`s by `setupInstancedPointsMesh` — drive
+the vertex stage:
+
+| Attribute    | Type   | Meaning                                              |
+| ------------ | ------ | ---------------------------------------------------- |
+| `aCenter`    | vec3   | World-space centre position                          |
+| `aRadius`    | float  | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage) |
+| `aSharpness` | float  | Per-point sharpness (multiplied by `sharpnessScale` similarly)                                          |
+| `aColor`     | vec3   | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute |
+| `aScalar`    | float  | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                  |
+
+The vertex shader projects `aCenter` to clip space, computes a world-space
+`pointSize` in pixels, then expands the unit quad by
+`aQuadCorner * pointSize / uResolution * projCenter.w` (the `* projCenter.w`
+converts the NDC delta into a clip-space delta that survives the upcoming
+perspective divide). The interpolated sprite UV `vSpriteCoord ∈ [0, 1]²`
+replaces `gl_PointCoord`, which is unavailable under `THREE.Mesh`.
+
+## World-space sizing
+
+Sizing is FOV-independent and matches `..` siblings' implementation: per-frame
+camera changes update **only** the precomputed scalar uniforms, not the shader.
+
+- `pointSizeFactor = 2 · resolution.y / tan(fov/2)` (perspective) or
+  `4 · resolution.y / frustumHeight` (ortho) — computed by `computePointSizeFactor`
+  in `../_shared/camera-uniforms.ts`, the shared math module that both Point and
+  GSplat materials and their picking counterparts pull from.
+- `maxPointSize = resolution.y · 0.5` — `computeMaxPointSize`, same module.
+- `uIsOrtho` (`int`) branches the inverse-distance term: `1.0` for ortho,
+  `inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))` for perspective. `inversesqrt`
+  is a native GPU instruction — faster than `sqrt + divide`.
+- `pointSize = max(1.0, min(basePointSize · sharpnessCompensation, maxPointSize))`.
+  The lower bound of `1.0` avoids degenerate quads; zero-radius filtering happens
+  in the fragment shader (see "nD slicing" below).
+
+`MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` broadcasts to
+every registered material via the `CameraAwareMaterial` interface, so a single
+camera-change call updates every Point material in the scene.
+
+## Sharpness compensation
+
+The fragment falloff is `(1 - r)^s` (parabolic, where `r ∈ [0, 1]` is the
+normalised sprite radius and `s` is per-point sharpness). Larger `s` makes the
+visible disk smaller, so without compensation high-sharpness points would
+shrink as `s` rises. The vertex stage upscales `pointSize` by
+
+```
+compensation = 1 / (1 - 0.01^(1/s))
+```
+
+— the analytical inverse of the radius at which intensity drops to 1%. This
+keeps the visible disk size constant across the full sharpness range.
+
+The raw expression diverges as `s → 0`, so the GLSL shader sanitises with
+`max(vSharpness, 0.01)` and `isInvalidFloat(...)` falls back to `1.0` on
+NaN/Inf. The TSL factory mirrors both guards (`max(normalizedSharpness, 0.01)`
+plus an explicit `lessThan(1e30).and(greaterThan(-1e30))` test).
+
+NaN/Inf sanitisation on `aSharpness` and `aRadius` goes through
+`sanitizePositive` / `sanitizeNonNegative` from `../_shared/glsl-lib.ts` (GLSL)
+and `../_shared/tsl-helpers.ts` (TSL) — the shared sanitisers prevent
+malformed-data poisoning of the `pow()` chain.
+
+## Fragment stage: falloff + GOG + max-mode
+
+The fragment shader runs in this order:
+
+1. **Zero-radius discard** — points clipped by nD slicing arrive with
+   `vRadius ≈ 0` from the loader; `discard` on `vRadius < 0.0001` short-circuits
+   the rest. (`vRadius` uses `highp` precision specifically for this check.)
+2. **Inscribed-circle discard** — `centered = vSpriteCoord - 0.5`,
+   `r2 = dot(centered, centered)`, `discard` if `r2 > 0.25`. Comparing squared
+   distance avoids a `sqrt` on the discard path.
+3. **Falloff** — `normalizedR = sqrt(4 · r2)`, `falloff = max(1 - r, 0)^s`.
+4. **Per-node GOG (Gain/Offset/Gamma)** —
+   `adjusted = vColor * uIntensity + uOffset` (clamped non-negative),
+   then `finalColor = pow(adjusted, vec3(invGamma))`. Pre-computed `invGamma`
+   moves the division out of the per-fragment path. A second discard culls
+   sub-1e-4 fragments to skip cost on offset-zeroed pixels. GOG is **per-node**;
+   global EOG (exposure) lives in the mega-shader post-processing pass.
+5. **Alpha** — `alpha = falloff * opacity`.
+6. **Max-mode RGB premultiplication** —
+   `#ifdef LUXAR_MAX_RGB_CONTRIBUTION` returns `vec4(finalColor * alpha, alpha)`;
+   the default path returns `vec4(finalColor, alpha)` (for `AdditiveBlending`'s
+   `SrcAlpha, One`). See the next section.
+
+## Blending modes
+
+`PointMaterial`/`PointTSLMaterial` accept the canonical Luxar `BlendingMode`
+(`'additive' | 'normal' | 'opaque' | 'luminous' | 'max'`) and route everything
+through `applyBlendingMode(mode)`, which is the **single source of truth** for
+both creation (called from the constructor) and runtime UI transitions (called
+from `LayersPanel`). The method:
+
+- Pulls the canonical THREE state from `getCompleteBlendingState` and applies
+  it via `applyBlendingStateToMaterial` (`../../blending-state.ts`) — covers
+  `blending`, `blendEquation`, `blendSrc`/`blendDst`, `depthTest`, etc.
+- Adds/removes the `LUXAR_MAX_RGB_CONTRIBUTION` shader define. In `max` mode
+  the framebuffer uses `CustomBlending + MaxEquation + OneFactor/OneFactor`,
+  which does **not** multiply source RGB by alpha at composite time. Without
+  premultiplication a soft point with `alpha = 0.1` would still write its full
+  bright RGB → max captures a flat coloured disk instead of the intended soft
+  contribution. The define toggles a shader recompile and forces the
+  premultiplied output.
+- Idempotent: identical state is a no-op via `userData.blendingMode` /
+  `defines.LUXAR_MAX_RGB_CONTRIBUTION` early exits.
+
+This is why the constructor's blending-mode wiring isn't done inline — the
+LayersPanel runtime-transition path needs the exact same code, and a previous
+generic UI path forgot `blendSrc`/`blendDst` and stranded SrcAlpha factors on
+an `additive → max` switch.
+
+## Colormap branch (`USE_COLORMAP`)
+
+Optional per-point scalar colouring. When enabled, the shader reads
+`aScalar` (per-instance float) and samples a 256×1 LUT texture
+(`uColormapTex`) at `t = clamp((aScalar - uScalarMin) * uScalarScale, 0, 1)`
+instead of reading `aColor`.
+
+- **GLSL** path: a `#ifdef USE_COLORMAP` block. `updateColormapTexture` flips
+  the define and sets `material.needsUpdate = true` to trigger recompilation.
+- **TSL** path: the colormap branch is a JS-side `if` in the factory, plus a
+  `texture()` node that captures the `THREE.Texture` by reference at
+  factory-call time. `PointTSLMaterial.updateColormapTexture` calls
+  `rebuildGraph()` whenever the on/off state **or** texture identity changes —
+  the GLSL `ShaderMaterial` path gets away with a single uniform write because
+  it reads the IUniform by reference every frame; TSL doesn't.
+
+Both materials implement the `ColormapAwareMaterial` interface
+(`setColormapTexture`, `setScalarRange`) so `material-colormap-helpers.ts` is
+their only external writer — nothing outside reaches into
+`material.uniforms.uColormapTex` directly.
+
+## nD slicing
+
+Points with zero effective radius arrive from `data/points/projection.ts`
+when their nD position doesn't intersect the current display hyperplane.
+Rather than culling on the CPU side, the encoder ships `aRadius = 0` and the
+fragment shader's `if (vRadius < 0.0001) discard` short-circuits them.
+Performance-wise this is acceptable because the vertex stage still runs, but
+the more expensive falloff/GOG/colormap fragment work is skipped.
+
+## Uniforms (reference)
+
+| Name              | Type      | Source                                | Notes                                                                 |
+| ----------------- | --------- | ------------------------------------- | --------------------------------------------------------------------- |
+| `opacity`         | float     | `updateOpacity`                        | Multiplied into final alpha                                           |
+| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)    | Per-node gamma; `userData.gamma` carries the original value for `clone()` |
+| `uIntensity`      | float     | `updateIntensity`                      | Per-node GOG gain                                                      |
+| `uOffset`         | float     | `updateOffset`                         | Per-node GOG offset                                                    |
+| `pointSizeFactor` | float     | `updateCameraParams` (camera math)    | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                       |
+| `maxPointSize`    | float     | `updateCameraParams`                   | Pre-computed `resY · 0.5`                                              |
+| `uIsOrtho`        | int       | `updateCameraParams`                   | `0` = perspective, `1` = ortho                                         |
+| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2) | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion |
+| `radiusScale`     | float     | `updateRadiusScale`                    | Dtype normalisation (e.g. `1/255` for uint8 radii)                     |
+| `sharpnessScale`  | float     | `updateSharpnessScale`                 | Same idea for sharpness                                                |
+| `uColormapTex`    | sampler2D | `setColormapTexture`                   | 256×1 LUT; `USE_COLORMAP` only                                         |
+| `uScalarMin`      | float     | `setScalarRange`                       | LUT normalisation min                                                   |
+| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                          |
+
+`clampGamma` (`../_shared/uniform-helpers.ts`) is the single source of truth
+for the `Math.max(0.001, γ ?? 1.0)` clamp — the GLSL `pow(color, 1/γ)` divides
+by zero at `γ == 0`, so every gamma write goes through this helper.
+
+## `clone()`
+
+Both wrappers override `clone()` to return their concrete type (`PointMaterial`
+or `PointTSLMaterial` — not the base `THREE.ShaderMaterial`/`NodeMaterial`).
+The clone path:
+
+1. Constructs a new instance with the original `PointMaterialConfig` derived
+   from `this.uniforms.*.value`, `this.userData.{gamma,depthTest,blendingMode,scalarRange}`,
+   and `this.uniforms.uColormapTex?.value`. The constructor's
+   `applyBlendingMode` re-establishes blending state and shader defines.
+2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
+   `invGamma`, `radiusScale`, `sharpnessScale`) verbatim so the clone starts at
+   the current camera frame, not the default.
+3. For `THREE.CustomBlending` (`max` mode), copies `blendEquation/Src/Dst` from
+   the source — the constructor would set canonical defaults, but if the source
+   had any post-construction overrides, copy carries them through.
+
+Disposal is inherited from the base material class; `MaterialManager`
+subscribes to the synchronous `dispose` event and cleans up its registry +
+cache automatically, so no explicit unregister hook lives here. (This is why
+this file stays out of the manager's import graph.)
+
+## Related
+
+- `../_shared/README.md` — `ShaderSource`, `buildMaterial`, `CameraAwareMaterial`,
+  `ColormapAwareMaterial`, `clampGamma`, the shared GLSL/TSL sanitisers, the
+  shared `pointSizeFactor` / `maxPointSize` / `focalLength` math.
+- `../line/`, `../gsplat/` — sibling stacks with the same four-file layout and
+  the same public surface (three-geometry symmetry).
+- `../../point-geometry.ts` — the 4-vertex unit-quad base geometry the
+  instancing builds on.
+- `../../node-factory/create-points-node.ts` — `createPointsGeometry` (sets up
+  the `InstancedBufferAttribute`s) and `createPointsMaterial` (the entry point
+  for callers).
+- `../../material-manager.ts` — `getPointMaterial(config)` is the dispatch
+  entry that selects `PointMaterial` vs `PointTSLMaterial`.
+- `../../picking/point-picking-material(-tsl).ts` — picking counterpart;
+  reuses the same vertex math via `camera-uniforms.ts` so screen-space hit
+  tests match what the user sees.
+- `../../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
+  that pairs `POINT_SOURCE.webgl` and `POINT_SOURCE.webgpu`.

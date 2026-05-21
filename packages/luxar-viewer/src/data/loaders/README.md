@@ -153,7 +153,7 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 
 ## Tolerance calculation
 
-Unified tolerance logic lives in `data/tolerance-computer.ts::computeTolerance`
+Unified tolerance logic lives in `tolerance-computer.ts::computeTolerance`
 and is selected by `geometryType`:
 
 | Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
@@ -297,12 +297,22 @@ class PointSpatialIndexLoader extends BaseSpatialLoader<PointsViewState, LoadedP
 
 ```
 src/data/loaders/
-├── index.ts                      # Module exports
+├── index.ts                      # Module exports (barrel)
 ├── README.md                     # This file
-├── base-types.ts                 # Common type definitions
-├── range-loader.ts               # Encoding dispatch
-├── spatial-query-builder.ts      # Canonical chunk-bounds query API
-└── transferable-accumulator.ts   # Zero-allocation + worker pattern
+├── base-types.ts                 # Common type definitions (BaseViewState, LoadRange, BaseLoader, ...)
+├── range-loader.ts               # Encoding dispatch (broadcasted/quantized/LUT/array_ref/direct)
+├── spatial-query-builder.ts      # Canonical chunk-bounds AABB query + helpers
+├── tolerance-computer.ts         # Geometry-aware per-dimension tolerance
+├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
+├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
+├── color-attribute-utils.ts      # Shared color-range loader with native-dtype preservation
+├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce
+├── image-label-loader.ts         # Lazy per-element image-label fetching (LRU blob URLs)
+├── label-loader.ts               # Lazy CSR-style string-label fetching
+├── overlay-loader.ts             # Reads overlay configurations from the zarr store
+├── loader-metrics.ts             # Pure helpers for moving-average load metrics
+├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
+└── once-init.ts                  # One-shot async initializer with retry-on-failure
 ```
 
 ## Testing
@@ -335,10 +345,35 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   - Points, Lines, GSplats factory functions
   - Memory tracking statistics
 
-- **../tolerance-computer.test.ts** (sibling)
+- **tolerance-computer.test.ts**
   - `computeTolerance` for points / lines / gsplats with displayed/hidden,
     discrete/spatial, with/without step, and option overrides
 
+- **base-types.test.ts** — `hasDimensionMetadata`, `getDisplayDimCount`,
+  `isHiddenDimension` type guards.
+- **chunk-bounds-loader.test.ts** — `fetchChunkBoundsArray` happy-path,
+  404 soft-fallback, and corrupt-zarr warning behavior.
+- **color-attribute-utils.test.ts** — native-dtype allocation, direct vs
+  encoded vs array_ref branches, `original_dtype` restoration with clamping.
+- **extend-to-all-preflight.test.ts** — warning and one-time announce
+  predicates, silence when `extendDims` is empty.
+- **loader-metrics.test.ts** — `recordLoadEvent` rolling-mean math,
+  `computeLoadLatency` undefined/zero start fallback.
+- **monitor-events.test.ts** — add/remove idempotency, per-listener
+  try/catch isolation, `clear()` on dispose.
+- **once-init.test.ts** — concurrent callers share in-flight promise;
+  rejected init clears the cache so the next call retries.
+
+## Dependencies
+
+- Internal: `data/zarr`, `data/array-decoder`, `workers/worker-pool`,
+  `cache/lru-cache`, `utils/log`, `utils/clamp`, `config`,
+  `types/dims`, `types/data-monitor-types`, `types/zarr`,
+  `profiling/update-profiler`.
+- External: `three`, `comlink` (via `workers/worker-pool`).
+
 ## See Also
 
-- [array-decoder.ts](../array-decoder.ts) - Low-level array decoding
+- [../array-decoder/](../array-decoder/) — low-level encoding metadata and decoders consumed by `range-loader.ts`.
+- [../../workers/README.md](../../workers/README.md) — worker pool API and the `runWithTimeout()` contract referenced above.
+

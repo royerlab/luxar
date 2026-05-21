@@ -2,7 +2,7 @@
  * Unit tests for `applyLensDistortion()` in `picking-system/lens-distortion.ts`.
  *
  * The TypeScript implementation must stay numerically identical to the
- * GLSL `applyDistortion()` in `mega-shader.glsl.ts:117-128`, otherwise
+ * GLSL `applyDistortion()` in `mega/shader.glsl.ts:117-128`, otherwise
  * mouse coordinates won't index into the correct pick-buffer pixel when
  * post-processing lens distortion is active.
  *
@@ -65,7 +65,7 @@ describe('applyLensDistortion', () => {
   });
 
   it('matches the GLSL reference (parity contract with mega-shader.glsl.ts)', () => {
-    // GLSL formula from mega-shader.glsl.ts:118-127, ported verbatim:
+    // GLSL formula from mega/shader.glsl.ts:118-127, ported verbatim:
     //   vec2 xn = 2.0 * (uv - 0.5);
     //   float r2 = dot(xn, xn);
     //   vec3 xDistorted = vec3((1.0 + distortionCoeff * r2) * xn, 1.0);

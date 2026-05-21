@@ -64,7 +64,7 @@ from npm and let your bundler resolve it.)
 | `src`            | string           | config  | Initial Zarr URL.                                                     |
 | `debug`          | boolean          | false   | Exposes `window.__luxarDebug` for Playwright / dev console.           |
 | `loaderConfig`   | LoaderConfig     | —       | Cache and prefetch flags.                                             |
-| `updateBrowserUrl` | boolean        | true    | **Set to false in embeds** so the host URL isn't rewritten.           |
+| `updateBrowserUrl` | boolean        | false   | Already off by default for embed safety; the standalone bootstrap opts in to `true`. |
 | `wasmPath`       | string           | —       | Override for bundlers that don't resolve `import.meta.url` for WASM.  |
 | `workerPath`     | string           | —       | Same, but for the data worker.                                        |
 

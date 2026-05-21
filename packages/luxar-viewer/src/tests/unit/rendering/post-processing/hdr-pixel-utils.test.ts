@@ -13,7 +13,7 @@ import {
   flipPixelsVerticallyRGBA,
   compactWebGPUReadbackRows,
   readPixelsCompactAsync,
-} from '../../../../rendering/post-processing/hdr-pixel-utils';
+} from '../../../../rendering/post-processing/hdr/pixel-utils';
 import type { Renderer, RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 describe('halfFloatToFloat32', () => {

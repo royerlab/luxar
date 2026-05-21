@@ -1,0 +1,129 @@
+# Data Loading Monitor internals
+
+Private helpers behind the `M`-key data-loading monitor. The public
+facade lives at `../data-loading-monitor.ts` and owns the panel
+lifecycle, event subscription, and three-state UI (hidden → mini →
+expanded). This folder holds the pure-ish helpers it pulls in each
+tick: HTML templates, the loading advisor, the event queue, the
+polling loop, and the hierarchical timing panel.
+
+## Files
+
+| File              | Role                                                                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `templates.ts`    | HTML-string template functions for every cell, card, progress bar, status badge, tab content, scene-graph tree, and memory section the monitor paints. Also re-exports `MemoryMetrics` and friends. |
+| `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, high memory, low GPU reuse rate, frequent evictions, …).        |
+| `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                       |
+| `polling-loop.ts` | `PollingLoop` — restartable interval timer with tick stats. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                          |
+| `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders.                |
+
+`README.md` for this folder; per-subpackage READMEs live under
+`metrics/` and `tabs/`.
+
+## How the pieces fit together
+
+```
+LoaderMonitor events ──► EventQueue ──► PollingLoop.onTick ─┐
+                                                            │
+                ┌──────────────────────────────────────────┘
+                ▼
+     metrics/rates.ts + metrics/cache.ts   (roll up rates & cache state)
+                │
+                ▼
+   templates.ts (full repaint)  ◄──┐
+                │                  │ structure missing
+                ▼                  │
+   tabs/cache.ts (incremental)  ───┘ patch-by-`data-field`
+                │
+                ▼
+        advisor.ts (emits Recommendations into the Insights tab)
+                │
+                ▼
+   timing-panel.ts (hierarchical timing tree, separate render path)
+```
+
+The orchestrator at `../data-loading-monitor.ts` owns:
+
+- the `EventQueue<MonitorEvent>` instance and a `PollingLoop` that
+  drains it on each tick,
+- a `LoadingAdvisor` instance that sees every drained event plus
+  rolled-up metrics,
+- the painted-once-then-patched tab DOM (templates for structure;
+  `tabs/` for per-tick value patches),
+- the timing panel's container and its expand/collapse state.
+
+## Status badges and color classes
+
+`templates.ts` is the single source of truth for the cache-status
+pills surfaced in the Cache tab. `CACHE_BADGE_COLOR` maps each
+`CacheStatusBadge` (`cache-enabled`, `no-cache`, `disabled-config`,
+`opfs-unavailable`, `quota-constrained`, `cache-errors-detected`,
+`unvalidated-external-dataset`, `provider-missing`) to a
+`luxar-color--*` modifier class. `renderCacheStatusBadges` emits one
+`<span class="luxar-badge …" data-badge="…">` per badge; the row
+wrapper carries `data-field="cache-status-row"` and a `join('|')`
+signature so `tabs/cache.ts` can skip `innerHTML` replacement when the
+badge set hasn't changed across ticks.
+
+All other dynamic colors flow through `getColorClass(SemanticColor)`
+which returns `luxar-color--{success|warning|error|info|muted|dimmed|primary}`.
+
+## Contracts and invariants
+
+- **Templates produce structure, updaters patch values.**
+  `templates.ts` paints the full HTML on a tab switch or a structural
+  change; `tabs/cache.ts` (and the per-tick updaters in the
+  orchestrator) only rewrite values via `data-field` selectors. If a
+  selector misses, the updater returns `false` and the orchestrator
+  rebuilds via `templates.ts`.
+- **`EventQueue.drain()` is atomic** — the internal array is
+  reassigned in one step so producers pushing concurrently never
+  observe a half-drained queue.
+- **`PollingLoop` swallows `onTick` errors** (logged via
+  `utils/log`) so a single bad tick can't stop monitoring.
+- **`LoadingAdvisor` is idempotent per recommendation id** — every
+  `addX…Recommendation` writes a fixed `id` (e.g. `slow-query`,
+  `high-memory`, `low-gpu-reuse-points`) into a `Map`, so the latest
+  values win and stale entries don't accumulate across ticks. The
+  history buffer is capped at
+  `config.dataLoading.monitor.limits.maxAdvisorHistory`.
+- **Thresholds come from `config.dataLoading.monitor.thresholds`** —
+  `advisor.ts` never hard-codes magic numbers; tuning happens in the
+  unified config.
+- **Timing panel expand/collapse state is module-level** on purpose so
+  it survives full DOM repaints triggered by tab switches.
+- **All user-supplied strings flow through `utils/escape-html`** before
+  being interpolated into template literals (loader paths, entry
+  names, recommendation messages).
+
+## Why this layout
+
+The monitor's public file is already large because it orchestrates an
+event loop, multi-tab DOM, scene-graph viewer, and timing tree. Each
+helper here was extracted to keep that orchestrator focused on
+coordination rather than HTML strings, rate math, or advisory logic.
+Everything in this folder is reachable only via the parent monitor;
+no external module imports it directly.
+
+## Subpackages
+
+- [`metrics/`](./metrics/README.md) — Pure roll-up helpers for cache
+  metrics and per-second event rates (`aggregateCacheMetrics`,
+  `calculateRates`).
+- [`tabs/`](./tabs/README.md) — Per-tick tab updaters that patch the
+  static structure painted by `templates.ts` (currently
+  `updateCacheTab` plus `dom-helpers`).
+
+## See Also
+
+- [`../data-loading-monitor.ts`](../data-loading-monitor.ts) —
+  Orchestrator that wires the queue, polling loop, advisor, templates,
+  and tab updaters together.
+- [`../README.md`](../README.md) — UI package overview; the Data
+  Loading Monitor section describes the user-facing behaviour
+  (keyboard shortcut `M`, three-state UI, event types).
+- `../../types/data-monitor-types.ts` — Shared types
+  (`MonitorEvent`, `LoaderMetrics`, `CacheMetrics`,
+  `CacheStatusBadge`, `Recommendation`, `SceneGraphState`, …).
+- `../../profiling/update-profiler.ts` — Source of the `TimingEntry`
+  tree rendered by `timing-panel.ts`.

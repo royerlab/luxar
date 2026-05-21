@@ -1,226 +1,117 @@
-# Rendering Controls Setup Modules
+# Rendering Controls Support Modules
 
-Modular setup functions for the rendering controls UI. Each module is responsible for creating a specific category of controls in the GUI interface.
+> Helpers backing the `RenderingControls` facade in `../rendering-controls.ts` — settings persistence, live-state sync, cinematic-mode preset, focus management, optical math, and the per-category GUI builders under [`setup/`](./setup/README.md).
 
-## Overview
+The parent class (`../rendering-controls.ts`, ~900 lines) owns construction, the GUI panel, and lifecycle. Everything else lives here as small focused modules that are individually unit-testable: pure helpers (no DOM) for math and settings I/O; small classes that own one piece of state (cinematic snapshot, RAF loop, document-level listener); and a `setup/` subpackage of builder functions that populate the GUI folders. Keeping each concern in its own file keeps `rendering-controls.ts` an orchestrator and lets the heavy machinery be tested without instantiating a SceneManager or a real GUI.
 
-The rendering controls UI is split into focused, maintainable modules for better organization, testability, and navigation.
-
-### Architecture
+## File Structure
 
 ```
 rendering-controls/
-├── types.ts                    # Shared types (SetupContext, SetupResult)
-├── navigation-setup.ts         # Navigation controls (orbit, fly, ortho)
-├── camera-setup.ts             # Camera settings (FOV, clipping)
-├── hdr-setup.ts                # HDR intensity & tone mapping
-├── anti-aliasing-setup.ts      # AA techniques (FXAA, MSAA, SSAA)
-└── post-processing-setup.ts    # Effects (bloom, noise, vignette, lens distortion)
+├── types.ts                   # SetupContext / SetupResult shared by the setup/ builders
+├── apply-settings.ts          # applyRenderingSettings — push settings → live subsystems
+├── sync-current-state.ts      # syncCurrentState — pull live state ← subsystems → GUI
+├── settings-persistence.ts    # localStorage save/load + base & reset defaults builders
+├── controls-utils.ts          # Pure: validate / clamp / serialize / merge / impact-score
+├── cinematic-mode.ts          # CinematicModeController — film-look preset (snapshot/restore)
+├── clipping-display.ts        # ClippingDisplay — RAF loop showing live near/far when dynamic
+├── focus-manager.ts           # FocusManager — outside-click blur + canvas refocus
+├── fov-utils.ts               # Pure: 35mm focal-length ↔ FOV conversions
+└── setup/                     # Per-category GUI builders (see ./setup/README.md)
 ```
 
-Each module exports a setup function that:
+## Modules
 
-1. Takes a `SetupContext` with GUI, settings, and callbacks
-2. Creates its category's controls using the GUI library
-3. Returns a `SetupResult` with controller references
+### `types.ts`
 
-## Module Responsibilities
+Defines `SetupContext` and `SetupResult` — the shared call-shape used by every builder in `setup/`. `SetupContext` carries the `GUI`, the live `RenderingSettings`, the `PostProcessingManager`, the `SceneManager`, the optional `AnimationController`, and the `saveSettings` / `triggerAnimation` / `updateClippingControlsState` / `updateNavigationControls` callbacks. `SetupResult` returns `{ controllers, folders?, shadowObjects? }`; the parent class merges every builder's `controllers` map into one combined `RenderingControllers`.
 
-### types.ts
+### `apply-settings.ts`
 
-Defines shared interfaces used across all setup modules:
+`applyRenderingSettings(context)` pushes the current `RenderingSettings` into the post-processing pipeline and the scene manager. Used after any wholesale settings change (load from storage, apply zarr defaults, reset). No opinion about the source — only about how each field maps to a manager call. Side-effects: bloom, global EOG (exposure/offset/gamma), SSAA/FXAA/MSAA, tone mapping, detector noise (+ kicks the animation controller when enabled), vignette, chromatic lens distortion, dynamic clipping, and a final `triggerAnimation()`.
+
+### `sync-current-state.ts`
+
+`syncCurrentState(context)` is the inverse direction: pulls live state from the scene manager + camera + `ControlsManager` into `RenderingSettings` and refreshes every relevant `RenderingControllers` entry. Called whenever the panel becomes visible so the user sees what subsystems actually report rather than what they were last told to be. Snaps `fov` to a `config.camera.fovPresets` label when within 0.5°, mirrors fly-config from `ControlsManager` (persists across orbit↔fly switches), updates orbit `autoRotate`/`autoRotateSpeed`, and finishes with `gui.controllersRecursive().forEach(c => c.updateDisplay())` plus a cinematic-checkbox refresh and a navigation-folder visibility update.
+
+### `settings-persistence.ts`
+
+localStorage I/O and defaults building. No DOM, no manager calls — just structured merging:
+
+| Export | Purpose |
+| --- | --- |
+| `buildBaseDefaults()` | Hardcoded base defaults (`config.renderingControls.defaults` + `config.controls.fly.*` defaults). Returns `FullySpecifiedRenderingSettings`. |
+| `buildResetDefaults(zarrViewerConfig?)` | Base defaults overlaid with zarr `viewer_config` overrides (routed through `validateRenderingSettings` to clamp NaN/Infinity). |
+| `saveSettingsToStorage(sceneId, settings)` | Quota-safe write under `StorageKeys.rendering(sceneId)`. |
+| `loadSettingsFromStorage(sceneId)` | Quota-safe read; returns `{ stored, loaded }`. |
+| `clearStoredSettings(sceneId)` | Quota-safe `removeItem`. |
+
+`FullySpecifiedRenderingSettings` narrows the otherwise-optional fly fields to non-optional concretes — useful for callers that don't want `| undefined` everywhere.
+
+### `controls-utils.ts`
+
+Pure utility functions extracted for testability — no external dependencies beyond `config`. Key exports:
+
+- `validateRenderingSettings(partial)` — range-clamps every numeric, enum-checks `toneMapping` (`None`, `Linear`, `Reinhard`, `Cineon`, `ACES`, `AgX`, `Neutral`) and `controlType` (`orbit`, `fly`, `ortho`), and replaces non-boolean injections with defaults. Guards against NaN/Infinity in corrupted localStorage or malicious zarr config.
+- `clampMSAASamples(value)` — snaps to a valid power-of-two MSAA count (0, 2, 4, 8, 16). Non-finite or non-numeric input → 0 (disabled); finite values are bucketed by `<=` comparisons.
+- `serializeSettings` / `deserializeSettings` — JSON encode/decode with a null-on-parse-failure return.
+- `mergeSettings(partial, defaults?)` — `{ ...defaults, ...partial }` then validate.
+- `getSettingsRequiringRebuild(current, previous)` — returns the list of changed keys (`'msaa'`, `'ssaa'`, `'fxaa'`, `'toneMapping'`) that force a post-processing pipeline rebuild.
+- `calculatePerformanceImpact(settings)` — heuristic 0–100 score for the AA/bloom/tone-mapping/lens-distortion/auto-rotate combo.
+- `isValidColor(s)` — hex / rgb(a) / a short named-color allowlist.
+- `getDefaultRenderingSettings()` — thin wrapper over `config.renderingControls.defaults` (re-exported `RenderingSettings` type for callers that prefer to import from this module).
+- `settingsChanged(a, b)` — JSON-string equality (good enough for the panel's needs).
+
+### `cinematic-mode.ts`
+
+`CinematicModeController` owns the Cinematic-Mode preset (C-key toggle):
+
+- **Enable** snapshots the affected `RenderingSettings` keys (tone mapping, detector noise, vignette, chromatic lens distortion, FOV, FOV preset) and applies cinematic values: ACES tone mapping, low detector noise (readout/photon/FPN), vignette on, the `35mm` lens-distortion preset, and 35 mm FOV.
+- **Disable** restores from the snapshot, dirty-checked per key (a key is only restored if it still holds the cinematic value — user edits are preserved). If no snapshot exists (panel loaded with cinematic already on), falls back to `50mm Normal` defaults.
+- **`updateCheckbox()`** uses a majority-vote over the four signal effects (`detectorNoiseEnabled`, `vignetteEnabled`, `chromaticLensDistortionEnabled`, `toneMapping === 'ACES'`) to drive the checkbox's display state.
+- **`clearSnapshot()`** is called from `resetToDefaults`/`loadSettings` so the next toggle starts fresh.
+
+The post-processing batch goes through `postProcessing.withDeferredRebuild(...)` so the depth counter unwinds even if a sub-setter throws. `TONE_MAPPING_MAP` (string → `THREE.ToneMapping` enum) is exported and reused by `apply-settings.ts`.
+
+### `clipping-display.ts`
+
+`ClippingDisplay` ties the dynamic-clipping toggle to the near/far sliders:
+
+- When `dynamicEnabled === true` it sets `opacity: 0.5` and `pointer-events: none` on the slider containers and starts a throttled (100 ms) `requestAnimationFrame` loop that copies `camera.near` / `camera.far` into `settings.near` / `settings.far` and calls `controller.updateDisplay()` (without firing `onChange`).
+- When `dynamicEnabled === false` it cancels the RAF and restores normal styling.
+- `getNearPlane` / `getFarPlane` are passed as getters because the near/far controllers are created by `setup/camera-setup.ts` and may not exist when this controller is constructed.
+- `dispose()` cancels the RAF; safe to call multiple times.
+
+### `focus-manager.ts`
+
+`FocusManager` keeps keyboard focus on the canvas when the user clicks outside the panel:
+
+- **`onPanelShown()`** schedules a `setTimeout(100 ms)` that installs a capture-phase `mousedown` listener on `document`. The delay is so the click that opened the panel doesn't immediately trigger the handler.
+- The handler blurs the active GUI element and refocuses the canvas when the click target is outside `context.panel`.
+- **`onPanelHidden()`** blurs any active element, tears down the listener, and refocuses the canvas. Idempotent.
+- **`dispose()`** is always sufficient to leave zero document-level listeners behind.
+
+### `fov-utils.ts`
+
+Pure 35mm-equivalent focal-length ↔ FOV conversions used by the camera section of the GUI:
 
 ```typescript
-interface SetupContext {
-  gui: GUI; // GUI instance
-  settings: RenderingSettings; // Current settings
-  postProcessing: PostProcessingManager; // Effect manager
-  sceneManager: SceneManager; // Scene/camera manager
-  animationController?: AnimationController; // Animation trigger
-  saveSettings: () => void; // Persist settings
-  triggerAnimation: () => void; // Request render
-  updateClippingControlsState: (enabled: boolean) => void;
-  updateNavigationControls: (type: 'orbit' | 'fly' | 'ortho') => void;
-}
-
-interface SetupResult {
-  controllers: Partial<RenderingControllers>; // UI controller refs
-  folders?: { [key: string]: GUI }; // Folder refs
-  shadowObjects?: { [key: string]: any }; // Special UI objects
-}
+fovToFocalLength(fovDegrees: number): number   // sensorWidth / (2 · tan(FOV/2))
+focalLengthToFov(focalLengthMm: number): number // 2 · atan(sensorWidth / (2 · f))
 ```
 
-### navigation-setup.ts
+Reference sensor is the 36 mm-wide 35mm-film sensor (`FILM_35MM_SENSOR_WIDTH_MM`). `fovToFocalLength` rounds to the nearest integer mm since the GUI only displays whole-millimetre labels (e.g. `~50mm` next to the FOV slider when the preset is `Custom`).
 
-**Navigation controls for camera movement and rotation**
+## Subpackages
 
-Creates controls for:
+- [`setup/`](./setup/README.md) — Per-category GUI builders that populate the rendering-controls panel: `navigation-setup`, `camera-setup`, `hdr-setup`, `anti-aliasing-setup`, `post-processing-setup`, `performance-setup`, `theme-setup`. Each builder consumes a `SetupContext` (from `./types.ts`) and returns a `SetupResult`.
 
-- Control type selector (orbit, fly, ortho)
-- Orbit controls (auto-rotate, rotation speed)
-- Fly controls (movement speed, rotation speed, inertial mode, damping)
+## Dependencies
 
-Returns folder references for `orbitFolder` and `flyFolder` which are used by `updateNavigationControls()` to show/hide controls based on the active control type.
+- Internal: `../../config`, `../../config/zarr-bridge/viewer-config-utils`, `../../controls/types`, `../../rendering` (`PostProcessingManager`), `../../scene/scene-manager`, `../../scene/animation/animation-controller`, `../../types/zarr`, `../../utils/log`, `../../utils/storage-keys`, `../gui`.
+- External: `three` (for the `THREE.ToneMapping` enum in `cinematic-mode.ts`).
 
-### camera-setup.ts
+## Related
 
-**Camera-specific settings**
-
-Creates controls for:
-
-- FOV presets (28mm, 35mm, 50mm, 85mm, 135mm, Custom)
-- FOV slider with real-time adjustment
-- Clipping planes (near, far, dynamic clipping)
-
-**Special behavior:** Takes `controllersRef` parameter to enable FOV preset synchronization with lens distortion controls (defined in post-processing module).
-
-### hdr-setup.ts
-
-**Global EOG (Exposure-Offset-Gamma) and tone mapping**
-
-Creates controls for:
-
-- Exposure (log2 stops for perceptual linearity, -5 to +5)
-- Global Offset (linear slider, -1.0 to 1.0)
-- Global Gamma (linear slider, 0.1 to 10.0)
-- Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
-
-Global EOG is applied inside the mega-shader fragment immediately before the tone-mapping operator.
-
-### anti-aliasing-setup.ts
-
-**Anti-aliasing techniques**
-
-Creates controls for:
-
-- SSAA (Supersampling) with resolution multiplier
-- FXAA (Fast Approximate AA)
-- MSAA (Multisample AA) with sample count
-
-Includes dynamic subfolder showing/hiding based on AA enablement.
-
-### post-processing-setup.ts
-
-**Post-processing visual effects**
-
-Creates controls for:
-
-- **Bloom**: Glow/light bleeding (threshold, strength, radius, mipmap levels)
-- **Detector Noise**: Physics-based noise (shot, readout, FPN)
-- **Chromatic Lens Distortion**: Brown-Conrady + camera intrinsics + per-channel dispersion
-- **Vignette**: Edge darkening (darkness, offset)
-- **Lens Distortion**: Full camera model (distortion, principal point, focal length, skew)
-
-**Special behavior:** Takes `controllersRef` parameter and exports lens distortion controller references for FOV preset synchronization.
-
-## Usage
-
-The main `RenderingControls` class calls these setup functions during initialization:
-
-```typescript
-private setupControls(): void {
-  this.setupAutoBlur();
-
-  // Navigation
-  const navResult = setupNavigationControls({
-    gui: this.gui,
-    settings: this.settings,
-    postProcessing: this.postProcessing,
-    sceneManager: this.sceneManager,
-    animationController: this.animationController,
-    saveSettings: () => this.saveSettings(),
-    triggerAnimation: () => this.triggerAnimation(),
-    updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
-    updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
-  });
-
-  Object.assign(this.controllers, navResult.controllers);
-  this.orbitFolder = navResult.folders?.orbitFolder;
-  this.flyFolder = navResult.folders?.flyFolder;
-
-  // Camera (needs controller reference for lens distortion sync)
-  const camResult = setupCameraControls(context, this.controllers);
-  Object.assign(this.controllers, camResult.controllers);
-
-  // HDR
-  const hdrResult = setupHDRControls(context);
-  Object.assign(this.controllers, hdrResult.controllers);
-
-  // Anti-aliasing
-  const aaResult = setupAntiAliasingControls(context);
-  Object.assign(this.controllers, aaResult.controllers);
-
-  // Post-processing (needs controller reference for lens distortion)
-  const ppResult = setupPostProcessingControls(context, this.controllers);
-  Object.assign(this.controllers, ppResult.controllers);
-}
-```
-
-## Cross-Module Dependencies
-
-### FOV Preset ↔ Lens Distortion Sync
-
-When a FOV preset is selected, the camera module updates the corresponding lens distortion parameters:
-
-- Camera module receives `controllersRef` to access lens distortion controllers
-- Post-processing module exports lens distortion controller references
-- FOV preset onChange updates both FOV and lens distortion settings
-
-### Exposure Slider
-
-The exposure slider uses log2 stops (photography-standard units):
-
-- Slider controls `settings.exposure` directly (-5 to +5 stops)
-- 0 = neutral, +1 = 2x brighter, -1 = half brightness
-- Applied via `sceneManager.updateExposure(value)` in the HDR effect pass
-
-### Navigation Folder Visibility
-
-The navigation module returns folder references:
-
-- `orbitFolder` and `flyFolder` stored by main class
-- `updateNavigationControls()` shows/hides folders based on control type
-- Orbit folder shared between orbit and ortho modes
-
-## Benefits of Modular Design
-
-1. **Improved Maintainability**: Each module has a single, clear responsibility
-2. **Better Testability**: Smaller functions easier to test in isolation
-3. **Enhanced Readability**: Clear separation of concerns, easier navigation
-4. **Reduced Complexity**: Main file reduced from 2,514 to 1,350 lines (46% reduction)
-5. **Tool Compatibility**: Files now within Read tool token limits
-6. **Scalability**: Easy to add new control categories without bloating main file
-
-## Best Practices
-
-### When Adding New Controls
-
-1. **Determine the category**: Does it fit in an existing module or need a new one?
-2. **Follow the pattern**: Export a setup function that takes `SetupContext`
-3. **Return controller refs**: Enable programmatic updates via `SetupResult`
-4. **Add tooltips**: Use `domElement.setAttribute('title', ...)` for help text
-5. **Handle dependencies**: Pass additional parameters if cross-module sync needed
-6. **Document behavior**: Update this README with special behaviors
-
-### Cross-Module Communication
-
-- **Prefer explicit parameters** over global state
-- **Pass controller references** when one module needs to update another's controls
-- **Use shadow objects** for complex UI patterns (like logarithmic sliders)
-- **Return folder references** when visibility toggling is needed
-
-## Testing
-
-Each module can be tested independently by:
-
-1. Creating a mock `SetupContext` with required dependencies
-2. Calling the setup function
-3. Verifying the returned `SetupResult` contains expected controllers
-4. Testing UI interactions trigger the correct callbacks
-
-See the main rendering-controls tests for examples of testing the integrated system.
-
-## Related Documentation
-
-- Parent: `../README.md` - UI package overview
-- Main class: `../rendering-controls.ts` - RenderingControls class that uses these modules
+- `../rendering-controls.ts` — `RenderingControls` facade that wires every module here into a single panel.
+- [`./setup/README.md`](./setup/README.md) — The per-category builder functions.

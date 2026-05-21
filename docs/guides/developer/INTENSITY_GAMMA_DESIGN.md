@@ -26,7 +26,7 @@ wrong:
 ### Global Controls (vendored into tone mapping, zero extra cost)
 
 Move global brightness/gamma out of shaders into the tone mapping shader itself.
-The vendored `LuxarToneMappingEffect` applies EOG **before** tone mapping in a single pass:
+The vendored `LuxarMegaShaderMaterial` applies EOG **before** tone mapping in a single pass:
 
 ```
 HDR buffer → [Bloom] → [EOG + Tone Mapping (single pass)] → [Vignette] → [AA] → display
@@ -132,7 +132,7 @@ UI sliders (in "☀️ HDR" folder):
   - Offset: linear slider -1.0 to +1.0
   - Gamma: linear slider 0.1 to 10.0
   ↓
-postProcessingManager.luxarToneMappingEffect.uniforms
+postProcessingManager.megaShader.uniforms
   - uExposure, uOffset, uGamma
   ↓
 Single vendored shader pass (EOG + tone mapping)
@@ -231,7 +231,7 @@ implemented as a separate post-processing pass.
 - This avoids an extra render target allocation and preserves the fused pipeline
 
 **Approach:** `MegaShaderMaterial` exposes `uExposure`, `uGlobalOffset`, and
-`uGlobalGamma` uniforms. `mega-shader.glsl.ts` applies EOG immediately before
+`uGlobalGamma` uniforms. `mega/shader.glsl.ts` applies EOG immediately before
 calling Three's tone-mapping shader chunks:
 
 ```glsl
@@ -276,13 +276,21 @@ All features described in this document are **fully implemented**:
 - `packages/luxar/src/luxar/typing_utils/constants.py` — range constants
 
 ### TypeScript (shaders)
-- `packages/luxar-viewer/src/rendering/point-material.ts` — GOG uniforms
-- `packages/luxar-viewer/src/rendering/line-material.ts` — GOG uniforms
-- `packages/luxar-viewer/src/rendering/gsplat-material.ts` — GOG uniforms
+
+Dual-stack: each geometry has a parallel GLSL (WebGL2 path) and TSL (WebGPU path) implementation; GOG uniforms live in both.
+
+- `packages/luxar-viewer/src/rendering/materials/point/material-glsl.ts` — GOG uniforms (WebGL2)
+- `packages/luxar-viewer/src/rendering/materials/point/material-tsl.ts` — GOG uniforms (WebGPU)
+- `packages/luxar-viewer/src/rendering/materials/line/material-glsl.ts` — GOG uniforms (WebGL2)
+- `packages/luxar-viewer/src/rendering/materials/line/material-tsl.ts` — GOG uniforms (WebGPU)
+- `packages/luxar-viewer/src/rendering/materials/gsplat/material-glsl.ts` — GOG uniforms (WebGL2)
+- `packages/luxar-viewer/src/rendering/materials/gsplat/material-tsl.ts` — GOG uniforms (WebGPU)
 
 ### TypeScript (post-processing + scene management)
-- `packages/luxar-viewer/src/rendering/post-processing/mega-shader-material.ts` — EOG uniforms and tone-mapping mode defines
-- `packages/luxar-viewer/src/rendering/post-processing/mega-shader.glsl.ts` — fused EOG + tone-mapping shader stage
+- `packages/luxar-viewer/src/rendering/post-processing/mega/material.ts` — EOG uniforms and tone-mapping mode `#define` (WebGL2 path)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/material-tsl.ts` — EOG uniforms and tone-mapping mode uniform (WebGPU path)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/shader.glsl.ts` — fused EOG + tone-mapping shader stage (WebGL2)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/shader.tsl.ts` — fused EOG + tone-mapping shader stage (WebGPU)
 - `packages/luxar-viewer/src/rendering/post-processing/post-processing-manager.ts` — exposure/offset/gamma update methods
 - `packages/luxar-viewer/src/rendering/material-manager.ts` — per-node GOG uniforms in material creation
 - `packages/luxar-viewer/src/scene/scene-manager.ts` — `updateExposure()`/`updateGlobalOffset()`/`updateGlobalGamma()` routing
@@ -291,12 +299,12 @@ All features described in this document are **fully implemented**:
 ### TypeScript (config + propagation)
 - `packages/luxar-viewer/src/config/types.ts` — `exposure`/`globalOffset`/`globalGamma` in RenderingSettings
 - `packages/luxar-viewer/src/config/index.ts` — defaults
-- `packages/luxar-viewer/src/config/viewer-config-utils.ts` — `RENDERING_SETTINGS_MAP` snake_case → camelCase
+- `packages/luxar-viewer/src/config/zarr-bridge/viewer-config-utils.ts` — `RENDERING_SETTINGS_MAP` snake_case → camelCase
 - `packages/luxar-viewer/src/types/zarr.ts` — `ZarrViewerConfig` fields
 
 ### TypeScript (UI)
-- `packages/luxar-viewer/src/ui/rendering-controls/hdr-setup.ts` — Exposure/Offset/Gamma sliders
-- `packages/luxar-viewer/src/ui/rendering-controls-utils.ts` — `validateRenderingSettings()` ranges
+- `packages/luxar-viewer/src/ui/rendering-controls/setup/hdr-setup.ts` — Exposure/Offset/Gamma sliders
+- `packages/luxar-viewer/src/ui/rendering-controls/controls-utils.ts` — `validateRenderingSettings()` ranges
 
 ### TypeScript (node types)
 - `packages/luxar-viewer/src/types/points.ts` — `intensity?` and `offset?` in `PointsMetadata`

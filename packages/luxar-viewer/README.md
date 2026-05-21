@@ -275,206 +275,44 @@ The advanced rendering controls panel (located on the left side) provides real-t
 
 ### Project Structure
 
+The viewer source tree is organized into 17 subpackages, each with its own
+`README.md` documenting its files, public surface, invariants, and
+dependencies in detail. The top-level shape:
+
 ```
 src/
-├── core/
-│   ├── main.ts                    # Application entry point
-│   └── app.ts                     # Main application class
-├── cache/
-│   ├── index.ts                       # Public-API barrel
-│   ├── multi-level-caching-store.ts   # L1+L2 cascade orchestrator
-│   ├── chunk-prefetcher.ts            # Background prefetch loop
-│   ├── decompressed-chunk-cache.ts    # L0 decompressed chunk cache
-│   ├── lru-cache.ts                   # Generic LRU
-│   ├── types.ts                       # Shared cache types
-│   ├── decompressed-chunk-cache/
-│   │   └── cached-zarr-array.ts       # zarrita proxy wrapping L0
-│   └── multi-level-caching-store/
-│       ├── opfs-store.ts              # L2 OPFS persistence
-│       ├── segmented-lru-cache.ts     # L1 segmented LRU
-│       ├── bandwidth-window.ts        # Sliding-window throughput tracker
-│       ├── fetch-retry.ts             # fetchWithRetry + abort/URL helpers
-│       ├── validation-queue.ts        # Cross-instance validation serializer
-│       └── opfs-store/
-│           ├── buckets.ts             # Bucket-handle cache
-│           ├── metadata.ts            # _cache_meta.json lifecycle
-│           └── opfs-timeout.ts        # I/O timeout race helper
-├── config/
-│   ├── index.ts                   # Unified configuration system
-│   ├── types.ts                   # Configuration type definitions
-│   ├── validation.ts              # Configuration validation
-│   ├── viewer-config-utils.ts     # Viewer config utilities
-│   └── viewer-state-capture.ts    # Viewer state capture
-├── controls/
-│   ├── controls-manager.ts        # Control mode switching and management
-│   ├── luxar-fly-controls.ts      # Custom fly controls with inertial physics
-│   ├── luxar-orbit-controls.ts    # Quaternion-based orbit controls
-│   └── types.ts                   # Control system type definitions
-├── data/
-│   ├── array-decoder.ts           # Array decoding from zarr
-│   ├── chunk-spatial-index.ts     # Point chunk spatial indexing
-│   ├── data-accumulator.ts        # Data accumulation for progressive loading
-│   ├── data-loader-types.ts       # Data loader type definitions
-│   ├── data-monitor-manager.ts    # Data monitoring
-│   ├── directory-navigator.ts     # Directory navigation
-│   ├── effective-radius-calculator.ts # nD effective radius computation
-│   ├── gsplats-chunk-spatial-index.ts # GSplats chunk spatial indexing
-│   ├── gsplats-processor.ts       # Gaussian splat processing
-│   ├── gsplats-progressive-loader.ts # Progressive GSplats loading
-│   ├── gsplats-spatial-index-loader.ts # GSplats spatial index loading
-│   ├── index.ts                   # Data module exports
-│   ├── lines-chunk-spatial-index.ts # Lines chunk spatial indexing
-│   ├── lines-spatial-index-loader.ts # Lines spatial index loading
-│   ├── loader-registry.ts         # Loader registry
-│   ├── nd-transform.ts            # nD transform inverse-query for non-displayed dimensions
-│   ├── point-spatial-index-loader.ts # Point spatial index loading
-│   ├── scene-graph-builder.ts     # Scene graph construction from zarr
-│   ├── scene-loader.ts            # Scene loading orchestration
-│   ├── scene-loader-manager.ts    # Scene loader management
-│   ├── stats-aggregator.ts        # Statistics aggregation
-│   ├── tolerance-computer.ts      # Tolerance computation
-│   ├── view-state-manager.ts      # View state management
-│   ├── zarr-loader.ts             # Zarr dataset loading with nD support
-│   └── loaders/                   # Modular loader subsystem
-│       ├── base-types.ts          # Base loader type definitions
-│       ├── index.ts               # Loader module exports
-│       ├── integration-example.ts # Loader integration example
-│       ├── range-loader.ts        # Range-based loading
-│       ├── spatial-query-builder.ts # Spatial query construction
-│       └── transferable-accumulator.ts # Transferable data accumulation
-├── input/
-│   ├── input-handler.ts           # User interaction handling
-│   ├── input-handler-utils.ts     # Input handler utilities
-│   └── input-context-manager.ts   # Keyboard conflict resolution
-├── profiling/
-│   └── update-profiler.ts         # Update profiling
-├── rendering/
-│   ├── adaptive-dpr-manager.ts    # Adaptive device pixel ratio management
-│   ├── chromatic-lens-distortion-effect.ts # Chromatic lens distortion effect
-│   ├── colormap-data.ts           # Colormap data definitions
-│   ├── colormap-textures.ts       # Colormap texture generation
-│   ├── detector-noise-effect.ts   # Detector noise effect
-│   ├── gpu-buffer-pool.ts         # GPU buffer pooling and reuse
-│   ├── gsplat-material.ts         # Gaussian splat material
-│   ├── line-material.ts           # Line material
-│   ├── material-manager.ts        # Material caching and optimization
-│   ├── point-material.ts          # Point material with custom shaders
-│   └── post-processing/           # Mega-shader post-processing pipeline
-│                                  # (bloom + FXAA + fused per-pixel effects)
-├── scene/
-│   ├── animation/                 # Animation controller + dimension animation manager
-│   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   ├── scene-manager.ts           # 3D scene and renderer setup (orchestrator)
-│   └── scene-manager/             # Extracted helpers — camera/, clipping/, render-pipeline/, viewport/
-├── styles/                        # CSS styles
-│   ├── index.css                  # Main stylesheet
-│   ├── reset.css                  # CSS reset
-│   ├── base/                      # Base styles
-│   ├── components/                # Component styles
-│   └── themes/                    # Theme stylesheets
-├── themes/
-│   ├── index.ts                   # Theme module exports
-│   ├── glass-filters.ts           # Glass filter effects
-│   ├── theme-manager.ts           # Theme management
-│   ├── types.ts                   # Theme type definitions
-│   └── themes/
-│       ├── dark.theme.ts          # Dark theme
-│       ├── frosted-glass.theme.ts # Frosted glass theme
-│       ├── light.theme.ts         # Light theme
-│       └── liquid-glass.theme.ts  # Liquid glass theme
-├── types/
-│   ├── animation.ts               # Animation type definitions
-│   ├── dims.ts                    # Dimension type definitions
-│   ├── float16array.d.ts          # Float16Array type declaration
-│   ├── gsplats.ts                 # Gaussian splats type definitions
-│   ├── index.ts                   # Type module exports
-│   ├── lines.ts                   # Lines type definitions
-│   ├── points.ts                  # Points type definitions
-│   └── zarr.ts                    # Zarr type definitions
-├── ui/
-│   ├── data-loading-monitor.ts    # Data loading progress monitor
-│   ├── data-monitor-templates.ts  # Data monitor HTML templates
-│   ├── data-monitor-types.ts      # Data monitor type definitions
-│   ├── dataset-browser.ts         # Dataset browser panel
-│   ├── debug-console.ts           # In-app debug console (Ctrl+L)
-│   ├── dimension-sliders.ts       # nD navigation UI components
-│   ├── helpers.ts                 # UI helper utilities
-│   ├── performance-monitor.ts     # FPS and timing metrics
-│   ├── recording-panel.ts         # Screenshot and video capture panel
-│   ├── rendering-controls.ts      # Advanced rendering controls panel
-│   ├── rendering-controls-utils.ts # Rendering controls utilities
-│   ├── components/
-│   │   ├── base/
-│   │   │   └── ui-component.ts    # Base UI component class
-│   │   ├── colormap-legend.ts     # Colormap legend overlay
-│   │   ├── event-queue.ts         # Event queue for UI updates
-│   │   ├── hierarchical-timing-panel.ts # Hierarchical timing panel
-│   │   ├── loading-advisor.ts     # Loading advisor overlay
-│   │   ├── polling-loop.ts        # Polling loop for UI updates
-│   │   ├── resolution-indicator.ts # Resolution indicator overlay
-│   │   └── scale-bar.ts           # Physical scale bar overlay
-│   ├── layers/                    # Layer management UI
-│   │   ├── index.ts               # Layer module exports
-│   │   ├── layers-panel.ts        # Layers panel
-│   │   ├── layer-state.ts         # Layer state management
-│   │   └── range-slider.ts        # Range slider component
-│   ├── rendering-controls/        # Rendering controls sub-modules
-│   │   ├── anti-aliasing-setup.ts # Anti-aliasing setup
-│   │   ├── camera-setup.ts        # Camera setup
-│   │   ├── hdr-setup.ts           # HDR setup
-│   │   ├── navigation-setup.ts    # Navigation setup
-│   │   ├── post-processing-setup.ts # Post-processing setup
-│   │   └── types.ts               # Rendering controls type definitions
-│   └── gui/                       # Custom GUI framework
-│       ├── index.ts               # GUI module exports
-│       ├── controllers/
-│       │   ├── boolean-controller.ts  # Boolean controller
-│       │   ├── function-controller.ts # Function/button controller
-│       │   ├── number-controller.ts   # Number controller
-│       │   ├── option-controller.ts   # Option/select controller
-│       │   └── string-controller.ts   # String controller
-│       ├── core/
-│       │   ├── controller.ts      # Base controller class
-│       │   ├── folder.ts          # Folder/section container
-│       │   ├── gui.ts             # GUI root class
-│       │   └── types.ts           # GUI type definitions
-│       ├── dom/
-│       │   └── event-manager.ts   # DOM event management
-│       ├── styles/                # GUI CSS styles
-│       │   ├── controller.css
-│       │   ├── folder.css
-│       │   └── gui.css
-│       └── utils/
-│           ├── auto-blur.ts       # Auto-blur utility
-│           └── value-formatting.ts # Value formatting utility
-├── utils/
-│   ├── console-interceptor.ts     # Console output capture
-│   ├── escape-html.ts             # HTML escaping utility
-│   ├── hdr-color-conversion.ts    # HDR color conversion
-│   ├── hdr-detection.ts           # HDR display detection
-│   ├── hdr-video-encoder.ts       # HDR video encoding
-│   ├── log.ts                     # Structured logging utility
-│   └── memory-detector.ts         # Memory availability detection
-├── wasm/
-│   ├── index.ts                   # WASM module loader
-│   ├── types.ts                   # WASM type definitions
-│   ├── rust/                      # Rust WASM source
-│   │   └── src/                   # Rust source files
-│   └── typescript/                # TypeScript fallback implementations
-│       ├── decode.ts              # Array decoding
-│       ├── effective_radii.ts     # Effective radius computation
-│       ├── gsplats.ts             # Gaussian splat processing
-│       ├── gsplats_processing.ts  # GSplat processing utilities
-│       ├── index.ts               # TypeScript fallback exports
-│       ├── lines.ts               # Lines processing
-│       ├── lines_clipping.ts      # Lines clipping
-│       ├── points.ts              # Points processing
-│       ├── projection.ts          # Projection utilities
-│       └── spatial.ts             # Spatial utilities
-└── workers/
-    ├── data-worker.ts             # Background data processing worker
-    └── worker-pool.ts             # Worker pool management
+├── index.ts                  # Public-API barrel (side-effect-free)
+├── lib-styles-entry.ts       # CSS-only build entry
+│
+├── core/                     # Application bootstrap, lifecycle, debug interface
+├── config/                   # Unified configuration system (sections/ + zarr-bridge/)
+├── cache/                    # 3-tier cache: L0 decompressed, L1 memory, L2 OPFS
+├── data/                     # Zarr loading, nD slicing, per-geometry loaders
+├── rendering/                # GLSL/TSL materials, post-processing, picking, GPU buffer pool
+├── scene/                    # SceneManager + animation + scene-manager helpers
+├── controls/                 # Orbit / Fly / Ortho camera controls
+├── input/                    # Keyboard / mouse handlers, context routing
+├── ui/                       # GUI library, panels, monitors, recording panel
+├── styles/                   # CSS (base, components, themes, embed vs standalone)
+├── themes/                   # Theme manager + dark/light/glass theme definitions
+├── types/                    # Type definitions and ambient declarations
+├── utils/                    # Cross-cutting utilities (log, event bus, HDR, platform)
+├── wasm/                     # Rust kernels + TypeScript fallback (parity-tested)
+├── workers/                  # Worker pool, data worker, validation
+├── profiling/                # UpdateProfiler for hierarchical timing
+└── tests/                    # Unit (vitest), e2e harnesses, mocks, builders, benchmarks
 ```
+
+For per-subpackage details — file tables, public exports, invariants — read
+the `README.md` inside the subfolder. The major subpackages also document
+their own subpackages (e.g. `rendering/README.md` links to `materials/`,
+`picking/`, `post-processing/`, `material-manager/`, `node-factory/`,
+`gpu-buffer-pool/`).
+
+See also: [`src/README.md`](./src/README.md) for the navigational hub and
+the enforced layer order, [`CONVENTIONS.md`](./CONVENTIONS.md) for project-
+wide conventions, and [`ARCHITECTURE-DIAGRAMS.md`](./ARCHITECTURE-DIAGRAMS.md)
+for high-level diagrams.
 
 ### Available Scripts
 
@@ -575,18 +413,21 @@ export const config: AppConfig = {
 
 ### Material Caching System
 
-The material manager in `src/rendering/material-manager.ts` provides optimized material handling:
+The material manager in `src/rendering/material-manager.ts` provides optimized material handling. Per-geometry getters return cached materials keyed by property bucketing:
 
 ```typescript
 // Supported blending modes
 type BlendingMode = 'normal' | 'additive' | 'max';
 
-// Materials are automatically cached based on properties
-const material = materialManager.getMaterial({
+// Per-geometry getters — see src/rendering/material-manager.ts for
+// PointMaterialProperties / LineMaterialProperties / GSplatMaterialProperties
+const pointMat = materialManager.getPointMaterial({
   blendingMode: 'additive',
   opacity: 1.0,
   gamma: 2.2,
 });
+const lineMat  = materialManager.getLineMaterial({  /* ... */ });
+const gsplatMat = materialManager.getGSplatMaterial({ /* ... */ });
 ```
 
 ### Per-Point Attributes
@@ -723,9 +564,15 @@ monitor.toggle();   // Toggle visibility
 
 ### URL Parameters
 
-- `?src=<path>` - Path to Zarr dataset
-- `?debug=true` - Enable debug logging
-- `?fps=true` - Show FPS counter on startup
+- `?src=<path>` — Path to Zarr dataset
+- `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
+- `?no-cache` — Disable all cache tiers (L0 + L1 + L2) for this session
+- `?cache-debug` — Verbose cache logging
+- `?clear-cache` — Clear all caches before loading
+- `?no-prefetch` — Disable adjacent-chunk prefetching (caches still active)
+- `?prefetch-debug` — Verbose prefetch logging
+- `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
+- `?renderer=webgpu&webgpu-force-webgl` — TSL/WebGPU API surface but Three.js routes through its internal WebGL2 backend (diagnostic)
 
 ### Programmatic Usage
 

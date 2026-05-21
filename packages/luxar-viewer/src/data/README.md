@@ -25,28 +25,37 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ```
 data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
+├── zarr.ts                        # Zarrita facade (only module allowed to import zarrita directly)
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
+├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
+├── attrs-composer.ts              # Composes per-layer attributes along the scene graph
+│                                  #   (used by SceneLoader and UI panels)
+├── dims-to-view-state.ts          # SimpleDims → ViewState (zarr-loader entry helper)
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
 │
 ├── points/                        # Points geometry — facade + decomposition + math
 │   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
+│   ├── handler.ts                     # GeometryTypeHandler<Points> registry entry
 │   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
 │   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
 │
 ├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
+│   ├── handler.ts                     # GeometryTypeHandler<Lines> registry entry
 │   └── projection.ts                  # clipSegmentToSlice + lerp + projectLinesTo3D (TS + WASM) + initLinesWASM
 │
 ├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
 │   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
+│   ├── handler.ts                       # GeometryTypeHandler<GSplats> registry entry
+│   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
 │   └── projection.ts                    # nD → 3D pure-math companion (centers, Cholesky, attenuation)
 │
 ├── transforms/                    # nD transform helpers
@@ -67,9 +76,6 @@ data/
 │   ├── load-and-decode.ts         # loadAndDecodeOptionalArray helper
 │   └── types.ts                   # ArrayMetadata + EncodingMetadata
 │
-├── attrs-composer.ts              # Composes per-layer attributes along the scene graph
-│                                  #   (used by SceneLoader and UI panels)
-│
 ├── nav/                           # Multi-strategy server directory browsing
 │   └── directory-navigator.ts
 │
@@ -77,7 +83,9 @@ data/
 │   ├── scene-stats.ts             # Roll up loaded geometry per type
 │   └── aggregator.ts              # Accumulator stats aggregation across loaders
 │
-├── dims-to-view-state.ts          # SimpleDims → ViewState (zarr-loader entry helper)
+├── scene-loader/                  # Modules composed by scene-loader.ts (cache, nodes,
+│                                  #   process, commit, update-view, retry, ...).
+│                                  #   See scene-loader/ for the extracted units.
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
@@ -86,13 +94,16 @@ data/
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
 │   │                              #   tolerance to `loaders/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
+│   ├── tolerance-computer.ts      # Geometry-aware per-dimension tolerance
+│   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
+│   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
 │   ├── transferable-accumulator.ts # Zero-allocation buffer management
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
 │   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
 │   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
-│   ├── loader-registry.ts         # Lifecycle management for geometry loaders
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
 │   ├── monitor-events.ts          # Shared LoaderEventEmitter for monitor events
+│   ├── once-init.ts               # Tiny once-init helper for lazy initializers
 │   └── color-attribute-utils.ts   # Shared color-range loader (points, lines, gsplats)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
@@ -158,20 +169,20 @@ SceneLoader is split into focused, testable modules:
 └─────────┘ └─────────┘ └─────────────────┘ └─────────────┘
 ```
 
-**NodeFactory** (`node-factory.ts`):
+**Node Factories** (`scene-loader/nodes/`):
 
 - Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data
 - Geometry creation with proper dtype handling (Float32, Uint8, Float16)
 - Material creation and colormap application
 - Transform application and validation
 - Picking system integration (shadow pick-node creation)
-- **Empty-placeholder factories**
-  (`createEmpty{Points,Lines,GSplats}Node`) — every loader attaches a
+- **Empty-placeholder factories** — every loader attaches a
   placeholder before the first fetch so a transient load failure leaves
   a findable, retryable node in the scene rather than a hole. The same
-  node is later populated in place by `commit*Geometry` helpers.
+  node is later populated in place by `scene-loader/commit/commit-*-geometry.ts`
+  helpers.
 
-**Data Accumulators** (`data-accumulator.ts`):
+**Data Accumulators** (`accumulators/`):
 
 - Zero-allocation buffer pooling for Points/Lines/GSplats
 - Multi-type support (Float32, Uint8, Uint16)
@@ -179,30 +190,17 @@ SceneLoader is split into focused, testable modules:
 
 **Benefits of Modular Design**:
 
-- **Testability**: Each module tested independently (88+ new tests)
+- **Testability**: Each module tested independently
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader is ~2,100 lines and continues to
-  shrink as concerns extract out. Long-term target is under 1,500. See
-  `scene-loader/` siblings for the extracted modules:
-  `data-processor-lines`, `data-processor-gsplats`,
-  `commit-points-geometry`, `effective-attrs`, `extend-tolerance`,
-  `loader-factory`, `scene-graph-converter`, `url-normalization`,
-  `cache-api`, `cache-setup`, and `monitor-wiring`.
-
-**Next extractions (planned, not yet done).** Each is a self-contained
-unit that does not span multiple geometry types:
-
-- `metadata-loader.ts` — pull `loadRootMetadata()` out (~80 LOC). It is
-  pure I/O over the zarr root group attrs and has no scene-graph
-  dependency.
-- `attrs-applier.ts` — extract `applyEffectiveAttrs()` (~60 LOC). It
-  composes parent + node attrs and delegates to
-  `data/attrs-composer.ts`.
-- `view-updater.ts` — pull the `updateView()` orchestration shell
-  (~100 LOC) leaving the per-geometry data-processor calls in place.
-
-These extractions are incremental and should not change behavior. Land
-them as separate small PRs to keep the diff reviewable.
+- **Reduced Complexity**: `scene-loader.ts` is now ~1,050 lines (down
+  from ~2,100) thanks to ongoing extraction. See `scene-loader/`
+  siblings for the extracted modules: `load-scene`, `process/`,
+  `commit/`, `update-view/`, `nodes/`, `cache-api`, `cache-setup`,
+  `derive-node-view-state`, `dispose`, `effective-attrs`,
+  `extend-tolerance`, `loader-factory`, `loader-registry`,
+  `monitor-wiring`, `predicted-view-state`, `retry`,
+  `run-loader-updates`, `scene-graph-converter`, `url-normalization`,
+  `view-state-queue`, and `visible-counts`.
 
 ---
 
@@ -613,7 +611,7 @@ The chunk-based spatial index dramatically improves performance for large nD dat
 // For nD datasets with Morton ordering, uses chunk_bounds for fast queries
 // For 3D datasets without Morton ordering, falls back to loading all points
 
-// The PointSpatialIndexLoader delegates to the canonical builder:
+// The PointsSpatialIndexLoader delegates to the canonical builder:
 const ranges = await new SpatialQueryBuilder(index, viewState, {
   tolerance, // pre-computed via calculateSpatialQueryTolerance for points
   totalElements: attrs.n_points,
@@ -1038,24 +1036,20 @@ location /data/ {
 | `retryAllFailedLoaders()`   | Retry all failed loaders                  |
 | `dispose()`                 | Clean up all resources                    |
 
-### Node Factory (node-factory.ts)
+### Node Factories (scene-loader/nodes/)
 
-| Class/Method                                   | Description                                   |
-| ---------------------------------------------- | --------------------------------------------- |
-| `NodeFactory`                                  | Creates THREE.js scene nodes from loaded data |
-| `createPointsNode(path, attrs, data, loader)`  | Create Points node with geometry and material |
-| `createLinesNode(path, attrs, data, loader)`   | Create instanced Lines mesh                   |
-| `createGSplatsNode(path, attrs, data, loader)` | Create instanced GSplats mesh                 |
-| `createPointsGeometry(data, maxR, maxS)`       | Create THREE.js geometry for points           |
-| `createPointsMaterial(attrs, rScale, sScale)`  | Create shader material for points             |
-| `applyTransform(object, transform)`            | Apply 4x4 column-major transform              |
-| `validateTransformFormat(transform)`           | Detect row-major vs column-major format       |
+The node factories that build the THREE.js scene from loaded data now
+live under `scene-loader/nodes/` (one file per geometry kind:
+`load-points-node.ts`, `load-lines-node.ts`, `load-gsplats-node.ts`),
+plus `build-scene-graph.ts`, `enumerate-store.ts`, and the supporting
+helpers. See `scene-loader/` for details — there is no single
+`NodeFactory` class to import from this folder.
 
-### Point Spatial Index Loader (point-spatial-index-loader.ts)
+### Points Spatial Index Loader (points/points-spatial-index-loader.ts)
 
 | Class/Method                          | Description                               |
 | ------------------------------------- | ----------------------------------------- |
-| `PointSpatialIndexLoader`             | Loader using chunk-based spatial indexing |
+| `PointsSpatialIndexLoader`            | Loader using chunk-based spatial indexing |
 | `constructor(location, node, config)` | Create loader with chunk index support    |
 | `updateView(viewState)`               | Update for new view (reloads currently)   |
 | `getCacheStats()`                     | Get cache statistics                      |
@@ -1081,22 +1075,22 @@ location /data/ {
 | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path. |
 
-### Monitoring Management (data-monitor-manager.ts)
+### Monitor Port (scene-loader-monitor-port.ts)
 
-| Class/Method                            | Description                                     |
-| --------------------------------------- | ----------------------------------------------- |
-| `DataMonitorManager`                    | Singleton manager for monitor UI instances      |
-| `getInstance()`                         | Get the singleton manager instance              |
-| `createMonitor(id, container, config?)` | Create a new monitor UI instance                |
-| `getMonitor(id)`                        | Get a specific monitor by ID                    |
-| `getDefaultMonitor()`                   | Get the default monitor instance                |
-| `showMonitor(id?)`                      | Show specific or default monitor                |
-| `hideMonitor(id?)`                      | Hide specific or default monitor                |
-| `toggleMonitor(id?)`                    | Toggle specific or default monitor              |
-| `destroyMonitor(id)`                    | Dispose and remove a specific monitor           |
-| `disposeInstance()`                     | Dispose the singleton (called from app dispose) |
+| Symbol                          | Description                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `SceneLoaderMonitorPort`        | Interface — the subset of `DataLoadingMonitor`'s surface that `SceneLoader` consumes.        |
+| `SceneLoaderMonitorFactory`     | Factory type injected by `core/app.ts` via `SceneLoaderManager.setMonitorFactory`.           |
+| `L0CacheProviderPort`           | Provider injected via `setL0CacheProvider`.                                                  |
+| `GPUBufferPoolProviderPort`     | Provider injected via `setGPUBufferPoolProvider`.                                            |
+| `AccumulatorProviderPort`       | Per-geometry accumulator stats provider.                                                     |
 
-### Directory Navigation (directory-navigator.ts)
+The concrete `DataMonitorManager` (a UI panel manager) lives in
+`../ui/data-monitor-manager.ts` and is intentionally outside the
+`data/` layer — production code only reaches it through the monitor
+port above.
+
+### Directory Navigation (nav/directory-navigator.ts)
 
 | Class/Method           | Description                             |
 | ---------------------- | --------------------------------------- |
@@ -1105,21 +1099,30 @@ location /data/ {
 | `getFullUrl(path)`     | Get full URL for a path                 |
 | `canListDirectories()` | Check if directory listing is supported |
 
-### Utility Functions (zarr-loader-utils.ts)
+### Zarr Facade (zarr.ts)
 
-| Function                                        | Description                             |
-| ----------------------------------------------- | --------------------------------------- |
-| `normalizeZarrPath(path, baseUrl?)`             | Normalize path to valid Zarr URL        |
-| `extractDimensionMetadata(attrs)`               | Extract dimensions from zarr attributes |
-| `inheritRenderingAttributes(attrs, parent)`     | Apply attribute inheritance             |
-| `validatePointsData(positions, expected, ndim)` | Validate points data                    |
-| `calculateInitialSlicePosition(dims)`           | Calculate initial nD slice position     |
-| `isPointsGroup(attrs, name)`                    | Check if group contains points          |
-| `calculateBoundingBox(positions, ndim)`         | Calculate nD bounding box               |
-| `processTransformAttribute(transform)`          | Process transform from zarr metadata    |
-| `estimatePointsMemory(n, ndim, ...)`            | Estimate memory usage in MB             |
-| `validateRenderingAttributes(attrs)`            | Validate and apply defaults             |
-| `determineLoadingStrategy(n, memory)`           | Choose loading strategy based on size   |
+Every production import of `zarrita` is funnelled through `zarr.ts`,
+which re-exports the types and helpers the rest of the viewer needs
+(`openStore`, `openGroup`, `openArray`, `readArray`, `slice`,
+`isNotFoundError`, `createFetchStore`, `codecRegistry`, plus the
+`Location`, `Group`, `Array`, `DataType`, `TypedArray` aliases). Future
+backend swaps or zarrita API moves stay isolated to this one file.
+
+### Attribute Composition (attrs-composer.ts)
+
+| Symbol                                | Description                                                                  |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| `composeAttrs(chain)`                 | Compose a root-to-leaf chain of `ComposableAttrs` into `EffectiveAttrs`.     |
+| `collectAncestorNodes(root, path)`    | Walk the scene graph and return the chain of ancestor `SceneNode`s.          |
+| `collectAncestorAttrs(root, path)`    | Convenience — collect the chain as `ComposableAttrs[]`.                      |
+| `getEffectiveAttrs(root, path)`       | Compose the effective attrs for a target path in one call.                   |
+| `collectDataDescendants(start)`       | Collect every data-leaf (points/lines/gsplats) under `start`.                |
+
+### Dims → ViewState (dims-to-view-state.ts)
+
+| Function                                  | Description                                                                |
+| ----------------------------------------- | -------------------------------------------------------------------------- |
+| `simpleDimsToViewState(dims, options)`    | Convert a `SimpleDims` navigation snapshot into a per-loader `ViewState`.  |
 
 ---
 
@@ -1193,3 +1196,26 @@ Part of the Luxar project. See root LICENSE file for details.
 ---
 
 _For implementation details, see the source files in this directory._
+
+## Subpackages
+
+- [accumulators](./accumulators/) — Zero-allocation buffer pools for
+  Points/Lines/GSplats.
+- [array-decoder](./array-decoder/) — Decoders for the Python
+  `luxar.encoding` array formats.
+- [gsplats](./gsplats/README.md) — GSplats spatial-index loader,
+  progressive multi-LOD, projection math.
+- [lines](./lines/README.md) — Lines spatial-index loader, dual chunk
+  index, projection.
+- [loaders](./loaders/README.md) — Unified loader infrastructure
+  (`SpatialQueryBuilder`, `RangeLoader`, tolerance).
+- [nav](./nav/) — Multi-strategy directory navigation
+  (`DirectoryNavigator`).
+- [points](./points/README.md) — Points spatial-index loader and
+  effective-radius math.
+- [scene-loader](./scene-loader/) — Modules composed by
+  `scene-loader.ts` (cache, nodes, process, commit, update-view).
+- [stats](./stats/) — Scene and per-loader statistics aggregation for
+  the monitor.
+- [transforms](./transforms/) — nD inverse-query helper for
+  non-displayed dimensions.

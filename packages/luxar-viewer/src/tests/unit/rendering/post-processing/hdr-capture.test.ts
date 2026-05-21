@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { formatHDRExrLogLine } from '../../../../rendering/post-processing/hdr-capture';
+import { formatHDRExrLogLine } from '../../../../rendering/post-processing/hdr/capture';
 
 describe('formatHDRExrLogLine', () => {
   it('formats half-float capture metadata', () => {

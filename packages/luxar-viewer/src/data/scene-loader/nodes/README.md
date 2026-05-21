@@ -1,0 +1,100 @@
+# Scene-graph node construction
+
+Initial-load helpers that walk a zarr scene graph and attach the
+matching THREE.js objects to the scene. One file per first-class
+geometry kind (Points, Lines, GSplats) wraps the `loader-factory.ts`
+construction + placeholder + initial-fetch + commit dance; shared
+infrastructure handles store enumeration, scene-graph building,
+dimension initialization, monitor wiring, error dispatch, and the
+recursive walk.
+
+This folder is the **initial-load** path. The per-update path lives
+in the sibling `../../points/handler.ts`, `../../lines/handler.ts`,
+and `../../gsplats/handler.ts` modules. Together the two paths cover
+every way a leaf node gets data: first construction, slice updates,
+and retry-after-failure.
+
+## Files
+
+| File                            | Role                                                                                                                                                                                                                                                                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-ctx.ts`                  | `NodeBuildCtx` interface — the per-call snapshot the orchestrator passes down to every leaf loader (viewState, factoryDeps, registry, nodeFactory, plus callback closures for attrs composition, view-state derivation, monitor wiring, and per-type commit). Never carries `this`.                  |
+| `build-scene-graph.ts`          | `buildSceneGraph(rootLoc, rootAttrs, store)` — enumerates the store, walks groups breadth-first by path depth, opens each group's attrs, skips the `/overlays` subtree, and eagerly fetches the sibling `colormap_lut` zarr array for any node declaring `colormap: 'custom'`. Returns the `SceneNode` tree. |
+| `enumerate-store.ts`            | `enumerateStore(store)` — thin wrapper around the consolidated-metadata `contents()` method with a single-root fallback for stores that don't expose it.                                                                                                                                              |
+| `initialize-scene-dimensions.ts`| `initializeSceneDimensions(sceneDims)` — validates a scene-level `scene_dimensions` blob through `ViewStateManager`, logs the validation, and returns a fresh `ViewState`. Returns `null` on invalid input so the caller can leave the previous ViewState untouched.                                  |
+| `load-scene-nodes.ts`           | `loadSceneNodes(node, parentThree, parentLoc, ctx)` — recursive walk. For each leaf, dispatches to the matching per-type loader through `loadLeafNode`. For each group, creates a `THREE.Group`, applies its 4x4 transform via `NodeFactory.applyTransform`, and recurses.                            |
+| `load-points-node.ts`           | `loadPointsNode` — initial-load wrapper for a single Points leaf. Builds the loader, registers it, attaches an empty placeholder, derives the per-node view state (with `applyPartialExtendTolerance: true`), fetches points, and commits through `updatePointsGeometry`. Throws `LoaderError` on failure.   |
+| `load-lines-node.ts`            | `loadLinesNode` — mirror of `loadPointsNode` for Lines. Differs in one place: the data fetch uses `applyPartialExtendTolerance: false` because segment bounds already encode non-displayed spatial extent (the override would double-apply during clipping). Commits via `processLinesData` + `commitLinesGeometry`. |
+| `load-gsplats-node.ts`          | `loadGSplatsNode` — mirror of `loadPointsNode` for GSplats. Branches on `n_lods`: multi-LOD nodes (`n_lods > 1`) use the progressive loader (with parent's composed effective attrs so LOD synthetic nodes inherit opacity/intensity); single-LOD nodes use the standard loader. Commits via `processGSplatsData` + `commitGSplatsGeometry`. |
+| `connect-loader-to-monitor.ts`  | `connectLoaderToMonitor(path, loader, monitor)` — duck-type-guarded wiring. Points loaders always implement the full `LoaderMonitor` surface; Lines/GSplats expose it optionally. Checks for the four-method shape (`addEventListener`/`removeEventListener`/`getMetrics`/`getActiveQueries`) before wiring. Null monitor short-circuits. |
+| `load-leaf-error-dispatch.ts`   | `LoaderError` class + `classifyLoaderError(error)` heuristic + `loadLeafNode(load, path)` wrapper. Catches `LoaderError` thrown by a leaf, logs+toasts by kind (Network warns, Decode/Validation/Unexpected error-logs and toasts), returns `null` so the failing leaf doesn't sink the rest of the scene. Re-throws non-LoaderError exceptions. |
+
+## Invariants
+
+- **Three-geometry symmetry.** `load-points-node.ts`,
+  `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
+  shape: `createXLoader` helper → `registry.registerXLoader` →
+  `nodeFactory.createEmptyXNode` placeholder → `parentThree.add` →
+  `deriveNodeViewState` → `loader.loadX` → process+commit through
+  the same helpers the update/retry paths use → `recordFailure` +
+  `throw new LoaderError` on error. Filename matches the single
+  exported function.
+- **Placeholder before fetch.** Every leaf attaches an empty
+  placeholder mesh *before* the initial data fetch. A transient fetch
+  failure then leaves a findable, retryable THREE node in the scene
+  rather than a hole — `retryFailedLoader(path)` can target it, and
+  the placeholder's `userData.attrs` is the source of truth the retry
+  view state is derived from. The same node is later populated in
+  place by the matching `../commit/commit-*-geometry.ts` helper, so
+  the 0-points → N-points transition uses the same code path as every
+  subsequent update.
+- **Single source of truth for view state.** Every leaf calls
+  `ctx.deriveNodeViewState(path, attrs, opts)` — the same helper the
+  main update loop and `retry.ts` use. Initial/update/retry can never
+  silently load different query regions. Points and GSplats pass
+  `applyPartialExtendTolerance: true`; Lines passes `false` (segment
+  bounds already encode the equivalent extent).
+- **Initial load never skips.** `deriveNodeViewState` may return
+  `skip: true` to mean "leave the existing node alone" — but on
+  initial load we always want to construct the THREE node so future
+  slice changes can populate it. Each leaf handles the skip return by
+  falling back to the orchestrator's base `ctx.viewState`.
+- **ViewState snapshot is captured by value.** `NodeBuildCtx` carries
+  a snapshot of the orchestrator's viewState at the time
+  `loadSceneNodes` is invoked, not a reference. A concurrent
+  `updateView` mutating the orchestrator's field cannot corrupt an
+  in-flight initial-load query.
+- **Partial-scene resilience.** Each leaf is wrapped in
+  `loadLeafNode`, which catches `LoaderError` and returns `null` so
+  one failing leaf doesn't take down the whole scene. Non-LoaderError
+  exceptions still propagate.
+- **Overlays are not 3D scene nodes.** `buildSceneGraph` skips any
+  path under `/overlays` because screen-space overlays live in a
+  parallel tree built by a different code path.
+
+## See also
+
+- `../loader-factory.ts` — `createPointsLoader` / `createLinesLoader`
+  / `createGSplatsLoader` / `createProgressiveGSplatsLoader` helpers
+  that the leaf loaders call. The orchestrator passes the live
+  `LoaderFactoryDeps` snapshot through `NodeBuildCtx`.
+- `../loader-registry.ts` — `LoaderRegistry.registerXLoader` and
+  `recordFailure` invoked by every leaf.
+- `../derive-node-view-state.ts` — `deriveNodeViewState` and the
+  `DerivedNodeViewState` / `DeriveOpts` shapes consumed via
+  `NodeBuildCtx`.
+- `../process/data-processor-{lines,gsplats}.ts` — async projection
+  step that produces the `StagedLinesCommit` / `StagedGSplatsCommit`
+  bundles consumed by commit.
+- `../commit/commit-{points,lines,gsplats}-geometry.ts` — synchronous
+  GPU-commit helpers invoked at the tail of each initial-load.
+- `../../points/handler.ts`, `../../lines/handler.ts`,
+  `../../gsplats/handler.ts` — the matching **update**-path helpers;
+  this folder owns the **initial-load** path.
+- `../../../rendering/node-factory.ts` — `createEmptyXNode` and
+  `applyTransform` used to build the placeholder meshes and group
+  transforms.
+- `../../scene-loader-monitor-port.ts` — `SceneLoaderMonitorPort`
+  contract used by `connect-loader-to-monitor.ts`.
+- `../../view-state-manager.ts` — `ViewStateManager` used by
+  `initialize-scene-dimensions.ts` for dimension validation.

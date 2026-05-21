@@ -1,0 +1,17 @@
+# cache
+
+OPFS-based zarr cache configuration slice. Owns the three-level cache hierarchy (L0 decompressed chunks, L1 memory LRU, L2 OPFS) size budgets, the OPFS operation timeout, and the external-dataset TTL.
+
+Conforms to the section-trio pattern documented in [../../README.md](../../README.md): `data.ts` exports the literal, `types.ts` defines the interface, `validate.ts` exports a section validator invoked by the central dispatcher.
+
+## Contents
+
+- `data.ts` — `cacheConfig: CacheConfig`. Defaults: caching `enabled`, L0 on with a 200MB decompressed-chunk budget, L1 100MB in-memory LRU, L2 2048MB persistent OPFS, `opfsOperationTimeoutMs: 10_000`, `externalDatasetTtlMs: null` (no TTL — content-hash validation only), `debug: false`.
+- `types.ts` — `CacheConfig` interface. Documents each field including the rationale for the OPFS timeout (bounds hung-handle stalls into cache misses) and the external-TTL semantics (`null` means rely on `content_hash` exclusively).
+- `validate.ts` — `validateCache(config, errors, warnings)`. Rejects non-finite or non-positive L0/L1/L2 sizes; enforces `l1MaxSizeMB ≥ 10` because `SegmentedLRUCache` reserves a 10MB metadata floor below which chunk writes are silently dropped; requires `opfsOperationTimeoutMs` to be finite and positive; allows `externalDatasetTtlMs` to be `null` or a finite positive number (explicitly rejecting `NaN`).
+
+## Public API
+
+- `cacheConfig` — re-exported through `../../index.ts` into `AppConfig.cache`.
+- `CacheConfig` — re-exported through `../../types.ts`.
+- `validateCache` — called from `../../validation.ts`.

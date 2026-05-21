@@ -16,7 +16,7 @@ without spinning up a renderer.
 | `pick-render.ts`      | `voteWinner(pixels, pickSize, votesScratch)` — brightness-weighted majority vote across the 5×5 pixel readback. Returns the `(nodeId, elementId, accumulated brightness)` triple or `null` |
 | `settle-loop.ts`      | `HOVER_SETTLE_MS = 120` plus `evaluateSettle({ now, lastMouseMoveTime, lastDirtyTime, lastPickFiredTime })` returning `{ action: 'fire' \| 'wait' \| 'idle' }` |
 | `settle-scheduler.ts` | `SettleScheduler` — owns the rAF lifecycle and the mouse/dirty timestamps. Forwards each tick's decision to `evaluateSettle` and invokes `ctx.firePick` when both axes settle. The orchestrator hands it a narrow `SettleSchedulerCtx` (no `this` back-pointer) |
-| `lens-distortion.ts`  | `applyLensDistortion(u, v, params, out)` — TypeScript port of the green-channel Brown–Conrady distortion from `post-processing/mega-shader.glsl.ts::applyDistortion`. Lets the picking system map mouse coords into the undistorted pick buffer when the mega-shader is distorting the visible frame |
+| `lens-distortion.ts`  | `applyLensDistortion(u, v, params, out)` — TypeScript port of the green-channel Brown–Conrady distortion from `post-processing/mega/shader.glsl.ts::applyDistortion`. Lets the picking system map mouse coords into the undistorted pick buffer when the mega-shader is distorting the visible frame |
 
 ## Why this split exists
 
@@ -85,8 +85,8 @@ input.
 
 `lens-distortion.ts` exists to keep screen-space picking aligned with the
 mega-shader's Brown–Conrady distortion. The TS port mirrors the GLSL
-green-channel formula in `post-processing/mega-shader.glsl.ts:117-128`
-(and the TSL counterpart in `mega.tsl.ts`); the orchestrator runs it on
+green-channel formula in `post-processing/mega/shader.glsl.ts:117-128`
+(and the TSL counterpart in `post-processing/mega/shader.tsl.ts`); the orchestrator runs it on
 the raw mouse UV before computing the pick-target read coords so the
 pixel sampled matches what the user sees under the distorted frame. The
 function takes an explicit `UVScratch` so the hot path is allocation-free.
@@ -96,7 +96,7 @@ function takes an explicit `UVScratch` so the hot path is allocation-free.
 - `../picking-system.ts` — orchestrator that imports these five modules
 - `../../material-manager/lifecycle.ts` — `SOFT_DISPOSE_FLAG` symbol that
   `unregisterAllPickMaterials` cooperates with on context-loss rebuild
-- `../../post-processing/mega-shader.glsl.ts` — GLSL `applyDistortion`
+- `../../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion`
   that `lens-distortion.ts` must stay byte-for-byte equivalent to
 - `../../materials/_shared/camera-uniforms.ts` — sibling parity case
   (picking math centralised so screen-space hit tests match rendering)
