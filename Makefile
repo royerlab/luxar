@@ -12,7 +12,7 @@
         check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
-        stats show-env prune-env shell build publish-test publish \
+        stats stats-fast show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
         benchmark-metal benchmark-metal-stress \
@@ -2342,11 +2342,18 @@ serve-docs:  ## Serve documentation locally
 	hatch run docs:serve
 
 # Project statistics
-stats:  ## Generate project statistics report (HTML)
+stats:  ## Generate project statistics report (HTML + Markdown)
 	@echo "📊 Analyzing project codebase..."
 	hatch run python stats/generate_stats.py
-	@echo "✅ Report generated: stats/project_stats.html"
-	@echo "💡 Open with: open stats/project_stats.html"
+	@echo "✅ Reports generated:"
+	@echo "   - stats/project_stats.html  (styled, open in a browser)"
+	@echo "   - stats/PROJECT_STATS.md    (GitHub-friendly, linked from README.md)"
+	@echo "💡 Quick view: open stats/project_stats.html"
+
+stats-fast:  ## Generate project statistics without running tests (file counts only)
+	@echo "📊 Analyzing project codebase (no tests)..."
+	hatch run python stats/generate_stats.py --no-tests
+	@echo "✅ Reports generated: stats/project_stats.html, stats/PROJECT_STATS.md"
 
 # Hatch environment management
 show-env:  ## Show all Hatch environments
