@@ -18,15 +18,15 @@
  * that lifecycle at app shutdown.
  */
 
-import { log, Modules } from '../../utils/log';
-import { disposeCustomColormapTextures } from '../../rendering/colormap-textures';
-import { getWorkerPool } from '../../workers/worker-pool';
-import type { LoaderRegistry } from './loaders/loader-registry';
-import type { ViewStateQueue } from './view-state/view-state-queue';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
-import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
-import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
+import { log, Modules } from '../../../utils/log';
+import { disposeCustomColormapTextures } from '../../../rendering/colormap-textures';
+import { getWorkerPool } from '../../../workers/worker-pool';
+import type { LoaderRegistry } from '../loaders/loader-registry';
+import type { ViewStateQueue } from '../view-state/view-state-queue';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
 /**
  * Container of nullable resources the SceneLoader owns. The orchestrator

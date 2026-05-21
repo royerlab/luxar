@@ -27,11 +27,11 @@ import {
   retryFailedLoaderUnlocked,
   retryAllFailedLoadersUnlocked,
   type RetryCtx,
-} from '../../../../data/scene-loader/retry';
-import { LoaderRegistry } from '../../../../data/scene-loader/loaders/loader-registry';
-import type { DataLoader, LoadedPointsData, ViewState } from '../../../../data/data-loader-types';
-import type { LinesDataLoader, LoadedLinesData } from '../../../../types/lines';
-import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../types/gsplats';
+} from '../../../../../data/scene-loader/lifecycle/retry';
+import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import type { DataLoader, LoadedPointsData, ViewState } from '../../../../../data/data-loader-types';
+import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
+import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../../types/gsplats';
 
 // ============================================================================
 // Local fixtures — flat ctx-stubbing per the data/scene-loader test pattern.

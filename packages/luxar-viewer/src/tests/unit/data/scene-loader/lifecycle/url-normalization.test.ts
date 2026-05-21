@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeURL } from '../../../../data/scene-loader/url-normalization';
+import { normalizeURL } from '../../../../../data/scene-loader/lifecycle/url-normalization';
 
 const ORIGIN = 'http://localhost:5173';
 

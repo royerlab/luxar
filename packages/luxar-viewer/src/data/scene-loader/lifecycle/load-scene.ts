@@ -30,26 +30,26 @@
  */
 
 import * as THREE from 'three';
-import * as zarr from '../zarr';
-import { log, Modules, LogEmoji } from '../../utils/log';
-import { notifier } from '../../utils/cross-layer/notifier';
-import { getWorkerPool } from '../../workers/worker-pool';
-import { ZarrSceneAttrs } from '../../types/zarr';
-import type { LoaderConfig, SceneNode, ViewState } from '../data-loader-types';
-import type { DataLoader } from '../data-loader-types';
-import type { LinesDataLoader } from '../../types/lines';
-import type { GSplatsDataLoader } from '../../types/gsplats';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import type { UpdateProfiler } from '../../profiling/update-profiler';
-import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
-import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
-import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
-import { setupCaches } from './cache/cache-setup';
-import { wireMonitorAfterLoad } from './monitor-wiring';
-import { loadOverlayConfigs } from '../loaders/overlay-loader';
-import { buildSceneGraph } from './nodes/build-scene-graph';
-import { loadSceneNodes } from './nodes/load-scene-nodes';
-import type { NodeBuildCtx } from './nodes/build-ctx';
+import * as zarr from '../../zarr';
+import { log, Modules, LogEmoji } from '../../../utils/log';
+import { notifier } from '../../../utils/cross-layer/notifier';
+import { getWorkerPool } from '../../../workers/worker-pool';
+import { ZarrSceneAttrs } from '../../../types/zarr';
+import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
+import type { DataLoader } from '../../data-loader-types';
+import type { LinesDataLoader } from '../../../types/lines';
+import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import type { UpdateProfiler } from '../../../profiling/update-profiler';
+import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
+import { setupCaches } from '../cache/cache-setup';
+import { wireMonitorAfterLoad } from '../monitor-wiring';
+import { loadOverlayConfigs } from '../../loaders';
+import { buildSceneGraph } from '../nodes/build-scene-graph';
+import { loadSceneNodes } from '../nodes/load-scene-nodes';
+import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
  * Narrow context the load-scene path needs. Captures the orchestrator's
