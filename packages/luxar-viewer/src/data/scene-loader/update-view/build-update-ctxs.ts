@@ -14,8 +14,8 @@
  */
 
 import type * as THREE from 'three';
-import type { ViewStateQueue } from '../view-state-queue';
-import type { DeriveOpts, DerivedNodeViewState } from '../derive-node-view-state';
+import type { ViewStateQueue } from '../view-state/view-state-queue';
+import type { DeriveOpts, DerivedNodeViewState } from '../view-state/derive-node-view-state';
 import type { PointsHandlerCtx } from '../../points/handler';
 import type { LinesHandlerCtx } from '../../lines/handler';
 import type { GSplatsHandlerCtx } from '../../gsplats/handler';

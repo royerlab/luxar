@@ -8,8 +8,8 @@ import {
   predictNextViewState,
   dispatchPredictivePrefetch,
   type PrefetchableLoader,
-} from '../../../../data/scene-loader/predicted-view-state';
-import type { ViewState } from '../../../../data/data-loader-types';
+} from '../../../../../data/scene-loader/view-state/predicted-view-state';
+import type { ViewState } from '../../../../../data/data-loader-types';
 
 function vs(overrides: Partial<ViewState> = {}): ViewState {
   return {

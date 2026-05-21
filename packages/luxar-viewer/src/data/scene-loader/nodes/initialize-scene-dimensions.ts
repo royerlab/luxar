@@ -11,7 +11,7 @@
 import { log, Modules } from '../../../utils/log';
 import type { ViewState } from '../../data-loader-types';
 import { ViewStateManager } from '../../view-state-manager';
-import { isSceneDimensions } from '../extend-tolerance';
+import { isSceneDimensions } from '../view-state/extend-tolerance';
 
 /**
  * Validate scene dimensions and return the initial ViewState built from

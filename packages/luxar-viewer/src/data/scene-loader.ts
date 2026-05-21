@@ -8,7 +8,7 @@
 import * as zarr from './zarr';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/url-normalization';
-import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
+import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/view-state/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
   listCachedDatasets as listCachedDatasetsHelper,
@@ -30,7 +30,7 @@ import {
 } from './scene-loader/process/data-processor-gsplats';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
-import { ViewStateQueue } from './scene-loader/view-state-queue';
+import { ViewStateQueue } from './scene-loader/view-state/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
@@ -86,7 +86,7 @@ import {
   retryAllFailedLoadersUnlocked,
   type RetryCtx,
 } from './scene-loader/retry';
-import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
+import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';

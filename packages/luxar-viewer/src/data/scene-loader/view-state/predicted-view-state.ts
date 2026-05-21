@@ -24,7 +24,7 @@
  * SceneLoader's own viewState.
  */
 
-import type { ViewState } from '../data-loader-types';
+import type { ViewState } from '../../data-loader-types';
 
 /**
  * Structural type for a loader that supports predictive prefetch.

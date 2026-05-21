@@ -23,8 +23,8 @@
  * passes it back through the trigger callback unchanged.
  */
 
-import { log, Modules } from '../../utils/log';
-import type { ViewState } from '../data-loader-types';
+import { log, Modules } from '../../../utils/log';
+import type { ViewState } from '../../data-loader-types';
 import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
 
 export class ViewStateQueue {

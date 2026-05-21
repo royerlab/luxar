@@ -10,7 +10,7 @@ import {
   hasOwnProperties,
   isSceneDimensions,
   validateExtendDims,
-} from '../../../../data/scene-loader/extend-tolerance';
+} from '../../../../../data/scene-loader/view-state/extend-tolerance';
 
 describe('hasOwnProperties', () => {
   it('returns false for an empty object', () => {

@@ -14,13 +14,13 @@
  * otherwise the derived view state.
  */
 
-import type { SceneNode, ViewState } from '../data-loader-types';
+import type { SceneNode, ViewState } from '../../data-loader-types';
 import {
   hasOwnProperties,
   getOrComputeExtendedTolerance,
   validateExtendDims,
 } from './extend-tolerance';
-import { computeWorldNdTransform, invertNdTransformForQuery } from '../transforms/nd-transform';
+import { computeWorldNdTransform, invertNdTransformForQuery } from '../../transforms/nd-transform';
 
 export type DerivedNodeViewState =
   | { skip: 'extend_to_all' }

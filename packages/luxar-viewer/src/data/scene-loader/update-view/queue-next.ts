@@ -22,7 +22,7 @@
 import { log, Modules } from '../../../utils/log';
 import type { ViewState } from '../../data-loader-types';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
-import type { ViewStateQueue } from '../view-state-queue';
+import type { ViewStateQueue } from '../view-state/view-state-queue';
 
 export interface QueueNextCtx {
   viewStateQueue: ViewStateQueue;
