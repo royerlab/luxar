@@ -22,7 +22,8 @@
 import * as zarr from '../zarr';
 import { get, slice } from '../zarr';
 import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
-import type { RangeLoader, LoadRange } from './range-loader';
+import type { RangeLoader } from './range-loader';
+import type { LoadRange } from './base-types';
 import { clamp } from '../../utils/clamp';
 
 /** Minimal shape needed by the helpers — both SplatRange and SegmentRange match. */
