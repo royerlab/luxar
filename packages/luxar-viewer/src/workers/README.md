@@ -153,9 +153,10 @@ workers/
     │                                            visibilityMaskBuffer }
     │                                            + requireWasm helper
     ├── initialize.ts                           — WASM bootstrap
-    ├── types.ts                                — EffectiveRadiusConfig,
-    │                                            ProjectionViewState,
+    ├── types.ts                                — ProjectionViewState,
     │                                            PointsOutputBuffers
+    │                                            (re-exports EffectiveRadiusConfig
+    │                                            from types/points.ts)
     ├── validation.ts                           — JS→WASM boundary checks
     │                                            (worker-internal)
     ├── spatial-index/
@@ -205,7 +206,7 @@ From `data-worker.ts`:
 - `type DataWorkerAPI` — Comlink-proxied surface (`workerAPI`)
 - `type PointsOutputBuffers` — transferable result shape for `projectPointsTo3D`
 - `type EffectiveRadiusConfig`, `type ProjectionViewState` — projection input shapes
-- Re-exports of the color helpers from `color-utils.ts` (test back-compat)
+  (`EffectiveRadiusConfig` is canonically defined in `types/points.ts`; re-exported here for worker-API self-documentation)
 
 From `color-utils.ts`:
 
