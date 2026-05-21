@@ -8,11 +8,7 @@ import { validateDataLoadingPerformance } from './performance/validate';
  * validators (network, memory, performance) and inlines the trivial
  * spatial-section checks that don't warrant their own validate.ts.
  */
-export function validateDataLoading(
-  config: AppConfig,
-  errors: string[],
-  warnings: string[]
-): void {
+export function validateDataLoading(config: AppConfig, errors: string[], warnings: string[]): void {
   const { dataLoading } = config;
 
   validateDataLoadingNetwork(config, errors, warnings);

@@ -22,7 +22,10 @@ import {
   type KeyBindingsCommands,
   type KeyBindingsPanelGetters,
 } from '../../../../../input/input-handler/key-bindings/register-all';
-import { InputContext, type InputContextManager } from '../../../../../input/input-handler/context-manager';
+import {
+  InputContext,
+  type InputContextManager,
+} from '../../../../../input/input-handler/context-manager';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../../ui/debug-console';
 

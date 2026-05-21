@@ -680,9 +680,7 @@ describe('SceneManager', () => {
         isCenteredOnBoundingBox: boolean;
       };
       const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
-      const onSceneSpy = vi
-        .spyOn(sceneManager, 'centerCameraOnScene')
-        .mockImplementation(() => {});
+      const onSceneSpy = vi.spyOn(sceneManager, 'centerCameraOnScene').mockImplementation(() => {});
       // Default after construction is isCenteredOnBoundingBox=false.
       expect(internals.isCenteredOnBoundingBox).toBe(false);
 
@@ -699,9 +697,7 @@ describe('SceneManager', () => {
         isCenteredOnBoundingBox: boolean;
       };
       const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
-      const onSceneSpy = vi
-        .spyOn(sceneManager, 'centerCameraOnScene')
-        .mockImplementation(() => {});
+      const onSceneSpy = vi.spyOn(sceneManager, 'centerCameraOnScene').mockImplementation(() => {});
       // Force the bbox-centered state directly.
       internals.isCenteredOnBoundingBox = true;
 

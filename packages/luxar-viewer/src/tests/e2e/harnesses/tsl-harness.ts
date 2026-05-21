@@ -38,7 +38,10 @@ import {
 } from '../../../rendering/picking/point/pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/materials/line/shader-glsl';
-import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/materials/line/shader-tsl';
+import {
+  lineWebGPUFactory,
+  buildLineTSLNodesFromUniforms,
+} from '../../../rendering/materials/line/shader-tsl';
 import { LINE_PICK_SOURCE } from '../../../rendering/picking/line/shaders';
 import {
   linePickWebGPUFactory,
@@ -56,7 +59,10 @@ import {
   buildGSplatPickTSLNodesFromUniforms,
 } from '../../../rendering/picking/gsplat/pick.tsl';
 import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
-import { requireWebGLSources, type ShaderSource } from '../../../rendering/materials/_shared/shader-source';
+import {
+  requireWebGLSources,
+  type ShaderSource,
+} from '../../../rendering/materials/_shared/shader-source';
 
 /**
  * Shape of an entry in the shader registry exposed to Playwright.

@@ -24,7 +24,10 @@ import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { pointPickWebGPUFactory, type PointPickTSLNodes } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import { computePointSizeFactor, computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
+import {
+  computePointSizeFactor,
+  computeMaxPointSize,
+} from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import type { PointPickingMaterialConfig } from './material';
 

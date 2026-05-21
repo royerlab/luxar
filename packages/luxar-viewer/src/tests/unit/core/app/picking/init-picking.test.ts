@@ -8,10 +8,7 @@
 
 import * as THREE from 'three';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  initPicking,
-  type InitPickingResult,
-} from '../../../../../core/app/picking/init-picking';
+import { initPicking, type InitPickingResult } from '../../../../../core/app/picking/init-picking';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 
 // All heavy collaborators are module-mocked so the test never touches
@@ -329,10 +326,7 @@ describe('initPicking', () => {
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('start', expect.any(Function));
       expect(sm.controls.addEventListener).toHaveBeenCalledWith('end', expect.any(Function));
-      expect(sm.addEventListener).toHaveBeenCalledWith(
-        'camera-changed',
-        expect.any(Function)
-      );
+      expect(sm.addEventListener).toHaveBeenCalledWith('camera-changed', expect.any(Function));
     });
   });
 });

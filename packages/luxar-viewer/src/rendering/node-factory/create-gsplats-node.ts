@@ -5,16 +5,9 @@
  */
 
 import * as THREE from 'three';
-import {
-  materialManager,
-  type BlendingMode,
-  type LuxarGSplatMaterial,
-} from '../material-manager';
+import { materialManager, type BlendingMode, type LuxarGSplatMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
-import {
-  createInstancedGSplatsMesh,
-  type InstancedGSplatsMeshConfig,
-} from '../gsplat-geometry';
+import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from '../gsplat-geometry';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';

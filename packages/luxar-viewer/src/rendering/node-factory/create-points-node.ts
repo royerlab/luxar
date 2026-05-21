@@ -12,11 +12,7 @@
  */
 
 import * as THREE from 'three';
-import {
-  materialManager,
-  type BlendingMode,
-  type LuxarPointMaterial,
-} from '../material-manager';
+import { materialManager, type BlendingMode, type LuxarPointMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { createPointQuadGeometry } from '../point-geometry';

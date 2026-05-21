@@ -65,9 +65,7 @@ function makeSceneNode(overrides: Partial<SceneNode> = {}): SceneNode {
 }
 
 /** Minimal DataLoader stub — the helper only calls `.loadPoints`. */
-function makePointsLoader(
-  loadPoints: (vs: ViewState) => Promise<LoadedPointsData>
-): DataLoader {
+function makePointsLoader(loadPoints: (vs: ViewState) => Promise<LoadedPointsData>): DataLoader {
   return { loadPoints } as unknown as DataLoader;
 }
 
@@ -214,12 +212,7 @@ describe('loadPointsNode — pointCount === 0 path', () => {
     createPointsLoaderMock.mockReturnValue(makePointsLoader(vi.fn().mockResolvedValue(data)));
     const ctx = makeCtx();
 
-    const placeholder = await loadPointsNode(
-      makeSceneNode(),
-      new THREE.Group(),
-      {} as never,
-      ctx
-    );
+    const placeholder = await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(placeholder).not.toBeNull();
     expect(placeholder!.name).toBe('/scene/p');
@@ -236,9 +229,9 @@ describe('loadPointsNode — error path', () => {
     const ctx = makeCtx();
     const parent = new THREE.Group();
 
-    await expect(
-      loadPointsNode(makeSceneNode(), parent, {} as never, ctx)
-    ).rejects.toBeInstanceOf(LoaderError);
+    await expect(loadPointsNode(makeSceneNode(), parent, {} as never, ctx)).rejects.toBeInstanceOf(
+      LoaderError
+    );
 
     // Placeholder stays — retry will populate it later.
     expect(parent.children.length).toBe(1);

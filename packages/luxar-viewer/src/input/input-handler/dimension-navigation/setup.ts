@@ -26,10 +26,7 @@ import { log, Modules } from '../../../utils/log';
 import { AnimationShortcuts } from '../key-bindings/animation-shortcuts';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type {
-  DimensionSliders,
-  SliderConfig,
-} from '../../../ui/dimension-sliders';
+import type { DimensionSliders, SliderConfig } from '../../../ui/dimension-sliders';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { InputContextManager } from '../context-manager';
 import type { PanelCoordinator } from '../commands/panel-coordinator';

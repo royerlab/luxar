@@ -33,11 +33,7 @@ export interface AtomicCommitCtx {
   /** Pickable-state invalidator (cached pick buffer goes stale on geometry change). */
   nodeFactory: NodeFactory;
   /** Per-type commit callbacks routed through the orchestrator's delegates. */
-  updatePointsGeometry(
-    path: string,
-    data: LoadedPointsData,
-    session?: UpdateSession
-  ): void;
+  updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
   commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
   commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void;
 }
@@ -106,4 +102,3 @@ export function runAtomicCommit(
     ctx.nodeFactory.markPickingDirty();
   }
 }
-

@@ -53,27 +53,29 @@ export const canvasToBlobOverride: { current: ((cb: any) => void) | null } = {
  */
 export function installCanvasMock(): () => void {
   const origCreateElement = document.createElement.bind(document);
-  const spy = vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
-    const el = origCreateElement(tag, options);
-    if (tag === 'canvas') {
-      const canvasEl = el as HTMLCanvasElement;
-      const origGetContext = canvasEl.getContext.bind(canvasEl);
-      (canvasEl as any).getContext = (type: string, ...args: any[]) => {
-        if (type === '2d') {
-          return { putImageData: vi.fn(), drawImage: vi.fn() };
-        }
-        return origGetContext(type, ...args);
-      };
-      (el as HTMLCanvasElement).toBlob = vi.fn((cb: any) => {
-        if (canvasToBlobOverride.current) {
-          canvasToBlobOverride.current(cb);
-        } else {
-          cb(new Blob(['test'], { type: 'image/png' }));
-        }
-      });
-    }
-    return el;
-  });
+  const spy = vi
+    .spyOn(document, 'createElement')
+    .mockImplementation((tag: string, options?: any) => {
+      const el = origCreateElement(tag, options);
+      if (tag === 'canvas') {
+        const canvasEl = el as HTMLCanvasElement;
+        const origGetContext = canvasEl.getContext.bind(canvasEl);
+        (canvasEl as any).getContext = (type: string, ...args: any[]) => {
+          if (type === '2d') {
+            return { putImageData: vi.fn(), drawImage: vi.fn() };
+          }
+          return origGetContext(type, ...args);
+        };
+        (el as HTMLCanvasElement).toBlob = vi.fn((cb: any) => {
+          if (canvasToBlobOverride.current) {
+            canvasToBlobOverride.current(cb);
+          } else {
+            cb(new Blob(['test'], { type: 'image/png' }));
+          }
+        });
+      }
+      return el;
+    });
   return () => spy.mockRestore();
 }
 

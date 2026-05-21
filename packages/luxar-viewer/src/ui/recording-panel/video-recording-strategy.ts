@@ -104,8 +104,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       session.saveRecordingState({
         disableDPR: true,
         lockResize: true,
-        scaleResolution:
-          opts.videoResolution > 0 ? { targetH: opts.videoResolution } : undefined,
+        scaleResolution: opts.videoResolution > 0 ? { targetH: opts.videoResolution } : undefined,
       });
       if (opts.videoResolution > 0) {
         await new Promise((r) => requestAnimationFrame(r));

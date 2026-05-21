@@ -418,8 +418,7 @@ async function measureScenario(
           const elapsedSinceStart = now - start;
           // Frames start at 0; `>=` so `warmupFrames=5` skips exactly 5 warmup
           // frames (frames 0..4) and the 6th frame is the first sampled.
-          const warmupDone =
-            frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
+          const warmupDone = frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
             dts.push(now - lastTime);

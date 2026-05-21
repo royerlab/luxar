@@ -19,7 +19,10 @@
  */
 
 import * as THREE from 'three';
-import { isColormapAwareMaterial, type ColormapAwareMaterial } from './materials/_shared/colormap-aware-material';
+import {
+  isColormapAwareMaterial,
+  type ColormapAwareMaterial,
+} from './materials/_shared/colormap-aware-material';
 
 /**
  * Apply a colormap texture (or `null` to disable) to a material.
