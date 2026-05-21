@@ -27,7 +27,7 @@
  * Luxar's internal IDs (1..6) to TSL functions is in
  * {@link applyToneMapping}.
  *
- * @module rendering/post-processing/mega.tsl
+ * @module rendering/post-processing/mega/shader.tsl
  */
 
 import * as THREE from 'three';

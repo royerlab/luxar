@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { MegaShaderTSLMaterial } from '../../../../rendering/post-processing/mega-shader-material-tsl';
+import { MegaShaderTSLMaterial } from '../../../../rendering/post-processing/mega/material-tsl';
 
 describe('MegaShaderTSLMaterial capture-mode toggles', () => {
   it('toggleRawHdrCapture(true) rebuilds the TSL graph (version bumps)', () => {

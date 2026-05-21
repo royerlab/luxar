@@ -27,13 +27,13 @@
  *     encoding to mirror the GLSL `LUXAR_CAPTURE_RAW_HDR` /
  *     `LUXAR_CAPTURE_LINEAR_LDR` defines.
  *
- * @module rendering/post-processing/mega-shader-material-tsl
+ * @module rendering/post-processing/mega/material-tsl
  */
 
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
-import { megaWebGPUFactory, type LuxarToneMappingMode } from './mega.tsl';
-import type { MegaShaderConfig } from './mega-shader-material';
+import { megaWebGPUFactory, type LuxarToneMappingMode } from './shader.tsl';
+import type { MegaShaderConfig } from './material';
 
 /**
  * Map THREE.ToneMapping → the compact Luxar mode index used by the
