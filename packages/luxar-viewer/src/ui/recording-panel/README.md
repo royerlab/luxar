@@ -2,99 +2,170 @@
 
 Video, image, and EXR-sequence export pipeline for the viewer. The
 public entry point is [`RecordingPanel`](../recording-panel.ts); the
-modules here are the drivers / utilities that the panel delegates to.
+modules here are the strategies / session scaffolding / utilities
+the panel delegates to. Per-mode offline encoders live one level
+deeper, in [`drivers/`](./drivers/README.md).
 
 ## Architecture
 
 ```
-RecordingPanel (UI + state)
+RecordingPanel (UI + dispatch)
        │
        ▼
-   RecordingDriver  (one of)
+   RecordingSession           ── shared scaffolding (state save/restore,
+       │                         mutex, confirmation dialog, REC
+       │                         indicator, slider-sync)
+       ▼
+   CaptureStrategy  (one of)
        │
-       ├─ video-mode-driver         → MediaRecorder real-time capture
-       ├─ offline-capture-driver    → frame-by-frame render + encode
-       ├─ image-sequence-driver     → PNG / JPEG per frame
-       ├─ exr-sequence-driver       → 16-bit float HDR per frame
-       └─ zip-sequence-capture      → zip of images for sequence export
+       ├─ ScreenshotStrategy       → single-frame PNG / WebP / JPEG / EXR
+       ├─ VideoRecordingStrategy   → MediaRecorder real-time WebM capture
+       └─ OfflineCaptureStrategy   → frame-by-frame offline loop
+                                      │
+                                      └─ delegates per-frame work to a
+                                         driver in `drivers/`:
+                                           • VideoModeDriver       (MP4/WebM/MKV)
+                                           • ImageSequenceDriver   (PNG/WebP/JPEG)
+                                           • ExrSequenceDriver     (HDR float)
 ```
 
-Every driver implements a small state machine: `idle → recording →
-finalizing → done`, with `dispose()` callable at any point to abort
-cleanly.
+`RecordingSession` is the **Session** half of a Strategy + Session
+decomposition: every cross-cutting concern that all three capture
+paths share — DPR save/restore, resize-lock, panel hide/restore,
+auto-rotate pause/restore, the modal confirmation dialog, the REC
+indicator widget, mutual-exclusion flags, slider-sync coordinator —
+lives on Session. Each strategy owns its own capture pipeline plus a
+reference to Session for the shared scaffolding.
 
 ## Files
 
-| File                        | Role                                                                         |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `video-mode-driver.ts`      | Real-time MediaRecorder capture (MP4 / WebM / MKV)                           |
-| `offline-capture-driver.ts` | Frame-by-frame deterministic capture; locks DPR + resize for reproducibility |
-| `image-sequence-driver.ts`  | PNG/JPEG per-frame export                                                    |
-| `exr-sequence-driver.ts`    | HDR float capture per frame                                                  |
-| `zip-sequence-capture.ts`   | Bundles a sequence into a downloadable zip                                   |
-| `screenshot-exporter.ts`    | Single-frame PNG export                                                      |
-| `video-codec-selection.ts`  | Picks the best supported MediaRecorder mimeType per browser                  |
-| `media-utilities.ts`        | Shared `Blob` / `ArrayBuffer` plumbing                                       |
-| `overlay-compositor.ts`     | Renders the recording overlay onto the captured frame                        |
-| `animation-sync.ts`         | Drives `AnimationController` deterministically during offline capture        |
-| `gui-builder.ts`            | Pure mode→format and format→predicate visibility rules                       |
-| `ui/gui-construction.ts`    | Builds the lil-gui controller tree for the recording panel                   |
-| `types.ts`                  | Shared recording types                                                       |
+| File                            | Role                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex            |
+| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union             |
+| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG            |
+| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                     |
+| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — frame-by-frame turntable / EXR loop, drives one driver   |
+| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob` |
+| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path     |
+| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `generateFfmpegScript`, `anchorOffset` |
+| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                     |
+| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`       |
+| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`) |
+| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences               |
+| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                |
+
+## Subpackages
+
+- [drivers](./drivers/README.md) — Per-mode offline-capture backends
+  (image sequence, EXR sequence, video). All implement the
+  `OfflineCaptureDriver` interface and plug into
+  `OfflineCaptureStrategy`.
+- `ui/` — Internal helper for building the lil-gui controller tree
+  (`gui-construction.ts`). Used only by `RecordingPanel`.
+
+## Strategy + Session contract
+
+Each `CaptureStrategy` implementation exposes the same tiny surface
+(see `capture-strategy.ts`):
+
+| Method | Purpose |
+| --- | --- |
+| `kind` | `'screenshot'` \| `'video'` \| `'offline'` — used by the panel's dispatch |
+| `canRun(state)` | Informational pre-check; the strategy still re-verifies inside `run` |
+| `run(opts, mode, session)` | The capture operation. Resolves when the capture finishes or aborts. |
+| `abort()` | Synchronous external stop. Video stops the MediaRecorder; offline fires its AbortController; screenshot is a no-op. |
+| `dispose()` | Panel-shutting-down signal. Drops long-lived state (tracks, AbortController, …). |
+
+Strategies are responsible for their own try/finally cleanup. They
+read mutual-exclusion flags off `RecordingSession` (`isRecording`,
+`isOfflineCaptureActive`) and call back into Session for the shared
+unwind helpers (`restoreRecordingState`, `restoreAutoRotate`,
+`restoreAllPanels`, …).
 
 ## Codec selection
 
-`video-codec-selection.ts` queries `MediaRecorder.isTypeSupported(...)`
-for an ordered list of preferences:
+Two codec paths, kept separate:
 
-1. MP4 (H.264) — universal playback, smallest files
-2. WebM (VP9) — fallback when MP4 unavailable (most Firefox, some Linux Chrome)
-3. WebM (VP8) — broad-compatibility fallback
-4. MKV (H.264) — Chromium-only with `chromiumExperimental` mime
+**Real-time video (`VideoRecordingStrategy`)** uses the browser's
+`MediaRecorder`, which only supports WebM (VP9 / VP8).
+`media-utilities.ts::getSupportedMimeType` picks the highest-quality
+WebM mime type the platform supports, or returns `null` to disable
+the option.
 
-The first supported entry wins. Browsers that support none get a
-disabled video-mode option with a tooltip explaining the limitation.
+**Offline video (`VideoModeDriver` in `drivers/`)** uses
+[mediabunny](https://www.npmjs.com/package/mediabunny), which
+supports VP9, AV1, AVC (H.264), HEVC (H.265), and VP8 across MP4 /
+WebM / MKV containers. `video-codec-selection.ts::selectVideoCodec`
+runs the fallback chain: map the user preference, downgrade to a
+container-compatible codec if needed, then walk a fallback list
+until `canEncodeVideo` reports support at the requested resolution.
 
 ## Offline-capture loop
 
-`offline-capture-driver.ts` drives a deterministic frame-by-frame
-capture:
+`OfflineCaptureStrategy.runOfflineCaptureLoop` drives a deterministic
+frame-by-frame capture for turntable + EXR-sequence modes:
 
-1. Lock DPR (disable adaptive-DPR; pin to the configured value).
-2. Lock canvas size (disable resize listener).
-3. Show the recording overlay if enabled.
-4. For each frame:
-   - Set `AnimationController` to the next frame's timestamp.
-   - Wait for `renderer.render` to complete + composer + post-fx.
-   - Read back the framebuffer (via `hdr-capture` or RGBA8 readback).
-   - Encode through the selected sink (video / image / EXR).
-5. Finalize the sink (flush MediaRecorder, zip the sequence, etc.).
-6. Restore DPR + resize listener + overlay state.
+1. Show the confirmation dialog; bail if cancelled.
+2. Assign `sessionAbort` BEFORE any state mutation, so a `dispose()`
+   during the early state-save / rAF window aborts cleanly.
+3. Hide panels, save renderer state, disable DPR, lock resize,
+   scale resolution to a 16-pixel-aligned multiple of the target.
+4. Pause auto-rotate and compute per-frame angle for the turntable.
+5. Build the per-mode driver (`ImageSequenceDriver` /
+   `ExrSequenceDriver` / `VideoModeDriver`); call `driver.setup(ctx)`.
+6. Mount the modal overlay (focus trap + Escape to cancel + preview
+   canvas + counter).
+7. For each frame: register a per-frame callback that orbits the
+   camera one step, `await requestAnimationFrame`, then call
+   `driver.captureFrame(ctx, frameIndex, progress)`. Tolerate up to
+   `MAX_CONSECUTIVE_ERRORS = 3` consecutive frame failures before
+   bailing.
+8. Call `driver.finalize(ctx, capturedFrames, progress)`.
+9. In `finally`: call `driver.abort?(ctx, reason)` if setup ran but
+   finalize didn't succeed, remove per-frame callbacks, hide the
+   indicator + overlay, restore auto-rotate + recording state, and
+   clear the abort controller reference.
 
-Steps 1, 2, and 6 are non-trivial: a thrown error anywhere in the
-loop must restore the locks. The driver wraps the whole loop in a
-`try / finally` so the user doesn't end up with a permanently locked
-DPR or hidden overlay after a partial capture.
+The `try { … } finally { … }` wrapping every state-mutating step is
+load-bearing: a thrown error anywhere in the loop must restore the
+DPR lock, resize listener, panel visibility, overlay state, and
+recording flags. The driver's own abort handler runs from the same
+finally so per-driver resources (ZIP streams, mediabunny encoders)
+are torn down without orphan files.
 
-## Offscreen-canvas teardown
+## Screenshot path
 
-EXR + image sequence drivers use offscreen canvases for compositing.
-Each driver's `dispose()` runs `ctx.clearRect(0, 0, w, h)` on its
-offscreen canvas (defensive) and then drops the reference. The
-offscreen canvases are garbage-collected once the driver is gone.
+`ScreenshotStrategy` is simpler: hide panels, save state, optionally
+null the scene background for transparent output, capture via
+`screenshot-exporter.ts::renderFrameToCanvas`, encode with
+`encodeScreenshotBlob`, restore in `finally`. An `inProgress` flag
+debounces the G keyboard shortcut and the Capture button so two
+back-to-back captures don't race the save/restore-state pair.
+
+For EXR screenshots, the strategy bypasses canvas-2D and calls
+`postProcessing.captureHDRAsEXR()` directly to preserve the full
+floating-point dynamic range.
 
 ## Public surface
 
-External consumers (UI, embedders) interact with `RecordingPanel`,
-not the drivers directly. Embedders that want to drive a recording
+External consumers (UI, embedders, tests) interact with
+`RecordingPanel`. Embedders that want to drive a recording
 programmatically should use `RecordingPanel.startRecording(opts)` /
-`stopRecording()` rather than instantiating a driver.
+`stopRecording()` rather than instantiating a strategy or session
+directly.
+
+`types.ts` re-exports the public option shapes (`RecordingMode`,
+`RecordingOptions`, `OutputFormat`, `VideoCodecOption`,
+`VideoResolution`, `VideoQuality`, `PanelStates`). `recording-panel.ts`
+re-exports these so external callers have a single import surface.
 
 ## E2E coverage
 
 `tests/e2e/recording-panel.spec.ts` exercises:
 
-- Codec auto-selection (verifies the panel doesn't crash on a
-  browser without MP4 support).
+- Codec auto-selection (panel doesn't crash on a browser without MP4
+  support).
 - Video record + stop + download for a short scene.
-- Image sequence export.
+- Image-sequence export.
 - Overlay compositing on / off.

@@ -17,7 +17,7 @@ import {
   type BloomLiveState,
 } from '../../../../../rendering/post-processing/post-processing-manager/settings';
 import type { LuxarMegaShaderMaterial } from '../../../../../rendering/material-manager';
-import type { BloomChain } from '../../../../../rendering/post-processing/bloom-chain';
+import type { BloomChain } from '../../../../../rendering/post-processing/bloom/chain';
 
 /**
  * Build a megaShader stub exposing just the surface the helpers touch.

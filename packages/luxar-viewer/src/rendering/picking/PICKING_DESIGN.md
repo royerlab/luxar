@@ -252,7 +252,7 @@ const raw = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
 // Passing a TypedArray as the 6th arg mis-binds it to textureIndex (becomes NaN).
 ```
 
-`PickingSystem.readbackAndVote` delegates to the unified `readPixelsCompactAsync` primitive (`post-processing/hdr-pixel-utils.ts`), which branches on `RendererCapabilities.apiSurface` (`'webgl2'` vs `'webgpu'`) internally to call the correct overload.
+`PickingSystem.readbackAndVote` delegates to the unified `readPixelsCompactAsync` primitive (`post-processing/hdr/pixel-utils.ts`), which branches on `RendererCapabilities.apiSurface` (`'webgl2'` vs `'webgpu'`) internally to call the correct overload.
 
 ### 256-byte row padding
 
@@ -263,14 +263,14 @@ For the 5×5 RGBA32F pick buffer:
 - compact row = 5 px × 16 B/px = **80 B/row**
 - padded row = ⌈80 / 256⌉ × 256 = **256 B/row**
 
-Three.js sizes the returned typed array for the padded layout (~276 floats vs the compact 100). The picking system passes the raw buffer through `compactWebGPUReadbackRows` (`rendering/post-processing/hdr-pixel-utils.ts`), which drops the padding row-by-row when present and is a no-op for widths whose row stride is already aligned. The same helper backs the post-processing screenshot / HDR-capture paths so all three readback sites share one implementation.
+Three.js sizes the returned typed array for the padded layout (~276 floats vs the compact 100). The picking system passes the raw buffer through `compactWebGPUReadbackRows` (`rendering/post-processing/hdr/pixel-utils.ts`), which drops the padding row-by-row when present and is a no-op for widths whose row stride is already aligned. The same helper backs the post-processing screenshot / HDR-capture paths so all three readback sites share one implementation.
 
-See `picking-system.ts::readbackAndVote` for the branch and `hdr-pixel-utils.ts::compactWebGPUReadbackRows` for the deinterlace math.
+See `picking-system.ts::readbackAndVote` for the branch and `hdr/pixel-utils.ts::compactWebGPUReadbackRows` for the deinterlace math.
 
 ## References
 
 - `picking-system.ts` — current async implementation (both backends)
-- `hdr-pixel-utils.ts::compactWebGPUReadbackRows` — shared WebGPU row-padding helper
+- `hdr/pixel-utils.ts::compactWebGPUReadbackRows` — shared WebGPU row-padding helper
 - `app.ts:782` — sole orchestrator (callback already async)
 - WebGPU spec: `GPUBuffer.mapAsync()` — async readback contract
 - WebGPU spec: Texture & buffer copy alignment (256-byte `bytesPerRow`)

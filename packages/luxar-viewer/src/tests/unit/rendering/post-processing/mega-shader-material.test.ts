@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { MegaShaderMaterial } from '../../../../rendering/post-processing/mega-shader-material';
+import { MegaShaderMaterial } from '../../../../rendering/post-processing/mega/material';
 
 describe('MegaShaderMaterial', () => {
   it('disables renderer tone-mapping injection and starts in Neutral mode', () => {

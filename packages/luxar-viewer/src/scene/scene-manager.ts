@@ -15,7 +15,7 @@ import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
 import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import type { PostProcessingManager } from '../rendering/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';

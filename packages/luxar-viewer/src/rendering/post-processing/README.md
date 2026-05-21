@@ -4,12 +4,12 @@ Post-processing pipeline for the viewer. Built from a custom
 mega-shader: tone mapping, bloom, anti-aliasing (FXAA / MSAA / SSAA),
 detector noise, vignette, and chromatic lens distortion.
 
-`PostProcessingManager` is the public API class at
-`rendering/post-processing-manager.ts`. This folder contains its private
-helpers: bloom chain, FXAA pass, fullscreen geometry, mega-shader,
-HDR-capture helpers, and the focused modules under
-`post-processing-manager/` for resource lifecycle, settings, pipeline,
-and capture.
+`PostProcessingManager` is the public-API class at
+`rendering/post-processing/post-processing-manager.ts`. This folder
+contains its private helpers grouped by effect (`bloom/`, `fxaa/`,
+`mega/`) plus shared infrastructure (`fullscreen/`, `hdr/`) and the
+orchestrator-focused modules under `post-processing-manager/` for
+resource lifecycle, settings, pipeline, and capture.
 
 The pipeline fuses all per-pixel effects into a single fullscreen
 fragment shader. Net effect: fewer fullscreen passes per frame, no
@@ -66,24 +66,56 @@ Two `#define`-gated shortcuts cover the EXR/HDR-capture paths
 
 ## Module map
 
-| File                         | Role                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| `post-processing-manager.ts` | Public API: setters, lifecycle, capture paths, context-restore               |
-| `mega-shader.glsl.ts`        | Fused fragment shader (vertex is a trivial fullscreen triangle)              |
-| `mega-shader-material.ts`    | `ShaderMaterial` wrapper — uniform layout, `#define` toggles for each effect |
-| `bloom-chain.ts`             | Threshold + downsample/upsample pyramid producing the bloom texture          |
-| `fxaa-pass.ts`               | Inline FXAA on the LDR ldrTarget → backbuffer                                |
-| `hdr-capture.ts`             | One helper — the EXR log-line formatter                                      |
-| `hdr-pixel-utils.ts`         | HalfFloat ↔ Float32 conversion + vertical flip for `ImageData`               |
-| `render-target-sizing.ts`    | DPR/SSAA-aware physical-pixel size helper                                    |
+```
+post-processing/
+├── post-processing-manager.ts      # Public-API orchestrator class
+├── post-processing-manager/        # Focused helpers behind the orchestrator
+│   ├── capture.ts                  #   three capture paths + EXR encoding
+│   ├── pipeline.ts                 #   per-frame composition (scene → bloom → mega → fxaa)
+│   ├── resource-lifecycle.ts       #   sizing + GPU resource allocate/dispose
+│   └── settings.ts                 #   user-toggle setter logic + validation
+├── mega/                           # Fused tonemap / distortion / noise / vignette fragment
+│   ├── material.ts                 #   ShaderMaterial wrapper (#define toggles)
+│   ├── material-tsl.ts             #   WebGPU NodeMaterial counterpart
+│   ├── shader.glsl.ts              #   GLSL3 vertex + fragment + MEGA_SOURCE
+│   └── shader.tsl.ts               #   TSL/WebGPU factory + LuxarToneMappingMode
+├── bloom/                          # Threshold + downsample/upsample pyramid
+│   ├── chain.ts                    #   BloomChain class
+│   ├── shaders.ts                  #   GLSL3 sources + three ShaderSource records
+│   └── bloom.tsl.ts                #   TSL factories
+├── fxaa/                           # Single-pass FXAA Quality
+│   ├── pass.ts                     #   FxaaPass class
+│   ├── shaders.ts                  #   GLSL3 source + FXAA_SOURCE
+│   └── fxaa.tsl.ts                 #   TSL/WebGPU factory
+├── fullscreen/                     # Shared fullscreen-rendering plumbing
+│   ├── geometry.ts                 #   caps-aware fullscreen triangle
+│   └── pass.ts                     #   FullscreenPass (scene+camera+mesh triplet)
+├── hdr/                            # HDR readback + EXR-log
+│   ├── pixel-utils.ts              #   unified WebGL2/WebGPU readPixelsCompactAsync
+│   └── capture.ts                  #   formatHDRExrLogLine
+└── render-target-sizing.ts         # DPR/SSAA-aware physical-pixel size helper
+```
+
+The orchestrator lives at `post-processing/post-processing-manager.ts`
+(file) next to its `post-processing-manager/` (folder) of private helpers
+— P2 layout. Each per-effect subfolder is self-contained; intra-folder
+imports never cross effect boundaries. Shared infrastructure
+(`fullscreen/`, `hdr/`) sits in its own concern-named folder.
 
 ## Public surface
 
 ```typescript
 import { PostProcessingManager } from '@/rendering';
+import { createRendererCapabilities } from '@/rendering/renderer-capabilities';
 
-const pp = new PostProcessingManager(renderer, scene, camera, { width, height }, () =>
-  sceneManager.updateMaterialsForCurrentCamera()
+const capabilities = createRendererCapabilities(renderer);
+const pp = new PostProcessingManager(
+  renderer,
+  capabilities,
+  scene,
+  camera,
+  { width, height },
+  () => sceneManager.updateMaterialsForCurrentCamera()
 );
 
 pp.setBloomEnabled(true);
@@ -184,6 +216,13 @@ effects.
 - **Detector noise jumps after context restore** — the
   `_previousRenderTimestamp` field needs to be cleared in
   `rebuildAfterContextRestore()` (it is).
+
+## Dependencies
+
+- Internal: `rendering/materials/_shared` (shader-source / buildMaterial),
+  `rendering/renderer-capabilities`, `utils/log`, `utils/clamp`.
+- External: `three`, `three/tsl`, `three/webgpu`,
+  `three/examples/jsm/exporters/EXRExporter.js`.
 
 See `../README.md` for the rendering-pipeline overview and how the
 post-processing stage fits into it.

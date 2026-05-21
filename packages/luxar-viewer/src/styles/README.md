@@ -1,19 +1,31 @@
 # luxar-viewer/src/styles
 
-CSS architecture for the Luxar viewer, organized as a four-layer cascade: reset, base, components, and theme overrides.
+CSS architecture for the Luxar viewer, split between an **embed-safe library entry** (`index.css`) and a **standalone-app entry** (`standalone.css`). The split exists so third-party host pages can import the library without having their `body`, `*`, scrollbar, or focus styles clobbered.
 
 ## Architecture
 
-All styles are imported through `index.css` in strict cascade order.
+Two entry stylesheets:
+
+- `index.css` — embed-safe. Every rule is scoped to a `.luxar-*` class, a
+  `[data-theme=...]` attribute, or a component-local selector. Imports
+  `base/utilities.css`, every `components/*.css`, the custom GUI library
+  styles from `../ui/gui/styles/`, and the `themes/*.css` overrides.
+- `standalone.css` — global host-page chrome. Imports `reset.css`,
+  `base/typography.css`, and `base/layout.css`. The standalone app's
+  `main.ts` imports **both** files; embedders import only `index.css`.
 
 ```
-1. reset.css          — Browser normalization (box-sizing, margins, scrollbars)
-2. base/              — Foundational styles applied globally
-   ├── typography.css — Font families, sizes, and weights
-   ├── layout.css     — Grid system, viewport setup, container widths
-   └── utilities.css  — Reusable utility classes (flex, alignment, spacing)
-3. components/        — Scoped styles for individual UI components
-4. themes/            — Theme-specific visual overrides (glass effects)
+standalone.css (standalone app only)
+  ├── reset.css            — Modern CSS reset (Josh Comeau-style)
+  └── base/
+      ├── typography.css   — Font families, sizes, weights
+      └── layout.css       — Grid, viewport, container widths
+
+index.css (library, embed-safe)
+  ├── base/utilities.css   — Tailwind-like .luxar-* utility classes
+  ├── components/*.css     — Per-UI-surface component styles
+  ├── ../ui/gui/styles/    — Custom GUI library (gui, controller, folder)
+  └── themes/*.css         — Named theme overrides (applied last)
 ```
 
 ## CSS Custom Properties
@@ -62,6 +74,7 @@ Each UI component has a dedicated CSS file:
 | `error-dialog.css`         | Error display dialogs                  |
 | `help-overlay.css`         | Keyboard shortcut help overlay         |
 | `layers-panel.css`         | Per-node layer visibility controls     |
+| `overlay-layer.css`        | Generic overlay layer container        |
 | `recording-panel.css`      | Screenshot and video capture panel     |
 | `resolution-indicator.css` | Adaptive DPR resolution badge          |
 | `scale-bar.css`            | Physical unit scale bar                |
@@ -82,3 +95,9 @@ These files are activated by the `ThemeManager` when the corresponding theme is 
 - Component styles reference CSS custom properties, never hardcoded colors
 - Scrollbar styling is dark-theme optimized via `::-webkit-scrollbar`
 - No `!important` overrides — cascade order handles specificity
+
+## See Also
+
+- [base/](./base/README.md) — Layout primitives, typography, utility classes
+- [components/](./components/README.md) — Per-UI-surface component styles
+- [themes/](./themes/README.md) — Named theme overrides

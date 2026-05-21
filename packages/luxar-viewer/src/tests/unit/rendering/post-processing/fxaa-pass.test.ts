@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { FxaaPass } from '../../../../rendering/post-processing/fxaa-pass';
+import { FxaaPass } from '../../../../rendering/post-processing/fxaa/pass';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 function mockCaps(): RendererCapabilities {

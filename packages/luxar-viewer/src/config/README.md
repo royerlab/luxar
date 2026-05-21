@@ -469,3 +469,27 @@ When updating configuration:
 4. **Documentation**: Update comments and examples
 
 The config package is the foundation that ensures consistent behavior across all Luxar components while providing flexibility for customization and future enhancements.
+
+---
+
+## Public API / Exports
+
+From `./index.ts`:
+
+- `config: AppConfig` — the composed application configuration object.
+- `AppConfig`, `RenderingSettings` — type re-exports (full set lives in `./types.ts`).
+
+From `./validation.ts`:
+
+- `validateConfig(config)` — dispatcher returning `{ valid, errors, warnings }`.
+- `logValidationResults(result)`, `validateAndLog(config)`.
+
+From `./url-params.ts`:
+
+- `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
+- `normalizeDataSourceUrl(rawSrc)`, `buildDataSourceBrowserUrl(src, location)`,
+  `replaceBrowserDataSourceUrl(src, target?)`.
+
+From `./constants.ts`:
+
+- `MAX_SUPPORTED_DIMS = 16` — mirrored in Rust as the WASM ABI cap on nD.
