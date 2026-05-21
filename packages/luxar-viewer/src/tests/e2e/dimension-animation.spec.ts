@@ -138,16 +138,18 @@ test.describe('Dimension Animation - UI Controls', () => {
     await playButton.click({ button: 'right' });
     await waitForNextRender(page);
 
-    // Check for animation settings panel (context menu or radio button panel)
+    // Check for animation settings panel — accepts either layout currently
+    // shipped by `ui/dimension-sliders.ts`: a labelled radio-button panel or
+    // the floating context menu.
     const settingsPanel = await page.evaluate(() => {
-      // Check for new-style radio button panel
+      // Radio-button panel layout: look for the section labels.
       const speedLabel = Array.from(document.querySelectorAll('*')).find(
         (el) => el.textContent?.trim() === 'Speed'
       );
       const loopLabel = Array.from(document.querySelectorAll('*')).find(
         (el) => el.textContent?.trim() === 'Loop Mode'
       );
-      // Check for old-style context menu as well
+      // Context-menu layout: look for the menu element.
       const contextMenu = document.querySelector('.luxar-dimension-slider__context-menu');
 
       return {

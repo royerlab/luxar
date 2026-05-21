@@ -1,6 +1,6 @@
 # Types Package
 
-TypeScript type definitions for high-dimensional data visualization in Luxar. This package provides the fundamental data structures and interfaces for managing nD points and lines data, dimension metadata, and coordinate system definitions.
+TypeScript type definitions for high-dimensional data visualization in Luxar. This package provides the fundamental data structures and interfaces for managing nD points, lines, and Gaussian-splat data, dimension metadata, zarr-store schemas, animation state, data-loading monitor contracts, and ambient global typings.
 
 ## Table of Contents
 
@@ -12,7 +12,9 @@ TypeScript type definitions for high-dimensional data visualization in Luxar. Th
 - [Utility Functions](#utility-functions)
 - [Zarr Types](#zarr-types)
 - [Animation Types](#animation-types)
+- [Data-Loading Monitor Types](#data-loading-monitor-types)
 - [Float16Array Type Declaration](#float16array-type-declaration)
+- [Window Debug Surface](#window-debug-surface)
 - [Usage Examples](#usage-examples)
 - [Type Safety](#type-safety)
 - [Best Practices](#best-practices)
@@ -483,9 +485,51 @@ import type {
 - **`DimensionAnimationState`** -- Full state for a single dimension's animation: `isPlaying`, `targetFPS`, `loopMode`, `direction`, FPS measurement fields (`actualFPS`, `frameCount`, timestamps).
 - **`DimensionAnimationEvents`** -- Event map emitted by `DimensionAnimationManager`: `play`, `pause`, `complete`, `speedChange`, `loopModeChange`, `directionChange`, `fpsWarning`.
 
+## Data-Loading Monitor Types
+
+`data-monitor-types.ts` defines the event-driven contracts shared by the loader layer and the data-loading-monitor UI. These types are deliberately housed in `types/` so the data layer (`cache-setup.ts`, spatial-index loaders) and the UI layer (`ui/data-loading-monitor/*`) can both reference them without crossing into each other's modules.
+
+Key exports:
+
+- **`MonitorEvent` / `MonitorEventType` / `MonitorEventListener`** -- the event stream emitted by loaders: `query`, `load`, `cache-hit`, `cache-miss`, `evict`, `error`, `prefetch`.
+- **`LoaderType`** -- `'point-spatial-index' | 'lines-spatial-index' | 'gsplats-spatial-index'`.
+- **`LoaderMonitor`** -- the `addEventListener` / `removeEventListener` / `getMetrics` / `getActiveQueries` surface implemented by spatial-index loaders.
+- **`LoaderMetrics`** -- per-loader counters (queries, loads, evictions), throughput (points/bytes loaded), avg query/load times, memory usage, plus optional `spatialIndex` (`PointSpatialIndexMetrics`) and `optimization` (`OptimizationMetrics`) breakdowns. `OptimizationMetrics` surfaces accumulator pooling, worker offload, WASM acceleration, and GPU buffer pool stats.
+- **`QueryInfo`** -- shape of an in-flight or recent query (id, status, ranges, fromCache).
+- **`GlobalStats`** -- aggregate dashboard numbers across all loaders (totals for points/segments/splats, hit-rate, queries-per-second, `recommendations`).
+- **`Recommendation`** -- `{ id, severity, category, title, message, ... }` performance recommendations surfaced in the monitor UI.
+- **`CacheMetrics`** + **`CacheTelemetryState`** + **`CacheStatusBadge`** -- the cache tab's data shape. `CacheTelemetryState` distinguishes the four operational states (`enabled`, `disabled-no-cache`, `disabled-config`, `not-wired`); `CacheStatusBadge` enumerates the chips rendered next to it (`cache-enabled`, `no-cache`, `opfs-unavailable`, `quota-constrained`, `unvalidated-external-dataset`, `cache-errors-detected`, `provider-missing`). L0/L1/L2 breakdowns are optional and only present when a `CacheStatsProvider` is wired.
+- **`CacheStatsProvider`** -- the interface `MultiLevelCachingStore` implements so the monitor can read stats without depending on the cache implementation directly.
+- **`SceneGraphNode` / `SceneGraphNodeType` / `SceneGraphState`** -- simplified scene-graph view used by the monitor's tree panel (separate from the runtime `SceneNode` in `data/data-loader-types.ts`).
+- **`MemoryMetrics`** + **`GPUPoolStats`** + **`GPUPoolTypeStats`** + **`AccumulatorStats`** -- cross-layer memory contracts used by the Memory tab. `GPUPoolStats.byType` is broken down per geometry kind (`points`, `lines`, `gsplats`).
+- **`MonitorConfig`** / **`MonitorUIState`** -- display configuration and runtime UI state (active tab, time range, expand state).
+- **`TimelinePoint`** / **`GridCellState`** -- `@internal` reserved extension shapes; no current consumer.
+
+These types are **not** re-exported from `index.ts` -- import them directly from `../types/data-monitor-types`.
+
 ## Float16Array Type Declaration
 
-The file `float16array.d.ts` provides TypeScript type declarations for `Float16Array`, which is supported in modern browsers (Chrome 122+, Firefox 127+, Safari 17+) but lacks built-in TypeScript definitions. This allows the viewer to handle Float16-encoded zarr arrays without type errors.
+The file `float16array.d.ts` provides TypeScript type declarations for `Float16Array`, which is supported in modern browsers (Chrome 122+, Firefox 127+, Safari 17+) but lacks built-in TypeScript definitions. This allows the viewer to handle Float16-encoded zarr arrays without type errors. `Float16Array` is also a member of the `PositionArray` and `ScalarArray` unions in `points.ts`.
+
+## Window Debug Surface
+
+`window.d.ts` augments the global `Window` interface with the optional `__luxarDebug` namespace. The viewer attaches this object **only** when debug mode is active (`?debug` URL parameter or persisted `luxar.debug` localStorage flag); production builds without those flags leave it undefined.
+
+Population happens in two stages:
+
+1. `bootstrapStandalone()` (or any caller that opts in) attaches `app`, `consoleInterceptor`, and `version` before `init()` runs.
+2. `LuxarApp.setupDebugInterface()` extends with runtime references after `init()` completes and flips `runtimeReady` to `true`.
+
+Notable members on `window.__luxarDebug`:
+
+- Runtime objects: `app`, `scene`, `camera`, `renderer` (typed as `unknown` -- may be `THREE.WebGLRenderer` or `WebGPURenderer` when opted in via `?renderer=webgpu`), `controls`, `postProcessing`, `animationController`, `inputHandler`, `renderingControls`, `recordingPanel`, `sceneDimsManager`.
+- Helpers for interactive debugging and Playwright agents: `getState()`, `renderOnce()`, `getSceneLoader()`, `getPickingSystem()`, `getOverlayManager()`, `showError(message)`.
+- `cache` -- `getStats()`, `listDatasets()`, `clearL0/L1/L2/All()`.
+- `workers` -- `getQueueDepth()`, `getStats()` for worker-pool diagnostics.
+- `lastExportedState` -- last viewer state exported via the keyboard shortcut handler.
+- `injectSyntheticScene(spec)` -- debug/perf-bench-only synthetic line scene injection (not present in production bundles).
+
+Return shapes for the helpers are intentionally dynamic and typed as `unknown` so callers must narrow before reading.
 
 ## Usage Examples
 
@@ -720,3 +764,18 @@ const ranges = getDimensionRanges(positions, dims.ndim, numPoints);
 ```
 
 The types package provides the type-safe foundation for all nD visualization operations in Luxar, ensuring data consistency and enabling rich semantic interpretation of high-dimensional datasets.
+
+---
+
+## File Index
+
+- `index.ts` -- Barrel re-exporting the public types and helpers (`DimensionMetadata`, `SimpleDims`, `initializeDims`, `getDimensionRanges`, the Points/Lines/GSplats interface families and their type guards, `ZarrSceneAttrs`/`ZarrNodeAttrs`, `hasContentsMethod`).
+- `dims.ts` -- `DimensionMetadata`, `SimpleDims`, `initializeDims()`, `getDimensionRanges()`.
+- `points.ts` -- `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
+- `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
+- `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
+- `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
+- `animation.ts` -- `LoopMode`, `AnimationDirection`, `DimensionAnimationState`, `DimensionAnimationEvents`.
+- `data-monitor-types.ts` -- Data-loading monitor contracts (`MonitorEvent`, `LoaderMetrics`, `CacheMetrics`, `CacheTelemetryState`, `CacheStatusBadge`, `CacheStatsProvider`, `SceneGraphNode`, `MemoryMetrics`, `GPUPoolStats`, ...).
+- `float16array.d.ts` -- Ambient `Float16Array` typing.
+- `window.d.ts` -- Ambient `window.__luxarDebug` augmentation.

@@ -27,6 +27,7 @@ scene/
 │   └── viewport/                   # dpr-policy, resize-orchestrator
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
+├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines)
 └── README.md                       # This documentation
 ```
 
@@ -50,31 +51,49 @@ The `SceneManager` is the central hub for all 3D scene operations.
 **Core Features:**
 
 ```typescript
-class SceneManager {
-  // Scene setup
+class SceneManager extends THREE.EventDispatcher {
+  // Scene setup (populated by init())
   scene: THREE.Scene;
   camera: LuxarCamera; // PerspectiveCamera | OrthographicCamera
-  renderer: THREE.WebGLRenderer;
+  renderer: Renderer; // WebGLRenderer or WebGPURenderer
+  capabilities: RendererCapabilities;
   controls: ControlsManager;
+  postProcessing: PostProcessingManager;
 
-  // Scene manipulation
-  addToScene(object: THREE.Object3D): void;
-  clearScene(): void;
-  updateBoundingBox(): void;
+  // Lifecycle
+  init(options: {
+    canvas: HTMLCanvasElement;
+    debug?: boolean;
+    renderer?: 'webgl' | 'webgpu';
+    webgpuForceWebGL?: boolean;
+    perfTimestamp?: boolean;
+  }): Promise<void>;
+  loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void>;
+  updateSize(): void;
+  dispose(): void;
 
   // Camera control
   updateFOV(delta: number): void;
+  updateClippingPlanes(near: number, far: number): void;
+  autoAdjustClippingPlanes(): { near: number; far: number };
+  setDynamicClipping(enabled: boolean): void;
+  getDynamicClippingState(): { enabled: boolean; near: number; far: number };
   setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
+  getControlType(): ControlType;
 
   // Centering
+  centerCameraOnScene(): void;
   toggleCentering(): void;
   getCurrentCenter(): THREE.Vector3;
 
-  // Lifecycle
-  updateSize(): void;
-  dispose(): void;
+  // WebGL context-loss
+  isWebGLContextLost(): boolean;
 }
 ```
+
+Scene mutation goes through the standard Three.js API on the
+`scene` field (e.g. `sceneManager.scene.add(group)`); SceneManager
+itself does not expose a wrapping `addToScene` method.
 
 **Usage Example:**
 
@@ -83,8 +102,8 @@ const canvas = document.getElementById('app') as HTMLCanvasElement;
 const sceneManager = new SceneManager();
 await sceneManager.init({ canvas });
 
-// Add objects to scene
-sceneManager.addToScene(pointCloud);
+// Add objects directly through the THREE.Scene field
+sceneManager.scene.add(pointCloud);
 
 // Update camera FOV
 sceneManager.updateFOV(10); // Increase FOV by 10 degrees
@@ -302,27 +321,22 @@ Scene (THREE.Scene)
 **Adding Objects:**
 
 ```typescript
-// Add with automatic bbox update
-sceneManager.addToScene(object);
+// Add directly through the THREE.Scene field
+sceneManager.scene.add(object);
 
 // Batch operations
 const group = new THREE.Group();
 group.add(points1, points2, points3);
-sceneManager.addToScene(group);
+sceneManager.scene.add(group);
 ```
 
 **Clearing Scene:**
 
-```typescript
-// Remove all objects except lights
-sceneManager.clearScene();
-
-// Dispose of geometries and materials
-object.traverse((child) => {
-  if (child.geometry) child.geometry.dispose();
-  if (child.material) child.material.dispose();
-});
-```
+`loadSceneData` internally clears prior loaded content (lights and
+background are preserved) before adding the new dataset's root
+group. Manual disposal helpers used by that path are in
+`scene-manager/render-pipeline/scene-disposal.ts`
+(`clearLoadedSceneContent`, `disposeSceneGraphResources`).
 
 ---
 
@@ -362,6 +376,10 @@ const { near, far } = sceneManager.autoAdjustClippingPlanes();
 // Enable dynamic clipping (auto-adjusts each frame)
 sceneManager.setDynamicClipping(true); // enable sphere-based clipping
 
+// Trigger an explicit dynamic update (normally called per-frame
+// by AnimationController)
+sceneManager.updateDynamicClippingPlanes();
+
 // Get current dynamic clipping state
 const state = sceneManager.getDynamicClippingState();
 // { enabled: boolean, near: number, far: number }
@@ -379,17 +397,16 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 
 **How It Works:**
 
-1. Each frame, computes a bounding sphere from the scene bounding box (with 20% safety margin)
+1. Each frame, computes a bounding sphere from the cached scene bounds (with safety margin)
 2. Near plane = `max(MIN_NEAR_PLANE, distToCenter - radius)` -- smoothly transitions to minimum as camera enters the sphere
 3. Far plane = `distToCenter + radius` -- distance to farthest point on the sphere
-4. Uses exponential smoothing for stable transitions: `z_new = (1-α)·z_old + α·z_optimal`
+4. The bounds cache is invalidated on scene load/clear; zero per-frame scene-graph traversal in steady state
 
 **Benefits:**
 
 - Always-optimal Z-buffer precision as camera moves
-- **Smooth, direction-independent clipping** -- no sharp jumps at bounding box edges
+- **Direction-independent clipping** -- no sharp jumps at bounding box edges
 - Near plane continuously drops to minimum as camera enters the scene
-- Smooth transitions prevent visual artifacts
 - Eliminates need for manual clipping adjustment
 - Perfect for exploring large-scale scenes from any viewpoint
 
@@ -399,12 +416,6 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 // Enable sphere-based dynamic clipping
 sceneManager.setDynamicClipping(true);
 ```
-
-**Adapt Speed Values:**
-
-- **0.01**: Very smooth, slow adaptation (good for cinematic)
-- **0.1**: Balanced - stable yet responsive
-- **0.5**: Fast adaptation (default)
 
 ### Centering Modes
 
@@ -654,7 +665,7 @@ sceneManager.render();
 
 ```typescript
 import { SceneManager } from './scene/scene-manager';
-import { AnimationController } from './scene/animation-controller';
+import { AnimationController } from './scene/animation/animation-controller';
 import { sceneDimsManager } from './scene/scene-dims-manager';
 
 // Initialize scene
@@ -673,31 +684,26 @@ sceneDimsManager.initFromScene(sceneManager.scene);
 animationController.startAnimation();
 ```
 
-### Loading Point Clouds
+### Loading a Zarr Scene
 
 ```typescript
-// Load from zarr
-const pointClouds = await loadFromZarr(url);
+// One-shot: clears prior content, loads zarr scene tree,
+// applies any viewer_config camera overrides, auto-frames the
+// camera, and auto-adjusts clipping planes.
+await sceneManager.loadSceneData(zarrUrl);
 
-// Add to scene
-pointClouds.forEach((points) => {
-  sceneManager.addToScene(points);
-});
-
-// Update bounds
-sceneManager.updateBoundingBox();
-
-// Center camera on data
-const center = sceneManager.getCurrentCenter();
-sceneManager.controls.lookAt(center);
+// Manual recentering on bbox (also bound to 'F' key in app)
+sceneManager.centerCameraOnScene();
 ```
 
 ### Handling Window Resize
 
 ```typescript
 window.addEventListener('resize', () => {
+  // updateSize() schedules an rAF-coalesced resize through the
+  // ResizeOrchestrator, which propagates to renderer, camera
+  // aspect, post-processing, and material uniforms.
   sceneManager.updateSize();
-  postProcessing.resize(window.innerWidth, window.innerHeight);
 });
 ```
 
@@ -809,19 +815,22 @@ function disposeObject(object: THREE.Object3D) {
 
 | Method                                | Description                              |
 | ------------------------------------- | ---------------------------------------- |
-| `addToScene(object)`                  | Add object to scene                      |
-| `clearScene()`                        | Remove all objects                       |
-| `updateBoundingBox()`                 | Recalculate bounds                       |
-| `toggleCentering()`                   | Switch center mode                       |
+| `init(options)`                       | Build renderer, scene, camera, controls, post-processing |
+| `loadSceneData(src, loaderConfig?)`   | Load zarr scene; clears prior content, auto-frames, auto-clips |
+| `centerCameraOnScene()`               | Frame camera on scene bounding box       |
+| `toggleCentering()`                   | Switch center mode (origin ↔ bbox)       |
 | `getCurrentCenter()`                  | Get active center point                  |
 | `updateFOV(delta)`                    | Adjust field of view                     |
 | `updateClippingPlanes(near, far)`     | Set camera clipping planes               |
 | `autoAdjustClippingPlanes()`          | Calculate optimal clipping from scene    |
-| `setDynamicClipping(enabled, speed?)` | Enable/disable per-frame clipping update |
+| `setDynamicClipping(enabled)`         | Enable/disable per-frame clipping update |
 | `getDynamicClippingState()`           | Get current dynamic clipping state       |
 | `updateDynamicClippingPlanes()`       | Manually trigger dynamic clipping update |
-| `setControlType(type)`                | Switch control mode                      |
-| `updateSize()`                        | Handle resize                            |
+| `setControlType(type)` / `getControlType()` | Switch / read current control type |
+| `setAdaptivePixelRatio(dpr)`          | Set DPR override (AdaptiveDPRManager)    |
+| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms |
+| `isWebGLContextLost()`                | Query WebGL context-loss state           |
+| `updateSize()`                        | Handle resize (rAF-debounced)            |
 | `dispose()`                           | Clean up resources                       |
 
 ### AnimationController
@@ -855,3 +864,24 @@ Part of the Luxar project. See root LICENSE file for details.
 ---
 
 _For implementation details, see the source files in this directory._
+
+---
+
+## Top-Level Files
+
+- `scene-manager.ts` — `SceneManager` orchestrator: renderer, camera,
+  controls, post-processing, resize, disposal.
+- `scene-dims-manager.ts` — Singleton dimension state across all nD
+  objects in the scene (exported as both class `SceneDimsManager`
+  and lazy-Proxy singleton `sceneDimsManager`).
+- `synthetic-scene.ts` — Mulberry32-seeded synthetic line-segment
+  scene generator (`generateSyntheticLines`) used by the perf bench
+  and the `__luxarDebug.injectSyntheticScene` debug API.
+
+## Subpackages
+
+- [animation](./animation/README.md) — `AnimationController` render
+  loop and `DimensionAnimationManager` per-dimension playback.
+- [scene-manager](./scene-manager/README.md) — Extracted SceneManager
+  helpers (camera setup/framing/materials/mode, clipping policy and
+  bounds cache, render-pipeline setup, viewport DPR and resize).

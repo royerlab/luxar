@@ -1,30 +1,24 @@
 # Panels
 
-Modal / floating panels rendered above the WebGL canvas: dataset
-browser, dimension sliders, debug console.
+Reserved namespace for a future panel-framework refactor.
 
-## Files
+This folder is currently **empty** — no source files live here. The
+modal and floating panels that sit above the WebGL canvas (dataset
+browser, dimension sliders, debug console, recording panel, layers,
+rendering controls, help overlay) currently live one level up in
+`packages/luxar-viewer/src/ui/`, each as a `<name>.ts` entry file with
+a sibling `<name>/` folder for pure helpers.
 
-| File                          | Role                                                                  |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `dataset-browser.ts`          | "Open dataset" modal — file-system browse + URL paste + recent list   |
-| `dataset-url-utils.ts`        | Pure helpers for URL normalization and validation used by the browser |
-| `dimension-sliders.ts`        | nD navigation UI — per-dimension slider with step / range / unit      |
-| `debug-console.ts`            | Floating debug console panel (toggled by `Ctrl+L`)                    |
-| `debug-console-formatters.ts` | Pure formatters for log lines (timestamp, level coloring, etc.)       |
+When a shared panel base class or registry is introduced, it will land
+here. Until then this README exists only so the cross-reference from
+`../README.md` (`[panels](./panels/README.md) — Panel framework.`) does
+not dangle.
 
-## Public surface
+## See Also
 
-Panels are constructed by `core/app.ts` and exposed through
-factories where lower-layer code needs to mount them (see
-`DimensionSlidersFactory` in `src/input/input-handler.ts` for the
-dependency-inversion pattern).
-
-## Invariants
-
-- All DOM listeners go through `EventGroup` for bulk teardown.
-- Panels are idempotent on `dispose()` and tolerate being disposed
-  before `init()` runs (e.g. when scene load fails early).
-- Dataset-URL parsing is pure (no DOM, no network). The network
-  preflight lives in `dataset-browser.ts` and uses `AbortController`
-  for cancellation.
+- [`../README.md`](../README.md) — UI package overview, including the
+  current list of individual panels and their entry points.
+- [`../dataset-browser.ts`](../dataset-browser.ts),
+  [`../dimension-sliders.ts`](../dimension-sliders.ts),
+  [`../debug-console.ts`](../debug-console.ts) — actual panel
+  implementations.

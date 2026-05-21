@@ -381,9 +381,10 @@ Initialize OPFS storage and validate cache. Must be called before first use.
 
 Get a zarr chunk with L1 → L2 → HTTP cascade. Implements zarrita's AsyncReadable interface.
 
-**`getStats(): { l1, l2, network }`**
+**`getStats(): MultiLevelCacheStats`**
 
-Get cache statistics:
+Get the aggregated multi-tier statistics snapshot consumed by the
+data-loading monitor, debug overlay, and cache E2E suite:
 
 ```typescript
 {
@@ -400,15 +401,33 @@ Get cache statistics:
     size: number,            // Total bytes in OPFS
     count: number,           // Total files in OPFS
     reads: number,           // Total reads from L2
-    writes: number           // Total writes to L2
+    writes: number,          // Total writes to L2
+    misses: number           // L2 lookup misses
+    // plus health counters: available, oversizedWriteSkipped,
+    // quotaWriteSkipped, evictions, writeFailures,
+    // corruptedEntries, metadataParseFailures, orphanedFilesRemoved
   },
   network: {
     bytesTransferred: number, // Total bytes fetched from network
-    requestCount: number,     // Total HTTP requests
+    requestCount: number,     // Total HTTP requests (incl. prefetch)
     bandwidth: number         // Current bandwidth (bytes/sec, sliding window)
-  }
+  },
+  demand: {
+    l1Hits: number,           // User-demand L1 hits (excludes prefetch)
+    l2Hits: number,           // User-demand L2 hits (excludes prefetch)
+    networkRequests: number   // User-demand network requests
+  },
+  health: {
+    validationMode: 'content-hash' | 'ttl' | 'none',
+    lastValidatedAt: number | null,
+    unvalidatedExternalDataset: boolean,
+    opfsAvailable: boolean
+  },
+  clearOnInitCount: number    // Times ?clear-cache fired on init
 }
 ```
+
+See `types.ts` (`MultiLevelCacheStats`) for the authoritative shape.
 
 **`clearL1(): void`**
 
@@ -445,7 +464,12 @@ Get the attached prefetcher instance (if any).
 
 **`async dispose(): Promise<void>`**
 
-Flush pending metadata writes, clear prefetcher reference, and clear L1. Call when navigating away.
+Mark the store disposed (synchronously short-circuiting `getResult`),
+abort the store-level `dataAbort` controller (cancelling in-flight
+prefetch / demand fetches), tear down the prefetcher, cancel any
+in-flight or queued validation, await L2 dispose (which flushes pending
+metadata writes), and clear L1. Call when navigating away or switching
+datasets.
 
 **`async listDatasets(): Promise<Array<{...}>>`**
 
@@ -480,9 +504,17 @@ new ChunkPrefetcher(store: MultiLevelCachingStore, options?: {
 
 #### Methods
 
-**`onAccess(key: string): void`**
+**`onAccess(key: string, priority?: 'high' | 'normal'): void`**
 
-Called by store when a chunk is accessed from L2 or L3. Enqueues adjacent chunks for prefetching. Called automatically - not for direct use.
+Called by store when a chunk is accessed from L2 or L3. Enqueues
+adjacent chunks for prefetching at the given priority (default
+`'normal'`). Called automatically - not for direct use.
+
+**`enqueueWithPriority(keys: Iterable<string>, priority?: 'high' | 'normal'): void`**
+
+Explicitly enqueue an iterable of chunk keys for prefetching at a chosen
+priority (default `'high'`). Used by higher-level scheduling code to
+front-load chunks ahead of demand.
 
 **`registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void`**
 
@@ -749,6 +781,26 @@ console.log('Cached datasets:', datasets);
 // Clear all caches during development
 await window.__luxarDebug.cache.clearAll();
 ```
+
+## File Layout
+
+- `multi-level-caching-store.ts` — L1+L2 facade implementing zarrita's
+  `AsyncReadable` with validation, prefetcher hookup, and disposal.
+- `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
+- `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
+  with per-array bounds registration and high/normal priority queues.
+- `lru-cache.ts` — Generic LRU with O(1) get/set/delete.
+- `types.ts` — Shared cache types (`MultiLevelCacheStats`,
+  `CacheStatusBadge`, validation-mode helpers, etc.).
+- `decompressed-chunk-cache/cached-zarr-array.ts` — ES6 Proxy that
+  wraps a `zarr.Array` with the L0 cache (`wrapWithCache`,
+  `isCachedArray`, `unwrapCachedArray`).
+- `multi-level-caching-store/` — internals split into
+  `segmented-lru-cache.ts` (L1), `opfs-store.ts` + `opfs-store/`
+  (L2 persistence, bucketing, metadata), `fetch-retry.ts` (HTTP
+  retry/abort helpers, URL hashing), `bandwidth-window.ts` (sliding
+  window), and `validation-queue.ts` (per-dataset validation
+  serialization).
 
 ## Related Packages
 

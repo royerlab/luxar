@@ -4,16 +4,16 @@ Hierarchical timing instrumentation for the scene update pipeline with EMA smoot
 
 ## Overview
 
-The Profiling package provides performance profiling for data loading and rendering operations. It measures timing of each update cycle, tracks metrics like cache hits/misses, and displays results in the UI.
+The Profiling package provides performance profiling for data loading and rendering operations. It measures timing of each update cycle, tracks per-loader metadata (visible counts, skip reasons), and displays results in the UI.
 
 ### Key Features
 
-- **Hierarchical Timing**: Parent-child relationships with automatic nesting
+- **Hierarchical Timing**: Parent-child relationships built via explicit session passing (`session.begin(name)` / `timeWithMeta`)
 - **Exponential Moving Average**: Stable timing averages with EMA (alpha=0.1)
-- **Session Stack**: Ambient pattern for clean nesting without passing sessions around
-- **Concurrent-Safe**: Handles parallel loader updates automatically
-- **Metadata Tracking**: Points, segments, cache hits, bytes, and custom info
-- **UI Integration**: DataLoadingMonitor displays timing panel
+- **Ambient root context**: `time()`/`begin()` attach to the root session — handy for flat top-level entries
+- **Concurrent-safe top-level entries**: `timeTopLevel()` is safe under `Promise.all` for parallel loader updates
+- **Metadata Tracking**: Points, segments, splats, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
+- **UI Integration**: `DataLoadingMonitor` displays the timing panel
 
 ## Quick Start
 
@@ -27,14 +27,19 @@ const profiler = new UpdateProfiler();
 profiler.beginUpdate();
 
 try {
-  // Automatic nesting via session stack
-  const data = await profiler.time('Load Data', async () => {
+  // Top-level entry under the root — safe for Promise.all
+  const data = await profiler.timeTopLevel('Points (/scene/foo)', async (session) => {
+    // Use the passed session to nest child entries
+    const result = await session.begin('Load Arrays');
+    // ... do work ...
+    result.end();
+    session.setMetadata({ points: 12345 });
     return this.loadData();
   });
 
-  // With metadata
+  // Flat top-level entry with metadata
   await profiler.timeWithMeta('Process', (session) => {
-    session.setMetadata({ count: data.length });
+    session.setMetadata({ info: `count=${data.length}` });
     return this.processData(data);
   });
 } finally {
@@ -66,33 +71,47 @@ try {
 | Function               | Purpose                                       |
 | ---------------------- | --------------------------------------------- |
 | `formatMs(ms)`         | Format milliseconds for display               |
-| `hasOverBudget(entry)` | Check if entry or children exceed 16ms budget |
+| `hasOverBudget(entry)` | Check if entry or children exceed the 60fps budget (16.67ms) |
 
-## Session Stack Pattern
+## Session Model
 
-Sessions automatically nest under the current session via stack:
+The profiler tracks a single ambient context — the root session created by
+`beginUpdate()`. `time()`, `begin()`, `timeWithMeta()`, and `skip()` all
+attach their entries as direct children of that root. **`time()` does NOT
+push/pop the context**, so a nested `profiler.time('Inner', …)` inside
+`profiler.time('Outer', …)` registers `Inner` as a *sibling* of `Outer`,
+not a child (pinned by `update-profiler.test.ts`).
 
+To build a true hierarchy, pass a session explicitly and call
+`session.begin(childName)`:
+
+```typescript
+profiler.beginUpdate();
+const points = profiler.beginTopLevel('Points (/scene/nuclei)');
+const query = points.begin('Spatial Query');
+// ... do work ...
+query.end();
+points.setMetadata({ points: 50000 });
+points.end();
+profiler.endUpdate();
 ```
-beginUpdate()           <- Root session created, pushed to stack
-  time('Query', ...)    <- Child of root
-  time('Load', ...)     <- Child of root (same level)
-    time('Decode', ...) <- Child of Load
-  time('GPU', ...)      <- Child of root
-endUpdate()             <- Stack cleared, listeners notified
-```
 
-No need to pass sessions around - the stack handles parent-child relationships.
+`timeTopLevel(name, fn)` is the recommended sugar — it creates a direct
+child of root, passes the session to `fn`, and is the only entry point
+that is safe under `Promise.all` (each call tracks its own ID, so
+concurrent top-level operations do not corrupt one another).
 
 ## Timing Hierarchy
 
-The profiler captures this structure during scene updates:
+A typical scene update produces this structure (each per-loader subtree
+is built by handlers receiving the `timeTopLevel` session):
 
 ```
 Total Update                              [root]
-+-- Points (/scene/nuclei)                [per-loader]
-|   +-- Spatial Query                     [chunk index query]
-|   +-- Load Arrays                       [fetch + decode]
-|   +-- Project to 3D                     [nD visibility + projection]
++-- Points (/scene/nuclei)                [per-loader, timeTopLevel]
+|   +-- Spatial Query                     [child of Points session]
+|   +-- Load Arrays
+|   +-- Project to 3D
 |
 +-- Lines (/scene/tracks)                 [per-loader]
 |   +-- Spatial Query
@@ -104,12 +123,16 @@ Total Update                              [root]
 |   +-- Spatial Query
 |   +-- Load Arrays
 |
-+-- [Skipped: /scene/detector]            [extend_to_all optimization]
++-- [Skipped: /scene/detector]            [skip(): 0-duration, skipReason]
 ```
 
 ## Metadata Per Entry
 
-| Entry Type      | Metadata Fields               |
+`TimingMetadata` fields (all optional): `chunks`, `cacheHits`,
+`cacheMisses`, `points`, `segments`, `splats`, `skipped`, `skipReason`,
+`info`.
+
+| Entry Type      | Metadata Fields typically set |
 | --------------- | ----------------------------- |
 | Total Update    | (none)                        |
 | Points          | `points` (visible count)      |
@@ -156,3 +179,22 @@ this.sceneLoader = new SceneLoader(store, {
 // Connect profiler to UI
 this.monitor.setProfiler(this.profiler);
 ```
+
+---
+
+## Contents
+
+- `update-profiler.ts` — `UpdateProfiler`, `RootSession`, the
+  `TimingEntry` / `TimingMetadata` / `UpdateSession` interfaces, plus the
+  `formatMs` and `hasOverBudget` helpers.
+
+## Public Exports
+
+- `class UpdateProfiler`, `class RootSession`
+- Interfaces: `UpdateSession`, `TimingEntry`, `TimingMetadata`
+- Functions: `formatMs(ms)`, `hasOverBudget(entry)`
+
+## Dependencies
+
+- Internal: `../utils/log` (for `log.warning` / `log.error` on session
+  misuse and listener errors).

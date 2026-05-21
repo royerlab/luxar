@@ -6,19 +6,23 @@ specific to the GSplats node type.
 
 ## Files
 
-| File                              | Role                                                                                                                                                              |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload           |
-| `projection.ts`                   | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback. |
-| `gsplats-progressive-loader.ts`   | Progressive amplitude-ordered loading — surfaces the brightest splats first while the rest stream in                                                              |
-| `chunk-index-loader.ts`           | Loads the GSplats chunk-bounds index from zarr metadata                                                                                                           |
+| File                              | Role                                                                                                                                                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload                                                                         |
+| `gsplats-progressive-loader.ts`   | Composite multi-LOD facade: wraps N `GSplatsSpatialIndexLoader` instances (one per LOD subgroup) and loads them sequentially. Stops at the first LOD whose load exceeds the cache-hit threshold and prefetches the next one     |
+| `chunk-index-loader.ts`           | Loads the GSplats chunk-bounds index from zarr metadata, reconciles the metadata-implied chunk count against the array shape, and exposes a thin `registerArrayBounds` helper                                                   |
+| `projection.ts`                   | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback                                                                |
+| `handler.ts`                      | Per-type wiring for the scene-loader load+stage path. Derives the gsplats view state (with `applyPartialExtendTolerance: true`), calls `loader.updateView()`, hands off to `processGSplatsData`, and dispatches predictive prefetch |
+| `lod-refinement.ts`               | Progressive LOD refinement loop: after the initial commit, loads remaining LODs one pass per `requestAnimationFrame`, with cancellation when the view-state queue has pending state                                              |
 
 ## Public surface
 
-`GSplatsSpatialIndexLoader` implements the same `SpatialIndexLoader`
-contract as Points / Lines (constructor, `loadForView`,
-`prefetchChunks`, `dispose`, monitor events). Scene-loader code never
-imports the concrete class — it goes through `loader-factory.ts`.
+`GSplatsSpatialIndexLoader` implements the `GSplatsDataLoader`
+contract — same shape as the Points and Lines facades (constructor,
+`loadGSplats`, `updateView`, `prefetchChunks`, `dispose`, monitor
+events via `addEventListener` / `getMetrics` / `getActiveQueries`).
+Scene-loader code never imports the concrete class — it goes through
+`loader-factory.ts`.
 
 ## Invariants
 
@@ -26,10 +30,11 @@ imports the concrete class — it goes through `loader-factory.ts`.
   `_lSubWorkspace` at module scope; sized to
   `MAX_SUPPORTED_DIMS = 16` from `src/config/constants.ts`). Hot
   loops (called per splat, 100k+ times) must not re-allocate.
-- Amplitude-ordered loading preserves visual priority: the loader
-  consumes a precomputed `amplitude_order` array stored in zarr so
-  the brightest splats arrive in the first range, regardless of
-  spatial chunk order.
+- Amplitude-ordered LOD priority is structural, not runtime: LOD 0
+  carries the coarsest (highest-amplitude) splats and each subsequent
+  LOD adds residual detail. `GSplatsProgressiveLoader` concatenates
+  loaded LODs in order, so the brightest splats are always present
+  first regardless of how many LODs have streamed in.
 - Hidden-dim attenuation uses **marginal** Σ, not conditional. The
   marginal path is correct for diagonal hidden-display covariance
   (the typical case for time-stamped / channel-stamped splats). See
@@ -38,7 +43,7 @@ imports the concrete class — it goes through `loader-factory.ts`.
 ## See also
 
 - `src/types/gsplats.ts` — type definitions and metadata schema
-- `src/rendering/gsplat-material.ts` — GPU-side rendering
+- `src/rendering/materials/gsplat/` — GPU-side material/rendering
 - `src/wasm/typescript/gsplats-processing.ts` — TypeScript fallback
   that mirrors the Rust WASM kernel
 - `src/data/loaders/README.md` — encoding dispatch / range

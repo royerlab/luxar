@@ -12,6 +12,7 @@ to the Points node type.
 | `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical. |
 | `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                           |
 | `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                    |
+| `handler.ts`                     | Per-type wiring for the scene-loader's load + stage phase. Exports `loadAndStage` (skip → `loader.updateView` → failure-clear → metadata → predictive-prefetch dispatch), plus `kind`/`label` constants and the `StagedPointsCommit` / `PointsHandlerCtx` shapes. Lines and GSplats mirror this shape so all first-class geometry kinds stay symmetrical. |
 
 ## Public surface
 
@@ -51,7 +52,9 @@ main-thread use (worker-disabled environments, unit tests).
 ## See also
 
 - `src/types/points.ts` — type definitions and metadata schema
-- `src/rendering/point-material.ts` — GPU-side rendering
+- `src/rendering/materials/point/` — GPU-side rendering
+  (`material-glsl.ts` / `material-tsl.ts` variants share the
+  `shader-glsl.ts` / `shader-tsl.ts` sources)
 - `src/rendering/material-sync-helpers.ts` —
   `syncPointMaterialWithGeometry` propagates dtype scales
 - `src/wasm/typescript/points.ts` and `effective-radii.ts` —
