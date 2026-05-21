@@ -28,7 +28,7 @@
  */
 
 import * as THREE from 'three';
-import type { PostProcessingManager } from '../post-processing-manager';
+import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import {
   disposePickMaterial,

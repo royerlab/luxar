@@ -79,6 +79,7 @@ rendering/
 │       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
 │       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
 │       ├── pick-render.ts              # voteWinner (brightness-weighted majority over 5×5)
+│       ├── lens-distortion.ts          # applyLensDistortion (sync screen-space picking with mega-shader)
 │       └── settle-loop.ts              # HOVER_SETTLE_MS + evaluateSettle decision logic
 │
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
@@ -100,12 +101,17 @@ rendering/
 ### Step 1: Initialize Post-Processing
 
 ```typescript
-import { PostProcessingManager } from './rendering/post-processing-manager';
+import { PostProcessingManager } from './rendering/post-processing/post-processing-manager';
+import { createRendererCapabilities } from './rendering/renderer-capabilities';
 
-const postProcessing = new PostProcessingManager(renderer, scene, camera, {
-  width: window.innerWidth,
-  height: window.innerHeight,
-});
+const capabilities = createRendererCapabilities(renderer);
+const postProcessing = new PostProcessingManager(
+  renderer,
+  capabilities,
+  scene,
+  camera,
+  { width: window.innerWidth, height: window.innerHeight }
+);
 
 // In your render loop
 function animate() {
@@ -128,12 +134,12 @@ postProcessing.updateBloomSettings(
 
 ```typescript
 // AgX: Neutral, film-like (recommended)
-postProcessing.setToneMapping('AgX');
+postProcessing.setToneMapping(THREE.AgXToneMapping);
 
 // Or try others:
-// 'ACES' - Cinematic with warm tones
-// 'Reinhard' - Classic, simple
-// 'Linear' - No tone mapping
+// THREE.ACESFilmicToneMapping - Cinematic with warm tones
+// THREE.ReinhardToneMapping  - Classic, simple
+// THREE.LinearToneMapping    - No tone mapping
 ```
 
 ### Step 4: Add Anti-Aliasing
@@ -167,7 +173,13 @@ The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment sha
 
 ```typescript
 // Initialize with HDR support
-const postProcessing = new PostProcessingManager(renderer, scene, camera, { width, height });
+const postProcessing = new PostProcessingManager(
+  renderer,
+  capabilities,
+  scene,
+  camera,
+  { width, height }
+);
 
 // Configure bloom
 postProcessing.updateBloomSettings(/* strength */ 0.3, /* radius */ 0.85, /* threshold */ 0.01);
@@ -524,14 +536,17 @@ new THREE.WebGLRenderTarget(width, height, {
 ### Basic Setup
 
 ```typescript
-import { PostProcessingManager } from './rendering/post-processing-manager';
+import { PostProcessingManager } from './rendering/post-processing/post-processing-manager';
 import { materialManager } from './rendering/material-manager';
 
 // Initialize post-processing
-const postProcessing = new PostProcessingManager(renderer, scene, camera, {
-  width: canvas.width,
-  height: canvas.height,
-});
+const postProcessing = new PostProcessingManager(
+  renderer,
+  capabilities,
+  scene,
+  camera,
+  { width: canvas.width, height: canvas.height }
+);
 
 // Create point material
 const material = materialManager.getPointMaterial({

@@ -16,14 +16,14 @@
  */
 
 import * as THREE from 'three';
-import { log, Modules } from '../utils/log';
-import { config } from '../config';
-import { type LuxarMegaShaderMaterial } from './material-manager';
-import { BloomChain } from './post-processing/bloom-chain';
-import { FxaaPass } from './post-processing/fxaa-pass';
-import { FullscreenPass } from './post-processing/fullscreen-pass';
-import type { Renderer, RendererCapabilities } from './renderer-capabilities';
-import { clamp } from '../utils/clamp';
+import { log, Modules } from '../../utils/log';
+import { config } from '../../config';
+import { type LuxarMegaShaderMaterial } from '../material-manager';
+import { BloomChain } from './bloom-chain';
+import { FxaaPass } from './fxaa-pass';
+import { FullscreenPass } from './fullscreen-pass';
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+import { clamp } from '../../utils/clamp';
 import {
   computeEffectiveSize,
   getPhysicalSize,
@@ -32,15 +32,15 @@ import {
   buildBloomChain,
   disposeTransientResources,
   applyScaledNoiseSettings,
-} from './post-processing/post-processing-manager/resource-lifecycle';
-import { runPipeline, type PipelineCtx } from './post-processing/post-processing-manager/pipeline';
+} from './post-processing-manager/resource-lifecycle';
+import { runPipeline, type PipelineCtx } from './post-processing-manager/pipeline';
 import {
   captureHDRPixels as captureHDRPixelsImpl,
   captureHDRAsEXR as captureHDRAsEXRImpl,
   renderToImageData as renderToImageDataImpl,
   type CaptureCtx,
   type CaptureMode,
-} from './post-processing/post-processing-manager/capture';
+} from './post-processing-manager/capture';
 import {
   updateBloomSettings as updateBloomSettingsImpl,
   clampBloomLevels,
@@ -50,7 +50,7 @@ import {
   updateChromaticLensDistortion as updateChromaticLensDistortionImpl,
   getLensDistortionParams as getLensDistortionParamsImpl,
   type LensDistortionParams,
-} from './post-processing/post-processing-manager/settings';
+} from './post-processing-manager/settings';
 
 /**
  * Manages HDR post-processing: scene → bloom → mega-shader → (FXAA) →
