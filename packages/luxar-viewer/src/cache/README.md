@@ -69,6 +69,7 @@ Override cache behavior via URL parameters:
 - `?clear-cache` - Clear all caches (L0 + L1 + L2) before loading dataset
 - `?no-prefetch` - Disable prefetching (caches still active)
 - `?prefetch-debug` - Enable verbose prefetch logging
+- `?cache-stats` - Auto-open the data-loading monitor expanded on the Cache tab
 
 Example:
 
@@ -190,8 +191,7 @@ this origin. Cleared by:
 OPFS storage is sandboxed per origin. Cross-origin pages cannot read
 this cache. Private/incognito browser windows typically expose a
 reduced-quota OPFS that wipes on tab close — the cache degrades to L1
-
-- network with no persistence.
++ network with no persistence.
 
 ## OPFS availability and quota
 
@@ -757,14 +757,17 @@ private async getRemoteContentHash(): Promise<string | null> {
 When `?debug` URL parameter is present, cache management available at:
 
 ```typescript
-await window.__luxarDebug.cache.getStats(); // Get L1 + L2 statistics
+await window.__luxarDebug.cache.getStats(); // Get L0 + L1 + L2 statistics
 await window.__luxarDebug.cache.listDatasets(); // List all cached datasets
-await window.__luxarDebug.cache.clearL1(); // Clear L1 memory cache only
+window.__luxarDebug.cache.clearL0(); // Clear L0 decompressed cache only
+window.__luxarDebug.cache.clearL1(); // Clear L1 memory cache only
 await window.__luxarDebug.cache.clearL2(); // Clear L2 OPFS cache only
 await window.__luxarDebug.cache.clearAll(); // Clear L0 + L1 + L2
 ```
 
-L0 cache statistics are available in the Data Monitor panel (press `D` to toggle).
+L0 cache statistics are also surfaced by the Data Monitor's Cache tab
+(press `M` to cycle the data monitor; `?cache-stats` auto-opens it
+expanded on the Cache tab).
 
 Example usage:
 

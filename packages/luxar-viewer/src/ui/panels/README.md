@@ -11,8 +11,8 @@ a sibling `<name>/` folder for pure helpers.
 
 When a shared panel base class or registry is introduced, it will land
 here. Until then this README exists only so the cross-reference from
-`../README.md` (`[panels](./panels/README.md) — Panel framework.`) does
-not dangle.
+`../README.md` (`[panels/](./panels/README.md) — Shared panel framework
+used by multiple top-level panels.`) does not dangle.
 
 ## See Also
 

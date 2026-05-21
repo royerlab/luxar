@@ -1,8 +1,7 @@
 /**
  * Renderer-construction helpers extracted from SceneManager.
  *
- * Three concerns live here, all of which were previously inline
- * private methods on the class:
+ * Three concerns live here:
  *
  *   - `selectBackend` — apply the URL-param / env-var / default
  *     precedence ladder to pick WebGL or WebGPU.

@@ -104,9 +104,7 @@ export function resolveMaterialBackend(caps: RendererCapabilities | null): Mater
 /**
  * Constructor table for the visual material pair of each geometry
  * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
- * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate,
- * replacing what used to be inline `useTSL ? new XTSL(...) : new
- * X(...)` ternaries.
+ * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate.
  */
 export const VISUAL_FACTORIES = {
   point: { glsl: PointMaterial, tsl: PointTSLMaterial },
@@ -161,9 +159,7 @@ function getCommonMaterialBuckets(props: {
 export function pointCacheKey(props: PointMaterialProperties, backend: MaterialBackend): string {
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
-  const radiusBucket = props.radiusScale
-    ? Math.round(Math.max(0, props.radiusScale) * 1000)
-    : 1000;
+  const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
   const sharpnessBucket = props.sharpnessScale
     ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
     : 1000;

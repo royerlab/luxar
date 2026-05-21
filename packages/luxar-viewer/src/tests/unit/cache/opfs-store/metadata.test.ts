@@ -82,16 +82,18 @@ function mockRoot() {
 
 function seedMetadata(
   rootFiles: Map<string, string>,
-  data: Partial<{
-    baseUrl: string;
-    entries: Array<[string, { size: number; order: number }]>;
-    totalSize: number;
-    orderCounter: number;
-    contentHash: string | null;
-    encodingVersion: number;
-    validationMode: string;
-    lastValidatedAt: number;
-  }> | string
+  data:
+    | Partial<{
+        baseUrl: string;
+        entries: Array<[string, { size: number; order: number }]>;
+        totalSize: number;
+        orderCounter: number;
+        contentHash: string | null;
+        encodingVersion: number;
+        validationMode: string;
+        lastValidatedAt: number;
+      }>
+    | string
 ) {
   const payload = typeof data === 'string' ? data : JSON.stringify(data);
   rootFiles.set('_cache_meta.json', payload);
@@ -344,7 +346,14 @@ describe('OPFSMetadataManager', () => {
     it('removes files in hex buckets that are not in the expected set', async () => {
       const { root, buckets } = mockRoot();
       // Two hex buckets each with a few files.
-      buckets.set('aa', new Map([['keep1', ''], ['drop1', ''], ['drop2', '']]));
+      buckets.set(
+        'aa',
+        new Map([
+          ['keep1', ''],
+          ['drop1', ''],
+          ['drop2', ''],
+        ])
+      );
       buckets.set('bb', new Map([['keep2', '']]));
 
       await mgr.cleanupOrphans(root, new Set(['keep1', 'keep2']));

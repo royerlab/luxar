@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Each of the 12 production shaders (3 geometry visual × {GLSL, TSL} + 3 geometry picking × {GLSL, TSL} + mega-shader, FXAA, bloom-threshold × {GLSL, TSL}) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
+The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Each of the 9 production shaders (3 geometry visual + 3 geometry picking + mega-shader + FXAA + bloom-threshold) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
 
 The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpu-force-webgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
@@ -59,11 +59,12 @@ rendering/
 │   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
 │
 ├── post-processing/                    # Private helpers for post-processing-manager
-│   ├── bloom-chain / bloom-shaders / bloom.tsl
-│   ├── fxaa-pass / fxaa-shaders / fxaa.tsl
-│   ├── fullscreen-pass / fullscreen-geometry / render-target-sizing
-│   ├── mega-shader-material / mega-shader-material-tsl / mega-shader.glsl / mega.tsl
-│   ├── hdr-pixel-utils / hdr-capture
+│   ├── bloom/                          # chain / shaders / bloom.tsl
+│   ├── fxaa/                           # pass / shaders / fxaa.tsl
+│   ├── fullscreen/                     # pass / geometry
+│   ├── mega/                           # material / material-tsl / shader.glsl / shader.tsl
+│   ├── hdr/                            # pixel-utils / capture
+│   ├── render-target-sizing.ts
 │   └── post-processing-manager/        # PostProcessingManager helper modules
 │       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
 │       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
@@ -72,19 +73,21 @@ rendering/
 │
 ├── picking/                            # GPU picking materials + orchestration
 │   ├── picking-system.ts               # Orchestrator
-│   ├── picking-shaders.ts
-│   ├── {point,line,gsplat}-picking-material(-tsl).ts
-│   ├── {point,line,gsplat}-pick.tsl.ts
+│   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
+│   ├── line/     { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
+│   ├── gsplat/   { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
 │   └── picking-system/                 # PickingSystem helper modules
 │       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
 │       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
 │       ├── pick-render.ts              # voteWinner (brightness-weighted majority over 5×5)
 │       ├── lens-distortion.ts          # applyLensDistortion (sync screen-space picking with mega-shader)
-│       └── settle-loop.ts              # HOVER_SETTLE_MS + evaluateSettle decision logic
+│       ├── settle-loop.ts              # HOVER_SETTLE_MS + evaluateSettle decision logic
+│       └── settle-scheduler.ts         # Debounced settle-pass scheduling
 │
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
 │   ├── {points,lines,gsplats}-adapter.ts
 │   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
+│   ├── geometry-bytes.ts               # estimateGeometryBytes + cached size invalidation
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
@@ -105,13 +108,10 @@ import { PostProcessingManager } from './rendering/post-processing/post-processi
 import { createRendererCapabilities } from './rendering/renderer-capabilities';
 
 const capabilities = createRendererCapabilities(renderer);
-const postProcessing = new PostProcessingManager(
-  renderer,
-  capabilities,
-  scene,
-  camera,
-  { width: window.innerWidth, height: window.innerHeight }
-);
+const postProcessing = new PostProcessingManager(renderer, capabilities, scene, camera, {
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
 
 // In your render loop
 function animate() {
@@ -167,19 +167,16 @@ The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment sha
 
 - One fused fullscreen pass for per-pixel effects: fewer rasterizations, fewer texture binds, no ping-pong target pair
 - No third-party post-processing dependency
-- A single GLSL/TSL shader pair (`mega-shader.glsl.ts` + `mega.tsl.ts`) backs both the WebGL2 and WebGPU backends
+- A single GLSL/TSL shader pair (`mega/shader.glsl.ts` + `mega/shader.tsl.ts`) backs both the WebGL2 and WebGPU backends
 
 **Core API:**
 
 ```typescript
 // Initialize with HDR support
-const postProcessing = new PostProcessingManager(
-  renderer,
-  capabilities,
-  scene,
-  camera,
-  { width, height }
-);
+const postProcessing = new PostProcessingManager(renderer, capabilities, scene, camera, {
+  width,
+  height,
+});
 
 // Configure bloom
 postProcessing.updateBloomSettings(/* strength */ 0.3, /* radius */ 0.85, /* threshold */ 0.01);
@@ -540,13 +537,10 @@ import { PostProcessingManager } from './rendering/post-processing/post-processi
 import { materialManager } from './rendering/material-manager';
 
 // Initialize post-processing
-const postProcessing = new PostProcessingManager(
-  renderer,
-  capabilities,
-  scene,
-  camera,
-  { width: canvas.width, height: canvas.height }
-);
+const postProcessing = new PostProcessingManager(renderer, capabilities, scene, camera, {
+  width: canvas.width,
+  height: canvas.height,
+});
 
 // Create point material
 const material = materialManager.getPointMaterial({

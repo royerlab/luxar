@@ -128,13 +128,13 @@ Note: `vi.mock(...)` calls themselves still live in each test file,
 because `vi.mock` paths resolve relative to the calling file. Only
 the helper functions and constants are hoisted here.
 
-| Export | Purpose |
-|--------|---------|
-| `makeMockZarrLocation(prefix)` | Stub `zarr.Location` whose `resolve(path)` returns `"${prefix}://${path}"` so `zarr.open` mocks can match on path substring. |
-| `makeChunkBoundsArray(chunkCount, ndim)` | Descriptor for the chunk-bounds zarr array — shape `[chunkCount, ndim, 2]` (one min/max pair per chunk per dimension), `float32`, no attrs. |
-| `makeMockZarrArray(shape, dtype?, attrs?)` | Minimal `{ shape, dtype, attrs }` descriptor for the zarr arrays the loaders touch. |
-| `makeChunkBoundsBuffer(chunkCount, ndim)` | Zero-filled `Float32Array` of length `chunkCount * ndim * 2` for `zarr.get`'s `data` field — every chunk intersects every query. |
-| `DEFAULT_VISIBLE_RANGES` | `[{start: 0, end: 100}, {start: 200, end: 300}]` — two ranges so the loader's range-merge / accumulator logic gets exercised. |
+| Export                                     | Purpose                                                                                                                                     |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `makeMockZarrLocation(prefix)`             | Stub `zarr.Location` whose `resolve(path)` returns `"${prefix}://${path}"` so `zarr.open` mocks can match on path substring.                |
+| `makeChunkBoundsArray(chunkCount, ndim)`   | Descriptor for the chunk-bounds zarr array — shape `[chunkCount, ndim, 2]` (one min/max pair per chunk per dimension), `float32`, no attrs. |
+| `makeMockZarrArray(shape, dtype?, attrs?)` | Minimal `{ shape, dtype, attrs }` descriptor for the zarr arrays the loaders touch.                                                         |
+| `makeChunkBoundsBuffer(chunkCount, ndim)`  | Zero-filled `Float32Array` of length `chunkCount * ndim * 2` for `zarr.get`'s `data` field — every chunk intersects every query.            |
+| `DEFAULT_VISIBLE_RANGES`                   | `[{start: 0, end: 100}, {start: 200, end: 300}]` — two ranges so the loader's range-merge / accumulator logic gets exercised.               |
 
 ## Conventions
 

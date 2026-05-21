@@ -46,7 +46,10 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
     getDims: vi.fn().mockReturnValue({ ndim: 4, displayed: [0, 1, 2] }),
     getDimensionNames: vi.fn().mockReturnValue(['x', 'y', 'z', 'time']),
     getDimensionRanges: vi.fn().mockReturnValue([
-      [0, 100], [0, 100], [0, 100], [0, 50],
+      [0, 100],
+      [0, 100],
+      [0, 100],
+      [0, 50],
     ]),
     setDimensionValue: vi.fn(),
     hasNonDisplayedDimensions: vi.fn().mockReturnValue(true),
@@ -75,7 +78,10 @@ describe('VideoRecordingStrategy', () => {
       ondataavailable: null as any,
       onstop: null as any,
     };
-    vi.stubGlobal('MediaRecorder', vi.fn().mockImplementation(() => mockMediaRecorder));
+    vi.stubGlobal(
+      'MediaRecorder',
+      vi.fn().mockImplementation(() => mockMediaRecorder)
+    );
     (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(true);
   });
 

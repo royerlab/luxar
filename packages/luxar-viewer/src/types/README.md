@@ -336,12 +336,13 @@ Metadata for lines nodes from zarr `.zattrs`:
 ```typescript
 interface LinesMetadata {
   type: 'lines';
-  line_type: LineType; // 'segments' | 'polyline' | 'loop' | 'indexed'
+  original_line_type: LineType; // 'segments' | 'polyline' | 'loop' | 'indexed'
   n_vertices: number; // Total vertex count
   n_segments: number; // Total segment count
   ndim: number; // Position dimensionality
-  has_colors?: boolean; // Whether colors array is present
-  has_widths?: boolean; // Whether widths array is present
+  max_width: number; // Maximum line width in world units
+  has_colors: boolean; // Whether colors array is present
+  has_sharpness: boolean; // Whether sharpness array is present
   // ... additional properties
 }
 ```
@@ -372,13 +373,13 @@ interface GSplatsMetadata {
   n_splats: number; // Total splat count
   ndim: number; // Position dimensionality
   has_colors: boolean; // Whether colors array is present
-  has_sharpness: boolean; // Whether sharpness array is present
   chunk_size: number; // Elements per chunk
   amplitude_range: ValueRange; // Amplitude value range
-  sharpness_bounds: ValueRange; // Sharpness value bounds
   center_bounds: CoordinateBounds; // Center coordinate bounds
   ordering: 'morton' | 'hilbert' | 'none'; // Spatial ordering method
   extend_to_all?: string[]; // Dimensions to extend visibility across
+  n_lods?: number; // Number of LOD levels (v1.1 multi-LOD format)
+  truncation_radius?: number; // Gaussian truncation radius (default 3.0)
   // ... additional properties
 }
 ```
@@ -393,7 +394,6 @@ interface LoadedGSplatsData {
   amplitudes: Float32Array; // Splat amplitudes (N,)
   choleskyFactors: Float32Array; // Packed Cholesky (N * k) where k = ndim*(ndim+1)/2
   colors: Float32Array | Uint8Array | Uint16Array | null; // RGB colors
-  sharpness: Float32Array | null; // Sharpness values (defaults to 2.0)
   splatCount: number;
   ndim: number;
 }
@@ -422,8 +422,8 @@ if (isGSplatsUserData(mesh.userData)) {
 // Compute packed Cholesky factor count for a given dimensionality
 const packed = choleskyPackedSize(3); // 6 = 3*(3+1)/2
 
-// Pre-computed sizes for common dimensions (1D-7D)
-console.log(CHOLESKY_SIZES); // [1, 3, 6, 10, 15, 21, 28]
+// Pre-computed sizes for common dimensions (2D-4D), keyed by dimensionality
+console.log(CHOLESKY_SIZES); // { '2D': 3, '3D': 6, '4D': 10 }
 ```
 
 See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query-builder.ts`.
@@ -771,7 +771,7 @@ The types package provides the type-safe foundation for all nD visualization ope
 
 - `index.ts` -- Barrel re-exporting the public types and helpers (`DimensionMetadata`, `SimpleDims`, `initializeDims`, `getDimensionRanges`, the Points/Lines/GSplats interface families and their type guards, `ZarrSceneAttrs`/`ZarrNodeAttrs`, `hasContentsMethod`).
 - `dims.ts` -- `DimensionMetadata`, `SimpleDims`, `initializeDims()`, `getDimensionRanges()`.
-- `points.ts` -- `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
+- `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.

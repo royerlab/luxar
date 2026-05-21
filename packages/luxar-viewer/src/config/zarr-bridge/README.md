@@ -28,8 +28,8 @@ Unlike the `sections/<name>/` slices, this folder does not contribute a section 
 
 - `ui/rendering-controls.ts` and `ui/rendering-controls/settings-persistence.ts` call `extractRenderingOverrides` to seed user settings from zarr.
 - `scene/scene-manager.ts` and `scene/scene-manager/camera/camera-setup.ts` call `extractCameraOverrides` to position the camera on scene load.
-- `input/input-handler.ts` calls `captureViewerState` on the `Ctrl+Shift+S` shortcut to copy a `ZarrViewerConfig` to the clipboard.
-- Unit tests in `tests/unit/config/viewer-config-utils.test.ts` and `tests/unit/config/viewer-state-capture.test.ts`.
+- `input/input-handler/commands/viewer-state-export.ts` calls `captureViewerState` (wired to `Ctrl+Shift+S` in `input/input-handler/key-bindings/navigation-bindings.ts`) to copy a `ZarrViewerConfig` to the clipboard.
+- Unit tests in `src/tests/unit/config/viewer-config-utils.test.ts` and `src/tests/unit/config/viewer-state-capture.test.ts`.
 
 ## See Also
 

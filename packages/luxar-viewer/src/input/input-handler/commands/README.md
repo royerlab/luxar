@@ -1,10 +1,10 @@
 # `input-handler/commands/`
 
-Command bodies the orchestrator delegates to. Each function takes a
-narrow `*Ctx` object built by a `makeXxxCtx()` method on the
-`InputHandler` — never `this`. Event-emission sites (panel-cycle,
-panel-hide, open-dataset-browser) stay at the call site to preserve
-the live event surface.
+Command bodies the orchestrator delegates to. The non-trivial commands
+take a narrow `*Ctx` object built by a `makeXxxCtx()` private method on
+`InputHandler` — never `this` — so each command is unit-testable
+against a small typed surface. Pure helpers (`focus-utils`,
+`data-monitor-cycle`) take their inputs directly.
 
 - `panel-coordinator.ts` — `PanelCoordinator` class. Owns the
   priority-ordered "close all panels" flow used by Escape, plus the

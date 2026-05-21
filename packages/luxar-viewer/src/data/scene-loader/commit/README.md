@@ -15,12 +15,12 @@ are allowed inside commit — by contract.
 
 ## Files
 
-| File                            | Role                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `commit-points-geometry.ts`     | Synchronous Points commit. GPU-buffer-pool path (zero-alloc on reuse) → same-size in-place interleaved-attribute write → dispose-and-recreate via `NodeFactory.createPointsGeometry`. Propagates dtype-aware `radiusScale` / `sharpnessScale` onto `geometry.userData` and calls `syncPointMaterialWithGeometry` to push them into the material uniforms. |
-| `commit-lines-geometry.ts`      | Synchronous Lines commit. Pool path via `acquireLinesGeometry` / `updateLinesGeometry`, fallback via `updateInstancedLinesMesh`. Captures the acquire's rebuild flag separately from the update's, because `updateLinesGeometry` may itself trigger a spec-set rebuild (lazy scalar promotion). Updates `visibleSegmentCount`.     |
-| `commit-gsplats-geometry.ts`    | Synchronous GSplats commit. Pool path passes the live `uTruncate` uniform into `updateGSplatsGeometry` so frustum-cull sizing matches the shader; fallback via `updateInstancedGSplatsMesh`. Updates `visibleSplatCount`. Reads `uTruncate` defensively with a `3.0` default.                                                       |
-| `invalidate-render-object.ts`   | Shared helper. Dispatches a tagged `'dispose'` event on a mesh's material so Three's `WebGPURenderer` evicts the cached `RenderObject` and rebuilds its `vertexBuffers` set against the pool's freshly-grown `InstancedInterleavedBuffer`. The `SOFT_DISPOSE_FLAG` symbol tells `MaterialManager` to treat this as a cache-flush, not a real dispose.     |
+| File                          | Role                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commit-points-geometry.ts`   | Synchronous Points commit. GPU-buffer-pool path (zero-alloc on reuse) → same-size in-place interleaved-attribute write → dispose-and-recreate via `NodeFactory.createPointsGeometry`. Propagates dtype-aware `radiusScale` / `sharpnessScale` onto `geometry.userData` and calls `syncPointMaterialWithGeometry` to push them into the material uniforms. |
+| `commit-lines-geometry.ts`    | Synchronous Lines commit. Pool path via `acquireLinesGeometry` / `updateLinesGeometry`, fallback via `updateInstancedLinesMesh`. Captures the acquire's rebuild flag separately from the update's, because `updateLinesGeometry` may itself trigger a spec-set rebuild (lazy scalar promotion). Updates `visibleSegmentCount`.                            |
+| `commit-gsplats-geometry.ts`  | Synchronous GSplats commit. Pool path passes the live `uTruncate` uniform into `updateGSplatsGeometry` so frustum-cull sizing matches the shader; fallback via `updateInstancedGSplatsMesh`. Updates `visibleSplatCount`. Reads `uTruncate` defensively with a `3.0` default.                                                                             |
+| `invalidate-render-object.ts` | Shared helper. Dispatches a tagged `'dispose'` event on a mesh's material so Three's `WebGPURenderer` evicts the cached `RenderObject` and rebuilds its `vertexBuffers` set against the pool's freshly-grown `InstancedInterleavedBuffer`. The `SOFT_DISPOSE_FLAG` symbol tells `MaterialManager` to treat this as a cache-flush, not a real dispose.     |
 
 ## Invariants
 
@@ -35,13 +35,13 @@ are allowed inside commit — by contract.
   invalidate the renderer cache when the pool reports a buffer
   rebuild, write the visible-count back onto `userData`. Filename
   matches the single export.
-- **Why no `commit-*-geometry.ts` for the async step?** Points's
-  facade folds nD → 3D projection into `loadPoints()` itself, so the
-  orchestrator only commits — there is no `data-processor-points.ts`.
-  Lines (segment clipping) and GSplats (Cholesky-factored
-  projection) need per-frame worker dispatches and so do have
-  matching `process/data-processor-{lines,gsplats}.ts` modules
-  upstream of commit.
+- **Why no `data-processor-points.ts`?** Points's facade folds
+  nD → 3D projection into `loadPoints()` itself, so the orchestrator
+  only commits — there is no async processing step. Lines (segment
+  clipping) and GSplats (Cholesky-factored projection) need per-frame
+  worker dispatches and so do have matching
+  `process/data-processor-{lines,gsplats}.ts` modules upstream of
+  commit.
 - **Pool-rebuild → render-object invalidation.** Whenever
   `gpuBufferPool.didLastAcquireRebuildAttributes()` returns `true`
   (grow, pool swap, fresh allocation, or lazy scalar promotion), the

@@ -64,7 +64,7 @@ describe('applyLensDistortion', () => {
     expect(out.y).toBeCloseTo(0.5, 6);
   });
 
-  it('matches the GLSL reference (parity contract with mega-shader.glsl.ts)', () => {
+  it('matches the GLSL reference (parity contract with mega/shader.glsl.ts)', () => {
     // GLSL formula from mega/shader.glsl.ts:118-127, ported verbatim:
     //   vec2 xn = 2.0 * (uv - 0.5);
     //   float r2 = dot(xn, xn);

@@ -13,12 +13,12 @@ the [shared infrastructure README](../_shared/README.md).
 
 ## Module map
 
-| File              | Role                                                                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shader-glsl.ts`  | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                    |
-| `shader-tsl.ts`   | `pointWebGPUFactory(uniforms, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Builds `vertexNode` + `colorNode` and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
-| `material-glsl.ts`| `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                |
-| `material-tsl.ts` | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; the constructor calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.             |
+| File               | Role                                                                                                                                                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                        |
+| `shader-tsl.ts`    | `pointWebGPUFactory(uniforms, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Builds `vertexNode` + `colorNode` and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
+| `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                    |
+| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; the constructor calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                 |
 
 `MaterialManager.getPointMaterial` dispatches on `caps.apiSurface` so callers
 (`NodeFactory.createPointsMaterial`, `LayersPanel`, …) never see the
@@ -31,13 +31,13 @@ the base geometry from `../../point-geometry.ts`). Per-instance attributes —
 supplied as `InstancedBufferAttribute`s by `setupInstancedPointsMesh` — drive
 the vertex stage:
 
-| Attribute    | Type   | Meaning                                              |
-| ------------ | ------ | ---------------------------------------------------- |
-| `aCenter`    | vec3   | World-space centre position                          |
-| `aRadius`    | float  | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage) |
-| `aSharpness` | float  | Per-point sharpness (multiplied by `sharpnessScale` similarly)                                          |
-| `aColor`     | vec3   | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute |
-| `aScalar`    | float  | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                  |
+| Attribute    | Type  | Meaning                                                                                                                                  |
+| ------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `aCenter`    | vec3  | World-space centre position                                                                                                              |
+| `aRadius`    | float | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                 |
+| `aSharpness` | float | Per-point sharpness (multiplied by `sharpnessScale` similarly)                                                                           |
+| `aColor`     | vec3  | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute |
+| `aScalar`    | float | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                                                   |
 
 The vertex shader projects `aCenter` to clip space, computes a world-space
 `pointSize` in pixels, then expands the unit quad by
@@ -172,21 +172,21 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 
 ## Uniforms (reference)
 
-| Name              | Type      | Source                                | Notes                                                                 |
-| ----------------- | --------- | ------------------------------------- | --------------------------------------------------------------------- |
-| `opacity`         | float     | `updateOpacity`                        | Multiplied into final alpha                                           |
-| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)    | Per-node gamma; `userData.gamma` carries the original value for `clone()` |
-| `uIntensity`      | float     | `updateIntensity`                      | Per-node GOG gain                                                      |
-| `uOffset`         | float     | `updateOffset`                         | Per-node GOG offset                                                    |
-| `pointSizeFactor` | float     | `updateCameraParams` (camera math)    | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                       |
-| `maxPointSize`    | float     | `updateCameraParams`                   | Pre-computed `resY · 0.5`                                              |
-| `uIsOrtho`        | int       | `updateCameraParams`                   | `0` = perspective, `1` = ortho                                         |
-| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2) | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion |
-| `radiusScale`     | float     | `updateRadiusScale`                    | Dtype normalisation (e.g. `1/255` for uint8 radii)                     |
-| `sharpnessScale`  | float     | `updateSharpnessScale`                 | Same idea for sharpness                                                |
-| `uColormapTex`    | sampler2D | `setColormapTexture`                   | 256×1 LUT; `USE_COLORMAP` only                                         |
-| `uScalarMin`      | float     | `setScalarRange`                       | LUT normalisation min                                                   |
-| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                          |
+| Name              | Type      | Source                                        | Notes                                                                     |
+| ----------------- | --------- | --------------------------------------------- | ------------------------------------------------------------------------- |
+| `opacity`         | float     | `updateOpacity`                               | Multiplied into final alpha                                               |
+| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()` |
+| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                         |
+| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                       |
+| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                          |
+| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                 |
+| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                            |
+| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
+| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
+| `sharpnessScale`  | float     | `updateSharpnessScale`                        | Same idea for sharpness                                                   |
+| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |
+| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                     |
+| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                   |
 
 `clampGamma` (`../_shared/uniform-helpers.ts`) is the single source of truth
 for the `Math.max(0.001, γ ?? 1.0)` clamp — the GLSL `pow(color, 1/γ)` divides
@@ -228,8 +228,8 @@ this file stays out of the manager's import graph.)
   for callers).
 - `../../material-manager.ts` — `getPointMaterial(config)` is the dispatch
   entry that selects `PointMaterial` vs `PointTSLMaterial`.
-- `../../picking/point-picking-material(-tsl).ts` — picking counterpart;
+- `../../picking/point/material.ts` / `material-tsl.ts` — picking counterpart;
   reuses the same vertex math via `camera-uniforms.ts` so screen-space hit
   tests match what the user sees.
-- `../../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
+- `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
   that pairs `POINT_SOURCE.webgl` and `POINT_SOURCE.webgpu`.

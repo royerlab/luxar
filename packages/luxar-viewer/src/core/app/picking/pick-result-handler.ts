@@ -71,9 +71,7 @@ export function buildPickResultHandler(
       ]);
       const hasContent = label || imageUrl;
       ports.overlayManager?.updateHoverContent(
-        hasContent
-          ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId }
-          : null
+        hasContent ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId } : null
       );
     } catch (err) {
       // Don't let label loading errors kill the hover loop.

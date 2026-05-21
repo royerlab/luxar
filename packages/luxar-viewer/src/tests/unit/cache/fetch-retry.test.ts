@@ -55,9 +55,7 @@ describe('buildUrl', () => {
   });
 
   it('strips trailing slashes on the base', () => {
-    expect(buildUrl('https://example.com/data.zarr/', 'k')).toBe(
-      'https://example.com/data.zarr/k'
-    );
+    expect(buildUrl('https://example.com/data.zarr/', 'k')).toBe('https://example.com/data.zarr/k');
     expect(buildUrl('https://example.com/data.zarr///', 'k')).toBe(
       'https://example.com/data.zarr/k'
     );

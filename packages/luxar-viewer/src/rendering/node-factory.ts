@@ -12,10 +12,7 @@
  */
 
 import * as THREE from 'three';
-import {
-  materialManager,
-  type LuxarPointMaterial,
-} from './material-manager';
+import { materialManager, type LuxarPointMaterial } from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';

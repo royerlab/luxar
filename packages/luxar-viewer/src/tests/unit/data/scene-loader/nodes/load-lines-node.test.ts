@@ -49,9 +49,7 @@ function makeSceneNode(overrides: Partial<SceneNode> = {}): SceneNode {
   };
 }
 
-function makeLinesLoader(
-  loadLines: (vs: ViewState) => Promise<LoadedLinesData>
-): LinesDataLoader {
+function makeLinesLoader(loadLines: (vs: ViewState) => Promise<LoadedLinesData>): LinesDataLoader {
   return { loadLines } as unknown as LinesDataLoader;
 }
 
@@ -165,19 +163,10 @@ describe('loadLinesNode — happy path', () => {
     const ctx = makeCtx();
     ctx.spies.processLinesData.mockResolvedValue(staged);
 
-    const placeholder = await loadLinesNode(
-      makeSceneNode(),
-      new THREE.Group(),
-      {} as never,
-      ctx
-    );
+    const placeholder = await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(placeholder).not.toBeNull();
-    expect(ctx.spies.processLinesData).toHaveBeenCalledWith(
-      '/scene/l',
-      data,
-      ctx.viewState
-    );
+    expect(ctx.spies.processLinesData).toHaveBeenCalledWith('/scene/l', data, ctx.viewState);
     expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(staged);
   });
 });
@@ -203,12 +192,7 @@ describe('loadLinesNode — processLinesData returns null', () => {
     const ctx = makeCtx();
     // ctx.processLinesData defaults to resolving null in makeCtx.
 
-    const placeholder = await loadLinesNode(
-      makeSceneNode(),
-      new THREE.Group(),
-      {} as never,
-      ctx
-    );
+    const placeholder = await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(placeholder).not.toBeNull();
     expect(ctx.spies.processLinesData).toHaveBeenCalledTimes(1);
@@ -240,9 +224,9 @@ describe('loadLinesNode — error path', () => {
     const ctx = makeCtx();
     const parent = new THREE.Group();
 
-    await expect(
-      loadLinesNode(makeSceneNode(), parent, {} as never, ctx)
-    ).rejects.toBeInstanceOf(LoaderError);
+    await expect(loadLinesNode(makeSceneNode(), parent, {} as never, ctx)).rejects.toBeInstanceOf(
+      LoaderError
+    );
 
     expect(parent.children.length).toBe(1);
     expect(ctx.registry.failedLoaders.has('/scene/l')).toBe(true);

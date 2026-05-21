@@ -60,6 +60,24 @@ bodies). Event dispatch sites stay on the orchestrator so the listener
 contract (`change` / `start` / `end`) is unchanged from outside the
 package.
 
+### Subpackages
+
+- [`controls-manager/`](./controls-manager/README.md) — focused helpers
+  split out from `ControlsManager`: per-mode factory functions, camera
+  state save/restore across mode swaps, event-forwarder plumbing, and
+  the scale-derived limit math. Stateless over `ctx` bundles.
+- [`luxar-orbit-controls/`](./luxar-orbit-controls/README.md) — pure
+  helpers extracted from `LuxarOrbitControls`: the per-frame update
+  sequencer (`runUpdateStep`) and the camera-write step
+  (`applyToCamera` / `initializeFromCamera`), delegating to thematic
+  `math/` (trackball / pan / zoom) and `input/` (pointer / touch /
+  keyboard) subgroups.
+- [`luxar-fly-controls/`](./luxar-fly-controls/README.md) — per-class
+  helpers for `LuxarFlyControls`: camera ↔ orientation sync, physics
+  integration (`integrateTranslation` / `integrateRotation`), DOM
+  listener wiring, plus the `input/` subfolder for keyboard / mouse /
+  wheel event-handler bodies.
+
 ---
 
 ## Control Types
@@ -188,7 +206,7 @@ class LuxarOrbitControls extends EventDispatcher {
   target: Vector3; // Orbit center
   enabled: boolean;
   enableDamping: boolean;
-  dampingFactor: number; // 0.05 default (exponential decay)
+  dampingFactor: number; // 0.25 default (exponential decay)
   rotateSpeed: number; // 3.0 default
   panSpeed: number; // 1.0 default
   zoomSpeed: number; // 1.0 default

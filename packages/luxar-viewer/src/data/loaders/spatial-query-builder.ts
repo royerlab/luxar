@@ -21,11 +21,7 @@
  */
 
 import { log, Modules } from '../../utils/log';
-import {
-  computeTolerance,
-  type GeometryType,
-  type ToleranceOptions,
-} from './tolerance-computer';
+import { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';
 import type { BaseViewState, LoadRange } from './base-types';
 
 // ============================================================================

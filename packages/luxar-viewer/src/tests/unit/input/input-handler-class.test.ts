@@ -1,9 +1,9 @@
 /**
  * Unit tests for the InputHandler class.
  *
- * Utilities in input-handler-utils.ts are tested separately in
- * input-handler.test.ts. The constructor wires several heavy
- * components (SceneManager,
+ * Pure utility functions (navigation keys, FOV math, dimension
+ * selection) are tested separately in input-handler.test.ts. The
+ * constructor wires several heavy components (SceneManager,
  * AnimationController, PerformanceMonitor, DebugConsole), but only
  * stores them — the lifecycle methods that don't call `init()` can be
  * exercised with structural stubs.
@@ -13,7 +13,7 @@
  *   - Optional setters (setRenderingControls / setScaleBar / etc.)
  *   - Setter forwarding to PanelCoordinator (R/C/Esc shortcuts)
  *   - clearDimensionUI is a no-op when no dimension UI exists
- *   - clearDimensionUI removes the sceneDimsManager listener (r8 regression)
+ *   - clearDimensionUI removes the sceneDimsManager listener
  *   - init() idempotency
  *   - dispose() without init (no listeners to clean up)
  *   - dispose() idempotency
@@ -330,7 +330,7 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
 });
 
 describe('InputHandler.clearDimensionUI — sceneDimsManager listener cleanup', () => {
-  // r8 regression: clearDimensionUI must remove the listener it
+  // Invariant: clearDimensionUI must remove the listener it
   // registered with sceneDimsManager, otherwise a disposed
   // InputHandler is retained by the singleton.
   it('removes a registered sceneDimsListener from sceneDimsManager', () => {

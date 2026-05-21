@@ -65,15 +65,15 @@ zarr shape is also empty.
 `types.ts` mirrors what the Python encoder writes under the
 `encoding` key of `.zattrs`:
 
-| Field | Used by | Notes |
-|-------|---------|-------|
-| `name` | dispatch | One of the encoding modes above; missing → direct. |
-| `n_elements` | broadcasted | Logical broadcast count. Required for `broadcasted`. |
-| `lut`, `lut_mode`, `original_shape` | LUT | `lut_mode` defaults to `'row'`. `k` from `original_shape[1]`. |
-| `original_dtype` | LUT + quantized | Required by validation; consumers restore native dtype after decode. |
-| `bounds` / `min` / `max` | quantized | Linear quantization range. |
-| `max_log` | log_scalar | Inverse-log1p scale factor; must be finite and `> 0`. |
-| `target`, `hash` | array_ref + dedup | `target` resolved via `zarrRootLoc.resolve()`; `hash` keys the registry. |
+| Field                               | Used by           | Notes                                                                    |
+| ----------------------------------- | ----------------- | ------------------------------------------------------------------------ |
+| `name`                              | dispatch          | One of the encoding modes above; missing → direct.                       |
+| `n_elements`                        | broadcasted       | Logical broadcast count. Required for `broadcasted`.                     |
+| `lut`, `lut_mode`, `original_shape` | LUT               | `lut_mode` defaults to `'row'`. `k` from `original_shape[1]`.            |
+| `original_dtype`                    | LUT + quantized   | Required by validation; consumers restore native dtype after decode.     |
+| `bounds` / `min` / `max`            | quantized         | Linear quantization range.                                               |
+| `max_log`                           | log_scalar        | Inverse-log1p scale factor; must be finite and `> 0`.                    |
+| `target`, `hash`                    | array_ref + dedup | `target` resolved via `zarrRootLoc.resolve()`; `hash` keys the registry. |
 
 `ArrayDecoder.validateEncodingMetadata()` runs ahead of dispatch and
 rejects metadata that's structurally wrong (missing `name`, `target`
@@ -87,12 +87,14 @@ error.
 deduplicate identical buffers across the scene. `ArrayDecoder` registers
 into it from both the broadcasted and direct paths, and reads from it
 in `decodeArrayRef()` before touching zarr. The registry lives in its
-own module so consumers that only need the type (SceneLoader, the
-loader factory) don't import the full ~950-line decoder body.
+own module so consumers that only need the type (SceneLoader,
+`loaders/base-types.ts`, `scene-loader/loader-factory.ts`, the three
+spatial-index loaders, and `RangeLoader`) don't import the full
+~970-line decoder body.
 
 ## Range-Loader Hooks
 
-The `loaders/range-loader.ts` path needs to decode a *slice* of a
+The `loaders/range-loader.ts` path needs to decode a _slice_ of a
 quantized or LUT array without loading the whole thing. Three static /
 instance helpers on `ArrayDecoder` support that:
 

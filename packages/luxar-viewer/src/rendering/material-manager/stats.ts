@@ -31,9 +31,7 @@ export function getCacheStats(ctx: StatsCtx) {
     gsplatMaterials: ctx.gsplatMaterialCache.size,
     ownedMaterials: ctx.ownedMaterials.size,
     cachedMaterials:
-      ctx.pointMaterialCache.size +
-      ctx.lineMaterialCache.size +
-      ctx.gsplatMaterialCache.size,
+      ctx.pointMaterialCache.size + ctx.lineMaterialCache.size + ctx.gsplatMaterialCache.size,
     totalRegistered: ctx.registeredMaterials.size,
     /** Cumulative LRU evictions across all three caches since creation. */
     evictions: ctx.evictionCount,

@@ -26,7 +26,10 @@ import {
   AnimationShortcuts,
   type AnimationShortcutsContext,
 } from '../../../../../input/input-handler/key-bindings/animation-shortcuts';
-import { InputContext, type InputContextManager } from '../../../../../input/input-handler/context-manager';
+import {
+  InputContext,
+  type InputContextManager,
+} from '../../../../../input/input-handler/context-manager';
 import type { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
 import type { SimpleDims } from '../../../../../types/dims';
 

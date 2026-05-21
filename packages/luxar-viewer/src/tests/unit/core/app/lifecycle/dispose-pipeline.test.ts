@@ -133,8 +133,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     resolutionIndicator:
       s.resolutionIndicator as unknown as DisposePipelinePorts['resolutionIndicator'],
     inputHandler: s.inputHandler as unknown as DisposePipelinePorts['inputHandler'],
-    renderingControls:
-      s.renderingControls as unknown as DisposePipelinePorts['renderingControls'],
+    renderingControls: s.renderingControls as unknown as DisposePipelinePorts['renderingControls'],
     recordingPanel: s.recordingPanel as unknown as DisposePipelinePorts['recordingPanel'],
     layersPanel: s.layersPanel as unknown as DisposePipelinePorts['layersPanel'],
     scaleBar: s.scaleBar as unknown as DisposePipelinePorts['scaleBar'],
@@ -142,8 +141,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     overlayManager: s.overlayManager as unknown as DisposePipelinePorts['overlayManager'],
     pickingSystem: s.pickingSystem as unknown as DisposePipelinePorts['pickingSystem'],
     labelLoader: s.labelLoader as unknown as DisposePipelinePorts['labelLoader'],
-    imageLabelLoader:
-      s.imageLabelLoader as unknown as DisposePipelinePorts['imageLabelLoader'],
+    imageLabelLoader: s.imageLabelLoader as unknown as DisposePipelinePorts['imageLabelLoader'],
     datasetBrowser: s.datasetBrowser as unknown as DisposePipelinePorts['datasetBrowser'],
     // vitest's Mock type doesn't structurally satisfy `() => void`,
     // so cast each clearX through unknown at the call site.

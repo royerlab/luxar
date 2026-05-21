@@ -20,11 +20,7 @@
 
 import * as THREE from 'three';
 import { clamp } from '../../../utils/clamp';
-import {
-  BLOOM_THRESHOLD_SOURCE,
-  BLOOM_DOWNSAMPLE_SOURCE,
-  BLOOM_UPSAMPLE_SOURCE,
-} from './shaders';
+import { BLOOM_THRESHOLD_SOURCE, BLOOM_DOWNSAMPLE_SOURCE, BLOOM_UPSAMPLE_SOURCE } from './shaders';
 import { buildMaterial } from '../../materials/_shared/material-builder';
 import { FullscreenPass } from '../fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';

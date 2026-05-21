@@ -25,10 +25,7 @@
 
 import { log, Modules } from '../../utils/log';
 import type { ViewState } from '../data-loader-types';
-import {
-  dispatchPredictivePrefetch,
-  type PrefetchableLoader,
-} from './predicted-view-state';
+import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
 
 export class ViewStateQueue {
   private _pendingViewState: Partial<ViewState> | null = null;

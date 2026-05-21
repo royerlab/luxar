@@ -13,11 +13,11 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     far: 1000, // Far clipping plane (default matches camera.far)
     // Dynamic clipping planes
     dynamicClippingEnabled: true, // Auto-adjust clipping planes based on camera position
-    // Bloom settings - single source of truth (moved from config.rendering.bloom)
+    // Bloom settings - single source of truth
     bloomEnabled: false, // Enable/disable bloom effect (opt-in via zarr viewer_config)
     bloomThreshold: 0.01, // Luminance threshold (0-1), lower = more bloom, higher = less bloom
-    bloomStrength: 0.25, // Bloom intensity multiplier (moved from rendering.bloom)
-    bloomRadius: 1.0, // Blur radius for bloom spread (moved from rendering.bloom)
+    bloomStrength: 0.25, // Bloom intensity multiplier
+    bloomRadius: 1.0, // Blur radius for bloom spread
     bloomLevels: 8, // Number of mipmap levels (1-12, lower = coarser/faster, higher = smoother)
     exposure: 0.0, // Global exposure in log2 stops (0 = neutral, +1 = 2x brighter)
     globalOffset: 0.0, // Global additive brightness shift

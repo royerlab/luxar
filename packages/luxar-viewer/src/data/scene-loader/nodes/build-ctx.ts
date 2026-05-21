@@ -16,11 +16,7 @@ import type { LoaderRegistry } from '../loader-registry';
 import type { LoaderFactoryDeps } from '../loader-factory';
 import type { NodeFactory } from '../../../rendering/node-factory';
 import type { SceneNode, ViewState, LoadedPointsData, DataLoader } from '../../data-loader-types';
-import type {
-  LinesDataLoader,
-  LinesViewState,
-  LoadedLinesData,
-} from '../../../types/lines';
+import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../../types/lines';
 import type {
   GSplatsDataLoader,
   GSplatsViewState,

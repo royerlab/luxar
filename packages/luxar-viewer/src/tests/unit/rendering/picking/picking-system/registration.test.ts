@@ -82,12 +82,8 @@ describe('unregisterAllPickMaterials', () => {
   it('unregisters each isCameraAwareMaterial-tagged material from materialManager', () => {
     const a = makeCameraAwareMaterial();
     const b = makeCameraAwareMaterial();
-    materialManager.register(
-      a as unknown as Parameters<typeof materialManager.register>[0]
-    );
-    materialManager.register(
-      b as unknown as Parameters<typeof materialManager.register>[0]
-    );
+    materialManager.register(a as unknown as Parameters<typeof materialManager.register>[0]);
+    materialManager.register(b as unknown as Parameters<typeof materialManager.register>[0]);
     const baseline = materialManager.getCacheStats().totalRegistered;
 
     const nodeMap = new Map<number, PickNodeEntry>();
@@ -102,12 +98,8 @@ describe('unregisterAllPickMaterials', () => {
   it('handles material arrays — every CameraAwareMaterial inside is unregistered', () => {
     const a = makeCameraAwareMaterial();
     const b = makeCameraAwareMaterial();
-    materialManager.register(
-      a as unknown as Parameters<typeof materialManager.register>[0]
-    );
-    materialManager.register(
-      b as unknown as Parameters<typeof materialManager.register>[0]
-    );
+    materialManager.register(a as unknown as Parameters<typeof materialManager.register>[0]);
+    materialManager.register(b as unknown as Parameters<typeof materialManager.register>[0]);
     const baseline = materialManager.getCacheStats().totalRegistered;
 
     const nodeMap = new Map<number, PickNodeEntry>();

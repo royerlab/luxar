@@ -12,11 +12,7 @@
 import * as THREE from 'three';
 import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
 import { log, Modules } from '../../../utils/log';
-import {
-  halfFloatToFloat32,
-  float32ToHalfFloat,
-  readPixelsCompactAsync,
-} from '../hdr/pixel-utils';
+import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from '../hdr/pixel-utils';
 import { formatHDRExrLogLine } from '../hdr/capture';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 import type { LuxarMegaShaderMaterial } from '../../material-manager';

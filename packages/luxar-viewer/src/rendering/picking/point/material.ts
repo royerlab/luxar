@@ -9,7 +9,10 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
-import { computePointSizeFactor, computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
+import {
+  computePointSizeFactor,
+  computeMaxPointSize,
+} from '../../materials/_shared/camera-uniforms';
 import { POINT_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 

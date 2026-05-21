@@ -22,11 +22,7 @@ import {
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
 } from '../loader-factory';
 import type { SceneNode } from '../../data-loader-types';
-import type {
-  GSplatsMetadata,
-  GSplatsDataLoader,
-  GSplatsViewState,
-} from '../../../types/gsplats';
+import type { GSplatsMetadata, GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { NodeBuildCtx } from './build-ctx';
 
 /** Construct the single-LOD gsplats loader and wire it to the monitor. */

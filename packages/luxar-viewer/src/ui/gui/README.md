@@ -141,6 +141,8 @@ which re-exports `GUI` (default and named) along with `Folder`,
 
 - [controllers/](./controllers/README.md) — Concrete subclasses: `NumberController`, `BooleanController`, `StringController`, `OptionController`, `FunctionController`.
 - [format/](./format/README.md) — Input formatting helpers: `applyAutoBlur`, `clamp`, `formatNumber`, `parseNumber`.
+- [dom/](./dom/README.md) — DOM plumbing for the GUI; currently the centralized `EventManager` used by every controller for guaranteed listener cleanup.
+- [styles/](./styles/README.md) — Scoped CSS for the GUI, split into `gui.css`, `controller.css`, and `folder.css`; namespaced under `.luxar-gui`.
 
 ## See Also
 
