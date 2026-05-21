@@ -86,7 +86,7 @@ input.
 `lens-distortion.ts` exists to keep screen-space picking aligned with the
 mega-shader's Brown–Conrady distortion. The TS port mirrors the GLSL
 green-channel formula in `post-processing/mega/shader.glsl.ts:117-128`
-(and the TSL counterpart in `mega.tsl.ts`); the orchestrator runs it on
+(and the TSL counterpart in `post-processing/mega/shader.tsl.ts`); the orchestrator runs it on
 the raw mouse UV before computing the pick-target read coords so the
 pixel sampled matches what the user sees under the distorted frame. The
 function takes an explicit `UVScratch` so the hot path is allocation-free.
