@@ -11,7 +11,7 @@
  */
 
 import * as THREE from 'three';
-import { BloomChain } from '../bloom-chain';
+import { BloomChain } from '../bloom/chain';
 import { FxaaPass } from '../fxaa-pass';
 import { FullscreenPass } from '../fullscreen/pass';
 import { computeEffectiveRenderSize } from '../render-target-sizing';

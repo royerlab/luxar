@@ -13,7 +13,7 @@ import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { clamp } from '../../../utils/clamp';
 import type { LuxarMegaShaderMaterial } from '../../material-manager';
-import type { BloomChain } from '../bloom-chain';
+import type { BloomChain } from '../bloom/chain';
 
 /** Validated MSAA sample counts. */
 export const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;

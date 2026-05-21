@@ -26,7 +26,7 @@ import * as THREE from 'three';
 import { vec4 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { FXAA_SOURCE } from '../../../rendering/post-processing/fxaa-shaders';
-import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom-shaders';
+import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom/shaders';
 import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl';
 import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
 import { POINT_SOURCE } from '../../../rendering/materials/point/shader-glsl';

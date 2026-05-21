@@ -19,15 +19,15 @@
  */
 
 import * as THREE from 'three';
-import { clamp } from '../../utils/clamp';
+import { clamp } from '../../../utils/clamp';
 import {
   BLOOM_THRESHOLD_SOURCE,
   BLOOM_DOWNSAMPLE_SOURCE,
   BLOOM_UPSAMPLE_SOURCE,
-} from './bloom-shaders';
-import { buildMaterial } from '../materials/_shared/material-builder';
-import { FullscreenPass } from './fullscreen/pass';
-import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+} from './shaders';
+import { buildMaterial } from '../../materials/_shared/material-builder';
+import { FullscreenPass } from '../fullscreen/pass';
+import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 
 export interface BloomChainConfig {
   /** Number of mip levels (1..12). Higher = wider, softer bloom. */

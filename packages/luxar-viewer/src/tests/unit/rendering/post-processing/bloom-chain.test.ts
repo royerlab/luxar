@@ -7,7 +7,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { BloomChain } from '../../../../rendering/post-processing/bloom-chain';
+import { BloomChain } from '../../../../rendering/post-processing/bloom/chain';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 function mockCaps(): RendererCapabilities {
@@ -117,8 +117,8 @@ describe('bloom TSL factories — primitive uniform propagation', () => {
   };
 
   async function loadFactoriesWithUniformSpy(): Promise<{
-    bloomThresholdWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom.tsl').bloomThresholdWebGPUFactory;
-    bloomUpsampleWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom.tsl').bloomUpsampleWebGPUFactory;
+    bloomThresholdWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom/bloom.tsl').bloomThresholdWebGPUFactory;
+    bloomUpsampleWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom/bloom.tsl').bloomUpsampleWebGPUFactory;
     capturedNodes: RenderUpdateNode[];
   }> {
     // Re-import the bloom TSL module under a vi.doMock so a single
@@ -142,7 +142,7 @@ describe('bloom TSL factories — primitive uniform propagation', () => {
         return node;
       }) as unknown as typeof tsl.uniform,
     }));
-    const mod = await import('../../../../rendering/post-processing/bloom.tsl');
+    const mod = await import('../../../../rendering/post-processing/bloom/bloom.tsl');
     return {
       bloomThresholdWebGPUFactory: mod.bloomThresholdWebGPUFactory,
       bloomUpsampleWebGPUFactory: mod.bloomUpsampleWebGPUFactory,
