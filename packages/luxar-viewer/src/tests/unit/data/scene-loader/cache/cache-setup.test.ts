@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // MultiLevelCachingStore / DecompressedChunkCache / ChunkPrefetcher
 // instances. We don't care about their behaviour here — only the
 // telemetryState branch the function chooses.
-vi.mock('../../../../cache', () => {
+vi.mock('../../../../../cache', () => {
   return {
     MultiLevelCachingStore: vi.fn().mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
@@ -36,8 +36,8 @@ vi.mock('zarrita', () => ({
   withMaybeConsolidatedMetadata: undefined,
 }));
 
-import { setupCaches } from '../../../../data/scene-loader/cache-setup';
-import { config as appConfig } from '../../../../config';
+import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
+import { config as appConfig } from '../../../../../config';
 
 describe('setupCaches — cache telemetry state resolution', () => {
   // Snapshot/restore the relevant config flags between tests so each

@@ -23,8 +23,8 @@
  * @module data/scene-loader/cache-api
  */
 
-import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
-import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 
 /**
  * Snapshot of all three cache levels exposed by

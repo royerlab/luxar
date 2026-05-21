@@ -44,7 +44,7 @@ import type { UpdateProfiler } from '../../profiling/update-profiler';
 import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
-import { setupCaches } from './cache-setup';
+import { setupCaches } from './cache/cache-setup';
 import { wireMonitorAfterLoad } from './monitor-wiring';
 import { loadOverlayConfigs } from '../loaders/overlay-loader';
 import { buildSceneGraph } from './nodes/build-scene-graph';
