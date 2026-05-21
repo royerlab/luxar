@@ -88,7 +88,7 @@ import {
 } from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
-import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
+import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
 import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/lifecycle/load-scene';
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';

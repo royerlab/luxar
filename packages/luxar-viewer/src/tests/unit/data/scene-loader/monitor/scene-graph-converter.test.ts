@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { convertToSceneGraphNode } from '../../../../data/scene-loader/scene-graph-converter';
-import type { SceneNode } from '../../../../data/data-loader-types';
+import { convertToSceneGraphNode } from '../../../../../data/scene-loader/monitor/scene-graph-converter';
+import type { SceneNode } from '../../../../../data/data-loader-types';
 
 function makeNode(overrides: Partial<SceneNode> = {}): SceneNode {
   return {

@@ -7,9 +7,9 @@
  */
 
 import * as THREE from 'three';
-import { isLinesUserData } from '../../types/lines';
-import type { GSplatsUserData } from '../../types/gsplats';
-import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
+import { isLinesUserData } from '../../../types/lines';
+import type { GSplatsUserData } from '../../../types/gsplats';
+import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
 /**
  * Traverse `rootGroup`, sum the per-mesh visible-counts userData, and
