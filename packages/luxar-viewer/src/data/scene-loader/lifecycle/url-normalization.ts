@@ -10,7 +10,7 @@
  * this version takes the origin as a parameter so it's testable
  * without a DOM.
  *
- * @module data/scene-loader/url-normalization
+ * @module data/scene-loader/lifecycle/url-normalization
  */
 
 /**

@@ -80,7 +80,7 @@ The three public wrappers differ only in their input map type
 aggregation logic is identical. Keeping them separate matches the
 three-geometry symmetry rule used elsewhere in `data/` and lets the
 monitor wire one provider per geometry kind in
-`scene-loader/monitor-wiring.ts`.
+`scene-loader/monitor/monitor-wiring.ts`.
 
 ## Invariants
 
@@ -103,7 +103,7 @@ monitor wire one provider per geometry kind in
 
 - `data/zarr-loader.ts` — calls `computeSceneStats` at the end of
   `loadScene` and emits one debug log line per stat.
-- `data/scene-loader/monitor-wiring.ts` — wires the three
+- `data/scene-loader/monitor/monitor-wiring.ts` — wires the three
   `getAggregated*AccumulatorStats` wrappers into the
   `AccumulatorProviderPort` consumed by the data-loading monitor.
 
@@ -111,6 +111,6 @@ monitor wire one provider per geometry kind in
 
 - `../accumulators/README.md` — defines `AccumulatorStats` and the
   per-geometry accumulators that produce it.
-- `../scene-loader/monitor-wiring.ts` — the only consumer of the
+- `../scene-loader/monitor/monitor-wiring.ts` — the only consumer of the
   aggregator wrappers.
 - `../zarr-loader.ts` — the only caller of `computeSceneStats`.

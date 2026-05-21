@@ -171,7 +171,7 @@ export class SceneLoader {
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
    * and the per-loader previous view-state map used by predictive
-   * prefetch. See ./scene-loader/view-state-queue.ts.
+   * prefetch. See ./scene-loader/view-state/view-state-queue.ts.
    *
    * The pending-state slot is overwritten on every queued update, so a
    * burst of view changes during an in-flight retry collapses to a

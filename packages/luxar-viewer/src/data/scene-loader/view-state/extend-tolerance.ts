@@ -6,7 +6,7 @@
  * be unit-tested without instantiating SceneLoader (which needs zarr,
  * ViewStateManager, LoaderRegistry, ...).
  *
- * @module data/scene-loader/extend-tolerance
+ * @module data/scene-loader/view-state/extend-tolerance
  */
 
 import type { SceneDimensions } from '../../view-state-manager';

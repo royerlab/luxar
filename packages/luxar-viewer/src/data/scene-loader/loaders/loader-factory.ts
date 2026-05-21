@@ -17,7 +17,7 @@
  * order, same logging, same null-coalescing of optional cache /
  * profiler / prefetcher dependencies.
  *
- * @module data/scene-loader/loader-factory
+ * @module data/scene-loader/loaders/loader-factory
  */
 
 import * as zarr from '../../zarr';

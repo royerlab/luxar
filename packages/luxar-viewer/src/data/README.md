@@ -83,9 +83,10 @@ data/
 │   ├── scene-stats.ts             # Roll up loaded geometry per type
 │   └── aggregator.ts              # Accumulator stats aggregation across loaders
 │
-├── scene-loader/                  # Modules composed by scene-loader.ts (cache, nodes,
-│                                  #   process, commit, update-view, retry, ...).
-│                                  #   See scene-loader/ for the extracted units.
+├── scene-loader/                  # Modules composed by scene-loader.ts, organised into
+│                                  #   nine subpackages: cache/, loaders/, view-state/,
+│                                  #   lifecycle/, monitor/, commit/, nodes/, process/,
+│                                  #   update-view/. See scene-loader/README.md.
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
@@ -193,14 +194,12 @@ SceneLoader is split into focused, testable modules:
 - **Testability**: Each module tested independently
 - **Maintainability**: Clear responsibility boundaries
 - **Reduced Complexity**: `scene-loader.ts` is now ~1,050 lines (down
-  from ~2,100) thanks to ongoing extraction. See `scene-loader/`
-  siblings for the extracted modules: `load-scene`, `process/`,
-  `commit/`, `update-view/`, `nodes/`, `cache-api`, `cache-setup`,
-  `derive-node-view-state`, `dispose`, `effective-attrs`,
-  `extend-tolerance`, `loader-factory`, `loader-registry`,
-  `monitor-wiring`, `predicted-view-state`, `retry`,
-  `run-loader-updates`, `scene-graph-converter`, `url-normalization`,
-  `view-state-queue`, and `visible-counts`.
+  from ~2,100) thanks to ongoing extraction. See `scene-loader/` for
+  the extracted modules, organised into nine thematic subpackages:
+  `cache/`, `loaders/`, `view-state/`, `lifecycle/`, `monitor/`,
+  `commit/`, `nodes/`, `process/`, and `update-view/`. Top-level of
+  `scene-loader/` contains no `.ts` files — every helper lives in
+  one of the subpackages above.
 
 ---
 
@@ -1248,7 +1247,9 @@ _For implementation details, see the source files in this directory._
 - [points](./points/README.md) — Points spatial-index loader and
   effective-radius math.
 - [scene-loader](./scene-loader/) — Modules composed by
-  `scene-loader.ts` (cache, nodes, process, commit, update-view).
+  `scene-loader.ts`, grouped into nine thematic subpackages
+  (cache, loaders, view-state, lifecycle, monitor, commit, nodes,
+  process, update-view).
 - [stats](./stats/) — Scene and per-loader statistics aggregation for
   the monitor.
 - [transforms](./transforms/) — nD inverse-query helper for
