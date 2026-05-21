@@ -4,6 +4,7 @@
     "src/index.ts",
     "src/lib-styles-entry.ts",
     "src/tests/**/*.{test,spec}.ts",
+    "src/tests/e2e/harnesses/*.ts",
     "scripts/**/*.{ts,mjs,js}",
     "tools/**/*.ts",
     "tests/fixtures/**/*.{ts,py}"
