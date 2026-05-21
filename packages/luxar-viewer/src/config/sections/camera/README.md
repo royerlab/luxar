@@ -10,7 +10,7 @@ Note: `fov`, `near`, and `far` are intentionally **not** in this section — the
 
 - `data.ts` — `cameraConfig: CameraConfig`. Defines `initialPosition`, `fovMin`/`fovMax`/`fovSensitivity`, and the `fovPresets` / `lensDistortionPresets` tables keyed by 35mm-equivalent focal-length names (`28mm Wide`, `35mm`, `50mm Normal`, `85mm Portrait`, `135mm Tele`, plus `Custom` for FOV).
 - `types.ts` — `CameraConfig` interface, including the per-preset lens-distortion shape (`distortionX/Y`, `principalPointX/Y`, `focalLengthX/Y`, `skew`, `dispersion`).
-- `validate.ts` — `validateCamera(config, errors, warnings)`. Rejects non-finite `fov`/`near`/`far` (reading `near`/`far` from `renderingControls.defaults`), enforces `near > 0`, `far > near`, and `fovMin < fovMax`; warns on `fovSensitivity` outside `(0, 1]`.
+- `validate.ts` — `validateCamera(config, errors, warnings)`. Reads `fov`/`near`/`far` from `renderingControls.defaults`; rejects non-finite values, enforces `1 ≤ fov ≤ 180`, `near > 0`, `far > near`, and `fovMin < fovMax`; warns on `fovSensitivity` outside `(0, 1]`.
 
 ## Public API
 
