@@ -14,10 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  installFocusHandling,
-  type FocusHandlingPorts,
-} from '../../../../../core/app/lifecycle/focus-handling';
+import { installFocusHandling } from '../../../../../core/app/lifecycle/focus-handling';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 import type { RecordingPanel } from '../../../../../ui/recording-panel';
