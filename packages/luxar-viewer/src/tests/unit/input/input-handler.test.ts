@@ -236,8 +236,9 @@ describe('InputHandler Utilities', () => {
 
   // NOTE: isNavigationKey and calculateFovChange are also tested in
   // src/tests/unit/controls/input-validation.test.ts with additional edge cases
-  // (e.g., textarea blocking, custom sensitivity). Both suites test the same
-  // pure functions from input-handler-utils.ts — keep them in sync.
+  // (e.g., textarea blocking, custom sensitivity). Both suites exercise the same
+  // pure functions (keyboard-validation.ts + window-events/fov-wheel-math.ts) —
+  // keep them in sync.
   describe('isNavigationKey', () => {
     it('should return true for [ key', () => {
       const event = new KeyboardEvent('keydown', { key: '[' });

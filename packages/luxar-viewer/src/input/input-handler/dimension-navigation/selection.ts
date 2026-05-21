@@ -1,8 +1,7 @@
 /**
  * Pure dimension-selection helpers (which dims are navigable, which key
- * maps to which dim, how to cycle through them). Extracted from
- * input-handler-utils.ts so the selection rules are unit-testable in
- * isolation.
+ * maps to which dim, how to cycle through them). Pure functions so the
+ * selection rules are unit-testable in isolation.
  *
  * @module input/input-handler/dimension-navigation/selection
  */

@@ -404,14 +404,14 @@ Tests for WebGL rendering, shaders, and post-processing.
   - World-space sizing
   - HDR color support
 
-- `postprocessing-manager.test.ts` - HDR post-processing pipeline
-  - Tone mapping
-  - Bloom effects
-  - Exposure control
-
-- `postprocessing-depth-mapping.test.ts` - Depth mapping for compositing
-  - Depth buffer readback
-  - Multi-pass rendering
+- `post-processing-manager-lifecycle.test.ts` + `post-processing/` -
+  HDR post-processing pipeline
+  - Tone mapping (mega-shader material + TSL parity)
+  - Bloom chain
+  - FXAA pass
+  - HDR capture + pixel utils
+  - Render-target sizing
+  - Resource lifecycle + settings (under `post-processing-manager/`)
 
 - `rendering-controls-utils.test.ts` - Rendering control helpers
   - Parameter validation

@@ -39,7 +39,8 @@ export class SettleScheduler {
 
   /**
    * Record a cursor position from a mousemove. No-op while suppressed
-   * (mirrors the orchestrator's pre-refactor early return).
+   * so the orchestrator can pause picking without losing the
+   * rAF wake-up loop.
    */
   recordMouseMove(x: number, y: number): void {
     if (this._suppressed) return;

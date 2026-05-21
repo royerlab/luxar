@@ -1,9 +1,9 @@
 /**
  * Unit tests for the InputHandler class.
  *
- * Utilities in input-handler-utils.ts are tested separately in
- * input-handler.test.ts. The constructor wires several heavy
- * components (SceneManager,
+ * Pure utility functions (navigation keys, FOV math, dimension
+ * selection) are tested separately in input-handler.test.ts. The
+ * constructor wires several heavy components (SceneManager,
  * AnimationController, PerformanceMonitor, DebugConsole), but only
  * stores them — the lifecycle methods that don't call `init()` can be
  * exercised with structural stubs.

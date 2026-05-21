@@ -8,7 +8,7 @@
  *    on top of base defaults.
  *  - Writing the current settings back to localStorage and clearing it.
  *
- * No DOM, no postprocessing-manager, no scene-manager calls — just
+ * No DOM, no post-processing-manager, no scene-manager calls — just
  * I/O + structured merging. The facade still owns the "after-load"
  * orchestration (apply to camera, refresh GUI, etc.).
  */

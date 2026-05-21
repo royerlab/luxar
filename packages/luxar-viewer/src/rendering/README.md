@@ -59,11 +59,12 @@ rendering/
 │   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
 │
 ├── post-processing/                    # Private helpers for post-processing-manager
-│   ├── bloom-chain / bloom-shaders / bloom.tsl
-│   ├── fxaa-pass / fxaa-shaders / fxaa.tsl
-│   ├── fullscreen-pass / fullscreen-geometry / render-target-sizing
-│   ├── mega-shader-material / mega-shader-material-tsl / mega-shader.glsl / mega.tsl
-│   ├── hdr-pixel-utils / hdr-capture
+│   ├── bloom/                          # chain / shaders / bloom.tsl
+│   ├── fxaa/                           # pass / shaders / fxaa.tsl
+│   ├── fullscreen/                     # pass / geometry
+│   ├── mega/                           # material / material-tsl / shader.glsl / shader.tsl
+│   ├── hdr/                            # pixel-utils / capture
+│   ├── render-target-sizing.ts
 │   └── post-processing-manager/        # PostProcessingManager helper modules
 │       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
 │       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
@@ -167,7 +168,7 @@ The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment sha
 
 - One fused fullscreen pass for per-pixel effects: fewer rasterizations, fewer texture binds, no ping-pong target pair
 - No third-party post-processing dependency
-- A single GLSL/TSL shader pair (`mega-shader.glsl.ts` + `mega.tsl.ts`) backs both the WebGL2 and WebGPU backends
+- A single GLSL/TSL shader pair (`mega/shader.glsl.ts` + `mega/shader.tsl.ts`) backs both the WebGL2 and WebGPU backends
 
 **Core API:**
 
