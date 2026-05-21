@@ -23,7 +23,7 @@
  * {@link FullscreenPass.setMaterial} between draws — mirroring what the
  * pre-extraction code already did against the bare `mesh.material`.
  *
- * @module rendering/post-processing/fullscreen-pass
+ * @module rendering/post-processing/fullscreen/pass
  */
 
 import * as THREE from 'three';

@@ -1,6 +1,6 @@
 /**
  * FXAA TSL factory — NodeMaterial counterpart to the GLSL3 shader
- * in `fxaa-shaders.ts`.
+ * in `shaders.ts`.
  *
  * Implements the same FXAA Quality preset as the GLSL version:
  * Rec.601 luma → local-contrast early-out → diagonal-tap sub-pixel
@@ -10,7 +10,7 @@
  * threaded in via the factory parameter so the WebGL fallback and
  * the WebGPU path share one source of state.
  *
- * @module rendering/post-processing/fxaa.tsl
+ * @module rendering/post-processing/fxaa/fxaa.tsl
  */
 
 import * as THREE from 'three';

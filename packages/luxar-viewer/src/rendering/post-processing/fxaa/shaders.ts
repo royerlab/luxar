@@ -6,9 +6,9 @@
  *
  * Lives in its own module so the eventual WebGPU/TSL port has a
  * single place to add a NodeMaterial factory without touching
- * `fxaa-pass.ts`.
+ * `pass.ts`.
  *
- * @module rendering/post-processing/fxaa-shaders
+ * @module rendering/post-processing/fxaa/shaders
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';

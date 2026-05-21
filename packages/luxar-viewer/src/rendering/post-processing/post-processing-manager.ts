@@ -12,7 +12,7 @@
  *
  * When FXAA is disabled, stage (3) writes directly to the backbuffer.
  *
- * @module rendering/post-processing-manager
+ * @module rendering/post-processing/post-processing-manager
  */
 
 import * as THREE from 'three';

@@ -15,7 +15,7 @@
  * Bloom resolution is half the canvas. Bloom is a soft glow; full-res
  * doesn't visibly improve quality and doubles memory.
  *
- * @module rendering/post-processing/bloom-chain
+ * @module rendering/post-processing/bloom/chain
  */
 
 import * as THREE from 'three';

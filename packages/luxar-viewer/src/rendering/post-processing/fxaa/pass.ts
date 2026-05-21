@@ -5,7 +5,7 @@
  * tone-mapped LDR pixels. Runs after the mega-shader and writes to
  * the renderer's current target (typically the canvas backbuffer).
  *
- * @module rendering/post-processing/fxaa-pass
+ * @module rendering/post-processing/fxaa/pass
  */
 
 import * as THREE from 'three';
