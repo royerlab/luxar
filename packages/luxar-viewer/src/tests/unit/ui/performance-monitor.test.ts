@@ -126,7 +126,7 @@ describe('PerformanceMonitor', () => {
   describe('frame-timing subscriptions', () => {
     it('does not forward bus events to stats while hidden (no subscription)', async () => {
       const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/event-bus');
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       eventBus.emit('frame-start', {});
       eventBus.emit('frame-end', {});
       expect(stats.begin).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe('PerformanceMonitor', () => {
 
     it('forwards bus events to stats.begin/end while visible', async () => {
       const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/event-bus');
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       monitor.show();
       eventBus.emit('frame-start', {});
       eventBus.emit('frame-end', {});
@@ -145,7 +145,7 @@ describe('PerformanceMonitor', () => {
 
     it('hide() unsubscribes so subsequent bus events stop driving stats', async () => {
       const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/event-bus');
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       monitor.show();
       eventBus.emit('frame-start', {});
       eventBus.emit('frame-end', {});

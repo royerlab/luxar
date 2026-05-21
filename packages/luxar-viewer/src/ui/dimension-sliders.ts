@@ -3,7 +3,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 import {
   clampWithCyclicWrap,
   valueToFraction,

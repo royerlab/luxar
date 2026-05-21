@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
-import { PointPickingMaterial } from '../../../rendering/picking/point-picking-material';
+import { PointPickingMaterial } from '../../../rendering/picking/point/material';
 import { syncPointMaterialWithGeometry } from '../../../data/scene-loader/commit/commit-points-geometry';
 
 describe('syncPointMaterialWithGeometry', () => {

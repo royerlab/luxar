@@ -14,16 +14,22 @@ import { describe, it, expect } from 'vitest';
 import type { SimpleDims } from '../../../types/dims';
 import {
   getNonDisplayedDimensions,
+  mapKeyToDimension,
+  getNextDimensionIndex,
+} from '../../../input/input-handler/dimension-navigation/selection';
+import {
   calculateStepSize,
   calculateNextPosition,
-  mapKeyToDimension,
-  isNavigationKey,
-  calculateFovChange,
-  shouldBlockShortcut,
-  getNextDimensionIndex,
+} from '../../../input/input-handler/dimension-navigation/step-math';
+import {
   formatDimensionValue,
   generateNavigationHelp,
-} from '../../../input/input-handler-utils';
+} from '../../../input/input-handler/dimension-navigation/format';
+import {
+  isNavigationKey,
+  shouldBlockShortcut,
+} from '../../../input/input-handler/keyboard-validation';
+import { calculateFovChange } from '../../../input/input-handler/window-events/fov-wheel-math';
 
 // Helper to create SimpleDims test objects
 function createDims(ndim: number, displayed: number[], metadata?: any[]): SimpleDims {

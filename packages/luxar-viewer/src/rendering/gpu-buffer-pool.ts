@@ -28,7 +28,7 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
-import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geometry-utils';
+import { estimateGeometryBytes, invalidateCachedByteSize } from './gpu-buffer-pool/geometry-bytes';
 import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
 import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';

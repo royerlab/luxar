@@ -8,7 +8,7 @@
  * @module rendering/gpu-buffer-pool/byte-budget-evictor
  */
 
-import { estimateGeometryBytes } from '../../utils/geometry-utils';
+import { estimateGeometryBytes } from './geometry-bytes';
 import type { PooledBuffer } from './pool-stats';
 import { selectBuffersToEvict } from './eviction-policy';
 import { log, Modules } from '../../utils/log';

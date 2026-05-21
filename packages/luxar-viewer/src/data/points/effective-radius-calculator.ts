@@ -7,18 +7,11 @@
  */
 
 import { ViewState } from '../data-loader-types';
+import type { EffectiveRadiusConfig } from '../../types/points';
 
-/**
- * Configuration for effective radius calculation.
- */
-export interface EffectiveRadiusConfig {
-  /** Which dimensions points extend through spatially */
-  spatialExtendDims: boolean[];
-  /** Maximum radius in the dataset for query optimization */
-  maxRadius: number;
-  /** Which dimensions are discrete (for exact matching) - DEPRECATED: non-spatial is always discrete */
-  discreteDims?: boolean[];
-}
+// Re-export so existing importers (`import { EffectiveRadiusConfig } from
+// '.../data/points/effective-radius-calculator'`) keep resolving.
+export type { EffectiveRadiusConfig };
 
 /**
  * Calculate effective radii for points based on their distance from the slice hyperplane.

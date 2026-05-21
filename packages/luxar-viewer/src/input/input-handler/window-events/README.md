@@ -1,0 +1,18 @@
+# `input-handler/window-events/`
+
+Window- and document-level listeners that the orchestrator wires once
+during `init()`.
+
+- `window-event-handler.ts` — `WindowEventHandler` class. Owns the
+  three global listeners: `resize` (forwards to
+  `SceneManager.updateSize()`), `wheel` (intercepts Ctrl/Meta+wheel for
+  FOV; orbit/ortho controls own the regular zoom), and
+  `fullscreenchange` (toggles canvas inline styles + runs one rAF
+  `updateSize()` after the viewport transition).
+- `fullscreen-toggle.ts` — `toggleFullscreen` body. Requests
+  fullscreen on `document.documentElement`; falls back to the WebGL
+  canvas if the document request rejects; exits otherwise.
+- `fov-wheel-math.ts` — `calculateFovChange`. Currently unused by the
+  live wheel handler (which calls `sceneManager.updateFOV(deltaY)`
+  directly), kept as a documented public surface + because its tests
+  pin the `[fovMin, fovMax]` clamp behavior used elsewhere.

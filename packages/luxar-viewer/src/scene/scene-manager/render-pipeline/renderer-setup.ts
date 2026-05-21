@@ -30,9 +30,9 @@ import {
   type Renderer,
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
-import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr-detection';
+import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
-import { notifier } from '../../../utils/notifier';
+import { notifier } from '../../../utils/cross-layer/notifier';
 
 /**
  * URL-param / env-var / default precedence ladder for backend

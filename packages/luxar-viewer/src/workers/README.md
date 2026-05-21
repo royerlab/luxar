@@ -44,9 +44,10 @@ buffers are transferred back to the main thread to avoid copying where possible.
 ## Usage
 
 ```typescript
-import { getWorkerPool, disposeWorkerPool } from './workers';
+import { getWorkerPool, disposeWorkerPool } from './workers/worker-pool';
 
-// Get singleton pool (auto-initializes on first call)
+// Get singleton pool (constructed on first call; workers spawn on
+// first `initialize()` — directly or indirectly via runWithTimeout).
 const pool = getWorkerPool();
 await pool.initialize();
 
@@ -82,9 +83,10 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 ### Initialization
 
-- Lazy: workers are created on first `getWorkerPool()` call
+- Lazy: workers are spawned on the first `initialize()` call (also triggered implicitly by `getWorker`, `getWorkerWithTracking`, or `runWithTimeout`)
 - Safe: promise deduplication ensures concurrent callers share a single initialization
 - Resilient: uses `Promise.allSettled()` so partial worker failures don't block the pool
+- Generation-guarded: `dispose()` mid-init bumps a generation token and terminates pending workers, preventing a stale init from re-populating a disposed pool
 
 ## Data Worker API
 
@@ -117,6 +119,101 @@ If WASM is unavailable, each worker falls back to a pure TypeScript implementati
 
 ```
 workers/
-├── worker-pool.ts   — Pool manager with load balancing
-└── data-worker.ts   — Worker implementation (WASM + Comlink)
+├── color-utils.ts                              — Worker- and main-thread-shared
+│                                                 color/scalar coercion
+├── worker-pool.ts                              — Pool orchestrator: generation-
+│                                                 guarded init, runWithTimeout,
+│                                                 dispose. Class + re-exports
+│                                                 from worker-pool/ subtree.
+├── worker-pool/
+│   ├── errors.ts                               — WorkerTimeoutError,
+│   │                                            WorkerAbortError, TimeoutKind
+│   ├── types.ts                                — WorkerInstance interface
+│   ├── stats.ts                                — computeStats, computeQueueDepth
+│   ├── lifecycle/
+│   │   ├── worker-count.ts                     — hardwareConcurrency cap
+│   │   ├── init-with-guard.ts                  — race init vs timeout+onerror
+│   │   ├── error-handlers.ts                   — attachWorkerErrorHandlers +
+│   │   │                                        evictFailedWorker
+│   │   └── spawn-worker.ts                     — per-worker factory +
+│   │                                            terminateAttemptWorkers
+│   ├── selection/
+│   │   ├── least-busy.ts                       — runWithTimeout selection
+│   │   └── round-robin.ts                      — direct getWorker() rotation
+│   └── timeout/
+│       ├── with-timeout.ts                     — Promise.race + timer
+│       ├── pick-timeout-ms.ts                  — kind → config knob
+│       └── combine-signals.ts                  — AbortSignal.any + fallback
+├── data-worker.ts                              — Worker entry (Vite ?worker
+│                                                 target). Imports task helpers
+│                                                 from data-worker/ and exposes
+│                                                 the Comlink workerAPI.
+└── data-worker/
+    ├── state.ts                                — WasmCtx { wasm,
+    │                                            visibilityMaskBuffer }
+    │                                            + requireWasm helper
+    ├── initialize.ts                           — WASM bootstrap
+    ├── types.ts                                — ProjectionViewState,
+    │                                            PointsOutputBuffers
+    │                                            (re-exports EffectiveRadiusConfig
+    │                                            from types/points.ts)
+    ├── validation.ts                           — JS→WASM boundary checks
+    │                                            (worker-internal)
+    ├── spatial-index/
+    │   └── query.ts                            — querySpatialIndex
+    ├── visibility/
+    │   ├── points.ts                           — computeNDVisibilityPoints
+    │   ├── lines.ts                            — computeNDVisibilityLines
+    │   └── gsplats.ts                          — computeNDVisibilityGSplats
+    ├── projection/
+    │   ├── points.ts                           — projectPointsTo3D
+    │   ├── lines.ts                            — projectLinesTo3D
+    │   └── gsplats.ts                          — projectGSplatsTo3D
+    └── decode/
+        ├── quantized.ts                        — uint8/uint16 → float32
+        ├── log-scalar.ts                       — log-space dequantization
+        ├── lut.ts                              — row + scalar LUT decode
+        └── broadcasted.ts                      — single value → N×k array
 ```
+
+## Internal Layout
+
+External callers only import from the three package-root files
+(`worker-pool.ts`, `color-utils.ts`, `data-worker.ts` via the Vite
+`?worker` URL). Everything under `worker-pool/` and `data-worker/` is
+worker-internal: helpers grouped by concern, each file owning a single
+piece of the pool's or the worker's responsibility. The recursive
+layout follows the audience: the more widely a file is imported, the
+shallower it lives.
+
+Task functions under `data-worker/` take a shared `state: WasmCtx`
+(defined in `data-worker/state.ts`) so they can read the WASM module
+and grow the pooled visibility-mask scratch buffer without referencing
+module-level globals.
+
+## Public API
+
+From `worker-pool.ts`:
+
+- `getWorkerPool()` / `disposeWorkerPool()` — singleton accessor and teardown
+- `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `setAbortSignal`, `reinitialize`, `getStats`, `getQueueDepth`)
+- `setDataWorkerUrl(url)` — override the worker module URL (for embedders whose bundlers can't resolve Vite's `?worker` import)
+- `class WorkerTimeoutError` / `class WorkerAbortError` — distinguish hung-worker eviction from caller-initiated cancellation
+- `type TimeoutKind = 'visibility' | 'projection' | 'decode'` — selects the per-call timeout from `config.dataLoading.performance`
+
+From `data-worker.ts`:
+
+- `type DataWorkerAPI` — Comlink-proxied surface (`workerAPI`)
+- `type PointsOutputBuffers` — transferable result shape for `projectPointsTo3D`
+- `type EffectiveRadiusConfig`, `type ProjectionViewState` — projection input shapes
+  (`EffectiveRadiusConfig` is canonically defined in `types/points.ts`; re-exported here for worker-API self-documentation)
+
+From `color-utils.ts`:
+
+- `coerceColorsToFloat32` (also imported by `data/lines/projection.ts`)
+- `coerceScalarsToFloat32`, `fillColorsWhite`
+
+## Dependencies
+
+- Internal: `../wasm` (compiled WASM + TypeScript fallback via `initWasm`), `../config` (worker count + timeout settings), `../utils/log`, `../config/constants` (`MAX_SUPPORTED_DIMS`)
+- External: `comlink` (typed RPC + `transfer` for zero-copy result buffers)

@@ -1,0 +1,104 @@
+import type { LoaderConfig } from '../../data/data-loader-types';
+import type { AppFactories } from './factories';
+
+/**
+ * Init-time options for {@link LuxarApp.init}.
+ *
+ * Typically constructed by `main.ts` from `readUrlParams()`, but any caller
+ * can provide values directly — useful for tests, embedding, and notebook
+ * integrations where `window.location` is not the right source.
+ */
+export interface LuxarAppOptions {
+  /**
+   * Canvas element to render into. The standalone app's main.ts resolves
+   * this via `document.getElementById('app')`; embedders pass any
+   * HTMLCanvasElement they own.
+   */
+  canvas: HTMLCanvasElement;
+  /** Dataset URL. Defaults to {@link config.defaultZarrPath}. */
+  src?: string;
+  /** Expose `window.__luxarDebug` and verbose hardware logging. */
+  debug?: boolean;
+  /** Cache and prefetch flags forwarded to the data loader. */
+  loaderConfig?: LoaderConfig;
+  /**
+   * Reflect the loaded dataset URL in the browser address bar via
+   * `history.replaceState` so the page can be reloaded or shared.
+   *
+   * Defaults to `false` for programmatic/embedded safety. The standalone
+   * bootstrap sets this to `true` explicitly.
+   */
+  updateBrowserUrl?: boolean;
+
+  /**
+   * Absolute URL to the WASM JS shim (`luxar_wasm.js`).
+   *
+   * Defaults to `new URL('../wasm/luxar_wasm.js', import.meta.url)` —
+   * resolved relative to the bundled JS, which works for Vite, Rollup,
+   * webpack 5, and most modern bundlers. Embedders whose bundlers don't
+   * support `import.meta.url` for asset URLs (or who ship the WASM files
+   * from a non-default location) override this.
+   */
+  wasmPath?: string;
+
+  /**
+   * Absolute URL to the data-worker module bundle.
+   *
+   * Defaults to `new URL('./data-worker.ts', import.meta.url)`. Override
+   * if your bundler can't resolve worker URLs that way.
+   */
+  workerPath?: string;
+
+  /**
+   * Open the data-loading monitor in expanded mode on the Cache tab as
+   * soon as the scene is wired up. Set by the standalone bootstrap when
+   * `?cache-stats` is in the URL; embedders can pass it explicitly when
+   * profiling cache behaviour.
+   */
+  openCacheStats?: boolean;
+
+  /**
+   * Optional construction overrides for the heavy components
+   * constructed by `init()`. When omitted (or per-key undefined),
+   * `defaultFactories` is used and the production path simply calls
+   * the matching `new X(...)`. Embedders + tests use this hook to
+   * substitute alternate scene managers, recording panels, etc.
+   * See `factories.ts`.
+   */
+  factories?: AppFactories;
+
+  /**
+   * Force a specific rendering backend, overriding the default
+   * resolution. Mirrors `UrlParams.renderer` — the standalone
+   * bootstrap reads `?renderer=webgl|webgpu` and threads it here
+   * so per-load A/B testing doesn't need a dev-server restart.
+   *
+   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial` (the
+   *   production default).
+   * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial`. Internally
+   *   falls back to WebGL2 when no WebGPU adapter.
+   * - Undefined: fall back to `VITE_LUXAR_USE_WEBGPU` (opt-in to
+   *   WebGPU) / `VITE_LUXAR_USE_LEGACY_WEBGL` (no-op, matches default)
+   *   env vars, then the WebGL default.
+   */
+  renderer?: 'webgl' | 'webgpu';
+
+  /**
+   * Diagnostic mode for `renderer: 'webgpu'`: construct
+   * `WebGPURenderer({ forceWebGL: true })` so Three.js still uses the
+   * WebGPURenderer API surface and TSL `NodeMaterial` shaders, but routes
+   * rendering through its internal WebGL2 backend. Mirrors the
+   * `?webgpu-force-webgl` URL flag.
+   */
+  webgpuForceWebGL?: boolean;
+
+  /**
+   * Opt-in to WebGPU `timestamp-query` profiling. Construct
+   * `WebGPURenderer({ trackTimestamp: true })` so the perf bench can
+   * read per-frame GPU duration via
+   * `renderer.resolveTimestampsAsync('render')`. Tiny runtime cost
+   * (~1-2% per Three.js docs); intended only for the perf-bench spec
+   * (`?perf-timestamp` URL flag). Ignored under `WebGLRenderer`.
+   */
+  perfTimestamp?: boolean;
+}

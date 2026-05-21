@@ -33,42 +33,51 @@
  * to ensure consistent state across all nD objects in the scene.
  */
 
-import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
-import { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
-import { notifier } from '../utils/notifier';
-import { captureViewerState } from '../config/zarr-bridge/viewer-state-capture';
-import type { DimensionSliders, SliderConfig } from '../ui/dimension-sliders';
-
-/**
- * Factory used by `InputHandler.initDimensionSliders()` to construct
- * the slider panel. Injected from `core/app.ts` so the input layer
- * never imports the concrete UI class at runtime — it only knows the
- * shape via `import type`. Closes the input → ui layer-cruiser
- * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
- */
-export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
+import { notifier } from '../utils/cross-layer/notifier';
+import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { InputContextManager, InputContext } from './input-context-manager';
-import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
-import { PanelCoordinator } from './handlers/panel-coordinator';
-import { WindowEventHandler } from './handlers/window-event-handler';
-import { AnimationShortcuts } from './handlers/animation-shortcuts';
-import { registerAllKeyBindings } from './handlers/key-bindings';
-import { isTypingInInput, isFocusOnSceneCanvas } from './handlers/focus-utils';
-import { nextControlType } from './handlers/control-mode-cycle';
-import { log, Modules, LogEmoji } from '../utils/log';
-import { updateSceneForDimensions } from '../data';
-import { eventBus } from '../utils/event-bus';
+import { InputContextManager } from './input-handler/context-manager';
+import { computeDimensionStep, resolveSelectedDimension } from './input-handler/dimension-navigation/compute-step';
+import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
+import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
+import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
+import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
+import {
+  toggleControlMode,
+  toggleInertialMode,
+  type ControlModeCtx,
+} from './input-handler/commands/control-mode';
+import {
+  clearDimensionUI,
+  initDimensionSliders,
+  type DimensionSlidersFactory,
+  type DimNavSetupCtx,
+} from './input-handler/dimension-navigation/setup';
+import {
+  toggleFullscreen,
+  type FullscreenCtx,
+} from './input-handler/window-events/fullscreen-toggle';
+import { cycleDataMonitor } from './input-handler/commands/data-monitor-cycle';
+import {
+  exportViewerState,
+  type ViewerStateExportCtx,
+} from './input-handler/commands/viewer-state-export';
+import { log, Modules } from '../utils/log';
+
+// Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
+// can keep importing it from '../input/input-handler' unchanged.
+export type { DimensionSlidersFactory } from './input-handler/dimension-navigation/setup';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -281,9 +290,12 @@ export class InputHandler {
    * - User interaction events (mousedown, touchstart)
    * - Context-specific key bindings
    *
-   * Must be called once during application initialization, after scene manager
-   * is created but before scene loading. Event listeners are automatically
-   * cleaned up when dispose() is called.
+   * Called once during application initialization, after scene manager
+   * is created but before scene loading. Re-entry is guarded: a second
+   * call logs a warning and returns without re-binding listeners (so
+   * HMR / context-restore / test re-setup can't silently double event
+   * volume). Event listeners are automatically cleaned up when
+   * dispose() is called.
    *
    * @example
    * ```typescript
@@ -328,31 +340,7 @@ export class InputHandler {
    * ```
    */
   clearDimensionUI(): void {
-    // Dispose of existing dimension sliders
-    if (this.dimensionSliders) {
-      this.dimensionSliders.dispose();
-      this.dimensionSliders = undefined;
-      this.panelCoordinator.setDimensionSliders(undefined);
-    }
-
-    // Dispose of animation manager
-    if (this.animationManager) {
-      this.animationManager.dispose();
-      this.animationManager = undefined;
-    }
-
-    // Remove the listener before resetting so a stale closure can't
-    // observe a half-reset state.
-    if (this.sceneDimsListener) {
-      sceneDimsManager.removeListener(this.sceneDimsListener);
-      this.sceneDimsListener = undefined;
-    }
-
-    // Reset the scene dimension manager
-    sceneDimsManager.reset();
-
-    // Reset selected dimension
-    this.selectedDimension = 0;
+    clearDimensionUI(this.makeDimNavSetupCtx());
   }
 
   /**
@@ -398,84 +386,7 @@ export class InputHandler {
    * ```
    */
   initDimensionSliders(): void {
-    // Initialize scene dims manager
-    if (!sceneDimsManager.initFromScene(this.sceneManager.scene)) {
-      return; // No nD objects found
-    }
-
-    const dims = sceneDimsManager.getDims();
-    const dimensionRanges = sceneDimsManager.getDimensionRanges();
-
-    if (!dims || !dimensionRanges) {
-      return;
-    }
-
-    // Clean up existing sliders if any
-    if (this.dimensionSliders) {
-      this.dimensionSliders.dispose();
-    }
-
-    // Build the slider panel only if a factory is injected. Listener
-    // wiring + animation manager + initial update are hoisted out of
-    // this branch so embed callers without a slider factory still get
-    // keyboard nD navigation that actually loads data.
-    if (this.dimensionSlidersFactory) {
-      const dimensionNames = sceneDimsManager.getDimensionNames();
-      const dimensionUnits = sceneDimsManager.getDimensionUnits();
-
-      this.dimensionSliders = this.dimensionSlidersFactory({
-        container: document.body,
-        dims,
-        dimensionRanges,
-        dimensionNames,
-        dimensionUnits,
-      });
-      this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
-
-      // Show sliders only if we have non-displayed dimensions
-      this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
-    } else {
-      log.warning(
-        Modules.INPUT,
-        'No DimensionSliders factory provided; skipping slider construction'
-      );
-      this.panelCoordinator.setDimensionSliders(undefined);
-    }
-
-    // Initialize animation manager and register keyboard shortcuts —
-    // these don't depend on the slider panel existing.
-    this.initAnimationManager();
-
-    // Cross-link animation manager. Slider link is null-guarded; the
-    // recording-panel link runs unconditionally.
-    if (this.animationManager) {
-      this.dimensionSliders?.setAnimationManager(this.animationManager);
-      this.recordingPanel?.setAnimationManager(this.animationManager);
-    }
-
-    // Listen for dimension changes (returns Promise for animation
-    // synchronization). The slider .update() inside the callback is
-    // null-guarded, so this listener works fine without a slider
-    // panel. Stored on the instance so clearDimensionUI / dispose
-    // can remove it cleanly. Replace any prior listener instead of
-    // stacking when initDimensionSliders runs more than once.
-    if (this.sceneDimsListener) {
-      sceneDimsManager.removeListener(this.sceneDimsListener);
-    }
-    this.sceneDimsListener = async (): Promise<void> => {
-      if (this.dimensionSliders) {
-        this.dimensionSliders.update();
-      }
-      this.animationController.startAnimation();
-      await this.updateAllNDNodes();
-    };
-    sceneDimsManager.addListener(this.sceneDimsListener);
-
-    // Trigger initial update now that listener is registered — ensures
-    // data loads at the correct initial slice position whether or not
-    // a slider panel exists.
-    this.updateAllNDNodes();
-    this.animationController.startAnimation();
+    initDimensionSliders(this.makeDimNavSetupCtx());
   }
 
   /**
@@ -486,68 +397,31 @@ export class InputHandler {
     this.dimensionSliders?.setVisible(true);
   }
 
-  /**
-   * Initialize animation manager and register keyboard shortcuts
-   * Called from initDimensionSliders() after scene loads
-   * @private
-   */
-  private initAnimationManager(): void {
-    if (!this.animationManager) {
-      this.animationManager = new DimensionAnimationManager(
-        sceneDimsManager,
-        this.animationController
-      );
-
-      // Register animation shortcuts via the dedicated AnimationShortcuts
-      // concern. The context callbacks read instance state at dispatch
-      // time so subsequent dim selections / animation-manager swaps are
-      // picked up automatically.
-      const shortcuts = new AnimationShortcuts(this.contextManager, {
-        getSelectedDimension: () => this.selectedDimension,
-        getAnimationManager: () => this.animationManager,
-      });
-      shortcuts.register();
-    }
-  }
-
-  /**
-   * Update all nD nodes (points, lines, splats) with current dimension values.
-   *
-   * Called automatically when dimension slice positions change. Updates ALL
-   * nD-aware data nodes in the scene by:
-   * - Querying spatial indices for visible chunks in current slice
-   * - Loading necessary data chunks from cache/HTTP
-   * - Updating point positions, colors, and other attributes
-   * - Triggering re-render to display new data
-   *
-   * This is the core of nD navigation - it translates dimension changes into
-   * data updates. The update is asynchronous because it may need to fetch
-   * data over the network.
-   *
-   * @private
-   * @returns Promise that resolves when all nD nodes have been updated and
-   *          data loading is complete (or in progress)
-   *
-   * @example
-   * ```typescript
-   * // Called automatically by dimension change listener:
-   * sceneDimsManager.addListener(() => {
-   *   this.updateAllNDNodes();  // Update data for new slice
-   *   this.animationController.startAnimation();  // Re-render
-   * });
-   * ```
-   */
-  private async updateAllNDNodes(): Promise<void> {
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return;
-    }
-
-    // Use the new loader architecture's update mechanism
-    await updateSceneForDimensions(dims, this.sceneManager.scene as unknown as THREE.Group);
-
-    // Trigger re-render after update
-    this.animationController.startAnimation();
+  private makeDimNavSetupCtx(): DimNavSetupCtx {
+    return {
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      dimensionSlidersFactory: this.dimensionSlidersFactory,
+      contextManager: this.contextManager,
+      panelCoordinator: this.panelCoordinator,
+      recordingPanel: this.recordingPanel,
+      getSelectedDimension: () => this.selectedDimension,
+      setSelectedDimension: (value) => {
+        this.selectedDimension = value;
+      },
+      getAnimationManager: () => this.animationManager,
+      setAnimationManager: (manager) => {
+        this.animationManager = manager;
+      },
+      getDimensionSliders: () => this.dimensionSliders,
+      setDimensionSliders: (sliders) => {
+        this.dimensionSliders = sliders;
+      },
+      getSceneDimsListener: () => this.sceneDimsListener,
+      setSceneDimsListener: (listener) => {
+        this.sceneDimsListener = listener;
+      },
+    };
   }
 
   /**
@@ -636,8 +510,7 @@ export class InputHandler {
    * @private
    */
   private handleDataMonitorCycle(): void {
-    eventBus.emit('panel-cycle', { panelId: 'data-monitor' });
-    log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
+    cycleDataMonitor();
   }
 
   /**
@@ -781,21 +654,11 @@ export class InputHandler {
    * @private
    */
   private toggleFullscreen(): void {
-    if (!document.fullscreenElement) {
-      // Enter fullscreen - target the document element for true fullscreen
-      document.documentElement.requestFullscreen().catch((err) => {
-        log.error(Modules.INPUT, 'Error attempting to enable fullscreen:', err);
-        // Fallback: try the canvas element
-        this.sceneManager.renderer.domElement.requestFullscreen().catch((fallbackErr) => {
-          log.error(Modules.INPUT, 'Fallback fullscreen also failed:', fallbackErr);
-        });
-      });
-    } else {
-      // Exit fullscreen
-      document.exitFullscreen().catch((err) => {
-        log.error(Modules.INPUT, 'Error attempting to exit fullscreen:', err);
-      });
-    }
+    toggleFullscreen(this.makeFullscreenCtx());
+  }
+
+  private makeFullscreenCtx(): FullscreenCtx {
+    return { sceneManager: this.sceneManager };
   }
 
   /**
@@ -845,36 +708,15 @@ export class InputHandler {
    * @private
    */
   private exportViewerState(): void {
-    if (!this.renderingControls) {
-      log.warning(Modules.INPUT, 'Cannot export state: rendering controls not available');
-      return;
-    }
+    exportViewerState(this.makeViewerStateExportCtx());
+  }
 
-    const state = captureViewerState(
-      this.sceneManager,
-      this.renderingControls,
-      sceneDimsManager,
-      this.animationManager
-    );
-
-    const json = JSON.stringify(state, null, 2);
-
-    // Copy to clipboard
-    navigator.clipboard
-      .writeText(json)
-      .then(() => {
-        notifier.toast('Viewer state copied to clipboard');
-        log.info(Modules.INPUT, 'Viewer state exported to clipboard');
-      })
-      .catch((err) => {
-        log.error(Modules.INPUT, 'Failed to copy state to clipboard:', err);
-        notifier.toast('Failed to copy state to clipboard');
-      });
-
-    // Also store on debug interface for programmatic access
-    if (window.__luxarDebug) {
-      window.__luxarDebug.lastExportedState = state;
-    }
+  private makeViewerStateExportCtx(): ViewerStateExportCtx {
+    return {
+      sceneManager: this.sceneManager,
+      renderingControls: this.renderingControls,
+      animationManager: this.animationManager,
+    };
   }
 
   /**
@@ -891,31 +733,7 @@ export class InputHandler {
    * @private
    */
   private toggleControlMode(): void {
-    const currentType = this.sceneManager.controls.getControlType();
-    log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
-
-    const newType = nextControlType(currentType);
-
-    // Use sceneManager.setControlType for ortho (handles camera swap)
-    this.sceneManager.setControlType(newType);
-
-    // Update input context based on control mode
-    if (newType === 'fly') {
-      this.contextManager.setContext(InputContext.FLY_CONTROLS);
-    } else {
-      this.contextManager.setContext(InputContext.NAVIGATION);
-    }
-
-    // Sync rendering controls if they exist
-    if (this.renderingControls) {
-      this.renderingControls.syncCurrentState();
-    }
-
-    log.custom(
-      LogEmoji.CONTROLS,
-      Modules.CONTROLS,
-      `Switched to ${newType} controls (press V to toggle)`
-    );
+    toggleControlMode(this.makeControlModeCtx());
   }
 
   /**
@@ -933,27 +751,15 @@ export class InputHandler {
    * @private
    */
   private toggleInertialMode(): void {
-    const flyControls = this.sceneManager.controls.getFlyControls();
-    if (flyControls) {
-      const currentInertial = flyControls.inertialMode;
-      flyControls.setInertialMode(!currentInertial);
+    toggleInertialMode(this.makeControlModeCtx());
+  }
 
-      // Sync rendering controls if they exist
-      if (this.renderingControls) {
-        this.renderingControls.syncCurrentState();
-      }
-
-      log.custom(
-        LogEmoji.ROCKET,
-        Modules.CONTROLS,
-        `Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`
-      );
-    } else {
-      log.info(
-        Modules.INPUT,
-        'Inertial mode is only available in fly control mode (press V to switch)'
-      );
-    }
+  private makeControlModeCtx(): ControlModeCtx {
+    return {
+      sceneManager: this.sceneManager,
+      contextManager: this.contextManager,
+      renderingControls: this.renderingControls,
+    };
   }
 
   /**

@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
-import { notifier } from '../utils/notifier';
+import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
 import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
