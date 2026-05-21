@@ -1,30 +1,49 @@
 #!/usr/bin/env python3
-"""
-Generate project statistics report for Luxar.
+"""Generate the Luxar project statistics report.
 
-Analyzes all languages in the codebase (Python, TypeScript, Rust, CUDA, CSS,
-Shell, Configuration files) to produce comprehensive statistics including
-lines of code, file counts, function/class counts, test coverage, and more.
+Scans the codebase, parses package manifests, optionally runs the test
+suites with coverage, and renders an HTML report (and optional JSON).
+
+Usage:
+    python stats/generate_stats.py                 # full report with tests
+    python stats/generate_stats.py --no-tests      # skip test runs (fast)
+    python stats/generate_stats.py --no-coverage   # count tests, skip coverage
+    python stats/generate_stats.py --json          # also write project_stats.json
 """
 
+from __future__ import annotations
+
+import argparse
+import ast
 import html
 import json
 import re
 import subprocess
+import tokenize
 from collections import defaultdict
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+# tomllib is stdlib from Python 3.11+. The project pins python_version=3.10
+# in pyproject.toml so mypy can't see it; hatch runs on 3.11+ at runtime.
+import tomllib  # type: ignore[import-not-found]
 from arbol import aprint, asection
 
-# Language configurations
-LANGUAGE_CONFIG = {
+# ---------------------------------------------------------------------------
+# Language configuration
+# ---------------------------------------------------------------------------
+
+LANGUAGE_CONFIG: dict[str, dict[str, Any]] = {
     "python": {
         "extensions": [".py"],
         "comment_single": "#",
-        "comment_multi_start": '"""',
-        "comment_multi_end": '"""',
+        "comment_multi_start": None,  # handled by tokenize, not regex
+        "comment_multi_end": None,
         "color": "#3572A5",
+        "label": "Python",
     },
     "typescript": {
         "extensions": [".ts", ".tsx"],
@@ -32,6 +51,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "/*",
         "comment_multi_end": "*/",
         "color": "#3178C6",
+        "label": "TypeScript",
     },
     "rust": {
         "extensions": [".rs"],
@@ -39,6 +59,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "/*",
         "comment_multi_end": "*/",
         "color": "#DEA584",
+        "label": "Rust",
     },
     "cuda": {
         "extensions": [".cu", ".cuh"],
@@ -46,6 +67,15 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "/*",
         "comment_multi_end": "*/",
         "color": "#76B900",
+        "label": "CUDA",
+    },
+    "go": {
+        "extensions": [".go"],
+        "comment_single": "//",
+        "comment_multi_start": "/*",
+        "comment_multi_end": "*/",
+        "color": "#00ADD8",
+        "label": "Go",
     },
     "css": {
         "extensions": [".css", ".scss"],
@@ -53,6 +83,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "/*",
         "comment_multi_end": "*/",
         "color": "#563D7C",
+        "label": "CSS",
     },
     "javascript": {
         "extensions": [".js", ".jsx", ".mjs"],
@@ -60,6 +91,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "/*",
         "comment_multi_end": "*/",
         "color": "#F7DF1E",
+        "label": "JavaScript",
     },
     "shell": {
         "extensions": [".sh", ".bash"],
@@ -67,6 +99,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#89E051",
+        "label": "Shell",
     },
     "json": {
         "extensions": [".json"],
@@ -74,6 +107,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#292929",
+        "label": "JSON",
     },
     "toml": {
         "extensions": [".toml"],
@@ -81,6 +115,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#9C4121",
+        "label": "TOML",
     },
     "yaml": {
         "extensions": [".yaml", ".yml"],
@@ -88,6 +123,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#CB171E",
+        "label": "YAML",
     },
     "markdown": {
         "extensions": [".md"],
@@ -95,6 +131,7 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#083FA1",
+        "label": "Markdown",
     },
     "html": {
         "extensions": [".html", ".htm"],
@@ -102,18 +139,22 @@ LANGUAGE_CONFIG = {
         "comment_multi_start": "<!--",
         "comment_multi_end": "-->",
         "color": "#E34C26",
+        "label": "HTML",
     },
     "makefile": {
-        "extensions": ["Makefile", ".mk"],
+        "extensions": ["Makefile"],
         "comment_single": "#",
         "comment_multi_start": None,
         "comment_multi_end": None,
         "color": "#427819",
+        "label": "Makefile",
     },
 }
 
-# Directories to skip
-SKIP_DIRS = {
+# Directory names skipped anywhere in the path. Generated/build artifacts and
+# vendored dependencies are excluded so the report reflects the human-written
+# codebase rather than Sphinx output or Playwright traces.
+SKIP_DIR_NAMES = {
     ".git",
     "node_modules",
     "__pycache__",
@@ -130,70 +171,230 @@ SKIP_DIRS = {
     "venv",
     "htmlcov",
     ".tox",
+    "_build",
+    "playwright-report",
+    ".playwright-mcp",
+    "test-results",
+    "delme",
+    "datasets",
+    "build-cuda-logs",
+    "cuda-build-logs",
+    ".idea",
+    ".claude",
+    ".vscode",
 }
 
+# Subpackages we want to call out in the HTML breakdown.
+PYTHON_PACKAGE_ROOT = Path("packages/luxar/src/luxar")
+TS_PACKAGE_ROOT = Path("packages/luxar-viewer/src")
 
-def count_lines_in_file(filepath, lang_config):
-    """Count total, code, comment, and blank lines in a file."""
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LineStats:
+    total: int = 0
+    code: int = 0
+    comment: int = 0
+    blank: int = 0
+
+
+@dataclass
+class LanguageStats:
+    files: int = 0
+    total_lines: int = 0
+    code_lines: int = 0
+    comment_lines: int = 0
+    blank_lines: int = 0
+    definitions: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    by_subdir: dict[str, dict[str, int]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(int))
+    )
+    largest_files: list[tuple[str, int]] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "files": self.files,
+            "total_lines": self.total_lines,
+            "code_lines": self.code_lines,
+            "comment_lines": self.comment_lines,
+            "blank_lines": self.blank_lines,
+            "definitions": dict(self.definitions),
+            "by_subdir": {k: dict(v) for k, v in self.by_subdir.items()},
+            "largest_files": self.largest_files,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Line and definition counting
+# ---------------------------------------------------------------------------
+
+
+def _count_lines_generic(filepath: Path, lang_config: dict[str, Any]) -> LineStats:
+    """Count lines for languages other than Python.
+
+    Block-comment detection is line-based: any line that contains the start
+    or end token (or sits between them) is treated as a comment line. This
+    is approximate for languages where string literals can embed the same
+    delimiter, but acceptable as a project-level metric.
+    """
     try:
         with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
-    except Exception:
-        return {"total": 0, "code": 0, "comment": 0, "blank": 0}
+    except OSError:
+        return LineStats()
 
     total = len(lines)
     blank = sum(1 for line in lines if line.strip() == "")
 
-    comment = 0
-    in_block_comment = False
     comment_single = lang_config.get("comment_single")
-    comment_multi_start = lang_config.get("comment_multi_start")
-    comment_multi_end = lang_config.get("comment_multi_end")
+    multi_start = lang_config.get("comment_multi_start")
+    multi_end = lang_config.get("comment_multi_end")
 
-    for line in lines:
-        stripped = line.strip()
-
-        # Handle block comments
-        if comment_multi_start and comment_multi_end:
-            if comment_multi_start in stripped and not in_block_comment:
-                in_block_comment = True
-            if in_block_comment:
-                comment += 1
-                if comment_multi_end in stripped:
-                    in_block_comment = False
-                continue
-
-        # Handle single-line comments
+    comment = 0
+    in_block = False
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if in_block:
+            comment += 1
+            if multi_end and multi_end in stripped:
+                in_block = False
+            continue
+        if multi_start and multi_start in stripped:
+            comment += 1
+            # Single-line block comment closes on same line
+            after_start = stripped.split(multi_start, 1)[1]
+            if not (multi_end and multi_end in after_start):
+                in_block = True
+            continue
         if comment_single and stripped.startswith(comment_single):
             comment += 1
 
     code = max(0, total - blank - comment)
+    return LineStats(total=total, code=code, comment=comment, blank=blank)
 
-    return {"total": total, "code": code, "comment": comment, "blank": blank}
 
+def _count_lines_python(filepath: Path) -> LineStats:
+    """Accurate Python line accounting using the tokenize module.
 
-def count_python_definitions(filepath):
-    """Count classes and functions in Python file."""
+    - blank: lines containing only whitespace
+    - comment: lines that are either pure `#` comments or pure module/class/
+      function docstrings (a string expression statement). Inline comments and
+      string literals used as values are NOT counted as comments.
+    - code: everything else (total - blank - comment).
+    """
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except Exception:
+        with open(filepath, "rb") as f:
+            data = f.read()
+    except OSError:
+        return LineStats()
+
+    text = data.decode("utf-8", errors="ignore")
+    lines = text.splitlines()
+    total = len(lines)
+    blank = sum(1 for line in lines if line.strip() == "")
+
+    comment_lines: set[int] = set()
+
+    # Pure `#` comment lines via tokenize.
+    try:
+        import io
+
+        tokens = list(tokenize.tokenize(io.BytesIO(data).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        tokens = []
+
+    for tok in tokens:
+        if tok.type == tokenize.COMMENT:
+            start_line = tok.start[0]
+            line_text = lines[start_line - 1] if 0 < start_line <= total else ""
+            if line_text.lstrip().startswith("#"):
+                comment_lines.add(start_line)
+
+    # Docstrings (module / class / function / async function) via AST.
+    try:
+        tree = ast.parse(data)
+    except SyntaxError:
+        tree = None
+
+    if tree is not None:
+        docstring_parents: list[ast.AST] = [tree]
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                docstring_parents.append(node)
+        for parent in docstring_parents:
+            body = getattr(parent, "body", None)
+            if not body:
+                continue
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                start = first.lineno
+                end = getattr(first, "end_lineno", start)
+                for ln in range(start, end + 1):
+                    comment_lines.add(ln)
+
+    comment = len(comment_lines)
+    code = max(0, total - blank - comment)
+    return LineStats(total=total, code=code, comment=comment, blank=blank)
+
+
+def count_lines_in_file(filepath: Path, lang_name: str) -> LineStats:
+    if lang_name == "python":
+        return _count_lines_python(filepath)
+    return _count_lines_generic(filepath, LANGUAGE_CONFIG[lang_name])
+
+
+def count_python_definitions(filepath: Path) -> dict[str, int]:
+    """AST-based Python definition counting.
+
+    - classes: every ClassDef
+    - methods: any function/async-function whose parent in the body chain is
+      a ClassDef
+    - functions: every other function/async-function (module-level and
+      nested-in-function)
+    """
+    try:
+        with open(filepath, "rb") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
         return {"classes": 0, "functions": 0, "methods": 0}
 
-    classes = len(re.findall(r"^\s*class\s+\w+", content, re.MULTILINE))
-    all_functions = len(re.findall(r"^\s*def\s+\w+", content, re.MULTILINE))
-    methods = len(re.findall(r"^\s{4,}def\s+\w+", content, re.MULTILINE))
-    functions = all_functions - methods
+    classes = 0
+    functions = 0
+    methods = 0
 
+    def walk(node: ast.AST, *, in_class: bool) -> None:
+        nonlocal classes, functions, methods
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                classes += 1
+                walk(child, in_class=True)
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if in_class:
+                    methods += 1
+                else:
+                    functions += 1
+                walk(child, in_class=False)
+            else:
+                walk(child, in_class=in_class)
+
+    walk(tree, in_class=False)
     return {"classes": classes, "functions": functions, "methods": methods}
 
 
-def count_typescript_definitions(filepath):
-    """Count classes, functions, and interfaces in TypeScript file."""
+def count_typescript_definitions(filepath: Path) -> dict[str, int]:
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except Exception:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
         return {"classes": 0, "functions": 0, "interfaces": 0, "types": 0}
 
     classes = len(re.findall(r"^\s*(?:export\s+)?class\s+\w+", content, re.MULTILINE))
@@ -202,7 +403,8 @@ def count_typescript_definitions(filepath):
     )
     functions += len(
         re.findall(
-            r"^\s*(?:export\s+)?const\s+\w+\s*=\s*(?:async\s+)?\([^)]*\)\s*=>",
+            r"^\s*(?:export\s+)?const\s+\w+(?:\s*:\s*[^=]+)?\s*=\s*"
+            r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|\w+\s*=>)",
             content,
             re.MULTILINE,
         )
@@ -211,7 +413,6 @@ def count_typescript_definitions(filepath):
         re.findall(r"^\s*(?:export\s+)?interface\s+\w+", content, re.MULTILINE)
     )
     types = len(re.findall(r"^\s*(?:export\s+)?type\s+\w+\s*=", content, re.MULTILINE))
-
     return {
         "classes": classes,
         "functions": functions,
@@ -220,20 +421,27 @@ def count_typescript_definitions(filepath):
     }
 
 
-def count_rust_definitions(filepath):
-    """Count structs, functions, traits, and impls in Rust file."""
+def count_rust_definitions(filepath: Path) -> dict[str, int]:
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except Exception:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
         return {"structs": 0, "functions": 0, "traits": 0, "impls": 0, "enums": 0}
 
-    structs = len(re.findall(r"^\s*(?:pub\s+)?struct\s+\w+", content, re.MULTILINE))
-    functions = len(re.findall(r"^\s*(?:pub\s+)?fn\s+\w+", content, re.MULTILINE))
-    traits = len(re.findall(r"^\s*(?:pub\s+)?trait\s+\w+", content, re.MULTILINE))
-    impls = len(re.findall(r"^\s*impl(?:\s*<[^>]*>)?\s+\w+", content, re.MULTILINE))
-    enums = len(re.findall(r"^\s*(?:pub\s+)?enum\s+\w+", content, re.MULTILINE))
-
+    structs = len(
+        re.findall(r"^\s*(?:pub(?:\([^)]+\))?\s+)?struct\s+\w+", content, re.MULTILINE)
+    )
+    functions = len(
+        re.findall(
+            r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+\w+", content, re.MULTILINE
+        )
+    )
+    traits = len(
+        re.findall(r"^\s*(?:pub(?:\([^)]+\))?\s+)?trait\s+\w+", content, re.MULTILINE)
+    )
+    impls = len(re.findall(r"^\s*impl\b", content, re.MULTILINE))
+    enums = len(
+        re.findall(r"^\s*(?:pub(?:\([^)]+\))?\s+)?enum\s+\w+", content, re.MULTILINE)
+    )
     return {
         "structs": structs,
         "functions": functions,
@@ -243,20 +451,17 @@ def count_rust_definitions(filepath):
     }
 
 
-def count_cuda_definitions(filepath):
-    """Count kernels and device functions in CUDA file."""
+def count_cuda_definitions(filepath: Path) -> dict[str, int]:
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except Exception:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
         return {"kernels": 0, "device_functions": 0, "host_functions": 0}
 
-    kernels = len(re.findall(r"__global__\s+\w+\s+\w+", content, re.MULTILINE))
+    kernels = len(re.findall(r"__global__\s+\w+\s+\w+\s*\(", content))
     device_functions = len(
-        re.findall(r"__device__\s+(?!__host__)[\w\s*&]+\s+\w+\s*\(", content)
+        re.findall(r"__device__\s+(?!__host__)[\w\s*&:<>,]+?\s+\w+\s*\(", content)
     )
-    host_functions = len(re.findall(r"__host__\s+[\w\s*&]+\s+\w+\s*\(", content))
-
+    host_functions = len(re.findall(r"__host__\s+[\w\s*&:<>,]+?\s+\w+\s*\(", content))
     return {
         "kernels": kernels,
         "device_functions": device_functions,
@@ -264,60 +469,234 @@ def count_cuda_definitions(filepath):
     }
 
 
-def count_css_definitions(filepath):
-    """Count CSS rules, selectors, and variables."""
+def count_go_definitions(filepath: Path) -> dict[str, int]:
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-    except Exception:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {"functions": 0, "structs": 0, "interfaces": 0}
+
+    # `func Name(...)` or `func (recv T) Name(...)`
+    functions = len(
+        re.findall(r"^func\s+(?:\([^)]+\)\s+)?\w+\s*\(", content, re.MULTILINE)
+    )
+    structs = len(re.findall(r"^type\s+\w+\s+struct\b", content, re.MULTILINE))
+    interfaces = len(re.findall(r"^type\s+\w+\s+interface\b", content, re.MULTILINE))
+    return {"functions": functions, "structs": structs, "interfaces": interfaces}
+
+
+def count_css_definitions(filepath: Path) -> dict[str, int]:
+    try:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
         return {"rules": 0, "variables": 0, "media_queries": 0}
 
-    # Count rule blocks (simplified)
+    # Approximate: count `{...}` blocks. Nested blocks (SCSS) under-count but
+    # are reasonable as a structural signal.
     rules = len(re.findall(r"\{[^}]*\}", content))
     variables = len(re.findall(r"--[\w-]+\s*:", content))
-    media_queries = len(re.findall(r"@media", content))
-
+    media_queries = len(re.findall(r"@media\b", content))
     return {"rules": rules, "variables": variables, "media_queries": media_queries}
 
 
-def get_test_statistics(project_root):
-    """Get test count and coverage statistics for Python, TypeScript, and Rust."""
-    test_stats = {
-        "python": {
-            "test_files": 0,
-            "test_count": 0,
-            "test_passed": 0,
-            "test_failed": 0,
-            "coverage_percent": 0,
-        },
-        "typescript": {
-            "test_files": 0,
-            "test_count": 0,
-            "test_passed": 0,
-            "test_failed": 0,
-            "coverage_percent": 0,
-        },
+# ---------------------------------------------------------------------------
+# File scanning
+# ---------------------------------------------------------------------------
+
+
+def _is_skipped(path: Path) -> bool:
+    return any(part in SKIP_DIR_NAMES for part in path.parts)
+
+
+def _iter_files_for_extension(root: Path, ext: str) -> Iterator[Path]:
+    """Yield files matching ``ext`` under ``root``, skipping ignored dirs."""
+    if ext.startswith("."):
+        pattern = f"*{ext}"
+    else:
+        pattern = ext  # exact filename (e.g. "Makefile")
+    for filepath in root.rglob(pattern):
+        if _is_skipped(filepath):
+            continue
+        yield filepath
+
+
+def analyze_language(root: Path, language_name: str) -> LanguageStats:
+    lang_config = LANGUAGE_CONFIG[language_name]
+    stats = LanguageStats()
+    file_sizes: list[tuple[str, int]] = []
+
+    for ext in lang_config["extensions"]:
+        for filepath in _iter_files_for_extension(root, ext):
+            stats.files += 1
+
+            line_stats = count_lines_in_file(filepath, language_name)
+            stats.total_lines += line_stats.total
+            stats.code_lines += line_stats.code
+            stats.comment_lines += line_stats.comment
+            stats.blank_lines += line_stats.blank
+
+            try:
+                rel = filepath.relative_to(root)
+            except ValueError:
+                rel = filepath
+            file_sizes.append((str(rel), line_stats.code))
+            subdir = rel.parts[0] if len(rel.parts) > 1 else "root"
+            stats.by_subdir[subdir]["files"] += 1
+            stats.by_subdir[subdir]["code_lines"] += line_stats.code
+
+            if language_name == "python":
+                defs = count_python_definitions(filepath)
+            elif language_name == "typescript":
+                defs = count_typescript_definitions(filepath)
+            elif language_name == "rust":
+                defs = count_rust_definitions(filepath)
+            elif language_name == "cuda":
+                defs = count_cuda_definitions(filepath)
+            elif language_name == "go":
+                defs = count_go_definitions(filepath)
+            elif language_name == "css":
+                defs = count_css_definitions(filepath)
+            else:
+                defs = {}
+            for k, v in defs.items():
+                stats.definitions[k] += v
+
+    file_sizes.sort(key=lambda x: x[1], reverse=True)
+    stats.largest_files = file_sizes[:10]
+    return stats
+
+
+def analyze_package_breakdown(root: Path, pkg_root: Path) -> list[dict[str, Any]]:
+    """Return per-subdirectory stats for files directly under ``pkg_root``.
+
+    Aggregates by immediate child directory and counts Python (for the luxar
+    package) or TypeScript files. Used to render a per-subpackage breakdown
+    in the HTML.
+    """
+    abs_root = root / pkg_root
+    if not abs_root.exists():
+        return []
+
+    # Determine which extensions to track based on package root.
+    is_python_root = "luxar/src" in str(pkg_root).replace("\\", "/")
+    if is_python_root:
+        exts = LANGUAGE_CONFIG["python"]["extensions"]
+        lang_name = "python"
+    else:
+        exts = LANGUAGE_CONFIG["typescript"]["extensions"]
+        lang_name = "typescript"
+
+    entries: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"files": 0, "code_lines": 0, "comment_lines": 0}
+    )
+
+    for ext in exts:
+        for filepath in abs_root.rglob(f"*{ext}"):
+            if _is_skipped(filepath):
+                continue
+            try:
+                rel = filepath.relative_to(abs_root)
+            except ValueError:
+                continue
+            subpkg = rel.parts[0] if len(rel.parts) > 1 else "<root>"
+            line_stats = count_lines_in_file(filepath, lang_name)
+            entries[subpkg]["files"] += 1
+            entries[subpkg]["code_lines"] += line_stats.code
+            entries[subpkg]["comment_lines"] += line_stats.comment
+
+    out = [
+        {"name": name, **vals}
+        for name, vals in sorted(entries.items(), key=lambda x: -x[1]["code_lines"])
+    ]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Tests / coverage
+# ---------------------------------------------------------------------------
+
+
+def _empty_test_section() -> dict[str, Any]:
+    return {
+        "test_files": 0,
+        "test_count": 0,
+        "test_passed": 0,
+        "test_failed": 0,
+        "coverage_percent": 0.0,
+    }
+
+
+def collect_test_file_counts(root: Path) -> dict[str, Any]:
+    """File-level inventory (no test execution)."""
+    py_tests = [
+        p
+        for p in list(root.rglob("test_*.py")) + list(root.rglob("*_test.py"))
+        if not _is_skipped(p)
+    ]
+    viewer = root / "packages" / "luxar-viewer"
+    ts_tests = [
+        p
+        for p in list(viewer.rglob("*.test.ts")) + list(viewer.rglob("*.test.tsx"))
+        if not _is_skipped(p)
+    ]
+    e2e_tests = (
+        [p for p in viewer.rglob("*.spec.ts") if not _is_skipped(p)]
+        if viewer.exists()
+        else []
+    )
+    return {
+        "python_count": len(py_tests),
+        "ts_count": len(ts_tests),
+        "e2e_count": len(e2e_tests),
+    }
+
+
+def get_test_statistics(
+    root: Path, *, run_tests: bool, run_coverage: bool
+) -> dict[str, Any]:
+    """Gather test inventory and optionally execute tests with coverage."""
+    test_stats: dict[str, Any] = {
+        "python": _empty_test_section(),
+        "typescript": _empty_test_section(),
         "rust": {"test_files": 0, "test_count": 0, "test_passed": 0, "test_failed": 0},
         "e2e": {"test_files": 0, "test_count": 0},
         "error": None,
     }
 
-    root_path = Path(project_root)
+    inventory = collect_test_file_counts(root)
+    test_stats["python"]["test_files"] = inventory["python_count"]
+    test_stats["typescript"]["test_files"] = inventory["ts_count"]
+    test_stats["e2e"]["test_files"] = inventory["e2e_count"]
 
-    # === Python Tests ===
+    # Rust test-file heuristic: any .rs file containing a #[test] or #[cfg(test)].
+    rust_path = root / "packages" / "luxar-viewer" / "src" / "wasm" / "rust"
+    if rust_path.exists():
+        rust_test_files = 0
+        for rs_file in rust_path.rglob("*.rs"):
+            if _is_skipped(rs_file):
+                continue
+            try:
+                txt = rs_file.read_text(errors="ignore")
+            except OSError:
+                continue
+            if "#[test]" in txt or "#[cfg(test)]" in txt:
+                rust_test_files += 1
+        test_stats["rust"]["test_files"] = rust_test_files
+
+    if not run_tests:
+        aprint("Skipping test execution (--no-tests)")
+        return test_stats
+
+    _run_python_tests(root, test_stats, run_coverage=run_coverage)
+    _run_typescript_tests(root, test_stats, run_coverage=run_coverage)
+    _run_rust_tests(root, test_stats)
+    return test_stats
+
+
+def _run_python_tests(
+    root: Path, test_stats: dict[str, Any], *, run_coverage: bool
+) -> None:
     with asection("Python tests"):
-        test_files = list(root_path.rglob("test_*.py")) + list(
-            root_path.rglob("*_test.py")
-        )
-        test_files = [
-            f
-            for f in test_files
-            if "__pycache__" not in str(f) and ".hatch" not in str(f)
-        ]
-        test_stats["python"]["test_files"] = len(test_files)
-        aprint(f"Found {len(test_files)} test files")
-
-        # Collect test count
+        # Collect count
         try:
             result = subprocess.run(
                 [
@@ -330,1324 +709,1356 @@ def get_test_statistics(project_root):
                 ],
                 capture_output=True,
                 text=True,
-                timeout=60,
-                cwd=project_root,
+                timeout=120,
+                cwd=root,
             )
-
             for line in result.stdout.split("\n"):
                 if "selected" in line or "collected" in line:
-                    numbers = re.findall(r"\d+", line)
-                    if numbers:
-                        test_stats["python"]["test_count"] = int(numbers[0])
-                        aprint(f"Collected {numbers[0]} tests")
+                    nums = re.findall(r"\d+", line)
+                    if nums:
+                        test_stats["python"]["test_count"] = int(nums[0])
+                        aprint(f"Collected {nums[0]} tests")
                         break
+        except FileNotFoundError:
+            aprint("hatch not found; skipping Python test collection")
+            return
+        except subprocess.TimeoutExpired:
+            aprint("Python test collection timed out")
+            return
         except Exception as e:
-            aprint(f"Could not collect tests: {e}")
+            aprint(f"Python test collection failed: {e}")
 
-        # Run tests with coverage
-        aprint("Running tests with coverage...")
+        cmd = ["hatch", "run", "pytest", "packages/luxar/src/luxar", "-q", "--tb=no"]
+        if run_coverage:
+            cmd[3:3] = ["--cov=packages/luxar/src/luxar", "--cov-report=term"]
+        aprint(f"Running: {' '.join(cmd)}")
+        # 30 min budget: the full Python suite (3K+ tests with coverage) is
+        # the long pole of the report. Bump if the suite keeps growing.
         try:
             result = subprocess.run(
-                [
-                    "hatch",
-                    "run",
-                    "pytest",
-                    "--cov=packages/luxar/src/luxar",
-                    "--cov-report=term",
-                    "packages/luxar/src/luxar",
-                    "-q",
-                    "--tb=no",
-                ],
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+                cwd=root,
+            )
+        except subprocess.TimeoutExpired:
+            aprint("Python test run timed out after 30 minutes")
+            return
+        except FileNotFoundError:
+            aprint("hatch not found; skipping Python test run")
+            return
+
+        for line in (result.stdout + "\n" + result.stderr).split("\n"):
+            if line.strip().startswith("TOTAL") and "%" in line:
+                m = re.search(r"(\d+(?:\.\d+)?)%", line)
+                if m:
+                    test_stats["python"]["coverage_percent"] = float(m.group(1))
+                    aprint(f"Coverage: {m.group(1)}%")
+                    break
+
+        for line in result.stdout.split("\n"):
+            m = re.search(r"(\d+)\s+passed", line)
+            if m:
+                test_stats["python"]["test_passed"] = int(m.group(1))
+            m = re.search(r"(\d+)\s+failed", line)
+            if m:
+                test_stats["python"]["test_failed"] = int(m.group(1))
+
+
+def _run_typescript_tests(
+    root: Path, test_stats: dict[str, Any], *, run_coverage: bool
+) -> None:
+    viewer = root / "packages" / "luxar-viewer"
+    if not viewer.exists():
+        return
+    with asection("TypeScript tests"):
+        cmd = [
+            "npx",
+            "vitest",
+            "--run",
+            "--exclude",
+            "**/wasm-performance.test.ts",
+        ]
+        if run_coverage:
+            cmd.insert(3, "--coverage")
+        aprint(f"Running: {' '.join(cmd)}")
+        try:
+            result = subprocess.run(
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=300,
-                cwd=project_root,
+                cwd=viewer,
             )
-
-            # Parse coverage
-            for line in result.stdout.split("\n") + result.stderr.split("\n"):
-                if line.strip().startswith("TOTAL"):
-                    parts = line.split()
-                    for part in reversed(parts):
-                        if "%" in part:
-                            pct_match = re.search(r"(\d+(?:\.\d+)?)%", part)
-                            if pct_match:
-                                test_stats["python"]["coverage_percent"] = float(
-                                    pct_match.group(1)
-                                )
-                                aprint(f"Coverage: {pct_match.group(1)}%")
-                                break
-                    break
-
-            # Count passing tests
-            for line in result.stdout.split("\n"):
-                if "passed" in line:
-                    match = re.search(r"(\d+)\s+passed", line)
-                    if match:
-                        test_stats["python"]["test_passed"] = int(match.group(1))
-                if "failed" in line:
-                    match = re.search(r"(\d+)\s+failed", line)
-                    if match:
-                        test_stats["python"]["test_failed"] = int(match.group(1))
-
+        except FileNotFoundError:
+            aprint("npx not found; skipping TypeScript test run")
+            return
         except subprocess.TimeoutExpired:
-            aprint("Test run timed out")
-        except Exception as e:
-            aprint(f"Could not run tests: {e}")
+            aprint("TypeScript test run timed out")
+            return
 
-    # === TypeScript Tests ===
-    viewer_path = root_path / "packages" / "luxar-viewer"
-    if viewer_path.exists():
-        with asection("TypeScript tests"):
-            ts_test_files = list(viewer_path.rglob("*.test.ts")) + list(
-                viewer_path.rglob("*.test.tsx")
+        for line in (result.stdout + "\n" + result.stderr).split("\n"):
+            if "Tests" in line and "passed" in line:
+                total_m = re.search(r"\((\d+)\)", line)
+                if total_m:
+                    test_stats["typescript"]["test_count"] = int(total_m.group(1))
+                pm = re.search(r"(\d+)\s+passed", line)
+                if pm:
+                    test_stats["typescript"]["test_passed"] = int(pm.group(1))
+                fm = re.search(r"(\d+)\s+failed", line)
+                if fm:
+                    test_stats["typescript"]["test_failed"] = int(fm.group(1))
+                break
+
+        if run_coverage:
+            cov_json = viewer / "coverage" / "coverage-summary.json"
+            if cov_json.exists():
+                try:
+                    cov = json.loads(cov_json.read_text())
+                    pct = cov.get("total", {}).get("statements", {}).get("pct")
+                    if pct is not None:
+                        test_stats["typescript"]["coverage_percent"] = float(pct)
+                        aprint(f"Coverage (JSON): {pct}%")
+                except (OSError, ValueError) as e:
+                    aprint(f"Could not read coverage JSON: {e}")
+
+
+def _run_rust_tests(root: Path, test_stats: dict[str, Any]) -> None:
+    rust_path = root / "packages" / "luxar-viewer" / "src" / "wasm" / "rust"
+    if not rust_path.exists():
+        return
+    with asection("Rust tests"):
+        try:
+            result = subprocess.run(
+                ["cargo", "test", "--", "--test-threads=1"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                cwd=rust_path,
             )
-            ts_test_files = [f for f in ts_test_files if "node_modules" not in str(f)]
-            test_stats["typescript"]["test_files"] = len(ts_test_files)
-            aprint(f"Found {len(ts_test_files)} unit test files")
+        except FileNotFoundError:
+            aprint("cargo not found; skipping Rust tests")
+            return
+        except subprocess.TimeoutExpired:
+            aprint("Rust test run timed out")
+            return
 
-            # E2E test files
-            e2e_files = list(viewer_path.rglob("*.spec.ts"))
-            e2e_files = [f for f in e2e_files if "node_modules" not in str(f)]
-            test_stats["e2e"]["test_files"] = len(e2e_files)
-            aprint(f"Found {len(e2e_files)} E2E test files")
-
-            # Run TypeScript tests with coverage
-            # Exclude performance benchmark tests that may timeout and block coverage
-            aprint("Running unit tests with coverage...")
-            try:
-                result = subprocess.run(
-                    [
-                        "npx",
-                        "vitest",
-                        "--run",
-                        "--coverage",
-                        "--exclude",
-                        "**/wasm-performance.test.ts",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                    cwd=viewer_path,
-                )
-
-                # Parse test counts from output
-                for line in result.stdout.split("\n") + result.stderr.split("\n"):
-                    if "Tests" in line and "passed" in line:
-                        total_match = re.search(r"\((\d+)\)", line)
-                        if total_match:
-                            test_stats["typescript"]["test_count"] = int(
-                                total_match.group(1)
-                            )
-                        passed_match = re.search(r"(\d+)\s+passed", line)
-                        if passed_match:
-                            test_stats["typescript"]["test_passed"] = int(
-                                passed_match.group(1)
-                            )
-                        failed_match = re.search(r"(\d+)\s+failed", line)
-                        if failed_match:
-                            test_stats["typescript"]["test_failed"] = int(
-                                failed_match.group(1)
-                            )
-                        break
-
-                # Try to read coverage from JSON file (more reliable than stdout)
-                coverage_json = viewer_path / "coverage" / "coverage-summary.json"
-                if coverage_json.exists():
-                    try:
-                        with open(coverage_json) as f:
-                            cov_data = json.load(f)
-                        total_cov = cov_data.get("total", {})
-                        statements = total_cov.get("statements", {})
-                        if statements:
-                            pct = statements.get("pct", 0)
-                            test_stats["typescript"]["coverage_percent"] = float(pct)
-                            aprint(f"Coverage (from JSON): {pct}%")
-                    except Exception as e:
-                        aprint(f"Could not read coverage JSON: {e}")
-
-                # Fallback: parse coverage from stdout
-                if test_stats["typescript"]["coverage_percent"] == 0:
-                    for line in result.stdout.split("\n") + result.stderr.split("\n"):
-                        # Look for lines like "All files  |   85.23 |..."
-                        if "All files" in line and "|" in line:
-                            parts = line.split("|")
-                            if len(parts) >= 2:
-                                try:
-                                    pct = float(parts[1].strip())
-                                    test_stats["typescript"]["coverage_percent"] = pct
-                                    aprint(f"Coverage (from stdout): {pct}%")
-                                    break
-                                except ValueError:
-                                    pass
-
-                aprint(
-                    f"Passed: {test_stats['typescript']['test_passed']}, "
-                    f"Failed: {test_stats['typescript']['test_failed']}"
-                )
-
-            except subprocess.TimeoutExpired:
-                aprint("Test run timed out")
-            except Exception as e:
-                aprint(f"Could not run tests: {e}")
-
-    # === Rust Tests ===
-    rust_path = root_path / "packages" / "luxar-viewer" / "src" / "wasm" / "rust"
-    if rust_path.exists():
-        with asection("Rust tests"):
-            rust_test_files = list(rust_path.rglob("*.rs"))
-            test_stats["rust"]["test_files"] = len(
-                [
-                    f
-                    for f in rust_test_files
-                    if "test" in f.read_text(errors="ignore").lower()
-                ]
-            )
-
-            # Run cargo test
-            aprint("Running cargo tests...")
-            try:
-                result = subprocess.run(
-                    ["cargo", "test", "--", "--test-threads=1"],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    cwd=rust_path,
-                )
-
-                # Parse test results
-                for line in result.stdout.split("\n"):
-                    if "test result:" in line:
-                        passed_match = re.search(r"(\d+)\s+passed", line)
-                        if passed_match:
-                            test_stats["rust"]["test_passed"] = int(
-                                passed_match.group(1)
-                            )
-                            test_stats["rust"]["test_count"] = int(
-                                passed_match.group(1)
-                            )
-                        failed_match = re.search(r"(\d+)\s+failed", line)
-                        if failed_match:
-                            test_stats["rust"]["test_failed"] = int(
-                                failed_match.group(1)
-                            )
-                            test_stats["rust"]["test_count"] += int(
-                                failed_match.group(1)
-                            )
-                        break
-
-                aprint(
-                    f"Passed: {test_stats['rust']['test_passed']}, "
-                    f"Failed: {test_stats['rust']['test_failed']}"
-                )
-
-            except Exception as e:
-                aprint(f"Could not run Rust tests: {e}")
-
-    return test_stats
+        passed = failed = 0
+        for line in result.stdout.split("\n"):
+            if "test result:" not in line:
+                continue
+            pm = re.search(r"(\d+)\s+passed", line)
+            fm = re.search(r"(\d+)\s+failed", line)
+            if pm:
+                passed += int(pm.group(1))
+            if fm:
+                failed += int(fm.group(1))
+        test_stats["rust"]["test_passed"] = passed
+        test_stats["rust"]["test_failed"] = failed
+        test_stats["rust"]["test_count"] = passed + failed
+        aprint(f"Passed: {passed}, Failed: {failed}")
 
 
-def get_git_statistics(project_root):
-    """Get Git repository statistics."""
-    git_stats = {
+# ---------------------------------------------------------------------------
+# Git
+# ---------------------------------------------------------------------------
+
+
+def _git(root: Path, *args: str, timeout: int = 30) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=root,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def get_git_statistics(root: Path) -> dict[str, Any]:
+    git_stats: dict[str, Any] = {
         "total_commits": 0,
         "contributors": 0,
         "first_commit_date": None,
         "last_commit_date": None,
-        "branches": 0,
+        "local_branches": 0,
+        "remote_branches": 0,
         "tags": 0,
         "commits_last_30_days": 0,
+        "files_changed_last_30_days": 0,
         "top_contributors": [],
+        "current_branch": None,
     }
 
-    try:
-        # Total commits
-        result = subprocess.run(
-            ["git", "rev-list", "--count", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
-        )
-        if result.returncode == 0:
-            git_stats["total_commits"] = int(result.stdout.strip())
+    out = _git(root, "rev-list", "--count", "HEAD")
+    if out:
+        git_stats["total_commits"] = int(out.strip())
 
-        # Contributors
-        result = subprocess.run(
-            ["git", "shortlog", "-sn", "--all"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
-        )
-        if result.returncode == 0:
-            contributors = result.stdout.strip().split("\n")
-            git_stats["contributors"] = len([c for c in contributors if c.strip()])
-            # Get top 5 contributors
-            for line in contributors[:5]:
-                match = re.match(r"\s*(\d+)\s+(.+)", line)
-                if match:
-                    git_stats["top_contributors"].append(
-                        {"commits": int(match.group(1)), "name": match.group(2).strip()}
-                    )
+    out = _git(root, "shortlog", "-sn", "--all")
+    if out:
+        contributors = [line for line in out.strip().split("\n") if line.strip()]
+        git_stats["contributors"] = len(contributors)
+        for line in contributors[:5]:
+            m = re.match(r"\s*(\d+)\s+(.+)", line)
+            if m:
+                git_stats["top_contributors"].append(
+                    {"commits": int(m.group(1)), "name": m.group(2).strip()}
+                )
 
-        # First and last commit dates
-        result = subprocess.run(
-            ["git", "log", "--format=%ai", "--reverse"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            dates = result.stdout.strip().split("\n")
-            if dates:
-                git_stats["first_commit_date"] = dates[0].split()[0]
-                git_stats["last_commit_date"] = dates[-1].split()[0]
+    out = _git(root, "log", "--format=%ai", "--reverse")
+    if out and out.strip():
+        dates = out.strip().split("\n")
+        git_stats["first_commit_date"] = dates[0].split()[0]
+        git_stats["last_commit_date"] = dates[-1].split()[0]
 
-        # Branch count
-        result = subprocess.run(
-            ["git", "branch", "-a"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
+    out = _git(root, "branch")
+    if out:
+        git_stats["local_branches"] = len(
+            [b for b in out.strip().split("\n") if b.strip()]
         )
-        if result.returncode == 0:
-            branches = [b for b in result.stdout.strip().split("\n") if b.strip()]
-            git_stats["branches"] = len(branches)
-
-        # Tag count
-        result = subprocess.run(
-            ["git", "tag"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
+    out = _git(root, "branch", "-r")
+    if out:
+        git_stats["remote_branches"] = len(
+            [b for b in out.strip().split("\n") if b.strip()]
         )
-        if result.returncode == 0:
-            tags = [t for t in result.stdout.strip().split("\n") if t.strip()]
-            git_stats["tags"] = len(tags)
 
-        # Commits in last 30 days
-        result = subprocess.run(
-            ["git", "rev-list", "--count", "--since=30 days ago", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_root,
-        )
-        if result.returncode == 0:
-            git_stats["commits_last_30_days"] = int(result.stdout.strip() or 0)
+    out = _git(root, "tag")
+    if out:
+        git_stats["tags"] = len([t for t in out.strip().split("\n") if t.strip()])
 
-    except Exception as e:
-        git_stats["error"] = str(e)
+    out = _git(root, "rev-list", "--count", "--since=30 days ago", "HEAD")
+    if out:
+        try:
+            git_stats["commits_last_30_days"] = int(out.strip())
+        except ValueError:
+            pass
+
+    out = _git(root, "log", "--since=30 days ago", "--name-only", "--pretty=format:")
+    if out:
+        files = {line.strip() for line in out.split("\n") if line.strip()}
+        git_stats["files_changed_last_30_days"] = len(files)
+
+    out = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if out:
+        git_stats["current_branch"] = out.strip()
 
     return git_stats
 
 
-def get_dependency_statistics(project_root):
-    """Get dependency information from package files."""
-    deps = {
-        "python": {"production": 0, "dev": 0, "packages": []},
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+
+
+def get_dependency_statistics(root: Path) -> dict[str, Any]:
+    deps: dict[str, Any] = {
+        "python": {"production": 0, "dev": 0, "groups": {}, "packages": []},
         "node": {"production": 0, "dev": 0, "packages": []},
         "rust": {"production": 0, "dev": 0, "packages": []},
     }
 
-    root_path = Path(project_root)
-
-    # Python dependencies from pyproject.toml
-    pyproject = root_path / "pyproject.toml"
+    # Python via pyproject.toml
+    pyproject = root / "pyproject.toml"
     if pyproject.exists():
         try:
-            content = pyproject.read_text()
-            # Count dependencies (simplified parsing)
-            in_deps = False
-            in_dev_deps = False
-            for line in content.split("\n"):
-                if "[project.dependencies]" in line or "dependencies = [" in line:
-                    in_deps = True
-                    in_dev_deps = False
-                elif (
-                    "[project.optional-dependencies]" in line
-                    or "dev-dependencies" in line
-                ):
-                    in_dev_deps = True
-                    in_deps = False
-                elif line.strip().startswith("[") and not line.strip().startswith("[["):
-                    in_deps = False
-                    in_dev_deps = False
-                elif in_deps and "=" in line or (in_deps and '"' in line):
-                    deps["python"]["production"] += 1
-                elif in_dev_deps and "=" in line or (in_dev_deps and '"' in line):
-                    deps["python"]["dev"] += 1
-        except Exception:
-            pass
+            data = tomllib.loads(pyproject.read_text())
+            project = data.get("project", {})
+            prod = project.get("dependencies", []) or []
+            deps["python"]["production"] = len(prod)
+            deps["python"]["packages"] = [
+                re.split(r"[<>=!~\[ ]", spec, 1)[0] for spec in prod
+            ]
+            optional = project.get("optional-dependencies", {}) or {}
+            for grp, items in optional.items():
+                deps["python"]["groups"][grp] = len(items)
+                deps["python"]["dev"] += len(items)
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            aprint(f"Could not parse pyproject.toml: {e}")
 
-    # Node.js dependencies from package.json
-    viewer_package = root_path / "packages" / "luxar-viewer" / "package.json"
-    if viewer_package.exists():
+    # Node via packages/luxar-viewer/package.json
+    pkg_json = root / "packages" / "luxar-viewer" / "package.json"
+    if pkg_json.exists():
         try:
-            with open(viewer_package) as f:
-                pkg = json.load(f)
+            pkg = json.loads(pkg_json.read_text())
             deps["node"]["production"] = len(pkg.get("dependencies", {}))
             deps["node"]["dev"] = len(pkg.get("devDependencies", {}))
-            deps["node"]["packages"] = list(pkg.get("dependencies", {}).keys())[:10]
-        except Exception:
-            pass
+            deps["node"]["packages"] = list(pkg.get("dependencies", {}).keys())
+        except (OSError, json.JSONDecodeError) as e:
+            aprint(f"Could not parse package.json: {e}")
 
-    # Rust dependencies from Cargo.toml
-    cargo_toml = (
-        root_path / "packages" / "luxar-viewer" / "src" / "wasm" / "rust" / "Cargo.toml"
-    )
-    if cargo_toml.exists():
+    # Rust via Cargo.toml
+    cargo = root / "packages" / "luxar-viewer" / "src" / "wasm" / "rust" / "Cargo.toml"
+    if cargo.exists():
         try:
-            content = cargo_toml.read_text()
-            in_deps = False
-            in_dev_deps = False
-            for line in content.split("\n"):
-                if "[dependencies]" in line:
-                    in_deps = True
-                    in_dev_deps = False
-                elif "[dev-dependencies]" in line:
-                    in_dev_deps = True
-                    in_deps = False
-                elif line.strip().startswith("["):
-                    in_deps = False
-                    in_dev_deps = False
-                elif in_deps and "=" in line and not line.strip().startswith("#"):
-                    deps["rust"]["production"] += 1
-                elif in_dev_deps and "=" in line and not line.strip().startswith("#"):
-                    deps["rust"]["dev"] += 1
-        except Exception:
-            pass
+            data = tomllib.loads(cargo.read_text())
+            deps["rust"]["production"] = len(data.get("dependencies", {}) or {})
+            deps["rust"]["dev"] = len(data.get("dev-dependencies", {}) or {})
+            deps["rust"]["packages"] = list(data.get("dependencies", {}).keys())
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            aprint(f"Could not parse Cargo.toml: {e}")
 
     return deps
 
 
-def analyze_directory(root_dir, language_name):
-    """Analyze all files for a specific language."""
-    lang_config = LANGUAGE_CONFIG[language_name]
-    extensions = lang_config["extensions"]
+# ---------------------------------------------------------------------------
+# Extras: CI workflows, CHANGELOG, total project size
+# ---------------------------------------------------------------------------
 
-    stats = {
-        "files": 0,
-        "total_lines": 0,
-        "code_lines": 0,
-        "comment_lines": 0,
-        "blank_lines": 0,
-        "definitions": defaultdict(int),
-        "by_subdir": defaultdict(lambda: defaultdict(int)),
-        "largest_files": [],
+
+def get_extras(root: Path) -> dict[str, Any]:
+    extras: dict[str, Any] = {
+        "ci_workflows": 0,
+        "changelog_versions": 0,
+        "project_size_bytes": 0,
     }
 
-    root_path = Path(root_dir)
-    file_sizes = []
+    wf_dir = root / ".github" / "workflows"
+    if wf_dir.exists():
+        extras["ci_workflows"] = sum(
+            1 for p in wf_dir.iterdir() if p.suffix in {".yml", ".yaml"}
+        )
 
-    for ext in extensions:
-        # Handle special case for Makefile
-        if ext == "Makefile":
-            for filepath in root_path.rglob(ext):
-                if any(part in filepath.parts for part in SKIP_DIRS):
-                    continue
-                process_file(
-                    filepath, root_path, stats, lang_config, language_name, file_sizes
-                )
-        else:
-            for filepath in root_path.rglob(f"*{ext}"):
-                if any(part in filepath.parts for part in SKIP_DIRS):
-                    continue
-                process_file(
-                    filepath, root_path, stats, lang_config, language_name, file_sizes
-                )
+    changelog = root / "CHANGELOG.md"
+    if changelog.exists():
+        try:
+            text = changelog.read_text(encoding="utf-8", errors="ignore")
+            extras["changelog_versions"] = len(
+                re.findall(r"^##\s+", text, re.MULTILINE)
+            )
+        except OSError:
+            pass
 
-    # Get top 5 largest files
-    file_sizes.sort(key=lambda x: x[1], reverse=True)
-    stats["largest_files"] = file_sizes[:5]
+    # Project size (text + binaries under tracked, non-skipped dirs).
+    total = 0
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        if _is_skipped(p):
+            continue
+        try:
+            total += p.stat().st_size
+        except OSError:
+            pass
+    extras["project_size_bytes"] = total
 
-    return stats
-
-
-def process_file(filepath, root_path, stats, lang_config, language_name, file_sizes):
-    """Process a single file and update stats."""
-    try:
-        rel_path = filepath.relative_to(root_path)
-        if len(rel_path.parts) > 1:
-            subdir = rel_path.parts[0]
-        else:
-            subdir = "root"
-    except ValueError:
-        subdir = "root"
-
-    stats["files"] += 1
-
-    # Count lines
-    line_stats = count_lines_in_file(filepath, lang_config)
-    stats["total_lines"] += line_stats["total"]
-    stats["code_lines"] += line_stats["code"]
-    stats["comment_lines"] += line_stats["comment"]
-    stats["blank_lines"] += line_stats["blank"]
-
-    # Track file sizes
-    file_sizes.append((str(filepath.relative_to(root_path)), line_stats["code"]))
-
-    # Count definitions based on language
-    if language_name == "python":
-        defs = count_python_definitions(filepath)
-        stats["definitions"]["classes"] += defs["classes"]
-        stats["definitions"]["functions"] += defs["functions"]
-        stats["definitions"]["methods"] += defs["methods"]
-    elif language_name == "typescript":
-        defs = count_typescript_definitions(filepath)
-        stats["definitions"]["classes"] += defs["classes"]
-        stats["definitions"]["functions"] += defs["functions"]
-        stats["definitions"]["interfaces"] += defs["interfaces"]
-        stats["definitions"]["types"] += defs["types"]
-    elif language_name == "rust":
-        defs = count_rust_definitions(filepath)
-        stats["definitions"]["structs"] += defs["structs"]
-        stats["definitions"]["functions"] += defs["functions"]
-        stats["definitions"]["traits"] += defs["traits"]
-        stats["definitions"]["impls"] += defs["impls"]
-        stats["definitions"]["enums"] += defs["enums"]
-    elif language_name == "cuda":
-        defs = count_cuda_definitions(filepath)
-        stats["definitions"]["kernels"] += defs["kernels"]
-        stats["definitions"]["device_functions"] += defs["device_functions"]
-        stats["definitions"]["host_functions"] += defs["host_functions"]
-    elif language_name == "css":
-        defs = count_css_definitions(filepath)
-        stats["definitions"]["rules"] += defs["rules"]
-        stats["definitions"]["variables"] += defs["variables"]
-        stats["definitions"]["media_queries"] += defs["media_queries"]
-
-    # Update subdir stats
-    stats["by_subdir"][subdir]["files"] += 1
-    stats["by_subdir"][subdir]["code_lines"] += line_stats["code"]
+    return extras
 
 
-def generate_html_report(stats, output_file):
-    """Generate comprehensive HTML report from statistics."""
+# ---------------------------------------------------------------------------
+# HTML rendering
+# ---------------------------------------------------------------------------
+
+
+def _fmt_size(bytes_count: int) -> str:
+    if bytes_count >= 1024**3:
+        return f"{bytes_count / 1024**3:.2f} GB"
+    if bytes_count >= 1024**2:
+        return f"{bytes_count / 1024**2:.1f} MB"
+    if bytes_count >= 1024:
+        return f"{bytes_count / 1024:.1f} KB"
+    return f"{bytes_count} B"
+
+
+def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
     now = datetime.now()
-
-    # Calculate totals
-    total_files = sum(stats["languages"][lang]["files"] for lang in stats["languages"])
-    total_code_lines = sum(
-        stats["languages"][lang]["code_lines"] for lang in stats["languages"]
-    )
-    total_lines = sum(
-        stats["languages"][lang]["total_lines"] for lang in stats["languages"]
-    )
-
-    # Primary languages (code files)
+    langs = stats["languages"]
     primary_langs = [
         "python",
         "typescript",
         "rust",
         "cuda",
+        "go",
         "css",
         "javascript",
         "shell",
     ]
-    config_langs = ["json", "toml", "yaml"]
+    config_langs = ["json", "toml", "yaml", "makefile"]
     doc_langs = ["markdown", "html"]
 
-    # Test totals
-    test_stats = stats["tests"]
+    total_files = sum(langs[lang]["files"] for lang in langs)
+    total_code_lines = sum(langs[lang]["code_lines"] for lang in langs)
+    total_lines = sum(langs[lang]["total_lines"] for lang in langs)
+    total_comment_lines = sum(langs[lang]["comment_lines"] for lang in langs)
+    active_langs = sum(1 for lang in langs if langs[lang]["files"] > 0)
+
+    tests = stats["tests"]
     total_test_files = (
-        test_stats["python"]["test_files"]
-        + test_stats["typescript"]["test_files"]
-        + test_stats["e2e"]["test_files"]
+        tests["python"]["test_files"]
+        + tests["typescript"]["test_files"]
+        + tests["e2e"]["test_files"]
+        + tests["rust"]["test_files"]
     )
     total_tests = (
-        test_stats["python"]["test_count"]
-        + test_stats["typescript"]["test_count"]
-        + test_stats["rust"]["test_count"]
+        tests["python"]["test_count"]
+        + tests["typescript"]["test_count"]
+        + tests["rust"]["test_count"]
     )
     total_passed = (
-        test_stats["python"]["test_passed"]
-        + test_stats["typescript"]["test_passed"]
-        + test_stats["rust"]["test_passed"]
+        tests["python"]["test_passed"]
+        + tests["typescript"]["test_passed"]
+        + tests["rust"]["test_passed"]
     )
 
-    # Calculate weighted average coverage (only for languages with coverage data)
-    py_coverage = test_stats["python"]["coverage_percent"]
-    ts_coverage = test_stats["typescript"]["coverage_percent"]
-    py_loc = stats["languages"]["python"]["code_lines"]
-    ts_loc = stats["languages"]["typescript"]["code_lines"]
+    py = langs["python"]
+    ts = langs["typescript"]
+    rust = langs["rust"]
+    cuda = langs["cuda"]
+    go = langs["go"]
+    css = langs["css"]
+    md = langs["markdown"]
+    html_lang = langs["html"]
+    json_stats = langs["json"]
+    yaml_stats = langs["yaml"]
+    toml_stats = langs["toml"]
 
-    if py_loc + ts_loc > 0:
-        weighted_coverage = (py_coverage * py_loc + ts_coverage * ts_loc) / (
-            py_loc + ts_loc
-        )
-    else:
-        weighted_coverage = 0
+    py_cov = tests["python"]["coverage_percent"]
+    ts_cov = tests["typescript"]["coverage_percent"]
+    weighted_cov = (py_cov * py["code_lines"] + ts_cov * ts["code_lines"]) / max(
+        1, py["code_lines"] + ts["code_lines"]
+    )
 
-    report_html = f"""<!DOCTYPE html>
+    git = stats["git"]
+    extras = stats["extras"]
+    deps = stats["dependencies"]
+
+    code_density = (total_code_lines / total_lines * 100) if total_lines else 0
+    comment_density = (total_comment_lines / total_lines * 100) if total_lines else 0
+    primary_code_lines = sum(
+        langs[lang]["code_lines"]
+        for lang in primary_langs
+        if langs[lang]["code_lines"] > 0
+    )
+
+    def pct(n: int) -> float:
+        return (n / primary_code_lines * 100) if primary_code_lines else 0
+
+    # Build the HTML in pieces to keep f-strings tractable.
+    out: list[str] = []
+    out.append(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luxar Project Statistics Report</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 2rem;
-        }}
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
-        }}
-        header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 3rem 2rem;
-            text-align: center;
-        }}
-        header h1 {{ font-size: 2.5rem; margin-bottom: 0.5rem; font-weight: 700; }}
-        header p {{ font-size: 1.1rem; opacity: 0.9; }}
-        .content {{ padding: 2rem; }}
-
-        .summary {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1.25rem;
-            margin-bottom: 2rem;
-        }}
-        .stat-card {{
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            padding: 1.25rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
-        }}
-        .stat-card:hover {{ transform: translateY(-4px); box-shadow: 0 8px 12px rgba(0,0,0,0.15); }}
-        .stat-card h3 {{
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #667eea;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }}
-        .stat-card .value {{ font-size: 2rem; font-weight: 700; color: #333; }}
-        .stat-card .label {{ font-size: 0.8rem; color: #666; margin-top: 0.25rem; }}
-
-        section {{ margin-bottom: 2.5rem; }}
-        section h2 {{
-            font-size: 1.6rem;
-            color: #667eea;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 3px solid #667eea;
-        }}
-        section h3 {{
-            font-size: 1.2rem;
-            color: #444;
-            margin: 1.5rem 0 1rem 0;
-        }}
-
-        table {{ width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9rem; }}
-        th {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 0.75rem;
-            text-align: left;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.05em;
-        }}
-        td {{ padding: 0.6rem 0.75rem; border-bottom: 1px solid #e0e0e0; }}
-        tr:hover {{ background: #f8f9fa; }}
-        .number {{ text-align: right; font-family: 'Monaco', 'Courier New', monospace; font-weight: 500; }}
-
-        .lang-badge {{
-            display: inline-block;
-            padding: 0.2rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: white;
-        }}
-
-        .progress-bar {{
-            height: 16px;
-            background: #e0e0e0;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-top: 0.5rem;
-        }}
-        .progress-fill {{
-            height: 100%;
-            transition: width 0.3s ease;
-        }}
-
-        .lang-breakdown {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-        }}
-        .lang-card {{
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 1.25rem;
-            border-left: 4px solid;
-        }}
-        .lang-card h4 {{
-            font-size: 1rem;
-            margin-bottom: 0.75rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }}
-        .lang-stats {{ font-size: 0.85rem; color: #555; }}
-        .lang-stats div {{ margin-bottom: 0.25rem; }}
-
-        .two-column {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 2rem;
-        }}
-
-        .insight {{
-            margin-bottom: 1rem;
-            padding: 1rem;
-            background: #f8f9fa;
-            border-left: 4px solid #667eea;
-            border-radius: 4px;
-        }}
-        .insight strong {{ color: #667eea; }}
-
-        footer {{
-            text-align: center;
-            padding: 2rem;
-            color: #666;
-            font-size: 0.85rem;
-            border-top: 1px solid #e0e0e0;
-        }}
-
-        .health-indicator {{
-            display: inline-block;
-            padding: 0.15rem 0.4rem;
-            border-radius: 3px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }}
-        .health-good {{ background: #d4edda; color: #155724; }}
-        .health-warning {{ background: #fff3cd; color: #856404; }}
-        .health-danger {{ background: #f8d7da; color: #721c24; }}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Luxar Project Statistics</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #222;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 2rem;
+}}
+.container {{
+    max-width: 1400px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+}}
+header {{
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 3rem 2rem;
+    text-align: center;
+}}
+header h1 {{ font-size: 2.4rem; margin-bottom: 0.4rem; font-weight: 700; }}
+header p {{ font-size: 1rem; opacity: 0.92; }}
+.content {{ padding: 2rem; }}
+.summary {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+}}
+.stat-card {{
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    padding: 1.1rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.08);
+    transition: transform 0.15s;
+}}
+.stat-card:hover {{ transform: translateY(-3px); box-shadow: 0 8px 12px rgba(0,0,0,0.13); }}
+.stat-card h3 {{
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #5a5fb0;
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+}}
+.stat-card .value {{ font-size: 1.9rem; font-weight: 700; color: #222; }}
+.stat-card .label {{ font-size: 0.78rem; color: #666; margin-top: 0.2rem; }}
+section {{ margin-bottom: 2.5rem; }}
+section h2 {{
+    font-size: 1.5rem;
+    color: #5a5fb0;
+    margin-bottom: 0.85rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 3px solid #5a5fb0;
+}}
+section h3 {{
+    font-size: 1.1rem;
+    color: #444;
+    margin: 1.35rem 0 0.85rem 0;
+}}
+table {{ width: 100%; border-collapse: collapse; margin-top: 0.85rem; font-size: 0.9rem; }}
+th {{
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 0.6rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+}}
+td {{ padding: 0.55rem 0.75rem; border-bottom: 1px solid #e7e7e7; }}
+tr:hover {{ background: #fafbff; }}
+.number {{ text-align: right; font-family: 'SF Mono', Menlo, 'Monaco', monospace; font-weight: 500; }}
+.lang-badge {{
+    display: inline-block;
+    padding: 0.18rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: white;
+}}
+.progress-bar {{ height: 16px; background: #e0e0e0; border-radius: 8px; overflow: hidden; margin-top: 0.5rem; }}
+.progress-fill {{ height: 100%; transition: width 0.3s ease; }}
+.lang-breakdown {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }}
+.lang-card {{ background: #f8f9fa; border-radius: 8px; padding: 1.1rem; border-left: 4px solid; }}
+.lang-card h4 {{ font-size: 1rem; margin-bottom: 0.65rem; display: flex; align-items: center; gap: 0.5rem; }}
+.lang-stats {{ font-size: 0.85rem; color: #555; }}
+.lang-stats div {{ margin-bottom: 0.2rem; }}
+.two-column {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 1.75rem; }}
+.insight {{ margin-bottom: 0.75rem; padding: 0.85rem 1rem; background: #f5f6fb; border-left: 4px solid #5a5fb0; border-radius: 4px; font-size: 0.92rem; }}
+.insight strong {{ color: #5a5fb0; }}
+.health-indicator {{ display: inline-block; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.72rem; font-weight: 500; }}
+.health-good {{ background: #d4edda; color: #155724; }}
+.health-warning {{ background: #fff3cd; color: #856404; }}
+.health-danger {{ background: #f8d7da; color: #721c24; }}
+footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; border-top: 1px solid #e0e0e0; }}
+.mono {{ font-family: 'SF Mono', Menlo, 'Monaco', monospace; font-size: 0.85em; }}
+</style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Luxar Project Statistics</h1>
-            <p>Comprehensive codebase analysis | Generated {now.strftime("%B %d, %Y at %H:%M")}</p>
-        </header>
+<div class="container">
+<header>
+    <h1>Luxar Project Statistics</h1>
+    <p>Comprehensive codebase analysis &middot; Generated {now.strftime("%B %d, %Y at %H:%M")}</p>
+</header>
+<div class="content">
 
-        <div class="content">
-            <!-- Executive Summary -->
-            <div class="summary">
-                <div class="stat-card">
-                    <h3>Total Files</h3>
-                    <div class="value">{total_files:,}</div>
-                    <div class="label">All languages</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Lines of Code</h3>
-                    <div class="value">{total_code_lines:,}</div>
-                    <div class="label">Executable code</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Total Lines</h3>
-                    <div class="value">{total_lines:,}</div>
-                    <div class="label">Including comments</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Languages</h3>
-                    <div class="value">{len([lang for lang in stats["languages"] if stats["languages"][lang]["files"] > 0])}</div>
-                    <div class="label">Active in codebase</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Test Files</h3>
-                    <div class="value">{total_test_files:,}</div>
-                    <div class="label">Py + TS + E2E</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Tests</h3>
-                    <div class="value">{total_tests:,}</div>
-                    <div class="label">Total test cases</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Coverage</h3>
-                    <div class="value">{weighted_coverage:.1f}%</div>
-                    <div class="label">Weighted average</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Commits</h3>
-                    <div class="value">{stats["git"]["total_commits"]:,}</div>
-                    <div class="label">{stats["git"]["commits_last_30_days"]} in last 30d</div>
-                </div>
-            </div>
+<div class="summary">
+    <div class="stat-card"><h3>Total Files</h3><div class="value">{total_files:,}</div><div class="label">All languages</div></div>
+    <div class="stat-card"><h3>Lines of Code</h3><div class="value">{total_code_lines:,}</div><div class="label">Executable only</div></div>
+    <div class="stat-card"><h3>Total Lines</h3><div class="value">{total_lines:,}</div><div class="label">Incl. comments &amp; blanks</div></div>
+    <div class="stat-card"><h3>Languages</h3><div class="value">{active_langs}</div><div class="label">Active in tree</div></div>
+    <div class="stat-card"><h3>Test Files</h3><div class="value">{total_test_files:,}</div><div class="label">Py + TS + Rust + E2E</div></div>
+    <div class="stat-card"><h3>Tests</h3><div class="value">{total_tests:,}</div><div class="label">Collected cases</div></div>
+    <div class="stat-card"><h3>Coverage</h3><div class="value">{weighted_cov:.1f}%</div><div class="label">Py/TS weighted</div></div>
+    <div class="stat-card"><h3>Commits</h3><div class="value">{git["total_commits"]:,}</div><div class="label">{git["commits_last_30_days"]} in last 30d</div></div>
+    <div class="stat-card"><h3>Project Size</h3><div class="value">{_fmt_size(extras["project_size_bytes"])}</div><div class="label">Source &amp; assets</div></div>
+    <div class="stat-card"><h3>CI Workflows</h3><div class="value">{extras["ci_workflows"]}</div><div class="label">.github/workflows</div></div>
+</div>
+""")
 
-            <!-- Language Breakdown -->
-            <section>
-                <h2>Language Breakdown</h2>
-                <table>
-                    <tr>
-                        <th>Language</th>
-                        <th class="number">Files</th>
-                        <th class="number">Code Lines</th>
-                        <th class="number">Total Lines</th>
-                        <th class="number">Comments</th>
-                        <th class="number">% of Codebase</th>
-                    </tr>
-"""
-
-    # Add rows for each language with code
+    # Language breakdown table
+    out.append("""<section><h2>Language Breakdown</h2>
+<table>
+<tr><th>Language</th><th class="number">Files</th><th class="number">Code Lines</th><th class="number">Total Lines</th><th class="number">Comments</th><th class="number">% of Codebase</th></tr>
+""")
     for lang in primary_langs + config_langs + doc_langs:
-        lang_stats = stats["languages"].get(lang, {})
-        if lang_stats.get("files", 0) == 0:
+        s = langs.get(lang, {})
+        if not s.get("files"):
             continue
+        cfg = LANGUAGE_CONFIG[lang]
+        share = (s["code_lines"] / total_code_lines * 100) if total_code_lines else 0
+        out.append(f"""<tr>
+<td><span class="lang-badge" style="background:{cfg["color"]}">{cfg["label"].upper()}</span></td>
+<td class="number">{s["files"]:,}</td>
+<td class="number">{s["code_lines"]:,}</td>
+<td class="number">{s["total_lines"]:,}</td>
+<td class="number">{s["comment_lines"]:,}</td>
+<td class="number">{share:.1f}%</td>
+</tr>
+""")
+    out.append("</table>")
 
-        pct = (
-            (lang_stats["code_lines"] / total_code_lines * 100)
-            if total_code_lines > 0
-            else 0
-        )
-        color = LANGUAGE_CONFIG[lang]["color"]
-
-        report_html += f"""                    <tr>
-                        <td><span class="lang-badge" style="background: {color}">{lang.upper()}</span></td>
-                        <td class="number">{lang_stats["files"]:,}</td>
-                        <td class="number">{lang_stats["code_lines"]:,}</td>
-                        <td class="number">{lang_stats["total_lines"]:,}</td>
-                        <td class="number">{lang_stats["comment_lines"]:,}</td>
-                        <td class="number">{pct:.1f}%</td>
-                    </tr>
-"""
-
-    report_html += """                </table>
-
-                <h3>Code Distribution</h3>
-                <div class="progress-bar" style="height: 24px; display: flex;">
-"""
-
-    # Visual bar showing language distribution
+    out.append(
+        '<h3>Primary-language code distribution</h3><div class="progress-bar" style="height:24px;display:flex;">'
+    )
     for lang in primary_langs:
-        lang_stats = stats["languages"].get(lang, {})
-        if lang_stats.get("code_lines", 0) == 0:
+        s = langs.get(lang, {})
+        if not s.get("code_lines"):
             continue
-        pct = (
-            (lang_stats["code_lines"] / total_code_lines * 100)
-            if total_code_lines > 0
-            else 0
+        share = (
+            (s["code_lines"] / primary_code_lines * 100) if primary_code_lines else 0
         )
-        if pct > 0.5:  # Only show if significant
-            color = LANGUAGE_CONFIG[lang]["color"]
-            report_html += f'                    <div class="progress-fill" style="width: {pct}%; background: {color};" title="{lang.title()}: {pct:.1f}%"></div>\n'
-
-    report_html += """                </div>
-                <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.75rem; font-size: 0.85rem;">
-"""
-
-    for lang in primary_langs:
-        lang_stats = stats["languages"].get(lang, {})
-        if lang_stats.get("code_lines", 0) == 0:
+        if share < 0.5:
             continue
-        color = LANGUAGE_CONFIG[lang]["color"]
-        report_html += f'                    <span><span style="display:inline-block;width:12px;height:12px;background:{color};border-radius:2px;margin-right:4px;"></span>{lang.title()}</span>\n'
+        cfg = LANGUAGE_CONFIG[lang]
+        out.append(
+            f'<div class="progress-fill" style="width:{share}%;background:{cfg["color"]};" '
+            f'title="{cfg["label"]}: {share:.1f}%"></div>'
+        )
+    out.append(
+        '</div><div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.55rem;font-size:0.85rem;">'
+    )
+    for lang in primary_langs:
+        s = langs.get(lang, {})
+        if not s.get("code_lines"):
+            continue
+        cfg = LANGUAGE_CONFIG[lang]
+        out.append(
+            f'<span><span style="display:inline-block;width:12px;height:12px;background:{cfg["color"]};border-radius:2px;margin-right:4px;vertical-align:middle;"></span>{cfg["label"]}</span>'
+        )
+    out.append("</div></section>")
 
-    report_html += """                </div>
-            </section>
+    # Primary languages detail cards
+    out.append('<section><h2>Primary Languages</h2><div class="lang-breakdown">')
 
-            <!-- Primary Languages Detail -->
-            <section>
-                <h2>Primary Languages</h2>
-                <div class="lang-breakdown">
-"""
+    def card(lang_key: str, headline: str, body_inner: str) -> str:
+        cfg = LANGUAGE_CONFIG[lang_key]
+        return (
+            f'<div class="lang-card" style="border-color:{cfg["color"]}">'
+            f'<h4><span class="lang-badge" style="background:{cfg["color"]}">{cfg["label"].upper()}</span> {headline}</h4>'
+            f'<div class="lang-stats">{body_inner}</div></div>'
+        )
 
-    # Python details
-    py = stats["languages"]["python"]
-    if py["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["python"]["color"]}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["python"]["color"]}">PYTHON</span> Core Backend</h4>
-                        <div class="lang-stats">
-                            <div><strong>{py["files"]:,}</strong> files | <strong>{py["code_lines"]:,}</strong> lines of code</div>
-                            <div>Classes: {py["definitions"].get("classes", 0):,} | Functions: {py["definitions"].get("functions", 0):,} | Methods: {py["definitions"].get("methods", 0):,}</div>
-                            <div>Coverage: <strong>{test_stats["python"]["coverage_percent"]:.1f}%</strong> | Tests: {test_stats["python"]["test_count"]:,}</div>
-                        </div>
-                    </div>
-"""
+    if py["files"]:
+        out.append(
+            card(
+                "python",
+                "Core Backend",
+                (
+                    f"<div><strong>{py['files']:,}</strong> files | <strong>{py['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Classes: {py['definitions'].get('classes', 0):,} | "
+                    f"Functions: {py['definitions'].get('functions', 0):,} | "
+                    f"Methods: {py['definitions'].get('methods', 0):,}</div>"
+                    f"<div>Coverage: <strong>{py_cov:.1f}%</strong> | "
+                    f"Tests: {tests['python']['test_count']:,}</div>"
+                ),
+            )
+        )
+    if ts["files"]:
+        out.append(
+            card(
+                "typescript",
+                "Viewer Frontend",
+                (
+                    f"<div><strong>{ts['files']:,}</strong> files | <strong>{ts['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Classes: {ts['definitions'].get('classes', 0):,} | "
+                    f"Functions: {ts['definitions'].get('functions', 0):,} | "
+                    f"Interfaces: {ts['definitions'].get('interfaces', 0):,} | "
+                    f"Types: {ts['definitions'].get('types', 0):,}</div>"
+                    f"<div>Coverage: <strong>{ts_cov:.1f}%</strong> | "
+                    f"Tests: {tests['typescript']['test_count']:,}</div>"
+                ),
+            )
+        )
+    if rust["files"]:
+        out.append(
+            card(
+                "rust",
+                "WASM Module",
+                (
+                    f"<div><strong>{rust['files']:,}</strong> files | <strong>{rust['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Structs: {rust['definitions'].get('structs', 0):,} | "
+                    f"Functions: {rust['definitions'].get('functions', 0):,} | "
+                    f"Traits: {rust['definitions'].get('traits', 0):,} | "
+                    f"Impls: {rust['definitions'].get('impls', 0):,} | "
+                    f"Enums: {rust['definitions'].get('enums', 0):,}</div>"
+                    f"<div>Tests: {tests['rust']['test_count']:,} ({tests['rust']['test_passed']} passed)</div>"
+                ),
+            )
+        )
+    if cuda["files"]:
+        out.append(
+            card(
+                "cuda",
+                "GPU Kernels",
+                (
+                    f"<div><strong>{cuda['files']:,}</strong> files | <strong>{cuda['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Kernels: {cuda['definitions'].get('kernels', 0):,} | "
+                    f"Device fns: {cuda['definitions'].get('device_functions', 0):,} | "
+                    f"Host fns: {cuda['definitions'].get('host_functions', 0):,}</div>"
+                ),
+            )
+        )
+    if go["files"]:
+        out.append(
+            card(
+                "go",
+                "Native Launchers",
+                (
+                    f"<div><strong>{go['files']:,}</strong> files | <strong>{go['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Functions: {go['definitions'].get('functions', 0):,} | "
+                    f"Structs: {go['definitions'].get('structs', 0):,} | "
+                    f"Interfaces: {go['definitions'].get('interfaces', 0):,}</div>"
+                ),
+            )
+        )
+    if css["files"]:
+        out.append(
+            card(
+                "css",
+                "Styling",
+                (
+                    f"<div><strong>{css['files']:,}</strong> files | <strong>{css['code_lines']:,}</strong> LOC</div>"
+                    f"<div>Rules: {css['definitions'].get('rules', 0):,} | "
+                    f"Vars: {css['definitions'].get('variables', 0):,} | "
+                    f"@media: {css['definitions'].get('media_queries', 0):,}</div>"
+                ),
+            )
+        )
+    out.append("</div></section>")
 
-    # TypeScript details
-    ts = stats["languages"]["typescript"]
-    if ts["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["typescript"]["color"]}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["typescript"]["color"]}">TYPESCRIPT</span> Viewer Frontend</h4>
-                        <div class="lang-stats">
-                            <div><strong>{ts["files"]:,}</strong> files | <strong>{ts["code_lines"]:,}</strong> lines of code</div>
-                            <div>Classes: {ts["definitions"].get("classes", 0):,} | Functions: {ts["definitions"].get("functions", 0):,} | Interfaces: {ts["definitions"].get("interfaces", 0):,} | Types: {ts["definitions"].get("types", 0):,}</div>
-                            <div>Coverage: <strong>{test_stats["typescript"]["coverage_percent"]:.1f}%</strong> | Tests: {test_stats["typescript"]["test_count"]:,}</div>
-                        </div>
-                    </div>
-"""
+    # Per-package breakdown
+    py_pkg = stats["package_breakdown"]["python"]
+    ts_pkg = stats["package_breakdown"]["typescript"]
 
-    # Rust details
-    rust = stats["languages"]["rust"]
-    if rust["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["rust"]["color"]}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["rust"]["color"]}">RUST</span> WASM Module</h4>
-                        <div class="lang-stats">
-                            <div><strong>{rust["files"]:,}</strong> files | <strong>{rust["code_lines"]:,}</strong> lines of code</div>
-                            <div>Structs: {rust["definitions"].get("structs", 0):,} | Functions: {rust["definitions"].get("functions", 0):,} | Traits: {rust["definitions"].get("traits", 0):,} | Impls: {rust["definitions"].get("impls", 0):,}</div>
-                            <div>Tests: {test_stats["rust"]["test_count"]:,} passed</div>
-                        </div>
-                    </div>
-"""
+    if py_pkg or ts_pkg:
+        out.append('<section><h2>Per-Package Breakdown</h2><div class="two-column">')
+        if py_pkg:
+            out.append(
+                "<div><h3>Python (packages/luxar/src/luxar/)</h3><table>"
+                '<tr><th>Subpackage</th><th class="number">Files</th>'
+                '<th class="number">Code Lines</th><th class="number">Comments</th></tr>'
+            )
+            for entry in py_pkg:
+                out.append(
+                    f'<tr><td class="mono">{html.escape(entry["name"])}</td>'
+                    f'<td class="number">{entry["files"]:,}</td>'
+                    f'<td class="number">{entry["code_lines"]:,}</td>'
+                    f'<td class="number">{entry["comment_lines"]:,}</td></tr>'
+                )
+            out.append("</table></div>")
+        if ts_pkg:
+            out.append(
+                "<div><h3>TypeScript (packages/luxar-viewer/src/)</h3><table>"
+                '<tr><th>Subpackage</th><th class="number">Files</th>'
+                '<th class="number">Code Lines</th><th class="number">Comments</th></tr>'
+            )
+            for entry in ts_pkg:
+                out.append(
+                    f'<tr><td class="mono">{html.escape(entry["name"])}</td>'
+                    f'<td class="number">{entry["files"]:,}</td>'
+                    f'<td class="number">{entry["code_lines"]:,}</td>'
+                    f'<td class="number">{entry["comment_lines"]:,}</td></tr>'
+                )
+            out.append("</table></div>")
+        out.append("</div></section>")
 
-    # CUDA details
-    cuda = stats["languages"]["cuda"]
-    if cuda["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["cuda"]["color"]}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["cuda"]["color"]}">CUDA</span> GPU Acceleration</h4>
-                        <div class="lang-stats">
-                            <div><strong>{cuda["files"]:,}</strong> files | <strong>{cuda["code_lines"]:,}</strong> lines of code</div>
-                            <div>Kernels: {cuda["definitions"].get("kernels", 0):,} | Device Functions: {cuda["definitions"].get("device_functions", 0):,} | Host Functions: {cuda["definitions"].get("host_functions", 0):,}</div>
-                        </div>
-                    </div>
-"""
-
-    # CSS details
-    css = stats["languages"]["css"]
-    if css["files"] > 0:
-        report_html += f"""                    <div class="lang-card" style="border-color: {LANGUAGE_CONFIG["css"]["color"]}">
-                        <h4><span class="lang-badge" style="background: {LANGUAGE_CONFIG["css"]["color"]}">CSS</span> Styling</h4>
-                        <div class="lang-stats">
-                            <div><strong>{css["files"]:,}</strong> files | <strong>{css["code_lines"]:,}</strong> lines of code</div>
-                            <div>Rules: {css["definitions"].get("rules", 0):,} | Variables: {css["definitions"].get("variables", 0):,} | Media Queries: {css["definitions"].get("media_queries", 0):,}</div>
-                        </div>
-                    </div>
-"""
-
-    report_html += """                </div>
-            </section>
-
-            <!-- Test & Quality Metrics -->
-            <section>
-                <h2>Test & Quality Metrics</h2>
-                <table>
-                    <tr>
-                        <th>Metric</th>
-                        <th class="number">Python</th>
-                        <th class="number">TypeScript</th>
-                        <th class="number">Rust</th>
-                        <th class="number">E2E</th>
-                        <th class="number">Total</th>
-                        <th>Status</th>
-                    </tr>
-                    <tr>
-                        <td>Test Files</td>
-                        <td class="number">{py_test_files}</td>
-                        <td class="number">{ts_test_files}</td>
-                        <td class="number">-</td>
-                        <td class="number">{e2e_files}</td>
-                        <td class="number">{total_test_files}</td>
-                        <td><span class="health-indicator health-good">Good</span></td>
-                    </tr>
-                    <tr>
-                        <td>Test Count</td>
-                        <td class="number">{py_tests:,}</td>
-                        <td class="number">{ts_tests:,}</td>
-                        <td class="number">{rust_tests:,}</td>
-                        <td class="number">-</td>
-                        <td class="number">{total_tests:,}</td>
-                        <td><span class="health-indicator health-good">Comprehensive</span></td>
-                    </tr>
-                    <tr>
-                        <td>Tests Passed</td>
-                        <td class="number">{py_passed:,}</td>
-                        <td class="number">{ts_passed:,}</td>
-                        <td class="number">{rust_passed:,}</td>
-                        <td class="number">-</td>
-                        <td class="number">{total_passed:,}</td>
-                        <td>{pass_status}</td>
-                    </tr>
-                    <tr>
-                        <td>Code Coverage</td>
-                        <td class="number">{py_coverage:.1f}%</td>
-                        <td class="number">{ts_coverage:.1f}%</td>
-                        <td class="number">-</td>
-                        <td class="number">-</td>
-                        <td class="number">{weighted_coverage:.1f}%</td>
-                        <td>{coverage_status}</td>
-                    </tr>
-                    <tr>
-                        <td>Tests per 1K LOC</td>
-                        <td class="number">{py_tests_per_kloc:.1f}</td>
-                        <td class="number">{ts_tests_per_kloc:.1f}</td>
-                        <td class="number">-</td>
-                        <td class="number">-</td>
-                        <td class="number">{total_tests_per_kloc:.1f}</td>
-                        <td>{tests_per_kloc_status}</td>
-                    </tr>
-                </table>
-            </section>
-""".format(
-        py_test_files=test_stats["python"]["test_files"],
-        ts_test_files=test_stats["typescript"]["test_files"],
-        e2e_files=test_stats["e2e"]["test_files"],
-        total_test_files=total_test_files,
-        py_tests=test_stats["python"]["test_count"],
-        ts_tests=test_stats["typescript"]["test_count"],
-        rust_tests=test_stats["rust"]["test_count"],
-        total_tests=total_tests,
-        py_passed=test_stats["python"]["test_passed"],
-        ts_passed=test_stats["typescript"]["test_passed"],
-        rust_passed=test_stats["rust"]["test_passed"],
-        total_passed=total_passed,
-        pass_status='<span class="health-indicator health-good">All Passing</span>'
-        if total_passed == total_tests
-        else '<span class="health-indicator health-warning">Some Failures</span>',
-        py_coverage=test_stats["python"]["coverage_percent"],
-        ts_coverage=test_stats["typescript"]["coverage_percent"],
-        weighted_coverage=weighted_coverage,
-        coverage_status='<span class="health-indicator health-good">Excellent</span>'
-        if weighted_coverage >= 80
+    # Test metrics
+    py_loc = py["code_lines"]
+    ts_loc = ts["code_lines"]
+    py_tpk = tests["python"]["test_count"] / (py_loc / 1000) if py_loc else 0
+    ts_tpk = tests["typescript"]["test_count"] / (ts_loc / 1000) if ts_loc else 0
+    total_tpk = total_tests / (total_code_lines / 1000) if total_code_lines else 0
+    pass_status = (
+        '<span class="health-indicator health-good">All Passing</span>'
+        if total_tests and total_passed == total_tests
+        else '<span class="health-indicator health-warning">Some Failures</span>'
+        if total_tests
+        else '<span class="health-indicator health-warning">Not Run</span>'
+    )
+    cov_status = (
+        '<span class="health-indicator health-good">Excellent</span>'
+        if weighted_cov >= 80
         else '<span class="health-indicator health-warning">Good</span>'
-        if weighted_coverage >= 60
-        else '<span class="health-indicator health-danger">Needs Work</span>',
-        py_tests_per_kloc=(
-            test_stats["python"]["test_count"] / (py["code_lines"] / 1000)
-        )
-        if py["code_lines"] > 0
-        else 0,
-        ts_tests_per_kloc=(
-            test_stats["typescript"]["test_count"] / (ts["code_lines"] / 1000)
-        )
-        if ts["code_lines"] > 0
-        else 0,
-        total_tests_per_kloc=(total_tests / (total_code_lines / 1000))
-        if total_code_lines > 0
-        else 0,
-        tests_per_kloc_status='<span class="health-indicator health-good">Well Tested</span>'
-        if total_tests / max(1, total_code_lines / 1000) > 15
-        else '<span class="health-indicator health-warning">Adequate</span>',
+        if weighted_cov >= 60
+        else '<span class="health-indicator health-warning">Not Measured</span>'
+        if weighted_cov == 0
+        else '<span class="health-indicator health-danger">Needs Work</span>'
+    )
+    tpk_status = (
+        '<span class="health-indicator health-good">Well Tested</span>'
+        if total_tpk > 15
+        else '<span class="health-indicator health-warning">Adequate</span>'
     )
 
-    # Git Statistics
-    git = stats["git"]
-    report_html += f"""
-            <section>
-                <h2>Git Statistics</h2>
-                <div class="two-column">
-                    <div>
-                        <table>
-                            <tr>
-                                <th>Metric</th>
-                                <th class="number">Value</th>
-                            </tr>
-                            <tr>
-                                <td>Total Commits</td>
-                                <td class="number">{git["total_commits"]:,}</td>
-                            </tr>
-                            <tr>
-                                <td>Contributors</td>
-                                <td class="number">{git["contributors"]}</td>
-                            </tr>
-                            <tr>
-                                <td>Branches</td>
-                                <td class="number">{git["branches"]}</td>
-                            </tr>
-                            <tr>
-                                <td>Tags</td>
-                                <td class="number">{git["tags"]}</td>
-                            </tr>
-                            <tr>
-                                <td>Commits (Last 30 Days)</td>
-                                <td class="number">{git["commits_last_30_days"]}</td>
-                            </tr>
-                            <tr>
-                                <td>First Commit</td>
-                                <td class="number">{git["first_commit_date"] or "N/A"}</td>
-                            </tr>
-                            <tr>
-                                <td>Last Commit</td>
-                                <td class="number">{git["last_commit_date"] or "N/A"}</td>
-                            </tr>
-                        </table>
-                    </div>
-                    <div>
-                        <h3>Top Contributors</h3>
-                        <table>
-                            <tr>
-                                <th>Name</th>
-                                <th class="number">Commits</th>
-                            </tr>
-"""
+    out.append(f"""<section><h2>Test &amp; Quality Metrics</h2>
+<table>
+<tr><th>Metric</th><th class="number">Python</th><th class="number">TypeScript</th><th class="number">Rust</th><th class="number">E2E</th><th class="number">Total</th><th>Status</th></tr>
+<tr><td>Test Files</td>
+    <td class="number">{tests["python"]["test_files"]}</td>
+    <td class="number">{tests["typescript"]["test_files"]}</td>
+    <td class="number">{tests["rust"]["test_files"]}</td>
+    <td class="number">{tests["e2e"]["test_files"]}</td>
+    <td class="number">{total_test_files}</td>
+    <td><span class="health-indicator health-good">Good</span></td></tr>
+<tr><td>Test Count</td>
+    <td class="number">{tests["python"]["test_count"]:,}</td>
+    <td class="number">{tests["typescript"]["test_count"]:,}</td>
+    <td class="number">{tests["rust"]["test_count"]:,}</td>
+    <td class="number">&mdash;</td>
+    <td class="number">{total_tests:,}</td>
+    <td><span class="health-indicator health-good">Comprehensive</span></td></tr>
+<tr><td>Tests Passed</td>
+    <td class="number">{tests["python"]["test_passed"]:,}</td>
+    <td class="number">{tests["typescript"]["test_passed"]:,}</td>
+    <td class="number">{tests["rust"]["test_passed"]:,}</td>
+    <td class="number">&mdash;</td>
+    <td class="number">{total_passed:,}</td>
+    <td>{pass_status}</td></tr>
+<tr><td>Code Coverage</td>
+    <td class="number">{py_cov:.1f}%</td>
+    <td class="number">{ts_cov:.1f}%</td>
+    <td class="number">&mdash;</td>
+    <td class="number">&mdash;</td>
+    <td class="number">{weighted_cov:.1f}%</td>
+    <td>{cov_status}</td></tr>
+<tr><td>Tests per 1K LOC</td>
+    <td class="number">{py_tpk:.1f}</td>
+    <td class="number">{ts_tpk:.1f}</td>
+    <td class="number">&mdash;</td>
+    <td class="number">&mdash;</td>
+    <td class="number">{total_tpk:.1f}</td>
+    <td>{tpk_status}</td></tr>
+</table>
+</section>
+""")
 
-    for contributor in git.get("top_contributors", [])[:5]:
-        # Escape contributor name to prevent XSS
-        safe_name = html.escape(contributor["name"])
-        report_html += f"""                            <tr>
-                                <td>{safe_name}</td>
-                                <td class="number">{contributor["commits"]:,}</td>
-                            </tr>
-"""
-
-    report_html += """                        </table>
-                    </div>
-                </div>
-            </section>
-"""
+    # Git statistics
+    out.append(f"""<section><h2>Git Activity</h2><div class="two-column">
+<div>
+<table>
+<tr><th>Metric</th><th class="number">Value</th></tr>
+<tr><td>Current Branch</td><td class="number mono">{html.escape(git.get("current_branch") or "N/A")}</td></tr>
+<tr><td>Total Commits</td><td class="number">{git["total_commits"]:,}</td></tr>
+<tr><td>Contributors (all-time)</td><td class="number">{git["contributors"]}</td></tr>
+<tr><td>Local Branches</td><td class="number">{git["local_branches"]}</td></tr>
+<tr><td>Remote Branches</td><td class="number">{git["remote_branches"]}</td></tr>
+<tr><td>Tags</td><td class="number">{git["tags"]}</td></tr>
+<tr><td>Commits (last 30 days)</td><td class="number">{git["commits_last_30_days"]:,}</td></tr>
+<tr><td>Files Changed (last 30 days)</td><td class="number">{git["files_changed_last_30_days"]:,}</td></tr>
+<tr><td>First Commit</td><td class="number">{git["first_commit_date"] or "N/A"}</td></tr>
+<tr><td>Last Commit</td><td class="number">{git["last_commit_date"] or "N/A"}</td></tr>
+</table>
+</div>
+<div><h3>Top Contributors</h3><table>
+<tr><th>Name</th><th class="number">Commits</th></tr>
+""")
+    for c in git.get("top_contributors", [])[:5]:
+        out.append(
+            f"<tr><td>{html.escape(c['name'])}</td>"
+            f'<td class="number">{c["commits"]:,}</td></tr>'
+        )
+    out.append("</table></div></div></section>")
 
     # Dependencies
-    deps = stats["dependencies"]
-    report_html += f"""
-            <section>
-                <h2>Dependencies</h2>
-                <table>
-                    <tr>
-                        <th>Ecosystem</th>
-                        <th class="number">Production</th>
-                        <th class="number">Development</th>
-                        <th class="number">Total</th>
-                    </tr>
-                    <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["python"]["color"]}">Python</span></td>
-                        <td class="number">{deps["python"]["production"]}</td>
-                        <td class="number">{deps["python"]["dev"]}</td>
-                        <td class="number">{deps["python"]["production"] + deps["python"]["dev"]}</td>
-                    </tr>
-                    <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["typescript"]["color"]}">Node.js</span></td>
-                        <td class="number">{deps["node"]["production"]}</td>
-                        <td class="number">{deps["node"]["dev"]}</td>
-                        <td class="number">{deps["node"]["production"] + deps["node"]["dev"]}</td>
-                    </tr>
-                    <tr>
-                        <td><span class="lang-badge" style="background: {LANGUAGE_CONFIG["rust"]["color"]}">Rust</span></td>
-                        <td class="number">{deps["rust"]["production"]}</td>
-                        <td class="number">{deps["rust"]["dev"]}</td>
-                        <td class="number">{deps["rust"]["production"] + deps["rust"]["dev"]}</td>
-                    </tr>
-                </table>
-            </section>
-"""
+    py_group_str = ", ".join(
+        f"{g}={n}" for g, n in sorted(deps["python"]["groups"].items())
+    )
+    out.append(f"""<section><h2>Dependencies</h2>
+<table>
+<tr><th>Ecosystem</th><th class="number">Production</th><th class="number">Development</th><th class="number">Total</th><th>Notes</th></tr>
+<tr><td><span class="lang-badge" style="background:{LANGUAGE_CONFIG["python"]["color"]}">Python</span></td>
+    <td class="number">{deps["python"]["production"]}</td>
+    <td class="number">{deps["python"]["dev"]}</td>
+    <td class="number">{deps["python"]["production"] + deps["python"]["dev"]}</td>
+    <td class="mono">{html.escape(py_group_str) or "&mdash;"}</td></tr>
+<tr><td><span class="lang-badge" style="background:{LANGUAGE_CONFIG["javascript"]["color"]};color:#222">Node.js</span></td>
+    <td class="number">{deps["node"]["production"]}</td>
+    <td class="number">{deps["node"]["dev"]}</td>
+    <td class="number">{deps["node"]["production"] + deps["node"]["dev"]}</td>
+    <td>packages/luxar-viewer/package.json</td></tr>
+<tr><td><span class="lang-badge" style="background:{LANGUAGE_CONFIG["rust"]["color"]};color:#222">Rust</span></td>
+    <td class="number">{deps["rust"]["production"]}</td>
+    <td class="number">{deps["rust"]["dev"]}</td>
+    <td class="number">{deps["rust"]["production"] + deps["rust"]["dev"]}</td>
+    <td>luxar-viewer/src/wasm/rust/Cargo.toml</td></tr>
+</table>
+</section>
+""")
+
+    # Largest files
+    out.append('<section><h2>Largest Source Files</h2><div class="two-column">')
+    for lang_key, heading in [("python", "Python"), ("typescript", "TypeScript")]:
+        files = langs[lang_key].get("largest_files") or []
+        if not files:
+            continue
+        out.append(
+            f"<div><h3>{heading}</h3><table>"
+            '<tr><th>Path</th><th class="number">Code Lines</th></tr>'
+        )
+        for path, lines in files[:10]:
+            out.append(
+                f'<tr><td class="mono">{html.escape(path)}</td>'
+                f'<td class="number">{lines:,}</td></tr>'
+            )
+        out.append("</table></div>")
+    out.append("</div></section>")
 
     # Documentation & Configuration
-    md = stats["languages"]["markdown"]
-    json_stats = stats["languages"]["json"]
-    yaml_stats = stats["languages"]["yaml"]
-    toml_stats = stats["languages"]["toml"]
+    out.append(f"""<section><h2>Documentation &amp; Configuration</h2><div class="two-column">
+<div><h3>Documentation</h3><table>
+<tr><th>Type</th><th class="number">Files</th><th class="number">Lines</th></tr>
+<tr><td>Markdown (.md)</td><td class="number">{md["files"]}</td><td class="number">{md["total_lines"]:,}</td></tr>
+<tr><td>HTML</td><td class="number">{html_lang["files"]}</td><td class="number">{html_lang["total_lines"]:,}</td></tr>
+<tr><td>CHANGELOG entries (## headings)</td><td class="number">{extras["changelog_versions"]}</td><td class="number">&mdash;</td></tr>
+</table></div>
+<div><h3>Configuration</h3><table>
+<tr><th>Type</th><th class="number">Files</th><th class="number">Lines</th></tr>
+<tr><td>JSON</td><td class="number">{json_stats["files"]}</td><td class="number">{json_stats["total_lines"]:,}</td></tr>
+<tr><td>YAML</td><td class="number">{yaml_stats["files"]}</td><td class="number">{yaml_stats["total_lines"]:,}</td></tr>
+<tr><td>TOML</td><td class="number">{toml_stats["files"]}</td><td class="number">{toml_stats["total_lines"]:,}</td></tr>
+<tr><td>CI workflows (.yml in .github/workflows/)</td><td class="number">{extras["ci_workflows"]}</td><td class="number">&mdash;</td></tr>
+</table></div>
+</div></section>
+""")
 
-    report_html += f"""
-            <section>
-                <h2>Documentation & Configuration</h2>
-                <div class="two-column">
-                    <div>
-                        <h3>Documentation</h3>
-                        <table>
-                            <tr>
-                                <th>Type</th>
-                                <th class="number">Files</th>
-                                <th class="number">Lines</th>
-                            </tr>
-                            <tr>
-                                <td>Markdown (.md)</td>
-                                <td class="number">{md["files"]}</td>
-                                <td class="number">{md["total_lines"]:,}</td>
-                            </tr>
-                            <tr>
-                                <td>HTML</td>
-                                <td class="number">{stats["languages"]["html"]["files"]}</td>
-                                <td class="number">{stats["languages"]["html"]["total_lines"]:,}</td>
-                            </tr>
-                        </table>
-                    </div>
-                    <div>
-                        <h3>Configuration</h3>
-                        <table>
-                            <tr>
-                                <th>Type</th>
-                                <th class="number">Files</th>
-                                <th class="number">Lines</th>
-                            </tr>
-                            <tr>
-                                <td>JSON</td>
-                                <td class="number">{json_stats["files"]}</td>
-                                <td class="number">{json_stats["total_lines"]:,}</td>
-                            </tr>
-                            <tr>
-                                <td>YAML</td>
-                                <td class="number">{yaml_stats["files"]}</td>
-                                <td class="number">{yaml_stats["total_lines"]:,}</td>
-                            </tr>
-                            <tr>
-                                <td>TOML</td>
-                                <td class="number">{toml_stats["files"]}</td>
-                                <td class="number">{toml_stats["total_lines"]:,}</td>
-                            </tr>
-                        </table>
-                    </div>
-                </div>
-            </section>
-"""
+    # Key insights
+    arch_bits = []
+    if py["files"]:
+        arch_bits.append(f"{py['definitions'].get('classes', 0)} Python classes")
+    if ts["files"]:
+        arch_bits.append(
+            f"{ts['definitions'].get('interfaces', 0)} TypeScript interfaces"
+        )
+    if rust["files"]:
+        arch_bits.append(f"{rust['definitions'].get('functions', 0)} Rust functions")
+    arch_text = ", ".join(arch_bits) if arch_bits else "n/a"
 
-    # Key Insights
-    code_density = (total_code_lines / total_lines * 100) if total_lines > 0 else 0
-    primary_code_lines = sum(
-        stats["languages"][lang]["code_lines"]
-        for lang in primary_langs
-        if stats["languages"].get(lang, {}).get("code_lines", 0) > 0
-    )
-    py_pct = (
-        (py["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    )
-    ts_pct = (
-        (ts["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    )
-    rust_pct = (
-        (rust["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    )
-    cuda_pct = (
-        (cuda["code_lines"] / primary_code_lines * 100) if primary_code_lines > 0 else 0
-    )
+    mix_bits = []
+    for lang in ("python", "typescript", "rust", "cuda", "go"):
+        s = langs.get(lang)
+        if s and s["code_lines"]:
+            mix_bits.append(
+                f"{LANGUAGE_CONFIG[lang]['label']} {pct(s['code_lines']):.1f}%"
+            )
+    mix_text = " &middot; ".join(mix_bits) if mix_bits else "n/a"
 
-    report_html += f"""
-            <section>
-                <h2>Key Insights</h2>
-                <div class="insight">
-                    <strong>Code Density:</strong> {code_density:.1f}% of all lines are executable code (excluding blanks and comments)
-                </div>
-                <div class="insight">
-                    <strong>Language Mix:</strong> Python {py_pct:.1f}% | TypeScript {ts_pct:.1f}% | Rust {rust_pct:.1f}% | CUDA {cuda_pct:.1f}%
-                </div>
-                <div class="insight">
-                    <strong>Architecture:</strong> {py["definitions"].get("classes", 0)} Python classes, {ts["definitions"].get("interfaces", 0)} TypeScript interfaces, {rust["definitions"].get("structs", 0)} Rust structs
-                </div>
-                <div class="insight">
-                    <strong>Test Health:</strong> {total_tests:,} tests across {total_test_files} files with {weighted_coverage:.1f}% weighted coverage
-                </div>
-                <div class="insight">
-                    <strong>Project Activity:</strong> {git["commits_last_30_days"]} commits in the last 30 days by {git["contributors"]} contributor(s)
-                </div>
-                <div class="insight">
-                    <strong>Documentation:</strong> {md["files"]} markdown files with {md["total_lines"]:,} lines of documentation
-                </div>
-            </section>
-        </div>
-
-        <footer>
-            Generated by Luxar Project Analyzer | {now.strftime("%Y")} |
-            Excluding: node_modules, __pycache__, coverage, dist, build, target
-        </footer>
-    </div>
+    out.append(f"""<section><h2>Key Insights</h2>
+<div class="insight"><strong>Code density:</strong> {code_density:.1f}% executable code, {comment_density:.1f}% comments, blanks account for the rest.</div>
+<div class="insight"><strong>Language mix (primary):</strong> {mix_text}</div>
+<div class="insight"><strong>Architecture:</strong> {arch_text}</div>
+<div class="insight"><strong>Test health:</strong> {total_tests:,} tests across {total_test_files} files with {weighted_cov:.1f}% weighted coverage</div>
+<div class="insight"><strong>Project activity:</strong> {git["commits_last_30_days"]:,} commits and {git["files_changed_last_30_days"]:,} files touched in the last 30 days by {git["contributors"]} contributor(s).</div>
+<div class="insight"><strong>Documentation:</strong> {md["files"]} markdown files with {md["total_lines"]:,} lines.</div>
+</section>
+</div>
+<footer>
+Generated by Luxar Project Analyzer &middot; {now.strftime("%Y-%m-%d %H:%M")} &middot;
+Excludes: node_modules, __pycache__, coverage, dist, build, target, _build, playwright-report, datasets, delme, .venv
+</footer>
+</div>
 </body>
 </html>
-"""
+""")
 
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(report_html)
+    output_file.write_text("".join(out), encoding="utf-8")
 
 
-def main():
-    """Main analysis function."""
+def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
+    """Write a GitHub-friendly markdown summary of the stats.
+
+    Mirrors the high-impact sections of the HTML report: summary cards,
+    language breakdown, per-package tables, tests, git activity,
+    dependencies, and the largest files. Includes a link to the rich
+    HTML report at ``stats/project_stats.html``.
+    """
+    now = datetime.now()
+    langs = stats["languages"]
+    tests = stats["tests"]
+    git = stats["git"]
+    deps = stats["dependencies"]
+    extras = stats["extras"]
+
+    total_files = sum(langs[lang]["files"] for lang in langs)
+    total_code = sum(langs[lang]["code_lines"] for lang in langs)
+    total_lines = sum(langs[lang]["total_lines"] for lang in langs)
+    active_langs = sum(1 for lang in langs if langs[lang]["files"] > 0)
+    py = langs["python"]
+    ts = langs["typescript"]
+    py_loc = py["code_lines"]
+    ts_loc = ts["code_lines"]
+    py_cov = tests["python"]["coverage_percent"]
+    ts_cov = tests["typescript"]["coverage_percent"]
+    weighted_cov = (py_cov * py_loc + ts_cov * ts_loc) / max(1, py_loc + ts_loc)
+
+    total_test_files = (
+        tests["python"]["test_files"]
+        + tests["typescript"]["test_files"]
+        + tests["e2e"]["test_files"]
+        + tests["rust"]["test_files"]
+    )
+    total_tests = (
+        tests["python"]["test_count"]
+        + tests["typescript"]["test_count"]
+        + tests["rust"]["test_count"]
+    )
+
+    lines: list[str] = []
+    lines.append("# Luxar Project Statistics")
+    lines.append("")
+    lines.append(
+        f"_Generated {now.strftime('%Y-%m-%d %H:%M')} &middot; "
+        f"For the styled report with progress bars and per-language detail, "
+        f"open [`project_stats.html`](./project_stats.html) locally._"
+    )
+    lines.append("")
+    lines.append(
+        "_To refresh both this file and the HTML report, run `make stats` "
+        "from the project root._"
+    )
+    lines.append("")
+
+    # Headline figures
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("| --- | ---: |")
+    lines.append(f"| Total files | {total_files:,} |")
+    lines.append(f"| Lines of code (executable) | {total_code:,} |")
+    lines.append(f"| Total lines | {total_lines:,} |")
+    lines.append(f"| Active languages | {active_langs} |")
+    lines.append(f"| Test files | {total_test_files:,} |")
+    lines.append(f"| Tests collected | {total_tests:,} |")
+    lines.append(f"| Coverage (Py/TS weighted) | {weighted_cov:.1f}% |")
+    lines.append(f"| Total commits | {git['total_commits']:,} |")
+    lines.append(f"| Commits in last 30 days | {git['commits_last_30_days']:,} |")
+    lines.append(f"| Project size | {_fmt_size(extras['project_size_bytes'])} |")
+    lines.append(f"| CI workflows | {extras['ci_workflows']} |")
+    lines.append("")
+
+    # Language breakdown
+    lines.append("## Language Breakdown")
+    lines.append("")
+    lines.append("| Language | Files | Code | Total | Comments | Share |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for lang in (
+        "python",
+        "typescript",
+        "rust",
+        "cuda",
+        "go",
+        "css",
+        "javascript",
+        "shell",
+        "json",
+        "toml",
+        "yaml",
+        "markdown",
+        "html",
+        "makefile",
+    ):
+        s = langs.get(lang, {})
+        if not s.get("files"):
+            continue
+        share = (s["code_lines"] / total_code * 100) if total_code else 0
+        label = LANGUAGE_CONFIG[lang]["label"]
+        lines.append(
+            f"| {label} | {s['files']:,} | {s['code_lines']:,} | "
+            f"{s['total_lines']:,} | {s['comment_lines']:,} | {share:.1f}% |"
+        )
+    lines.append("")
+
+    # Primary languages summary
+    lines.append("## Primary Languages")
+    lines.append("")
+    if py["files"]:
+        lines.append(
+            f"- **Python** &mdash; {py['files']:,} files, {py_loc:,} LOC, "
+            f"{py['definitions'].get('classes', 0):,} classes, "
+            f"{py['definitions'].get('functions', 0):,} functions, "
+            f"{py['definitions'].get('methods', 0):,} methods "
+            f"(coverage {py_cov:.1f}%, tests {tests['python']['test_count']:,})."
+        )
+    if ts["files"]:
+        lines.append(
+            f"- **TypeScript** &mdash; {ts['files']:,} files, {ts_loc:,} LOC, "
+            f"{ts['definitions'].get('classes', 0):,} classes, "
+            f"{ts['definitions'].get('functions', 0):,} functions, "
+            f"{ts['definitions'].get('interfaces', 0):,} interfaces, "
+            f"{ts['definitions'].get('types', 0):,} types "
+            f"(coverage {ts_cov:.1f}%, tests {tests['typescript']['test_count']:,})."
+        )
+    rust = langs["rust"]
+    if rust["files"]:
+        lines.append(
+            f"- **Rust (WASM)** &mdash; {rust['files']:,} files, "
+            f"{rust['code_lines']:,} LOC, "
+            f"{rust['definitions'].get('functions', 0):,} functions "
+            f"(tests {tests['rust']['test_count']:,})."
+        )
+    cuda = langs["cuda"]
+    if cuda["files"]:
+        lines.append(
+            f"- **CUDA** &mdash; {cuda['files']:,} files, {cuda['code_lines']:,} LOC, "
+            f"{cuda['definitions'].get('kernels', 0):,} kernels."
+        )
+    go = langs["go"]
+    if go["files"]:
+        lines.append(
+            f"- **Go (launchers)** &mdash; {go['files']:,} files, "
+            f"{go['code_lines']:,} LOC."
+        )
+    lines.append("")
+
+    # Per-package breakdown
+    py_pkg = stats["package_breakdown"]["python"]
+    ts_pkg = stats["package_breakdown"]["typescript"]
+    if py_pkg:
+        lines.append("## Python subpackages (`packages/luxar/src/luxar/`)")
+        lines.append("")
+        lines.append("| Subpackage | Files | Code Lines | Comments |")
+        lines.append("| --- | ---: | ---: | ---: |")
+        for entry in py_pkg:
+            lines.append(
+                f"| `{entry['name']}` | {entry['files']:,} | "
+                f"{entry['code_lines']:,} | {entry['comment_lines']:,} |"
+            )
+        lines.append("")
+    if ts_pkg:
+        lines.append("## TypeScript subpackages (`packages/luxar-viewer/src/`)")
+        lines.append("")
+        lines.append("| Subpackage | Files | Code Lines | Comments |")
+        lines.append("| --- | ---: | ---: | ---: |")
+        for entry in ts_pkg:
+            lines.append(
+                f"| `{entry['name']}` | {entry['files']:,} | "
+                f"{entry['code_lines']:,} | {entry['comment_lines']:,} |"
+            )
+        lines.append("")
+
+    # Tests
+    lines.append("## Tests & Coverage")
+    lines.append("")
+    lines.append("| Metric | Python | TypeScript | Rust | E2E | Total |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    lines.append(
+        f"| Test files | {tests['python']['test_files']} | "
+        f"{tests['typescript']['test_files']} | "
+        f"{tests['rust']['test_files']} | "
+        f"{tests['e2e']['test_files']} | {total_test_files} |"
+    )
+    lines.append(
+        f"| Tests collected | {tests['python']['test_count']:,} | "
+        f"{tests['typescript']['test_count']:,} | "
+        f"{tests['rust']['test_count']:,} | &mdash; | {total_tests:,} |"
+    )
+    total_passed = (
+        tests["python"]["test_passed"]
+        + tests["typescript"]["test_passed"]
+        + tests["rust"]["test_passed"]
+    )
+    lines.append(
+        f"| Tests passed | {tests['python']['test_passed']:,} | "
+        f"{tests['typescript']['test_passed']:,} | "
+        f"{tests['rust']['test_passed']:,} | &mdash; | {total_passed:,} |"
+    )
+    lines.append(
+        f"| Coverage | {py_cov:.1f}% | {ts_cov:.1f}% | &mdash; | &mdash; | "
+        f"{weighted_cov:.1f}% |"
+    )
+    lines.append("")
+
+    # Git
+    lines.append("## Git Activity")
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("| --- | ---: |")
+    lines.append(f"| Current branch | `{git.get('current_branch') or 'N/A'}` |")
+    lines.append(f"| Total commits | {git['total_commits']:,} |")
+    lines.append(f"| Contributors (all-time) | {git['contributors']} |")
+    lines.append(f"| Local branches | {git['local_branches']} |")
+    lines.append(f"| Remote branches | {git['remote_branches']} |")
+    lines.append(f"| Tags | {git['tags']} |")
+    lines.append(f"| Commits (last 30 days) | {git['commits_last_30_days']:,} |")
+    lines.append(
+        f"| Files changed (last 30 days) | {git['files_changed_last_30_days']:,} |"
+    )
+    lines.append(f"| First commit | {git['first_commit_date'] or 'N/A'} |")
+    lines.append(f"| Last commit | {git['last_commit_date'] or 'N/A'} |")
+    lines.append("")
+
+    if git.get("top_contributors"):
+        lines.append("### Top contributors")
+        lines.append("")
+        lines.append("| Name | Commits |")
+        lines.append("| --- | ---: |")
+        for c in git["top_contributors"][:5]:
+            lines.append(f"| {c['name']} | {c['commits']:,} |")
+        lines.append("")
+
+    # Dependencies
+    py_groups = (
+        ", ".join(f"{g}={n}" for g, n in sorted(deps["python"]["groups"].items()))
+        or "&mdash;"
+    )
+    lines.append("## Dependencies")
+    lines.append("")
+    lines.append("| Ecosystem | Production | Development | Total | Notes |")
+    lines.append("| --- | ---: | ---: | ---: | --- |")
+    lines.append(
+        f"| Python | {deps['python']['production']} | "
+        f"{deps['python']['dev']} | "
+        f"{deps['python']['production'] + deps['python']['dev']} | "
+        f"groups: {py_groups} |"
+    )
+    lines.append(
+        f"| Node.js | {deps['node']['production']} | {deps['node']['dev']} | "
+        f"{deps['node']['production'] + deps['node']['dev']} | "
+        f"`packages/luxar-viewer/package.json` |"
+    )
+    lines.append(
+        f"| Rust | {deps['rust']['production']} | {deps['rust']['dev']} | "
+        f"{deps['rust']['production'] + deps['rust']['dev']} | "
+        f"`packages/luxar-viewer/src/wasm/rust/Cargo.toml` |"
+    )
+    lines.append("")
+
+    # Largest files
+    py_largest = py.get("largest_files") or []
+    ts_largest = ts.get("largest_files") or []
+    if py_largest or ts_largest:
+        lines.append("## Largest Source Files")
+        lines.append("")
+        if py_largest:
+            lines.append("### Python")
+            lines.append("")
+            lines.append("| Path | Code Lines |")
+            lines.append("| --- | ---: |")
+            for path, n in py_largest[:10]:
+                lines.append(f"| `{path}` | {n:,} |")
+            lines.append("")
+        if ts_largest:
+            lines.append("### TypeScript")
+            lines.append("")
+            lines.append("| Path | Code Lines |")
+            lines.append("| --- | ---: |")
+            for path, n in ts_largest[:10]:
+                lines.append(f"| `{path}` | {n:,} |")
+            lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append(
+        "_Excludes: `node_modules`, `__pycache__`, `coverage`, `dist`, "
+        "`build`, `target`, `_build`, `playwright-report`, `datasets`, "
+        "`delme`, `.venv`. Source: `stats/generate_stats.py`._"
+    )
+    lines.append("")
+
+    output_file.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-tests", action="store_true", help="Skip running tests (file counts only)"
+    )
+    parser.add_argument(
+        "--no-coverage",
+        action="store_true",
+        help="Run tests but skip coverage collection",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Also emit stats/project_stats.json"
+    )
+    args = parser.parse_args()
+
+    script_path = Path(__file__).resolve()
+    project_root = (
+        script_path.parent.parent
+        if script_path.parent.name == "stats"
+        else script_path.parent
+    )
+
     with asection("Analyzing Luxar project"):
-        # Get project root
-        script_path = Path(__file__).resolve()
-        if script_path.parent.name == "stats":
-            project_root = script_path.parent.parent
-        else:
-            project_root = script_path.parent
-
-        # Analyze all languages
-        all_stats = {"languages": {}}
+        all_stats: dict[str, Any] = {"languages": {}}
 
         with asection("Analyzing code by language"):
-            for lang in LANGUAGE_CONFIG:
-                aprint(f"Scanning {lang}...")
-                all_stats["languages"][lang] = analyze_directory(project_root, lang)
-                files = all_stats["languages"][lang]["files"]
-                lines = all_stats["languages"][lang]["code_lines"]
-                if files > 0:
-                    aprint(f"  {files} files, {lines:,} lines of code")
+            for name in LANGUAGE_CONFIG:
+                ls = analyze_language(project_root, name)
+                all_stats["languages"][name] = ls.as_dict()
+                if ls.files:
+                    aprint(f"{name:12s} {ls.files:4d} files, {ls.code_lines:6,} LOC")
 
-        # Get test statistics (runs actual tests with coverage)
-        with asection("Running tests and gathering coverage"):
-            all_stats["tests"] = get_test_statistics(project_root)
+        with asection("Per-package breakdown"):
+            all_stats["package_breakdown"] = {
+                "python": analyze_package_breakdown(project_root, PYTHON_PACKAGE_ROOT),
+                "typescript": analyze_package_breakdown(project_root, TS_PACKAGE_ROOT),
+            }
+            aprint(
+                f"Python subpackages: {len(all_stats['package_breakdown']['python'])}"
+            )
+            aprint(
+                f"TS subpackages: {len(all_stats['package_breakdown']['typescript'])}"
+            )
 
-        # Get Git statistics
-        with asection("Gathering Git statistics"):
+        with asection("Tests and coverage"):
+            all_stats["tests"] = get_test_statistics(
+                project_root,
+                run_tests=not args.no_tests,
+                run_coverage=not args.no_coverage,
+            )
+
+        with asection("Git statistics"):
             all_stats["git"] = get_git_statistics(project_root)
             aprint(f"Total commits: {all_stats['git']['total_commits']}")
-            aprint(f"Contributors: {all_stats['git']['contributors']}")
+            aprint(f"Contributors:  {all_stats['git']['contributors']}")
 
-        # Get dependency statistics
-        with asection("Analyzing dependencies"):
+        with asection("Dependencies"):
             all_stats["dependencies"] = get_dependency_statistics(project_root)
+            d = all_stats["dependencies"]
+            aprint(
+                f"Python: {d['python']['production']} prod + "
+                f"{d['python']['dev']} dev (groups: "
+                f"{', '.join(sorted(d['python']['groups'])) or 'none'})"
+            )
+            aprint(f"Node:   {d['node']['production']} prod + {d['node']['dev']} dev")
+            aprint(f"Rust:   {d['rust']['production']} prod + {d['rust']['dev']} dev")
 
-        # Generate HTML report
+        with asection("Extras"):
+            all_stats["extras"] = get_extras(project_root)
+            aprint(f"CI workflows:  {all_stats['extras']['ci_workflows']}")
+            aprint(
+                f"Project size:  {_fmt_size(all_stats['extras']['project_size_bytes'])}"
+            )
+
         stats_dir = project_root / "stats"
         stats_dir.mkdir(exist_ok=True)
-        output_file = stats_dir / "project_stats.html"
+        html_file = stats_dir / "project_stats.html"
+        md_file = stats_dir / "PROJECT_STATS.md"
+        with asection("Generating reports"):
+            generate_html_report(all_stats, html_file)
+            aprint(f"HTML:  {html_file}")
+            generate_markdown_report(all_stats, md_file)
+            aprint(f"MD:    {md_file}")
 
-        with asection("Generating HTML report"):
-            generate_html_report(all_stats, output_file)
-            aprint(f"Report saved to: {output_file}")
+        if args.json:
+            json_file = stats_dir / "project_stats.json"
+            json_file.write_text(json.dumps(all_stats, indent=2, default=str))
+            aprint(f"JSON:  {json_file}")
 
-    # Print summary
-    aprint("\n" + "=" * 60)
-    aprint("SUMMARY")
-    aprint("=" * 60)
-
+    # Summary line
     total_files = sum(
         all_stats["languages"][lang]["files"] for lang in all_stats["languages"]
     )
     total_code = sum(
         all_stats["languages"][lang]["code_lines"] for lang in all_stats["languages"]
     )
-
-    aprint(f"Total files: {total_files:,}")
-    aprint(f"Total lines of code: {total_code:,}")
     aprint("")
-
-    # Primary languages summary
-    primary_langs = ["python", "typescript", "rust", "cuda", "css"]
-    for lang in primary_langs:
-        stats = all_stats["languages"][lang]
-        if stats["files"] > 0:
-            aprint(
-                f"{lang.title():12} {stats['files']:>4} files, {stats['code_lines']:>6,} LOC"
-            )
-
-    aprint("")
-
-    # Test summary
-    tests = all_stats["tests"]
-    total_tests = (
-        tests["python"]["test_count"]
-        + tests["typescript"]["test_count"]
-        + tests["rust"]["test_count"]
-    )
-    aprint(f"Total tests: {total_tests:,}")
-    aprint(
-        f"Python coverage: {tests['python']['coverage_percent']:.1f}% | "
-        f"TypeScript coverage: {tests['typescript']['coverage_percent']:.1f}%"
-    )
-
-    aprint("")
-    aprint(f"Report: {output_file}")
+    aprint("=" * 60)
+    aprint(f"SUMMARY: {total_files:,} files, {total_code:,} LOC")
+    aprint("=" * 60)
 
 
 if __name__ == "__main__":
