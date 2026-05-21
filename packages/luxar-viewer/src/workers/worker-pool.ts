@@ -24,12 +24,27 @@ import {
 export type { WorkerInstance };
 export { WorkerTimeoutError, WorkerAbortError };
 export type { TimeoutKind };
-import {
-  getDataWorkerUrlOverride,
-  getWorkerPool,
-  disposeWorkerPool,
-  setDataWorkerUrl,
-} from './worker-pool/singleton';
+
+/**
+ * Optional override for the data-worker module URL.
+ *
+ * The default `new Worker(new URL('./data-worker.ts', import.meta.url))`
+ * pattern works under Vite, Rollup, and webpack 5. Bundlers that don't
+ * resolve `import.meta.url` for workers, or consumers that ship the
+ * worker bundle from a non-default location, can call
+ * {@link setDataWorkerUrl} once at startup with an explicit absolute URL.
+ *
+ * Set via `LuxarAppOptions.workerPath` from `LuxarApp.init`.
+ */
+let dataWorkerUrlOverride: string | undefined;
+
+/**
+ * Override the URL used to construct data workers. Pass an absolute URL
+ * to a module-format worker bundle. Call before the first worker is created.
+ */
+export function setDataWorkerUrl(url: string): void {
+  dataWorkerUrlOverride = url;
+}
 import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
@@ -49,7 +64,6 @@ import {
 } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
-export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
@@ -123,7 +137,7 @@ export class WorkerPool {
         // Spawn every worker in parallel. The URL override is resolved lazily
         // (inside spawnWorker via the captured value) so setDataWorkerUrl
         // calls made before the first getWorkerPool() take effect.
-        const urlOverride = getDataWorkerUrlOverride();
+        const urlOverride = dataWorkerUrlOverride;
         const workerPromises = Array.from({ length: workerCount }, (_, index) =>
           spawnWorker({
             index,
@@ -569,6 +583,29 @@ export class WorkerPool {
     // instead of attempting a fresh `initialize()`.
     this.initPromise = null;
     this.nextWorkerIndex = 0;
+  }
+}
+
+// Singleton instance
+let workerPoolInstance: WorkerPool | null = null;
+
+/**
+ * Get the global worker pool instance
+ */
+export function getWorkerPool(): WorkerPool {
+  if (!workerPoolInstance) {
+    workerPoolInstance = new WorkerPool();
+  }
+  return workerPoolInstance;
+}
+
+/**
+ * Dispose the global worker pool (for testing/cleanup)
+ */
+export function disposeWorkerPool(): void {
+  if (workerPoolInstance) {
+    workerPoolInstance.dispose();
+    workerPoolInstance = null;
   }
 }
 
