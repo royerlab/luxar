@@ -64,10 +64,6 @@ import {
   type DimensionSlidersFactory,
   type DimNavSetupCtx,
 } from './input-handler/dimension-navigation/setup';
-
-// Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
-// can keep importing it from '../input/input-handler' unchanged.
-export type { DimensionSlidersFactory } from './input-handler/dimension-navigation/setup';
 import {
   toggleFullscreen,
   type FullscreenCtx,
@@ -78,6 +74,10 @@ import {
   type ViewerStateExportCtx,
 } from './input-handler/commands/viewer-state-export';
 import { log, Modules } from '../utils/log';
+
+// Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
+// can keep importing it from '../input/input-handler' unchanged.
+export type { DimensionSlidersFactory } from './input-handler/dimension-navigation/setup';
 
 /**
  * Central coordinator for all user input events and nD navigation.

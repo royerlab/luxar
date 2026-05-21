@@ -70,15 +70,11 @@ function makeCtx(opts: {
 
   const controls: FakeControls = {
     type: opts.initialControlType ?? 'orbit',
-    getControlType: vi.fn(function (this: FakeControls) {
-      return this.type;
-    }),
+    getControlType: vi.fn(() => controls.type),
     getFlyControls: vi.fn(() =>
       opts.flyControls === undefined ? null : opts.flyControls
     ),
   };
-  // Bind `this` for getControlType so `controls.type` is read live.
-  controls.getControlType = vi.fn(() => controls.type);
 
   const sceneManager = {
     controls: {
