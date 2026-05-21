@@ -91,7 +91,7 @@ For each resize (rAF-coalesced or immediate), `doResize` runs:
 - `../../scene-manager.ts` — the `SceneManager` owns the orchestrator
   instance, supplies the `getCtx()` callback, and routes
   `updateSize()` through it.
-- `../../../rendering/post-processing-manager.ts` —
+- `../../../rendering/post-processing/post-processing-manager.ts` —
   `PostProcessingManager.resize` and `setDPRScale`, the two sinks for
   the resize pipeline.
 - `../../../utils/camera-utils.ts` — `updateCameraAspect`, called from
