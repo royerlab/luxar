@@ -116,7 +116,7 @@ in `nodes/build-ctx.ts`, never via direct import.
   main-thread projection kernels used as the worker fallback.
 - `../../loaders/tolerance-computer.ts` — geometry-aware per-dim
   tolerance used by `processLinesData`.
-- `../extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
+- `../view-state/extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
 - `../../../workers/worker-pool.ts` — `runWithTimeout` dispatch used
   by both worker projection paths.
 - `../../../rendering/gsplat-geometry.ts` — `packCholeskyForShader`
