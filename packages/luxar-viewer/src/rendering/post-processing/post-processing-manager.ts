@@ -20,7 +20,7 @@ import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
 import { type LuxarMegaShaderMaterial } from '../material-manager';
 import { BloomChain } from './bloom/chain';
-import { FxaaPass } from './fxaa-pass';
+import { FxaaPass } from './fxaa/pass';
 import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { clamp } from '../../utils/clamp';
