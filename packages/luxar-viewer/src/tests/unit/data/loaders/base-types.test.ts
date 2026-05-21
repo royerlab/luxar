@@ -8,7 +8,7 @@ import {
   getDisplayDimCount,
   isHiddenDimension,
   type BaseViewState,
-} from '../../../../data/loaders/base-types';
+} from '../../../../data/loaders';
 import type { DimensionMetadata } from '../../../../types/dims';
 
 const sampleDims: DimensionMetadata[] = [

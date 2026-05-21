@@ -8,10 +8,10 @@ import {
   createLoadAllRange,
   executeSpatialQuery,
   type ChunkSpatialIndex,
-} from '../../../../data/loaders/spatial-query-builder';
-import type { BaseViewState } from '../../../../data/loaders/base-types';
-import type { DimensionMetadata } from '../../../../types/dims';
-import * as toleranceComputer from '../../../../data/loaders/tolerance-computer';
+  type BaseViewState,
+} from '../../../../../data/loaders';
+import type { DimensionMetadata } from '../../../../../types/dims';
+import * as toleranceComputer from '../../../../../data/loaders/spatial-query/tolerance-computer';
 
 // ============================================================================
 // buildQueryPosition

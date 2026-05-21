@@ -17,8 +17,7 @@ import type { ScaleBar } from '../../../ui/scale-bar';
 import type { ColormapLegend } from '../../../ui/colormap-legend';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { PickingSystem } from '../../../rendering/picking/picking-system';
-import type { LabelLoader } from '../../../data/loaders/label-loader';
-import type { ImageLabelLoader } from '../../../data/loaders/image-label-loader';
+import type { LabelLoader, ImageLabelLoader } from '../../../data/loaders';
 import type { DatasetBrowser } from '../../../ui/dataset-browser';
 
 /**

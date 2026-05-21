@@ -16,10 +16,10 @@
  * URL.revokeObjectURL on eviction.
  */
 
-import * as zarr from '../zarr';
-import { get, slice } from '../zarr';
-import { LRUCache } from '../../cache/lru-cache';
-import { log, Modules } from '../../utils/log';
+import * as zarr from '../../zarr';
+import { get, slice } from '../../zarr';
+import { LRUCache } from '../../../cache/lru-cache';
+import { log, Modules } from '../../../utils/log';
 
 /** Cached image entry with blob URL and size for LRU tracking. */
 interface CachedImage {

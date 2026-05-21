@@ -14,8 +14,8 @@ import {
   restoreOriginalDtype,
   loadColorRanges,
   type ColorRange,
-} from '../../../../data/loaders/color-attribute-utils';
-import type { RangeLoader } from '../../../../data/loaders/range-loader';
+  type RangeLoader,
+} from '../../../../data/loaders';
 
 vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');

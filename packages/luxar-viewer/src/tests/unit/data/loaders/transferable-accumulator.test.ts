@@ -7,7 +7,7 @@ import {
   type PointsBuffers,
   type TransferableBuffers,
   type BufferShape,
-} from '../../../../data/loaders/transferable-accumulator';
+} from '../../../../data/loaders';
 
 describe('TransferableAccumulator', () => {
   describe('basic operations', () => {

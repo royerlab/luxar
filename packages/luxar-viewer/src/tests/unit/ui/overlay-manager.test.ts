@@ -20,7 +20,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OverlayManager, FONT_PRESETS } from '../../../ui/overlay-manager';
-import type { OverlayConfig } from '../../../data/loaders/overlay-loader';
+import type { OverlayConfig } from '../../../data/loaders';
 import type { SimpleDims } from '../../../types/dims';
 
 /**
