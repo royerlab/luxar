@@ -4,12 +4,12 @@ Post-processing pipeline for the viewer. Built from a custom
 mega-shader: tone mapping, bloom, anti-aliasing (FXAA / MSAA / SSAA),
 detector noise, vignette, and chromatic lens distortion.
 
-`PostProcessingManager` is the public API class at
-`rendering/post-processing-manager.ts`. This folder contains its private
-helpers: bloom chain, FXAA pass, fullscreen geometry, mega-shader,
-HDR-capture helpers, and the focused modules under
-`post-processing-manager/` for resource lifecycle, settings, pipeline,
-and capture.
+`PostProcessingManager` is the public-API class at
+`rendering/post-processing/post-processing-manager.ts`. This folder
+contains its private helpers grouped by effect (`bloom/`, `fxaa/`,
+`mega/`) plus shared infrastructure (`fullscreen/`, `hdr/`) and the
+orchestrator-focused modules under `post-processing-manager/` for
+resource lifecycle, settings, pipeline, and capture.
 
 The pipeline fuses all per-pixel effects into a single fullscreen
 fragment shader. Net effect: fewer fullscreen passes per frame, no

@@ -1,7 +1,7 @@
 # Post-processing manager helpers
 
 Focused modules split out from the `PostProcessingManager` orchestrator
-class (one level up at `rendering/post-processing/post-processing-manager.ts`). The
+class (one level up at `../post-processing-manager.ts`). The
 orchestrator owns the state fields and event dispatch; these helpers own
 the work — resource construction and sizing, user-facing setter logic,
 the per-frame pipeline run, and the HDR/EXR/ImageData capture paths.
