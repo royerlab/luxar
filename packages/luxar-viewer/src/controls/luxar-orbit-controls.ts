@@ -14,7 +14,24 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../utils/camera-utils';
-import { clamp } from '../utils/clamp';
+import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
+import {
+  applyToCamera,
+  initializeFromCamera,
+} from './luxar-orbit-controls/camera-application';
+import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
+import {
+  type ControlAction,
+  type OrbitInputCtx,
+  handlePointerDown,
+  handlePointerMove,
+  handlePointerUp,
+  handleWheel,
+} from './luxar-orbit-controls/input/pointer';
+import { handleTouchStart, handleTouchMove } from './luxar-orbit-controls/input/touch';
+import { attachKeyboardPan } from './luxar-orbit-controls/input/keyboard';
+
+export type { ControlAction };
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
@@ -34,13 +51,6 @@ export interface LuxarOrbitControlsConfig {
   screenSpacePanning?: boolean;
   trackballRadius?: number;
 }
-
-export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
-
-const _IDENTITY_QUAT = new THREE.Quaternion();
-const _v = new THREE.Vector3();
-const _v2 = new THREE.Vector3();
-const _q1 = new THREE.Quaternion();
 
 export class LuxarOrbitControls extends THREE.EventDispatcher<{
   change: {};
@@ -122,8 +132,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
   // Keyboard pan
   public keyPanSpeed: number = 7; // pixels per arrow key press
-  private boundOnKeyDown: ((e: KeyboardEvent) => void) | null = null;
-  private keyListenElement: HTMLElement | null = null;
+  private keyboardDisposer: (() => void) | null = null;
 
   constructor(camera: LuxarCamera, domElement: HTMLElement, config?: LuxarOrbitControlsConfig) {
     super();
@@ -190,92 +199,41 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * @returns true if camera moved (useful for render-on-demand).
    */
   public update(deltaTime?: number): boolean {
-    // 1. Auto-rotation: around the camera's screen-up axis (always appears vertical to the viewer)
-    // Speed=1.0 → one full rotation in 60 seconds (matches THREE.js OrbitControls convention)
-    if (this.autoRotate && this.enableRotate) {
-      const dt = deltaTime ?? 1 / 60;
-      const angle = ((2 * Math.PI) / 60) * this.autoRotateSpeed * dt;
-      // Inline quaternion math (applyOrbitRotation also calls applyToCamera, redundant in update())
-      _v2.set(0, 1, 0).applyQuaternion(this.orientation);
-      _q1.setFromAxisAngle(_v2, angle);
-      this.orientation.premultiply(_q1);
-      this.orientation.normalize();
-    }
+    return runUpdateStep(this.makeUpdateCtx(), deltaTime);
+  }
 
-    // 2. Apply trackball rotation with damping (local frame)
-    if (this.enableDamping) {
-      _q1.slerpQuaternions(_IDENTITY_QUAT, this.rotationDelta, this.dampingFactor);
-      this.orientation.multiply(_q1);
-      this.orientation.normalize();
-      this.rotationDelta.slerp(_IDENTITY_QUAT, this.dampingFactor);
-    } else {
-      this.orientation.multiply(this.rotationDelta);
-      this.orientation.normalize();
-      this.rotationDelta.identity();
-    }
-
-    // 3. Apply view-axis roll with damping
-    if (Math.abs(this.rollDelta) > 1e-6) {
-      _v2.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
-      if (this.enableDamping) {
-        const rollApply = this.rollDelta * this.dampingFactor;
-        _q1.setFromAxisAngle(_v2, rollApply);
-        this.orientation.premultiply(_q1);
-        this.orientation.normalize();
-        this.rollDelta *= 1 - this.dampingFactor;
-      } else {
-        _q1.setFromAxisAngle(_v2, this.rollDelta);
-        this.orientation.premultiply(_q1);
-        this.orientation.normalize();
-        this.rollDelta = 0;
-      }
-    }
-
-    // 4. Apply pan with damping
-    if (this.enableDamping) {
-      this.target.addScaledVector(this.panDelta, this.dampingFactor);
-      this.panDelta.multiplyScalar(1 - this.dampingFactor);
-    } else {
-      this.target.add(this.panDelta);
-      this.panDelta.set(0, 0, 0);
-    }
-
-    // 5. Apply zoom with damping
-    if (Math.abs(this.zoomDelta) > 1e-8) {
-      if (this.enableDamping) {
-        const zoomApply = 1 + this.zoomDelta * this.dampingFactor;
-        this.applyZoomScale(zoomApply);
-        this.zoomDelta *= 1 - this.dampingFactor;
-      } else {
-        this.applyZoomScale(1 + this.zoomDelta);
-        this.zoomDelta = 0;
-      }
-    }
-
-    // 6. Clamp distance
-    this.distance = THREE.MathUtils.clamp(this.distance, this.minDistance, this.maxDistance);
-
-    // 7. Clamp ortho zoom
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom, this.minZoom, this.maxZoom);
-      this.camera.updateProjectionMatrix();
-    }
-
-    // 8. Apply to camera
-    this.applyToCamera();
-
-    // 9. Change detection
-    const moved =
-      !this.camera.position.equals(this.lastPosition) ||
-      !this.camera.quaternion.equals(this.lastQuaternion);
-
-    if (moved) {
-      this.dispatchEvent({ type: 'change' });
-      this.lastPosition.copy(this.camera.position);
-      this.lastQuaternion.copy(this.camera.quaternion);
-    }
-
-    return moved;
+  private makeUpdateCtx(): OrbitUpdateCtx {
+    return {
+      enableRotate: this.enableRotate,
+      enableDamping: this.enableDamping,
+      dampingFactor: this.dampingFactor,
+      autoRotate: this.autoRotate,
+      autoRotateSpeed: this.autoRotateSpeed,
+      orientation: this.orientation,
+      rotationDelta: this.rotationDelta,
+      panDelta: this.panDelta,
+      target: this.target,
+      getRollDelta: () => this.rollDelta,
+      setRollDelta: (v) => {
+        this.rollDelta = v;
+      },
+      getZoomDelta: () => this.zoomDelta,
+      setZoomDelta: (v) => {
+        this.zoomDelta = v;
+      },
+      getDistance: () => this.distance,
+      setDistance: (v) => {
+        this.distance = v;
+      },
+      camera: this.camera,
+      minDistance: this.minDistance,
+      maxDistance: this.maxDistance,
+      minZoom: this.minZoom,
+      maxZoom: this.maxZoom,
+      lastPosition: this.lastPosition,
+      lastQuaternion: this.lastQuaternion,
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
   }
 
   /** Save current state for reset(). */
@@ -394,394 +352,112 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   }
 
   // ---------------------------------------------------------------------------
-  // Trackball math (vendored from ArcballControls / Shoemake)
+  // Math delegates (luxar-orbit-controls/math/*)
   // ---------------------------------------------------------------------------
 
-  /** Project NDC coordinates onto virtual trackball (sphere + hyperboloid). */
-  private projectOnTrackball(ndcX: number, ndcY: number): THREE.Vector3 {
-    const r = this.trackballRadius;
-    const r2 = r * r;
-    const d2 = ndcX * ndcX + ndcY * ndcY;
-    let z: number;
-    if (d2 <= r2 * 0.5) {
-      z = Math.sqrt(r2 - d2); // On the sphere
-    } else {
-      z = (r2 * 0.5) / Math.sqrt(d2); // On the hyperboloid (smooth falloff at edges)
-    }
-    return new THREE.Vector3(ndcX, ndcY, z).normalize();
-  }
-
-  /** Compute rotation quaternion from arcball drag (start → end in NDC). */
-  private computeArcballRotation(startNDC: THREE.Vector2, endNDC: THREE.Vector2): THREE.Quaternion {
-    const p1 = this.projectOnTrackball(startNDC.x, startNDC.y);
-    const p2 = this.projectOnTrackball(endNDC.x, endNDC.y);
-
-    const axis = new THREE.Vector3().crossVectors(p1, p2);
-    if (axis.lengthSq() < 1e-10) return new THREE.Quaternion(); // No rotation
-
-    axis.normalize();
-    const angle = Math.acos(THREE.MathUtils.clamp(p1.dot(p2), -1, 1)) * this.rotateSpeed;
-
-    // Negate angle: camera orbits opposite to the drag direction
-    // (dragging right rotates the view rightward = camera moves left around target)
-    return new THREE.Quaternion().setFromAxisAngle(axis, -angle);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Pan math (vendored from OrbitControls)
-  // ---------------------------------------------------------------------------
-
-  private panLeft(distance: number, objectMatrix: THREE.Matrix4): void {
-    _v.setFromMatrixColumn(objectMatrix, 0); // camera X axis
-    _v.multiplyScalar(-distance);
-    this.panDelta.add(_v);
-  }
-
-  private panUp(distance: number, objectMatrix: THREE.Matrix4): void {
-    if (this.screenSpacePanning) {
-      _v.setFromMatrixColumn(objectMatrix, 1); // camera Y axis
-    } else {
-      _v.setFromMatrixColumn(objectMatrix, 0);
-      _v.crossVectors(this.camera.up, _v);
-    }
-    _v.multiplyScalar(distance);
-    this.panDelta.add(_v);
+  private makePanCtx(): PanCtx {
+    return {
+      camera: this.camera,
+      distance: this.distance,
+      panSpeed: this.panSpeed,
+      screenSpacePanning: this.screenSpacePanning,
+      domElement: this.domElement,
+    };
   }
 
   private pan(deltaX: number, deltaY: number): void {
-    if (this.camera instanceof THREE.PerspectiveCamera) {
-      const fovRad = this.camera.fov * (Math.PI / 180);
-      const height = 2 * this.distance * Math.tan(fovRad / 2);
-      this.panLeft(
-        (deltaX * height * this.panSpeed) / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-      this.panUp(
-        (deltaY * height * this.panSpeed) / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-    } else {
-      const cam = this.camera as THREE.OrthographicCamera;
-      this.panLeft(
-        (deltaX * (cam.right - cam.left) * this.panSpeed) / cam.zoom / this.domElement.clientWidth,
-        this.camera.matrix
-      );
-      this.panUp(
-        (deltaY * (cam.top - cam.bottom) * this.panSpeed) / cam.zoom / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-    }
+    applyPan(this.panDelta, deltaX, deltaY, this.makePanCtx());
   }
 
   // ---------------------------------------------------------------------------
-  // Zoom math (vendored from OrbitControls)
-  // ---------------------------------------------------------------------------
-
-  private getZoomScale(delta: number): number {
-    const normalizedDelta = Math.abs(delta * 0.01);
-    return Math.pow(0.95, this.zoomSpeed * normalizedDelta);
-  }
-
-  private applyZoomScale(scale: number): void {
-    if (this.camera instanceof THREE.PerspectiveCamera) {
-      this.distance *= scale;
-    } else {
-      const cam = this.camera as THREE.OrthographicCamera;
-      cam.zoom = clamp(cam.zoom / scale, this.minZoom, this.maxZoom);
-      cam.updateProjectionMatrix();
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Camera application
+  // Camera application (delegated to luxar-orbit-controls/camera-application.ts)
   // ---------------------------------------------------------------------------
 
   /** Apply orientation + distance + target to camera transform. */
   private applyToCamera(): void {
-    _v.set(0, 0, this.distance).applyQuaternion(this.orientation);
-    this.camera.position.copy(this.target).add(_v);
-    this.camera.up.set(0, 1, 0).applyQuaternion(this.orientation);
-    this.camera.lookAt(this.target);
-    // Ensure camera.matrix is up-to-date (needed by pan math which reads matrix columns)
-    this.camera.updateMatrixWorld();
+    applyToCamera(this.camera, this.target, this.orientation, this.distance);
   }
 
   /** Extract orientation and distance from current camera state. */
   private initializeFromCamera(): void {
-    const offset = new THREE.Vector3().subVectors(this.camera.position, this.target);
-    this.distance = Math.max(offset.length(), 0.001);
-
-    // Derive up from camera quaternion rather than camera.up — the quaternion
-    // is always authoritative, whereas camera.up may be stale (fly controls
-    // only update quaternion, not up). Prevents roll loss on fly→orbit switch.
-    // lookAt() has a singularity when the view direction is parallel to the up vector.
-    // Detect this and use a fallback up vector to prevent NaN.
-    const viewDir = offset.clone().normalize();
-    let up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    const upDot = Math.abs(viewDir.dot(up));
-    if (upDot > 0.999) {
-      // Near singularity: pick a fallback up vector perpendicular to view direction
-      up = Math.abs(viewDir.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
-    }
-
-    const lookMatrix = new THREE.Matrix4().lookAt(this.camera.position, this.target, up);
-    this.orientation.setFromRotationMatrix(lookMatrix);
+    this.distance = initializeFromCamera(this.camera, this.target, this.orientation);
   }
 
   // ---------------------------------------------------------------------------
-  // Pointer event handling
+  // Input handling (delegated to luxar-orbit-controls/input/*)
   // ---------------------------------------------------------------------------
 
-  private getPointerNDC(event: PointerEvent): THREE.Vector2 {
-    const rect = this.domElement.getBoundingClientRect();
-    return new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
-  }
-
-  private getMouseAction(button: number, shiftKey: boolean): ControlAction {
-    let mapping: THREE.MOUSE | null = null;
-    if (button === 0) mapping = this.mouseButtons.LEFT;
-    else if (button === 1) mapping = this.mouseButtons.MIDDLE;
-    else if (button === 2) mapping = this.mouseButtons.RIGHT;
-
-    if (mapping === null) return 'none';
-
-    // Shift+left inverts the primary action:
-    // If left=pan → Shift+left=rotate; if left=rotate → Shift+left=pan
-    if (button === 0 && shiftKey) {
-      if (mapping === THREE.MOUSE.PAN) return this.enableRotate ? 'rotate' : 'none';
-      if (mapping === THREE.MOUSE.ROTATE) return this.enablePan ? 'pan' : 'none';
-    }
-
-    if (mapping === THREE.MOUSE.ROTATE) return this.enableRotate ? 'rotate' : 'none';
-    if (mapping === THREE.MOUSE.PAN) return this.enablePan ? 'pan' : 'none';
-    if (mapping === THREE.MOUSE.DOLLY) return this.enableZoom ? 'zoom' : 'none';
-
-    return 'none';
+  private makeInputCtx(): OrbitInputCtx {
+    return {
+      enabled: this.enabled,
+      enableRotate: this.enableRotate,
+      enablePan: this.enablePan,
+      enableZoom: this.enableZoom,
+      mouseButtons: this.mouseButtons,
+      domElement: this.domElement,
+      trackballRadius: this.trackballRadius,
+      rotateSpeed: this.rotateSpeed,
+      zoomSpeed: this.zoomSpeed,
+      boundOnPointerMove: this.boundOnPointerMove,
+      boundOnPointerUp: this.boundOnPointerUp,
+      pointers: this.pointers,
+      pointerPositions: this.pointerPositions,
+      rotateStart: this.rotateStart,
+      panStart: this.panStart,
+      dollyStart: this.dollyStart,
+      rotationDelta: this.rotationDelta,
+      getState: () => this.state,
+      setState: (s) => {
+        this.state = s;
+      },
+      addZoomDelta: (delta) => {
+        this.zoomDelta += delta;
+      },
+      pan: (dx, dy) => this.pan(dx, dy),
+      dispatch: (type) => this.dispatchEvent({ type }),
+      onTouchStart: () => handleTouchStart(this.makeInputCtx()),
+      onTouchMove: (event) => handleTouchMove(this.makeInputCtx(), event),
+      setPointers: (pointers) => {
+        this.pointers = pointers;
+      },
+    };
   }
 
   private onPointerDown(event: PointerEvent): void {
-    if (!this.enabled) return;
-
-    if (this.pointers.length === 0) {
-      this.domElement.setPointerCapture(event.pointerId);
-      this.domElement.addEventListener('pointermove', this.boundOnPointerMove);
-      this.domElement.addEventListener('pointerup', this.boundOnPointerUp);
-      this.domElement.addEventListener('pointercancel', this.boundOnPointerUp);
-    }
-
-    this.pointers.push(event);
-    this.pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
-
-    if (event.pointerType === 'touch') {
-      this.onTouchStart();
-    } else {
-      const action = this.getMouseAction(event.button, event.shiftKey);
-      this.state = action;
-
-      if (action === 'rotate') {
-        this.rotateStart.copy(this.getPointerNDC(event));
-      } else if (action === 'pan') {
-        this.panStart.set(event.clientX, event.clientY);
-      } else if (action === 'zoom') {
-        this.dollyStart.set(event.clientX, event.clientY);
-      }
-    }
-
-    if (this.state !== 'none') {
-      this.dispatchEvent({ type: 'start' });
-    }
+    handlePointerDown(this.makeInputCtx(), event);
   }
 
   private onPointerMove(event: PointerEvent): void {
-    if (!this.enabled) return;
-
-    // Update pointer position
-    const pos = this.pointerPositions.get(event.pointerId);
-    if (pos) pos.set(event.clientX, event.clientY);
-
-    // Update the pointer in our array
-    for (let i = 0; i < this.pointers.length; i++) {
-      if (this.pointers[i].pointerId === event.pointerId) {
-        this.pointers[i] = event;
-        break;
-      }
-    }
-
-    if (event.pointerType === 'touch') {
-      this.onTouchMove(event);
-      return;
-    }
-
-    if (this.state === 'rotate') {
-      const endNDC = this.getPointerNDC(event);
-      const deltaQuat = this.computeArcballRotation(this.rotateStart, endNDC);
-      this.rotationDelta.multiply(deltaQuat);
-      this.rotateStart.copy(endNDC);
-    } else if (this.state === 'pan') {
-      const deltaX = event.clientX - this.panStart.x;
-      const deltaY = event.clientY - this.panStart.y;
-      this.pan(deltaX, deltaY);
-      this.panStart.set(event.clientX, event.clientY);
-    } else if (this.state === 'zoom') {
-      const deltaY = event.clientY - this.dollyStart.y;
-      if (deltaY > 0) {
-        this.zoomDelta += this.getZoomScale(deltaY) - 1;
-      } else if (deltaY < 0) {
-        this.zoomDelta -= this.getZoomScale(-deltaY) - 1;
-      }
-      this.dollyStart.set(event.clientX, event.clientY);
-    }
+    handlePointerMove(this.makeInputCtx(), event);
   }
 
   private onPointerUp(event: PointerEvent): void {
-    // Remove this pointer
-    this.pointers = this.pointers.filter((p) => p.pointerId !== event.pointerId);
-    this.pointerPositions.delete(event.pointerId);
-
-    if (this.pointers.length === 0) {
-      try {
-        this.domElement.releasePointerCapture(event.pointerId);
-      } catch {
-        /* pointer capture may already be released on cancel */
-      }
-      this.domElement.removeEventListener('pointermove', this.boundOnPointerMove);
-      this.domElement.removeEventListener('pointerup', this.boundOnPointerUp);
-      this.domElement.removeEventListener('pointercancel', this.boundOnPointerUp);
-    }
-
-    this.state = 'none';
-    this.dispatchEvent({ type: 'end' });
+    handlePointerUp(this.makeInputCtx(), event);
   }
 
   private onWheel(event: WheelEvent): void {
-    if (!this.enabled || !this.enableZoom) return;
-    event.preventDefault();
-
-    const scale = this.getZoomScale(event.deltaY);
-    if (event.deltaY < 0) {
-      // Scroll up = zoom in
-      this.zoomDelta += scale - 1;
-    } else if (event.deltaY > 0) {
-      // Scroll down = zoom out
-      this.zoomDelta -= scale - 1;
-    }
-
-    // Wake up animation loop (zoomDelta is applied with damping in update())
-    this.dispatchEvent({ type: 'change' });
+    handleWheel(this.makeInputCtx(), event);
   }
-
-  // ---------------------------------------------------------------------------
-  // Touch handling
-  // ---------------------------------------------------------------------------
-
-  private onTouchStart(): void {
-    if (this.pointers.length === 1) {
-      // Single finger: rotate (or pan if rotation disabled)
-      if (this.enableRotate) {
-        this.state = 'rotate';
-        this.rotateStart.copy(this.getPointerNDC(this.pointers[0]));
-      } else if (this.enablePan) {
-        this.state = 'pan';
-        this.panStart.set(this.pointers[0].clientX, this.pointers[0].clientY);
-      }
-    } else if (this.pointers.length === 2) {
-      // Two fingers: dolly-pan
-      this.state = 'zoom'; // Combined dolly + pan
-      const dx = this.pointers[0].clientX - this.pointers[1].clientX;
-      const dy = this.pointers[0].clientY - this.pointers[1].clientY;
-      this.dollyStart.set(0, Math.sqrt(dx * dx + dy * dy));
-      // Pan center
-      this.panStart.set(
-        (this.pointers[0].clientX + this.pointers[1].clientX) * 0.5,
-        (this.pointers[0].clientY + this.pointers[1].clientY) * 0.5
-      );
-    }
-  }
-
-  private onTouchMove(_event: PointerEvent): void {
-    if (this.pointers.length === 1 && this.state === 'rotate') {
-      const endNDC = this.getPointerNDC(this.pointers[0]);
-      const deltaQuat = this.computeArcballRotation(this.rotateStart, endNDC);
-      this.rotationDelta.multiply(deltaQuat);
-      this.rotateStart.copy(endNDC);
-    } else if (this.pointers.length === 1 && this.state === 'pan') {
-      const deltaX = this.pointers[0].clientX - this.panStart.x;
-      const deltaY = this.pointers[0].clientY - this.panStart.y;
-      this.pan(deltaX, deltaY);
-      this.panStart.set(this.pointers[0].clientX, this.pointers[0].clientY);
-    } else if (this.pointers.length >= 2) {
-      // Two-finger dolly + pan
-      const p0 = this.pointerPositions.get(this.pointers[0].pointerId);
-      const p1 = this.pointerPositions.get(this.pointers[1].pointerId);
-      if (!p0 || !p1) return;
-
-      // Dolly (pinch)
-      // Negate so pinch-out (fingers spread) = zoom in = negative zoomDelta,
-      // consistent with scroll-up = zoom in = negative zoomDelta.
-      const dx = p0.x - p1.x;
-      const dy = p0.y - p1.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const dollyDelta = distance / this.dollyStart.y;
-      if (dollyDelta > 0) {
-        this.zoomDelta -= dollyDelta - 1;
-      }
-      this.dollyStart.set(0, distance);
-
-      // Pan (two-finger drag)
-      const centerX = (p0.x + p1.x) * 0.5;
-      const centerY = (p0.y + p1.y) * 0.5;
-      this.pan(centerX - this.panStart.x, centerY - this.panStart.y);
-      this.panStart.set(centerX, centerY);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Keyboard handling
-  // ---------------------------------------------------------------------------
 
   /**
    * Enable keyboard controls (arrow keys for panning).
    * Call with the element that should receive key events (typically window or canvas).
    */
   public listenToKeyEvents(element: HTMLElement | Window): void {
-    if (this.boundOnKeyDown) return; // Already listening
-
-    this.boundOnKeyDown = (event: KeyboardEvent) => {
-      if (!this.enabled || !this.enablePan) return;
-
-      switch (event.code) {
-        case 'ArrowUp':
-          this.pan(0, this.keyPanSpeed);
-          event.preventDefault();
-          break;
-        case 'ArrowDown':
-          this.pan(0, -this.keyPanSpeed);
-          event.preventDefault();
-          break;
-        case 'ArrowLeft':
-          this.pan(this.keyPanSpeed, 0);
-          event.preventDefault();
-          break;
-        case 'ArrowRight':
-          this.pan(-this.keyPanSpeed, 0);
-          event.preventDefault();
-          break;
-      }
-    };
-
-    element.addEventListener('keydown', this.boundOnKeyDown as EventListener);
-    this.keyListenElement = element as HTMLElement;
+    if (this.keyboardDisposer) return; // Already listening
+    this.keyboardDisposer = attachKeyboardPan(element, {
+      enabled: () => this.enabled,
+      enablePan: () => this.enablePan,
+      keyPanSpeed: () => this.keyPanSpeed,
+      pan: (dx, dy) => this.pan(dx, dy),
+    });
   }
 
   /** Stop listening for keyboard events. */
   public stopListenToKeyEvents(): void {
-    if (this.boundOnKeyDown && this.keyListenElement) {
-      this.keyListenElement.removeEventListener('keydown', this.boundOnKeyDown as EventListener);
-      this.boundOnKeyDown = null;
-      this.keyListenElement = null;
+    if (this.keyboardDisposer) {
+      this.keyboardDisposer();
+      this.keyboardDisposer = null;
     }
   }
 }

@@ -7,7 +7,7 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';
 
-import type { RenderingControllers } from '../controls/types';
+import type { RenderingControllers } from './rendering-controls/types';
 import { log, Modules } from '../utils/log';
 import { setupNavigationControls } from './rendering-controls/setup/navigation-setup';
 import { setupCameraControls } from './rendering-controls/setup/camera-setup';

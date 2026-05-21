@@ -12,8 +12,8 @@
 import * as THREE from 'three';
 import { PointMaterial } from './materials/point/material-glsl';
 import { PointTSLMaterial } from './materials/point/material-tsl';
-import { PointPickingMaterial } from './picking/point-picking-material';
-import { PointPickingTSLMaterial } from './picking/point-picking-material-tsl';
+import { PointPickingMaterial } from './picking/point/material';
+import { PointPickingTSLMaterial } from './picking/point/material-tsl';
 
 /**
  * Synchronize a Points material's dtype-scale uniforms after a geometry

@@ -6,12 +6,63 @@
  */
 
 import type GUI from '../gui';
-import type { Folder } from '../gui';
+import type { Folder, Controller } from '../gui';
 import type { RenderingSettings } from '../../config';
 import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
-import type { RenderingControllers } from '../../controls/types';
+
+/** Rendering controls GUI controllers for the entire rendering panel. */
+export interface RenderingControllers {
+  controlType?: Controller;
+  // Camera controls
+  fov?: Controller;
+  fovPreset?: Controller;
+  nearPlane?: Controller;
+  farPlane?: Controller;
+  // Dynamic clipping controls
+  dynamicClippingEnabled?: Controller;
+  // HDR controls (global EOG)
+  exposure?: Controller;
+  globalOffset?: Controller;
+  globalGamma?: Controller;
+  // Chromatic lens distortion controls
+  chromaticLensDistortionX?: Controller;
+  chromaticLensDistortionY?: Controller;
+  chromaticLensDispersion?: Controller;
+  chromaticLensPrincipalPointX?: Controller;
+  chromaticLensPrincipalPointY?: Controller;
+  chromaticLensFocalLengthX?: Controller;
+  chromaticLensFocalLengthY?: Controller;
+  chromaticLensSkew?: Controller;
+  // Orbit controls
+  autoRotate?: Controller;
+  autoRotateSpeed?: Controller;
+  naturalDrag?: Controller;
+  // Fly controls
+  flyMovementSpeed?: Controller;
+  flyRotationSpeed?: Controller;
+  flyInertialMode?: Controller;
+  flyDamping?: Controller;
+  flyRotationDamping?: Controller;
+  // Performance controls
+  adaptiveDPREnabled?: Controller;
+  // Cinematic mode
+  cinematicMode?: Controller;
+}
+
+/** Bloom effect GUI controllers. */
+export interface BloomControllers {
+  threshold?: Controller;
+  strength?: Controller;
+  radius?: Controller;
+}
+
+/** HDR GUI controllers. */
+export interface HDRControllers {
+  hdrMultiplier?: Controller;
+  toneMapping?: Controller;
+}
 
 /**
  * Context object passed to all setup functions.

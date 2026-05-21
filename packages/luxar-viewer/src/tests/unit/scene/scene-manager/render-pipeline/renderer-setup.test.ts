@@ -39,7 +39,7 @@ vi.mock('../../../../../rendering/renderer-capabilities', () => ({
     pointSizeRange: [1, 64],
   })),
 }));
-vi.mock('../../../../../utils/hdr-detection', () => ({
+vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
   configureHDRRenderer: vi.fn(),
   logHDRCapabilities: vi.fn(),
 }));

@@ -18,7 +18,7 @@ import { log, Modules } from '../../utils/log';
 import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
-import type { RenderingControllers } from '../../controls/types';
+import type { RenderingControllers } from './types';
 
 /** String → THREE.ToneMapping map shared between applySettings and the cinematic toggle. */
 export const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {

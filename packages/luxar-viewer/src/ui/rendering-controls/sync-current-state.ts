@@ -15,7 +15,7 @@ import type GUI from '../gui';
 import type { RenderingSettings } from '../../config';
 import { config } from '../../config';
 import type { SceneManager } from '../../scene/scene-manager';
-import type { RenderingControllers } from '../../controls/types';
+import type { RenderingControllers } from './types';
 import { isOrbitControls } from '../../controls/types';
 
 export interface SyncCurrentStateContext {

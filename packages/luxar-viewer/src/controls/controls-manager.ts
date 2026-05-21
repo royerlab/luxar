@@ -20,10 +20,27 @@ import { LuxarOrbitControls } from './luxar-orbit-controls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 import type { LuxarCamera } from '../utils/camera-utils';
 import type { ControlType } from './types';
 import { isMacPlatform } from '../utils/platform';
+import {
+  createOrbitControls,
+  createFlyControls,
+  createOrthoControls,
+  naturalDragButtonMap,
+  type ControlsCreationCtx,
+} from './controls-manager/factories';
+import {
+  saveCameraState,
+  restoreCameraState,
+  type CameraStateCtx,
+} from './controls-manager/camera-state';
+import {
+  attachControlEventForwarders,
+  type ControlEventDispatcher,
+} from './controls-manager/event-forwarders';
+import { deriveScaleLimits } from './controls-manager/scene-scale';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
@@ -50,14 +67,7 @@ interface ControlsManagerEventMap {
   end: {};
 }
 
-type ControlEventMap = {
-  change: {};
-  start: {};
-  end: {};
-};
-
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
-type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
@@ -185,159 +195,70 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   // ---------------------------------------------------------------------------
-  // Control creation
+  // Control creation (delegated to controls-manager/factories.ts)
   // ---------------------------------------------------------------------------
 
+  private makeCreationCtx(): ControlsCreationCtx {
+    return {
+      camera: this.camera,
+      domElement: this.domElement,
+      config: this.config,
+      sceneScale: this.sceneScale,
+      storedDistanceLimits: this.storedDistanceLimits,
+      storedZoomLimits: this.storedZoomLimits,
+    };
+  }
+
   private createOrbitControls(): void {
-    const m = config.controls.scaleMultipliers;
-
-    // Use stored limits (from auto-frame) if available, then scale-derived,
-    // then hardcoded config defaults.
-    const minDist =
-      this.storedDistanceLimits?.min ??
-      (this.sceneScale > 0
-        ? this.sceneScale * m.minDistanceFactor
-        : config.controls.orbit.zoom.minDistance);
-    const maxDist =
-      this.storedDistanceLimits?.max ??
-      (this.sceneScale > 0
-        ? this.sceneScale * m.maxDistanceFactor
-        : config.controls.orbit.zoom.maxDistance);
-
-    const controls = new LuxarOrbitControls(this.camera, this.domElement, {
-      enableDamping: true,
-      screenSpacePanning: true,
-      autoRotate: this.config.autoRotate || false,
-      autoRotateSpeed: this.config.autoRotateSpeed || 0.25,
-      minDistance: minDist,
-      maxDistance: maxDist,
-    });
-
-    // Shift+scroll = view-axis rotation (roll)
-    controls.enableViewAxisRotation();
-
-    // Apply "natural drag" mapping (touchpad-friendly: LEFT=rotate, RIGHT=pan)
-    // when enabled. The default in LuxarOrbitControls is the mouse-friendly
-    // mapping (LEFT=pan, RIGHT=rotate); we only need to act when swapping in.
-    if (this.config.naturalDrag) {
-      controls.mouseButtons = {
-        LEFT: THREE.MOUSE.ROTATE,
-        MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.PAN,
-      };
-    }
-
-    // Target is set in restoreCameraState() after creation
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    // Target is set in restoreCameraState() after creation.
+    this.currentControls = createOrbitControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createFlyControls(): void {
-    const controls = new LuxarFlyControls(this.camera, this.domElement, {
-      movementSpeed: this.config.flyMovementSpeed,
-      rotationSpeed: this.config.flyRotationSpeed,
-      lookSpeed: this.config.flyLookSpeed,
-      inertialMode: this.config.flyInertialMode,
-      damping: this.config.flyDamping,
-      rotationDamping: this.config.flyRotationDamping,
-      // Keyboard is routed through InputContextManager — see input/README.md.
-      externalInputManagement: true,
-    });
-
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    this.currentControls = createFlyControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createOrthoControls(): void {
-    const m = config.controls.scaleMultipliers;
-
-    // Use stored zoom limits (from auto-frame) if available, else wide defaults.
-    const minZoom = this.storedZoomLimits?.min ?? m.minDistanceFactor;
-    const maxZoom = this.storedZoomLimits?.max ?? 1.0 / m.minDistanceFactor;
-
-    const controls = new LuxarOrbitControls(this.camera, this.domElement, {
-      enableDamping: true,
-      screenSpacePanning: true,
-      enableRotate: false,
-      minZoom,
-      maxZoom,
-      minDistance: 0,
-      maxDistance: Infinity,
-    });
-
-    // Remap: left-click = pan (Napari/Google Maps convention)
-    controls.mouseButtons = {
-      LEFT: THREE.MOUSE.PAN,
-      MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: null,
-    };
-
-    // Shift+scroll = view-axis rotation (roll)
-    controls.enableViewAxisRotation();
-
-    // Target is set in restoreCameraState() after creation
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    // Target is set in restoreCameraState() after creation.
+    this.currentControls = createOrthoControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   // ---------------------------------------------------------------------------
-  // Camera state save/restore
+  // Camera state save/restore (delegated to controls-manager/camera-state.ts)
   // ---------------------------------------------------------------------------
 
-  private saveCameraState(): void {
-    this.savedCameraPosition.copy(this.camera.position);
-    this.savedCameraRotation.copy(this.camera.rotation);
-    this.savedCameraUp.copy(this.camera.up);
+  private makeCameraStateCtx(): CameraStateCtx {
+    return {
+      camera: this.camera,
+      currentControls: this.currentControls,
+      sceneScale: this.sceneScale,
+      savedCameraPosition: this.savedCameraPosition,
+      savedCameraRotation: this.savedCameraRotation,
+      savedCameraUp: this.savedCameraUp,
+      savedTarget: this.savedTarget,
+    };
+  }
 
-    // Save target for all control types.
-    // For orbit/ortho: use the explicit orbit target.
-    // For fly: derive from camera look direction so switching to orbit/ortho
-    // gets a sensible pivot point (not a stale target from a previous mode).
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      this.savedTarget.copy(this.currentControls.target);
-    } else {
-      const forward = new THREE.Vector3();
-      this.camera.getWorldDirection(forward);
-      this.savedTarget
-        .copy(this.camera.position)
-        .add(forward.multiplyScalar(this.sceneScale || 10));
-    }
+  private saveCameraState(): void {
+    saveCameraState(this.makeCameraStateCtx());
   }
 
   private restoreCameraState(): void {
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      // Set the target, then re-derive orientation from the current camera state
-      // (important: the constructor initialized with target=(0,0,0), which is wrong)
-      this.currentControls.target.copy(this.savedTarget);
-      this.currentControls.reinitialize();
-      this.currentControls.update();
-    }
-    // Fly controls automatically initialize from current camera state
+    restoreCameraState(this.makeCameraStateCtx());
   }
 
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
-    const change = (): void => {
-      this.dispatchEvent({ type: 'change' });
-    };
-    const start = (): void => {
-      this.dispatchEvent({ type: 'start' });
-    };
-    const end = (): void => {
-      this.dispatchEvent({ type: 'end' });
-    };
-
-    controls.addEventListener('change', change);
-    controls.addEventListener('start', start);
-    controls.addEventListener('end', end);
-
-    // THREE.EventDispatcher isn't a DOM EventTarget so EventGroup.on()
-    // doesn't apply; register manual cleanup callbacks instead.
-    this.controlEvents.add(() => controls.removeEventListener('change', change));
-    this.controlEvents.add(() => controls.removeEventListener('start', start));
-    this.controlEvents.add(() => controls.removeEventListener('end', end));
+    attachControlEventForwarders(
+      controls,
+      (type) => this.dispatchEvent({ type }),
+      this.controlEvents
+    );
   }
 
   private disposeCurrentControls(): void {
@@ -400,9 +321,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     this.config.naturalDrag = enabled;
     if (this.currentType !== 'orbit') return;
     if (!(this.currentControls instanceof LuxarOrbitControls)) return;
-    this.currentControls.mouseButtons = enabled
-      ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
-      : { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+    this.currentControls.mouseButtons = naturalDragButtonMap(enabled);
   }
 
   public getNaturalDrag(): boolean {
@@ -547,9 +466,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return;
     this.sceneScale = diagonal;
 
-    const m = config.controls.scaleMultipliers;
-    const minDist = diagonal * m.minDistanceFactor;
-    const maxDist = diagonal * m.maxDistanceFactor;
+    const { minDist, maxDist, flySpeed } = deriveScaleLimits(diagonal);
 
     // Update active orbit/ortho controls with scale-derived distance limits,
     // but only if auto-frame hasn't set precise limits yet.
@@ -561,9 +478,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
 
     // Update fly movement speed
-    this.config.flyMovementSpeed = diagonal * m.flySpeedFactor;
+    this.config.flyMovementSpeed = flySpeed;
     if (this.currentControls instanceof LuxarFlyControls) {
-      this.currentControls.movementSpeed = this.config.flyMovementSpeed;
+      this.currentControls.movementSpeed = flySpeed;
     }
 
     log.custom(
@@ -571,7 +488,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       Modules.CONTROLS,
       `Scale-aware controls: diagonal=${diagonal.toFixed(1)}, ` +
         `dist=[${minDist.toFixed(3)}, ${maxDist.toFixed(1)}], ` +
-        `flySpeed=${this.config.flyMovementSpeed!.toFixed(2)}`
+        `flySpeed=${flySpeed.toFixed(2)}`
     );
   }
 

@@ -390,7 +390,7 @@ describe('AnimationController', () => {
     });
 
     it('emits frame-start and frame-end on the event bus per frame', async () => {
-      const { eventBus } = await import('../../../utils/event-bus');
+      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       const startListener = vi.fn();
       const endListener = vi.fn();
       const offStart = eventBus.on('frame-start', startListener);

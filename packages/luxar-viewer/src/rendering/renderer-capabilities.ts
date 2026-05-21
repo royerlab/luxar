@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
 
-import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr-detection';
+import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr/hdr-detection';
 
 export type { WebGPURenderer } from 'three/webgpu';
 

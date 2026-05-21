@@ -35,11 +35,61 @@ The core package serves as the central orchestrator for the Luxar application, m
 
 ```typescript
 core/
-├── main.ts        # Standalone-app HTML entry point (~20 lines)
-├── bootstrap.ts   # Pre-init sequence (theme, console patch, codec warm,
-│                  #   debug surface) + factory the standalone app uses
-└── app.ts         # LuxarApp — the core embed surface (`init` / `dispose`)
+├── main.ts                          # Standalone-app HTML entry point (~30 lines)
+├── bootstrap.ts                     # Pre-init sequence (theme, console patch,
+│                                    #   codec warm, debug surface) + the standalone
+│                                    #   factory `bootstrapStandalone()`
+├── app.ts                           # `LuxarApp` — the core embed surface
+│                                    #   (`init` / `loadDataset` / `dispose`)
+│                                    # ~600 LOC of orchestration glue: every method is
+│                                    # a 3–15 line delegate to a helper in `app/`.
+└── app/                             # LuxarApp's private support tree (no external importers)
+    ├── factories.ts                 # Factory overrides resolver for heavy subsystems
+    ├── options.ts                   # `LuxarAppOptions` interface (re-exported from app.ts)
+    ├── init/                        # init() pipeline
+    │   ├── pipeline.ts              # Build the subsystem graph, returns components
+    │   ├── environment-guards.ts    # Browser + THREE.REVISION peer-dep checks
+    │   └── module-overrides.ts      # Wire `wasmPath` / `workerPath` into module singletons
+    ├── lifecycle/                   # dispose / focus / unload
+    │   ├── dispose-pipeline.ts      # Per-component safeDispose teardown + singleton clear
+    │   ├── focus-handling.ts        # Window-focus + visibility-change → animation pause/resume
+    │   └── unload-handling.ts       # `beforeunload` → app.dispose()
+    ├── dataset/                     # Dataset routing
+    │   ├── load-dataset.ts          # Scene load + scene-dependent UI init sequence
+    │   ├── show-browser.ts          # Open the DatasetBrowser modal
+    │   ├── should-show-browser.ts   # URL-classification + zarr-metadata HEAD probe
+    │   ├── browser-decision.ts      # Pure URL classifier (must-browse / probe / load)
+    │   └── browser-shortcut.ts      # `open-dataset-browser` custom-event listener
+    ├── viewer-config/               # Zarr `viewer_config` + panel visibility
+    │   ├── apply-state.ts           # Dispatch `viewer_config` fields to UI subsystems
+    │   └── panel-visibility.ts      # Capture / restore RecordingControls + RecordingPanel state
+    ├── snapshot/                    # Camera / dimension state JSON
+    │   └── viewer-snapshot.ts       # captureSnapshot / restoreSnapshot for embed share-links
+    ├── debug/                       # `window.__luxarDebug` surface
+    │   ├── debug-interface.ts       # Populate `__luxarDebug` with scene/camera/runtime refs
+    │   ├── debug-state.ts           # Scene-walking helper for `__luxarDebug.getState()`
+    │   ├── debug-cache-helpers.ts   # `__luxarDebug.cache.*` thin wrappers over SceneLoader
+    │   └── cache-stats-view.ts      # Open the data-monitor on the Cache tab
+    ├── picking/                     # GPU picking init + result handler
+    │   ├── init-picking.ts          # Stand up PickingSystem + LabelLoaders + listeners
+    │   └── pick-result-handler.ts   # Pure pick-result → OverlayManager hover content
+    └── overlays/                    # Screen-space overlay subsystems
+        ├── init-overlays.ts         # OverlayManager + zarr overlay_groups load
+        ├── init-scale-bar.ts        # ScaleBar + per-frame update + keyboard toggle
+        ├── init-colormap-legend.ts  # ColormapLegend + layer-state wiring
+        └── dispose-overlays.ts      # Tear down OverlayManager (called by loadDataset)
 ```
+
+**Layout rule** (Principle 1: depth ≠ specificity, applied recursively):
+
+- `app.ts`, `bootstrap.ts`, `main.ts` sit at the package root because they have external importers (the package barrel + the standalone bundler entry).
+- Every file under `app/` has zero non-test external importers — it's strictly LuxarApp's private support code, grouped thematically into `init/`, `lifecycle/`, `dataset/`, `viewer-config/`, `snapshot/`, `debug/`, `picking/`, `overlays/`.
+- Tests mirror the source layout under `tests/unit/core/app/<theme>/`.
+
+**Public exports**: `class LuxarApp` (with `init(options)`, `dispose()`, `captureSnapshot()`, `restoreSnapshot(snap)`) and `LuxarAppOptions` from `app.ts`; `bootstrapStandalone()` from `bootstrap.ts`. Nothing inside `app/` is exported externally.
+
+**Dependencies**: internally couples to `scene`, `controls`, `input`, `data`,
+`rendering`, `ui/*`, `config`, `themes`, and `utils`; externally only `three`.
 
 **Component Dependency Flow**:
 
