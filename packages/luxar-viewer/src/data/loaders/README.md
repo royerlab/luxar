@@ -65,9 +65,13 @@ interface SpatialDataLoader<TViewState, TLoadedData> {
 }
 ```
 
-### 2. range-loader.ts
+### 2. spatial-query/range-loader.ts
 
-Unified encoding dispatch:
+Unified encoding dispatch. The orchestrator (`spatial-query/range-loader.ts`)
+is a 111-line dispatcher; each encoding's body lives in a sibling helper
+under `spatial-query/range-loader/` (`broadcasted.ts`, `quantized.ts`,
+`lut.ts`, `direct.ts`, `array-ref.ts`, plus `detect-encoding.ts`,
+`ref-resolution.ts`, `shared-instance.ts`, and the shared `encoding-types.ts`).
 
 ```typescript
 import { RangeLoader, getSharedRangeLoader } from './loaders';
@@ -94,12 +98,12 @@ Supported encodings:
 - **array_ref**: Reference to another array (resolved at init)
 - **direct**: No encoding, pass-through
 
-### 3. spatial-query-builder.ts
+### 3. spatial-query/spatial-query-builder.ts
 
 Canonical chunk-bounds query API consumed by Points, Lines, and GSplats loaders.
 The constructor takes a discriminated-union `SpatialQueryOptions` — pass either
-`geometryType` (delegates tolerance to `tolerance-computer.computeTolerance`) or
-a pre-computed `tolerance: number[]` (used by points, which has bespoke
+`geometryType` (delegates tolerance to `spatial-query/tolerance-computer.computeTolerance`)
+or a pre-computed `tolerance: number[]` (used by points, which has bespoke
 `EffectiveRadiusConfig` semantics).
 
 Geometry-aware path (gsplats / lines):
@@ -153,7 +157,7 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 
 ## Tolerance calculation
 
-Unified tolerance logic lives in `tolerance-computer.ts::computeTolerance`
+Unified tolerance logic lives in `spatial-query/tolerance-computer.ts::computeTolerance`
 and is selected by `geometryType`:
 
 | Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
@@ -292,7 +296,7 @@ logModule, notFoundMessage)`: open a `chunk_bounds` / `vertex_chunk_bounds`
 shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
   spatial ordering legitimately omit the array) and on corrupt-zarr / network
   errors after a warning.
-- **`color-attribute-utils.ts`** — shared color-range loader with native-dtype
+- **`color-loader.ts`** — shared color-range loader with native-dtype
   preservation. Exports `loadColorRanges()` (end-to-end load with direct /
   `rgb_uint8` shortcut / encoded-then-restored branches), `allocateColorBuffer`,
   `restoreOriginalDtype`, `getExpectedColorType`, `colorBufferTypeMatches`,
@@ -303,17 +307,17 @@ shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
   `announceExtendToAllOnce` (one-shot BROADCAST emoji log on first load).
   Splitting into two functions matches the existing call structure of the
   loaders (warning → chunkIndex early-return → broadcast).
-- **`image-label-loader.ts`** — `ImageLabelLoader`: lazy per-element image
-  fetching from `image_label_offsets` + `image_label_bytes` arrays. Bulk-loads
-  the offsets table (small), then fetches each image's byte range on demand.
-  Decoded blobs are cached as blob URLs in a 50 MB-default LRU; eviction
-  revokes the URL. Detects JPEG / PNG / WebP from magic bytes.
-- **`label-loader.ts`** — `LabelLoader`: lazy CSR-style string-label fetching
-  from `label_offsets` + `label_bytes`. Bulk-loads the whole node's labels on
-  first hover; concurrent requests for the same node share one in-flight
-  promise.
-- **`overlay-loader.ts`** — `loadOverlayConfigs(store, rootLoc)`: enumerates
-  the `overlays/` group and parses each child's `.zattrs` into an
+- **`picking/image-label-loader.ts`** — `ImageLabelLoader`: lazy per-element
+  image fetching from `image_label_offsets` + `image_label_bytes` arrays.
+  Bulk-loads the offsets table (small), then fetches each image's byte range
+  on demand. Decoded blobs are cached as blob URLs in a 50 MB-default LRU;
+  eviction revokes the URL. Detects JPEG / PNG / WebP from magic bytes.
+- **`picking/label-loader.ts`** — `LabelLoader`: lazy CSR-style string-label
+  fetching from `label_offsets` + `label_bytes`. Bulk-loads the whole node's
+  labels on first hover; concurrent requests for the same node share one
+  in-flight promise.
+- **`overlays/overlay-loader.ts`** — `loadOverlayConfigs(store, rootLoc)`:
+  enumerates the `overlays/` group and parses each child's `.zattrs` into an
   `OverlayConfig` (text / image / html, with per-type fields). Results are
   z-index-sorted; missing `overlays/` group returns `[]` silently.
 - **`loader-metrics.ts`** — `recordLoadEvent(counters, points, bytes,
@@ -333,24 +337,43 @@ loadTime)` (rolling-mean update of `loads` / `pointsLoaded` / `bytesLoaded`
 
 ## File Structure
 
+External callers should import from the barrel (`from '../loaders'`) rather
+than reach into subpackages. The internal layout is:
+
 ```
 src/data/loaders/
-├── index.ts                      # Module exports (barrel)
+├── index.ts                      # Module exports (barrel — only public surface)
 ├── README.md                     # This file
 ├── base-types.ts                 # Common type definitions (BaseViewState, LoadRange, BaseLoader, ...)
-├── range-loader.ts               # Encoding dispatch (broadcasted/quantized/LUT/array_ref/direct)
-├── spatial-query-builder.ts      # Canonical chunk-bounds AABB query + helpers
-├── tolerance-computer.ts         # Geometry-aware per-dimension tolerance
-├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
-├── color-attribute-utils.ts      # Shared color-range loader with native-dtype preservation
-├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce
-├── image-label-loader.ts         # Lazy per-element image-label fetching (LRU blob URLs)
-├── label-loader.ts               # Lazy CSR-style string-label fetching
-├── overlay-loader.ts             # Reads overlay configurations from the zarr store
+├── color-loader.ts               # Shared color-range loader with native-dtype preservation
+├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
 ├── loader-metrics.ts             # Pure helpers for moving-average load metrics
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
-└── once-init.ts                  # One-shot async initializer with retry-on-failure
+├── once-init.ts                  # One-shot async initializer with retry-on-failure
+├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce
+│
+├── spatial-query/                # Chunk-bounds → tolerance → AABB scan → range fetch
+│   ├── spatial-query-builder.ts  # Canonical chunk-bounds AABB query + helpers
+│   ├── tolerance-computer.ts     # Geometry-aware per-dimension tolerance
+│   ├── range-loader.ts           # Encoding-dispatch orchestrator (111 LOC)
+│   └── range-loader/             # Per-encoding helper bodies (private to range-loader.ts)
+│       ├── encoding-types.ts     # EncodingType, RangeLoaderConfig, shared helpers
+│       ├── detect-encoding.ts    # Encoding detection from ArrayMetadata
+│       ├── broadcasted.ts        # Single value → all elements
+│       ├── quantized.ts          # uint8/uint16 → float32 dequantization
+│       ├── lut.ts                # Lookup-table decoding
+│       ├── direct.ts             # Unencoded pass-through
+│       ├── array-ref.ts          # Array ref diagnostic (should be pre-resolved)
+│       ├── ref-resolution.ts     # Open target array on array_ref
+│       └── shared-instance.ts    # getSharedRangeLoader singleton
+│
+├── picking/                      # Label loaders consumed by core/app/picking
+│   ├── label-loader.ts           # Lazy CSR-style string-label fetching
+│   └── image-label-loader.ts     # Lazy per-element image-label fetching (LRU blob URLs)
+│
+└── overlays/                     # Overlay metadata loader
+    └── overlay-loader.ts         # Reads overlay configurations from the zarr store
 ```
 
 ## Testing
@@ -360,7 +383,7 @@ src/data/loaders/
 pnpm test src/tests/unit/data/loaders/
 
 # Run specific tests
-pnpm test src/tests/unit/data/loaders/spatial-query-builder.test.ts
+pnpm test src/tests/unit/data/loaders/spatial-query/spatial-query-builder.test.ts
 pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 ```
 
@@ -391,8 +414,8 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   `isHiddenDimension` type guards.
 - **chunk-bounds-loader.test.ts** — `fetchChunkBoundsArray` happy-path,
   404 soft-fallback, and corrupt-zarr warning behavior.
-- **color-attribute-utils.test.ts** — native-dtype allocation, direct vs
-  encoded vs array_ref branches, `original_dtype` restoration with clamping.
+- **color-loader.test.ts** — native-dtype allocation, direct vs encoded vs
+  array_ref branches, `original_dtype` restoration with clamping.
 - **extend-to-all-preflight.test.ts** — warning and one-time announce
   predicates, silence when `extendDims` is empty.
 - **loader-metrics.test.ts** — `recordLoadEvent` rolling-mean math,
@@ -412,5 +435,5 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 
 ## See Also
 
-- [../array-decoder/](../array-decoder/) — low-level encoding metadata and decoders consumed by `range-loader.ts`.
+- [../array-decoder/](../array-decoder/) — low-level encoding metadata and decoders consumed by `spatial-query/range-loader.ts`.
 - [../../workers/README.md](../../workers/README.md) — worker pool API and the `runWithTimeout()` contract referenced above.
