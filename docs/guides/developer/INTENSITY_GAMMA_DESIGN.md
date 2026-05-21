@@ -231,7 +231,7 @@ implemented as a separate post-processing pass.
 - This avoids an extra render target allocation and preserves the fused pipeline
 
 **Approach:** `MegaShaderMaterial` exposes `uExposure`, `uGlobalOffset`, and
-`uGlobalGamma` uniforms. `mega-shader.glsl.ts` applies EOG immediately before
+`uGlobalGamma` uniforms. `mega/shader.glsl.ts` applies EOG immediately before
 calling Three's tone-mapping shader chunks:
 
 ```glsl
@@ -287,10 +287,10 @@ Dual-stack: each geometry has a parallel GLSL (WebGL2 path) and TSL (WebGPU path
 - `packages/luxar-viewer/src/rendering/materials/gsplat/material-tsl.ts` — GOG uniforms (WebGPU)
 
 ### TypeScript (post-processing + scene management)
-- `packages/luxar-viewer/src/rendering/post-processing/mega-shader-material.ts` — EOG uniforms and tone-mapping mode `#define` (WebGL2 path)
-- `packages/luxar-viewer/src/rendering/post-processing/mega-shader-material-tsl.ts` — EOG uniforms and tone-mapping mode uniform (WebGPU path)
-- `packages/luxar-viewer/src/rendering/post-processing/mega-shader.glsl.ts` — fused EOG + tone-mapping shader stage (WebGL2)
-- `packages/luxar-viewer/src/rendering/post-processing/mega.tsl.ts` — fused EOG + tone-mapping shader stage (WebGPU)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/material.ts` — EOG uniforms and tone-mapping mode `#define` (WebGL2 path)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/material-tsl.ts` — EOG uniforms and tone-mapping mode uniform (WebGPU path)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/shader.glsl.ts` — fused EOG + tone-mapping shader stage (WebGL2)
+- `packages/luxar-viewer/src/rendering/post-processing/mega/shader.tsl.ts` — fused EOG + tone-mapping shader stage (WebGPU)
 - `packages/luxar-viewer/src/rendering/post-processing/post-processing-manager.ts` — exposure/offset/gamma update methods
 - `packages/luxar-viewer/src/rendering/material-manager.ts` — per-node GOG uniforms in material creation
 - `packages/luxar-viewer/src/scene/scene-manager.ts` — `updateExposure()`/`updateGlobalOffset()`/`updateGlobalGamma()` routing
