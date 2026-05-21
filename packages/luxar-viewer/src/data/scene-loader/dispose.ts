@@ -127,4 +127,3 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
 
   return { rootGroupCleared: true, sceneGraphCleared: true } as const;
 }
-

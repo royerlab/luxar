@@ -177,9 +177,7 @@ describe('ResizeOrchestrator.dispose', () => {
       rafCallback = cb;
       return 42;
     });
-    const mockCancelRAF = vi
-      .spyOn(window, 'cancelAnimationFrame')
-      .mockImplementation(() => {});
+    const mockCancelRAF = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
 
     const harness = makeCtx();
     orchestrator.scheduleResize(() => harness.ctx);

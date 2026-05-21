@@ -47,9 +47,7 @@ describe('validateCache', () => {
     cfg.cache.l1MaxSizeMB = 5;
     const result = invokeValidator(validateCache, cfg);
     expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(
-      expect.stringMatching(/cache\.l1MaxSizeMB.*must be ≥ 10/)
-    );
+    expect(result.errors).toContainEqual(expect.stringMatching(/cache\.l1MaxSizeMB.*must be ≥ 10/));
   });
 
   it('accepts cache.l1MaxSizeMB at the floor (10)', () => {

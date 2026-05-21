@@ -139,9 +139,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
       seed?: number;
     }) => {
       const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
-      const { createInstancedLinesMesh, isAllSharpnessTwo } = await import(
-        '../../../rendering/line-geometry'
-      );
+      const { createInstancedLinesMesh, isAllSharpnessTwo } =
+        await import('../../../rendering/line-geometry');
       const { materialManager } = await import('../../../rendering/material-manager');
       const cfg = generateSyntheticLines(spec);
       // Build the visual material directly through the

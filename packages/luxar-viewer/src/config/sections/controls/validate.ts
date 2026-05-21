@@ -3,11 +3,7 @@ import type { AppConfig } from '../../types';
 /**
  * Validate control configuration (ConfigRange consistency)
  */
-export function validateControls(
-  config: AppConfig,
-  errors: string[],
-  _warnings: string[]
-): void {
+export function validateControls(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { controls } = config;
 
   // Validate all ConfigRange objects: min < max and min <= default <= max

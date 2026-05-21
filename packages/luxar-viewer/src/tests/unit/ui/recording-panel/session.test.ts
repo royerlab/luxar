@@ -50,7 +50,10 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
     getDims: vi.fn().mockReturnValue({ ndim: 4, displayed: [0, 1, 2] }),
     getDimensionNames: vi.fn().mockReturnValue(['x', 'y', 'z', 'time']),
     getDimensionRanges: vi.fn().mockReturnValue([
-      [0, 100], [0, 100], [0, 100], [0, 50],
+      [0, 100],
+      [0, 100],
+      [0, 100],
+      [0, 50],
     ]),
     setDimensionValue: vi.fn(),
     hasNonDisplayedDimensions: vi.fn().mockReturnValue(true),

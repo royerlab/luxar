@@ -10,10 +10,7 @@
 
 import * as THREE from 'three';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  loadDataset,
-  type LoadDatasetPorts,
-} from '../../../../../core/app/dataset/load-dataset';
+import { loadDataset, type LoadDatasetPorts } from '../../../../../core/app/dataset/load-dataset';
 
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   getSceneLoader: vi.fn(),

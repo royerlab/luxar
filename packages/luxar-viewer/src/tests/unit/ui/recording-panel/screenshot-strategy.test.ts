@@ -61,7 +61,13 @@ vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: a
 vi.mock('../../../../ui/gui', async () => {
   const { createMockController, createMockFolder, createMockGUI } = await import('./_helpers');
   const MockGUI = vi.fn().mockImplementation(() => createMockGUI());
-  return { default: MockGUI, GUI: MockGUI, Controller: vi.fn(), createMockController, createMockFolder };
+  return {
+    default: MockGUI,
+    GUI: MockGUI,
+    Controller: vi.fn(),
+    createMockController,
+    createMockFolder,
+  };
 });
 vi.mock('../../../../config', () => ({ config: { ui: { zIndex: { recordingPanel: 1500 } } } }));
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
@@ -74,7 +80,10 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
     getDims: vi.fn().mockReturnValue({ ndim: 4, displayed: [0, 1, 2] }),
     getDimensionNames: vi.fn().mockReturnValue(['x', 'y', 'z', 'time']),
     getDimensionRanges: vi.fn().mockReturnValue([
-      [0, 100], [0, 100], [0, 100], [0, 50],
+      [0, 100],
+      [0, 100],
+      [0, 100],
+      [0, 50],
     ]),
     setDimensionValue: vi.fn(),
     hasNonDisplayedDimensions: vi.fn().mockReturnValue(true),

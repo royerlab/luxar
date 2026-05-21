@@ -6,10 +6,6 @@
  */
 
 export { LayersPanel } from './layers/layers-panel';
-export {
-  LayerStateManager,
-  computeUniforms,
-  computeDisplayRange,
-} from './layers/layer-state';
+export { LayerStateManager, computeUniforms, computeDisplayRange } from './layers/layer-state';
 export type { LayerInfo, DisplayUniforms, SelectionMode } from './layers/layer-state';
 export { RangeSlider } from './layers/range-slider';

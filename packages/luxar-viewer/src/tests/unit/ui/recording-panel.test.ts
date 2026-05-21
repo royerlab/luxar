@@ -132,10 +132,7 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
 }));
 
 import { RecordingPanel } from '../../../ui/recording-panel';
-import {
-  createMockSceneManager,
-  createMockAnimationController,
-} from './recording-panel/_helpers';
+import { createMockSceneManager, createMockAnimationController } from './recording-panel/_helpers';
 
 URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
 URL.revokeObjectURL = vi.fn();

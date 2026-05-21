@@ -105,11 +105,7 @@ export function integrateRotation(ctx: FlyPhysicsCtx, delta: number): boolean {
 
   // Handle angular velocity for rotation with arrow keys and Q/E roll
   // True airplane-like fly controls: all rotations relative to camera's local axes
-  if (
-    ctx.lookState.horizontal !== 0 ||
-    ctx.lookState.vertical !== 0 ||
-    ctx.lookState.roll !== 0
-  ) {
+  if (ctx.lookState.horizontal !== 0 || ctx.lookState.vertical !== 0 || ctx.lookState.roll !== 0) {
     // Get camera's local axes in world space
     // These define the rotation axes for consistent airplane-like controls
     _v0.set(1, 0, 0).applyQuaternion(ctx.orientation);

@@ -20,9 +20,10 @@ export function getActivePixelRatio(override: number | null): number {
  * future monitor-DPI changes continue to track `window.devicePixelRatio`
  * automatically.
  */
-export function computePixelRatioOverride(
-  dpr: number
-): { override: number | null; active: number } {
+export function computePixelRatioOverride(dpr: number): {
+  override: number | null;
+  active: number;
+} {
   const nativeDPR = window.devicePixelRatio || 1;
   const safeDPR = Number.isFinite(dpr) && dpr > 0 ? dpr : nativeDPR;
   const override = Math.abs(safeDPR - nativeDPR) < 0.01 ? null : safeDPR;

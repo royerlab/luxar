@@ -159,9 +159,7 @@ function getCommonMaterialBuckets(props: {
 export function pointCacheKey(props: PointMaterialProperties, backend: MaterialBackend): string {
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
-  const radiusBucket = props.radiusScale
-    ? Math.round(Math.max(0, props.radiusScale) * 1000)
-    : 1000;
+  const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
   const sharpnessBucket = props.sharpnessScale
     ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
     : 1000;

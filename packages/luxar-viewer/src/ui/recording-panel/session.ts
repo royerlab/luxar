@@ -435,12 +435,7 @@ export class RecordingSession {
 
   startSliderSync(syncDimIndex: number, onComplete: () => void): void {
     if (!this.animationManager) return;
-    this.sliderSync.start(
-      syncDimIndex,
-      this.animationManager,
-      onComplete,
-      () => !this.disposed
-    );
+    this.sliderSync.start(syncDimIndex, this.animationManager, onComplete, () => !this.disposed);
   }
 
   cleanupSyncListener(): void {

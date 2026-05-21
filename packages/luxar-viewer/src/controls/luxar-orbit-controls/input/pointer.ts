@@ -81,11 +81,7 @@ export function pointerNDC(event: PointerEvent, domElement: HTMLElement): THREE.
  * the `mouseButtons` mapping and the `enableRotate`/`enablePan`/`enableZoom`
  * gates.
  */
-export function mouseAction(
-  button: number,
-  shiftKey: boolean,
-  ctx: OrbitInputCtx
-): ControlAction {
+export function mouseAction(button: number, shiftKey: boolean, ctx: OrbitInputCtx): ControlAction {
   let mapping: THREE.MOUSE | null = null;
   if (button === 0) mapping = ctx.mouseButtons.LEFT;
   else if (button === 1) mapping = ctx.mouseButtons.MIDDLE;

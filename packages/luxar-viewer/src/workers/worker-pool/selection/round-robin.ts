@@ -16,10 +16,7 @@ export interface RoundRobinResult {
   nextIndex: number;
 }
 
-export function nextRoundRobin(
-  workers: WorkerInstance[],
-  cursor: number
-): RoundRobinResult {
+export function nextRoundRobin(workers: WorkerInstance[], cursor: number): RoundRobinResult {
   const instance = workers[cursor];
   const nextIndex = (cursor + 1) % workers.length;
   return { instance, nextIndex };

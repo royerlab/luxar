@@ -195,16 +195,12 @@ describe('validateBloomConsistency', () => {
     const cfg = cloneConfig();
     cfg.renderingControls.defaults.bloomLevels = 1;
     expect(
-      invokeValidator(validateBloomConsistency, cfg).errors.filter((e) =>
-        e.includes('bloomLevels')
-      )
+      invokeValidator(validateBloomConsistency, cfg).errors.filter((e) => e.includes('bloomLevels'))
     ).toHaveLength(0);
 
     cfg.renderingControls.defaults.bloomLevels = 12;
     expect(
-      invokeValidator(validateBloomConsistency, cfg).errors.filter((e) =>
-        e.includes('bloomLevels')
-      )
+      invokeValidator(validateBloomConsistency, cfg).errors.filter((e) => e.includes('bloomLevels'))
     ).toHaveLength(0);
   });
 

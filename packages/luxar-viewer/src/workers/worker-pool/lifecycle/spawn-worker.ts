@@ -28,11 +28,7 @@ export interface SpawnWorkerOptions {
   urlOverride: string | undefined;
   pendingWorkers: Set<Worker>;
   attachPermanentHandlers: (worker: Worker, workerNumber: number) => void;
-  runInitGuard: (
-    worker: Worker,
-    api: Remote<DataWorkerAPI>,
-    workerNumber: number
-  ) => Promise<void>;
+  runInitGuard: (worker: Worker, api: Remote<DataWorkerAPI>, workerNumber: number) => Promise<void>;
   isCurrentGeneration: () => boolean;
 }
 
@@ -52,9 +48,7 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<WorkerInsta
   // The data-worker URL override (set via setDataWorkerUrl) lets embedders
   // whose bundlers don't support vite's `?worker` import point at an
   // explicitly-built worker bundle.
-  const worker = urlOverride
-    ? new Worker(urlOverride, { type: 'module' })
-    : new dataWorkerCtor();
+  const worker = urlOverride ? new Worker(urlOverride, { type: 'module' }) : new dataWorkerCtor();
 
   // Track this worker as in-flight so a concurrent dispose() can terminate it.
   // Removed on success or on the per-factory catch path.

@@ -40,7 +40,9 @@ function makePooled(targetBytes: number, type: PooledBuffer['type']): PooledBuff
 }
 
 /** Build an EvictorCtx with empty type pools by default. */
-function makeCtx(opts: { maxPoolBytes: number; maxPoolSize?: number } = { maxPoolBytes: 1_000_000 }): EvictorCtx {
+function makeCtx(
+  opts: { maxPoolBytes: number; maxPoolSize?: number } = { maxPoolBytes: 1_000_000 }
+): EvictorCtx {
   return {
     pointBuffers: new Map(),
     lineBuffers: new Map(),

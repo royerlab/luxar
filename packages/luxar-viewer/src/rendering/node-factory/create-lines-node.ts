@@ -11,11 +11,7 @@
  */
 
 import * as THREE from 'three';
-import {
-  materialManager,
-  type BlendingMode,
-  type LuxarLineMaterial,
-} from '../material-manager';
+import { materialManager, type BlendingMode, type LuxarLineMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
 import {
   createInstancedLinesMesh,

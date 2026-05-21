@@ -54,16 +54,8 @@ import { log, Modules } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
-import type {
-  LinesDataLoader,
-  LinesViewState,
-  LoadedLinesData,
-} from '../types/lines';
-import type {
-  GSplatsDataLoader,
-  GSplatsViewState,
-  LoadedGSplatsData,
-} from '../types/gsplats';
+import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
+import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
@@ -769,8 +761,7 @@ export class SceneLoader {
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
-      updatePointsGeometry: (path, data, session) =>
-        this.updatePointsGeometry(path, data, session),
+      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
       processLinesData: (path, data, viewState, session) =>
         this.processLinesData(path, data, viewState, session),
       commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),

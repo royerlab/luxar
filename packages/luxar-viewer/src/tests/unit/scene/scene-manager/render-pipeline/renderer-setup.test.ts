@@ -126,9 +126,7 @@ describe('createWebGPURenderer', () => {
     });
   });
 
-  function stubNavigatorGpu(
-    requestAdapter: () => Promise<unknown>
-  ): void {
+  function stubNavigatorGpu(requestAdapter: () => Promise<unknown>): void {
     Object.defineProperty(globalThis, 'navigator', {
       value: { ...originalNavigator, gpu: { requestAdapter } },
       configurable: true,
