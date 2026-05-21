@@ -2,8 +2,8 @@
  * Brown–Conrady lens-distortion math for the picking system.
  *
  * TypeScript port of the GLSL `applyDistortion` function in
- * `rendering/post-processing/mega-shader.glsl.ts:117-128` (and its
- * TSL counterpart in `mega.tsl.ts`). Uses the green-channel
+ * `rendering/post-processing/mega/shader.glsl.ts:117-128` (and its
+ * TSL counterpart in `mega/shader.tsl.ts`). Uses the green-channel
  * distortion (the reference channel — no chromatic offset).
  *
  * Maps from distorted screen space back into undistorted source space.
@@ -45,7 +45,7 @@ export interface UVScratch {
  * Apply Brown–Conrady distortion to UV coordinates and write the result
  * into `out`. Returns `out` for ergonomic chaining.
  *
- * Algorithm (must stay in sync with `mega-shader.glsl.ts::applyDistortion`):
+ * Algorithm (must stay in sync with `mega/shader.glsl.ts::applyDistortion`):
  *   1. UV ∈ [0, 1] → normalised n ∈ [-1, 1].
  *   2. Radial distortion: `xd = (1 + k_x · r²) · xn` (likewise y).
  *   3. Apply intrinsic matrix K with skew, principal point, focal length.

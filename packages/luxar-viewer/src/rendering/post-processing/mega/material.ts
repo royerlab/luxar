@@ -13,11 +13,11 @@
  * Toggling an effect on/off triggers a shader recompile via the
  * `#ifdef USE_*` gates. Value tweaks just touch uniforms.
  *
- * @module rendering/post-processing/mega-shader-material
+ * @module rendering/post-processing/mega/material
  */
 
 import * as THREE from 'three';
-import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './mega-shader.glsl';
+import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './shader.glsl';
 
 /**
  * Map THREE.ToneMapping → the `LUXAR_TONE_MAPPING_MODE` shader-define

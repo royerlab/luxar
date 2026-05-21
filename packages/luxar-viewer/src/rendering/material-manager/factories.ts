@@ -24,8 +24,8 @@ import { GSplatPickingMaterial } from '../picking/gsplat/material';
 import { PointPickingTSLMaterial } from '../picking/point/material-tsl';
 import { LinePickingTSLMaterial } from '../picking/line/material-tsl';
 import { GSplatPickingTSLMaterial } from '../picking/gsplat/material-tsl';
-import { MegaShaderMaterial } from '../post-processing/mega-shader-material';
-import { MegaShaderTSLMaterial } from '../post-processing/mega-shader-material-tsl';
+import { MegaShaderMaterial } from '../post-processing/mega/material';
+import { MegaShaderTSLMaterial } from '../post-processing/mega/material-tsl';
 import type { RendererCapabilities } from '../renderer-capabilities';
 import { clamp } from '../../utils/clamp';
 
