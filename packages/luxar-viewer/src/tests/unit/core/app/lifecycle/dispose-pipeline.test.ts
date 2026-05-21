@@ -145,15 +145,17 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     imageLabelLoader:
       s.imageLabelLoader as unknown as DisposePipelinePorts['imageLabelLoader'],
     datasetBrowser: s.datasetBrowser as unknown as DisposePipelinePorts['datasetBrowser'],
-    clearScaleBar: s.clears.scaleBar,
-    clearColormapLegend: s.clears.colormapLegend,
-    clearOverlayManager: s.clears.overlayManager,
-    clearRecordingPanel: s.clears.recordingPanel,
-    clearLayersPanel: s.clears.layersPanel,
-    clearPickingSystem: s.clears.pickingSystem,
-    clearLabelLoader: s.clears.labelLoader,
-    clearImageLabelLoader: s.clears.imageLabelLoader,
-    clearDatasetBrowser: s.clears.datasetBrowser,
+    // vitest's Mock type doesn't structurally satisfy `() => void`,
+    // so cast each clearX through unknown at the call site.
+    clearScaleBar: s.clears.scaleBar as unknown as () => void,
+    clearColormapLegend: s.clears.colormapLegend as unknown as () => void,
+    clearOverlayManager: s.clears.overlayManager as unknown as () => void,
+    clearRecordingPanel: s.clears.recordingPanel as unknown as () => void,
+    clearLayersPanel: s.clears.layersPanel as unknown as () => void,
+    clearPickingSystem: s.clears.pickingSystem as unknown as () => void,
+    clearLabelLoader: s.clears.labelLoader as unknown as () => void,
+    clearImageLabelLoader: s.clears.imageLabelLoader as unknown as () => void,
+    clearDatasetBrowser: s.clears.datasetBrowser as unknown as () => void,
   };
 }
 

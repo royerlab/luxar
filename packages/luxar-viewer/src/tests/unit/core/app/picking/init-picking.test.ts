@@ -10,7 +10,6 @@ import * as THREE from 'three';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   initPicking,
-  type InitPickingPorts,
   type InitPickingResult,
 } from '../../../../../core/app/picking/init-picking';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
