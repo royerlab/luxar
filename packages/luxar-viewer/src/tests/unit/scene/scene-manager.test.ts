@@ -248,20 +248,32 @@ vi.stubGlobal('document', {
   removeEventListener: vi.fn(),
 });
 
-// Mock the modules that depend on WebGL
-vi.mock('../rendering/post-processing', () => ({
+// Mock PostProcessingManager so the WebGL-dependent pipeline (bloom
+// chain, mega-shader allocation, EXR encoder) doesn't try to run under
+// jsdom. The stub mirrors only the methods the test path actually hits:
+// resize + DPR scaling during init / resizer.resizeNow, render +
+// continuous-animation query from the animation loop (if exercised),
+// rebuildAfterContextRestore for the context-restored handler, and
+// dispose for teardown. Setters (updateExposure / setBloomEnabled /
+// etc.) are not used by this test suite but are added defensively so a
+// future test calling them through `sceneManager.*` won't crash.
+vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
   PostProcessingManager: vi.fn().mockImplementation(() => ({
-    init: vi.fn(),
-    render: vi.fn(),
+    // Resize / DPR / camera plumbing (resize-orchestrator + camera-mode)
     resize: vi.fn(),
+    setDPRScale: vi.fn(),
+    setCamera: vi.fn(),
+    // Render loop (animation-controller)
+    render: vi.fn(),
+    needsContinuousAnimation: vi.fn(() => false),
+    // Lifecycle: dispose (scene-manager.dispose) +
+    // rebuildAfterContextRestore (webgl-context-recovery).
     dispose: vi.fn(),
-    updateBloomParams: vi.fn(),
-    setEnabled: vi.fn(),
-    // Required by WebGLContextRecovery's restore handler — without it, the
-    // context-restored callback throws inside its try/catch and the
-    // downstream markSceneResourcesDirtyForContextRestore + onContextRestored
-    // calls never run.
     rebuildAfterContextRestore: vi.fn(),
+    // EOG sliders (scene-manager getters/setters at ~line 956)
+    updateExposure: vi.fn(),
+    updateGlobalOffset: vi.fn(),
+    updateGlobalGamma: vi.fn(),
   })),
 }));
 
