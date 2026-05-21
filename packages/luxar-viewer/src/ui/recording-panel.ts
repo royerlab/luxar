@@ -13,9 +13,7 @@ import type { AnimationController } from '../scene/animation/animation-controlle
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { OverlayManager } from './overlay-manager';
-import {
-  generateFilename as generateFilenamePure,
-} from './recording-panel/media-utilities';
+import { generateFilename as generateFilenamePure } from './recording-panel/media-utilities';
 import {
   renderFrameToCanvas as renderFrameToCanvasHelper,
   downloadBlob as downloadBlobHelper,
@@ -126,8 +124,7 @@ export class RecordingPanel {
 
     // downloadBlob and generateFilename are routed through Panel methods
     // (not directly to the helpers) so test spies on Panel still intercept.
-    const downloadBlob = (blob: Blob, filename: string): void =>
-      this.downloadBlob(blob, filename);
+    const downloadBlob = (blob: Blob, filename: string): void => this.downloadBlob(blob, filename);
     const generateFilename = (ext: string): string => this.generateFilename(ext);
 
     this.screenshotStrategy = new ScreenshotStrategy(sceneManager, {

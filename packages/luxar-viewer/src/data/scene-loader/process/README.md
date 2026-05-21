@@ -10,10 +10,10 @@ atomic commit phase.
 
 ## Files
 
-| File                         | Role                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `data-processor-lines.ts`    | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesTo3D` on the main thread. Returns `StagedLinesCommit`.                  |
-| `data-processor-gsplats.ts`  | GSplats pipeline. Reads the mesh's `uTruncate` uniform (or `DEFAULT_TRUNCATE = 3.0`), derives `discreteDims` / `discreteSteps` / `extendToAllDims` from `viewState.dimensions`, projects via worker (`projectGSplatsTo3DUsingWorker`) when `useWebWorkers && splatCount > 1000 && ndim > 3`, packs Cholesky factors via `packCholeskyForShader`, and returns `StagedGSplatsCommit`. |
+| File                        | Role                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data-processor-lines.ts`   | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesTo3D` on the main thread. Returns `StagedLinesCommit`.                                                          |
+| `data-processor-gsplats.ts` | GSplats pipeline. Reads the mesh's `uTruncate` uniform (or `DEFAULT_TRUNCATE = 3.0`), derives `discreteDims` / `discreteSteps` / `extendToAllDims` from `viewState.dimensions`, projects via worker (`projectGSplatsTo3DUsingWorker`) when `useWebWorkers && splatCount > 1000 && ndim > 3`, packs Cholesky factors via `packCholeskyForShader`, and returns `StagedGSplatsCommit`. |
 
 Both files also **re-export** their sibling commit helper
 (`commitLinesGeometry`, `commitGSplatsGeometry`) from
@@ -24,7 +24,10 @@ the commit function from `data-processor-*` keep working.
 
 ```typescript
 // Lines
-export interface StagedLinesCommit { path: string; processed: ProcessedLinesData; }
+export interface StagedLinesCommit {
+  path: string;
+  processed: ProcessedLinesData;
+}
 export async function processLinesData(
   path: string,
   data: LoadedLinesData,

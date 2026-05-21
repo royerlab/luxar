@@ -160,19 +160,18 @@ Rationale:
   guarantees the click sees the pick result that matches the cursor
   position at click time, not one frame earlier.
 
-## Implementation outline (for the port PR, not this design doc)
+## Implementation outline
 
-The real `performPick` (around `picking-system.ts:338`) does the
-work of setting `this._lastReadX`/`_lastReadY` from the cursor
-coordinates, then calls `readbackAndVote()` with no arguments —
-`readbackAndVote` reads its window position from those fields
-(see `picking-system.ts:519-527`). So the async edit is two
-methods, no signature changes on the caller-facing API:
+`performPick` (around `picking-system.ts:338`) sets
+`this._lastReadX`/`_lastReadY` from the cursor coordinates, then calls
+`readbackAndVote()` with no arguments — `readbackAndVote` reads its
+window position from those fields (see `picking-system.ts:519-527`).
+The async path is two methods, with no signature changes on the
+caller-facing API:
 
 ```ts
-// picking-system.ts — diff sketch, NOT to be implemented yet.
-// Signatures match the existing methods; only the keyword `async`
-// and one `await` are added.
+// picking-system.ts — shape of the async path. Signatures match the
+// sync version; only `async` and one `await` are added.
 
 private async performPick(screenX: number, screenY: number): Promise<void> {
   // … existing cursor → _lastReadX/_lastReadY math …
@@ -198,9 +197,9 @@ private async readbackAndVote(): Promise<PickResult | null> {
 }
 ```
 
-The orchestrating callback at `app.ts:782` is **already** declared
-`async (result: PickResult | null) => { … }` (verified during the
-audit-fix planning). No call-site change needed there.
+The orchestrating callback at `app.ts:782` is declared
+`async (result: PickResult | null) => { … }`. No call-site change is
+needed there.
 
 Mouse-move dispatch in `onMouseMove` (around `picking-system.ts:270`)
 needs no change either: `performPick` is fired in a fire-and-forget

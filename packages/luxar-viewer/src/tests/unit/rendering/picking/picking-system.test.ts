@@ -179,8 +179,7 @@ describe('PickingSystem — registration', () => {
   // ---------------------------------------------------------------------
 
   it('invalidateBoxes(pickId) drops just that entry; invalidateBoxes() drops all', () => {
-    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })
-      ._worldBoxCache;
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
     cache.set(1, new THREE.Box3());
     cache.set(2, new THREE.Box3());
 
@@ -195,8 +194,7 @@ describe('PickingSystem — registration', () => {
   it('unregisterNode drops the corresponding cached world AABB', () => {
     const id = system.allocatePickId();
     system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id);
-    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })
-      ._worldBoxCache;
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
     cache.set(id, new THREE.Box3());
 
     system.unregisterNode(id);
@@ -332,11 +330,7 @@ describe('PickingSystem — camera + suppression', () => {
 
   it('getDiagnostics reflects suppress + registration state changes', () => {
     system.suppress(true);
-    system.registerNode(
-      new THREE.Object3D(),
-      new THREE.Object3D(),
-      system.allocatePickId()
-    );
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), system.allocatePickId());
     const d = system.getDiagnostics();
     expect(d.suppressed).toBe(true);
     expect(d.registeredNodeCount).toBe(1);

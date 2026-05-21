@@ -33,7 +33,10 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
-import { widenToFloat32, writeInterleavedAttribute } from '../../../rendering/interleaved-attributes';
+import {
+  widenToFloat32,
+  writeInterleavedAttribute,
+} from '../../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../../types/points';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';

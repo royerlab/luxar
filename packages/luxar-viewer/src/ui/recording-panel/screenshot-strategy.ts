@@ -59,7 +59,11 @@ export class ScreenshotStrategy implements CaptureStrategy {
     return true;
   }
 
-  async run(opts: RecordingOptions, _mode: RecordingMode, session: RecordingSession): Promise<void> {
+  async run(
+    opts: RecordingOptions,
+    _mode: RecordingMode,
+    session: RecordingSession
+  ): Promise<void> {
     // Refuse during active recording. captureScreenshot() and the
     // recording paths share `savedRecordingState` — without this guard,
     // a screenshot during recording would clobber the active session's
@@ -90,10 +94,7 @@ export class ScreenshotStrategy implements CaptureStrategy {
 
       // Set transparent background
       if (opts.transparentBackground) {
-        savedBackground = this.sceneManager.scene.background as
-          | THREE.Color
-          | THREE.Texture
-          | null;
+        savedBackground = this.sceneManager.scene.background as THREE.Color | THREE.Texture | null;
         this.sceneManager.scene.background = null;
       }
 
@@ -125,11 +126,7 @@ export class ScreenshotStrategy implements CaptureStrategy {
           showToast('Switched to PNG (JPEG has no alpha)');
         }
 
-        const blob = await encodeScreenshotBlob(
-          captureCanvas,
-          effectiveFormat,
-          opts.imageQuality
-        );
+        const blob = await encodeScreenshotBlob(captureCanvas, effectiveFormat, opts.imageQuality);
 
         if (blob) {
           this.hooks.downloadBlob(blob, this.hooks.generateFilename(effectiveFormat));

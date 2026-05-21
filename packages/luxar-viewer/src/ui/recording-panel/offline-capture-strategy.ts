@@ -41,10 +41,7 @@ import {
   computeVideoBitrate as computeVideoBitratePure,
   generateFfmpegScript as generateFfmpegScriptPure,
 } from './media-utilities';
-import type {
-  CaptureContext,
-  OfflineCaptureDriver,
-} from './drivers/offline-capture-driver';
+import type { CaptureContext, OfflineCaptureDriver } from './drivers/offline-capture-driver';
 import { ImageSequenceDriver } from './drivers/image-sequence-driver';
 import { ExrSequenceDriver } from './drivers/exr-sequence-driver';
 import { VideoModeDriver } from './drivers/video-mode-driver';
@@ -89,7 +86,11 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     return !state.isRecording && !state.isOfflineCaptureActive;
   }
 
-  async run(opts: RecordingOptions, _mode: RecordingMode, session: RecordingSession): Promise<void> {
+  async run(
+    opts: RecordingOptions,
+    _mode: RecordingMode,
+    session: RecordingSession
+  ): Promise<void> {
     return this.runOfflineCaptureLoop(opts.outputFormat as OfflineMode, opts, session);
   }
 
@@ -110,7 +111,9 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
   }
 
   // ── Test-only access (Panel proxies forward to these) ─────────
-  cleanupOfflineOverlayForTests(): void { this.overlayCleanup?.(); }
+  cleanupOfflineOverlayForTests(): void {
+    this.overlayCleanup?.();
+  }
 
   private async runOfflineCaptureLoop(
     mode: OfflineMode,
@@ -290,8 +293,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       fps,
       renderFrameToCanvas: () => this.hooks.renderFrameToCanvas(),
       generateFilename: (ext) => this.hooks.generateFilename(ext),
-      generateFfmpegScript: (rate, frames, ext) =>
-        generateFfmpegScriptPure(rate, frames, ext),
+      generateFfmpegScript: (rate, frames, ext) => generateFfmpegScriptPure(rate, frames, ext),
       downloadBlob: (blob, filename) => this.hooks.downloadBlob(blob, filename),
       computeVideoBitrate: (w, h) =>
         computeVideoBitratePure(w, h, opts.videoFPS, opts.videoQuality),

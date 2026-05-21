@@ -12,7 +12,9 @@ import type { LuxarAppOptions } from '../options';
  * the default. In practice we only support one LuxarApp per page in
  * v1, so this is fine.
  */
-export function applyModuleOverrides(options: Pick<LuxarAppOptions, 'wasmPath' | 'workerPath'>): void {
+export function applyModuleOverrides(
+  options: Pick<LuxarAppOptions, 'wasmPath' | 'workerPath'>
+): void {
   if (options.wasmPath) setWasmJsUrl(options.wasmPath);
   if (options.workerPath) setDataWorkerUrl(options.workerPath);
 }

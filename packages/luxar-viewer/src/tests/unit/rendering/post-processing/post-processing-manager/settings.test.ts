@@ -23,9 +23,11 @@ import type { BloomChain } from '../../../../../rendering/post-processing/bloom/
  * Build a megaShader stub exposing just the surface the helpers touch.
  * Each spy method is `vi.fn()` so we can assert calls + arguments.
  */
-function makeMegaShader(opts: {
-  lensEnabled?: boolean;
-} = {}) {
+function makeMegaShader(
+  opts: {
+    lensEnabled?: boolean;
+  } = {}
+) {
   return {
     setVignette: vi.fn(),
     toggleVignette: vi.fn(),

@@ -36,9 +36,10 @@ const sizingInputs = (overrides: Partial<SizingInputs> = {}): SizingInputs => ({
 
 describe('computeEffectiveSize', () => {
   it('returns renderSize unchanged when SSAA is off (ignores ssaaMultiplier)', () => {
-    expect(
-      computeEffectiveSize(sizingInputs({ ssaaEnabled: false, ssaaMultiplier: 4 }))
-    ).toEqual({ width: 800, height: 600 });
+    expect(computeEffectiveSize(sizingInputs({ ssaaEnabled: false, ssaaMultiplier: 4 }))).toEqual({
+      width: 800,
+      height: 600,
+    });
   });
 
   it('scales renderSize by ssaaMultiplier when SSAA is on', () => {

@@ -10,12 +10,7 @@
  */
 
 import * as THREE from 'three';
-import type {
-  DataLoader,
-  GeometryKind,
-  LoadedPointsData,
-  ViewState,
-} from '../data-loader-types';
+import type { DataLoader, GeometryKind, LoadedPointsData, ViewState } from '../data-loader-types';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { ViewStateQueue } from '../scene-loader/view-state-queue';

@@ -498,9 +498,7 @@ describe('OverlayManager.updateHoverContent', () => {
       'http://example.com'
     );
 
-    const el = document.querySelector(
-      '[data-overlay-name="hover-trap-display"]'
-    ) as HTMLDivElement;
+    const el = document.querySelector('[data-overlay-name="hover-trap-display"]') as HTMLDivElement;
     expect(el).toBeTruthy();
     // The non-fade branch of the gate sets display:none; it must be
     // skipped for hover overlays.

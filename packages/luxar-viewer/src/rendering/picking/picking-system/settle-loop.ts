@@ -27,10 +27,7 @@ export interface SettleTimestamps {
 }
 
 /** Outcome of one settle evaluation. */
-export type SettleDecision =
-  | { action: 'fire' }
-  | { action: 'wait' }
-  | { action: 'idle' };
+export type SettleDecision = { action: 'fire' } | { action: 'wait' } | { action: 'idle' };
 
 /**
  * Decide what the RAF tick should do given the current timestamps.

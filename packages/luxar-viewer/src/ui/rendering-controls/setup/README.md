@@ -26,7 +26,7 @@ Most builders use the shared `SetupContext` / `SetupResult` interfaces from `../
 ```typescript
 function setupXxxControls(
   context: SetupContext,
-  controllersRef?: SetupResult['controllers'],  // when cross-module sync is needed
+  controllersRef?: SetupResult['controllers'] // when cross-module sync is needed
 ): SetupResult;
 ```
 
@@ -45,7 +45,7 @@ Creates the **🕹️ Navigation** folder with:
 
 - Control-type selector (`orbit` | `fly` | `ortho`) wired to `sceneManager.setControlType`.
 - **Orbit Controls** sub-folder: auto-rotate toggle, rotation speed, `naturalDrag` toggle (defaults to ON on macOS for touchpad ergonomics).
-- **Fly Controls** sub-folder: movement speed, rotation speed, inertial-mode toggle, translation damping, rotation damping. Damping sliders only show when inertial mode is on; speed/damping ranges are pulled from `config.controls.fly.*`.
+- **Fly Controls** sub-folder: movement speed, rotation speed, inertial-mode toggle, translation damping, rotation damping. Damping sliders only show when inertial mode is on; movement-speed, rotation-speed, and translation-damping ranges are pulled from `config.controls.fly.*` (rotation damping is hardcoded `0.9 … 0.9999`).
 
 Returns `folders.orbitFolder` and `folders.flyFolder` so the parent class can show/hide them from `updateNavigationControls(type)` when the user switches control type. The orbit folder is reused for the `ortho` mode (panning + zooming share the same settings).
 
@@ -65,12 +65,12 @@ Takes `controllersRef` because the FOV preset writes back into the lens-distorti
 
 Creates the **☀️ HDR** folder with global Exposure–Offset–Gamma (EOG) plus the tone-mapping selector. The four controls map to scene-manager calls and one post-processing call:
 
-| Control      | Range          | Wired to                              |
-| ------------ | -------------- | ------------------------------------- |
-| Exposure     | -5 to +5 stops | `sceneManager.updateExposure(v)`      |
-| Offset       | -1.0 to 1.0    | `sceneManager.updateGlobalOffset(v)`  |
-| Gamma        | 0.1 to 10.0    | `sceneManager.updateGlobalGamma(v)`   |
-| Tone Mapping | seven options  | `postProcessing.setToneMapping(...)`  |
+| Control      | Range          | Wired to                             |
+| ------------ | -------------- | ------------------------------------ |
+| Exposure     | -5 to +5 stops | `sceneManager.updateExposure(v)`     |
+| Offset       | -1.0 to 1.0    | `sceneManager.updateGlobalOffset(v)` |
+| Gamma        | 0.1 to 10.0    | `sceneManager.updateGlobalGamma(v)`  |
+| Tone Mapping | seven options  | `postProcessing.setToneMapping(...)` |
 
 The tone-mapping dropdown maps display names (`None`, `Linear`, `Reinhard`, `Cineon`, `ACES`, `AgX`, `Neutral`) to the matching `THREE.*ToneMapping` enum values. EOG is applied inside the mega-shader fragment immediately before the tone-mapping operator.
 
@@ -117,7 +117,7 @@ Creates the **🎨 Theme** folder with a single **Active Theme** dropdown bound 
 
 The parent class (`../rendering-controls.ts`) calls these builders during construction and stitches together the few inter-module dependencies:
 
-- **FOV preset ↔ chromatic lens distortion** — `setupCameraControls(context, controllers)` is called *after* `setupPostProcessingControls(context, controllers)` so the controller map already contains the chromatic-lens entries that the FOV preset's `onChange` will mutate. Both builders take the same `controllers` object by reference; order of insertion in the parent class is what makes the link work.
+- **FOV preset ↔ chromatic lens distortion** — `setupCameraControls(context, controllers)` is called _after_ `setupPostProcessingControls(context, controllers)` so the controller map already contains the chromatic-lens entries that the FOV preset's `onChange` will mutate. Both builders take the same `controllers` object by reference; order of insertion in the parent class is what makes the link work.
 - **Navigation folder visibility** — `setupNavigationControls` returns `orbitFolder` / `flyFolder`; the parent's `updateNavigationControls(type)` toggles them when the control type changes.
 - **Clipping controls enable state** — `setupCameraControls` calls back into the parent's `updateClippingControlsState(enabled)` so the parent can disable the near/far sliders when dynamic clipping is on.
 - **Adaptive-DPR persistence** — after `loadSettings()` reads the stored `adaptiveDPREnabled` flag, the parent re-applies `performanceSetup.updateVisibility(flag)` so the panel matches the loaded state.

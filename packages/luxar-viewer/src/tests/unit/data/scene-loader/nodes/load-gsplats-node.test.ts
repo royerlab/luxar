@@ -243,9 +243,7 @@ describe('loadGSplatsNode — happy path commit flow', () => {
   it('routes data through processGSplatsData → commitGSplatsGeometry', async () => {
     const data = { splatCount: 7 } as LoadedGSplatsData;
     const staged = { path: '/scene/g' } as unknown as StagedGSplatsCommit;
-    createGSplatsLoaderMock.mockReturnValue(
-      makeGSplatsLoader(vi.fn().mockResolvedValue(data))
-    );
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn().mockResolvedValue(data)));
     const ctx = makeCtx();
     ctx.spies.processGSplatsData.mockResolvedValue(staged);
 
@@ -257,18 +255,11 @@ describe('loadGSplatsNode — happy path commit flow', () => {
 
   it('skips commit when processGSplatsData returns null', async () => {
     const data = { splatCount: 7 } as LoadedGSplatsData;
-    createGSplatsLoaderMock.mockReturnValue(
-      makeGSplatsLoader(vi.fn().mockResolvedValue(data))
-    );
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn().mockResolvedValue(data)));
     const ctx = makeCtx();
     // ctx.processGSplatsData resolves null by default.
 
-    const placeholder = await loadGSplatsNode(
-      makeSceneNode(),
-      new THREE.Group(),
-      {} as never,
-      ctx
-    );
+    const placeholder = await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(placeholder).not.toBeNull();
     expect(ctx.spies.processGSplatsData).toHaveBeenCalled();
@@ -279,15 +270,13 @@ describe('loadGSplatsNode — happy path commit flow', () => {
 describe('loadGSplatsNode — error path', () => {
   it('records failure and rethrows LoaderError', async () => {
     const cause = new Error('validation expected ndim>3');
-    createGSplatsLoaderMock.mockReturnValue(
-      makeGSplatsLoader(vi.fn().mockRejectedValue(cause))
-    );
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn().mockRejectedValue(cause)));
     const ctx = makeCtx();
     const parent = new THREE.Group();
 
-    await expect(
-      loadGSplatsNode(makeSceneNode(), parent, {} as never, ctx)
-    ).rejects.toBeInstanceOf(LoaderError);
+    await expect(loadGSplatsNode(makeSceneNode(), parent, {} as never, ctx)).rejects.toBeInstanceOf(
+      LoaderError
+    );
 
     expect(parent.children.length).toBe(1);
     expect(ctx.registry.failedLoaders.has('/scene/g')).toBe(true);

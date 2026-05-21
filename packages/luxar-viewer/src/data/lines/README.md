@@ -6,19 +6,21 @@ to the Lines node type.
 
 ## Files
 
-| File                            | Role                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lines-spatial-index-loader.ts` | Spatial-index loader for Lines: dual chunk index (segment ordering + vertex ordering), two-stage load (segment chunks → unique vertex set → vertex-attr ranges). Emits a `LoadedLinesData` payload with optional per-vertex scalars for colormap mode.                                                                                                      |
-| `projection.ts`                 | Main-thread `projectLinesTo3D`: clips segments to the nD slice, interpolates per-vertex attributes (colors, widths, sharpness, scalars) at clipped endpoints, and emits per-segment GPU instance buffers. Used as the fallback when the worker is unavailable. The primary path is the WASM batch projection in `workers/data-worker.ts::projectLinesTo3D`. |
-| `chunk-index-loader.ts`         | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`, and `computeVertexRangesFromIndices` for coalescing referenced vertex indices into contiguous zarr ranges.                                                                     |
-| `handler.ts`                    | Per-type scene-loader wiring (`loadAndStage`) — mirrors `points/handler.ts` and `gsplats/handler.ts`. Derives the per-node `LinesViewState`, calls `loader.updateView`, hands the payload to `processLinesData`, and dispatches predictive prefetch via the shared `ViewStateQueue`. Lines use `applyPartialExtendTolerance: false` (verbatim legacy behaviour). |
+| File                            | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lines-spatial-index-loader.ts` | Spatial-index loader for Lines: dual chunk index (segment ordering + vertex ordering), two-stage load (segment chunks → unique vertex set → vertex-attr ranges). Emits a `LoadedLinesData` payload with optional per-vertex scalars for colormap mode.                                                                                                                                                                                                                                               |
+| `projection.ts`                 | Main-thread `projectLinesTo3D` (TS fallback) and `projectLinesTo3DWASM` (batch WASM): clip segments to the nD slice, interpolate per-vertex attributes (colors, widths, sharpness, scalars) at clipped endpoints, and emit per-segment GPU instance buffers. The TS path is the fallback; the primary path is the WASM batch projection registered at `workers/data-worker/projection/lines.ts` (dispatched from `workers/data-worker.ts`). Also exports `createEmptyLinesData` and `initLinesWASM`. |
+| `chunk-index-loader.ts`         | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`, and `computeVertexRangesFromIndices` for coalescing referenced vertex indices into contiguous zarr ranges.                                                                                                                                                                                                              |
+| `handler.ts`                    | Per-type scene-loader wiring (`loadAndStage`) — mirrors `points/handler.ts` and `gsplats/handler.ts`. Derives the per-node `LinesViewState`, calls `loader.updateView`, hands the payload to `processLinesData`, and dispatches predictive prefetch via the shared `ViewStateQueue`. Lines use `applyPartialExtendTolerance: false` (verbatim legacy behaviour).                                                                                                                                     |
 
 ## Public surface
 
-`LinesSpatialIndexLoader` implements the same `SpatialIndexLoader`
-contract as Points / GSplats (constructor, `loadForView`,
-`prefetchChunks`, `dispose`, monitor events). Scene-loader code never
-imports the concrete class — it goes through `loader-factory.ts`.
+`LinesSpatialIndexLoader` implements `LinesDataLoader` — same shape
+as the Points and GSplats facades (constructor, `loadLines` /
+`updateView`, `prefetchChunks`, `dispose`, monitor events via
+`addEventListener` / `getMetrics` / `getActiveQueries`). Scene-loader
+code never imports the concrete class — it goes through
+`scene-loader/loader-factory.ts`.
 
 `projectLinesTo3D` is exported for the main-thread fallback path
 and for unit tests that exercise per-vertex interpolation without a

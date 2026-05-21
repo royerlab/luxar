@@ -15,10 +15,7 @@
 import * as THREE from 'three';
 import type { LuxarCamera } from '../utils/camera-utils';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
-import {
-  applyToCamera,
-  initializeFromCamera,
-} from './luxar-orbit-controls/camera-application';
+import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
 import {
   type ControlAction,

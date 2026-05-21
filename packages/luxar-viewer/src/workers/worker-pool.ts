@@ -15,29 +15,19 @@ import DataWorker from './data-worker?worker';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import type { WorkerInstance } from './worker-pool/types';
-import {
-  WorkerTimeoutError,
-  WorkerAbortError,
-  type TimeoutKind,
-} from './worker-pool/errors';
+import { WorkerTimeoutError, WorkerAbortError, type TimeoutKind } from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
-import {
-  spawnWorker,
-  terminateAttemptWorkers,
-} from './worker-pool/lifecycle/spawn-worker';
+import { spawnWorker, terminateAttemptWorkers } from './worker-pool/lifecycle/spawn-worker';
 import {
   attachWorkerErrorHandlers,
   evictFailedWorker,
 } from './worker-pool/lifecycle/error-handlers';
-import {
-  selectLeastBusy,
-  type TrackedWorkerHandle,
-} from './worker-pool/selection/least-busy';
+import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 
@@ -609,4 +599,3 @@ export function disposeWorkerPool(): void {
     workerPoolInstance = null;
   }
 }
-

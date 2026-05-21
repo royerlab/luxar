@@ -59,10 +59,7 @@ export function handleMouseUp(ctx: FlyMouseCtx, event: MouseEvent): void {
   if (!ctx.enabled) return;
 
   const action = ctx.getActiveMouseAction();
-  if (
-    (event.button === 0 && action === 'strafe') ||
-    (event.button === 2 && action === 'rotate')
-  ) {
+  if ((event.button === 0 && action === 'strafe') || (event.button === 2 && action === 'rotate')) {
     ctx.setActiveMouseAction('none');
     ctx.dispatch('end');
   }

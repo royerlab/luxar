@@ -27,9 +27,7 @@ import type { StagedGSplatsCommit } from './process/data-processor-gsplats';
  * decides the node should fall back to the base view state (e.g. full
  * extend_to_all coverage where deriving would empty the query).
  */
-type DerivedViewState =
-  | { skip: 'extend_to_all' }
-  | { skip: false; viewState: ViewState };
+type DerivedViewState = { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
 
 /**
  * Narrow context the retry helpers need from the orchestrator. Keeps
@@ -65,10 +63,7 @@ export interface RetryCtx {
  * registry), false on continued failure (registry updated with new
  * retry count), or false if the path is no longer in failed-loaders.
  */
-export async function retryFailedLoaderUnlocked(
-  path: string,
-  ctx: RetryCtx
-): Promise<boolean> {
+export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Promise<boolean> {
   const { registry } = ctx;
   if (!registry.failedLoaders.has(path)) return false;
 

@@ -23,14 +23,8 @@ export function applyTransform(object: THREE.Object3D, transform: readonly numbe
   validateTransformFormat(transform);
 
   // THREE.Matrix4.fromArray takes ArrayLike<number>; readonly tuple is fine.
+  // decompose() writes into the supplied targets in place, so pass the
+  // object's own fields directly — no intermediate Vector3 / Quaternion.
   const matrix = new THREE.Matrix4().fromArray(transform as number[]);
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-
-  matrix.decompose(position, quaternion, scale);
-
-  object.position.copy(position);
-  object.quaternion.copy(quaternion);
-  object.scale.copy(scale);
+  matrix.decompose(object.position, object.quaternion, object.scale);
 }

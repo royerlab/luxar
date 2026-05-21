@@ -258,13 +258,12 @@ export async function updateView(
   loaderId?: string
 ): Promise<void>
 
+// Update scene when navigating dimensions
 export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string
 ): Promise<void>
-  // Update scene when navigating dimensions
-}
 ```
 
 ### 2. Chunk-Based Spatial Index
@@ -829,22 +828,27 @@ dispose();
 ### Cache Management
 
 ```typescript
-import { getCacheStats, clearCaches } from 'luxar-viewer/data';
+import { SceneLoaderManager } from 'luxar-viewer/data';
 
 // Monitor cache usage for default loader
-const stats = getCacheStats();
+const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+const stats = loader?.getCacheStats();
 if (stats) {
-  for (const [path, cacheInfo] of stats) {
-    console.log(`${path}: ${cacheInfo.hitRate * 100}% hit rate`);
-  }
+  console.log(`L1 hit rate: ${(stats.l1?.hitRate ?? 0) * 100}%`);
+  console.log(`L2 hit rate: ${(stats.l2?.hitRate ?? 0) * 100}%`);
 }
 
-// Clear caches for specific loader
-clearCaches('loader1');
+// Clear the L2 (persistent / OPFS) cache for a specific loader
+await loader?.clearL2Cache();
 
-// Or clear default loader cache
-clearCaches();
+// Or clear every cache tier (L0 + L1 + L2)
+await loader?.clearAllCaches();
 ```
+
+The public `zarr-loader.ts` API no longer exports `getCacheStats` /
+`clearCaches`; reach the loader through `SceneLoaderManager` (or call
+`loader.getCacheStats()` / `clearL2Cache()` / `clearAllCaches()`
+directly).
 
 ### Advanced Instance Management
 
@@ -871,7 +875,7 @@ const loader = loaderManager.getLoader('myLoader');
 if (loader) {
   // Direct loader manipulation
   loader.showMonitor();
-  loader.clearCaches();
+  await loader.clearAllCaches();
 }
 
 // Reset for testing
@@ -910,18 +914,22 @@ location /data/ {
 **Problem: Memory usage too high**
 
 ```typescript
-// Solution: Configure cache limits
-const scene = await loadScene(url, {
-  maxMemoryMB: 200, // Limit cache to 200MB
-  evictionStrategy: 'lfu', // Use least-frequently-used eviction
-});
+// Pass ?no-cache or { noCache: true } to disable caching entirely.
+const scene = await loadScene(url, { noCache: true });
 
-// Monitor and clear cache as needed
-const stats = getCacheStats();
-if (stats.get('/points')?.totalMemory > threshold) {
-  clearCaches();
+// Or inspect the live cache stats via SceneLoaderManager and clear
+// the persistent L2 tier (or every tier) when needed.
+import { SceneLoaderManager } from 'luxar-viewer/data';
+const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+const stats = loader?.getCacheStats();
+if (stats?.l2 && stats.l2.bytes > threshold) {
+  await loader?.clearL2Cache();
 }
 ```
+
+Cache size limits live with the `cache/` package (multi-level caching
+store and OPFS backend) — not with `LoaderConfig`. See
+`../cache/README.md`.
 
 ---
 
@@ -931,27 +939,38 @@ if (stats.get('/points')?.totalMemory > threshold) {
 
 ```typescript
 interface LoaderConfig {
-  // Memory management
-  maxMemoryMB?: number; // Maximum memory for caching (default: 500)
+  /** Enable debug logging */
+  debug?: boolean;
 
-  // Cache strategy
-  evictionStrategy?: 'lru' | 'lfu'; // Cache eviction strategy (default: 'lru')
+  /** Enable data loading monitor UI */
+  enableMonitor?: boolean;
 
-  // UI
-  enableMonitor?: boolean; // Enable data loading monitor UI (default: true)
+  /** Disable both L1/L2 cache tiers and L0 decompressed cache. */
+  noCache?: boolean;
 
-  // Debug
-  debug?: boolean; // Enable debug logging (default: false)
+  /** Verbose cache logging. */
+  cacheDebug?: boolean;
+
+  /** Clear caches on init. */
+  clearCache?: boolean;
+
+  /** Disable adjacent-chunk prefetching. */
+  noPrefetch?: boolean;
+
+  /** Verbose prefetch logging. */
+  prefetchDebug?: boolean;
 }
 
 // Usage
 const scene = await loadScene(url, {
-  maxMemoryMB: 1000,
-  evictionStrategy: 'lru',
   enableMonitor: true,
   debug: false,
 });
 ```
+
+Cache size limits and eviction strategy are controlled by the
+multi-level caching store and `cache/` package — not by `LoaderConfig`.
+See `../cache/README.md`.
 
 ### Server Configuration
 
@@ -1001,9 +1020,12 @@ location /data/ {
 | `loadScene(url, config?, loaderId?)`               | Load complete Zarr dataset with chunk-based indexing |
 | `updateView(viewState, loaderId?)`                 | Update all points for new view state                 |
 | `updateSceneForDimensions(dims, scene, loaderId?)` | Update scene when navigating dimensions              |
-| `getCacheStats(loaderId?)`                         | Get cache statistics for monitoring                  |
-| `clearCaches(loaderId?)`                           | Clear caches to free memory                          |
 | `dispose(loaderId?)`                               | Clean up resources (specific or all)                 |
+
+Cache inspection and clearing are not on the `zarr-loader.ts` surface;
+get the loader via `SceneLoaderManager.getDefaultLoader()` (or
+`getLoader(id)`) and call `getCacheStats()`, `clearL2Cache()`, or
+`clearAllCaches()` directly on the `SceneLoader` instance.
 
 ### Instance Management (scene-loader-manager.ts)
 
@@ -1015,26 +1037,33 @@ location /data/ {
 | `getLoader(id)`                            | Get a specific loader by ID                                          |
 | `getDefaultLoader()`                       | Get the default loader instance                                      |
 | `getAllLoaders()`                          | Get all active loader instances                                      |
-| `destroyLoader(id)`                        | Dispose and remove a specific loader                                 |
-| `destroyAll()`                             | Dispose all loaders and reset manager                                |
+| `destroyLoader(id)`                        | Dispose and remove a specific loader (fire-and-forget).              |
+| `destroyLoaderAsync(id)`                   | Like `destroyLoader` but awaits full disposal (dataset switches).    |
+| `destroyAll()`                             | Dispose all loaders and reset manager (fire-and-forget).             |
+| `destroyAllAsync()`                        | Like `destroyAll` but awaits every loader's `dispose()` to settle.   |
+| `hasLoader(id)` / `getLoaderCount()`       | Lookup and count helpers for the loader registry.                    |
+| `setMonitorFactory(factory)`               | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).    |
+| `getProfiler()`                            | Return the shared `UpdateProfiler` singleton.                        |
 | `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
 ### Scene Loading (scene-loader.ts)
 
-| Class/Method                | Description                               |
-| --------------------------- | ----------------------------------------- |
-| `SceneLoader`               | Main scene loader orchestrator            |
-| `constructor(config?, id?)` | Create loader with config and optional ID |
-| `loadScene(url)`            | Load complete scene from zarr store       |
-| `updateView(viewState)`     | Update all loaders with new view state    |
-| `getCacheStats()`           | Get cache statistics from all loaders     |
-| `clearCaches()`             | Clear all loader caches                   |
-| `showMonitor()`             | Show data loading monitor UI              |
-| `hideMonitor()`             | Hide data loading monitor UI              |
-| `toggleMonitor()`           | Toggle data loading monitor UI            |
-| `retryFailedLoader(nodeId)` | Retry a failed loader                     |
-| `retryAllFailedLoaders()`   | Retry all failed loaders                  |
-| `dispose()`                 | Clean up all resources                    |
+| Class/Method                                            | Description                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `SceneLoader`                                           | Main scene loader orchestrator                                           |
+| `constructor(config?, id?, profiler?, monitorFactory?)` | Create loader; profiler + monitor factory are injected by the manager.   |
+| `loadScene(url)`                                        | Load complete scene from zarr store                                      |
+| `updateView(viewState)`                                 | Update all loaders with new view state                                   |
+| `getCacheStats()`                                       | Return a `CacheStatsSnapshot` covering L0/L1/L2 + network/demand/health. |
+| `listCachedDatasets()`                                  | List the datasets currently held in the L2 (persistent) cache.           |
+| `clearL2Cache()`                                        | Clear the persistent L2 cache tier (e.g. OPFS) for this loader.          |
+| `clearAllCaches()`                                      | Clear every cache tier (L0 + L1 + L2) for this loader.                   |
+| `showMonitor()`                                         | Show data loading monitor UI                                             |
+| `hideMonitor()`                                         | Hide data loading monitor UI                                             |
+| `toggleMonitor()`                                       | Toggle data loading monitor UI                                           |
+| `retryFailedLoader(path)`                               | Retry a failed loader (identified by zarr path).                         |
+| `retryAllFailedLoaders()`                               | Retry all failed loaders.                                                |
+| `dispose()`                                             | Async — clean up all resources, drain caches, await teardown.            |
 
 ### Node Factories (scene-loader/nodes/)
 
@@ -1047,14 +1076,19 @@ helpers. See `scene-loader/` for details — there is no single
 
 ### Points Spatial Index Loader (points/points-spatial-index-loader.ts)
 
-| Class/Method                          | Description                               |
-| ------------------------------------- | ----------------------------------------- |
-| `PointsSpatialIndexLoader`            | Loader using chunk-based spatial indexing |
-| `constructor(location, node, config)` | Create loader with chunk index support    |
-| `updateView(viewState)`               | Update for new view (reloads currently)   |
-| `getCacheStats()`                     | Get cache statistics                      |
-| `clearCache()`                        | Clear cached data                         |
-| `dispose()`                           | Clean up resources                        |
+| Class/Method                                                                                             | Description                                                                          |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `PointsSpatialIndexLoader`                                                                               | Loader using chunk-based spatial indexing                                            |
+| `constructor(zarrLocation, node, refRegistry?, zarrStore?, profiler?, l0Cache?, prefetcher?)`            | Create loader; cache/profiler/prefetcher are injected by `loader-factory`.           |
+| `initialize()`                                                                                           | Async — load the `chunk_bounds` array and prepare the spatial index.                 |
+| `loadPoints(viewState, session?)`                                                                        | Load points for the given view state; returns a `LoadedPointsData` payload.          |
+| `updateView(viewState, session?)`                                                                        | Re-query the spatial index for a new view state.                                     |
+| `prefetchChunks(viewState)`                                                                              | Background-fetch adjacent chunks predicted to be visible next.                       |
+| `dispose()`                                                                                              | Release the accumulator and other resources owned by this loader.                    |
+
+Cache statistics are aggregated by the parent `SceneLoader` via the
+`loader-metrics.ts` event bus — per-loader cache APIs were removed in
+favour of a single `SceneLoader.getCacheStats()` snapshot.
 
 ### Spatial-query API (loaders/spatial-query-builder.ts)
 
@@ -1077,13 +1111,13 @@ helpers. See `scene-loader/` for details — there is no single
 
 ### Monitor Port (scene-loader-monitor-port.ts)
 
-| Symbol                          | Description                                                                                  |
-| ------------------------------- | -------------------------------------------------------------------------------------------- |
-| `SceneLoaderMonitorPort`        | Interface — the subset of `DataLoadingMonitor`'s surface that `SceneLoader` consumes.        |
-| `SceneLoaderMonitorFactory`     | Factory type injected by `core/app.ts` via `SceneLoaderManager.setMonitorFactory`.           |
-| `L0CacheProviderPort`           | Provider injected via `setL0CacheProvider`.                                                  |
-| `GPUBufferPoolProviderPort`     | Provider injected via `setGPUBufferPoolProvider`.                                            |
-| `AccumulatorProviderPort`       | Per-geometry accumulator stats provider.                                                     |
+| Symbol                      | Description                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `SceneLoaderMonitorPort`    | Interface — the subset of `DataLoadingMonitor`'s surface that `SceneLoader` consumes. |
+| `SceneLoaderMonitorFactory` | Factory type injected by `core/app.ts` via `SceneLoaderManager.setMonitorFactory`.    |
+| `L0CacheProviderPort`       | Provider injected via `setL0CacheProvider`.                                           |
+| `GPUBufferPoolProviderPort` | Provider injected via `setGPUBufferPoolProvider`.                                     |
+| `AccumulatorProviderPort`   | Per-geometry accumulator stats provider.                                              |
 
 The concrete `DataMonitorManager` (a UI panel manager) lives in
 `../ui/data-monitor-manager.ts` and is intentionally outside the
@@ -1110,19 +1144,19 @@ backend swaps or zarrita API moves stay isolated to this one file.
 
 ### Attribute Composition (attrs-composer.ts)
 
-| Symbol                                | Description                                                                  |
-| ------------------------------------- | ---------------------------------------------------------------------------- |
-| `composeAttrs(chain)`                 | Compose a root-to-leaf chain of `ComposableAttrs` into `EffectiveAttrs`.     |
-| `collectAncestorNodes(root, path)`    | Walk the scene graph and return the chain of ancestor `SceneNode`s.          |
-| `collectAncestorAttrs(root, path)`    | Convenience — collect the chain as `ComposableAttrs[]`.                      |
-| `getEffectiveAttrs(root, path)`       | Compose the effective attrs for a target path in one call.                   |
-| `collectDataDescendants(start)`       | Collect every data-leaf (points/lines/gsplats) under `start`.                |
+| Symbol                             | Description                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| `composeAttrs(chain)`              | Compose a root-to-leaf chain of `ComposableAttrs` into `EffectiveAttrs`. |
+| `collectAncestorNodes(root, path)` | Walk the scene graph and return the chain of ancestor `SceneNode`s.      |
+| `collectAncestorAttrs(root, path)` | Convenience — collect the chain as `ComposableAttrs[]`.                  |
+| `getEffectiveAttrs(root, path)`    | Compose the effective attrs for a target path in one call.               |
+| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats) under `start`.            |
 
 ### Dims → ViewState (dims-to-view-state.ts)
 
-| Function                                  | Description                                                                |
-| ----------------------------------------- | -------------------------------------------------------------------------- |
-| `simpleDimsToViewState(dims, options)`    | Convert a `SimpleDims` navigation snapshot into a per-loader `ViewState`.  |
+| Function                               | Description                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `simpleDimsToViewState(dims, options)` | Convert a `SimpleDims` navigation snapshot into a per-loader `ViewState`. |
 
 ---
 

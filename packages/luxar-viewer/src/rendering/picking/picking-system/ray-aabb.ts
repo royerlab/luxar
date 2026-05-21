@@ -50,10 +50,7 @@ export function rayHitsAnyNode(
 }
 
 /** Invalidate one or all cached world-space AABBs. */
-export function invalidateBoxCache(
-  cache: Map<number, THREE.Box3>,
-  pickId?: number
-): void {
+export function invalidateBoxCache(cache: Map<number, THREE.Box3>, pickId?: number): void {
   if (pickId === undefined) cache.clear();
   else cache.delete(pickId);
 }

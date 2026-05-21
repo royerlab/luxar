@@ -75,8 +75,8 @@ The kernels share a small bag of tricks documented inline:
 - **Loop fusion** — visibility and norm computation collapsed into a single
   pass over the per-point inner loop (see `points.rs`,
   `gsplats_processing.rs::mahalanobis_distance_internal`).
-- **Branchless mask writes** — `output_mask[i] = visible as u8;
-  count += visible as u32;` instead of an `if/else`.
+- **Branchless mask writes** — `output_mask[i] = visible as u8; count +=
+  visible as u32;` instead of an `if/else`.
 - **Fixed-size lookup arrays** in place of `HashSet<u32>` for `display_dims`
   (see `lines_clipping.rs`, `effective_radii.rs`).
 - **Stride-specialised fast paths** for `stride == 1` and `stride == 3` in
@@ -99,8 +99,8 @@ Single-file utility module that everything else depends on. Exports
 
 ### `spatial.rs` — chunk broadphase
 
-| Function | Purpose |
-|----------|---------|
+| Function                | Purpose                                                    |
+| ----------------------- | ---------------------------------------------------------- |
 | `query_chunks_for_view` | AABB-vs-hypercube intersection across `num_chunks` chunks. |
 
 The chunk bounds array is laid out `[c0_dim0_min, c0_dim0_max, c0_dim1_min, …,
@@ -112,8 +112,8 @@ validation is required here (no fixed-size buffers).
 
 ### `points.rs` — point visibility
 
-| Function | Purpose |
-|----------|---------|
+| Function                       | Purpose                                     |
+| ------------------------------ | ------------------------------------------- |
 | `compute_nd_visibility_points` | Hypersphere/hypercube visibility per point. |
 
 For each point, normalises the per-dim delta by `tolerance[d] + radius` and
@@ -124,8 +124,8 @@ dimension's tolerance (isotropic).
 
 ### `lines.rs` — segment visibility
 
-| Function | Purpose |
-|----------|---------|
+| Function                      | Purpose                                                  |
+| ----------------------------- | -------------------------------------------------------- |
 | `compute_nd_visibility_lines` | A segment is visible iff **either** endpoint is visible. |
 
 Reuses the same normalised-distance formula as `points.rs` via a private
@@ -147,16 +147,16 @@ D: both OUT, opposite sides → clip both (segment crosses slab)
 E: both OUT, same side       → invisible
 ```
 
-| Function | Purpose |
-|----------|---------|
-| `clip_segment_single` | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop. |
-| `clip_segments_batch` | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`. |
-| `interpolate_clipped_positions` | After batch clip, compute 3D start/end positions for visible segments via `display_dims`. |
-| `interpolate_scalars_batch` | Same compaction for per-vertex scalar attributes (widths, sharpness, …). |
-| `interpolate_colors_batch` | RGB version with the inner loop unrolled across the three channels. |
-| `calculate_segment_lengths` | Euclidean 3D length per visible segment (for LOD / dash patterns). |
-| `mark_clipped_endpoints` | Boolean flags `t1 > 0` / `t2 < 1` per visible segment (for end-cap factor adjustment). |
-| `lerp`, `lerp_vec3`, `distance_3d` | Scalar math helpers exposed for the TS fallback to share semantics. |
+| Function                           | Purpose                                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `clip_segment_single`              | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop.                      |
+| `clip_segments_batch`              | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`. |
+| `interpolate_clipped_positions`    | After batch clip, compute 3D start/end positions for visible segments via `display_dims`.                     |
+| `interpolate_scalars_batch`        | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                      |
+| `interpolate_colors_batch`         | RGB version with the inner loop unrolled across the three channels.                                           |
+| `calculate_segment_lengths`        | Euclidean 3D length per visible segment (for LOD / dash patterns).                                            |
+| `mark_clipped_endpoints`           | Boolean flags `t1 > 0` / `t2 < 1` per visible segment (for end-cap factor adjustment).                        |
+| `lerp`, `lerp_vec3`, `distance_3d` | Scalar math helpers exposed for the TS fallback to share semantics.                                           |
 
 The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the
@@ -165,8 +165,8 @@ loop the moment the valid interval collapses.
 
 ### `gsplats.rs` — coarse splat visibility
 
-| Function | Purpose |
-|----------|---------|
+| Function                        | Purpose                                                         |
+| ------------------------------- | --------------------------------------------------------------- |
 | `compute_nd_visibility_gsplats` | Pre-filter using the max Cholesky row-norm as ellipsoid extent. |
 
 For each splat, computes the marginal standard deviation along each axis as
@@ -186,13 +186,13 @@ via Cholesky-Crout. This is what `compute_marginal_cholesky` (private,
 `#[inline]`) does, and it is what the TypeScript fallback must mirror exactly
 to keep parity tests green.
 
-| Function | Purpose |
-|----------|---------|
-| `mahalanobis_distance` | Forward substitution on packed `L`: solve `L·y = diff`, return `‖y‖`. |
-| `extract_cholesky_submatrix` | **Raw** row/col extraction — correct only for block-diagonal L. Documented as such; callers should prefer the attenuation helpers below. |
-| `compute_gsplats_attenuation` | Per-splat: build hidden-dim diff vector, compute correct marginal Cholesky for hidden dims, Mahalanobis distance, then a C⁰-continuous shifted Gaussian `scale · max(0, exp(-D²/2) - exp(-trunc²/2))`. Writes `output_visibility` and `output_attenuation`. |
-| `extract_visible_cholesky_3d` | For each visible splat, compute the correct marginal 3D Cholesky over `display_dims` and pack into `[L00, L10, L11, L20, L21, L22]` ready for the renderer. |
-| `compact_attenuated_amplitudes` | Compact `amplitudes[i] * attenuation[i]` over the visibility mask. |
+| Function                        | Purpose                                                                                                                                                                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mahalanobis_distance`          | Forward substitution on packed `L`: solve `L·y = diff`, return `‖y‖`.                                                                                                                                                                                       |
+| `extract_cholesky_submatrix`    | **Raw** row/col extraction — correct only for block-diagonal L. Documented as such; callers should prefer the attenuation helpers below.                                                                                                                    |
+| `compute_gsplats_attenuation`   | Per-splat: build hidden-dim diff vector, compute correct marginal Cholesky for hidden dims, Mahalanobis distance, then a C⁰-continuous shifted Gaussian `scale · max(0, exp(-D²/2) - exp(-trunc²/2))`. Writes `output_visibility` and `output_attenuation`. |
+| `extract_visible_cholesky_3d`   | For each visible splat, compute the correct marginal 3D Cholesky over `display_dims` and pack into `[L00, L10, L11, L20, L21, L22]` ready for the renderer.                                                                                                 |
+| `compact_attenuated_amplitudes` | Compact `amplitudes[i] * attenuation[i]` over the visibility mask.                                                                                                                                                                                          |
 
 The shifted Gaussian truncation eliminates a popping artifact at the
 splat boundary that a raw `exp(-D²/2)` would produce when splats cross the
@@ -200,8 +200,8 @@ slab edge. `truncate` is typically 3.0 (three sigma).
 
 ### `effective_radii.rs` — Pythagorean radius shrinkage
 
-| Function | Purpose |
-|----------|---------|
+| Function                    | Purpose                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------- |
 | `calculate_effective_radii` | `R_eff = sqrt(R² - D²)` where D is the nD distance in non-displayed dimensions. |
 
 Supports a per-dimension `spatial_extend_dims: &[u8]` flag distinguishing
@@ -213,13 +213,13 @@ dims are looked up via a fixed-size `[bool; 16]` array.
 
 ### `projection.rs` — extraction, bounds, compaction
 
-| Function | Purpose |
-|----------|---------|
-| `extract_3d_positions` | Project nD positions to 3D by indexing through `display_dims` (≤3); fills unused output dims with `0.0`. |
-| `calculate_bounds_3d` | Single-pass min/max sweep into a 6-element bounds buffer `[minX, minY, minZ, maxX, maxY, maxZ]`. Returns `0` and zero bounds on empty input. |
-| `compact_by_mask` | Stride-specialised compaction. Fast paths for `stride=1` (scalars) and `stride=3` (vec3) with an unrolled vec3 copy; generic fallback for arbitrary strides. |
-| `count_visible` | `popcount`-style scan over a `u8` mask. |
-| `radii_to_visibility_mask` | `mask[i] = radii[i] > threshold` (strictly greater — `radii[i] == threshold` is treated as hidden). |
+| Function                   | Purpose                                                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `extract_3d_positions`     | Project nD positions to 3D by indexing through `display_dims` (≤3); fills unused output dims with `0.0`.                                                     |
+| `calculate_bounds_3d`      | Single-pass min/max sweep into a 6-element bounds buffer `[minX, minY, minZ, maxX, maxY, maxZ]`. Returns `0` and zero bounds on empty input.                 |
+| `compact_by_mask`          | Stride-specialised compaction. Fast paths for `stride=1` (scalars) and `stride=3` (vec3) with an unrolled vec3 copy; generic fallback for arbitrary strides. |
+| `count_visible`            | `popcount`-style scan over a `u8` mask.                                                                                                                      |
+| `radii_to_visibility_mask` | `mask[i] = radii[i] > threshold` (strictly greater — `radii[i] == threshold` is treated as hidden).                                                          |
 
 ### `decode.rs` — array decoding
 
@@ -227,13 +227,13 @@ The decoders are the simplest kernels but dominate wall-clock time for
 large chunks. All hot loops precompute the scale factor outside the loop and
 use direct array indexing.
 
-| Function | Purpose |
-|----------|---------|
-| `decode_quantized_u8` / `decode_quantized_u16` | Linear dequantization: `output = min + raw · (max - min) / MAX_RAW`. |
-| `decode_log_scalar_u8` / `decode_log_scalar_u16` | Log-space dequantization for wide-dynamic-range positive scalars (radii). Uses `f32::exp_m1` for accuracy at small values. |
-| `decode_lut_scalar_u8` / `decode_lut_scalar_u16` | Scalar LUT lookup: `output[i] = lut[indices[i]]`. |
-| `decode_lut_row_u8` / `decode_lut_row_u16` | Row LUT lookup with stride `k` (for vec3 / vec4 attributes); uses `slice::copy_from_slice` for the inner copy. |
-| `decode_broadcasted` | Expand a single value (or short vector) to `num_points × elements_per_point`. Fast path when `value.len() >= elements_per_point`; otherwise pads with `value[0]`. |
+| Function                                         | Purpose                                                                                                                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `decode_quantized_u8` / `decode_quantized_u16`   | Linear dequantization: `output = min + raw · (max - min) / MAX_RAW`.                                                                                              |
+| `decode_log_scalar_u8` / `decode_log_scalar_u16` | Log-space dequantization for wide-dynamic-range positive scalars (radii). Uses `f32::exp_m1` for accuracy at small values.                                        |
+| `decode_lut_scalar_u8` / `decode_lut_scalar_u16` | Scalar LUT lookup: `output[i] = lut[indices[i]]`.                                                                                                                 |
+| `decode_lut_row_u8` / `decode_lut_row_u16`       | Row LUT lookup with stride `k` (for vec3 / vec4 attributes); uses `slice::copy_from_slice` for the inner copy.                                                    |
+| `decode_broadcasted`                             | Expand a single value (or short vector) to `num_points × elements_per_point`. Fast path when `value.len() >= elements_per_point`; otherwise pads with `value[0]`. |
 
 ---
 

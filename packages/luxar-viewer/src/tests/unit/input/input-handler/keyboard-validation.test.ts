@@ -16,7 +16,7 @@ import { calculateFovChange } from '../../../../input/input-handler/window-event
 // also exist in src/tests/unit/input/input-handler.test.ts. That file tests the same
 // utility functions as part of the InputHandler utility suite. Both suites are intentionally
 // kept — this file focuses on input validation edge cases (textarea, custom sensitivity),
-// while input-handler.test.ts covers broader input-handler-utils coverage.
+// while input-handler.test.ts covers the broader InputHandler utility surface.
 describe('Input Validation Utilities', () => {
   describe('isNavigationKey', () => {
     it('should identify navigation keys', () => {

@@ -9,13 +9,13 @@ without spinning up a renderer.
 
 ## Module map
 
-| File                  | Role                                                                                                                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registration.ts`     | `PickNodeEntry` (the `{ main, pick }` pair the orchestrator tracks), `disposePickMaterial(mesh)`, `unregisterAllPickMaterials(nodeMap)` — drops pick materials from `materialManager` without disposing the GPU object, for the post-context-loss rebuild path |
-| `ray-aabb.ts`         | World-space AABB cache + `rayHitsAnyNode(ray, nodeMap, cache)` early-out. `getOrComputeWorldBox` lazily projects a node's local `boundingBox` through `matrixWorld`; `invalidateBoxCache(cache, pickId?)` drops one or all entries |
-| `pick-render.ts`      | `voteWinner(pixels, pickSize, votesScratch)` — brightness-weighted majority vote across the 5×5 pixel readback. Returns the `(nodeId, elementId, accumulated brightness)` triple or `null` |
-| `settle-loop.ts`      | `HOVER_SETTLE_MS = 120` plus `evaluateSettle({ now, lastMouseMoveTime, lastDirtyTime, lastPickFiredTime })` returning `{ action: 'fire' \| 'wait' \| 'idle' }` |
-| `settle-scheduler.ts` | `SettleScheduler` — owns the rAF lifecycle and the mouse/dirty timestamps. Forwards each tick's decision to `evaluateSettle` and invokes `ctx.firePick` when both axes settle. The orchestrator hands it a narrow `SettleSchedulerCtx` (no `this` back-pointer) |
+| File                  | Role                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registration.ts`     | `PickNodeEntry` (the `{ main, pick }` pair the orchestrator tracks), `disposePickMaterial(mesh)`, `unregisterAllPickMaterials(nodeMap)` — drops pick materials from `materialManager` without disposing the GPU object, for the post-context-loss rebuild path                                       |
+| `ray-aabb.ts`         | World-space AABB cache + `rayHitsAnyNode(ray, nodeMap, cache)` early-out. `getOrComputeWorldBox` lazily projects a node's local `boundingBox` through `matrixWorld`; `invalidateBoxCache(cache, pickId?)` drops one or all entries                                                                   |
+| `pick-render.ts`      | `voteWinner(pixels, pickSize, votesScratch)` — brightness-weighted majority vote across the 5×5 pixel readback. Returns the `(nodeId, elementId, accumulated brightness)` triple or `null`                                                                                                           |
+| `settle-loop.ts`      | `HOVER_SETTLE_MS = 120` plus `evaluateSettle({ now, lastMouseMoveTime, lastDirtyTime, lastPickFiredTime })` returning `{ action: 'fire' \| 'wait' \| 'idle' }`                                                                                                                                       |
+| `settle-scheduler.ts` | `SettleScheduler` — owns the rAF lifecycle and the mouse/dirty timestamps. Forwards each tick's decision to `evaluateSettle` and invokes `ctx.firePick` when both axes settle. The orchestrator hands it a narrow `SettleSchedulerCtx` (no `this` back-pointer)                                      |
 | `lens-distortion.ts`  | `applyLensDistortion(u, v, params, out)` — TypeScript port of the green-channel Brown–Conrady distortion from `post-processing/mega/shader.glsl.ts::applyDistortion`. Lets the picking system map mouse coords into the undistorted pick buffer when the mega-shader is distorting the visible frame |
 
 ## Why this split exists
@@ -51,7 +51,7 @@ through its current `matrixWorld` once and caches the resulting
 `THREE.Box3`; subsequent picks reuse the cached box until the orchestrator
 explicitly invalidates it (on `registerNode`, `unregisterNode`, or a
 geometry commit). Camera motion does **not** invalidate the cache — the
-boxes live in world space and only depend on the *object's* transform.
+boxes live in world space and only depend on the _object's_ transform.
 `rayHitsAnyNode` short-circuits at the first intersection so the cost is
 O(N) only when the ray genuinely misses every node.
 
@@ -100,5 +100,7 @@ function takes an explicit `UVScratch` so the hot path is allocation-free.
   that `lens-distortion.ts` must stay byte-for-byte equivalent to
 - `../../materials/_shared/camera-uniforms.ts` — sibling parity case
   (picking math centralised so screen-space hit tests match rendering)
-- `../README.md` (planned) / `../../README.md` — picking subsystem in the
-  rendering package overview
+- `../README.md` — picking subsystem overview (the orchestrator + the
+  per-geometry material trios that wrap these helpers)
+- `../../README.md` — rendering package overview (picking is one
+  component in the larger pipeline)

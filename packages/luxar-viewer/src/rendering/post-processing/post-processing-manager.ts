@@ -597,7 +597,10 @@ export class PostProcessingManager {
     };
   }
 
-  private pipeline(opts: { applyFxaa: boolean; finalTarget: THREE.WebGLRenderTarget | null }): void {
+  private pipeline(opts: {
+    applyFxaa: boolean;
+    finalTarget: THREE.WebGLRenderTarget | null;
+  }): void {
     runPipeline(this.pipelineCtx(), opts);
   }
 
@@ -722,11 +725,7 @@ export class PostProcessingManager {
     if (this.megaShader.isDetectorNoiseEnabled()) {
       this.megaShader.advanceTime(dt);
     }
-    return renderToImageDataImpl(
-      this.captureCtx(),
-      this.getPhysicalSize(),
-      this.fxaaPass !== null
-    );
+    return renderToImageDataImpl(this.captureCtx(), this.getPhysicalSize(), this.fxaaPass !== null);
   }
 
   // ================================================================

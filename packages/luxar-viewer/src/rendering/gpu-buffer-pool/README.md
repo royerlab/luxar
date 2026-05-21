@@ -14,6 +14,8 @@ gpu-buffer-pool/
 ├── byte-budget-evictor.ts   # Cross-type eviction loop — evictUntilUnderByteBudget()
 ├── attribute-codec.ts       # Geometry-agnostic interleaved-buffer helpers
 │                              (rebuildInterleavedBuffer, writePooledAttribute)
+├── geometry-bytes.ts        # Cached per-geometry byte estimate
+│                              (estimateGeometryBytes, invalidateCachedByteSize)
 ├── points-adapter.ts        # PointsBufferAdapter — acquire/release/update for points
 ├── lines-adapter.ts         # LinesBufferAdapter   — acquire/release/update for lines
 └── gsplats-adapter.ts       # GSplatsBufferAdapter — acquire/release/update for gsplats
@@ -82,5 +84,5 @@ The evictor sees pooled-only buffers — active (in-use) buffers are never candi
 - `../gpu-buffer-pool.ts` — parent pool that wires the three adapters together and owns shared state
 - `../interleaved-attributes.ts` — `packInterleavedAttributes`, `widenToFloat32`, `writeInterleavedAttribute` primitives used by the codec
 - `../line-geometry.ts` / `../gsplat-geometry.ts` — standalone-geometry counterparts (mirror the `_maxInstanceCount` workaround)
-- `./geometry-bytes.ts` — `estimateGeometryBytes`, `invalidateCachedByteSize` (was `utils/geometry-utils.ts`; moved to live with its only consumers)
+- `./geometry-bytes.ts` — `estimateGeometryBytes`, `invalidateCachedByteSize`
 - `../README.md` § "GPU Buffer Pool" — package-level overview

@@ -1,8 +1,7 @@
 /**
  * NAVIGATION-context application bindings: all the orbit-mode UI
  * shortcuts (H, P, R, V, F, C, B, L, M, N, O, T, G, [, ], digits,
- * Escape, Space, Ctrl+L, Ctrl+Shift+S). Pure relocation from the
- * original key-bindings.ts; behavior byte-for-byte identical.
+ * Escape, Space, Ctrl+L, Ctrl+Shift+S).
  */
 
 import { config } from '../../../config';

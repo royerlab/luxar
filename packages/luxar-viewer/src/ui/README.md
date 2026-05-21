@@ -97,8 +97,9 @@ ui/
 │   │ attrs-utils.ts
 ├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
 │   └── ui-component.ts
-└── help-overlay/                       # Help overlay's private helper
-    └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
+├── help-overlay/                       # Help overlay's private helper
+│   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
+└── panels/                             # Reserved namespace for a future shared panel framework (currently empty)
 ```
 
 ### Why this layout?
@@ -1074,27 +1075,35 @@ _For implementation details, see the source files in this directory._
 
 ## Subpackages
 
-Documented subfolders with their own READMEs (private helpers for the
-sibling public-API file at this folder's root):
+Each sibling folder holds the private helpers for the public-API file
+of the same name at this folder's root. All have their own README:
 
 - [`data-loading-monitor/`](./data-loading-monitor/README.md) — Internals
   for `data-loading-monitor.ts` (templates, advisor, event queue,
   polling loop, timing panel; `metrics/` and `tabs/` helpers).
+- [`dataset-browser/`](./dataset-browser/README.md) — URL utilities
+  (`extractBaseUrl` / `extractPath`) for `dataset-browser.ts`.
+- [`debug-console/`](./debug-console/README.md) — Output formatters
+  (`@timestamp`, `[stream]`, etc.) for `debug-console.ts`.
+- [`dimension-sliders/`](./dimension-sliders/README.md) — Pure
+  value/fraction/wrap math helpers for `dimension-sliders.ts`.
 - [`gui/`](./gui/README.md) — Custom GUI library implementation
   (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
   formatting) re-exported by `gui.ts`.
+- [`help-overlay/`](./help-overlay/README.md) — Shared `focus-trap.ts`
+  (Tab/Shift+Tab focus cycling) used by `help-overlay.ts` and
+  `error-overlay.ts`.
 - [`layers/`](./layers/README.md) — Layers panel implementation
   (`LayersPanel`, `LayerStateManager`, range/labeled sliders) re-exported
   by `layers.ts`.
-- [`panels/`](./panels/README.md) — Shared panel framework used by
-  multiple top-level panels.
+- [`overlay-widgets/`](./overlay-widgets/README.md) — Shared
+  `UIComponent` base class for screen-space overlay widgets (scale bar,
+  colormap legend).
+- [`panels/`](./panels/README.md) — Reserved namespace for a future
+  shared panel framework. Currently empty.
 - [`recording-panel/`](./recording-panel/README.md) — Recording panel
   internals (capture drivers, GUI construction, media utilities,
   overlay compositor, sequence/ZIP exporters).
 - [`rendering-controls/`](./rendering-controls/README.md) — Rendering
   controls internals (per-category `setup/` modules, focus manager,
   cinematic mode, settings persistence, clipping/FOV utilities).
-
-The remaining sibling folders (`dataset-browser/`, `debug-console/`,
-`dimension-sliders/`, `help-overlay/`, `overlay-widgets/`) contain
-small single-purpose helpers documented inline at their call sites.

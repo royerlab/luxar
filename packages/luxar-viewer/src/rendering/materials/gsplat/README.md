@@ -8,13 +8,13 @@ Both backends ship side-by-side through the `ShaderSource` pattern documented in
 
 ## Module map
 
-| File | Role |
-| ---- | ---- |
-| `material-glsl.ts` | `GSplatMaterial` (extends `THREE.ShaderMaterial`, `glslVersion: GLSL3`) + `GSplatMaterialConfig` / `GSplatMaterialUniforms` types. Implements `CameraAwareMaterial` and `ColormapAwareMaterial`. Owns the GSplat-specific `applyBlendingMode` (sets `CustomBlending + OneFactor` for additive/luminous, `MaxEquation` for max, toggles `uProjectionMode`). |
-| `material-tsl.ts` | `GSplatTSLMaterial` (extends `NodeMaterial`). Same constructor signature and update surface as the GLSL wrapper. Owns persistent TSL leaf nodes and exposes them through `material.uniforms` as `IUniform`-shaped getter/setter proxies via `proxyIUniform`. `applyBlendingMode` here routes through the shared `getCompleteBlendingState` helper (see "Backend divergence on additive blending" below). |
-| `shader-glsl.ts` | `GSPLAT_VERTEX_SHADER`, `GSPLAT_FRAGMENT_SHADER` (GLSL3 strings) and the public `GSPLAT_SOURCE: ShaderSource` registry entry. |
-| `shader-tsl.ts` | `gsplatWebGPUFactory(nodes, config, outMaterial?)` — emits the TSL graph onto a `NodeMaterial`. Exports `GSplatTSLNodes` (the persistent leaf-node contract the wrapper owns) and `buildGSplatTSLNodesFromUniforms` (snapshot adapter for callers that don't own persistent nodes — the `ShaderSource.webgpu` factory and the TSL parity harness). |
-| `math.ts` | `computeRayIntegralFactor(truncate)` — the shifted Gaussian ray integral `sqrt(2π)·erf(T/√2) − 2·T·exp(−½·T²)` (Abramowitz & Stegun erf, max error 1.5e-7). Lives outside both material wrappers so the two backends compute byte-identical numeric values from identical inputs — the `tsl-shader-parity.spec.ts` harness depends on this. |
+| File               | Role                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material-glsl.ts` | `GSplatMaterial` (extends `THREE.ShaderMaterial`, `glslVersion: GLSL3`) + `GSplatMaterialConfig` / `GSplatMaterialUniforms` types. Implements `CameraAwareMaterial` and `ColormapAwareMaterial`. Owns the GSplat-specific `applyBlendingMode` (sets `CustomBlending + OneFactor` for additive/luminous, `MaxEquation` for max, toggles `uProjectionMode`).                                               |
+| `material-tsl.ts`  | `GSplatTSLMaterial` (extends `NodeMaterial`). Same constructor signature and update surface as the GLSL wrapper. Owns persistent TSL leaf nodes and exposes them through `material.uniforms` as `IUniform`-shaped getter/setter proxies via `proxyIUniform`. `applyBlendingMode` here routes through the shared `getCompleteBlendingState` helper (see "Backend divergence on additive blending" below). |
+| `shader-glsl.ts`   | `GSPLAT_VERTEX_SHADER`, `GSPLAT_FRAGMENT_SHADER` (GLSL3 strings) and the public `GSPLAT_SOURCE: ShaderSource` registry entry.                                                                                                                                                                                                                                                                            |
+| `shader-tsl.ts`    | `gsplatWebGPUFactory(nodes, config, outMaterial?)` — emits the TSL graph onto a `NodeMaterial`. Exports `GSplatTSLNodes` (the persistent leaf-node contract the wrapper owns) and `buildGSplatTSLNodesFromUniforms` (snapshot adapter for callers that don't own persistent nodes — the `ShaderSource.webgpu` factory and the TSL parity harness).                                                       |
+| `math.ts`          | `computeRayIntegralFactor(truncate)` — the shifted Gaussian ray integral `sqrt(2π)·erf(T/√2) − 2·T·exp(−½·T²)` (Abramowitz & Stegun erf, max error 1.5e-7). Lives outside both material wrappers so the two backends compute byte-identical numeric values from identical inputs — the `tsl-shader-parity.spec.ts` harness depends on this.                                                              |
 
 ## Vertex pipeline
 
@@ -58,19 +58,19 @@ The sum-projection branch carries the 3×3 cofactor expansion + `inversesqrt` �
 
 ## Uniform reference
 
-| Uniform | Type | Role |
-| ------- | ---- | ---- |
-| `uResolution` | `vec2` | Viewport pixels (used by Jacobian, screen-coverage fade, oriented-quad NDC). |
-| `uFx`, `uFy` | `float` | Focal lengths in pixels; set by `updateCameraParams` via `computeFocalLength(fov, height, isOrtho)`. |
-| `uIsOrtho` | `int` | 0 = perspective, 1 = orthographic. Branches Jacobian, fades, and screen mapping. |
-| `uNearCull` | `float` | Near-fade start distance (perspective only). |
-| `uMaxExtentFactor` | `float` | Coverage fade + quad clamp threshold as a fraction of `max(width, height)`. Default 0.33. |
-| `uTruncate`, `uTruncateSq` | `float` | Truncation radius in sigmas and its square. Default 3.0. |
-| `uShiftC`, `uInvOneMinusC` | `float` | Shifted-Gaussian boundary value `exp(−½·T²)` and the peak-preserving rescale `1/(1−C)`. Recomputed by `updateTruncationRadius`. |
-| `uRayIntegralFactor` | `float` | Shifted-Gaussian ray integral; computed by `computeRayIntegralFactor` in `math.ts`. ≈ 2.433 for `T = 3`. |
-| `uProjectionMode` | `int` | 0 = sum, 1 = max. |
-| `uOpacity`, `uIntensity`, `uOffset`, `uInvGamma` | `float` | Per-node opacity + GOG chain. |
-| `uColormapTex`, `uScalarMin`, `uScalarScale` | conditional | Present only when `defines.USE_COLORMAP` is set; LUT lookup uses `aAmplitude` as the scalar (mirrors the GLSL path). |
+| Uniform                                          | Type        | Role                                                                                                                            |
+| ------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `uResolution`                                    | `vec2`      | Viewport pixels (used by Jacobian, screen-coverage fade, oriented-quad NDC).                                                    |
+| `uFx`, `uFy`                                     | `float`     | Focal lengths in pixels; set by `updateCameraParams` via `computeFocalLength(fov, height, isOrtho)`.                            |
+| `uIsOrtho`                                       | `int`       | 0 = perspective, 1 = orthographic. Branches Jacobian, fades, and screen mapping.                                                |
+| `uNearCull`                                      | `float`     | Near-fade start distance (perspective only).                                                                                    |
+| `uMaxExtentFactor`                               | `float`     | Coverage fade + quad clamp threshold as a fraction of `max(width, height)`. Default 0.33.                                       |
+| `uTruncate`, `uTruncateSq`                       | `float`     | Truncation radius in sigmas and its square. Default 3.0.                                                                        |
+| `uShiftC`, `uInvOneMinusC`                       | `float`     | Shifted-Gaussian boundary value `exp(−½·T²)` and the peak-preserving rescale `1/(1−C)`. Recomputed by `updateTruncationRadius`. |
+| `uRayIntegralFactor`                             | `float`     | Shifted-Gaussian ray integral; computed by `computeRayIntegralFactor` in `math.ts`. ≈ 2.433 for `T = 3`.                        |
+| `uProjectionMode`                                | `int`       | 0 = sum, 1 = max.                                                                                                               |
+| `uOpacity`, `uIntensity`, `uOffset`, `uInvGamma` | `float`     | Per-node opacity + GOG chain.                                                                                                   |
+| `uColormapTex`, `uScalarMin`, `uScalarScale`     | conditional | Present only when `defines.USE_COLORMAP` is set; LUT lookup uses `aAmplitude` as the scalar (mirrors the GLSL path).            |
 
 ## See Also
 
@@ -79,5 +79,5 @@ The sum-projection branch carries the 3×3 cofactor expansion + `inversesqrt` �
 - `../../README.md` § "4. GSplat Material" — package-level overview of how this material plugs into the rendering pipeline.
 - `../../blending-state.ts` — `getCompleteBlendingState`, `applyBlendingStateToMaterial`, and the predicate guards (`isMaxMode`, `isAdditiveMode`, …) used by both wrappers.
 - `../../material-colormap-helpers.ts` — `applyColormapTextureToMaterial` / `applyScalarRangeToMaterial`, the only consumers of the `ColormapAwareMaterial` setters this material implements.
-- `../../picking/gsplat-picking-material.ts` and `../../picking/gsplat-pick.tsl.ts` — GPU-picking counterparts; reuse the same vertex pipeline through `computeFocalLength` so screen-space hits match rendering.
+- `../../picking/gsplat/material.ts` and `../../picking/gsplat/pick.tsl.ts` — GPU-picking counterparts; reuse the same vertex pipeline through `computeFocalLength` so screen-space hits match rendering.
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — the GLSL↔TSL parity harness `math.ts` exists to serve.

@@ -13,12 +13,12 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File              | Role                                                                                                                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.   |
-| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path. |
+| File               | Role                                                                                                                                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
+| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
 | `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph. |
+| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 
 ## Rendering model in one paragraph
 
@@ -73,13 +73,13 @@ Both backends share the same five `#define`s, set by the wrapper and
 either gated via `#ifdef` (GLSL) or read at TSL build time
 (`rebuildGraph` re-runs the factory):
 
-| Define                       | Effect                                                                                                          | Set by                                                            |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `USE_COLORMAP`               | Replaces `aStartColor`/`aEndColor` per-vertex RGB with `aStartScalar`/`aEndScalar` + LUT lookup                 | `setColormapTexture(texture)` / `updateColormapTexture`           |
-| `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                  | `updateGamma` when crossing the threshold                         |
-| `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`       | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine`      |
-| `LUXAR_SHARPNESS_TWO`        | Replaces `pow((1 − p²), max(vSharpness, 1e-4))` with `(1 − p²)²` when every per-vertex sharpness is 2.0          | `setSharpnessAllTwo(true)` — node-factory inspects upload arrays  |
-| `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                        |
+| Define                       | Effect                                                                                                                                                                | Set by                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `USE_COLORMAP`               | Replaces `aStartColor`/`aEndColor` per-vertex RGB with `aStartScalar`/`aEndScalar` + LUT lookup                                                                       | `setColormapTexture(texture)` / `updateColormapTexture`          |
+| `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                        |
+| `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine`     |
+| `LUXAR_SHARPNESS_TWO`        | Replaces `pow((1 − p²), max(vSharpness, 1e-4))` with `(1 − p²)²` when every per-vertex sharpness is 2.0                                                               | `setSharpnessAllTwo(true)` — node-factory inspects upload arrays |
+| `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                       |
 
 The GLSL wrapper toggles `this.needsUpdate = true` when a define changes
 so THREE's program cache recompiles; the TSL wrapper calls
@@ -90,14 +90,14 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## Shared helpers from `_shared/`
 
-| Symbol                                | Used for                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `clampGamma(g)`                       | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).   |
-| `CameraAwareMaterial` interface       | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material. |
-| `ColormapAwareMaterial` interface     | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.  |
-| `GLSL_SANITIZE_FUNCTIONS`             | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` to clean width/sharpness inputs against NaN/Inf/negative. |
-| `sanitizePositive` / `sanitizeNonNegative` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory. |
-| `proxyIUniform(node)`                 | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge. |
+| Symbol                                           | Used for                                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `clampGamma(g)`                                  | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).                                                          |
+| `CameraAwareMaterial` interface                  | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                        |
+| `ColormapAwareMaterial` interface                | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                         |
+| `GLSL_SANITIZE_FUNCTIONS`                        | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` to clean width/sharpness inputs against NaN/Inf/negative.              |
+| `sanitizePositive` / `sanitizeNonNegative` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                       |
+| `proxyIUniform(node)`                            | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge. |
 
 ## `isGammaOne` / `isNoGOG` cross-export
 
@@ -123,5 +123,5 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../README.md` — Rendering package overview and where line materials sit in the pipeline
 - `../../line-geometry.ts` — `InstancedBufferGeometry` builder and the interleaved-attribute layout this shader binds
 - `../../material-manager.ts` — owns the `getLineMaterial` cache and the camera-broadcast loop
-- `../../picking/line-picking-material.ts` / `line-picking-material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
+- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness

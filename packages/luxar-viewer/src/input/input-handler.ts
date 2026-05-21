@@ -48,7 +48,10 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { InputContextManager } from './input-handler/context-manager';
-import { computeDimensionStep, resolveSelectedDimension } from './input-handler/dimension-navigation/compute-step';
+import {
+  computeDimensionStep,
+  resolveSelectedDimension,
+} from './input-handler/dimension-navigation/compute-step';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';

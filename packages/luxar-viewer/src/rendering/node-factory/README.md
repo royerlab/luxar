@@ -15,13 +15,13 @@ a real scene, renderer, or picking system.
 
 ## Module map
 
-| File                     | Role                                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------------------- |
-| `validation.ts`          | `validateLoadedPointsData` (length/divisibility checks + structured log), `validateColorMode` (HDR Float32 vs SDR normalized-integer sanity), `validateTransformFormat` (row-major NumPy → throws) |
-| `transforms.ts`          | `applyTransform` — length-16 guard + row-major guard, then `Matrix4.fromArray().decompose()` onto `object.position / quaternion / scale` |
+| File                     | Role                                                                                                                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validation.ts`          | `validateLoadedPointsData` (length/divisibility checks + structured log), `validateColorMode` (HDR Float32 vs SDR normalized-integer sanity), `validateTransformFormat` (row-major NumPy → throws)                                                                        |
+| `transforms.ts`          | `applyTransform` — length-16 guard + row-major guard, then `Matrix4.fromArray().decompose()` onto `object.position / quaternion / scale`                                                                                                                                  |
 | `create-points-node.ts`  | `createPointsGeometry` (one shared unit quad + per-instance `aCenter/aColor/aRadius/aSharpness/aScalar`, dtype-aware normalization, `instanceCount` + `drawRange(0,6)`, metadata bounds) and `createPointsMaterial` (materialManager lookup + scalar-colormap clone path) |
-| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `sharpness=2` fast path + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder |
-| `create-gsplats-node.ts` | `createGSplatsNode` (gsplat material + colormap clone + `createInstancedGSplatsMesh` + optional picking shadow) and `createEmptyGSplatsNode` placeholder |
+| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `sharpness=2` fast path + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder                                                                                                |
+| `create-gsplats-node.ts` | `createGSplatsNode` (gsplat material + colormap clone + `createInstancedGSplatsMesh` + optional picking shadow) and `createEmptyGSplatsNode` placeholder                                                                                                                  |
 
 ## How the orchestrator composes them
 
@@ -49,8 +49,8 @@ NodeFactory (class in rendering/node-factory.ts)
   when a 4×4 transform looks row-major (non-zero at indices `[3,7,11]`
   with zeros at `[12,13,14]`). Python producers must transpose before
   storing: `matrix.T.ravel().tolist()`. This is the load-time refusal
-  the parent `THREE_VERSION_NOTES.md` and project-root `CLAUDE.md`
-  reference.
+  the project-root `CLAUDE.md` ("Critical Gotchas / Matrix Storage")
+  references.
 - **Colormap clone path.** `createPointsMaterial`, `createLinesNode`,
   and `createGSplatsNode` all share the same shape: when
   `nodeAttrs.colormap` is set (and, for points / lines, a scalar

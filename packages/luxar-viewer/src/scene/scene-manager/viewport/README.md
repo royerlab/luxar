@@ -13,10 +13,10 @@ functions called from both the orchestrator and from
 
 ## Files
 
-| File                     | Role                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File                     | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dpr-policy.ts`          | Pure, stateless DPR functions. `getActivePixelRatio(override)` resolves the currently-applied DPR (override or `window.devicePixelRatio`). `computePixelRatioOverride(dpr)` snaps to native within 0.01 (returns `override: null` so future monitor-DPI changes track natively) and rejects non-finite / non-positive inputs. `getNormalizedDPRScale(activeDPR)` returns `activeDPR / nativeDPR` for perceptually-constant DPR-dependent effects (e.g. detector-noise grain density). `syncPostProcessingDPRScale(pp, override)` pushes that scale into the post-processing pipeline so noise grain and AA thresholds stay consistent after DPR / resize changes. |
-| `resize-orchestrator.ts` | `ResizeOrchestrator` class owning the rAF-coalescing window-resize loop. `scheduleResize(getCtx)` reads `window.innerWidth`/`innerHeight` synchronously, cancels any in-flight rAF, and schedules a single `doResize` (a burst of `ResizeObserver` fires becomes one renderer resize). `resizeNow(w, h, ctx)` applies a resize immediately for the adaptive-DPR path which already runs at frame-level granularity. `resizeLocked` suppresses scheduling while a recording is in progress (resolution must stay locked). `dispose()` cancels in-flight rAF and clears pending state. |
+| `resize-orchestrator.ts` | `ResizeOrchestrator` class owning the rAF-coalescing window-resize loop. `scheduleResize(getCtx)` reads `window.innerWidth`/`innerHeight` synchronously, cancels any in-flight rAF, and schedules a single `doResize` (a burst of `ResizeObserver` fires becomes one renderer resize). `resizeNow(w, h, ctx)` applies a resize immediately for the adaptive-DPR path which already runs at frame-level granularity. `resizeLocked` suppresses scheduling while a recording is in progress (resolution must stay locked). `dispose()` cancels in-flight rAF and clears pending state.                                                                              |
 
 ## ResizeCtx contract
 
@@ -29,10 +29,10 @@ re-construction.
 
 ```typescript
 interface ResizeCtx {
-  readonly renderer: Renderer;                  // WebGL or WebGPU
-  readonly camera: LuxarCamera | null;          // null pre-init
+  readonly renderer: Renderer; // WebGL or WebGPU
+  readonly camera: LuxarCamera | null; // null pre-init
   readonly postProcessing: PostProcessingManager | null;
-  readonly pixelRatioOverride: number | null;   // current adaptive/manual DPR
+  readonly pixelRatioOverride: number | null; // current adaptive/manual DPR
   /** Refresh world-space point sizing uniforms after each resize. */
   updateMaterialsForCurrentCamera(): void;
 }
@@ -91,7 +91,7 @@ For each resize (rAF-coalesced or immediate), `doResize` runs:
 - `../../scene-manager.ts` — the `SceneManager` owns the orchestrator
   instance, supplies the `getCtx()` callback, and routes
   `updateSize()` through it.
-- `../../../rendering/post-processing-manager.ts` —
+- `../../../rendering/post-processing/post-processing-manager.ts` —
   `PostProcessingManager.resize` and `setDPRScale`, the two sinks for
   the resize pipeline.
 - `../../../utils/camera-utils.ts` — `updateCameraAspect`, called from

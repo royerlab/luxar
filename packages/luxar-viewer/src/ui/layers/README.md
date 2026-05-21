@@ -13,6 +13,8 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Blending mode** (additive, normal, max, opaque, luminous)
 - **Colormap** (for gsplats and scalar-backed points/lines)
 
+Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
+
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
 ## Usage
@@ -31,25 +33,30 @@ with LuxarZarrCompiler("scene.zarr") as c:
 
 ### Viewer
 
-Press **L** to toggle the Layers panel.
+Press **L** to toggle the Layers panel (Escape closes when focus is inside the panel).
 
 - **Click** a layer to select it
-- **Ctrl+Click** to toggle additional layers
+- **Ctrl/Cmd+Click** to toggle additional layers
 - **Shift+Click** for range selection
+- **Arrow Up / Arrow Down** move the keyboard focus through rows (and select on simple navigation)
+- **Enter / Space** select the focused row (honouring Ctrl/Cmd/Shift modifiers)
+- The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
 - Controls below the list apply to all selected layers
 
 ## Architecture
 
 ```
-layer-state.ts     Pure data model, min/max ↔ intensity/offset math
-layers-panel.ts    DOM panel, event handling, scene application
-range-slider.ts    Dual-thumb [min, max] slider component
-attrs-utils.ts     Pure helpers for layer attribute filtering / coercion
-labeled-slider.ts  Single-thumb labeled slider component
+layer-state.ts     Pure data model, min/max ↔ intensity/offset math, selection logic
+layers-panel.ts    DOM panel, event handling, attr composition, scene application
+range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
+labeled-slider.ts  Single-thumb labeled slider (gamma, opacity)
+attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```
 
 The public entrypoint is `../layers.ts` (parent file); it re-exports
-the surface external code should consume.
+`LayersPanel`, `LayerStateManager`, `RangeSlider`, the `computeUniforms` /
+`computeDisplayRange` math, and the `LayerInfo` / `DisplayUniforms` /
+`SelectionMode` types.
 
 ## Display Range Mapping
 
@@ -60,16 +67,23 @@ intensity = 1 / (max - min)
 offset    = -min / (max - min)
 ```
 
-Slider bounds come from `color_data_range` stored in the zarr `.zattrs` during encoding.
+Slider bounds come from the data-range zarr attr written during encoding:
+`scalar_data_range` (preferred when present), else `color_data_range`,
+else `amplitude_data_range` (gsplats), else `[0, 1]`. Group layers have no
+range of their own and fall through to `[0, 1]`. If the layer was authored
+with non-default `intensity` / `offset`, the recovered display range may
+extend beyond the stored data range — the slider bounds are widened to
+`[min(dataMin, displayMin), max(dataMax, displayMax)]` so the `<input>`
+doesn't silently clamp the thumb on first render.
 
 ## Files
 
-| File                                       | Purpose                                                      |
-| ------------------------------------------ | ------------------------------------------------------------ |
-| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms()`, selection logic    |
-| `layers-panel.ts`                          | `LayersPanel` class — DOM, event handlers, scene application |
-| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component                   |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component       |
-| `attrs-utils.ts`                           | Pure helpers for filtering / coercing layer attributes       |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface            |
-| `../../styles/components/layers-panel.css` | Themed CSS styles                                            |
+| File                                       | Purpose                                                                            |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic    |
+| `layers-panel.ts`                          | `LayersPanel` class — DOM, event handlers, attr composition, scene application     |
+| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity)            |
+| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)         |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                  |
+| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                  |

@@ -38,13 +38,13 @@ Defines `SetupContext` and `SetupResult` — the shared call-shape used by every
 
 localStorage I/O and defaults building. No DOM, no manager calls — just structured merging:
 
-| Export | Purpose |
-| --- | --- |
-| `buildBaseDefaults()` | Hardcoded base defaults (`config.renderingControls.defaults` + `config.controls.fly.*` defaults). Returns `FullySpecifiedRenderingSettings`. |
-| `buildResetDefaults(zarrViewerConfig?)` | Base defaults overlaid with zarr `viewer_config` overrides (routed through `validateRenderingSettings` to clamp NaN/Infinity). |
-| `saveSettingsToStorage(sceneId, settings)` | Quota-safe write under `StorageKeys.rendering(sceneId)`. |
-| `loadSettingsFromStorage(sceneId)` | Quota-safe read; returns `{ stored, loaded }`. |
-| `clearStoredSettings(sceneId)` | Quota-safe `removeItem`. |
+| Export                                     | Purpose                                                                                                                                      |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `buildBaseDefaults()`                      | Hardcoded base defaults (`config.renderingControls.defaults` + `config.controls.fly.*` defaults). Returns `FullySpecifiedRenderingSettings`. |
+| `buildResetDefaults(zarrViewerConfig?)`    | Base defaults overlaid with zarr `viewer_config` overrides (routed through `validateRenderingSettings` to clamp NaN/Infinity).               |
+| `saveSettingsToStorage(sceneId, settings)` | Quota-safe write under `StorageKeys.rendering(sceneId)`.                                                                                     |
+| `loadSettingsFromStorage(sceneId)`         | Quota-safe read; returns `{ stored, loaded }`.                                                                                               |
+| `clearStoredSettings(sceneId)`             | Quota-safe `removeItem`.                                                                                                                     |
 
 `FullySpecifiedRenderingSettings` narrows the otherwise-optional fly fields to non-optional concretes — useful for callers that don't want `| undefined` everywhere.
 
