@@ -796,7 +796,7 @@ export class SceneLoader {
   /**
    * Update geometry for a specific points node.
    *
-   * Implementation lives in `scene-loader/geometry-commit-handler.ts`.
+   * Implementation lives in `scene-loader/commit/commit-points-geometry.ts`.
    */
   private updatePointsGeometry(
     path: string,

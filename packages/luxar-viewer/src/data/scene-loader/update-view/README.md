@@ -61,7 +61,7 @@ consumes them.
 
 - `../scene-loader.ts` — the orchestrator that composes these three
   helpers; their ctx interfaces are shaped to match its private state.
-- `../view-state-queue.ts` — `takePending()` source consumed by
+- `../view-state/view-state-queue.ts` — `takePending()` source consumed by
   `queueNext`.
 - `../process/` — Stage 1 producers of `StagedLinesCommit` /
   `StagedGSplatsCommit` (Points use `LoadedPointsData` directly).
