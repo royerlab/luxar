@@ -17,7 +17,7 @@ import {
   clearL2Cache as clearL2CacheHelper,
   clearAllCaches as clearAllCachesHelper,
   type CacheStatsSnapshot,
-} from './scene-loader/cache-api';
+} from './scene-loader/cache/cache-api';
 import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
