@@ -11,7 +11,7 @@
  * one-line delegation and the composition rules can be tested
  * without touching the loader.
  *
- * @module data/scene-loader/effective-attrs
+ * @module data/scene-loader/view-state/effective-attrs
  */
 
 import { getEffectiveAttrs } from '../../attrs-composer';

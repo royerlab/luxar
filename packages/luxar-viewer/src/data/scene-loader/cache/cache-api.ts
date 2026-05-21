@@ -20,7 +20,7 @@
  * caches are absent under `?no-cache` or when the global config disables
  * them.
  *
- * @module data/scene-loader/cache-api
+ * @module data/scene-loader/cache/cache-api
  */
 
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';

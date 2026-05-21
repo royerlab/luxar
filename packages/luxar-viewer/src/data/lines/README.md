@@ -20,7 +20,7 @@ as the Points and GSplats facades (constructor, `loadLines` /
 `updateView`, `prefetchChunks`, `dispose`, monitor events via
 `addEventListener` / `getMetrics` / `getActiveQueries`). Scene-loader
 code never imports the concrete class — it goes through
-`scene-loader/loader-factory.ts`.
+`scene-loader/loaders/loader-factory.ts`.
 
 `projectLinesTo3D` is exported for the main-thread fallback path
 and for unit tests that exercise per-vertex interpolation without a

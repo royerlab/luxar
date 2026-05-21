@@ -6,7 +6,7 @@
  * derivation + type-specific stat extraction can be unit-tested
  * without instantiating SceneLoader.
  *
- * @module data/scene-loader/scene-graph-converter
+ * @module data/scene-loader/monitor/scene-graph-converter
  */
 
 import type { SceneNode } from '../../data-loader-types';
