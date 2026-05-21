@@ -213,12 +213,14 @@ class LuxarOrbitControls extends EventDispatcher {
 
 Key types and type guards exported from this package:
 
-- `ControlType` - `'orbit' | 'fly' | 'ortho'`
-- `ControlState`, `OrbitState`, `FlyState` - Complete control state interfaces
-- `ControlInstance` - Union of `LuxarOrbitControls | LuxarFlyControls`
-- `isOrbitControls(control)` - Type guard for orbit controls
-- `isFlyControls(control)` - Type guard for fly controls
-- `GuiControllers`, `RenderingControllers`, `BloomControllers`, `HDRControllers` - GUI controller type references
+- `ControlType` — `'orbit' | 'fly' | 'ortho'`
+- `ControlInstance` — Union of `LuxarOrbitControls | LuxarFlyControls`
+- `isOrbitControls(control)` — Type guard for orbit controls
+- `isFlyControls(control)` — Type guard for fly controls
+
+(GUI-controller reference types — `RenderingControllers`, `BloomControllers`,
+`HDRControllers` — live alongside their consumers in
+`ui/rendering-controls/types.ts`, not here.)
 
 ### Events
 
