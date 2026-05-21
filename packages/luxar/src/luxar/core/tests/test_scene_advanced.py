@@ -525,8 +525,7 @@ class TestToZarr:
 
         The detailed behavior (refusing existing destinations, refusing
         nested destinations, etc.) is exercised in test_review_fixes.py;
-        this test pins down the smoke-level happy path that used to be a
-        ``NotImplementedError`` stub.
+        this test pins down the smoke-level happy path.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
