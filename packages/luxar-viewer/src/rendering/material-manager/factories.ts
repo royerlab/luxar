@@ -104,9 +104,7 @@ export function resolveMaterialBackend(caps: RendererCapabilities | null): Mater
 /**
  * Constructor table for the visual material pair of each geometry
  * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
- * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate,
- * replacing what used to be inline `useTSL ? new XTSL(...) : new
- * X(...)` ternaries.
+ * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate.
  */
 export const VISUAL_FACTORIES = {
   point: { glsl: PointMaterial, tsl: PointTSLMaterial },

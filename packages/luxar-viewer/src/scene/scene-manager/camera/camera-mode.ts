@@ -4,8 +4,9 @@
  * Owns the perspective ↔ orthographic camera-swap policy and the
  * wiring of the swap into the control-type setter. SceneManager
  * keeps the public `setControlType()` method (so the
- * `camera-changed` event dispatches at the class call site, per
- * non-goal #2) but delegates the body to `setControlType()` here.
+ * `camera-changed` event dispatches at the class call site — helpers
+ * never dispatch on the host's event channel) but delegates the body
+ * to `setControlType()` here.
  *
  * The host owns the `camera` field; the ctx exposes a
  * `getCamera() / setCamera()` pair so helpers can read/replace it
@@ -52,7 +53,7 @@ export interface CameraModeCtx {
  * @returns `{ cameraChanged: true }` if the camera object was
  *   replaced; caller is expected to dispatch the `camera-changed`
  *   event in that case. (Event dispatch stays at the SceneManager
- *   call site — see non-goal #2.)
+ *   call site — helpers never dispatch on the host's event channel.)
  */
 export function setControlType(type: ControlType, ctx: CameraModeCtx): { cameraChanged: boolean } {
   const needsOrtho = type === 'ortho';

@@ -17,5 +17,5 @@ Keyboard binding table split per context.
   End / Shift+↑ / Shift+↓ (registered on NAVIGATION context after the
   animation manager is constructed).
 
-Behavior is byte-for-byte identical to the pre-split inline registration
-that used to live in `InputHandler`; the split is structural.
+The split is structural — every binding is registered through
+`InputHandler` at startup via `registerAllKeyBindings`.

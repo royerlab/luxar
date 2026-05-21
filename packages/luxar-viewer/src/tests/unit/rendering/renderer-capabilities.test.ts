@@ -172,9 +172,9 @@ describe('createRendererCapabilities (GL probes)', () => {
   });
 
   // -------------------------------------------------------------------
-  // HDR renderer-side probes — these used to live in hdr-detection.ts
-  // and moved here when raw-GL probing was concentrated in
-  // `createRendererCapabilities`.
+  // HDR renderer-side probes — raw-GL probing flows through
+  // `createRendererCapabilities` and fills out `hdr.*` from the
+  // GL context.
   // -------------------------------------------------------------------
 
   it('reads RED/GREEN/BLUE bits from the GL context into hdr.colorDepth', () => {
