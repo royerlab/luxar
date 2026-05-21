@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { FXAA_SOURCE } from './fxaa-shaders';
 import { buildMaterial } from '../materials/_shared/material-builder';
-import { FullscreenPass } from './fullscreen-pass';
+import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 /**

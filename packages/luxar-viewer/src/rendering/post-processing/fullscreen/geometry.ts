@@ -24,7 +24,7 @@
 
 import * as THREE from 'three';
 
-import type { RendererCapabilities } from '../renderer-capabilities';
+import type { RendererCapabilities } from '../../renderer-capabilities';
 
 /**
  * Build the shared fullscreen-triangle geometry. Called once per

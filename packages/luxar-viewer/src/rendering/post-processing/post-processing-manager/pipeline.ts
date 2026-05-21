@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import type { Renderer } from '../../renderer-capabilities';
 import type { LuxarMegaShaderMaterial } from '../../material-manager';
 import type { BloomChain } from '../bloom-chain';
-import type { FullscreenPass } from '../fullscreen-pass';
+import type { FullscreenPass } from '../fullscreen/pass';
 import type { FxaaPass } from '../fxaa-pass';
 
 /** Read-only references the pipeline runner needs from the orchestrator. */
