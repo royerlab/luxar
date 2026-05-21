@@ -12,16 +12,16 @@ place (`buildMaterial`).
 
 ## Module map
 
-| File                          | Role                                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `shader-source.ts`            | `ShaderSource` registry type: `{ name, webgl?: { vertex, fragment }, webgpu?: factory }` plus `requireWebGLSources()` narrowing helper |
-| `material-builder.ts`         | `buildMaterial(source, config, caps)` — branches on `caps.apiSurface` to return either a `THREE.ShaderMaterial` (GLSL3) or a TSL `NodeMaterial` |
-| `camera-aware-material.ts`    | `CameraAwareMaterial` interface + `isCameraAwareMaterial` guard. The contract `MaterialManager.updateCameraParams(fov, resolution, isOrtho?, nearCull?)` broadcasts to |
-| `colormap-aware-material.ts`  | `ColormapAwareMaterial` interface + guard. Two setters (`setColormapTexture`, `setScalarRange`) so the colormap helpers never reach into `material.uniforms` directly |
-| `camera-uniforms.ts`          | Pure math shared by visual + picking materials: `computePointSizeFactor`, `computeMaxPointSize`, `computeFocalLength`. Branches on `isOrtho` so callers don't special-case projection |
-| `uniform-helpers.ts`          | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor |
-| `glsl-lib.ts`                 | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every visual shader |
-| `tsl-helpers.ts`              | TSL counterparts to the GLSL sanitisers (`sanitizePositive`, `sanitizeNonNegative`, `invalidFloatTSL`) plus `proxyIUniform(node)` — wraps a TSL `UniformNode` in an `IUniform`-shaped getter/setter so the `material.uniforms.uX.value = Y` API works under both backends |
+| File                         | Role                                                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-source.ts`           | `ShaderSource` registry type: `{ name, webgl?: { vertex, fragment }, webgpu?: factory }` plus `requireWebGLSources()` narrowing helper                                                                                                                                    |
+| `material-builder.ts`        | `buildMaterial(source, config, caps)` — branches on `caps.apiSurface` to return either a `THREE.ShaderMaterial` (GLSL3) or a TSL `NodeMaterial`                                                                                                                           |
+| `camera-aware-material.ts`   | `CameraAwareMaterial` interface + `isCameraAwareMaterial` guard. The contract `updateCameraParams(fov, resolution, isOrtho?, nearCull?)` that `MaterialManager` broadcasts to every registered visual + picking material                                                  |
+| `colormap-aware-material.ts` | `ColormapAwareMaterial` interface + guard. Two setters (`setColormapTexture`, `setScalarRange`) so the colormap helpers never reach into `material.uniforms` directly                                                                                                     |
+| `camera-uniforms.ts`         | Pure math shared by visual + picking materials: `computePointSizeFactor`, `computeMaxPointSize`, `computeFocalLength`. Branches on `isOrtho` so callers don't special-case projection                                                                                     |
+| `uniform-helpers.ts`         | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor                                                                                                                                                     |
+| `glsl-lib.ts`                | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every Point / Line / GSplat visual _and_ picking GLSL shader                                                                                           |
+| `tsl-helpers.ts`             | TSL counterparts to the GLSL sanitisers (`sanitizePositive`, `sanitizeNonNegative`, `invalidFloatTSL`) plus `proxyIUniform(node)` — wraps a TSL `UniformNode` in an `IUniform`-shaped getter/setter so the `material.uniforms.uX.value = Y` API works under both backends |
 
 ## The `ShaderSource` GLSL/TSL parity pattern
 
@@ -32,7 +32,7 @@ material. The registry carries both backends side-by-side:
 ```typescript
 export const pointShaderSource: ShaderSource = {
   name: 'point',
-  webgl:  { vertex: POINT_VERTEX_GLSL, fragment: POINT_FRAGMENT_GLSL },
+  webgl: { vertex: POINT_VERTEX_GLSL, fragment: POINT_FRAGMENT_GLSL },
   webgpu: (uniforms) => buildPointNodeMaterial(uniforms),
 };
 ```

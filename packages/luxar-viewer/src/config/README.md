@@ -11,6 +11,8 @@ Unified configuration system for the Luxar player application. This package cent
 - [Usage Examples](#usage-examples)
 - [Type Safety](#type-safety)
 - [Best Practices](#best-practices)
+- [Subpackages](#subpackages)
+- [Public API / Exports](#public-api--exports)
 
 ## Overview
 
@@ -213,6 +215,8 @@ cache: {
   l0MaxSizeMB: 200,           // L0 memory budget
   l1MaxSizeMB: 100,           // L1: in-memory LRU cache
   l2MaxSizeMB: 2048,          // L2: persistent OPFS cache (largest)
+  opfsOperationTimeoutMs: 10000, // Per-OPFS-operation deadline (ms)
+  externalDatasetTtlMs: null, // Optional TTL (ms) for non-local datasets; null = no expiry
   debug: false                // Enable cache debug logging
 }
 ```
@@ -297,22 +301,24 @@ dataLoading: {
 
 ### Debug Console Configuration
 
-Development and debugging features:
+Development and debugging features. The debug console settings live under
+`config.ui.debugConsole` (see the `ui/` section), not at the top level:
 
 ```typescript
-// Debug console configuration is now in config.ui.debugConsole
-debugConsole: {
+// Access via config.ui.debugConsole
+config.ui.debugConsole = {
   panel: {
     defaultWidth: 600,
     defaultHeight: 400,
     minWidth: 400,
     maxWidth: 1200,
+    // minHeight, maxHeight, bottomOffset, leftOffset also defined
   },
   interceptor: {
     maxBufferSize: 10000, // Ring buffer for console messages
   },
-  // ... other settings
-}
+  // resize + style sub-objects also defined
+};
 ```
 
 ## Usage Examples
@@ -469,6 +475,27 @@ When updating configuration:
 4. **Documentation**: Update comments and examples
 
 The config package is the foundation that ensures consistent behavior across all Luxar components while providing flexibility for customization and future enhancements.
+
+---
+
+## Subpackages
+
+- **[sections/](sections/README.md)** — per-slice `data.ts` / `types.ts` /
+  (optional) `validate.ts` triples; one folder per `AppConfig` section.
+  Sections without cross-field invariants (`adaptive-dpr/`, `animation/`,
+  `dimension-animation/`, `ui/`) omit `validate.ts`.
+- **[zarr-bridge/](zarr-bridge/README.md)** — snake_case ↔ camelCase
+  conversion between zarr `viewer_config` and `RenderingSettings`, plus the
+  live-viewer state capture used by the `Ctrl+Shift+S` export.
+
+## See Also
+
+- `./index.ts` — composes section literals into the `config: AppConfig` export.
+- `./types.ts` — barrel re-export of all section types + the `AppConfig` interface.
+- `./validation.ts` — central dispatcher that invokes each section's
+  `validate*` function.
+- `./url-params.ts` — single point where `window.location.search` is read.
+- `./constants.ts` — `MAX_SUPPORTED_DIMS` (mirrored in Rust/WASM).
 
 ---
 

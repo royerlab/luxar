@@ -93,7 +93,7 @@ Counters `parseFailures` and `orphansRemoved` are surfaced through
 
 - **`withTimeout(promise, ms, label)`** — `Promise.race` against a
   `setTimeout` that rejects with `Error('OPFS timeout: <label>
-  exceeded <ms>ms')`. The timer is always cleared in `finally`.
+exceeded <ms>ms')`. The timer is always cleared in `finally`.
   Wraps individual OPFS calls so a hung browser handle cannot stall
   the cache indefinitely — every call in `OPFSStore` that touches the
   filesystem goes through this helper.

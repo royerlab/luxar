@@ -331,19 +331,21 @@ private showDatasetBrowser(): void {
 
 ### Error Recovery
 
-The `init()` method uses a single top-level try/catch. All initialization steps (scene manager, animation controller, input handler, rendering controls, and dataset loading) run inside this block. If any step fails, the error propagates to the caller:
+The `init()` method uses a single top-level try/catch. All initialization steps (the subsystem-building pipeline, dataset routing, dispose/focus/browser/debug handler installation) run inside this block. If any step fails, `init()` calls `dispose()` to tear down whatever partial state was constructed, then re-throws to the caller:
 
 ```typescript
 async init(options: LuxarAppOptions): Promise<void> {
   try {
-    // All initialization in sequence inside one try block:
-    // 1. Scene manager + animation controller
-    // 2. Input handler + rendering controls
-    // 3. Start animation loop
-    // 4. Dataset loading or browser display
-    // 5. Dispose/focus handlers
+    // 1. runInitPipeline — builds scene/animation/input/UI subsystems
+    //    (each assigned to `partial` so dispose() can find them after a throw)
+    // 2. Dataset routing — showDatasetBrowser() or loadDataset()
+    // 3. setupDisposeOnUnload / setupDatasetBrowserShortcut /
+    //    setupFocusHandling / setupDebugInterface
   } catch (error) {
-    // Single catch handles all initialization failures
+    log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
+    // Surface whatever subsystems were built before the throw, then dispose.
+    assignFromPartial();
+    this.dispose();
     throw error;
   }
 }
@@ -419,29 +421,31 @@ get components() {
 ```typescript
 import { LuxarApp } from './core/app';
 
+const canvas = document.getElementById('app') as HTMLCanvasElement;
+
 // Create and initialize app
 const app = new LuxarApp();
 
 // Start with specific dataset
-await app.init('/data/my-dataset.zarr');
+await app.init({ canvas, src: '/data/my-dataset.zarr' });
 
-// Start with directory browser
-await app.init('/data/');
+// Start with directory browser (trailing slash → browser)
+await app.init({ canvas, src: '/data/' });
 
-// Start with default dataset
-await app.init();
+// Start with no source — app shows the dataset browser
+await app.init({ canvas });
 ```
 
 ### URL Parameter Integration
 
 ```typescript
-// Automatic URL parameter parsing
+// Standalone callers use `bootstrapStandalone` (which calls `readUrlParams`).
+// Embedders typically parse URL params themselves and pass the result:
 const params = new URLSearchParams(window.location.search);
 const datasetURL = params.get('src') ?? '/data/default.zarr';
 
-// App automatically handles the URL
 const app = new LuxarApp();
-await app.init(datasetURL);
+await app.init({ canvas, src: datasetURL });
 ```
 
 ### Error Handling and Recovery
@@ -450,17 +454,14 @@ await app.init(datasetURL);
 const app = new LuxarApp();
 
 try {
-  await app.init(datasetURL);
+  await app.init({ canvas, src: datasetURL });
   console.log('Application started successfully');
 } catch (error) {
   console.error('Initialization failed:', error);
 
-  // App may still be partially functional
-  if (app.initialized) {
-    console.log('App partially initialized - some features may work');
-  }
-
-  // Manual cleanup if needed
+  // init() always calls dispose() on its own failure path before
+  // re-throwing, so the instance is already torn down. Calling
+  // dispose() again here is safe (it's idempotent) but redundant.
   app.dispose();
 }
 ```
@@ -469,7 +470,7 @@ try {
 
 ```typescript
 const app = new LuxarApp();
-await app.init();
+await app.init({ canvas });
 
 // Access components for testing or advanced usage
 const { sceneManager, animationController } = app.components;
@@ -540,14 +541,15 @@ This ensures zero CPU/GPU usage when the tab is not visible, even if continuous 
 ### Error Handling Strategy
 
 ```typescript
-// ✅ Good: Single try/catch in init(), let errors propagate to caller
+// ✅ Good: Single try/catch in init(); dispose partial state, then re-throw
 async init(options: LuxarAppOptions): Promise<void> {
   try {
     // All steps in sequence; any failure propagates
-    await this.sceneManager.init({ canvas: options.canvas });
-    // ... other initialization ...
-    await this.loadDataset(options.src ?? config.defaultZarrPath);
+    const result = await runInitPipeline(/* … */, partial);
+    // ... dataset routing + handler installation ...
   } catch (error) {
+    assignFromPartial(); // surface partial subsystems on this.*
+    this.dispose();      // tear them down
     throw error;
   }
 }

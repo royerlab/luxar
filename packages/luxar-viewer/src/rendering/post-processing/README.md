@@ -93,7 +93,7 @@ post-processing/
 ├── hdr/                            # HDR readback + EXR-log
 │   ├── pixel-utils.ts              #   unified WebGL2/WebGPU readPixelsCompactAsync
 │   └── capture.ts                  #   formatHDRExrLogLine
-└── render-target-sizing.ts         # DPR/SSAA-aware physical-pixel size helper
+└── render-target-sizing.ts         # SSAA-upscale arithmetic (computeEffectiveRenderSize)
 ```
 
 The orchestrator lives at `post-processing/post-processing-manager.ts`
@@ -109,13 +109,8 @@ import { PostProcessingManager } from '@/rendering';
 import { createRendererCapabilities } from '@/rendering/renderer-capabilities';
 
 const capabilities = createRendererCapabilities(renderer);
-const pp = new PostProcessingManager(
-  renderer,
-  capabilities,
-  scene,
-  camera,
-  { width, height },
-  () => sceneManager.updateMaterialsForCurrentCamera()
+const pp = new PostProcessingManager(renderer, capabilities, scene, camera, { width, height }, () =>
+  sceneManager.updateMaterialsForCurrentCamera()
 );
 
 pp.setBloomEnabled(true);
@@ -183,8 +178,11 @@ WebGL contexts can be lost on tab switch, GPU driver crash, or
 The detector-noise wall-clock timestamp is also reset so the first
 post-restore frame doesn't see a multi-second `dt` jump.
 
-The E2E test `tests/e2e/context-restore.spec.ts` asserts both identity
-preservation and a non-default exposure round-tripping across restore.
+The E2E test `src/tests/e2e/error-recovery.spec.ts` and the unit tests
+`src/tests/unit/rendering/post-processing-manager-lifecycle.test.ts` and
+`src/tests/unit/scene/scene-manager/render-pipeline/webgl-context-recovery.test.ts`
+exercise this path, asserting identity preservation and uniform
+round-tripping across restore.
 
 ## Unsupported effects
 

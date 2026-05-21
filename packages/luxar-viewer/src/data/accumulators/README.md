@@ -8,43 +8,48 @@ and the GC pauses that come with it.
 
 ## Files
 
-| File          | Role                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `types.ts`    | Shared `DataAccumulator<TData, TGetArgs, TFillArgs>` contract + `AccumulatorStats` shape. The three per-geometry files implement this interface.  |
-| `points.ts`   | `LoadedPointsDataAccumulator` — positions / colors / radii / sharpness / scalars, with native Uint8/Uint16/Float32 color preservation.            |
-| `lines.ts`    | `LinesDataAccumulator` — flat per-vertex buffers (positions, widths, colors, sharpness, scalars) + a separate `Uint32` segment-index buffer.      |
-| `gsplats.ts`  | `GSplatsDataAccumulator` — centers, amplitudes, packed Cholesky factors (camelCase `choleskyFactors`), colors.                                    |
+| File         | Role                                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `types.ts`   | Shared `DataAccumulator<TData, TGetArgs, TFillArgs>` contract + `AccumulatorStats` shape. The three per-geometry files implement this interface. |
+| `points.ts`  | `LoadedPointsDataAccumulator` — positions / colors / radii / sharpness / scalars, with native Uint8/Uint16/Float32 color preservation.           |
+| `lines.ts`   | `LinesDataAccumulator` — flat per-vertex buffers (positions, widths, colors, sharpness, scalars) + a separate `Uint32` segment-index buffer.     |
+| `gsplats.ts` | `GSplatsDataAccumulator` — centers, amplitudes, packed Cholesky factors (camelCase `choleskyFactors`), colors.                                   |
 
 ## The `DataAccumulator<T>` contract
 
-All three implementations expose the same four methods (signatures
+All three implementations expose the same five methods (signatures
 specialised by `TGetArgs` / `TFillArgs`):
 
-| Method                  | Purpose                                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ensureCapacity(n)`     | Grow underlying buffers to at least `n` (1.5× growth). Returns `true` if a real allocation happened.                   |
-| `getData(...counts)`    | Build a `Loaded{Points,Lines,GSplats}Data` payload of zero-copy `subarray()` views over the live prefix.               |
-| `fill(...offsets, data)`| Write a `Partial<Loaded*Data>` chunk into the buffers at the given offset(s). First call pins per-attribute dtypes.    |
-| `getStats()`            | `{ capacity, allocations, growthEvents, memoryMB }` — surfaced through the monitor port to the data-loading monitor.   |
-| `dispose()`             | Drop buffers to zero-length sentinels and set the `_disposed` flag. Subsequent `fill`/`ensureCapacity` throw.          |
+| Method                   | Purpose                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `ensureCapacity(n)`      | Grow underlying buffers to at least `n` (1.5× growth). Returns `true` if a real allocation happened.                 |
+| `getData(...counts)`     | Build a `Loaded{Points,Lines,GSplats}Data` payload of zero-copy `subarray()` views over the live prefix.             |
+| `fill(...offsets, data)` | Write a `Partial<Loaded*Data>` chunk into the buffers at the given offset(s). First call pins per-attribute dtypes.  |
+| `getStats()`             | `{ capacity, allocations, growthEvents, memoryMB }` — surfaced through the monitor port to the data-loading monitor. |
+| `dispose()`              | Drop buffers to zero-length sentinels and set the `_disposed` flag. Subsequent `fill`/`ensureCapacity` throw.        |
 
 The variadic shape exists because Lines needs **two** counters
 (vertices and segments grow independently), while Points and GSplats
 need only an element count:
 
-| Type    | `getData` signature                              | `fill` signature                                                |
-| ------- | ------------------------------------------------ | --------------------------------------------------------------- |
-| Points  | `getData(count)`                                 | `fill(offset, data)`                                            |
-| Lines   | `getData(segmentCount, vertexCount)`             | `fill(segmentOffset, vertexOffset, data)`                       |
-| GSplats | `getData(count)`                                 | `fill(offset, data)`                                            |
+| Type    | `getData` signature                  | `fill` signature                          |
+| ------- | ------------------------------------ | ----------------------------------------- |
+| Points  | `getData(count)`                     | `fill(offset, data)`                      |
+| Lines   | `getData(segmentCount, vertexCount)` | `fill(segmentOffset, vertexOffset, data)` |
+| GSplats | `getData(count)`                     | `fill(offset, data)`                      |
 
 ## Shared invariants
 
 - **Type detection on first fill.** Each accumulator inspects the first
   `fill()` call to pin attribute dtypes (`Uint8Array` / `Uint16Array` /
-  `Float32Array` for colors, `Uint8Array` / `Float32Array` for radii,
-  sharpness, and scalars). Subsequent fills MUST use the same types.
-  Growing buffers preserves the pinned dtype — no silent widening.
+  `Float32Array` for colors; `Uint8Array` / `Float32Array` for radii and
+  sharpness; `Uint8Array` / `Float16Array` / `Float32Array` tracked for
+  scalars, with Float16 widened to a Float32 buffer at fill time via the
+  numeric `TypedArray.set()` conversion). Subsequent fills MUST use the
+  same types. Growing buffers preserves the pinned dtype — no silent
+  widening. Lines and GSplats only enter `initializeTypes` when the fill
+  carries colors (or, for Lines, colors or scalars); Points enters on
+  every fill but the call is a no-op once types are pinned.
 - **Live-prefix copy on growth.** `ensureCapacity` only copies the live
   prefix (`usedCount` / `usedVertexCount` / `usedSegmentCount`) into
   the new buffers, not the full previous capacity. On a fresh
@@ -69,13 +74,36 @@ need only an element count:
 
 ## Direct buffer accessors
 
-Each accumulator also exposes typed getters (`getPositionBuffer()`,
-`getColorBuffer()`, `getVertexBuffer()`, `getSegmentBuffer()`,
-`getCholeskyBuffer()`, ...) for the spatial-index loaders' direct-write
-path. Loaders that bypass `fill()` to write into the raw buffers must
-call `markScalarsLoaded()` (Lines) or arrange for `hasScalars` to be
-set in some other way; otherwise `getData()` will return `undefined`
-for that attribute.
+Each accumulator also exposes typed getters for the spatial-index
+loaders' direct-write path:
+
+- Points: `getPositionBuffer()`, `getColorBuffer()`, `getRadiiBuffer()`,
+  `getSharpnessBuffer()`, `getScalarBuffer()`. `getScalarBuffer()`
+  lazy-allocates the scalar buffer at the current capacity on first
+  call (the sentinel-empty path).
+- Lines: `getVertexBuffer()`, `getSegmentBuffer()`, `getWidthBuffer()`,
+  `getColorBuffer()`, `getSharpnessBuffer()`, `getScalarBuffer()`
+  (same lazy allocation as Points).
+- GSplats: `getCenterBuffer()`, `getAmplitudeBuffer()`,
+  `getCholeskyBuffer()`, `getColorBuffer()`. GSplats additionally
+  exposes `setColorBuffer()` so the loader can swap in a
+  pre-allocated/quantised color buffer without going through `fill()`.
+
+Loaders that bypass `fill()` to write into the raw buffers must arrange
+for the corresponding `has*` flag to be set. Lines exposes
+`markScalarsLoaded()` for the zero-copy scalar path; for other
+attributes the loader is expected to perform at least one
+`fill()`-style call so the presence flag flips. Otherwise `getData()`
+will return `null`/`undefined` for that attribute even though the
+buffer holds valid data.
+
+Introspection helpers — `Points.hasTypes()`, and
+`{Points,Lines,GSplats}.isDisposed()` — let tests and the data-loading
+monitor inspect accumulator state without triggering allocations. The
+Points accumulator also exposes `updateMetadata({ ndim, totalPoints,
+usedSpatialIndex, ... })` for late metadata adjustments; the `bounds`
+field is intentionally ignored because `getData()` recomputes bounds
+from the live positions on every call.
 
 ## See also
 

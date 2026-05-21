@@ -12,10 +12,10 @@ polling loop, and the hierarchical timing panel.
 | File              | Role                                                                                                                                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `templates.ts`    | HTML-string template functions for every cell, card, progress bar, status badge, tab content, scene-graph tree, and memory section the monitor paints. Also re-exports `MemoryMetrics` and friends. |
-| `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, high memory, low GPU reuse rate, frequent evictions, …).        |
-| `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                       |
-| `polling-loop.ts` | `PollingLoop` — restartable interval timer with tick stats. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                          |
-| `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders.                |
+| `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, high memory, low GPU reuse rate, frequent evictions, …).       |
+| `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                      |
+| `polling-loop.ts` | `PollingLoop` — restartable interval timer with tick stats. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                         |
+| `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders.               |
 
 `README.md` for this folder; per-subpackage READMEs live under
 `metrics/` and `tabs/`.

@@ -68,9 +68,9 @@ try {
 
 ### Utility Functions
 
-| Function               | Purpose                                       |
-| ---------------------- | --------------------------------------------- |
-| `formatMs(ms)`         | Format milliseconds for display               |
+| Function               | Purpose                                                      |
+| ---------------------- | ------------------------------------------------------------ |
+| `formatMs(ms)`         | Format milliseconds for display                              |
 | `hasOverBudget(entry)` | Check if entry or children exceed the 60fps budget (16.67ms) |
 
 ## Session Model
@@ -79,7 +79,7 @@ The profiler tracks a single ambient context — the root session created by
 `beginUpdate()`. `time()`, `begin()`, `timeWithMeta()`, and `skip()` all
 attach their entries as direct children of that root. **`time()` does NOT
 push/pop the context**, so a nested `profiler.time('Inner', …)` inside
-`profiler.time('Outer', …)` registers `Inner` as a *sibling* of `Outer`,
+`profiler.time('Outer', …)` registers `Inner` as a _sibling_ of `Outer`,
 not a child (pinned by `update-profiler.test.ts`).
 
 To build a true hierarchy, pass a session explicitly and call
@@ -163,22 +163,29 @@ With ~20 timing entries per update:
 
 ## Integration
 
-### With SceneLoader
+### With SceneLoaderManager
+
+`SceneLoaderManager` owns the singleton `UpdateProfiler` and passes it
+positionally into every `SceneLoader` it constructs:
 
 ```typescript
-// App initialization
+// SceneLoaderManager constructor
 this.profiler = new UpdateProfiler();
-this.sceneLoader = new SceneLoader(store, {
-  profiler: this.profiler,
-});
+
+// Per loader
+const loader = new SceneLoader(config, id, this.profiler, this.monitorFactory);
 ```
+
+Consumers reach the profiler via `SceneLoaderManager.getInstance().getProfiler()`.
 
 ### With DataLoadingMonitor
 
 ```typescript
-// Connect profiler to UI
+// Connect profiler to UI (called by the app bootstrap)
 this.monitor.setProfiler(this.profiler);
 ```
+
+`DataLoadingMonitor` calls `profiler.getTimings()` to render the Performance tab.
 
 ---
 

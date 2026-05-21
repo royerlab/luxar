@@ -39,21 +39,21 @@ reference to Session for the shared scaffolding.
 
 ## Files
 
-| File                            | Role                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------- |
-| `session.ts`                    | `RecordingSession` — shared state save/restore, dialog, indicator, mutex            |
-| `capture-strategy.ts`           | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union             |
-| `screenshot-strategy.ts`        | `ScreenshotStrategy` — single-frame capture with optional transparent BG            |
-| `video-recording-strategy.ts`   | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                     |
-| `offline-capture-strategy.ts`   | `OfflineCaptureStrategy` — frame-by-frame turntable / EXR loop, drives one driver   |
-| `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob` |
-| `video-codec-selection.ts`      | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path     |
-| `media-utilities.ts`            | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `generateFfmpegScript`, `anchorOffset` |
-| `overlay-compositor.ts`         | `compositeOverlays` + text / image / HTML overlay rasterization                     |
-| `animation-sync.ts`             | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`       |
-| `gui-builder.ts`                | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`) |
-| `zip-sequence-capture.ts`       | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences               |
-| `types.ts`                      | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                |
+| File                          | Role                                                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `session.ts`                  | `RecordingSession` — shared state save/restore, dialog, indicator, mutex                                  |
+| `capture-strategy.ts`         | `CaptureStrategy` interface + `SessionState` view + `CaptureKind` union                                   |
+| `screenshot-strategy.ts`      | `ScreenshotStrategy` — single-frame capture with optional transparent BG                                  |
+| `video-recording-strategy.ts` | `VideoRecordingStrategy` — real-time MediaRecorder WebM capture                                           |
+| `offline-capture-strategy.ts` | `OfflineCaptureStrategy` — frame-by-frame turntable / EXR loop, drives one driver                         |
+| `screenshot-exporter.ts`      | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob`                |
+| `video-codec-selection.ts`    | `selectVideoCodec` — mediabunny codec fallback chain for the offline video path                           |
+| `media-utilities.ts`          | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `generateFfmpegScript`, `anchorOffset` |
+| `overlay-compositor.ts`       | `compositeOverlays` + text / image / HTML overlay rasterization                                           |
+| `animation-sync.ts`           | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`                             |
+| `gui-builder.ts`              | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)                       |
+| `zip-sequence-capture.ts`     | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                                     |
+| `types.ts`                    | Shared types: `RecordingMode`, `RecordingOptions`, `OutputFormat`, …                                      |
 
 ## Subpackages
 
@@ -69,13 +69,13 @@ reference to Session for the shared scaffolding.
 Each `CaptureStrategy` implementation exposes the same tiny surface
 (see `capture-strategy.ts`):
 
-| Method | Purpose |
-| --- | --- |
-| `kind` | `'screenshot'` \| `'video'` \| `'offline'` — used by the panel's dispatch |
-| `canRun(state)` | Informational pre-check; the strategy still re-verifies inside `run` |
-| `run(opts, mode, session)` | The capture operation. Resolves when the capture finishes or aborts. |
-| `abort()` | Synchronous external stop. Video stops the MediaRecorder; offline fires its AbortController; screenshot is a no-op. |
-| `dispose()` | Panel-shutting-down signal. Drops long-lived state (tracks, AbortController, …). |
+| Method                     | Purpose                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `kind`                     | `'screenshot'` \| `'video'` \| `'offline'` — used by the panel's dispatch                                           |
+| `canRun(state)`            | Informational pre-check; the strategy still re-verifies inside `run`                                                |
+| `run(opts, mode, session)` | The capture operation. Resolves when the capture finishes or aborts.                                                |
+| `abort()`                  | Synchronous external stop. Video stops the MediaRecorder; offline fires its AbortController; screenshot is a no-op. |
+| `dispose()`                | Panel-shutting-down signal. Drops long-lived state (tracks, AbortController, …).                                    |
 
 Strategies are responsible for their own try/finally cleanup. They
 read mutual-exclusion flags off `RecordingSession` (`isRecording`,
@@ -151,9 +151,9 @@ floating-point dynamic range.
 
 External consumers (UI, embedders, tests) interact with
 `RecordingPanel`. Embedders that want to drive a recording
-programmatically should use `RecordingPanel.startRecording(opts)` /
-`stopRecording()` rather than instantiating a strategy or session
-directly.
+programmatically should use `RecordingPanel.captureScreenshot()` /
+`startVideoRecording()` / `stopVideoRecording()` rather than
+instantiating a strategy or session directly.
 
 `types.ts` re-exports the public option shapes (`RecordingMode`,
 `RecordingOptions`, `OutputFormat`, `VideoCodecOption`,
@@ -162,10 +162,11 @@ re-exports these so external callers have a single import surface.
 
 ## E2E coverage
 
-`tests/e2e/recording-panel.spec.ts` exercises:
+`src/tests/e2e/recording-panel.spec.ts` exercises:
 
-- Codec auto-selection (panel doesn't crash on a browser without MP4
-  support).
-- Video record + stop + download for a short scene.
-- Image-sequence export.
-- Overlay compositing on / off.
+- Toggling the panel with the `T` key and closing it with `Escape`.
+- Panel structure (mode selector, Advanced Options, Capture button).
+- Triggering a screenshot via the `G` key and via the Capture button.
+- Surfacing the confirmation dialog for a video recording.
+- Showing the REC indicator during a video recording.
+- The `Show Panels` toggle inside Advanced Options.

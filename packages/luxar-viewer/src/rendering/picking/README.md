@@ -50,11 +50,11 @@ picking/
 
 Each geometry has one GLSL wrapper and one TSL wrapper, both implementing the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`. The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
 
-| Geometry | GLSL wrapper                  | TSL wrapper                       | TSL factory             | Pick footprint vs visual                        |
-| -------- | ----------------------------- | --------------------------------- | ----------------------- | ----------------------------------------------- |
-| Points   | `PointPickingMaterial`        | `PointPickingTSLMaterial`         | `point/pick.tsl.ts`     | **50% radius** (bright core only)               |
-| Lines    | `LinePickingMaterial`         | `LinePickingTSLMaterial`          | `line/pick.tsl.ts`      | **Full width** (thin lines, parabolic profile)  |
-| GSplats  | `GSplatPickingMaterial`       | `GSplatPickingTSLMaterial`        | `gsplat/pick.tsl.ts`    | **1.5σ** truncation (vs 3σ visual), max-proj   |
+| Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                       |
+| -------- | ----------------------- | -------------------------- | -------------------- | ---------------------------------------------- |
+| Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **50% radius** (bright core only)              |
+| Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, parabolic profile) |
+| GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs 3σ visual), max-proj   |
 
 All three fragment shaders write `vec4(uNodeId, gl_InstanceID, brightness, 1.0)` and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
 
@@ -95,11 +95,11 @@ WebGPU device loss is currently treated as unrecoverable — see `scene-manager.
 
 ## See Also
 
-- `../README.md` — Rendering package overview (picking is component 11 in the larger pipeline)
+- `../README.md` — Rendering package overview (picking sits alongside the visual material stacks in the larger pipeline)
 - `../materials/_shared/camera-aware-material.ts` — Shared `CameraAwareMaterial` interface that all six picking materials implement
 - `../materials/_shared/shader-source.ts` — `ShaderSource` shape used by each `<geometry>/shaders.ts` to ship a GLSL+TSL pair
 - `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in the point/gsplat pick vertex shaders for parity with their visual counterparts
 - `../post-processing/hdr/pixel-utils.ts` — `readPixelsCompactAsync` (unified WebGL2/WebGPU readback)
 - `../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion` that `picking-system/lens-distortion.ts` must stay byte-for-byte equivalent to
-- `../shaders/` (barrel) — Re-exports the per-geometry GLSL constants for the TSL-parity e2e harness
+- `../../tests/e2e/harnesses/tsl-harness.ts` — Imports `POINT_PICK_SOURCE` / `LINE_PICK_SOURCE` / `GSPLAT_PICK_SOURCE` directly from each `<geometry>/shaders.ts` to drive the GLSL/TSL parity tests
 - `PICKING_DESIGN.md` — Full backend rationale for the 1-frame async-readback latency

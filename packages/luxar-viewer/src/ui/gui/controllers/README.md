@@ -34,12 +34,12 @@ The most complex controller. Optionally renders a range slider (when both `min` 
 
 **Slider behavior**
 
-| Interaction | Effect |
-|-------------|--------|
-| Drag | Live `change` events; `finishChange` on `mouseup` / `touchend`. |
+| Interaction  | Effect                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                   |
 | Wheel scroll | Fine-tune by `step × 0.1`; `Shift+Scroll` for `step × 10`. Debounced `finishChange` 150 ms after scrolling stops. |
-| Double-click | Reset to the value captured at construction (`initialValue`). |
-| Alt+click | Focus and select the companion number input for keyboard entry. |
+| Double-click | Reset to the value captured at construction (`initialValue`).                                                     |
+| Alt+click    | Focus and select the companion number input for keyboard entry.                                                   |
 
 The slider's `title` tooltip advertises these shortcuts.
 

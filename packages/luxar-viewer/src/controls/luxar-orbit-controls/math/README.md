@@ -1,0 +1,83 @@
+# LuxarOrbitControls math helpers
+
+Pure math used by `luxar-orbit-controls.ts`. Each module owns one
+slice of the orbit-control update step — trackball rotation, pan,
+zoom — and reads everything it needs from parameters. None of them
+keep their own state or hold a back-reference to the orchestrator.
+Allocations are kept to either the explicit return value or a
+caller-supplied accumulator; module-local scratch vectors mirror the
+orchestrator's existing per-frame allocation pattern.
+
+## Files
+
+```
+math/
+├── trackball.ts   Shoemake virtual-trackball rotation (sphere + hyperboloid)
+├── pan.ts         OrbitControls pan math (perspective + ortho)
+└── zoom.ts        OrbitControls zoom math (perspective distance / ortho zoom)
+```
+
+### `trackball.ts`
+
+Vendored from ArcballControls / Ken Shoemake's virtual-trackball paper.
+
+- `projectOnTrackball(ndcX, ndcY, radius) -> Vector3` projects an NDC
+  point onto a hybrid surface: a sphere of `radius` for points inside
+  `d² <= r²/2`, and a `z = r²/(2·d)` hyperboloid outside. The split at
+  `d² = r²/2` is the standard C¹-smooth Shoemake transition that keeps
+  the trackball from "falling off" near the edges.
+- `computeArcballRotation(startNDC, endNDC, radius, rotateSpeed) -> Quaternion`
+  builds `axis = p1 × p2`, `angle = acos(p1·p2) · rotateSpeed`, and
+  returns `setFromAxisAngle(axis, -angle)`. The angle is **negated** so
+  the camera orbits opposite to the drag (drag right ⇒ camera moves
+  left around target). Degenerate drags (`|axis|² < 1e-10`) return
+  identity.
+
+### `pan.ts`
+
+Vendored from THREE.js OrbitControls. Functions **mutate a
+caller-supplied accumulator (`out`)** instead of returning fresh
+`Vector3`s, preserving the orchestrator's zero-alloc pattern.
+
+- `applyPanLeft(out, distance, objectMatrix)` adds `-distance · matrix.col(0)`.
+- `applyPanUp(out, distance, objectMatrix, cameraUp, screenSpacePanning)`
+  pans along either the camera Y axis (screen-space) or
+  `cameraUp × camera.x` (world-up pan).
+- `applyPan(out, deltaX, deltaY, ctx)` converts pointer pixel deltas
+  into world-space. Perspective: screen-height at the orbit distance
+  is `2·distance·tan(fov/2)`, scaled by `clientHeight`. Orthographic:
+  deltas scale off frustum width/height divided by `zoom`.
+
+### `zoom.ts`
+
+- `computeZoomScale(delta, zoomSpeed) -> number` returns
+  `0.95 ^ (zoomSpeed · |delta·0.01|)` — geometric per tick, not
+  additive.
+- `applyZoomScale(camera, currentDistance, scale, minZoom, maxZoom)`
+  branches on projection. **Perspective**: returns
+  `currentDistance · scale` for the caller to reassign — position is
+  derived from `distance × orientation` outside this module.
+  **Orthographic**: mutates `camera.zoom = clamp(zoom/scale, …)`,
+  refreshes the projection matrix, and returns `currentDistance`
+  unchanged.
+
+## Invariants
+
+- **Pure functions.** No module-level state beyond `pan.ts`'s `_v`
+  scratch vector, which is overwritten on every call.
+- **Caller owns the camera mutation.** Trackball and the perspective
+  branch of zoom return values; only `zoom.ts`'s ortho branch mutates
+  the camera directly, because `OrthographicCamera.zoom` has no
+  equivalent in the orchestrator's spherical-coords state.
+- **Drag direction sign lives here.** The `-angle` in
+  `computeArcballRotation` is the single source of truth for "drag
+  right rotates view right"; the orchestrator passes raw NDC deltas
+  without re-negating.
+
+## See also
+
+- `../../luxar-orbit-controls.ts` — orchestrator that imports these
+  helpers from its per-frame `update()` step.
+- `../input/` — sibling DOM-event handlers that produce the NDC and
+  pointer-delta inputs consumed here.
+- `../../README.md` — package overview and control-scheme tables.

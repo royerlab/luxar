@@ -180,16 +180,22 @@ The `SceneDimsManager` coordinates n-dimensional navigation across all scene obj
 interface SimpleDims {
   ndim: number; // Total dimensions
   displayed: number[]; // Indices of displayed dims (e.g., [0,1,2])
-  currentStep: Float32Array; // Current position in each dimension
+  currentStep: number[]; // Current position in each dimension
   metadata?: DimensionMetadata[]; // Names, units, ranges
 }
 
 interface DimensionMetadata {
   name: string; // e.g., "time", "x", "wavelength"
   unit: string; // e.g., "ms", "μm", "nm"
-  range: [number, number]; // Min and max values
-  step?: number; // Step size for discrete dimensions
+  scale: number; // Array-index → real-world units
+  range?: [number, number]; // Optional min and max values
+  step?: number; // Step size for navigation
   discrete?: boolean; // Whether dimension is discrete
+  cyclic?: boolean; // Whether dimension wraps (angles, etc.)
+  spatial?: boolean; // Whether points extend through this dim
+  categories?: string[]; // Optional categorical labels
+  display?: boolean; // Show in the 3D scene by default
+  description?: string; // UI tooltip
 }
 ```
 
@@ -533,7 +539,9 @@ The initialization happens in two phases:
 1. `sceneDimsManager.initFromScene()` sets up dimension state
 2. `inputHandler.initDimensionSliders()` triggers initial data load
 
-See `scene-dims-manager.ts:118-140` for initialization logic and `input-handler.ts:191-194` for the initial update trigger.
+See `scene-dims-manager.ts` (`initFromScene`) for the initialization
+logic and `input/input-handler.ts` (`initDimensionSliders`) for the
+initial update trigger.
 
 ### Keyboard Navigation
 
@@ -554,7 +562,7 @@ Navigate through dimensions with keyboard:
 
 ### nD Transform Inverse-Query
 
-The viewer uses an **inverse-query** approach for `nd_transform`: instead of transforming millions of point coordinates forward (O(N)), the query (slicePosition + tolerance) is inverse-transformed from world to local space once (O(1)). This is implemented in `data/nd-transform.ts` and applied transparently during geometry slicing. No loader internals change.
+The viewer uses an **inverse-query** approach for `nd_transform`: instead of transforming millions of point coordinates forward (O(N)), the query (slicePosition + tolerance) is inverse-transformed from world to local space once (O(1)). This is implemented in `data/transforms/nd-transform.ts` and applied transparently during geometry slicing. No loader internals change.
 
 ### Auto-Ranging from Position Bounds
 
@@ -813,25 +821,25 @@ function disposeObject(object: THREE.Object3D) {
 
 ### SceneManager
 
-| Method                                | Description                              |
-| ------------------------------------- | ---------------------------------------- |
-| `init(options)`                       | Build renderer, scene, camera, controls, post-processing |
-| `loadSceneData(src, loaderConfig?)`   | Load zarr scene; clears prior content, auto-frames, auto-clips |
-| `centerCameraOnScene()`               | Frame camera on scene bounding box       |
-| `toggleCentering()`                   | Switch center mode (origin ↔ bbox)       |
-| `getCurrentCenter()`                  | Get active center point                  |
-| `updateFOV(delta)`                    | Adjust field of view                     |
-| `updateClippingPlanes(near, far)`     | Set camera clipping planes               |
-| `autoAdjustClippingPlanes()`          | Calculate optimal clipping from scene    |
-| `setDynamicClipping(enabled)`         | Enable/disable per-frame clipping update |
-| `getDynamicClippingState()`           | Get current dynamic clipping state       |
-| `updateDynamicClippingPlanes()`       | Manually trigger dynamic clipping update |
-| `setControlType(type)` / `getControlType()` | Switch / read current control type |
-| `setAdaptivePixelRatio(dpr)`          | Set DPR override (AdaptiveDPRManager)    |
-| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms |
-| `isWebGLContextLost()`                | Query WebGL context-loss state           |
-| `updateSize()`                        | Handle resize (rAF-debounced)            |
-| `dispose()`                           | Clean up resources                       |
+| Method                                           | Description                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------- |
+| `init(options)`                                  | Build renderer, scene, camera, controls, post-processing       |
+| `loadSceneData(src, loaderConfig?)`              | Load zarr scene; clears prior content, auto-frames, auto-clips |
+| `centerCameraOnScene()`                          | Frame camera on scene bounding box                             |
+| `toggleCentering()`                              | Switch center mode (origin ↔ bbox)                             |
+| `getCurrentCenter()`                             | Get active center point                                        |
+| `updateFOV(delta)`                               | Adjust field of view                                           |
+| `updateClippingPlanes(near, far)`                | Set camera clipping planes                                     |
+| `autoAdjustClippingPlanes()`                     | Calculate optimal clipping from scene                          |
+| `setDynamicClipping(enabled)`                    | Enable/disable per-frame clipping update                       |
+| `getDynamicClippingState()`                      | Get current dynamic clipping state                             |
+| `updateDynamicClippingPlanes()`                  | Manually trigger dynamic clipping update                       |
+| `setControlType(type)` / `getControlType()`      | Switch / read current control type                             |
+| `setAdaptivePixelRatio(dpr)`                     | Set DPR override (AdaptiveDPRManager)                          |
+| `updateExposure/GlobalOffset/GlobalGamma(value)` | Update post-processing tone-mapping uniforms                   |
+| `isWebGLContextLost()`                           | Query WebGL context-loss state                                 |
+| `updateSize()`                                   | Handle resize (rAF-debounced)                                  |
+| `dispose()`                                      | Clean up resources                                             |
 
 ### AnimationController
 

@@ -417,7 +417,7 @@ The material manager in `src/rendering/material-manager.ts` provides optimized m
 
 ```typescript
 // Supported blending modes
-type BlendingMode = 'normal' | 'additive' | 'max';
+type BlendingMode = 'normal' | 'additive' | 'max' | 'opaque' | 'luminous';
 
 // Per-geometry getters — see src/rendering/material-manager.ts for
 // PointMaterialProperties / LineMaterialProperties / GSplatMaterialProperties

@@ -12,10 +12,10 @@ folder contains only the loop and the dimension scrubber.
 
 ## Files
 
-| File                            | Role                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `animation-controller.ts`       | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel) and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
-| `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                                            |
+| File                             | Role                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `animation-controller.ts`        | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel) and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
+| `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                      |
 
 ## Public surface
 
@@ -31,7 +31,7 @@ folder contains only the loop and the dimension scrubber.
 **`DimensionAnimationManager`**
 
 - `play(dimIndex, options?)` / `pause(dimIndex)` / `togglePlay(dimIndex, options?)` / `stop(dimIndex)` — control playback for one dimension. `stop` also removes the state entry; `pause` keeps it. `play` lazily calls `ensureRegistered()`, which installs the `'dimension-animation'` callback on the shared `AnimationController` with `continuous: true` and starts the loop.
-- `setTargetFPS(dimIndex, fps)` / `increaseSpeed(dimIndex)` / `decreaseSpeed(dimIndex)` — set or step through the FPS presets (`config.dimensionAnimation.presets.fps`, default `[1, 2, 5, 10, 15, 30, 60]`); values clamp to `[customMin, customMax]`. The speed-step helpers snap to the nearest preset and fall back to ±10 % beyond the range.
+- `setTargetFPS(dimIndex, fps)` / `increaseSpeed(dimIndex)` / `decreaseSpeed(dimIndex)` — set or step through the FPS presets (`config.dimensionAnimation.presets.fps`, default `[1, 2, 5, 10, 15, 30, 60]`); values clamp to `[customMin, customMax]`. The speed-step helpers jump to the next/previous preset and fall back to ±10 % multiplicative steps when already past the top/bottom preset.
 - `setLoopMode(dimIndex, mode)` — `'once' | 'loop' | 'bounce'`. `setTargetFPS` and `setLoopMode` create a paused state entry if none exists, so the UI can pre-configure a dimension before the user hits play.
 - `isAnimating(dimIndex)` / `getState(dimIndex)` — query playback flag and the full `DimensionAnimationState` (target/actual FPS, frame counters, direction).
 - `dispose()` — pauses every dimension, clears state, removes the per-frame callback, and unsubscribes the `SceneDimsManager` listener.
@@ -80,15 +80,15 @@ callers that build the options object dynamically; defaults come from
 `DimensionAnimationManager` extends `THREE.EventDispatcher` with the
 `DimensionAnimationEvents` map from `src/types/animation.ts`:
 
-| Event             | Payload                                                  | When                                          |
-| ----------------- | -------------------------------------------------------- | --------------------------------------------- |
-| `play`            | `{ dimIndex }`                                           | `play()` transitions a paused dim to playing  |
-| `pause`           | `{ dimIndex }`                                           | `pause()` transitions a playing dim           |
-| `complete`        | `{ dimIndex }`                                           | `once` mode hit the far boundary              |
-| `directionChange` | `{ dimIndex, direction }`                                | `bounce` mode flipped at a boundary           |
-| `speedChange`     | `{ dimIndex, fps }`                                      | `setTargetFPS` applied (after clamp)          |
-| `loopModeChange`  | `{ dimIndex, loopMode }`                                 | `setLoopMode` applied                         |
-| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS }`                     | Measured FPS fell below `feedbackThreshold`   |
+| Event             | Payload                              | When                                         |
+| ----------------- | ------------------------------------ | -------------------------------------------- |
+| `play`            | `{ dimIndex }`                       | `play()` transitions a paused dim to playing |
+| `pause`           | `{ dimIndex }`                       | `pause()` transitions a playing dim          |
+| `complete`        | `{ dimIndex }`                       | `once` mode hit the far boundary             |
+| `directionChange` | `{ dimIndex, direction }`            | `bounce` mode flipped at a boundary          |
+| `speedChange`     | `{ dimIndex, fps }`                  | `setTargetFPS` applied (after clamp)         |
+| `loopModeChange`  | `{ dimIndex, loopMode }`             | `setLoopMode` applied                        |
+| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS }` | Measured FPS fell below `feedbackThreshold`  |
 
 `AnimationController` does not extend `EventDispatcher`; it publishes
 `frame-start` and `frame-end` on `utils/cross-layer/event-bus` so the

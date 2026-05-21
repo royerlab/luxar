@@ -1,0 +1,84 @@
+# App lifecycle
+
+`LuxarApp`'s teardown and runtime power-management glue. Three helpers
+the orchestrator wires up at the end of `init()` to keep the render
+loop in step with page state and to tear every subsystem down in the
+correct order when the app — or the host page — goes away.
+
+The render loop itself lives in `../../../scene/animation/` (see
+`animation-controller.ts`). This folder does not drive frames; it only
+**starts**, **stops**, and **disposes** the controller in response to
+external lifecycle signals (window focus, document visibility,
+`beforeunload`, explicit `app.dispose()`).
+
+## Files
+
+```
+lifecycle/
+├── dispose-pipeline.ts   # Ordered, fault-tolerant teardown of every subsystem
+├── focus-handling.ts     # window focus + document visibilitychange → animate pause/resume
+└── unload-handling.ts    # window beforeunload → app.dispose()
+```
+
+| File                  | Role                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispose-pipeline.ts` | `runDisposePipeline(ports)` — runs every subsystem's `dispose()` through a `safeDispose` wrapper that catches and logs without bubbling. Component order is the teardown contract; singletons (`ThemeManager`, `DataMonitorManager`, `SceneLoaderManager`, `disposeWorkerPool`) tear down last. `DisposePipelinePorts` declares the snapshot of orchestrator state plus per-field clear callbacks. |
+| `focus-handling.ts`   | `installFocusHandling(ports)` registers `window.focus` and `document.visibilitychange` listeners on the shared `EventGroup`. Both early-return when `getRecordingPanel()?.isCurrentlyRecording()` reports an active capture so offline recording keeps a stable loop.                                                                                                                              |
+| `unload-handling.ts`  | `installUnloadHandler(ports)` registers a `beforeunload` listener that invokes the supplied `dispose` callback. The listener is owned by the shared `EventGroup`, so it is removed automatically by `events.dispose()` inside `runDisposePipeline`.                                                                                                                                                |
+
+## Animate-tick orchestration
+
+The render loop is driven by `AnimationController.startAnimation()` /
+`stopAnimation()`. This folder's helpers translate page lifecycle into
+those calls:
+
+| Event                                   | Action                                   | Suppressed during recording? |
+| --------------------------------------- | ---------------------------------------- | ---------------------------- |
+| `window` `focus`                        | `animationController.startAnimation()`   | yes                          |
+| `document` `visibilitychange` → hidden  | `animationController.stopAnimation()`    | yes                          |
+| `document` `visibilitychange` → visible | `animationController.startAnimation()`   | yes                          |
+| `window` `beforeunload`                 | `dispose()` (which stops the loop first) | n/a                          |
+
+`getRecordingPanel` is passed as a **live accessor**, not a snapshot,
+so a focus event that fires mid-dispose — after the orchestrator
+cleared its `recordingPanel` field but before `events.dispose()`
+removes the listener — sees the updated `undefined` and the
+optional-chain short-circuits.
+
+## Dispose flow
+
+`runDisposePipeline` is idempotent and safe to call from partial-init
+states (any port may be `undefined`). The order encodes a teardown
+contract:
+
+```
+1. animation + adaptive-DPR + resolution-indicator
+2. scaleBar, colormapLegend, overlayManager (overlay routes off first)
+3. recordingPanel, layersPanel
+4. pickingEvents → pickingSystem → labelLoader, imageLabelLoader
+5. datasetBrowser (close + unbind from inputHandler)
+6. inputHandler                         ← child panels gone before host
+7. renderingControls
+8. sceneManager
+9. ThemeManager.disposeInstance() + cleanupUI()
+10. events.dispose()                    ← all listeners (focus, visibility, beforeunload, …)
+11. DataMonitorManager → SceneLoaderManager → disposeWorkerPool()
+```
+
+A throwing component must NOT skip later cleanup — `safeDispose`
+records the failure label and continues, and a final aggregated
+`log.error` lists every component that threw. The per-field
+`clear*` callbacks (`clearScaleBar`, `clearOverlayManager`, …) let the
+helper drop the orchestrator's references without reaching into
+`LuxarApp` directly, keeping the pipeline a pure function over its
+ports.
+
+## See also
+
+- `../../../scene/animation/README.md` — the `AnimationController`
+  these helpers start and stop.
+- `../init/pipeline.ts` — builds the subsystems the dispose pipeline
+  tears down; the install-helpers here run at the end of `init()`.
+- `../../../utils/cross-layer/event-group.ts` — the `EventGroup`
+  abstraction every install-helper uses, so listener removal is one
+  call (`events.dispose()`) in step 10 of the dispose flow.
