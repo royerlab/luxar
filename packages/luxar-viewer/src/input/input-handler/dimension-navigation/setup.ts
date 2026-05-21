@@ -34,6 +34,15 @@ import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { InputContextManager } from '../context-manager';
 import type { PanelCoordinator } from '../commands/panel-coordinator';
 
+/**
+ * Factory used by `initDimensionSliders` to construct the slider panel.
+ * Injected from `core/app.ts` (via `InputHandler`'s constructor) so the
+ * input layer never imports the concrete UI class at runtime — it only
+ * knows the shape via `import type`. Closes the input → ui layer-cruiser
+ * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
+ *
+ * Re-exported from `input/input-handler.ts` as the public name.
+ */
 export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
 
 export interface DimNavSetupCtx {
@@ -141,10 +150,15 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
     return;
   }
 
-  // Clean up existing sliders if any
+  // Clean up existing sliders if any. Clearing the ref here (rather than
+  // relying on the factory branch to overwrite it) keeps the no-factory
+  // branch consistent — otherwise re-initialising without a factory
+  // would leave `dimensionSliders` pointing at a disposed instance and
+  // `showDimensionSliders()` would call `.setVisible(true)` on a corpse.
   const existingSliders = ctx.getDimensionSliders();
   if (existingSliders) {
     existingSliders.dispose();
+    ctx.setDimensionSliders(undefined);
   }
 
   // Build the slider panel only if a factory is injected. Listener

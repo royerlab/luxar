@@ -1,9 +1,22 @@
 /**
- * Unit tests for the camera control-mode cycle helper.
+ * Unit tests for the camera control-mode commands.
+ *
+ * `nextControlType` is the pure cycle helper. `toggleControlMode` and
+ * `toggleInertialMode` are the two command bodies extracted from
+ * input-handler.ts during step 5d — they coordinate SceneManager +
+ * InputContextManager + RenderingControls. Tests use minimal mocks for
+ * each collaborator (only the surface the command touches) so failures
+ * point at the command logic, not at the mock.
  */
 
-import { describe, it, expect } from 'vitest';
-import { nextControlType } from '../../../../../input/input-handler/commands/control-mode';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  nextControlType,
+  toggleControlMode,
+  toggleInertialMode,
+  type ControlModeCtx,
+} from '../../../../../input/input-handler/commands/control-mode';
+import { InputContext } from '../../../../../input/input-handler/context-manager';
 
 describe('nextControlType', () => {
   it('cycles orbit → fly → ortho → orbit', () => {
@@ -26,5 +39,177 @@ describe('nextControlType', () => {
   it('falls back to orbit for unknown control types', () => {
     expect(nextControlType('unknown')).toBe('orbit');
     expect(nextControlType('')).toBe('orbit');
+  });
+});
+
+interface FakeControls {
+  type: 'orbit' | 'fly' | 'ortho';
+  getControlType: ReturnType<typeof vi.fn>;
+  getFlyControls: ReturnType<typeof vi.fn>;
+}
+
+interface FakeFlyControls {
+  inertialMode: boolean;
+  setInertialMode: ReturnType<typeof vi.fn>;
+}
+
+function makeCtx(opts: {
+  initialControlType?: 'orbit' | 'fly' | 'ortho';
+  flyControls?: FakeFlyControls | null;
+  withRenderingControls?: boolean;
+}): {
+  ctx: ControlModeCtx;
+  setControlType: ReturnType<typeof vi.fn>;
+  setContext: ReturnType<typeof vi.fn>;
+  syncCurrentState: ReturnType<typeof vi.fn>;
+  controls: FakeControls;
+} {
+  const setControlType = vi.fn();
+  const setContext = vi.fn();
+  const syncCurrentState = vi.fn();
+
+  const controls: FakeControls = {
+    type: opts.initialControlType ?? 'orbit',
+    getControlType: vi.fn(function (this: FakeControls) {
+      return this.type;
+    }),
+    getFlyControls: vi.fn(() =>
+      opts.flyControls === undefined ? null : opts.flyControls
+    ),
+  };
+  // Bind `this` for getControlType so `controls.type` is read live.
+  controls.getControlType = vi.fn(() => controls.type);
+
+  const sceneManager = {
+    controls: {
+      getControlType: controls.getControlType,
+      getFlyControls: controls.getFlyControls,
+    },
+    setControlType,
+  } as unknown as ControlModeCtx['sceneManager'];
+
+  const contextManager = {
+    setContext,
+  } as unknown as ControlModeCtx['contextManager'];
+
+  const renderingControls = opts.withRenderingControls
+    ? ({ syncCurrentState } as unknown as ControlModeCtx['renderingControls'])
+    : undefined;
+
+  return {
+    ctx: { sceneManager, contextManager, renderingControls },
+    setControlType,
+    setContext,
+    syncCurrentState,
+    controls,
+  };
+}
+
+describe('toggleControlMode', () => {
+  it('cycles orbit → fly and sets FLY_CONTROLS context', () => {
+    const { ctx, setControlType, setContext } = makeCtx({
+      initialControlType: 'orbit',
+    });
+
+    toggleControlMode(ctx);
+
+    expect(setControlType).toHaveBeenCalledWith('fly');
+    expect(setContext).toHaveBeenCalledWith(InputContext.FLY_CONTROLS);
+  });
+
+  it('cycles fly → ortho and sets NAVIGATION context', () => {
+    const { ctx, setControlType, setContext } = makeCtx({
+      initialControlType: 'fly',
+    });
+
+    toggleControlMode(ctx);
+
+    expect(setControlType).toHaveBeenCalledWith('ortho');
+    expect(setContext).toHaveBeenCalledWith(InputContext.NAVIGATION);
+  });
+
+  it('cycles ortho → orbit and sets NAVIGATION context', () => {
+    const { ctx, setControlType, setContext } = makeCtx({
+      initialControlType: 'ortho',
+    });
+
+    toggleControlMode(ctx);
+
+    expect(setControlType).toHaveBeenCalledWith('orbit');
+    expect(setContext).toHaveBeenCalledWith(InputContext.NAVIGATION);
+  });
+
+  it('syncs renderingControls when one is wired', () => {
+    const { ctx, syncCurrentState } = makeCtx({
+      initialControlType: 'orbit',
+      withRenderingControls: true,
+    });
+
+    toggleControlMode(ctx);
+
+    expect(syncCurrentState).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op on renderingControls when none is wired', () => {
+    const { ctx, syncCurrentState } = makeCtx({
+      initialControlType: 'orbit',
+      withRenderingControls: false,
+    });
+
+    toggleControlMode(ctx);
+
+    expect(syncCurrentState).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleInertialMode', () => {
+  it('flips inertialMode on the fly controls', () => {
+    const flyControls: FakeFlyControls = {
+      inertialMode: false,
+      setInertialMode: vi.fn(),
+    };
+    const { ctx } = makeCtx({ flyControls });
+
+    toggleInertialMode(ctx);
+
+    expect(flyControls.setInertialMode).toHaveBeenCalledWith(true);
+  });
+
+  it('flips inertialMode back off when currently on', () => {
+    const flyControls: FakeFlyControls = {
+      inertialMode: true,
+      setInertialMode: vi.fn(),
+    };
+    const { ctx } = makeCtx({ flyControls });
+
+    toggleInertialMode(ctx);
+
+    expect(flyControls.setInertialMode).toHaveBeenCalledWith(false);
+  });
+
+  it('syncs renderingControls when one is wired AND fly controls are active', () => {
+    const flyControls: FakeFlyControls = {
+      inertialMode: false,
+      setInertialMode: vi.fn(),
+    };
+    const { ctx, syncCurrentState } = makeCtx({
+      flyControls,
+      withRenderingControls: true,
+    });
+
+    toggleInertialMode(ctx);
+
+    expect(syncCurrentState).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op (besides logging) when not in fly mode', () => {
+    const { ctx, syncCurrentState } = makeCtx({
+      flyControls: null,
+      withRenderingControls: true,
+    });
+
+    // Should not throw and should not touch renderingControls.
+    expect(() => toggleInertialMode(ctx)).not.toThrow();
+    expect(syncCurrentState).not.toHaveBeenCalled();
   });
 });

@@ -43,16 +43,7 @@ import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
 import { notifier } from '../utils/cross-layer/notifier';
-import type { DimensionSliders, SliderConfig } from '../ui/dimension-sliders';
-
-/**
- * Factory used by `InputHandler.initDimensionSliders()` to construct
- * the slider panel. Injected from `core/app.ts` so the input layer
- * never imports the concrete UI class at runtime — it only knows the
- * shape via `import type`. Closes the input → ui layer-cruiser
- * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
- */
-export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
+import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
@@ -70,8 +61,13 @@ import {
 import {
   clearDimensionUI,
   initDimensionSliders,
+  type DimensionSlidersFactory,
   type DimNavSetupCtx,
 } from './input-handler/dimension-navigation/setup';
+
+// Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
+// can keep importing it from '../input/input-handler' unchanged.
+export type { DimensionSlidersFactory } from './input-handler/dimension-navigation/setup';
 import {
   toggleFullscreen,
   type FullscreenCtx,
@@ -294,9 +290,12 @@ export class InputHandler {
    * - User interaction events (mousedown, touchstart)
    * - Context-specific key bindings
    *
-   * Must be called once during application initialization, after scene manager
-   * is created but before scene loading. Event listeners are automatically
-   * cleaned up when dispose() is called.
+   * Called once during application initialization, after scene manager
+   * is created but before scene loading. Re-entry is guarded: a second
+   * call logs a warning and returns without re-binding listeners (so
+   * HMR / context-restore / test re-setup can't silently double event
+   * volume). Event listeners are automatically cleaned up when
+   * dispose() is called.
    *
    * @example
    * ```typescript
