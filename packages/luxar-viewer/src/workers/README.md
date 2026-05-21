@@ -129,9 +129,6 @@ workers/
 │   ├── errors.ts                               — WorkerTimeoutError,
 │   │                                            WorkerAbortError, TimeoutKind
 │   ├── types.ts                                — WorkerInstance interface
-│   ├── singleton.ts                            — getWorkerPool,
-│   │                                            disposeWorkerPool,
-│   │                                            setDataWorkerUrl
 │   ├── stats.ts                                — computeStats, computeQueueDepth
 │   ├── lifecycle/
 │   │   ├── worker-count.ts                     — hardwareConcurrency cap
