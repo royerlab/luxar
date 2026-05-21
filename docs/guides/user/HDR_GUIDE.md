@@ -329,6 +329,6 @@ Luxar validates HDR colors:
 
 ## References
 
-- Luxar HDR detection: `packages/luxar-viewer/src/utils/hdr-detection.ts`
+- Luxar HDR detection: `packages/luxar-viewer/src/utils/hdr/hdr-detection.ts`
 - Python constants: `packages/luxar/src/luxar/typing_utils/constants.py` (`COLOR_HDR_TYPICAL_MAX = 10.0`)
 - HDR tests: `packages/luxar/src/luxar/core/tests/test_hdr_colors.py`

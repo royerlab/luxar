@@ -18,7 +18,12 @@ Both implementations share the same `WasmModule` interface, so callers don't nee
 ## Usage
 
 ```typescript
-import { initWasm, isWasmSupported } from './wasm';
+import { initWasm, isWasmSupported, setWasmJsUrl } from './wasm';
+
+// Optional: override the WASM JS shim URL for non-default bundler setups
+// (must be called before initWasm). LuxarApp forwards LuxarAppOptions.wasmPath
+// through this hook automatically.
+// setWasmJsUrl(new URL('/static/luxar/wasm/luxar_wasm.js', location.origin).href);
 
 // Load WASM with automatic TypeScript fallback
 const wasm = await initWasm();
@@ -27,6 +32,11 @@ const wasm = await initWasm();
 const chunks = wasm.query_chunks_for_view(/* ... */);
 const visibility = wasm.compute_nd_visibility_points(/* ... */);
 ```
+
+The default URL resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
+works for the standalone Vite app and most consumer bundlers (Vite, Rollup,
+webpack 5). Use `setWasmJsUrl` only when shipping WASM files from a
+non-standard location.
 
 ## WasmModule API
 
@@ -142,4 +152,11 @@ wasm/
     └── src/              — Mirror of TypeScript modules in Rust
 ```
 
-For Rust implementation details, see [`rust/README.md`](rust/README.md).
+## Subpackages
+
+- [`rust/`](./rust/README.md) — Rust source compiled to WASM. Implements
+  the kernels for Points, Lines, GSplats, projection, and line clipping.
+  See its README for the full Rust/WASM build pipeline.
+- [`typescript/`](./typescript/README.md) — Pure TypeScript fallback
+  matching the Rust kernels function-for-function. Used when WASM fails
+  to load or for environments without WebAssembly support.

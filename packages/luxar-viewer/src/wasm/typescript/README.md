@@ -8,30 +8,34 @@ path.
 
 ## Files
 
-| File                                  | Role                                                                        |
-| ------------------------------------- | --------------------------------------------------------------------------- |
-| `index.ts`                            | Aggregator implementing the `WasmModule` interface from `src/wasm/index.ts` |
-| `effective-radii.ts`                  | nD effective-radius computation (Points spatial culling)                    |
-| `decode.ts`                           | LUT / quantized / log-scalar decoding kernels                               |
-| `projection.ts`                       | nD→3D position extraction                                                   |
-| `spatial.ts`                          | nD visibility masks (per-element slab tests)                                |
-| `points.ts`                           | Points-specific kernels (radius_to_visibility_mask, compact_by_mask)        |
-| `lines.ts`, `lines-clipping.ts`       | Lines clipping + interpolation                                              |
-| `gsplats.ts`, `gsplats-processing.ts` | GSplats Mahalanobis distance, marginal Cholesky, compaction                 |
+| File                    | Role                                                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface     |
+| `spatial.ts`            | `query_chunks_for_view` — AABB intersection between chunk bounds and the nD slice                               |
+| `points.ts`             | `compute_nd_visibility_points` — per-point nD hypersphere/slice visibility test                                 |
+| `lines.ts`              | `compute_nd_visibility_lines` — endpoint-based segment visibility (OR of the two vertex tests)                  |
+| `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, clipped-end flags  |
+| `gsplats.ts`            | `compute_nd_visibility_gsplats` — ellipsoid-extent pre-filter using Cholesky row norms                          |
+| `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, shifted-Gaussian attenuation, visible-Cholesky extraction |
+| `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                      |
+| `decode.ts`             | LUT / quantized (u8, u16) / log-scalar decoders + `decode_broadcasted` for per-attribute broadcast              |
+| `projection.ts`         | nD→3D position extraction, AABB bounds, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`          |
 
 ## Public surface
 
-A single `TypeScriptFallback` class that implements `WasmModule`. The
-WASM loader (`src/wasm/index.ts`) constructs a `TypeScriptFallback`
-instance whenever the real WASM module fails to load.
+A single `TypeScriptFallback` class that implements the `WasmModule`
+interface from `../types.ts`. The WASM loader constructs a
+`TypeScriptFallback` instance whenever the real WASM module fails to
+load. Every individual kernel is also exported by name from
+`index.ts` for direct use (e.g. by unit tests).
 
 ## Parity contract
 
 Every TypeScript kernel here MUST produce the same numerical result
 as its Rust counterpart for the same inputs, within Float32 epsilon
-tolerance. This is locked in by `tests/unit/wasm/wasm-vs-typescript.test.ts`
-(skipped when the WASM binary isn't built; CI builds it and runs
-parity checks).
+tolerance. This is locked in by
+`src/tests/unit/wasm/wasm-vs-typescript.test.ts` (skipped when the
+WASM binary isn't built; CI builds it and runs parity checks).
 
 ## Performance
 
@@ -43,5 +47,7 @@ module (`make build-wasm`) for production performance.
 ## Constants
 
 `MAX_SUPPORTED_DIMS = 16` is imported from
-`src/config/constants.ts` — the single source of truth that the
-Rust side (`src/wasm/rust/src/common.rs`) must mirror.
+`../../config/constants.ts` (the single source of truth) and is used
+by `gsplats-processing.ts` to size module-level workspace buffers for
+the marginal Cholesky reconstruction. The Rust side
+(`src/wasm/rust/src/common.rs`) must mirror this value.

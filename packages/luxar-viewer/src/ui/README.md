@@ -1069,3 +1069,32 @@ Part of the Luxar project. See root LICENSE file for details.
 ---
 
 _For implementation details, see the source files in this directory._
+
+---
+
+## Subpackages
+
+Documented subfolders with their own READMEs (private helpers for the
+sibling public-API file at this folder's root):
+
+- [`data-loading-monitor/`](./data-loading-monitor/README.md) — Internals
+  for `data-loading-monitor.ts` (templates, advisor, event queue,
+  polling loop, timing panel; `metrics/` and `tabs/` helpers).
+- [`gui/`](./gui/README.md) — Custom GUI library implementation
+  (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
+  formatting) re-exported by `gui.ts`.
+- [`layers/`](./layers/README.md) — Layers panel implementation
+  (`LayersPanel`, `LayerStateManager`, range/labeled sliders) re-exported
+  by `layers.ts`.
+- [`panels/`](./panels/README.md) — Shared panel framework used by
+  multiple top-level panels.
+- [`recording-panel/`](./recording-panel/README.md) — Recording panel
+  internals (capture drivers, GUI construction, media utilities,
+  overlay compositor, sequence/ZIP exporters).
+- [`rendering-controls/`](./rendering-controls/README.md) — Rendering
+  controls internals (per-category `setup/` modules, focus manager,
+  cinematic mode, settings persistence, clipping/FOV utilities).
+
+The remaining sibling folders (`dataset-browser/`, `debug-console/`,
+`dimension-sliders/`, `help-overlay/`, `overlay-widgets/`) contain
+small single-purpose helpers documented inline at their call sites.

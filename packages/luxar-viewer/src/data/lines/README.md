@@ -10,7 +10,8 @@ to the Lines node type.
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lines-spatial-index-loader.ts` | Spatial-index loader for Lines: dual chunk index (segment ordering + vertex ordering), two-stage load (segment chunks → unique vertex set → vertex-attr ranges). Emits a `LoadedLinesData` payload with optional per-vertex scalars for colormap mode.                                                                                                      |
 | `projection.ts`                 | Main-thread `projectLinesTo3D`: clips segments to the nD slice, interpolates per-vertex attributes (colors, widths, sharpness, scalars) at clipped endpoints, and emits per-segment GPU instance buffers. Used as the fallback when the worker is unavailable. The primary path is the WASM batch projection in `workers/data-worker.ts::projectLinesTo3D`. |
-| `chunk-index-loader.ts`         | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                |
+| `chunk-index-loader.ts`         | Loads the Lines dual chunk-bounds index (segment + vertex orderings); exposes `registerLinesArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`, and `computeVertexRangesFromIndices` for coalescing referenced vertex indices into contiguous zarr ranges.                                                                     |
+| `handler.ts`                    | Per-type scene-loader wiring (`loadAndStage`) — mirrors `points/handler.ts` and `gsplats/handler.ts`. Derives the per-node `LinesViewState`, calls `loader.updateView`, hands the payload to `processLinesData`, and dispatches predictive prefetch via the shared `ViewStateQueue`. Lines use `applyPartialExtendTolerance: false` (verbatim legacy behaviour). |
 
 ## Public surface
 
@@ -55,7 +56,7 @@ Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
 ## See also
 
 - `src/types/lines.ts` — type definitions and metadata schema
-- `src/rendering/line-material.ts` — GPU-side rendering
+- `src/rendering/materials/line/material-glsl.ts` and `material-tsl.ts` — GPU-side rendering (WebGL2 + WebGPU dual stack)
 - `src/rendering/line-geometry.ts` — instanced mesh construction +
   update helpers
 - `src/wasm/typescript/lines.ts` and `lines-clipping.ts` —

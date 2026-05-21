@@ -53,9 +53,13 @@ const dark = tm.getTheme('dark');
 // Later: stop listening
 unsubscribe();
 
-// For testing: reset singleton
-ThemeManager.resetInstance();
+// For shutdown or test isolation: dispose the singleton
+ThemeManager.disposeInstance();
 ```
+
+The `disposeInstance()` static method tears down observers, CSS variables,
+glass filter DOM, and the refraction `MutationObserver`, then clears the
+singleton slot so the next `getInstance()` constructs a fresh manager.
 
 ## Theme Structure
 
@@ -120,13 +124,33 @@ in private/incognito mode (logs a warning, continues without persistence).
 
 ```
 themes/
-├── index.ts              — Public exports
-├── types.ts              — Theme, ThemeColors, ThemeTypography, etc.
-├── theme-manager.ts      — Singleton manager
-├── glass-filters.ts      — SVG filter pipeline for glass themes
-└── themes/
+├── index.ts              — Public exports (types, ThemeManager, four built-in themes)
+├── types.ts              — Theme, ThemeColors, ThemeTypography, ThemeEffects, etc.
+├── theme-manager.ts      — ThemeManager singleton
+├── glass-filters.ts      — SVG filter pipeline + refraction-layer injector for liquid-glass
+└── themes/               — Built-in Theme definitions (see Subpackages below)
     ├── dark.theme.ts
     ├── light.theme.ts
     ├── frosted-glass.theme.ts
     └── liquid-glass.theme.ts
 ```
+
+## Subpackages
+
+- [`themes/`](./themes/README.md) — The four built-in `Theme` objects
+  (`darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme`)
+  re-exported by `index.ts` and registered by `ThemeManager`'s
+  constructor.
+
+## Public API
+
+Re-exported by `./index.ts`:
+
+- `class ThemeManager` — singleton; see Usage above
+- `type Theme`, `type ThemeChangeHandler`
+- `darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme`
+
+Internal (not re-exported from `index.ts`, imported directly by
+`theme-manager.ts`): `injectGlassFilters`, `removeGlassFilters`,
+`injectGlassRefractionLayers`, `removeGlassRefractionLayers`,
+`setupGlassRefractionObserver` from `./glass-filters`.

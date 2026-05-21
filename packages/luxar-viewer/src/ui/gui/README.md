@@ -16,7 +16,7 @@ This custom GUI library provides a clean, themeable control panel for the Luxar 
 ## Usage
 
 ```typescript
-import GUI from './gui';
+import { GUI } from '../ui/gui';
 
 // Create GUI panel
 const gui = new GUI({
@@ -61,13 +61,17 @@ Options:
 - `width?: number` - Panel width in pixels (default: 300)
 - `closeFolders?: boolean` - Start folders closed (default: false)
 - `container?: HTMLElement` - Parent element (default: document.body)
+- `onClose?: () => void` - Callback fired when the close button is clicked. Supplying this option also causes a close button (`×`) to render in the header.
+- `closeButtonTitle?: string` - Tooltip text for the close button (e.g. `"Close (R)"`).
 
-Methods:
+Methods (inherited from `Folder`, plus root-only `show`/`hide`/`destroy`):
 
-- `add(object, property, ...args)` - Add a controller
+- `add(object, property, ...args)` - Add a controller (type auto-detected from the property value and extra args)
 - `addFolder(name)` - Add a nested folder
+- `controllersRecursive()` - Return all controllers including those in nested folders
+- `open()` / `close()` - Toggle folder open/closed state (no-op on the root GUI)
 - `show()` / `hide()` - Toggle visibility
-- `destroy()` - Clean up resources
+- `destroy()` - Dispose all children, remove DOM, clean up listeners
 
 ### Controller
 
@@ -118,29 +122,27 @@ Theme changes are automatic - no JavaScript intervention needed.
 
 ```
 gui/
-├── index.ts              # Public exports
-├── core/
-│   ├── gui.ts           # Root GUI class
-│   ├── folder.ts        # Folder implementation
-│   ├── controller.ts    # Base controller
-│   └── types.ts         # Type definitions
-├── controllers/
-│   ├── number-controller.ts
-│   ├── boolean-controller.ts
-│   ├── string-controller.ts
-│   ├── option-controller.ts
-│   └── function-controller.ts
+├── gui.ts                # Root GUI class (extends Folder; root DOM, show/hide/destroy)
+├── folder.ts             # Folder container: add() factory, addFolder(), open/close state
+├── controller.ts         # Base Controller: target/property binding, callbacks, dispose
+├── types.ts              # GUIOptions, ControllerOptions, ControllerType, callback types
+├── controllers/          # Concrete controllers (Number, Boolean, String, Option, Function)
+├── format/               # Input helpers (auto-blur behaviour, number parsing/formatting)
 ├── dom/
-│   └── event-manager.ts # Memory leak prevention
-├── utils/
-│   ├── auto-blur.ts     # Auto-blur behavior
-│   └── value-formatting.ts
-└── styles/
-    ├── gui.css          # Root panel styles
-    ├── controller.css   # Controller styles
-    └── folder.css       # Folder styles
+│   └── event-manager.ts  # Tracks listeners for guaranteed cleanup
+└── styles/               # Scoped CSS (gui.css, controller.css, folder.css)
 ```
+
+The public entry point lives one level up at [`../gui.ts`](../gui.ts),
+which re-exports `GUI` (default and named) along with `Folder`,
+`Controller`, and the concrete controller classes.
+
+## Subpackages
+
+- [controllers/](./controllers/README.md) — Concrete subclasses: `NumberController`, `BooleanController`, `StringController`, `OptionController`, `FunctionController`.
+- [format/](./format/README.md) — Input formatting helpers: `applyAutoBlur`, `clamp`, `formatNumber`, `parseNumber`.
 
 ## See Also
 
-- `../../rendering-controls/` - Primary consumer of this library
+- [`../../rendering-controls/`](../../rendering-controls/) — Primary consumer of this library.
+- [`../gui.ts`](../gui.ts) — Public re-export module that this folder backs.
