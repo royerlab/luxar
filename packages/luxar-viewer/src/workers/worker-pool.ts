@@ -21,6 +21,26 @@ import {
   type TimeoutKind,
 } from './worker-pool/errors';
 
+import { withTimeout } from './worker-pool/timeout/with-timeout';
+import { combineSignals } from './worker-pool/timeout/combine-signals';
+import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
+import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
+import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
+import {
+  spawnWorker,
+  terminateAttemptWorkers,
+} from './worker-pool/lifecycle/spawn-worker';
+import {
+  attachWorkerErrorHandlers,
+  evictFailedWorker,
+} from './worker-pool/lifecycle/error-handlers';
+import {
+  selectLeastBusy,
+  type TrackedWorkerHandle,
+} from './worker-pool/selection/least-busy';
+import { nextRoundRobin } from './worker-pool/selection/round-robin';
+import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
+
 export type { WorkerInstance };
 export { WorkerTimeoutError, WorkerAbortError };
 export type { TimeoutKind };
@@ -45,25 +65,6 @@ let dataWorkerUrlOverride: string | undefined;
 export function setDataWorkerUrl(url: string): void {
   dataWorkerUrlOverride = url;
 }
-import { withTimeout } from './worker-pool/timeout/with-timeout';
-import { combineSignals } from './worker-pool/timeout/combine-signals';
-import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
-import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
-import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
-import {
-  spawnWorker,
-  terminateAttemptWorkers,
-} from './worker-pool/lifecycle/spawn-worker';
-import {
-  attachWorkerErrorHandlers,
-  evictFailedWorker,
-} from './worker-pool/lifecycle/error-handlers';
-import {
-  selectLeastBusy,
-  type TrackedWorkerHandle,
-} from './worker-pool/selection/least-busy';
-import { nextRoundRobin } from './worker-pool/selection/round-robin';
-import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
