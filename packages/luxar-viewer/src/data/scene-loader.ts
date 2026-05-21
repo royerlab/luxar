@@ -7,7 +7,7 @@
 
 import * as zarr from './zarr';
 import * as THREE from 'three';
-import { normalizeURL } from './scene-loader/url-normalization';
+import { normalizeURL } from './scene-loader/lifecycle/url-normalization';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/view-state/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -85,12 +85,12 @@ import {
   retryFailedLoaderUnlocked,
   retryAllFailedLoadersUnlocked,
   type RetryCtx,
-} from './scene-loader/retry';
+} from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
-import { disposeSceneLoader } from './scene-loader/dispose';
-import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
+import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
+import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/lifecycle/load-scene';
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
