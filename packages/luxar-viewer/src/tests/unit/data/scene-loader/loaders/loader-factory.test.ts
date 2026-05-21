@@ -20,22 +20,22 @@ const linesCtorArgs: unknown[][] = [];
 const gsplatsCtorArgs: unknown[][] = [];
 const progressiveCtorArgs: unknown[][] = [];
 
-vi.mock('../../../../data/points/points-spatial-index-loader', () => ({
+vi.mock('../../../../../data/points/points-spatial-index-loader', () => ({
   PointsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     pointsCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/lines/lines-spatial-index-loader', () => ({
+vi.mock('../../../../../data/lines/lines-spatial-index-loader', () => ({
   LinesSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     linesCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/gsplats/gsplats-spatial-index-loader', () => ({
+vi.mock('../../../../../data/gsplats/gsplats-spatial-index-loader', () => ({
   GSplatsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     gsplatsCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/gsplats/gsplats-progressive-loader', () => ({
+vi.mock('../../../../../data/gsplats/gsplats-progressive-loader', () => ({
   GSplatsProgressiveLoader: vi.fn(function (...args: unknown[]) {
     progressiveCtorArgs.push(args);
   }),
@@ -70,8 +70,8 @@ import {
   createGSplatsLoader,
   createProgressiveGSplatsLoader,
   type LoaderFactoryDeps,
-} from '../../../../data/scene-loader/loader-factory';
-import type { SceneNode } from '../../../../data/data-loader-types';
+} from '../../../../../data/scene-loader/loaders/loader-factory';
+import type { SceneNode } from '../../../../../data/data-loader-types';
 
 function makeNode(path: string, type: SceneNode['type'] = 'points'): SceneNode {
   return {

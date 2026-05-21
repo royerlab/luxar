@@ -72,7 +72,7 @@ export {
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
 } from './stats/aggregator';
-export { LoaderRegistry, type FailedLoaderInfo } from './scene-loader/loader-registry';
+export { LoaderRegistry, type FailedLoaderInfo } from './scene-loader/loaders/loader-registry';
 export {
   computeTolerance,
   type GeometryType,

@@ -15,7 +15,7 @@ import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
-import { createPointsLoader as createPointsLoaderHelper } from '../loader-factory';
+import { createPointsLoader as createPointsLoaderHelper } from '../loaders/loader-factory';
 import type { SceneNode, DataLoader, ViewState } from '../../data-loader-types';
 import type { PointsMetadata } from '../../../types/points';
 import type { NodeBuildCtx } from './build-ctx';

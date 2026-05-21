@@ -18,7 +18,7 @@ import type { DataLoader, LoadedPointsData, ViewState } from '../data-loader-typ
 import type { LinesDataLoader, LinesViewState } from '../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
-import type { LoaderRegistry } from './loader-registry';
+import type { LoaderRegistry } from './loaders/loader-registry';
 import type { StagedLinesCommit } from './process/data-processor-lines';
 import type { StagedGSplatsCommit } from './process/data-processor-gsplats';
 

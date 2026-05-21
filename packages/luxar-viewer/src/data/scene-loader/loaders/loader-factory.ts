@@ -20,20 +20,20 @@
  * @module data/scene-loader/loader-factory
  */
 
-import * as zarr from '../zarr';
-import { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
-export type { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
-import { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';
-import { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
-import { GSplatsProgressiveLoader } from '../gsplats/gsplats-progressive-loader';
-import type { SceneNode } from '../data-loader-types';
-import type { LinesDataLoader } from '../../types/lines';
-import type { GSplatsDataLoader } from '../../types/gsplats';
-import { ArrayRefRegistry } from '../array-decoder/decoder';
-import { log, Modules } from '../../utils/log';
-import { UpdateProfiler } from '../../profiling/update-profiler';
-import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
-import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
+import * as zarr from '../../zarr';
+import { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
+export type { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
+import { LinesSpatialIndexLoader } from '../../lines/lines-spatial-index-loader';
+import { GSplatsSpatialIndexLoader } from '../../gsplats/gsplats-spatial-index-loader';
+import { GSplatsProgressiveLoader } from '../../gsplats/gsplats-progressive-loader';
+import type { SceneNode } from '../../data-loader-types';
+import type { LinesDataLoader } from '../../../types/lines';
+import type { GSplatsDataLoader } from '../../../types/gsplats';
+import { ArrayRefRegistry } from '../../array-decoder/decoder';
+import { log, Modules } from '../../../utils/log';
+import { UpdateProfiler } from '../../../profiling/update-profiler';
+import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
+import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 
 /** Common dependencies needed by every loader factory call. */
 export interface LoaderFactoryDeps {
