@@ -68,7 +68,7 @@ export const MEGA_VERTEX_SHADER = /* glsl */ `
  *   - `USE_DETECTOR_NOISE`    — physics-based detector noise
  *   - `USE_VIGNETTE`          — multiplicative vignette darkening
  *   - `LUXAR_TONE_MAPPING_MODE`   — internal mode ID (1..6); see
- *                                   mega-shader-material.ts
+ *                                   material.ts
  *   - `LUXAR_CAPTURE_RAW_HDR`     — early-exit after sample+bloom;
  *                                   bypasses EOG, tone mapping,
  *                                   vignette, sRGB encoding. Used by

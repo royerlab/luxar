@@ -1,6 +1,6 @@
 /**
  * Mega-shader TSL factory — NodeMaterial counterpart to the GLSL3
- * fragment in `mega-shader.glsl.ts`.
+ * fragment in `shader.glsl.ts`.
  *
  * The mega-shader fuses post-processing into a single pass. The TSL
  * port mirrors the GLSL operation order so the two backends produce
@@ -77,7 +77,7 @@ type TSLNode = any;
 
 /**
  * Luxar-internal tone-mapping IDs. Match the
- * `LUXAR_TONE_MAPPING_MODE` define values in `mega-shader.glsl.ts`.
+ * `LUXAR_TONE_MAPPING_MODE` define values in `shader.glsl.ts`.
  * `NoToneMapping` aliases to `Linear` upstream so callers never need
  * to set 0.
  */
@@ -344,9 +344,9 @@ export function megaWebGPUFactory(
   //     `setBloom(intensity, texture)` call `rebuildGraph()` whenever
   //     the texture identity changes, which re-runs this factory
   //     against the new texture. See
-  //     `mega-shader-material-tsl.ts::setHdrSceneTexture` /
+  //     `material-tsl.ts::setHdrSceneTexture` /
   //     `setBloom`. (Contrast with the bloom pyramid's
-  //     `bloom.tsl.ts`, where the input texture changes per pass and
+  //     `bloom/bloom.tsl.ts`, where the input texture changes per pass and
   //     the factory can't be re-run — that path needs `.onUpdate`.)
   const uHdrScene = texture(
     (uniforms.uHdrScene.value as THREE.Texture | null) ?? new THREE.Texture()

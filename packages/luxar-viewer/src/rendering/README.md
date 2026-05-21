@@ -721,7 +721,7 @@ function animate() {
 
 When extending the rendering system:
 
-1. **Add per-pixel effects to the mega-shader** rather than as a new full-screen pass — see `post-processing/mega-shader.glsl.ts` and `post-processing/mega-shader-material.ts`
+1. **Add per-pixel effects to the mega-shader** rather than as a new full-screen pass — see `post-processing/mega/shader.glsl.ts` and `post-processing/mega/material.ts`
 2. **Bracket new effects with `#ifdef USE_*` defines** so disabled effects compile out entirely
 3. **Test performance** across different hardware
 4. **Document settings** and performance impact

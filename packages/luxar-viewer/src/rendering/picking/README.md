@@ -70,7 +70,7 @@ Cursor-over-empty-canvas is rejected before readback by `rayHitsAnyNode` against
 
 ## Async readback (both backends)
 
-Pixel readback runs through `../post-processing/hdr-pixel-utils.ts::readPixelsCompactAsync`, which:
+Pixel readback runs through `../post-processing/hdr/pixel-utils.ts::readPixelsCompactAsync`, which:
 
 - Uses `readRenderTargetPixelsAsync` on both `WebGLRenderer` and `WebGPURenderer` (r184).
 - Compacts WebGPU's padded row layout transparently.
@@ -80,7 +80,7 @@ The 1-frame latency this incurs is documented in `PICKING_DESIGN.md`; the settle
 
 ## Lens-distortion parity
 
-When the mega-shader is applying Brown–Conrady distortion, the visible frame and the (undistorted) pick buffer diverge. `picking-system/lens-distortion.ts::applyLensDistortion` is a TS port of the GLSL green-channel formula in `../post-processing/mega-shader.glsl.ts`; the orchestrator runs it on the raw mouse UV before computing pick-target read coords so the pixel sampled matches what the user sees. The two implementations are kept byte-for-byte equivalent.
+When the mega-shader is applying Brown–Conrady distortion, the visible frame and the (undistorted) pick buffer diverge. `picking-system/lens-distortion.ts::applyLensDistortion` is a TS port of the GLSL green-channel formula in `../post-processing/mega/shader.glsl.ts`; the orchestrator runs it on the raw mouse UV before computing pick-target read coords so the pixel sampled matches what the user sees. The two implementations are kept byte-for-byte equivalent.
 
 ## Context loss
 
@@ -99,7 +99,7 @@ WebGPU device loss is currently treated as unrecoverable — see `scene-manager.
 - `../materials/_shared/camera-aware-material.ts` — Shared `CameraAwareMaterial` interface that all six picking materials implement
 - `../materials/_shared/shader-source.ts` — `ShaderSource` shape used by each `<geometry>/shaders.ts` to ship a GLSL+TSL pair
 - `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in the point/gsplat pick vertex shaders for parity with their visual counterparts
-- `../post-processing/hdr-pixel-utils.ts` — `readPixelsCompactAsync` (unified WebGL2/WebGPU readback)
-- `../post-processing/mega-shader.glsl.ts` — GLSL `applyDistortion` that `picking-system/lens-distortion.ts` must stay byte-for-byte equivalent to
+- `../post-processing/hdr/pixel-utils.ts` — `readPixelsCompactAsync` (unified WebGL2/WebGPU readback)
+- `../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion` that `picking-system/lens-distortion.ts` must stay byte-for-byte equivalent to
 - `../shaders/` (barrel) — Re-exports the per-geometry GLSL constants for the TSL-parity e2e harness
 - `PICKING_DESIGN.md` — Full backend rationale for the 1-frame async-readback latency

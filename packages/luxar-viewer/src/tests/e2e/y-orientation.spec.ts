@@ -22,8 +22,8 @@
  * contract on either side, the test fails with a clear "much closer
  * when flipped" signal pointing at the side that flipped.
  *
- * @see fullscreen-geometry.ts — UV-flip table keyed on `framebufferYDown`
- * @see hdr-pixel-utils.ts::readPixelsCompactAsync — the unconditional flip
+ * @see fullscreen/geometry.ts — UV-flip table keyed on `framebufferYDown`
+ * @see hdr/pixel-utils.ts::readPixelsCompactAsync — the unconditional flip
  */
 
 import { test, expect, type Page } from './fixtures';

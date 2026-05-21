@@ -348,7 +348,7 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
    * matching the GLSL `LUXAR_CAPTURE_RAW_HDR` define exactly.
    *
    * Toggling forces a TSL graph rebuild because the factory branches
-   * on this flag (see {@link mega.tsl.ts}). Cost is identical to
+   * on this flag (see {@link shader.tsl.ts}). Cost is identical to
    * toggling any other feature flag (bloom, vignette, …).
    */
   toggleRawHdrCapture(enabled: boolean): void {

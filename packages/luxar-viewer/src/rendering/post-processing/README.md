@@ -106,9 +106,16 @@ imports never cross effect boundaries. Shared infrastructure
 
 ```typescript
 import { PostProcessingManager } from '@/rendering';
+import { createRendererCapabilities } from '@/rendering/renderer-capabilities';
 
-const pp = new PostProcessingManager(renderer, scene, camera, { width, height }, () =>
-  sceneManager.updateMaterialsForCurrentCamera()
+const capabilities = createRendererCapabilities(renderer);
+const pp = new PostProcessingManager(
+  renderer,
+  capabilities,
+  scene,
+  camera,
+  { width, height },
+  () => sceneManager.updateMaterialsForCurrentCamera()
 );
 
 pp.setBloomEnabled(true);

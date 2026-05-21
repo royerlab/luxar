@@ -7,9 +7,9 @@
  *   - 4-tap tent   upsample      → mip[i] (additive blend)
  *
  * Source-of-truth lives here so the eventual WebGPU/TSL port has one
- * place to add NodeMaterial factories without touching `bloom-chain.ts`.
+ * place to add NodeMaterial factories without touching `chain.ts`.
  *
- * @module rendering/post-processing/bloom-shaders
+ * @module rendering/post-processing/bloom/shaders
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';

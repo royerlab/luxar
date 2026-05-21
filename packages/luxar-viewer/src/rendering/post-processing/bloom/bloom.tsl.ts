@@ -1,6 +1,6 @@
 /**
  * Bloom pyramid TSL factories — NodeMaterial counterparts to the
- * three GLSL3 shaders in `bloom-shaders.ts`.
+ * three GLSL3 shaders in `shaders.ts`.
  *
  * Shared pattern: each is a fullscreen pass that reads `uInput`
  * with a small 4-tap kernel, writes a vec4 RGB output. Differences:
@@ -10,7 +10,7 @@
  * - upsample: 4-tap tent filter + center sample, blended additively
  *   onto the destination mip via NodeMaterial.blending.
  *
- * @module rendering/post-processing/bloom.tsl
+ * @module rendering/post-processing/bloom/bloom.tsl
  */
 
 import * as THREE from 'three';

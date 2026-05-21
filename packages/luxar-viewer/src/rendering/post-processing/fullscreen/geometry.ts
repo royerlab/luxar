@@ -19,7 +19,7 @@
  * wrong row of the source target. The GLSL3 shaders now also read this
  * attribute (via `vUv = uv;`) so the correction lives in one place.
  *
- * @module rendering/post-processing/fullscreen-geometry
+ * @module rendering/post-processing/fullscreen/geometry
  */
 
 import * as THREE from 'three';
