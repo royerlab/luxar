@@ -45,7 +45,7 @@ import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 import { setupCaches } from '../cache/cache-setup';
-import { wireMonitorAfterLoad } from '../monitor-wiring';
+import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';

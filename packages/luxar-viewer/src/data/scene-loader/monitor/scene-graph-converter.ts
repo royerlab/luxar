@@ -9,8 +9,8 @@
  * @module data/scene-loader/scene-graph-converter
  */
 
-import type { SceneNode } from '../data-loader-types';
-import type { SceneGraphNode } from '../../types/data-monitor-types';
+import type { SceneNode } from '../../data-loader-types';
+import type { SceneGraphNode } from '../../../types/data-monitor-types';
 
 /** Valid scene-graph-node display types. */
 type GraphNodeType = SceneGraphNode['type'];

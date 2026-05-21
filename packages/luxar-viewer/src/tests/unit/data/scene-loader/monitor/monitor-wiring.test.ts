@@ -14,14 +14,14 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { wireMonitorAfterLoad } from '../../../../data/scene-loader/monitor-wiring';
-import type { SceneLoaderMonitorPort } from '../../../../data/scene-loader-monitor-port';
-import type { WireMonitorAfterLoadParams } from '../../../../data/scene-loader/monitor-wiring';
-import type { SceneNode } from '../../../../data/data-loader-types';
-import type { MultiLevelCachingStore } from '../../../../cache/multi-level-caching-store';
-import type { DecompressedChunkCache } from '../../../../cache/decompressed-chunk-cache';
-import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
-import type { UpdateProfiler } from '../../../../profiling/update-profiler';
+import { wireMonitorAfterLoad } from '../../../../../data/scene-loader/monitor/monitor-wiring';
+import type { SceneLoaderMonitorPort } from '../../../../../data/scene-loader-monitor-port';
+import type { WireMonitorAfterLoadParams } from '../../../../../data/scene-loader/monitor/monitor-wiring';
+import type { SceneNode } from '../../../../../data/data-loader-types';
+import type { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../../../cache/decompressed-chunk-cache';
+import type { GPUBufferPool } from '../../../../../rendering/gpu-buffer-pool';
+import type { UpdateProfiler } from '../../../../../profiling/update-profiler';
 
 function makeMonitor(): SceneLoaderMonitorPort & {
   __callOrder: string[];
