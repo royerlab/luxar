@@ -4,7 +4,7 @@
  * Centralized so the unit test pins the format. Used by
  * `captureHDRAsEXR` after a successful EXR encode.
  *
- * @module rendering/post-processing/hdr-capture
+ * @module rendering/post-processing/hdr/capture
  */
 
 /**

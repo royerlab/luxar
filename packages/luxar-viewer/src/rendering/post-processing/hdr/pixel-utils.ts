@@ -8,12 +8,12 @@
  * prefer `readPixelsCompactAsync`, which handles backend dispatch,
  * WebGPU padding, and canonical Y orientation in one place.
  *
- * @module rendering/post-processing/hdr-pixel-utils
+ * @module rendering/post-processing/hdr/pixel-utils
  */
 
 import * as THREE from 'three';
 
-import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 
 /**
  * Convert an array of half-float values (encoded as Uint16) into
