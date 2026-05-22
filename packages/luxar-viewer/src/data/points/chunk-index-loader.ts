@@ -21,7 +21,7 @@
 
 import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
-import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
+import { fetchChunkBoundsArray } from '../loaders';
 import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 /** Subset of points-node attributes the chunk-index probe needs. */

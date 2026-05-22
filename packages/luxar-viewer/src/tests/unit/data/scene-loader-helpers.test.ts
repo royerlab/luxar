@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { normalizeURL } from '../../../data/scene-loader/url-normalization';
-import { applyEffectiveAttrs } from '../../../data/scene-loader/effective-attrs';
+import { normalizeURL } from '../../../data/scene-loader/lifecycle/url-normalization';
+import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../data/data-loader-types';
 
 describe('normalizeURL', () => {

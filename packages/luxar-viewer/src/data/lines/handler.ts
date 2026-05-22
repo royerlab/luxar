@@ -12,7 +12,7 @@ import type { GeometryKind, ViewState } from '../data-loader-types';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
-import type { ViewStateQueue } from '../scene-loader/view-state-queue';
+import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import {
   processLinesData,
   type StagedLinesCommit,

@@ -25,10 +25,10 @@ vi.mock('../../../../../rendering/picking/picking-system', () => ({
     suppress: vi.fn(),
   })),
 }));
-vi.mock('../../../../../data/loaders/label-loader', () => ({
+vi.mock('../../../../../data/loaders/picking/label-loader', () => ({
   LabelLoader: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
 }));
-vi.mock('../../../../../data/loaders/image-label-loader', () => ({
+vi.mock('../../../../../data/loaders/picking/image-label-loader', () => ({
   ImageLabelLoader: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
 }));
 vi.mock('../../../../../data/zarr', () => ({
@@ -39,8 +39,7 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
 }));
 
 import { PickingSystem } from '../../../../../rendering/picking/picking-system';
-import { LabelLoader } from '../../../../../data/loaders/label-loader';
-import { ImageLabelLoader } from '../../../../../data/loaders/image-label-loader';
+import { LabelLoader, ImageLabelLoader } from '../../../../../data/loaders';
 import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 
 interface SceneManagerStub {

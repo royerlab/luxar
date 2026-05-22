@@ -2,38 +2,26 @@
  * Unified Loader Architecture - Shared Components
  *
  * Foundation for the unified spatial-index loader architecture, shared by the
- * Points, Lines, and GSplats loaders.
+ * Points, Lines, and GSplats loaders, plus label-picking and overlay loaders.
  *
- * - **base-types.ts** — common type definitions (`BaseViewState`, `LoadRange`,
- *   `BaseChunkSpatialIndex`, `SpatialDataLoader`).
- * - **range-loader.ts** — unified encoding dispatch (broadcasted, quantized,
- *   LUT, array_ref, direct), with worker offload + main-thread fallback.
- * - **spatial-query-builder.ts** — canonical chunk-bounds query API.
- *   `SpatialQueryBuilder` accepts either a `geometryType` (delegates tolerance
- *   to `tolerance-computer.computeTolerance`) or a pre-computed `tolerance`
- *   (used by points, which has bespoke `EffectiveRadiusConfig` semantics).
- * - **transferable-accumulator.ts** — zero-allocation buffers transferable to
- *   workers for CPU-offloaded projection.
+ * Subpackages:
+ * - **spatial-query/** — chunk-bounds probe, tolerance computer, AABB query
+ *   builder, and the encoding-dispatching range loader.
+ * - **picking/** — label and image-label loaders consumed by core/app/picking.
+ * - **overlays/** — overlay config loader consumed by the overlay manager.
  *
- * @example
- * ```ts
- * import {
- *   RangeLoader,
- *   SpatialQueryBuilder,
- *   type BaseViewState,
- *   type LoadRange,
- * } from './loaders';
+ * Root-level files:
+ * - **base-types.ts** — canonical shared types (`BaseViewState`, `LoadRange`, …).
+ * - **color-loader.ts** — color-attribute encode/decode shared by all three
+ *   spatial-index loaders.
+ * - **transferable-accumulator.ts** — zero-allocation worker-transferable buffers.
+ * - **chunk-bounds-loader.ts** — zarr chunk-bounds probe (layer below spatial-query).
+ * - **loader-metrics.ts**, **monitor-events.ts**, **once-init.ts**,
+ *   **extend-to-all-preflight.ts** — small cross-cutting helpers used by every
+ *   spatial loader.
  *
- * const ranges = await new SpatialQueryBuilder(chunkIndex, viewState, {
- *   geometryType: 'gsplats',
- *   totalElements: attrs.n_splats,
- *   chunkSize: attrs.chunk_size,
- *   extendDims: attrs.extend_to_all,
- * }).execute();
- *
- * const rangeLoader = new RangeLoader(refRegistry);
- * await rangeLoader.loadRanges(array, attrs, ranges, outputBuffer, totalElements);
- * ```
+ * External callers should import from this barrel rather than reaching into
+ * deep paths so subpackage internals can move without callsite churn.
  *
  * @module data/loaders
  */
@@ -55,17 +43,18 @@ export {
   isHiddenDimension,
 } from './base-types';
 
-// Range loader (encoding dispatch)
+// Spatial-query pipeline
 export {
   RangeLoader,
   type RangeLoaderConfig,
   type EncodingType,
+} from './spatial-query/range-loader';
+export {
   getSharedRangeLoader,
   getSharedRefRegistry,
   resetSharedRangeLoader,
-} from './range-loader';
+} from './spatial-query/range-loader/shared-instance';
 
-// Spatial query builder
 export {
   SpatialQueryBuilder,
   type SpatialQueryOptions,
@@ -77,7 +66,19 @@ export {
   mergeRanges,
   shouldExtendVisibility,
   createLoadAllRange,
-} from './spatial-query-builder';
+} from './spatial-query/spatial-query-builder';
+
+export {
+  computeTolerance,
+  type GeometryType,
+  type DimensionInfo,
+  type ToleranceOptions,
+} from './spatial-query/tolerance-computer';
+
+export {
+  fetchChunkBoundsArray,
+  type ChunkBoundsArray,
+} from './chunk-bounds-loader';
 
 // Transferable accumulator (zero-allocation + worker offload)
 export {
@@ -93,3 +94,42 @@ export {
   type WorkerProjectionRequest,
   type WorkerProjectionResponse,
 } from './transferable-accumulator';
+
+// Color attributes
+export {
+  allocateColorBuffer,
+  getExpectedColorType,
+  colorBufferTypeMatches,
+  loadDirectColorRanges,
+  restoreOriginalDtype,
+  loadColorRanges,
+  type ColorRange,
+  type ColorBuffer,
+  type ColorBufferKind,
+} from './color-loader';
+
+// Cross-cutting utilities
+export {
+  recordLoadEvent,
+  computeLoadLatency,
+  type LoaderMetricsCounters,
+} from './loader-metrics';
+
+export { LoaderEventEmitter } from './monitor-events';
+
+export { OnceInit } from './once-init';
+
+export {
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from './extend-to-all-preflight';
+
+// Picking
+export { LabelLoader } from './picking/label-loader';
+export { ImageLabelLoader } from './picking/image-label-loader';
+
+// Overlays
+export {
+  loadOverlayConfigs,
+  type OverlayConfig,
+} from './overlays/overlay-loader';

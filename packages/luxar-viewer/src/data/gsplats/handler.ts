@@ -17,7 +17,7 @@ import type {
 } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
-import type { ViewStateQueue } from '../scene-loader/view-state-queue';
+import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import {
   processGSplatsData,
   type StagedGSplatsCommit,

@@ -12,8 +12,8 @@
  * to mid-flight viewState mutation by a concurrent updateView.
  */
 
-import type { LoaderRegistry } from '../loader-registry';
-import type { LoaderFactoryDeps } from '../loader-factory';
+import type { LoaderRegistry } from '../loaders/loader-registry';
+import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import type { NodeFactory } from '../../../rendering/node-factory';
 import type { SceneNode, ViewState, LoadedPointsData, DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../../types/lines';
@@ -23,7 +23,7 @@ import type {
   LoadedGSplatsData,
 } from '../../../types/gsplats';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { DerivedNodeViewState, DeriveOpts } from '../derive-node-view-state';
+import type { DerivedNodeViewState, DeriveOpts } from '../view-state/derive-node-view-state';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 

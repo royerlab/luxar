@@ -8,7 +8,7 @@
 
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
-import type { OverlayConfig } from '../data/loaders/overlay-loader';
+import type { OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
