@@ -49,6 +49,7 @@ by the unified format.
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Literal, Optional, Union
 
 import numpy as np
@@ -165,6 +166,18 @@ def make_substitutive_lod(
     target_device = resolve_torch_device(
         device if not isinstance(device, str) or device != "auto" else None
     )
+    # Lloyd's move-acceptance test (1e-12 tolerance on a residual-energy
+    # delta) requires float64, which MPS does not support. CPU + float64 is
+    # the honest fallback; the algorithm already round-trips through CPU
+    # for the spatial-hash and knn queries, so MPS speedup was partial.
+    if target_device.type == "mps":
+        warnings.warn(
+            "make_substitutive_lod: MPS backend lacks float64 support; "
+            "falling back to CPU. Pass device='cpu' explicitly to silence.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        target_device = torch.device("cpu")
 
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     sub_levels: list[SubstitutiveLevel] = [
