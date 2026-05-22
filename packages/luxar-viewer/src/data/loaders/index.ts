@@ -48,10 +48,12 @@ export {
   RangeLoader,
   type RangeLoaderConfig,
   type EncodingType,
+} from './spatial-query/range-loader';
+export {
   getSharedRangeLoader,
   getSharedRefRegistry,
   resetSharedRangeLoader,
-} from './spatial-query/range-loader';
+} from './spatial-query/range-loader/shared-instance';
 
 export {
   SpatialQueryBuilder,

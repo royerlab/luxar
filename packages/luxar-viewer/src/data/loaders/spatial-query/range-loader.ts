@@ -26,11 +26,6 @@ import { loadArrayRef } from './range-loader/array-ref';
 import { resolveArrayRef } from './range-loader/ref-resolution';
 
 export type { LoadRange, RangeLoaderConfig, EncodingType };
-export {
-  getSharedRangeLoader,
-  getSharedRefRegistry,
-  resetSharedRangeLoader,
-} from './range-loader/shared-instance';
 
 export class RangeLoader {
   private decoder: ArrayDecoder;
