@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
-} from '../../../../data/loaders/extend-to-all-preflight';
+} from '../../../../data/loaders';
 import { Modules } from '../../../../utils/log';
 
 describe('warnExtendToAllNoDimensions', () => {

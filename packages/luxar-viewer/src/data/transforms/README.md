@@ -75,7 +75,7 @@ export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: strin
 
 ## Caller
 
-`../scene-loader/derive-node-view-state.ts` is the sole consumer: it
+`../scene-loader/view-state/derive-node-view-state.ts` is the sole consumer: it
 calls `computeWorldNdTransform(sceneGraph, path)` then
 `invertNdTransformForQuery(...)` to convert the orchestrator's
 world-space `ViewState` into the per-node local-space query that goes
@@ -85,7 +85,7 @@ into the spatial index.
 
 - `../../types/zarr.ts` — `NdTransformMap`, `NdTransformEntry`,
   `isPermutation`.
-- `../scene-loader/derive-node-view-state.ts` — the only caller.
+- `../scene-loader/view-state/derive-node-view-state.ts` — the only caller.
 - `../README.md` — parent overview, "nD Transforms on Non-Displayed
   Dimensions" section.
 - `docs/guides/specs/ND_TRANSFORMS_SPEC.md` — full spec, Python-side

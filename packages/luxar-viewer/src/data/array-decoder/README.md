@@ -88,7 +88,7 @@ deduplicate identical buffers across the scene. `ArrayDecoder` registers
 into it from both the broadcasted and direct paths, and reads from it
 in `decodeArrayRef()` before touching zarr. The registry lives in its
 own module so consumers that only need the type (SceneLoader,
-`loaders/base-types.ts`, `scene-loader/loader-factory.ts`, the three
+`loaders/base-types.ts`, `scene-loader/loaders/loader-factory.ts`, the three
 spatial-index loaders, and `RangeLoader`) don't import the full
 ~970-line decoder body.
 

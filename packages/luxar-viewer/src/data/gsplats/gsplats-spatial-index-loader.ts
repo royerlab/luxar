@@ -27,23 +27,23 @@ import {
   SpatialQueryBuilder,
   type ChunkSpatialIndex,
   type LoadRange,
+  getExpectedColorType,
+  loadColorRanges,
+  computeLoadLatency,
+  recordLoadEvent,
+  LoaderEventEmitter,
+  OnceInit,
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
 } from '../loaders';
 import { loadGSplatsChunkIndex, registerGSplatsArrayBounds } from './chunk-index-loader';
 import { createEmptyGSplatsData } from './projection';
-import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
-import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
-import { LoaderEventEmitter } from '../loaders/monitor-events';
-import { OnceInit } from '../loaders/once-init';
 import type {
   LoaderMetrics,
   MonitorEvent,
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import {
-  warnExtendToAllNoDimensions,
-  announceExtendToAllOnce,
-} from '../loaders/extend-to-all-preflight';
 import { choleskyPackedSize } from '../../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';

@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { runGSplatsRefinement } from '../../../../data/gsplats/lod-refinement';
-import { ViewStateQueue } from '../../../../data/scene-loader/view-state-queue';
+import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { GSplatsDataLoader } from '../../../../types/gsplats';
 import type { ViewState } from '../../../../data/data-loader-types';
 

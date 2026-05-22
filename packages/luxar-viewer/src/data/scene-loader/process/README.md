@@ -70,7 +70,7 @@ export { commitGSplatsGeometry } from '../commit/commit-gsplats-geometry';
 ```
 
 Consumers: `SceneLoader.processLinesData` / `processGSplatsData`
-(`data/scene-loader.ts`), `scene-loader/retry.ts`, and the per-node
+(`data/scene-loader.ts`), `scene-loader/lifecycle/retry.ts`, and the per-node
 loaders in `scene-loader/nodes/load-{lines,gsplats}-node.ts` — all of
 which reach these functions through the `LoadCtx` interface assembled
 in `nodes/build-ctx.ts`, never via direct import.
@@ -116,7 +116,7 @@ in `nodes/build-ctx.ts`, never via direct import.
   main-thread projection kernels used as the worker fallback.
 - `../../loaders/tolerance-computer.ts` — geometry-aware per-dim
   tolerance used by `processLinesData`.
-- `../extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
+- `../view-state/extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
 - `../../../workers/worker-pool.ts` — `runWithTimeout` dispatch used
   by both worker projection paths.
 - `../../../rendering/gsplat-geometry.ts` — `packCholeskyForShader`

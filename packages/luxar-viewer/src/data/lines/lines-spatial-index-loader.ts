@@ -23,21 +23,26 @@ import type {
 } from '../../types/lines';
 import type { SceneNode, PointRange } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
-import { RangeLoader, SpatialQueryBuilder, mergeRanges, type LoadRange } from '../loaders';
-import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
-import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
-import { LoaderEventEmitter } from '../loaders/monitor-events';
-import { OnceInit } from '../loaders/once-init';
+import {
+  RangeLoader,
+  SpatialQueryBuilder,
+  mergeRanges,
+  type LoadRange,
+  getExpectedColorType,
+  loadColorRanges,
+  computeLoadLatency,
+  recordLoadEvent,
+  LoaderEventEmitter,
+  OnceInit,
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from '../loaders';
 import type {
   LoaderMetrics,
   MonitorEvent,
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import {
-  warnExtendToAllNoDimensions,
-  announceExtendToAllOnce,
-} from '../loaders/extend-to-all-preflight';
 import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/lines';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';

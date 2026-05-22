@@ -20,7 +20,7 @@ import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
-} from '../loader-factory';
+} from '../loaders/loader-factory';
 import type { SceneNode } from '../../data-loader-types';
 import type { GSplatsMetadata, GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { NodeBuildCtx } from './build-ctx';

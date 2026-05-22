@@ -14,7 +14,7 @@ vi.mock('../../../../data/loaders/chunk-bounds-loader', () => ({
   fetchChunkBoundsArray: vi.fn(),
 }));
 
-import { fetchChunkBoundsArray } from '../../../../data/loaders/chunk-bounds-loader';
+import { fetchChunkBoundsArray } from '../../../../data/loaders';
 import {
   loadPointsChunkIndex,
   registerPointsArrayBounds,

@@ -7,8 +7,8 @@
 
 import * as zarr from './zarr';
 import * as THREE from 'three';
-import { normalizeURL } from './scene-loader/url-normalization';
-import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
+import { normalizeURL } from './scene-loader/lifecycle/url-normalization';
+import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/view-state/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
   listCachedDatasets as listCachedDatasetsHelper,
@@ -17,7 +17,7 @@ import {
   clearL2Cache as clearL2CacheHelper,
   clearAllCaches as clearAllCachesHelper,
   type CacheStatsSnapshot,
-} from './scene-loader/cache-api';
+} from './scene-loader/cache/cache-api';
 import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
@@ -28,9 +28,9 @@ import {
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
-import type { LoaderFactoryDeps } from './scene-loader/loader-factory';
+import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
-import { ViewStateQueue } from './scene-loader/view-state-queue';
+import { ViewStateQueue } from './scene-loader/view-state/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
@@ -59,7 +59,7 @@ import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import { LoaderRegistry } from './scene-loader/loader-registry';
+import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -85,12 +85,12 @@ import {
   retryFailedLoaderUnlocked,
   retryAllFailedLoadersUnlocked,
   type RetryCtx,
-} from './scene-loader/retry';
-import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
-import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
-import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
-import { disposeSceneLoader } from './scene-loader/dispose';
-import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
+} from './scene-loader/lifecycle/retry';
+import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
+import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
+import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
+import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
+import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/lifecycle/load-scene';
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
@@ -171,7 +171,7 @@ export class SceneLoader {
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
    * and the per-loader previous view-state map used by predictive
-   * prefetch. See ./scene-loader/view-state-queue.ts.
+   * prefetch. See ./scene-loader/view-state/view-state-queue.ts.
    *
    * The pending-state slot is overwritten on every queued update, so a
    * burst of view changes during an in-flight retry collapses to a
@@ -796,7 +796,7 @@ export class SceneLoader {
   /**
    * Update geometry for a specific points node.
    *
-   * Implementation lives in `scene-loader/geometry-commit-handler.ts`.
+   * Implementation lives in `scene-loader/commit/commit-points-geometry.ts`.
    */
   private updatePointsGeometry(
     path: string,

@@ -23,7 +23,7 @@ import * as THREE from 'three';
 // drag in zarr, WASM, the data monitor, etc.). Pattern matches
 // `loader-factory.test.ts`.
 const createPointsLoaderMock = vi.fn();
-vi.mock('../../../../../data/scene-loader/loader-factory', () => ({
+vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => ({
   createPointsLoader: (...args: unknown[]) => createPointsLoaderMock(...args),
   // Re-export the type-only interface — vitest ignores type imports at runtime
   // so this is just to satisfy `import type { LoaderFactoryDeps }` chains.
@@ -31,7 +31,7 @@ vi.mock('../../../../../data/scene-loader/loader-factory', () => ({
 
 import { loadPointsNode } from '../../../../../data/scene-loader/nodes/load-points-node';
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loader-registry';
+import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type {
   SceneNode,

@@ -75,13 +75,13 @@ and retry-after-failure.
 
 ## See also
 
-- `../loader-factory.ts` — `createPointsLoader` / `createLinesLoader`
+- `../loaders/loader-factory.ts` — `createPointsLoader` / `createLinesLoader`
   / `createGSplatsLoader` / `createProgressiveGSplatsLoader` helpers
   that the leaf loaders call. The orchestrator passes the live
   `LoaderFactoryDeps` snapshot through `NodeBuildCtx`.
-- `../loader-registry.ts` — `LoaderRegistry.registerXLoader` and
+- `../loaders/loader-registry.ts` — `LoaderRegistry.registerXLoader` and
   `recordFailure` invoked by every leaf.
-- `../derive-node-view-state.ts` — `deriveNodeViewState` and the
+- `../view-state/derive-node-view-state.ts` — `deriveNodeViewState` and the
   `DerivedNodeViewState` / `DeriveOpts` shapes consumed via
   `NodeBuildCtx`.
 - `../process/data-processor-{lines,gsplats}.ts` — async projection
