@@ -205,6 +205,22 @@ describe('ControlsManager', () => {
       expect(controls.damping).toBe(0.95);
     });
 
+    // controls.md [G20][P5]: setFlyRotationSpeed / setFlyRotationDamping
+    // previously had no tests (fly mode had 2 of 5 setters tested).
+    // Pin both forwarders so a regression that dropped the active-controls
+    // live-apply branch is caught.
+    it('setFlyRotationSpeed applies live to the active fly controls [controls.md/G20][P5]', () => {
+      controlsManager.setFlyRotationSpeed(3.14);
+      const controls = controlsManager.getControls() as LuxarFlyControls;
+      expect(controls.rotationSpeed).toBeCloseTo(3.14, 5);
+    });
+
+    it('setFlyRotationDamping applies live to the active fly controls [controls.md/G20][P5]', () => {
+      controlsManager.setFlyRotationDamping(0.88);
+      const controls = controlsManager.getControls() as LuxarFlyControls;
+      expect(controls.rotationDamping).toBeCloseTo(0.88, 5);
+    });
+
     it('returns the SAME LuxarFlyControls instance as getControls() when active [controls.md/W2][P2]', () => {
       // controls.md [W2][P2] strengthening: was `.toBeInstanceOf` only.
       // The contract is stronger than "an instance is returned": the
@@ -544,6 +560,97 @@ describe('ControlsManager', () => {
       controlsManager.setControlType('ortho');
 
       expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'ortho' }));
+    });
+  });
+
+  // controls.md [G19][P5]: setTarget / reinitialize had no tests. The two
+  // together are the auto-framing seam — autoFrameCamera mutates
+  // camera.position THEN calls setTarget THEN reinitialize so the next
+  // update() respects the new framing. A regression in either forwarder
+  // would silently break auto-framing.
+  describe('setTarget / reinitialize [controls.md/G19][P5]', () => {
+    it('setTarget copies into orbit controls.target (no update fired)', () => {
+      controlsManager.setTarget(new THREE.Vector3(7, 8, 9));
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.target.x).toBeCloseTo(7, 5);
+      expect(controls.target.y).toBeCloseTo(8, 5);
+      expect(controls.target.z).toBeCloseTo(9, 5);
+    });
+
+    it('reinitialize re-derives distance from camera.position → target', () => {
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      controls.enableDamping = false;
+      // Pretend autoFrameCamera moved the camera.
+      camera.position.set(0, 0, 20);
+      controls.target.set(0, 0, 0);
+      controlsManager.reinitialize();
+      controlsManager.update();
+      // After reinitialize, the orbit distance reflects the new ||cam-target||.
+      // A subsequent update() should NOT snap the camera back to the old
+      // distance — pinning the post-reinitialize observable z.
+      expect(camera.position.z).toBeCloseTo(20, 4);
+    });
+
+    it('setTarget on fly controls instantly orients camera toward target', () => {
+      controlsManager.setControlType('fly');
+      camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+      controlsManager.setTarget(new THREE.Vector3(10, 0, 5)); // straight +X
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      const expected = new THREE.Vector3(10, 0, 5).sub(camera.position).normalize();
+      expect(forward.x).toBeCloseTo(expected.x, 4);
+      expect(forward.z).toBeCloseTo(expected.z, 4);
+    });
+  });
+
+  // controls.md [G18][P5]: previously `setDistanceLimits` / `setZoomLimits` /
+  // `setSceneScale` / `getSceneScale` had NO direct tests. The auto-framing
+  // pipeline calls these setters after computing the scene's diagonal —
+  // a regression that dropped the live-apply step would silently degrade
+  // zoom/pan feel without tripping any test. Pin both contracts here:
+  //   1. The current orbit controls' min/max{Distance,Zoom} reflect the value.
+  //   2. The stored limits survive a mode-switch (orbit→fly→orbit).
+  describe('scale-aware setters [controls.md/G18][P5]', () => {
+    it('setDistanceLimits applies live to the active orbit controls', () => {
+      controlsManager.setDistanceLimits(2.5, 250);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.minDistance).toBeCloseTo(2.5, 5);
+      expect(controls.maxDistance).toBeCloseTo(250, 5);
+    });
+
+    it('setDistanceLimits persists across orbit → fly → orbit mode switches', () => {
+      controlsManager.setDistanceLimits(3, 300);
+      controlsManager.setControlType('fly');
+      controlsManager.setControlType('orbit');
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.minDistance).toBeCloseTo(3, 5);
+      expect(controls.maxDistance).toBeCloseTo(300, 5);
+    });
+
+    it('setZoomLimits applies live to the active ortho controls', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.copy(camera.position);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+      controlsManager.setZoomLimits(0.4, 40);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.minZoom).toBeCloseTo(0.4, 5);
+      expect(controls.maxZoom).toBeCloseTo(40, 5);
+    });
+
+    it('setSceneScale + getSceneScale round-trip; setSceneScale(<=0) is a no-op', () => {
+      controlsManager.setSceneScale(42);
+      expect(controlsManager.getSceneScale()).toBeCloseTo(42, 5);
+      // setSceneScale(<=0) is a no-op (no scene info) — previous value preserved.
+      controlsManager.setSceneScale(0);
+      expect(controlsManager.getSceneScale()).toBeCloseTo(42, 5);
+      controlsManager.setSceneScale(-1);
+      expect(controlsManager.getSceneScale()).toBeCloseTo(42, 5);
+      // A fresh positive value updates.
+      controlsManager.setSceneScale(100);
+      expect(controlsManager.getSceneScale()).toBeCloseTo(100, 5);
     });
   });
 });

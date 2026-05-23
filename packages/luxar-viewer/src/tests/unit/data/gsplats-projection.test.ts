@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as fc from 'fast-check';
 import {
   projectGSplatsTo3D,
   projectGSplats3DOnly,
@@ -842,5 +843,96 @@ describe('createEmptyGSplatsData', () => {
     expect(a.positions).not.toBe(b.positions);
     expect(a.amplitudes).not.toBe(b.amplitudes);
     expect(a.choleskyFactors).not.toBe(b.choleskyFactors);
+  });
+});
+
+// ============================================================================
+// [data.md/H4][P12] Property test: translation invariance under hidden-dim shifts
+//
+// The gsplat attenuation along hidden dims is a function of the difference
+// `slicePosition[h] - center[h]`. If we shift BOTH slicePosition and the
+// splat's hidden-dim coordinate by the same scalar k, the relative
+// position in hidden space is unchanged and the attenuation/amplitude
+// of every splat MUST be unchanged. The 3D-projected centers are taken
+// from displayDims only, so those are also unchanged by hidden-dim shifts.
+//
+// This is the algebraic property that downstream slice navigation
+// (keyboard nav, etc.) relies on: moving "through" the volume with the
+// slider is geometrically equivalent to moving the splats relative to
+// the slider — pin it as an invariant.
+// ============================================================================
+
+describe('projectGSplatsTo3D (property tests)', () => {
+  const f = Math.fround;
+
+  it('[H4] translation invariance: shifting slicePos[hidden] and centers[hidden] by k leaves amplitudes/centers3D unchanged', () => {
+    // 4D scene with 1 hidden dim (dim 3). Splats with random centers
+    // and amplitudes; identity 4D Cholesky for tractable attenuation;
+    // tolerance 1.0 on the hidden dim so the Gaussian is not flat.
+    fc.assert(
+      fc.property(
+        // splat 0 center: (cx0, cy0, cz0, cw0)
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-1), max: f(1), noNaN: true, noDefaultInfinity: true }),
+        // splat 1 center: (cx1, cy1, cz1, cw1)
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({ min: f(-1), max: f(1), noNaN: true, noDefaultInfinity: true }),
+        // slicePos on hidden dim
+        fc.float({ min: f(-1), max: f(1), noNaN: true, noDefaultInfinity: true }),
+        // translation k
+        fc.float({ min: f(-5), max: f(5), noNaN: true, noDefaultInfinity: true }),
+        (cx0, cy0, cz0, cw0, cx1, cy1, cz1, cw1, sliceW, k) => {
+          const ndim = 4;
+          // 4D identity Cholesky (10 elements: lower-triangular packed)
+          const identity4DCholesky = [1, 0, 1, 0, 0, 1, 0, 0, 0, 1];
+          const baseChol = new Float32Array([...identity4DCholesky, ...identity4DCholesky]);
+
+          const baseLoaded: LoadedGSplatsData = {
+            positions: new Float32Array([cx0, cy0, cz0, cw0, cx1, cy1, cz1, cw1]),
+            amplitudes: new Float32Array([1.0, 1.0]),
+            choleskyFactors: baseChol,
+            colors: null,
+            splatCount: 2,
+            ndim,
+          };
+          const baseViewState: GSplatsViewState = {
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0, sliceW],
+            tolerance: [1, 1, 1, 1],
+          };
+
+          // Shifted: both slicePos[3] AND center[3] for each splat shifted by k.
+          // Display-dim coordinates (0,1,2) are unchanged.
+          const shiftedLoaded: LoadedGSplatsData = {
+            ...baseLoaded,
+            positions: new Float32Array([cx0, cy0, cz0, cw0 + k, cx1, cy1, cz1, cw1 + k]),
+            choleskyFactors: new Float32Array(baseChol),
+          };
+          const shiftedViewState: GSplatsViewState = {
+            ...baseViewState,
+            slicePosition: [0, 0, 0, sliceW + k],
+          };
+
+          const r0 = projectGSplatsTo3D(baseLoaded, baseViewState);
+          const r1 = projectGSplatsTo3D(shiftedLoaded, shiftedViewState);
+
+          // Same set of splats survive the visibility test.
+          expect(r1.splatCount).toBe(r0.splatCount);
+          // Same per-splat attenuation (hence same amplitudes).
+          for (let i = 0; i < r0.amplitudes.length; i++) {
+            expect(r1.amplitudes[i]).toBeCloseTo(r0.amplitudes[i], 4);
+          }
+          // Same projected 3D centers (display dims untouched by hidden shift).
+          for (let i = 0; i < r0.centers3D.length; i++) {
+            expect(r1.centers3D[i]).toBeCloseTo(r0.centers3D[i], 3);
+          }
+        }
+      ),
+      { numRuns: 60 }
+    );
   });
 });

@@ -39,13 +39,31 @@ describe('DataLoadingMonitor', () => {
     });
 
     it('should respect configuration options', () => {
+      // [data.md/W7][P2] Previously toBeDefined() only — passed for any
+      // constructor that returned anything truthy, even if the supplied
+      // options were dropped. Pin each option onto the observable config
+      // bag and the disposable lifecycle.
       const customMonitor = new DataLoadingMonitor(container, {
         position: 'top-left',
         theme: 'light',
         defaultView: 'detailed',
         maxEvents: 500,
       });
-      expect(customMonitor).toBeDefined();
+      // Config bag must store every option we asked for.
+      const cfg = (customMonitor as unknown as {
+        config: {
+          position: string;
+          theme: string;
+          defaultView: string;
+          maxEvents: number;
+        };
+      }).config;
+      expect(cfg.position).toBe('top-left');
+      expect(cfg.theme).toBe('light');
+      expect(cfg.defaultView).toBe('detailed');
+      expect(cfg.maxEvents).toBe(500);
+      // Sanity: dispose is wired even for the custom-constructed instance.
+      expect(() => customMonitor.dispose()).not.toThrow();
     });
   });
 
@@ -377,11 +395,20 @@ describe('DataLoadingMonitor', () => {
 
       const recommendations = monitor.getRecommendations();
 
+      // [data.md/W7][P2] Strengthen: toBeDefined on a `Array.find()` result
+      // catches "no match" but lets through partially-malformed recs (e.g.
+      // missing `message` or `suggestion` strings, undefined severity).
+      // Pin the carrier-bag shape of each recommendation we expect.
+
       // Should recommend spatial indexing for slow fallback loader
       const spatialRec = recommendations.find((r) =>
         r.suggestion?.toLowerCase().includes('spatial')
       );
       expect(spatialRec).toBeDefined();
+      expect(typeof spatialRec!.message).toBe('string');
+      expect(spatialRec!.message.length).toBeGreaterThan(0);
+      expect(typeof spatialRec!.suggestion).toBe('string');
+      expect(spatialRec!.suggestion!.toLowerCase()).toContain('spatial');
 
       // L0 cache removed - no longer expect cache recommendations
       // const cacheRec = recommendations.find((r) => r.message.toLowerCase().includes('cache'));
@@ -390,6 +417,8 @@ describe('DataLoadingMonitor', () => {
       // Should warn about high memory usage
       const memoryRec = recommendations.find((r) => r.message.toLowerCase().includes('memory'));
       expect(memoryRec).toBeDefined();
+      expect(typeof memoryRec!.message).toBe('string');
+      expect(memoryRec!.message.toLowerCase()).toContain('memory');
     });
   });
 
@@ -556,8 +585,15 @@ describe('DataLoadingMonitor', () => {
       monitor.connectLoader('/test', mockLoader);
 
       // Verify we have metrics
+      // [data.md/W7][P2] Strengthen: toBeDefined passed even if getLoaderMetrics
+      // returned an empty object. Pin the type + path that the connected
+      // loader claimed it would emit.
       const metricsBefore = monitor.getLoaderMetrics('/test');
       expect(metricsBefore).toBeDefined();
+      expect(metricsBefore!.type).toBe('point-spatial-index');
+      expect(metricsBefore!.path).toBe('/test');
+      expect(metricsBefore!.queries).toBe(1);
+      expect(metricsBefore!.pointsLoaded).toBe(100);
 
       // Process queued events (with polling architecture, events are queued until tick)
       monitor.show(); // Make visible so forceUpdate works
@@ -599,56 +635,64 @@ describe('DataLoadingMonitor', () => {
 
   describe('panel width stability', () => {
     it('should maintain expanded class when switching tabs in expanded mode', () => {
+      // [data.md/W7][P2] Previously `expect(panel).toBeDefined()` — but the
+      // cast-to-HTMLElement returns `null` if the selector misses, and
+      // toBeDefined treats null as "defined". A mutation that stopped the
+      // panel from being mounted would survive. Pin instanceof + non-null.
       monitor.show();
       monitor.expand();
 
-      // Get panel element
-      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
-      expect(panel).toBeDefined();
+      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement | null;
+      expect(panel).not.toBeNull();
+      expect(panel).toBeInstanceOf(HTMLElement);
 
       // Check that panel has expanded class (width defined in CSS)
-      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
+      expect(panel!.classList.contains('luxar-data-monitor--expanded')).toBe(true);
 
       // Switch through all tabs and verify expanded class remains
       const tabs = ['overview', 'cache', 'performance', 'insights'];
       tabs.forEach((tab) => {
         monitor.setActiveTab(tab);
-        expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
+        expect(panel!.classList.contains('luxar-data-monitor--expanded')).toBe(true);
       });
     });
 
     it('should have compact class in compact mode', () => {
+      // [data.md/W7][P2] See note above — toBeDefined on a `... as HTMLElement`
+      // does not catch a missing selector; assert instanceof + non-null.
       monitor.show();
       monitor.minimize();
 
-      // Get panel element
-      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
-      expect(panel).toBeDefined();
+      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement | null;
+      expect(panel).not.toBeNull();
+      expect(panel).toBeInstanceOf(HTMLElement);
 
       // Check that panel has compact class (width defined in CSS)
-      expect(panel.classList.contains('luxar-data-monitor--compact')).toBe(true);
-      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(false);
+      expect(panel!.classList.contains('luxar-data-monitor--compact')).toBe(true);
+      expect(panel!.classList.contains('luxar-data-monitor--expanded')).toBe(false);
     });
 
     it('should update panel classes when transitioning between states', () => {
-      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
-      expect(panel).toBeDefined();
+      // [data.md/W7][P2] Strengthen panel existence assertion.
+      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement | null;
+      expect(panel).not.toBeNull();
+      expect(panel).toBeInstanceOf(HTMLElement);
 
       // Start hidden
       monitor.hide();
 
-      // Hidden → Mini (compact mode)
+      // Hidden -> Mini (compact mode)
       monitor.cycleState();
-      expect(panel.classList.contains('luxar-data-monitor--compact')).toBe(true);
+      expect(panel!.classList.contains('luxar-data-monitor--compact')).toBe(true);
 
-      // Mini → Expanded
+      // Mini -> Expanded
       monitor.cycleState();
-      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
+      expect(panel!.classList.contains('luxar-data-monitor--expanded')).toBe(true);
 
-      // Expanded → Hidden
+      // Expanded -> Hidden: mini class flips off, but isExpanded preserved.
+      // Pin: when hidden, the panel is no longer flagged compact (mini's role).
       monitor.cycleState();
-      // Panel classes should still be set (even if hidden)
-      // because isExpanded is still true internally
+      expect(panel!.classList.contains('luxar-data-monitor--compact')).toBe(false);
     });
   });
 

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import {
   isKeyAllowedInContext,
   sortContextsByPriority,
@@ -109,5 +110,93 @@ describe('sortContextsByPriority', () => {
     ]);
     const sorted = sortContextsByPriority(m, 'absent').map(([k]) => k);
     expect(sorted).toEqual(['nav', 'fly']);
+  });
+
+  // input.md [H3][P12] fast-check property test: sortContextsByPriority
+  // must be idempotent (sorting an already-sorted list yields the same
+  // order) and stable (ties preserve insertion order). Without these
+  // pinned, a future refactor that swapped to an unstable sort would
+  // silently re-order ties and surface only as a UX glitch.
+  it('[property] idempotent: sort(sort(x)) === sort(x) [input.md/H3][P12]', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(
+            fc.string({ minLength: 1, maxLength: 5 }),
+            fc.integer({ min: -100, max: 100 })
+          ),
+          { minLength: 0, maxLength: 20 }
+        ),
+        (entries) => {
+          // De-duplicate keys (Map collapses duplicates by key); preserve insertion order.
+          const seen = new Set<string>();
+          const unique = entries.filter(([k]) => !seen.has(k) && (seen.add(k), true));
+          const m = new Map<string, PriorityConfig>(
+            unique.map(([k, p]) => [k, { priority: p }])
+          );
+          const once = sortContextsByPriority(m);
+          const twice = sortContextsByPriority(new Map(once));
+          if (once.length !== twice.length) return false;
+          for (let i = 0; i < once.length; i++) {
+            if (once[i][0] !== twice[i][0]) return false;
+          }
+          return true;
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+
+  it('[property] stable: ties preserve insertion order [input.md/H3][P12]', () => {
+    fc.assert(
+      fc.property(
+        // Generate a list of unique keys, all with priority=42 (all-tie).
+        fc.uniqueArray(fc.string({ minLength: 1, maxLength: 5 }), {
+          minLength: 1,
+          maxLength: 12,
+        }),
+        (keys) => {
+          const m = new Map<string, PriorityConfig>(
+            keys.map((k) => [k, { priority: 42 }])
+          );
+          const sorted = sortContextsByPriority(m).map(([k]) => k);
+          // Stable sort over all-equal priorities = insertion order.
+          for (let i = 0; i < keys.length; i++) {
+            if (sorted[i] !== keys[i]) return false;
+          }
+          return true;
+        }
+      ),
+      { numRuns: 200 }
+    );
+  });
+
+  it('[property] descending priority: i-th result has priority >= (i+1)-th [input.md/H3][P12]', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(
+            fc.string({ minLength: 1, maxLength: 5 }),
+            fc.integer({ min: -100, max: 100 })
+          ),
+          { minLength: 0, maxLength: 20 }
+        ),
+        (entries) => {
+          const seen = new Set<string>();
+          const unique = entries.filter(([k]) => !seen.has(k) && (seen.add(k), true));
+          const m = new Map<string, PriorityConfig>(
+            unique.map(([k, p]) => [k, { priority: p }])
+          );
+          const sorted = sortContextsByPriority(m);
+          for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i - 1][1].priority ?? 0;
+            const cur = sorted[i][1].priority ?? 0;
+            if (prev < cur) return false;
+          }
+          return true;
+        }
+      ),
+      { numRuns: 200 }
+    );
   });
 });
