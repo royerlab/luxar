@@ -186,11 +186,12 @@ describe('StringController', () => {
       expect(label?.textContent).toBe(longLabel);
     });
 
-    it("escapes special characters in the label by using textContent, not innerHTML (XSS safety)", () => {
+    it('escapes special characters in the label by using textContent, not innerHTML (XSS safety)', () => {
       // textContent assignment is the safe path — a regression that
       // switched to innerHTML would interpret the markup. We assert by
       // checking innerHTML serializes the entities, not raw '<' / '&'.
-      controller.name("<img src=x onerror=alert('xss')>&'\"");
+      const payload = '<img src=x onerror=alert(\'xss\')>&\'"';
+      controller.name(payload);
       const label = controller.domElement.querySelector(
         '.luxar-gui__controller-name'
       ) as HTMLElement;
@@ -199,7 +200,7 @@ describe('StringController', () => {
       // were assigned to textContent and re-serialized as entities.
       expect(label.querySelector('img')).toBeNull();
       // The original characters survive a textContent round-trip:
-      expect(label.textContent).toBe("<img src=x onerror=alert('xss')>&'\"");
+      expect(label.textContent).toBe(payload);
     });
   });
 
