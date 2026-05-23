@@ -48,13 +48,26 @@ export async function decodeLUT(
     throw new Error(`decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`);
   }
   const entryCount = lutMode === 'row' ? Math.floor(lut.length / k) : lut.length;
-  for (let i = 0; i < indices.length; i++) {
-    if (indices[i] >= entryCount) {
-      throw new Error(
-        `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
-          `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
-      );
+  // Early-return guard: an empty indices array (or an empty LUT) has no
+  // out-of-range scan work to do. Skipping the loop avoids the O(n) JS
+  // overhead on the common no-op call path; the WASM call below also
+  // becomes a no-op against the zero-length output buffer.
+  if (indices.length > 0 && entryCount > 0) {
+    for (let i = 0; i < indices.length; i++) {
+      if (indices[i] >= entryCount) {
+        throw new Error(
+          `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
+            `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
+        );
+      }
     }
+  } else if (indices.length > 0 && entryCount === 0) {
+    // Empty LUT with non-empty indices is unambiguously a producer bug:
+    // every index would be out-of-range. Report the first one explicitly
+    // so the caller gets the same error shape as the in-loop branch.
+    throw new Error(
+      `decodeLUT: indices[0]=${indices[0]} out of range for 0 LUT entries (lutMode=${lutMode})`
+    );
   }
 
   // Infer dtype from indices type if not explicitly provided

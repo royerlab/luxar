@@ -191,6 +191,19 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // even while init() is still in flight. LuxarApp.setupDebugInterface()
     // extends this object with runtime references after init completes.
     //
+    // PARTIAL-STATE CONTRACT — IMPORTANT:
+    //   `__luxarDebug.app` exists from construction (just after `new
+    //   LuxarApp()`), but the app's per-subsystem fields
+    //   (sceneManager, inputHandler, recordingPanel, layersPanel,
+    //   renderingControls, debugConsole, …) are populated only after
+    //   `app.init(...)` resolves below. Consumers MUST wait until
+    //   either `app.initialized === true` or the post-init debug
+    //   surface keys (`scene`, `camera`, `renderer`, `controls`,
+    //   `getState`, …) appear before dereferencing component fields,
+    //   otherwise they will read `undefined` and crash overlays.
+    //   Playwright fixtures rely on the post-init keys for exactly
+    //   this reason.
+    //
     // `showError` is exposed so tests (visual-regression in particular) can
     // drive the error-dialog component directly without depending on the
     // URL-routing semantics in shouldShowBrowser, which evolve independently

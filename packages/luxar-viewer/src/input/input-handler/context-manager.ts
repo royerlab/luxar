@@ -17,6 +17,7 @@ import {
   isKeyAllowedInContext as isKeyAllowedInContextPure,
   sortContextsByPriority,
 } from './context-manager/routing-rules';
+import { isTypingInInput } from './commands/focus-utils';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
@@ -545,13 +546,18 @@ export class InputContextManager {
       const binding = contextBindings.get(bindingKey);
       if (!binding) continue;
 
+      // Route both `handler` and `keyupHandler` through this dispatch
+      // path. If the binding only declares a keyupHandler (no main
+      // handler is meaningful for keyup), keep searching; otherwise
+      // any future Escape-on-keyup feature would silently fail to
+      // route from a typing context.
       if (type === 'up') {
         if (binding.keyupHandler) {
           if (binding.preventDefault) event.preventDefault();
           binding.keyupHandler(event);
           return true;
         }
-        return false;
+        continue;
       }
       if (binding.preventDefault) event.preventDefault();
       binding.handler(event);
@@ -619,27 +625,12 @@ export class InputContextManager {
       return true;
     }
 
-    // Also check if focus is in a text-entry element
-    // Range inputs (sliders) and checkboxes are NOT text entry — don't block shortcuts
-    const activeElement = document.activeElement;
-    if (activeElement) {
-      const tagName = activeElement.tagName.toLowerCase();
-      if (tagName === 'input') {
-        const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
-        // Only block shortcuts for actual text-entry input types
-        if (inputType !== 'range' && inputType !== 'checkbox' && inputType !== 'radio') {
-          return true;
-        }
-      } else if (
-        tagName === 'textarea' ||
-        tagName === 'select' ||
-        activeElement.getAttribute('contenteditable') === 'true'
-      ) {
-        return true;
-      }
-    }
-
-    return false;
+    // Delegate the DOM-focus check to the canonical typing-detection
+    // helper so this path cannot diverge from InputHandler's
+    // isTypingInInput(). Both call sites read the same classification
+    // of activeElement (text inputs, textarea, select, contenteditable;
+    // excludes range/checkbox/radio).
+    return isTypingInInput(document.activeElement);
   }
 
   /**

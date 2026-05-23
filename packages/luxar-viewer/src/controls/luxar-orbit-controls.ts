@@ -152,6 +152,16 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.screenSpacePanning = config?.screenSpacePanning ?? true;
     this.trackballRadius = config?.trackballRadius ?? 1.0;
 
+    // MED-34 (audit-ack): `Infinity` is intentional API parity with
+    // three.js `OrbitControls` (which also defaults max-distance and
+    // max-zoom to `Infinity`). Callers that need a finite ceiling pass
+    // it via `config.maxDistance` / `config.maxZoom`. The audit's
+    // suggested `1e6` upper bound would silently cap users who rely on
+    // the THREE-compatible default. The wheel-zoom path is already
+    // hardened against runaway distance: `computeZoomScale()` clamps
+    // `scale` to `(0, 1]` for outward wheel deltas, so the distance
+    // never grows by more than ×1 per frame before the next clamp at
+    // `update.ts:131`.
     this.minDistance = config?.minDistance ?? 0.01;
     this.maxDistance = config?.maxDistance ?? Infinity;
     this.minZoom = config?.minZoom ?? 0.01;
@@ -238,7 +248,10 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.target0.copy(this.target);
     this.position0.copy(this.camera.position);
     this.orientation0.copy(this.orientation);
-    this.zoom0 = this.camera instanceof THREE.OrthographicCamera ? this.camera.zoom : 1;
+    // Both PerspectiveCamera and OrthographicCamera have a `.zoom` field that
+    // affects the projection matrix — save it unconditionally so reset()
+    // restores user-modified zoom on perspective cameras too.
+    this.zoom0 = this.camera.zoom;
   }
 
   /** Restore to last saved state. */
@@ -246,10 +259,8 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.target.copy(this.target0);
     this.orientation.copy(this.orientation0);
     this.distance = Math.max(this.position0.distanceTo(this.target0), 0.001);
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.camera.zoom = this.zoom0;
-      this.camera.updateProjectionMatrix();
-    }
+    this.camera.zoom = this.zoom0;
+    this.camera.updateProjectionMatrix();
     this.rotationDelta.identity();
     this.panDelta.set(0, 0, 0);
     this.zoomDelta = 0;

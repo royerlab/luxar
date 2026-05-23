@@ -47,9 +47,14 @@ let wasmJsUrlOverride: string | undefined;
  * Override the URL used to load the WASM JS shim. Pass an absolute URL
  * (e.g. `new URL('/static/luxar/wasm/luxar_wasm.js', location.origin).href`).
  * Call before {@link initWasm}.
+ *
+ * Pass `''` or `undefined` to RESET the override back to the default
+ * `import.meta.url`-relative resolution. Treating `''` as a valid value
+ * would otherwise survive a `??` check in {@link initWasm} and yield a
+ * bogus empty wasm URL.
  */
-export function setWasmJsUrl(url: string): void {
-  wasmJsUrlOverride = url;
+export function setWasmJsUrl(url: string | undefined): void {
+  wasmJsUrlOverride = url === '' ? undefined : url;
 }
 
 /**

@@ -13,6 +13,18 @@
  * pre-filter; precise attenuation is computed later by
  * `compute_gsplats_attenuation`.
  *
+ * Limitation (MED-45): taking the max of the row norms produces a single
+ * scalar extent applied isotropically along every axis. For highly
+ * anisotropic splats — e.g. a needle-shaped Gaussian stretched along
+ * one axis — this bound is tight along the stretched axis and loose
+ * along the others, so the visibility set is a strict superset of the
+ * true visible splats. This is **intentional and acceptable** because
+ * (a) this routine is a coarse pre-filter, not the final attenuation
+ * gate, and (b) the precise per-splat attenuation that follows in
+ * `compute_gsplats_attenuation` discards any splat whose contribution
+ * is negligible at the current slice. A tighter per-axis bound would
+ * cost more work here and save very little downstream.
+ *
  * @param centers - Splat centers [numSplats * ndim]
  * @param choleskyFactors - Packed Cholesky factors [numSplats * k] where k = ndim*(ndim+1)/2
  * @param slicePosition - Current slice position [ndim]

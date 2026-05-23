@@ -58,7 +58,21 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
     event.preventDefault();
   }
 
-  // WASD for movement
+  // WASD for movement.
+  //
+  // MED-35 (audit-ack): the audit flagged a latent edge case — Alt+W
+  // (sets `up=1`), then release Alt without releasing W, then press W
+  // again (sets `forward=1`) leaves `up=1, forward=1` concurrently.
+  // In practice browsers do not auto-repeat this transition (Alt+W +
+  // Alt-release keeps producing W keydown events with `altKey=false`,
+  // but the OS does not retrigger keydown on the modifier-state change
+  // alone). The `handleKeyUp` path below clears BOTH `forward` and
+  // `up` on a single 'w' keyup, so the worst case ends as soon as W
+  // is released. The simultaneous up+forward motion was deemed an
+  // acceptable transient by the fly-controls spec; if a future change
+  // makes the transition reachable, switch to the ternary form:
+  //   ctx.moveState.forward = isAltLike ? 0 : 1;
+  //   ctx.moveState.up = isAltLike ? 1 : 0;
   switch (event.key.toLowerCase()) {
     case 'w':
       if (event.altKey || event.metaKey) {

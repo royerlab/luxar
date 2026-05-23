@@ -9,7 +9,23 @@
  */
 
 /**
- * Standard emojis for different log categories
+ * Standard emojis for different log categories.
+ *
+ * **Intentional aliasing**: Several keys share the same emoji on purpose, so
+ * call-sites can pick the name that best documents intent without losing the
+ * visual grouping. The current aliased pairs/groups are:
+ *
+ * - `START` ≡ `ROCKET` ≡ '🚀' — app boot / launch-style action.
+ * - `SAVE` ≡ `CACHE` ≡ `MEMORY` ≡ '💾' — anything storage-like
+ *   (disk write, cache write, memory snapshot).
+ * - `SEARCH` ≡ `QUERY` ≡ '🔍' — read-side data lookups (UI search bar vs.
+ *   spatial query).
+ * - `DATA` ≡ `MONITOR` ≡ '📊' — data-volume reporting vs. live monitoring.
+ *
+ * The aliases are stable: if you add a new key that should share an existing
+ * visual category, prefer reusing the emoji here rather than introducing a
+ * near-duplicate. If you ever need to differentiate, pick a new emoji rather
+ * than deleting an alias (call-sites depend on these names).
  */
 export const LogEmoji = {
   // Status
@@ -25,15 +41,15 @@ export const LogEmoji = {
   UPDATE: '🔄',
   DELETE: '🗑️',
   SEARCH: '🔍',
-  QUERY: '🔍',
+  QUERY: '🔍', // alias of SEARCH — read-side lookup
   CLEAN: '🧹',
   BROADCAST: '📡',
   TARGET: '🎯',
-  ROCKET: '🚀',
+  ROCKET: '🚀', // alias of START — boot/launch action
 
   // Data
   DATA: '📊',
-  CACHE: '💾',
+  CACHE: '💾', // alias of SAVE — storage-like
   NETWORK: '🌐',
   FILE: '📄',
   SCENE: '🎬',
@@ -57,9 +73,9 @@ export const LogEmoji = {
   // Debug
   DEBUG: '🐛',
   CONSOLE: '🔧',
-  MONITOR: '📊',
+  MONITOR: '📊', // alias of DATA — live monitoring vs. data reporting
   PERFORMANCE: '⚡',
-  MEMORY: '💾',
+  MEMORY: '💾', // alias of SAVE — memory snapshot/usage
 } as const;
 
 /**
@@ -145,6 +161,7 @@ export const Modules = {
   LINES_LOADER: 'LinesSpatialIndexLoader',
   WASM: 'WASM',
   SCENE_DIMS: 'SceneDims',
+  DIMS: 'Dims',
 
   // Rendering
   RENDERER: 'Renderer',
@@ -174,6 +191,7 @@ export const Modules = {
   CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',
   ADAPTIVE_DPR: 'AdaptiveDPR',
   EVENT_GROUP: 'EventGroup',
+  NOTIFIER: 'Notifier',
 } as const;
 
 /**

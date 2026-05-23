@@ -431,11 +431,18 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.initializeTypes(data);
 
     // Track the highest filled index for cheap ensureCapacity copies.
+    // Prefer 1-per-point sources (radii, sharpness, scalars) over the
+    // multi-channel color buffer so the count is correct regardless of
+    // whether future color formats are RGB or RGBA. Positions are still
+    // checked first because they're the canonical 3-floats-per-point
+    // attribute on this code path. Only fall through to colors / 3 when
+    // no 1-per-point source is available.
     const filledCount = data.positions
       ? data.positions.length / 3
-      : data.colors
-        ? data.colors.length / 3
-        : (data.radii?.length ?? data.sharpness?.length ?? data.scalars?.length ?? 0);
+      : (data.radii?.length ??
+        data.sharpness?.length ??
+        data.scalars?.length ??
+        (data.colors ? data.colors.length / 3 : 0));
     if (filledCount > 0) {
       this.usedCount = Math.max(this.usedCount, offset + filledCount);
     }
@@ -504,8 +511,18 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     if (metadata.ndim !== undefined) this.ndim = metadata.ndim;
     if (metadata.totalPoints !== undefined) this.totalPoints = metadata.totalPoints;
     if (metadata.usedSpatialIndex !== undefined) this.usedSpatialIndex = metadata.usedSpatialIndex;
-    // Don't update bounds via updateMetadata - getData() computes it from positions
-    // This avoids potential corruption from external bounds objects
+    // Bounds are intentionally NOT updated via updateMetadata — getData()
+    // computes them fresh from positions. Warn loudly when a caller
+    // passes `bounds` so they don't silently believe their update took
+    // effect (e.g., during scene refresh after a coordinate transform).
+    if (metadata.bounds !== undefined) {
+      log.warning(
+        Modules.DATA_ACCUMULATOR,
+        'LoadedPointsDataAccumulator.updateMetadata: `bounds` argument ignored — ' +
+          'getData() recomputes bounds from positions. Drop the bounds field from ' +
+          'the call site or compute bounds before fill().'
+      );
+    }
   }
 
   getStats(): AccumulatorStats {

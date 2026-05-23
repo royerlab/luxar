@@ -9,6 +9,7 @@
 
 import { config } from '../../../config';
 import { clamp } from '../../../utils/clamp';
+import { log, Modules } from '../../../utils/log';
 
 /**
  * 3D bounding box representation
@@ -254,10 +255,26 @@ export function calculateClippingPlanesFromSphere(
 }
 
 /**
- * Determines if a bounding box is valid (non-zero volume)
+ * Determines whether a bounding box has any non-zero extent along at least
+ * one axis. The name "valid" is loose: this is **not** a non-degenerate-volume
+ * predicate.
+ *
+ * Returns `true` for:
+ *   - Full 3D boxes (all three sizes > 0)
+ *   - **Degenerate 2D boxes** (one axis has size 0, e.g. a flat slab in XY)
+ *   - **Degenerate 1D boxes** (two axes have size 0, e.g. a line segment
+ *     along X)
+ *
+ * Returns `false` only when the box collapses to a single point
+ * (`size.x === 0 && size.y === 0 && size.z === 0`).
+ *
+ * Callers needing non-zero **volume** (all three sizes > 0) must check
+ * explicitly. The current callers (camera-clipping math) want the wider
+ * "has any extent" semantics — a flat slab still produces a meaningful
+ * near/far plane.
  *
  * @param box - Bounding box to check
- * @returns True if box has non-zero volume
+ * @returns True iff `size.x > 0 || size.y > 0 || size.z > 0`
  */
 export function isValidBoundingBox(box: BoundingBox): boolean {
   const size = getBoundingBoxSize(box);
@@ -327,15 +344,38 @@ export function transformBoundingBox(box: BoundingBox, matrix: number[]): Boundi
     { x: box.max.x, y: box.max.y, z: box.max.z },
   ];
 
-  // Transform each corner
-  const transformedCorners = corners.map((corner) => {
-    const w = matrix[3] * corner.x + matrix[7] * corner.y + matrix[11] * corner.z + matrix[15];
-    return {
-      x: (matrix[0] * corner.x + matrix[4] * corner.y + matrix[8] * corner.z + matrix[12]) / w,
-      y: (matrix[1] * corner.x + matrix[5] * corner.y + matrix[9] * corner.z + matrix[13]) / w,
-      z: (matrix[2] * corner.x + matrix[6] * corner.y + matrix[10] * corner.z + matrix[14]) / w,
-    };
-  });
+  // Transform each corner, skipping any whose homogeneous w is ~0 to avoid
+  // dividing through to ±Infinity/NaN (perspective projection of points on
+  // or near the camera plane). The unprojected box is a safe fallback.
+  const W_EPSILON = 1e-12;
+  let skippedCorners = 0;
+  const transformedCorners = corners
+    .map((corner) => {
+      const w = matrix[3] * corner.x + matrix[7] * corner.y + matrix[11] * corner.z + matrix[15];
+      if (Math.abs(w) < W_EPSILON) {
+        skippedCorners++;
+        return null;
+      }
+      return {
+        x: (matrix[0] * corner.x + matrix[4] * corner.y + matrix[8] * corner.z + matrix[12]) / w,
+        y: (matrix[1] * corner.x + matrix[5] * corner.y + matrix[9] * corner.z + matrix[13]) / w,
+        z: (matrix[2] * corner.x + matrix[6] * corner.y + matrix[10] * corner.z + matrix[14]) / w,
+      };
+    })
+    .filter((p): p is { x: number; y: number; z: number } => p !== null);
+
+  if (skippedCorners > 0) {
+    log.warning(
+      Modules.SCENE_MANAGER,
+      `transformBoundingBox: skipped ${skippedCorners}/8 corner(s) with |w| < ${W_EPSILON} (degenerate perspective projection)`
+    );
+  }
+
+  // If every corner was degenerate, fall back to the input box rather than
+  // returning (Infinity, -Infinity).
+  if (transformedCorners.length === 0) {
+    return { min: { ...box.min }, max: { ...box.max } };
+  }
 
   // Find new min/max
   let minX = Infinity,

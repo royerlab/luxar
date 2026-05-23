@@ -52,9 +52,12 @@ export interface InitPickingPorts {
  */
 export async function initPicking(ports: InitPickingPorts): Promise<InitPickingResult> {
   // Re-init: tear down listeners from any previous picking session.
-  // (initPicking() also resets pickingEvents at the listener registration
-  // site below, but doing it here too lets us early-return on no-labels
-  // without leaking the previous session's listeners.)
+  // We dispose pickingEvents here (before the no-labels early-return) so
+  // we don't leak listeners from the previous session if this re-init
+  // ends up with no labels in the new scene. Subsequent listener
+  // registrations below all funnel through the same `pickingEvents`
+  // EventGroup, so a future `dispose()` (or the next initPicking call)
+  // removes them in one shot.
   ports.pickingEvents.dispose();
   ports.previous.pickingSystem?.dispose();
   ports.previous.labelLoader?.dispose();

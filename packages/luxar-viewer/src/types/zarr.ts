@@ -32,10 +32,17 @@ export type NdTransformEntry = NdTransformAffine | NdTransformPermutation;
 export type NdTransformMap = Record<string, NdTransformEntry>;
 
 /**
- * Type guard to check if an nd_transform entry is a permutation
+ * Type guard to check if an nd_transform entry is a permutation.
+ *
+ * Defensive: accepts `null` / `undefined` / primitives because zarr metadata
+ * is parsed dynamically from JSON. The naive `'permutation' in entry` form
+ * throws `TypeError` for those inputs, masking malformed `nd_transform`
+ * payloads as opaque loader crashes. Returns `false` instead.
  */
-export function isPermutation(entry: NdTransformEntry): entry is NdTransformPermutation {
-  return 'permutation' in entry;
+export function isPermutation(
+  entry: NdTransformEntry | null | undefined
+): entry is NdTransformPermutation {
+  return entry !== null && typeof entry === 'object' && 'permutation' in entry;
 }
 
 /**
@@ -353,6 +360,7 @@ export function hasNdTransform(
 ): attrs is ZarrNodeAttrs & { nd_transform: NdTransformMap } {
   return (
     attrs.nd_transform !== undefined &&
+    attrs.nd_transform !== null &&
     typeof attrs.nd_transform === 'object' &&
     !Array.isArray(attrs.nd_transform)
   );

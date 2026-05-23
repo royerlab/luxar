@@ -229,9 +229,25 @@ export interface ScaledNoiseInputs {
 }
 
 /**
- * Re-apply base sigmas through the DPR scaling. When DPR < 1 the
- * sigma scales linearly with DPR (Gaussian) and photonGain scales
- * with DPR² (shot noise).
+ * Re-apply base sigmas through the DPR scaling.
+ *
+ * Scaling contract (MED-28): the photon-gain term scales as `DPRScale²`
+ * while the readout and FPN sigmas scale **linearly** with `DPRScale`.
+ * This asymmetry is intentional and reflects the underlying physics:
+ *
+ *   - photon-gain models shot noise, whose variance is proportional to
+ *     the number of samples integrated per output pixel (≈ DPRScale²).
+ *     The gain term enters the shader as a variance, so it scales by
+ *     DPRScale².
+ *   - readout and FPN sigmas are per-pixel noise terms independent of
+ *     integration time / sample count, so they scale linearly with
+ *     `DPRScale` to preserve the visual standard deviation as the
+ *     effective pixel size changes.
+ *
+ * Do NOT "fix" this for visual symmetry — squaring or linearising
+ * both terms breaks the noise model. When `DPR < 1` the effective
+ * pixel is larger, so all three terms shrink (gain quadratically,
+ * sigmas linearly). When `DPR > 1` they grow in the same proportions.
  */
 export function applyScaledNoiseSettings(s: ScaledNoiseInputs): void {
   if (!s.megaShader.isDetectorNoiseEnabled()) return;

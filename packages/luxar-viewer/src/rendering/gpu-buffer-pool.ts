@@ -60,6 +60,58 @@ export type {
 export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 
 /**
+ * Minimum instance capacity for any pooled `InstancedInterleavedBuffer`.
+ *
+ * Sole reason for a floor at all: scenes that start at a slice with
+ * zero visible instances used to allocate at exactly the
+ * visible-count capacity — which for "no visible instances yet" is
+ * **0**. A zero-length `Float32Array` never produces a real GPU
+ * buffer on the WebGPU backend; subsequent growth replaces the
+ * JS-side buffer but the GPU side keeps the empty (or absent)
+ * buffer bound. Every draw then fails with "Instance range …
+ * requires a larger buffer than the bound buffer size (0)".
+ *
+ * Floor the initial capacity so the first `acquire*Geometry` call
+ * always produces a real, non-trivial GPU buffer. 256 is plenty —
+ * costs ~16 KB per geometry at the largest stride (gsplats) and is
+ * dwarfed by every realistic scene's actual instance count.
+ */
+const DEFAULT_MIN_INSTANCE_CAPACITY = 256;
+
+/**
+ * Module-level mutable handle so tests can lower the floor without
+ * reaching into every GPUBufferPool instance. Production code never
+ * touches this; production paths use the default. Tests call
+ * `__setMinInstanceCapacityForTesting(N)` so the growth code paths can
+ * be exercised at small instance counts.
+ *
+ * @internal
+ */
+let currentMinInstanceCapacity = DEFAULT_MIN_INSTANCE_CAPACITY;
+
+/**
+ * Test hook: override the per-acquire minimum capacity floor.
+ * Pass `null` to reset to the production default. NOT part of the
+ * public API — only for use in unit tests that want to exercise
+ * `growXxxGeometry` paths at small instance counts.
+ *
+ * @internal
+ */
+export function __setMinInstanceCapacityForTesting(value: number | null): void {
+  currentMinInstanceCapacity = value === null ? DEFAULT_MIN_INSTANCE_CAPACITY : value;
+}
+
+/**
+ * Choose the capacity to allocate for a buffer that needs to hold
+ * `requested` instances. Grows by 1.5× to leave headroom for the
+ * next update without a fresh grow, but never goes below
+ * `currentMinInstanceCapacity` (see `DEFAULT_MIN_INSTANCE_CAPACITY`).
+ */
+export function chooseCapacity(requested: number): number {
+  return Math.max(currentMinInstanceCapacity, Math.ceil(requested * 1.5));
+}
+
+/**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.
  *
  * Manages separate pools for Points, Lines, and GSplats geometries,

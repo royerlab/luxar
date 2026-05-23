@@ -83,12 +83,19 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // its own L1 check (synchronous; the L1 fast path stays direct) and
   // tracks its own demand counter — only the underlying network
   // request and L1/L2 writes are deduplicated. Cleared on settle.
+  //
+  // CRIT-5 fix: each entry carries an AbortController so a
+  // content-hash-mismatch invalidation can cancel in-flight fetches
+  // before they write stale data back into L1/L2 after a clear.
   private pendingGets = new Map<
     string,
-    Promise<{
-      result: Result<Uint8Array, CacheError>;
-      source: 'l2' | 'network' | 'missing';
-    }>
+    {
+      promise: Promise<{
+        result: Result<Uint8Array, CacheError>;
+        source: 'l2' | 'network' | 'missing';
+      }>;
+      controller: AbortController;
+    }
   >();
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
@@ -387,17 +394,28 @@ export class MultiLevelCachingStore implements AsyncReadable {
       result: Result<Uint8Array, CacheError>;
       source: 'l2' | 'network' | 'missing';
     }>;
+    // MED-2: only the originator of a coalesced inflight chain should
+    // run prefetcher.onAccess(key) — subsequent waiters early-return
+    // inside the prefetcher anyway, but each call still walks the
+    // neighbour set / seen-set. Tracking originator here dedupes that
+    // fan-out to exactly one onAccess call per logical access.
+    let isPrefetchOriginator = true;
     if (options?.signal !== undefined) {
       inflight = this.fetchKeyChain(key, options.signal);
     } else {
       const cached = this.pendingGets.get(key);
       if (cached) {
-        inflight = cached;
+        inflight = cached.promise;
+        isPrefetchOriginator = false;
       } else {
-        const fresh = this.fetchKeyChain(key).finally(() => {
+        // CRIT-5: per-entry AbortController lets validateCache cancel
+        // in-flight gets on a content-hash mismatch so the post-fetch
+        // L1/L2 populate cannot resurrect stale data after a clear.
+        const controller = new AbortController();
+        const fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
           this.pendingGets.delete(key);
         });
-        this.pendingGets.set(key, fresh);
+        this.pendingGets.set(key, { promise: fresh, controller });
         inflight = fresh;
       }
     }
@@ -419,10 +437,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
       else if (outcome.source === 'network') this.demandNetworkRequestCount++;
     }
 
-    // Per-caller prefetch trigger. Coalesced waiters all schedule
-    // their own onAccess fan-out (prefetcher dedupes neighbors via
-    // its own seen-set so this is idempotent).
-    if (!options?.suppressPrefetch && outcome.result.ok) {
+    // MED-2: per-key prefetch trigger. Only the originator of the
+    // coalesced inflight chain fans out neighbour onAccess work — the
+    // prefetcher's own seen-set would early-return for waiters, but
+    // each call still touches that seen-set N times for N waiters.
+    // Restrict to the originator (or non-coalesced signal'd callers)
+    // so we do exactly one onAccess per logical access.
+    if (!options?.suppressPrefetch && outcome.result.ok && isPrefetchOriginator) {
       this.prefetcher?.onAccess(key);
     }
 
@@ -444,6 +465,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
       const l2Hit = await this.l2Store.get(key);
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
+        // CRIT-5: if validateCache aborted this in-flight get during the
+        // L2 read (content-hash mismatch), do NOT promote stale bytes to
+        // a just-cleared L1.
+        if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+          return { result: err({ kind: 'Aborted' }), source: 'l2' };
+        }
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
         return { result: ok(l2Hit), source: 'l2' };
@@ -466,11 +493,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
       return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
     }
 
-    if (this.disposed || this.dataAbort.signal.aborted) {
+    if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
       return { result: err({ kind: 'Aborted' }), source: 'network' };
     }
     if (!response) {
-      if (this.disposed || this.dataAbort.signal.aborted) {
+      if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
       return {
@@ -492,6 +519,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
     this.bandwidth.record(data.byteLength);
+
+    // CRIT-5: if validateCache aborted this in-flight get between the
+    // arrayBuffer() resolve and now (content-hash mismatch raced an
+    // in-flight fetch), do NOT write stale bytes back into a
+    // just-cleared L1/L2 — that would silently undo the invalidation.
+    if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+      return { result: err({ kind: 'Aborted' }), source: 'network' };
+    }
 
     // Populate caches once.
     if (this.enabled) {
@@ -573,6 +608,16 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // L1 (e.g. content-hash refresh during a long session).
         this.clearL1();
         await this.clearL2();
+        // CRIT-5: cancel every in-flight coalesced get so a fetch that
+        // started before validation completed cannot resurrect stale
+        // bytes by writing back into the just-cleared L1/L2 after this
+        // returns. Each pending entry's controller signal is composed
+        // into fetchKeyChain, so abort() trips the post-arrayBuffer
+        // populate guard.
+        for (const [, pending] of this.pendingGets) {
+          pending.controller.abort();
+        }
+        this.pendingGets.clear();
         this.invalidationCallbacks.forEach((cb) => cb());
       }
 

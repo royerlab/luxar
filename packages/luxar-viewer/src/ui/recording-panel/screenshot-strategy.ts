@@ -74,6 +74,17 @@ export class ScreenshotStrategy implements CaptureStrategy {
       showToast('Stop recording before taking a screenshot');
       return;
     }
+    // MED-49 (audit-ack): the `inProgress` lock MUST be acquired here
+    // BEFORE the first `await` (the `requestAnimationFrame` below).
+    // The "debounces concurrent screenshot requests" test in
+    // `tests/unit/ui/recording-panel/screenshot-strategy.test.ts`
+    // depends on this ordering: two synchronous `run()` invocations
+    // (G keypress + Capture-button click) reach this guard before
+    // either has yielded, so the second short-circuits via `return`.
+    // If the lock acquisition ever moves below an `await`, the second
+    // call would slip past the guard and clobber the saved
+    // recording/DPR state. Keep the lock here; do not lazily acquire
+    // it inside the try-block.
     if (this.inProgress) return;
     this.inProgress = true;
 

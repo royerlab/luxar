@@ -19,6 +19,7 @@ import {
 import { invalidateCachedByteSize } from './geometry-bytes';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
+import { chooseCapacity } from '../gpu-buffer-pool';
 
 /** Packed GSplats data ready for GPU upload (from gsplats/projection.ts). */
 export interface PackedGSplatsData {
@@ -64,7 +65,7 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
 }
 
 function growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-  const newCapacity = Math.ceil(neededCount * 1.5);
+  const newCapacity = chooseCapacity(neededCount);
   invalidateCachedByteSize(geometry);
   rebuildInterleavedBuffer(geometry, newCapacity, GSPLATS_ATTRIBUTE_SPECS);
 }
@@ -108,7 +109,7 @@ export class GSplatsBufferAdapter {
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
-        active.capacity = Math.ceil(splatCount * 1.5);
+        active.capacity = chooseCapacity(splatCount);
         active.lastUsedFrame = host.frameCount;
         host.stats.capacityGrowths++;
         host._lastAcquireRebuilt = true;
@@ -133,7 +134,7 @@ export class GSplatsBufferAdapter {
     }
 
     host._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(splatCount * 1.5);
+    const capacity = chooseCapacity(splatCount);
     const geometry = createGSplatsGeometry(capacity);
 
     const newBuffer: PooledBuffer = {

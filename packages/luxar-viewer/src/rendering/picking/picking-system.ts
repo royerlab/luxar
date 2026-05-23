@@ -104,6 +104,16 @@ export class PickingSystem {
   private _dirty = true;
   private _drawBufSize = new THREE.Vector2();
 
+  // Last pick-buffer dimensions actually pushed to `pickTarget.setSize`.
+  // Used as an explicit guard against rapid-resize churn: on every pick
+  // we recompute (pickW, pickH) from the current drawing-buffer size and
+  // only call setSize when the values actually changed since last frame.
+  // Without this, an orbit + window-resize loop can call setSize many
+  // times per second, each reallocating the underlying GPU buffer.
+  // -1 sentinel ensures the first pick always triggers an explicit setSize.
+  private _lastPickW = -1;
+  private _lastPickH = -1;
+
   // Cached canvas rect (invalidated on resize via markDirty).
   private _canvasRect: DOMRect | null = null;
 
@@ -417,10 +427,16 @@ export class PickingSystem {
     const drawBuf = this.renderer.getDrawingBufferSize(this._drawBufSize);
     const { w: pickW, h: pickH } = computePickBufferSize(drawBuf.x, drawBuf.y);
 
-    // Check if pick target needs resize (also triggers re-render)
-    const sizeChanged = this.pickTarget.width !== pickW || this.pickTarget.height !== pickH;
+    // Check if pick target needs resize (also triggers re-render).
+    // Compare against `_lastPickW/_lastPickH` (explicit cache) instead
+    // of reading `this.pickTarget.width/.height` — this guards against
+    // a setSize-then-readback storm on rapid resize loops, since
+    // `setSize` itself reallocates the underlying GPU buffer.
+    const sizeChanged = this._lastPickW !== pickW || this._lastPickH !== pickH;
     if (sizeChanged) {
       this.pickTarget.setSize(pickW, pickH);
+      this._lastPickW = pickW;
+      this._lastPickH = pickH;
       this._dirty = true;
     }
 
@@ -450,6 +466,12 @@ export class PickingSystem {
     // downward.
     const scaleX = pickW / width;
     const scaleY = pickH / height;
+    // `correctedX/correctedY` can fall slightly outside [0, width/height]
+    // under extreme lens distortion at canvas corners. `Math.floor` on a
+    // negative value yields a negative integer; the downstream `clamp(...,
+    // 0, ...)` corrects that into a valid pick-buffer index. Keep the
+    // multiply unclamped — the clamp is the single source of truth for
+    // the legal index range.
     const cursorX = Math.floor(correctedX * scaleX);
     const cursorY = Math.floor(correctedY * scaleY);
 
