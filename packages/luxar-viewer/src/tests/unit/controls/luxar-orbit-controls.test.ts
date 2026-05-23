@@ -108,16 +108,24 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('quaternion rotation', () => {
-    it('should maintain camera distance after rotation', () => {
+    // [controls.md/O4][P4] Was a single example rotation; parametrize over
+    // axis + angle to lock the distance-preservation invariant across the
+    // unit sphere of rotations. This is a clean algebraic invariant
+    // (orthonormal rotation preserves Euclidean distance to the target).
+    it.each([
+      { axis: [0, 1, 0] as const, angle: Math.PI / 4, label: 'yaw 45deg' },
+      { axis: [1, 0, 0] as const, angle: Math.PI / 6, label: 'pitch 30deg' },
+      { axis: [0, 0, 1] as const, angle: Math.PI / 3, label: 'roll 60deg' },
+      { axis: [1, 1, 0] as const, angle: Math.PI / 2, label: 'diagonal 90deg' },
+    ])('preserves camera distance to target after $label rotation', ({ axis, angle }) => {
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
 
       const distBefore = camera.position.distanceTo(controls.target);
 
-      // Simulate a rotation by accessing private method via any cast
       const rotQuat = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        Math.PI / 4
+        new THREE.Vector3(axis[0], axis[1], axis[2]).normalize(),
+        angle,
       );
       (controls as any).rotationDelta.multiply(rotQuat);
       controls.update();

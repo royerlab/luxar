@@ -225,7 +225,12 @@ describe('DebugConsole - Critical Fixes', () => {
       handles.forEach((h) => expect(h.getAttribute('aria-hidden')).toBe('true'));
       debugConsole.dispose();
     });
+  });
 
+  // [ui.md/O4][P10] Moved out of `describe('Accessibility', ...)` — formatting
+  // null-prototype / cyclic objects is a robustness concern (JSON.stringify
+  // fallback path), not an accessibility one.
+  describe('Argument Formatting Robustness', () => {
     it('formats null-prototype objects without throwing', () => {
       const debugConsole = new DebugConsole();
       const console_any = debugConsole as unknown as {

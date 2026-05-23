@@ -653,20 +653,30 @@ describe('LuxarFlyControls', () => {
       expect(isFinite(camera.position.z)).toBe(true);
     });
 
-    it('should apply damping correctly with different delta times', () => {
-      controls.damping = 0.9; // 90% damping (direct property access)
-      (controls as any).velocity.set(10, 0, 0); // Initial velocity
+    // [controls.md/O3][P9] Was a single-delta test mis-named "with different
+    // delta times". Rename + parametrize to actually cover several deltas —
+    // the damping formula `v * damping^(delta*60)` is differential in delta.
+    it.each([
+      { delta: 0.016, label: '60fps' },
+      { delta: 0.032, label: '30fps' },
+      { delta: 0.008, label: '120fps' },
+    ])(
+      'damping applies frame-rate-independent decay $label (delta=$delta)',
+      ({ delta }) => {
+        const freshControls = new LuxarFlyControls(camera, domElement);
+        freshControls.damping = 0.9;
+        (freshControls as any).velocity.set(10, 0, 0);
 
-      // Update with delta time
-      controls.update(0.016); // One frame at 60fps
+        freshControls.update(delta);
 
-      // Velocity should decay according to: v * damping^(delta*60)
-      // Formula: v_new = v_old * (0.9)^(0.016*60) = v_old * (0.9)^0.96
-      const expectedDecay = Math.pow(0.9, 0.016 * 60);
-      const actualVelocity = (controls as any).velocity.x;
+        // v_new = v_old * damping^(delta*60)
+        const expectedDecay = Math.pow(0.9, delta * 60);
+        const actualVelocity = (freshControls as any).velocity.x;
 
-      expect(actualVelocity).toBeCloseTo(10 * expectedDecay, 1);
-    });
+        expect(actualVelocity).toBeCloseTo(10 * expectedDecay, 1);
+        freshControls.dispose();
+      },
+    );
   });
 
   describe('state management', () => {

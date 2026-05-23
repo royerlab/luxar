@@ -158,9 +158,14 @@ describe('GSplatsBuilder smoke', () => {
     expect(data.choleskyFactors.length).toBe(3 * 15);
   });
 
-  it('accepts explicit centers, amplitudes, cholesky, and colors', () => {
+  // [builders.md/O2][P4] Split a single it() that bundled four independent
+  // contracts (default amplitudes, explicit-centers identity, varying-amplitude
+  // bounds, explicit-cholesky identity, explicit-colors identity) into focused
+  // tests. Mutations now surface as a single failing test rather than an
+  // aggregate.
+
+  it('defaults amplitudes to 1.0 when only centers/cholesky/colors are set', () => {
     const centers = new Float32Array([0, 0, 0, 1, 1, 1]);
-    const amps = new Float32Array([0.5, 0.5]);
     const chol = new Float32Array(2 * 6).fill(0.25);
     const colors = new Float32Array([1, 0, 0, 0, 1, 0]);
 
@@ -171,28 +176,49 @@ describe('GSplatsBuilder smoke', () => {
       .withCholeskyFactors(chol)
       .withColors(colors)
       .build();
-    // Amplitudes wasn't set — should default to 1.0.
     expect(Array.from(data.amplitudes)).toEqual([1.0, 1.0]);
+  });
 
-    // Now with explicit amplitudes.
-    const data2 = new GSplatsBuilder()
+  it('preserves the explicit centers array reference on build()', () => {
+    const centers = new Float32Array([0, 0, 0, 1, 1, 1]);
+    const data = new GSplatsBuilder()
       .withSplats(2)
       .withDimensions(3)
       .withCenters(centers)
-      .withVaryingAmplitudes(0.4, 0.8)
-      .withCholeskyFactors(chol)
-      .withColors(colors)
       .build();
-    expect(data2.centers).toBe(centers);
-    for (const a of data2.amplitudes) {
+    expect(data.centers).toBe(centers);
+  });
+
+  it('clamps every withVaryingAmplitudes value into [min, max]', () => {
+    const data = new GSplatsBuilder()
+      .withSplats(2)
+      .withDimensions(3)
+      .withVaryingAmplitudes(0.4, 0.8)
+      .build();
+    for (const a of data.amplitudes) {
       expect(a).toBeGreaterThanOrEqual(0.4);
       expect(a).toBeLessThanOrEqual(0.8);
     }
-    expect(data2.choleskyFactors).toBe(chol);
-    expect(data2.colors).toBe(colors);
+  });
 
-    // Pin the unused `amps` parameter so its shape is exercised by tests too.
-    expect(amps.length).toBe(2);
+  it('preserves the explicit cholesky array reference on build()', () => {
+    const chol = new Float32Array(2 * 6).fill(0.25);
+    const data = new GSplatsBuilder()
+      .withSplats(2)
+      .withDimensions(3)
+      .withCholeskyFactors(chol)
+      .build();
+    expect(data.choleskyFactors).toBe(chol);
+  });
+
+  it('preserves the explicit colors array reference on build()', () => {
+    const colors = new Float32Array([1, 0, 0, 0, 1, 0]);
+    const data = new GSplatsBuilder()
+      .withSplats(2)
+      .withDimensions(3)
+      .withColors(colors)
+      .build();
+    expect(data.colors).toBe(colors);
   });
 });
 

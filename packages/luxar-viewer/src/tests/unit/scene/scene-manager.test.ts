@@ -927,10 +927,12 @@ describe('SceneManager', () => {
       expect(controls).toBe(sceneManager.controls);
     });
 
-    it('should handle fullscreen toggle', () => {
+    // [scene.md/O2][P9] Renamed from 'should handle fullscreen toggle' —
+    // the body never exercises fullscreen, it just verifies that
+    // `updateSize()` is a real (spyable, callable) method on SceneManager.
+    it('updateSize() is a callable method observable via vi.spyOn', () => {
       const updateSizeSpy = vi.spyOn(sceneManager, 'updateSize');
 
-      // Simulate fullscreen toggle (just test the updateSize call)
       sceneManager.updateSize();
 
       expect(updateSizeSpy).toHaveBeenCalled();

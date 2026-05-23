@@ -1,144 +1,17 @@
+/**
+ * Unit tests for gsplats-specific utilities.
+ *
+ * [types.md/O1][P10] The isGSplatsMetadata / isGSplatsUserData guard
+ * coverage has been consolidated into `geometry-guards.test.ts` (single
+ * source of truth across all three geometry types). This file now hosts
+ * only the gsplats-specific surface: `choleskyPackedSize` arithmetic
+ * and the `CHOLESKY_SIZES` constant table.
+ */
+
 import { describe, it, expect } from 'vitest';
-import {
-  isGSplatsMetadata,
-  isGSplatsUserData,
-  choleskyPackedSize,
-  CHOLESKY_SIZES,
-} from '../../../types/gsplats';
+import { choleskyPackedSize, CHOLESKY_SIZES } from '../../../types/gsplats';
 
 describe('GSplats Types', () => {
-  describe('isGSplatsMetadata', () => {
-    it('should return true for valid gsplats metadata', () => {
-      const validMetadata = {
-        type: 'gsplats',
-        n_splats: 1000,
-        ndim: 3,
-        has_colors: true,
-        chunk_size: 2000,
-        amplitude_range: { min: 0.0, max: 10.0 },
-        center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
-        ordering: 'hilbert',
-      };
-
-      expect(isGSplatsMetadata(validMetadata)).toBe(true);
-    });
-
-    it('should return false for points metadata', () => {
-      const pointsMetadata = {
-        type: 'points',
-        n_points: 1000,
-        ndim: 3,
-      };
-
-      expect(isGSplatsMetadata(pointsMetadata)).toBe(false);
-    });
-
-    it('should return false for lines metadata', () => {
-      const linesMetadata = {
-        type: 'lines',
-        n_vertices: 100,
-        n_segments: 50,
-      };
-
-      expect(isGSplatsMetadata(linesMetadata)).toBe(false);
-    });
-
-    it('should return false for missing type', () => {
-      const invalidMetadata = {
-        n_splats: 1000,
-        ndim: 3,
-      };
-
-      expect(isGSplatsMetadata(invalidMetadata)).toBe(false);
-    });
-
-    it('should return false for null/undefined', () => {
-      expect(isGSplatsMetadata(null)).toBe(false);
-      expect(isGSplatsMetadata(undefined)).toBe(false);
-    });
-
-    it('should return false for non-object', () => {
-      expect(isGSplatsMetadata('gsplats')).toBe(false);
-      expect(isGSplatsMetadata(123)).toBe(false);
-      expect(isGSplatsMetadata([])).toBe(false);
-    });
-  });
-
-  describe('isGSplatsUserData', () => {
-    it('should return true for valid gsplats userData', () => {
-      const validUserData = {
-        nodeType: 'gsplats',
-        loader: {}, // Actual loader would be a GSplatsDataLoader instance
-        attrs: {
-          type: 'gsplats',
-          n_splats: 1000,
-          ndim: 3,
-          has_colors: true,
-          chunk_size: 2000,
-          amplitude_range: { min: 0.0, max: 10.0 },
-          center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
-          ordering: 'morton',
-        },
-      };
-
-      expect(isGSplatsUserData(validUserData)).toBe(true);
-    });
-
-    it('should return false for points userData', () => {
-      const pointsUserData = {
-        nodeType: 'points',
-        loader: {},
-        attrs: {},
-      };
-
-      expect(isGSplatsUserData(pointsUserData)).toBe(false);
-    });
-
-    it('should return false for lines userData', () => {
-      const linesUserData = {
-        nodeType: 'lines',
-        loader: {},
-        attrs: {},
-      };
-
-      expect(isGSplatsUserData(linesUserData)).toBe(false);
-    });
-
-    it('should return false for missing nodeType', () => {
-      const invalidUserData = {
-        loader: {},
-        attrs: {},
-      };
-
-      expect(isGSplatsUserData(invalidUserData)).toBe(false);
-    });
-
-    it('should return false for wrong nodeType', () => {
-      const invalidUserData = {
-        nodeType: 'group',
-        children: [],
-      };
-
-      expect(isGSplatsUserData(invalidUserData)).toBe(false);
-    });
-
-    // [types.md/W4][P2] Audit found `isGSplatsUserData` tests never checked
-    // the guard against primitives — only objects with wrong/missing fields.
-    // The source predicate accepts `unknown` so non-object inputs must be
-    // rejected defensively (typeof null === 'object' footgun is the
-    // load-bearing branch).
-    it.each([
-      ['null', null],
-      ['undefined', undefined],
-      ['number', 42],
-      ['string', 'gsplats'],
-      ['boolean', true],
-      ['array', [{ nodeType: 'gsplats' }]],
-    ] as const)('rejects %s defensively', (_label, value) => {
-      expect(isGSplatsUserData(value)).toBe(false);
-    });
-  });
-
   // [types.md/O5][P4] Replaces four sibling `should return correct size for ND`
   // tests with a single it.each. Also strengthens to (a) the closed-form
   // identity n*(n+1)/2 and (b) cross-checking the CHOLESKY_SIZES constant.
@@ -201,15 +74,3 @@ describe('GSplats Types', () => {
     });
   });
 });
-
-// [types.md/W1][P1][P2][EXCLUDED-CATEGORY: types] Removed `GSplats Type
-// Definitions` describe block (~135 lines): ten `it(...)` blocks that
-// constructed typed literal objects and asserted the literal's own fields
-// equaled the values just written into them. The original code openly
-// admitted "if it compiles, the types are correct" — those tests
-// exercised zero runtime branches and killed zero mutants. TypeScript's
-// own type-checker (run as `pnpm typecheck`) is the authoritative gate
-// for compile-time correctness; these vitest tests added measurement
-// noise without any kill-rate signal. The runtime guards
-// `isGSplatsMetadata` / `isGSplatsUserData` retain dedicated, value-
-// asserting coverage above and in `geometry-guards.test.ts`.

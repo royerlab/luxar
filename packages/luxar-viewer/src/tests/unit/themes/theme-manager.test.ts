@@ -90,25 +90,20 @@ describe('ThemeManager', () => {
       expect(bgPrimary.trim()).toBe('#111111');
     });
 
-    it('should update CSS variables when switching themes', () => {
+    // [themes.md/O2][P4] Replaced a single test that bundled three sequential
+    // theme switches into one it() with an it.each table — each row exercises
+    // one (themeId → expected --luxar-bg-primary) mapping in isolation.
+    it.each([
+      ['dark', '#111111'],
+      ['light', '#ffffff'],
+      ['frosted-glass', 'rgba(255, 255, 255, 0.15)'],
+    ])('sets --luxar-bg-primary correctly for theme %s', (themeId, expectedBg) => {
       const manager = ThemeManager.getInstance();
-
-      // Set dark theme
-      manager.setTheme('dark');
-      let bgColor = getComputedStyle(document.documentElement).getPropertyValue(
-        '--luxar-bg-primary'
+      manager.setTheme(themeId);
+      const bgColor = getComputedStyle(document.documentElement).getPropertyValue(
+        '--luxar-bg-primary',
       );
-      expect(bgColor.trim()).toBe('#111111');
-
-      // Switch to light theme
-      manager.setTheme('light');
-      bgColor = getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary');
-      expect(bgColor.trim()).toBe('#ffffff');
-
-      // Switch to frosted-glass theme
-      manager.setTheme('frosted-glass');
-      bgColor = getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary');
-      expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.15)');
+      expect(bgColor.trim()).toBe(expectedBg);
     });
 
     it('should throw error mentioning the missing theme ID for invalid input', () => {
@@ -263,31 +258,29 @@ describe('ThemeManager', () => {
   });
 
   describe('CSS Variable Injection', () => {
-    it('injects each color variable with the EXACT value from the active theme object', () => {
-      // themes.md W4 fix: previous version asserted only `value !== ""`.
-      // A mutation that swapped `darkTheme.colors.background.primary` with
-      // any other non-empty string would have survived. Pin the exact
-      // mapping from theme-object value → emitted CSS variable.
+    // [themes.md/O3][P4] Replaced six expect() calls in a single it() with
+    // it.each — each (cssVar → theme-object-path) pair becomes its own case
+    // so individual mutations surface as a single failing row.
+    // Also closes [themes.md/W4][P2]: previous version asserted only
+    // `value !== ""`; now pins the exact mapping from theme-object value to
+    // emitted CSS variable, so a mutant swapping any value with another
+    // non-empty string still fails.
+    it.each([
+      ['--luxar-bg-primary', () => darkTheme.colors.background.primary],
+      ['--luxar-bg-secondary', () => darkTheme.colors.background.secondary],
+      ['--luxar-bg-tertiary', () => darkTheme.colors.background.tertiary],
+      ['--luxar-text-primary', () => darkTheme.colors.text.primary],
+      ['--luxar-text-secondary', () => darkTheme.colors.text.secondary],
+      ['--luxar-success', () => darkTheme.colors.semantic.success],
+      ['--luxar-warning', () => darkTheme.colors.semantic.warning],
+      ['--luxar-error', () => darkTheme.colors.semantic.error],
+    ])('injects %s with the EXACT value from the active theme object', (cssVar, expected) => {
       const manager = ThemeManager.getInstance();
       manager.setTheme('dark');
 
       const root = document.documentElement;
-      const getVar = (name: string) =>
-        getComputedStyle(root).getPropertyValue(name).trim();
-
-      // background.*
-      expect(getVar('--luxar-bg-primary')).toBe(darkTheme.colors.background.primary);
-      expect(getVar('--luxar-bg-secondary')).toBe(darkTheme.colors.background.secondary);
-      expect(getVar('--luxar-bg-tertiary')).toBe(darkTheme.colors.background.tertiary);
-
-      // text.*
-      expect(getVar('--luxar-text-primary')).toBe(darkTheme.colors.text.primary);
-      expect(getVar('--luxar-text-secondary')).toBe(darkTheme.colors.text.secondary);
-
-      // semantic.* — mutation swapping success/warning/error would now fail.
-      expect(getVar('--luxar-success')).toBe(darkTheme.colors.semantic.success);
-      expect(getVar('--luxar-warning')).toBe(darkTheme.colors.semantic.warning);
-      expect(getVar('--luxar-error')).toBe(darkTheme.colors.semantic.error);
+      const actual = getComputedStyle(root).getPropertyValue(cssVar).trim();
+      expect(actual).toBe(expected());
     });
 
     it('injects typography variables with the EXACT fontFamily.base from the theme', () => {

@@ -18,57 +18,13 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// [styles.md/O2][P10] Shared CSS-text helpers extracted to
+// `_helpers/css-text.ts` to remove the bootstrap duplication this file
+// previously shared with library-css-scope.test.ts.
+import { stripMediaQueries, ruleBody } from './_helpers/css-text';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CSS_PATH = resolve(HERE, '../../../styles/components/data-loading-monitor.css');
-
-/**
- * Strip every `@media (...) { ... }` block. The cache layout rules
- * we guard must live in the base stylesheet — a duplicate hiding
- * inside a media query (e.g. the 480px responsive fallback) is not
- * enough to satisfy desktop layout, so we exclude media-query bodies
- * from the rule-body lookup.
- */
-function stripMediaQueries(css: string): string {
-  // Walk the source, dropping `@media` blocks with balanced braces.
-  // A regex with `[^{}]*` would mis-handle nested rules inside the
-  // media block, so we use an explicit brace counter.
-  let out = '';
-  let i = 0;
-  while (i < css.length) {
-    const at = css.indexOf('@media', i);
-    if (at === -1) {
-      out += css.slice(i);
-      break;
-    }
-    out += css.slice(i, at);
-    const openBrace = css.indexOf('{', at);
-    if (openBrace === -1) break;
-    let depth = 1;
-    let j = openBrace + 1;
-    while (j < css.length && depth > 0) {
-      const ch = css[j];
-      if (ch === '{') depth++;
-      else if (ch === '}') depth--;
-      j++;
-    }
-    i = j;
-  }
-  return out;
-}
-
-/**
- * Extract the declaration block for a given CSS selector. Matches
- * the literal selector at the start of a rule. Returns an empty
- * string when the selector is not present. Good enough for the
- * focused rule-shape assertions below.
- */
-function ruleBody(css: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^|[^\\w-])${escaped}\\s*\\{([^}]*)\\}`, 'm');
-  const m = css.match(re);
-  return m ? m[2] : '';
-}
 
 describe('data-loading-monitor.css cache layout rules', () => {
   const cssRaw = readFileSync(CSS_PATH, 'utf8');

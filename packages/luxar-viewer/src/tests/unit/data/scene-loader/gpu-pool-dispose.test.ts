@@ -6,7 +6,7 @@
  * scale that's hundreds of MB of GPU memory leaked per dataset switch.
  */
 import { describe, it, expect } from 'vitest';
-import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 
 describe('GPUBufferPool.dispose', () => {
   it('clears active buffers + pooled buckets', () => {

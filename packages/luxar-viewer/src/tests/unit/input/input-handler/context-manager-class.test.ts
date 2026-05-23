@@ -10,7 +10,7 @@ import {
   InputContextManager,
   InputContext,
   MAX_KEY_EVENT_DEPTH,
-} from '../../../input/input-handler/context-manager';
+} from '../../../../input/input-handler/context-manager';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -831,7 +831,7 @@ describe('InputContextManager', () => {
         // Import focus-utils canonical helper synchronously via dynamic
         // import to avoid a hoisting hazard with the mocked top-level.
         const { isTypingInInput } = await import(
-          '../../../input/input-handler/commands/focus-utils'
+          '../../../../input/input-handler/commands/focus-utils'
         );
 
         const el = c.build();
