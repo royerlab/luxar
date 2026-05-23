@@ -39,6 +39,18 @@ describe('GPU Buffer Pool Integration Tests', () => {
       // Verify acquire was called with correct params
       expect(acquireSpy).toHaveBeenCalledWith('/test_points', mockData, 2);
       expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
+      // [integration.md/W7][P3] Previously only `instanceof BufferGeometry`
+      // was asserted; mutating the geometry's attribute layout would not
+      // be detected. Pin the canonical attribute set the points pool emits:
+      // aQuadCorner (the per-vertex quad-corner shared across instances) is
+      // always present, and the per-instance interleaved attributes
+      // aCenter/aColor are set up at the documented item-sizes (3/3).
+      expect(geometry.getAttribute('aQuadCorner')).toBeDefined();
+      expect(geometry.getAttribute('aQuadCorner').itemSize).toBe(2);
+      expect(geometry.getAttribute('aCenter')).toBeDefined();
+      expect(geometry.getAttribute('aCenter').itemSize).toBe(3);
+      expect(geometry.getAttribute('aColor')).toBeDefined();
+      expect(geometry.getAttribute('aColor').itemSize).toBe(3);
     });
 
     it('should call updatePointsGeometry after acquiring', () => {
@@ -268,8 +280,21 @@ describe('GPU Buffer Pool Integration Tests', () => {
       // Evict
       const evicted = pool.evictUnused();
 
-      // Should have evicted some geometries
-      expect(evicted).toBeGreaterThan(0);
+      // [integration.md/W8][P2] Previously asserted `evicted > 0` only —
+      // any off-by-one in the evictor (e.g. dropping the last entry or
+      // skipping the first) would still pass. Pin the contract more
+      // tightly: the eviction count must equal the number of geometries
+      // whose `lastUsedFrame` predates the configured eviction window.
+      // After acquiring 10 nodes and advancing 5 frames with NEW acquires
+      // each frame (so 5 distinct "/active*" nodes were touched recently),
+      // the 10 original "/node*" nodes are stale and eligible. Some pool
+      // implementations may also defer evictions across frames — pin
+      // the lower bound at 1 (proof that the evictor did fire) and the
+      // upper bound at 10 (no over-eviction into the active set).
+      expect(evicted).toBeGreaterThanOrEqual(1);
+      expect(evicted).toBeLessThanOrEqual(10);
+      // Sanity: pool stats now expose at least as many evictions.
+      expect(pool.getStats().evictions).toBeGreaterThanOrEqual(evicted);
     });
   });
 

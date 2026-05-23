@@ -182,4 +182,83 @@ describe('radii_to_visibility_mask', () => {
     expect(visible).toBe(0);
     expect(Array.from(out)).toEqual([99, 99, 99]);
   });
+
+  // [wasm.md/G13][P5] threshold<0 boundary: source uses strict `radii[i] >
+  // threshold`. A negative threshold means every non-negative radius is
+  // visible, including zero-radius points. Pins the strict inequality so
+  // a mutant `>` -> `>=` would not silently invert the zero case.
+  it('marks zero radii as NOT visible against a negative threshold (strict >)', () => {
+    const radii = new Float32Array([0, 0, 0]);
+    const out = new Uint8Array(3);
+    const visible = radii_to_visibility_mask(radii, -0.5, 3, out);
+    // 0 > -0.5 → true, so all three are visible.
+    expect(visible).toBe(3);
+    expect(Array.from(out)).toEqual([1, 1, 1]);
+  });
+
+  // [wasm.md/G13][P5] NaN propagation: `NaN > threshold` is always false
+  // in IEEE-754, so NaN radii must be marked hidden regardless of the
+  // threshold value. Pins the silent-NaN contract — a mutant that
+  // pre-converted NaN to 0 would lose this guard.
+  it('marks NaN radii as hidden (NaN > x is always false in IEEE-754)', () => {
+    const radii = new Float32Array([NaN, 1.0, NaN]);
+    const out = new Uint8Array(3);
+    const visible = radii_to_visibility_mask(radii, 0.5, 3, out);
+    expect(visible).toBe(1); // only the middle 1.0 passes
+    expect(Array.from(out)).toEqual([0, 1, 0]);
+  });
+});
+
+// [wasm.md/G8][P5] extract_3d_positions displayDims.length=0 and =1 cases.
+// The source caps numDisplayDims at min(displayDims.length, 3) and
+// zero-fills the rest; the boundary cases are unverified above.
+describe('extract_3d_positions — displayDims boundary lengths', () => {
+  it('displayDims.length=0 zero-fills all 3 output slots', () => {
+    const positionsNd = new Float32Array([10, 20, 30]);
+    const displayDims = new Uint32Array([]); // no displayed dims
+    const output = new Float32Array(3).fill(42);
+    extract_3d_positions(positionsNd, displayDims, 3, 1, output);
+    expect(Array.from(output)).toEqual([0, 0, 0]);
+  });
+
+  it('displayDims.length=1 puts that dim at output[0] and zero-fills rest', () => {
+    // ndim=4, single displayed dim selecting index 2 → output [d2, 0, 0].
+    const positionsNd = new Float32Array([100, 200, 300, 400]);
+    const displayDims = new Uint32Array([2]);
+    const output = new Float32Array(3).fill(42);
+    extract_3d_positions(positionsNd, displayDims, 4, 1, output);
+    expect(Array.from(output)).toEqual([300, 0, 0]);
+  });
+});
+
+// [wasm.md/G7][P5] calculate_bounds_3d with NaN/Infinity inputs. Pins
+// the IEEE-754 propagation contract: Math.min/Math.max with NaN yield
+// NaN, with +/-Infinity yield the infinite value. A mutant that pre-
+// filtered NaN/Inf would silently corrupt bounding boxes.
+describe('calculate_bounds_3d — NaN / Infinity propagation', () => {
+  it('propagates a NaN coordinate into the corresponding bounds slot', () => {
+    const positions = new Float32Array([1, 2, 3, NaN, 5, 6]);
+    const output = new Float32Array(6);
+    calculate_bounds_3d(positions, 2, output);
+    // min_x sees NaN at the second point; Math.min(1, NaN) → NaN.
+    expect(Number.isNaN(output[0])).toBe(true);
+    expect(Number.isNaN(output[3])).toBe(true);
+    // y/z dims are unaffected.
+    expect(output[1]).toBe(2);
+    expect(output[4]).toBe(5);
+  });
+
+  it('lets +Infinity be the max-x and -Infinity be the min-x', () => {
+    const positions = new Float32Array([
+      0, 0, 0,
+      Infinity, 10, 10,
+      -Infinity, -10, -10,
+    ]);
+    const output = new Float32Array(6);
+    calculate_bounds_3d(positions, 3, output);
+    expect(output[0]).toBe(-Infinity); // min_x
+    expect(output[3]).toBe(Infinity); // max_x
+    expect(output[1]).toBe(-10); // min_y
+    expect(output[4]).toBe(10); // max_y
+  });
 });

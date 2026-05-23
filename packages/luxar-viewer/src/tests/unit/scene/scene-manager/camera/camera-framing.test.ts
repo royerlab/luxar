@@ -272,4 +272,19 @@ describe('fitCameraToBounds', () => {
     expect(setTarget).not.toHaveBeenCalled();
     expect(reinitialize).toHaveBeenCalledTimes(1);
   });
+
+  it('orthographic: returns 0 and short-circuits on a zero-extent box (scene.md G11)', () => {
+    // [scene.md/G11][P5] Perspective zero-extent is covered above; the
+    // ortho path was not. Both paths must early-return without touching
+    // zoom/distance limits or setSceneScale when maxDim===0.
+    const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const { controls, setSceneScale, setZoomLimits, setDistanceLimits } = makeControls();
+    const result = fitCameraToBounds(ortho, controls, makeBounds([2, 2, 2], [2, 2, 2]), {
+      lookAtTarget: new THREE.Vector3(2, 2, 2),
+    });
+    expect(result).toBe(0);
+    expect(setSceneScale).not.toHaveBeenCalled();
+    expect(setZoomLimits).not.toHaveBeenCalled();
+    expect(setDistanceLimits).not.toHaveBeenCalled();
+  });
 });

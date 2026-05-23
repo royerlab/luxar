@@ -117,10 +117,22 @@ describe('restoreCameraState', () => {
     orbitControls.dispose();
   });
 
-  it('is a no-op when currentControls is null (fly fallback)', () => {
-    // Nothing should throw; no public observable to change.
+  it('is a no-op when currentControls is null (saved fields untouched) [controls.md/G3][P10]', () => {
+    // controls.md [G3][P10] strengthening: was `.not.toThrow()` only.
+    // Pin the no-op contract: the saved* slots on the ctx are untouched,
+    // and the camera state (position/rotation) is not modified either.
     const ctx = makeCtx({});
     ctx.savedTarget.set(2, 3, 4);
-    expect(() => restoreCameraState(ctx)).not.toThrow();
+    const savedTargetBefore = ctx.savedTarget.clone();
+    const cameraPosBefore = ctx.camera.position.clone();
+    const cameraQuatBefore = ctx.camera.quaternion.clone();
+    restoreCameraState(ctx);
+    // savedTarget remains exactly what we set.
+    expect(ctx.savedTarget.x).toBe(savedTargetBefore.x);
+    expect(ctx.savedTarget.y).toBe(savedTargetBefore.y);
+    expect(ctx.savedTarget.z).toBe(savedTargetBefore.z);
+    // Camera is untouched (the fallback path bails before mutating).
+    expect(ctx.camera.position.equals(cameraPosBefore)).toBe(true);
+    expect(ctx.camera.quaternion.equals(cameraQuatBefore)).toBe(true);
   });
 });

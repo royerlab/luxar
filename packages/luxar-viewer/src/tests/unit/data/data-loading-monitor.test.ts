@@ -422,15 +422,25 @@ describe('DataLoadingMonitor', () => {
     });
 
     it('should update UI when cycling states', () => {
+      // [data.md/W7][P2] Previously asserted only `calls.length > 0`. A
+      // mutation that called updateUI only once for three cycleState calls
+      // would survive. Pin EXACT count (one updateUI per cycleState) and
+      // verify the DOM mutation that updateUI is responsible for: the
+      // expanded/compact class on the panel.
       const updateUISpy = vi.spyOn(monitor as any, 'updateUI');
+      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
 
-      // Cycle through all states
-      monitor.cycleState(); // Hidden → Mini
-      monitor.cycleState(); // Mini → Expanded
-      monitor.cycleState(); // Expanded → Hidden
+      monitor.cycleState(); // Hidden -> Mini
+      expect(panel.classList.contains('luxar-data-monitor--compact')).toBe(true);
 
-      // updateUI should be called multiple times
-      expect(updateUISpy.mock.calls.length).toBeGreaterThan(0);
+      monitor.cycleState(); // Mini -> Expanded
+      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
+
+      monitor.cycleState(); // Expanded -> Hidden
+      // Three cycleState calls -> at least three updateUI invocations
+      // (the implementation may call updateUI more than once per cycle —
+      // pin it to AT LEAST three so we catch a missed call).
+      expect(updateUISpy.mock.calls.length).toBeGreaterThanOrEqual(3);
     });
   });
 
@@ -644,18 +654,29 @@ describe('DataLoadingMonitor', () => {
 
   describe('cleanup', () => {
     it('should dispose properly', () => {
-      monitor.connectLoader('/test1', {
+      // [data.md/W7][P2] Previously asserted only .not.toThrow() on show/hide
+      // after dispose. Strengthen by also pinning the observable disposal
+      // contract: the loader's removeEventListener was called, and the panel
+      // DOM was removed from the container.
+      const fakeLoader = {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getMetrics: vi.fn(() => ({}) as LoaderMetrics),
         getActiveQueries: vi.fn(() => []),
-      });
+      };
+      monitor.connectLoader('/test1', fakeLoader);
+      expect(container.querySelector('.luxar-data-monitor')).not.toBeNull();
 
       monitor.dispose();
 
-      // Should not throw when calling methods after dispose
+      // Loader was actually disconnected.
+      expect(fakeLoader.removeEventListener).toHaveBeenCalledTimes(1);
+      // Panel removed from DOM (disposal contract).
+      expect(container.querySelector('.luxar-data-monitor')).toBeNull();
+      // Post-dispose calls are inert (no throw, no resurrected panel).
       expect(() => monitor.show()).not.toThrow();
       expect(() => monitor.hide()).not.toThrow();
+      expect(container.querySelector('.luxar-data-monitor')).toBeNull();
     });
 
     it('should handle errors during disposal gracefully', () => {

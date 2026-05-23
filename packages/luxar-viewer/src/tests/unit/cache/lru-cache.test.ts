@@ -560,5 +560,84 @@ describe('LRUCache', () => {
       noCallbackCache.set('key2', new Uint8Array(40)); // Evicts key1, no error
       expect(noCallbackCache.count).toBe(1);
     });
+
+    it('fires onEvict when an item is removed via delete() [cache.md/G2][P5]', () => {
+      // [cache.md/G2][P5] Previous onEvict tests only exercised eviction via
+      // size-overflow and clear(); never via delete(). Mutating the
+      // `onEvict?.(key, value)` line inside delete() to a no-op would not
+      // fail any existing test. Pin the delete() path explicitly.
+      const evicted: Array<{ key: string; size: number }> = [];
+      const cache = new LRUCache<Uint8Array>(1000, getSize, (key, value) => {
+        evicted.push({ key, size: value.byteLength });
+      });
+
+      cache.set('to-delete', new Uint8Array(42));
+      cache.set('to-keep', new Uint8Array(8));
+
+      const ok = cache.delete('to-delete');
+      expect(ok).toBe(true);
+      expect(evicted).toEqual([{ key: 'to-delete', size: 42 }]);
+
+      // delete() on a missing key returns false and does NOT fire onEvict.
+      const evictedBefore = evicted.length;
+      const ok2 = cache.delete('never-existed');
+      expect(ok2).toBe(false);
+      expect(evicted.length).toBe(evictedBefore);
+    });
+
+    it('delete() decrements currentSize by exactly the deleted entry size [cache.md/G2][P5]', () => {
+      // Complement to the onEvict-on-delete test: pin the size bookkeeping
+      // so mutating the `this.currentSize -= ...` line in delete() to a no-op
+      // (or a wrong sign) is detected.
+      const cache = new LRUCache<Uint8Array>(1000, getSize);
+      cache.set('a', new Uint8Array(100));
+      cache.set('b', new Uint8Array(50));
+      expect(cache.size).toBe(150);
+
+      cache.delete('a');
+      expect(cache.size).toBe(50);
+      expect(cache.count).toBe(1);
+      // Deleting the same key again is a no-op.
+      cache.delete('a');
+      expect(cache.size).toBe(50);
+    });
+  });
+
+  describe('Boundary cases [cache.md/G3][P5]', () => {
+    it('maxSize === 0 rejects every write (degenerate cache)', () => {
+      // [cache.md/G3][P5] Previously no boundary test for maxSize===0.
+      // Implementation: `if (size > maxSize) return` — any non-zero-size
+      // value (every Uint8Array of length >=1) is rejected pre-insertion,
+      // so the cache stays empty and onEvict is never fired.
+      const evicted: string[] = [];
+      const cache = new LRUCache<Uint8Array>(0, getSize, (key) => {
+        evicted.push(key);
+      });
+
+      cache.set('k1', new Uint8Array(1));
+      expect(cache.count).toBe(0);
+      expect(cache.size).toBe(0);
+      expect(cache.has('k1')).toBe(false);
+      // Pre-insertion rejection: onEvict is NOT called (the entry never
+      // entered the cache, so there is nothing to "evict").
+      expect(evicted).toEqual([]);
+    });
+
+    it('rejects oversized values silently without disturbing existing entries [cache.md/G3][P5]', () => {
+      // Companion to the maxSize===0 test: a value larger than maxSize is
+      // rejected, and the cache's existing contents are unchanged. Mutating
+      // the `if (size > this.maxSize) return` early-return would erase the
+      // pre-existing entry — this test pins against that regression.
+      const cache = new LRUCache<Uint8Array>(100, getSize);
+      cache.set('keeper', new Uint8Array(50));
+      expect(cache.has('keeper')).toBe(true);
+      expect(cache.size).toBe(50);
+
+      cache.set('too-big', new Uint8Array(200));
+      // The oversized value is rejected; the pre-existing entry survives.
+      expect(cache.has('too-big')).toBe(false);
+      expect(cache.has('keeper')).toBe(true);
+      expect(cache.size).toBe(50);
+    });
   });
 });

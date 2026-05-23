@@ -2,7 +2,8 @@
  * Unit tests for Data Accumulators
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, test } from 'vitest';
+import * as fc from 'fast-check';
 import { LoadedPointsDataAccumulator } from '../../../../data/accumulators/points';
 import { LinesDataAccumulator } from '../../../../data/accumulators/lines';
 import { GSplatsDataAccumulator } from '../../../../data/accumulators/gsplats';
@@ -617,5 +618,96 @@ describe('accumulator growth uses usedCount subarray copy', () => {
     expect(out.positions[0]).toBe(0);
     expect(out.positions[(300 - 1) * 3]).toBe(299);
     expect(out.amplitudes[299]).toBeCloseTo(299.5);
+  });
+});
+
+// [data.md/H5][P12] ensureCapacity — algebraic invariants under arbitrary
+// growth requests. Pins:
+//   * post-condition: capacity >= n on success
+//   * monotone growth: capacity never shrinks
+//   * idempotent at-or-below: ensureCapacity(<= currentCapacity) is a no-op
+//   * prefix preservation: filled prefix survives any number of growths
+describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (data.md H5)', () => {
+  test('capacity >= n after ensureCapacity(n) for any reasonable n', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 50000 }), (n) => {
+        const acc = new LoadedPointsDataAccumulator(100, 3, 100000);
+        try {
+          acc.ensureCapacity(n);
+          expect(acc.getStats().capacity).toBeGreaterThanOrEqual(n);
+        } finally {
+          acc.dispose();
+        }
+      }),
+      { numRuns: 25 }
+    );
+  });
+
+  test('monotone: capacity never shrinks across a sequence of ensureCapacity calls', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 1, max: 20000 }), { minLength: 1, maxLength: 10 }),
+        (requests) => {
+          const acc = new LoadedPointsDataAccumulator(100, 3, 100000);
+          try {
+            let prevCap = acc.getStats().capacity;
+            for (const r of requests) {
+              acc.ensureCapacity(r);
+              const newCap = acc.getStats().capacity;
+              expect(newCap).toBeGreaterThanOrEqual(prevCap);
+              prevCap = newCap;
+            }
+          } finally {
+            acc.dispose();
+          }
+        }
+      ),
+      { numRuns: 15 }
+    );
+  });
+
+  test('idempotent at-or-below: ensureCapacity(<= currentCapacity) returns false and does not change capacity', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 100, max: 10000 }), fc.integer({ min: 1, max: 100 }), (initialCap, request) => {
+        const acc = new LoadedPointsDataAccumulator(initialCap, 3, 100000);
+        try {
+          // request <= initialCap (we'll force it within bounds).
+          const safeRequest = Math.min(request, initialCap);
+          const grew = acc.ensureCapacity(safeRequest);
+          expect(grew).toBe(false);
+          expect(acc.getStats().capacity).toBe(initialCap);
+        } finally {
+          acc.dispose();
+        }
+      }),
+      { numRuns: 15 }
+    );
+  });
+
+  test('prefix preservation: filled positions survive any growth', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 10, max: 500 }),
+        fc.integer({ min: 600, max: 5000 }),
+        (fillCount, growTo) => {
+          const acc = new LoadedPointsDataAccumulator(1024, 3, 100000);
+          try {
+            // Fill `fillCount` positions with monotone values.
+            const positions = new Float32Array(fillCount * 3);
+            for (let i = 0; i < positions.length; i++) positions[i] = i + 1;
+            acc.fill(0, { positions });
+            acc.ensureCapacity(growTo);
+            // The first `fillCount` positions must be exactly what we wrote.
+            const buf = acc.getPositionBuffer();
+            for (let i = 0; i < positions.length; i++) {
+              expect(buf[i]).toBe(i + 1);
+            }
+          } finally {
+            acc.dispose();
+          }
+        }
+      ),
+      { numRuns: 12 }
+    );
   });
 });

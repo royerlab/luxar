@@ -48,10 +48,20 @@ describe('ControlsManager', () => {
       expect(controlsManager.getControls()).toBeInstanceOf(LuxarOrbitControls);
     });
 
-    it('should have correct initial configuration', () => {
-      const controls = controlsManager.getControls();
-      expect(controls).toBeTruthy();
-      expect(controls!.enabled).toBe(true);
+    it('initial orbit controls have the expected default configuration [controls.md/W1][P2]', () => {
+      // controls.md [W1][P2] strengthening: was `.toBeTruthy()` +
+      // `.enabled === true` only. Pin the orbit-control defaults that
+      // matter for the active mode (enableRotate/Pan/Zoom + damping)
+      // — these are the values that drive the default UX. A regression
+      // that flipped a default to false would survive the smoke test.
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls).toBeInstanceOf(LuxarOrbitControls);
+      expect(controls.enabled).toBe(true);
+      expect(controls.enableRotate).toBe(true);
+      expect(controls.enablePan).toBe(true);
+      expect(controls.enableZoom).toBe(true);
+      expect(controls.enableDamping).toBe(true);
+      expect(controls.autoRotate).toBe(false);
     });
   });
 
@@ -195,9 +205,20 @@ describe('ControlsManager', () => {
       expect(controls.damping).toBe(0.95);
     });
 
-    it('should return fly controls when active', () => {
+    it('returns the SAME LuxarFlyControls instance as getControls() when active [controls.md/W2][P2]', () => {
+      // controls.md [W2][P2] strengthening: was `.toBeInstanceOf` only.
+      // The contract is stronger than "an instance is returned": the
+      // returned reference must be IDENTICAL to the active controls
+      // (`getFlyControls` is a narrowing accessor, not a factory). A
+      // regression that returned a NEW LuxarFlyControls would survive
+      // `.toBeInstanceOf` but fail the identity check.
       const flyControls = controlsManager.getFlyControls();
       expect(flyControls).toBeInstanceOf(LuxarFlyControls);
+      expect(flyControls).toBe(controlsManager.getControls());
+      // Default configuration is also pinned: enabled + inertialMode
+      // are the most user-visible defaults.
+      expect(flyControls!.enabled).toBe(true);
+      expect(flyControls!.inertialMode).toBe(true);
     });
 
     it('should return null for fly controls when orbit is active', () => {

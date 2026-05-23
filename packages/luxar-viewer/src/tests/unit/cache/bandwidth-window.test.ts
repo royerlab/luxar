@@ -113,5 +113,40 @@ describe('BandwidthWindow', () => {
       expect(internals(bw).start).toBe(0);
       expect(internals(bw).window.length).toBe(4);
     });
+
+    it('accepts a zero-byte transfer without throwing or skewing the window [cache.md/G1][P5]', () => {
+      // [cache.md/G1][P5] The audit observed `record(0)` (legitimate
+      // zero-byte transfer — e.g. a HEAD request or empty 200) was never
+      // exercised. Pin: a zero-byte record is added to the window like
+      // any other entry, contributes 0 bytes to the rate calculation, and
+      // does not throw.
+      bw.record(0);
+      expect(internals(bw).window.length).toBe(1);
+      expect(internals(bw).window[0].bytes).toBe(0);
+      // rate() over a single zero-byte entry is 0 (no transferred bytes).
+      expect(bw.rate()).toBe(0);
+
+      // A subsequent non-zero record produces a positive rate; the zero
+      // entry must not have polluted the calculation.
+      vi.advanceTimersByTime(2000);
+      bw.record(4000);
+      vi.advanceTimersByTime(1000);
+      expect(bw.rate()).toBeGreaterThan(0);
+    });
+
+    it('rate() immediately after a single record is well-defined (no division-by-zero) [cache.md/G1][P5]', () => {
+      // [cache.md/G1][P5] Source uses `windowSpan = max(1, ...)` to guard
+      // against the boundary `now - first.timestamp === 0` — the case where
+      // rate() is queried in the same millisecond as record(). Pin that
+      // boundary so a mutation removing the `max(1, ...)` clamp would
+      // produce Infinity / NaN and fail here.
+      bw.record(5000);
+      // No timer advance — same instant.
+      const r = bw.rate();
+      expect(Number.isFinite(r)).toBe(true);
+      // With windowSpan clamped to 1ms, rate = 5000 bytes / 1ms = 5e6 B/s.
+      expect(r).toBeGreaterThan(0);
+      expect(r).toBeLessThanOrEqual(5_000_000);
+    });
   });
 });

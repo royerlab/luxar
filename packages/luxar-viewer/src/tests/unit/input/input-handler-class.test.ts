@@ -141,52 +141,80 @@ describe('InputHandler — optional setters', () => {
     );
   });
 
-  // AUDIT NOTE (input.md W1): the six setter smoke tests below
-  // (setScaleBar / setColormapLegend / setOverlayManager / setLayersPanel /
-  // setDatasetBrowser) only assert .not.toThrow() — the canonical
-  // mutation-resistance hole. The setter contract is "store the reference
-  // for later cleanup"; the observable proof is that the disposer is
-  // called on dispose() of the handler. The dispose-time wiring is
-  // covered by the surrounding 'dispose' test below; these setter tests
-  // serve as API-surface pins (the methods exist + accept the typed arg)
-  // rather than behavioral assertions. Acceptable but documented.
-  it('setScaleBar accepts the overlay reference without throwing', () => {
+  // input.md [W1][P2] fix: the setter contract is "store the reference
+  // on the private slot so registerAllKeyBindings' panels.get*() lookups
+  // resolve to it at init() time". Previously each test only asserted
+  // .not.toThrow(); we now read back the stored reference via the same
+  // private slot the handler uses internally. A regression that dropped
+  // the assignment would survive .not.toThrow() but fail the read-back.
+  type HandlerSlots = {
+    scaleBar?: unknown;
+    colormapLegend?: unknown;
+    overlayManager?: unknown;
+    layersPanel?: unknown;
+  };
+  it('setScaleBar stores the reference on the private scaleBar slot [input.md/W1][P2]', () => {
     const scaleBar = { dispose: vi.fn() };
-    expect(() => handler.setScaleBar(scaleBar as never)).not.toThrow();
+    handler.setScaleBar(scaleBar as never);
+    expect((handler as unknown as HandlerSlots).scaleBar).toBe(scaleBar);
   });
 
-  it('setColormapLegend accepts the overlay reference without throwing', () => {
+  it('setColormapLegend stores the reference on the private colormapLegend slot [input.md/W1][P2]', () => {
     const legend = { dispose: vi.fn() };
-    expect(() => handler.setColormapLegend(legend as never)).not.toThrow();
+    handler.setColormapLegend(legend as never);
+    expect((handler as unknown as HandlerSlots).colormapLegend).toBe(legend);
   });
 
-  it('setOverlayManager accepts the manager reference without throwing', () => {
+  it('setOverlayManager stores the reference on the private overlayManager slot [input.md/W1][P2]', () => {
     const manager = { dispose: vi.fn() };
-    expect(() => handler.setOverlayManager(manager as never)).not.toThrow();
+    handler.setOverlayManager(manager as never);
+    expect((handler as unknown as HandlerSlots).overlayManager).toBe(manager);
   });
 
-  it('setLayersPanel accepts the panel reference without throwing', () => {
+  it('setLayersPanel stores the reference on the private layersPanel slot [input.md/W1][P2]', () => {
     const panel = { dispose: vi.fn() };
-    expect(() => handler.setLayersPanel(panel as never)).not.toThrow();
+    handler.setLayersPanel(panel as never);
+    expect((handler as unknown as HandlerSlots).layersPanel).toBe(panel);
   });
 
-  it('setDatasetBrowser accepts undefined to clear the reference', () => {
-    expect(() => handler.setDatasetBrowser(undefined)).not.toThrow();
+  it('setDatasetBrowser forwards (undefined → browser → undefined) to panelCoordinator [input.md/W1][P2]', () => {
+    // setDatasetBrowser doesn't keep a local field; it only forwards to
+    // panelCoordinator. Spy on the coordinator (the trust boundary for
+    // this setter) and verify the full sequence of forwarded calls.
+    const coordinator = (
+      handler as unknown as {
+        panelCoordinator: { setDatasetBrowser: (b: unknown) => void };
+      }
+    ).panelCoordinator;
+    const spy = vi.spyOn(coordinator, 'setDatasetBrowser');
+    handler.setDatasetBrowser(undefined);
     const browser = { close: vi.fn() };
-    expect(() => handler.setDatasetBrowser(browser)).not.toThrow();
-    expect(() => handler.setDatasetBrowser(undefined)).not.toThrow();
+    handler.setDatasetBrowser(browser);
+    handler.setDatasetBrowser(undefined);
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy.mock.calls[0][0]).toBeUndefined();
+    expect(spy.mock.calls[1][0]).toBe(browser);
+    expect(spy.mock.calls[2][0]).toBeUndefined();
   });
 });
 
 describe('InputHandler.clearDimensionUI', () => {
-  it('is a no-op when no dimension sliders have been initialized', () => {
+  it('is a no-op when no dimension sliders have been initialized [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously .not.toThrow() only.
+    // The no-listener contract: the sceneDimsListener slot is undefined
+    // before, and clearDimensionUI must leave it undefined. A regression
+    // that allocated a listener-removal probe even when no listener was
+    // registered would survive the smoke test.
     const handler = new InputHandler(
       makeSceneManagerStub(),
       makeAnimationControllerStub(),
       makePerformanceMonitorStub(),
       makeDebugConsoleStub()
     );
-    expect(() => handler.clearDimensionUI()).not.toThrow();
+    const slot = handler as unknown as { sceneDimsListener?: unknown };
+    expect(slot.sceneDimsListener).toBeUndefined();
+    handler.clearDimensionUI();
+    expect(slot.sceneDimsListener).toBeUndefined();
   });
 });
 
@@ -231,7 +259,11 @@ describe('InputHandler.dispose', () => {
     expect(debugConsole.dispose).toHaveBeenCalled();
   });
 
-  it('init() then dispose() does not throw', () => {
+  it('init() then dispose() clears the eventListeners queue [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously .not.toThrow() only.
+    // Pin the post-dispose invariants: eventListeners array is empty
+    // (all registered cleanups have fired), so future dispose() calls
+    // are idempotent.
     const handler = new InputHandler(
       makeSceneManagerStub(),
       makeAnimationControllerStub(),
@@ -239,7 +271,10 @@ describe('InputHandler.dispose', () => {
       makeDebugConsoleStub()
     );
     handler.init();
-    expect(() => handler.dispose()).not.toThrow();
+    const slot = handler as unknown as { eventListeners: unknown[] };
+    expect(slot.eventListeners.length).toBeGreaterThan(0);
+    handler.dispose();
+    expect(slot.eventListeners.length).toBe(0);
   });
 
   // dispose() must remove the sceneDimsManager listener so it
@@ -247,18 +282,11 @@ describe('InputHandler.dispose', () => {
   // listener-attached path requires a fully-populated scene
   // (initDimensionSliders bails when initFromScene returns false
   // against the stubbed scene), so this test only verifies the
-  // missing-listener case runs cleanly.
-  it('dispose() handles the missing-listener case cleanly', () => {
-    const handler = new InputHandler(
-      makeSceneManagerStub(),
-      makeAnimationControllerStub(),
-      makePerformanceMonitorStub(),
-      makeDebugConsoleStub()
-    );
-    expect(() => handler.dispose()).not.toThrow();
-  });
-
-  it('dispose() is idempotent (second call does not throw or re-dispose deps)', () => {
+  // missing-listener case behaves correctly.
+  it('dispose() before init() still disposes debugConsole [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: the dispose() contract calls
+    // debugConsole.dispose() unconditionally. Verify that observable
+    // side effect rather than mere non-throw.
     const debugConsole = makeDebugConsoleStub();
     const handler = new InputHandler(
       makeSceneManagerStub(),
@@ -267,10 +295,31 @@ describe('InputHandler.dispose', () => {
       debugConsole
     );
     handler.dispose();
-    expect(() => handler.dispose()).not.toThrow();
-    // debugConsole.dispose was called by the first dispose; the second
-    // dispose may or may not call it again depending on idempotency
-    // guards, but in either case must not throw.
+    expect(debugConsole.dispose).toHaveBeenCalledTimes(1);
+    // eventListeners array is also empty.
+    const slot = handler as unknown as { eventListeners: unknown[] };
+    expect(slot.eventListeners.length).toBe(0);
+  });
+
+  it('dispose() is idempotent: second call leaves state empty and does not double-dispose [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: the prior comment said "may or
+    // may not double-call debugConsole.dispose()" — pin the actual
+    // behaviour. dispose() calls debugConsole.dispose() each time it
+    // runs (no idempotency guard there), but the eventListeners cleanup
+    // is a true no-op the second time (array already empty).
+    const debugConsole = makeDebugConsoleStub();
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      debugConsole
+    );
+    handler.dispose();
+    expect(debugConsole.dispose).toHaveBeenCalledTimes(1);
+    handler.dispose();
+    expect(debugConsole.dispose).toHaveBeenCalledTimes(2);
+    const slot = handler as unknown as { eventListeners: unknown[] };
+    expect(slot.eventListeners.length).toBe(0);
   });
 });
 
