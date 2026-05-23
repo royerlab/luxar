@@ -9,18 +9,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DirectoryNavigator } from '../../../data/nav/directory-navigator';
+// [architecture.md/O1][P10] Moved from tests/unit/architecture/ - this is a per-class
+// behavioral test of DirectoryNavigator and belongs colocated with the source layer.
+import { DirectoryNavigator } from '../../../../data/nav/directory-navigator';
 
 // Mock fetch globally
 (globalThis as any).fetch = vi.fn();
-(globalThis as any).DOMParser = vi.fn().mockImplementation(() => ({
-  parseFromString: vi.fn(),
-}));
+// [architecture.md/O5][P3] Removed unused DOMParser stub. The HTML
+// Directory Listing block exercises only the catch / fail-fall-through
+// path (every fetch is mocked to fail), so DOMParser is never reached.
+// The previous noop stub would have hidden a real DOMParser-throwing
+// regression if the happy path were ever added. If we add a true HTML-
+// parsing happy-path test, we'll mock DOMParser properly there.
 
 describe('DirectoryNavigator', () => {
   let navigator: DirectoryNavigator;
   const mockFetch = (globalThis as any).fetch;
-  void (globalThis as any).DOMParser; // Mark as intentionally accessed but not stored
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,7 +76,11 @@ describe('DirectoryNavigator', () => {
     });
   });
 
-  describe('JSON Directory Listing (luxar serve)', () => {
+  // [architecture.md/O3][P9] Renamed: previous label coupled to a specific
+  // server implementation ("luxar serve"). The strategy DirectoryNavigator
+  // implements here is "JSON directory listing" generically — any
+  // conformant server emits the same payload shape.
+  describe('JSON Directory Listing strategy', () => {
     it('should parse JSON directory listing', async () => {
       // Zarr check fails
       mockFetch.mockResolvedValueOnce({ ok: false });

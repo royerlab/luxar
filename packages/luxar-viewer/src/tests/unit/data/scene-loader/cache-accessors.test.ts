@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SceneLoader } from '../../../data/scene-loader';
+import { SceneLoader } from '../../../../data/scene-loader';
 
 describe('SceneLoader cache accessors', () => {
   describe('with no cache layer (fresh loader, before loadScene)', () => {

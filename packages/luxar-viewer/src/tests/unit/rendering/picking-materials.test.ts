@@ -12,10 +12,6 @@ import { LinePickingMaterial } from '../../../rendering/picking/line/material';
 import { LinePickingTSLMaterial } from '../../../rendering/picking/line/material-tsl';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat/material';
 import { GSplatPickingTSLMaterial } from '../../../rendering/picking/gsplat/material-tsl';
-import {
-  MAX_PICK_BUFFER_DIM,
-  computePickBufferSize,
-} from '../../../rendering/picking/picking-system';
 
 describe('PointPickingMaterial', () => {
   it('instantiates with correct nodeId uniform', () => {
@@ -308,44 +304,8 @@ describe('LinePickingTSLMaterial sharpness fast path', () => {
   });
 });
 
-describe('computePickBufferSize', () => {
-  it('halves both dimensions for normal-sized buffers', () => {
-    expect(computePickBufferSize(1920, 1080)).toEqual({ w: 960, h: 540 });
-  });
-
-  it('caps oversized 4K buffer at MAX_PICK_BUFFER_DIM on the wide axis only', () => {
-    // 3840 / 2 = 1920 -> capped at 1024; 2160 / 2 = 1080 -> capped at 1024
-    expect(computePickBufferSize(3840, 2160)).toEqual({
-      w: MAX_PICK_BUFFER_DIM,
-      h: MAX_PICK_BUFFER_DIM,
-    });
-  });
-
-  it('caps only the axis that exceeds the limit', () => {
-    // 5120 / 2 = 2560 -> capped; 1440 / 2 = 720 -> kept
-    expect(computePickBufferSize(5120, 1440)).toEqual({
-      w: MAX_PICK_BUFFER_DIM,
-      h: 720,
-    });
-  });
-
-  it('floors fractional values', () => {
-    expect(computePickBufferSize(1921, 1081)).toEqual({ w: 960, h: 540 });
-  });
-
-  it('clamps to a minimum of 1 pixel', () => {
-    expect(computePickBufferSize(0, 0)).toEqual({ w: 1, h: 1 });
-    expect(computePickBufferSize(1, 1)).toEqual({ w: 1, h: 1 });
-  });
-
-  // rendering.md G8: negative inputs aren't an expected runtime case
-  // (canvas dimensions are always ≥ 0), but the contract is that the
-  // function never returns a value below the documented floor of 1.
-  // Pins the defensive behaviour against future "fast-path" tweaks
-  // that drop the Math.max clamp.
-  it('clamps negative inputs to 1 pixel (defensive contract)', () => {
-    expect(computePickBufferSize(-100, -100)).toEqual({ w: 1, h: 1 });
-    expect(computePickBufferSize(-1, 1080)).toEqual({ w: 1, h: 540 });
-    expect(computePickBufferSize(1920, -1)).toEqual({ w: 960, h: 1 });
-  });
-});
+// [rendering.md/O3][P10] computePickBufferSize tests live in their canonical
+// location at tests/unit/rendering/picking/picking-system.test.ts. The
+// previous duplicate block here covered the same algorithm with overlapping
+// inputs; all unique cases (asymmetric cap, floor-fractional, negative-clamp)
+// have been merged into the canonical file.

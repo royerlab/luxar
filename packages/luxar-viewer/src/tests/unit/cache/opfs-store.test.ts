@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
 // Mock File System Access API
@@ -95,6 +95,14 @@ describe('OPFSStore', () => {
 
     store = new OPFSStore('test-dataset-id', 'https://example.com/data.zarr', 100 * 1024 * 1024);
     await store.init();
+  });
+
+  afterEach(() => {
+    // [cache.md/O5][P10] Explicitly unstub globals so tests that re-stub
+    // navigator mid-test (e.g. 'slow set + concurrent clear') do not bleed
+    // into subsequent tests if test order changes. beforeEach also re-stubs,
+    // but explicit cleanup is robust against reordering.
+    vi.unstubAllGlobals();
   });
 
   describe('Initialization', () => {

@@ -112,31 +112,52 @@ describe('createModuleLogger', () => {
     errorSpy.mockRestore();
   });
 
-  it('binds every method to the supplied module name', () => {
-    const ml = createModuleLogger('MyMod');
+  // [utils.md/O2][P10] Replaced a single it() that bundled 8 console.log
+  // assertions with an it.each — each console.log-routed method is one row,
+  // and the two console.warn/error-routed methods are pinned in dedicated
+  // tests below. A method that silently switches console routes (e.g.
+  // `info` becoming `warn`) now produces a single failing case instead of
+  // a confusing aggregate.
+  describe('createModuleLogger — every method binds the supplied module name', () => {
+    it.each([
+      ['log', 'plain'],
+      ['info', 'info'],
+      ['success', 'done'],
+      ['load', 'fetching'],
+      ['update', 'updating'],
+      ['query', 'querying'],
+      ['data', 'crunching'],
+    ] as const)('%s routes through console.log and tags the module', (method, message) => {
+      const ml = createModuleLogger('MyMod');
+      (ml[method as keyof typeof ml] as (m: string) => void)(message);
 
-    ml.log('plain');
-    ml.info('info');
-    ml.success('done');
-    ml.error('boom');
-    ml.warning('careful');
-    ml.load('fetching');
-    ml.update('updating');
-    ml.query('querying');
-    ml.data('crunching');
-    ml.custom('🎯', 'aim');
+      // Exactly one console.log call, tagged with the module name.
+      expect(logSpy.mock.calls.length).toBe(1);
+      expect(logSpy.mock.calls[0][0] as string).toContain('[MyMod]');
+      // The user-supplied message must reach the console.
+      expect(logSpy.mock.calls[0][0] as string).toContain(message);
+    });
 
-    // log + info + success + load + update + query + data + custom each
-    // route through console.log. error and warning route to console.error
-    // and console.warn respectively. Total console.log calls: 8.
-    const allLogMessages = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
-    expect(allLogMessages.length).toBe(8);
-    for (const m of allLogMessages) {
-      expect(m).toContain('[MyMod]');
-    }
+    it('custom() also routes through console.log and tags the module', () => {
+      const ml = createModuleLogger('MyMod');
+      ml.custom('🎯', 'aim');
+      expect(logSpy.mock.calls.length).toBe(1);
+      expect(logSpy.mock.calls[0][0] as string).toContain('[MyMod]');
+    });
 
-    expect(errorSpy.mock.calls[0][0] as string).toContain('[MyMod] boom');
-    expect(warnSpy.mock.calls[0][0] as string).toContain('[MyMod] careful');
+    it('error() routes through console.error and tags the module', () => {
+      const ml = createModuleLogger('MyMod');
+      ml.error('boom');
+      expect(errorSpy.mock.calls.length).toBe(1);
+      expect(errorSpy.mock.calls[0][0] as string).toContain('[MyMod] boom');
+    });
+
+    it('warning() routes through console.warn and tags the module', () => {
+      const ml = createModuleLogger('MyMod');
+      ml.warning('careful');
+      expect(warnSpy.mock.calls.length).toBe(1);
+      expect(warnSpy.mock.calls[0][0] as string).toContain('[MyMod] careful');
+    });
   });
 
   it('uses Modules.* values as module strings', () => {

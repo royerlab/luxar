@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SceneLoader } from '../../../data';
+import { SceneLoader } from '../../../../data';
 import * as zarr from 'zarrita';
 
 vi.mock('zarrita', () => ({
@@ -26,7 +26,7 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-vi.mock('../../../rendering/material-manager', () => ({
+vi.mock('../../../../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({
       uniforms: {},
@@ -38,7 +38,7 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
-vi.mock('../../../utils/cross-layer/notifier', () => ({
+vi.mock('../../../../utils/cross-layer/notifier', () => ({
   notifier: {
     toast: vi.fn(),
     error: vi.fn(),

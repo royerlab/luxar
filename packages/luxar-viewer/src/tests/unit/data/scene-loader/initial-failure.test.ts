@@ -21,20 +21,20 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { NodeFactory } from '../../../rendering/node-factory';
-import { SceneLoader } from '../../../data/scene-loader';
-import type { PointsMetadata } from '../../../types/points';
-import type { LinesMetadata } from '../../../types/lines';
-import type { GSplatsMetadata } from '../../../types/gsplats';
-import type { DataLoader } from '../../../data/data-loader-types';
-import type { LinesDataLoader } from '../../../types/lines';
-import type { GSplatsDataLoader } from '../../../types/gsplats';
+import { NodeFactory } from '../../../../rendering/node-factory';
+import { SceneLoader } from '../../../../data/scene-loader';
+import type { PointsMetadata } from '../../../../types/points';
+import type { LinesMetadata } from '../../../../types/lines';
+import type { GSplatsMetadata } from '../../../../types/gsplats';
+import type { DataLoader } from '../../../../data/data-loader-types';
+import type { LinesDataLoader } from '../../../../types/lines';
+import type { GSplatsDataLoader } from '../../../../types/gsplats';
 
 // `materialManager.getX` calls hit shader compilation, which requires a
 // live WebGL context. Mock it the same way scene-loader tests do.
-vi.mock('../../../rendering/material-manager', async () => {
-  const actual = await vi.importActual<typeof import('../../../rendering/material-manager')>(
-    '../../../rendering/material-manager'
+vi.mock('../../../../rendering/material-manager', async () => {
+  const actual = await vi.importActual<typeof import('../../../../rendering/material-manager')>(
+    '../../../../rendering/material-manager'
   );
   return {
     ...actual,
@@ -73,7 +73,7 @@ vi.mock('../../../rendering/material-manager', async () => {
 // `getColormapTexture` reads a sampler uniform; the placeholder factories
 // don't trip the colormap branch (no `nodeAttrs.colormap`), but mock for
 // safety.
-vi.mock('../../../rendering/colormap-textures', () => ({
+vi.mock('../../../../rendering/colormap-textures', () => ({
   getColormapTexture: vi.fn(() => null),
 }));
 

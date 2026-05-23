@@ -38,46 +38,10 @@ export function ensureImageDataPolyfill(): void {
   };
 }
 
-/**
- * Mutable hook so individual tests can make `canvas.toBlob` return null
- * (simulates encoding failure). Reset to `null` at the end of the test.
- */
-export const canvasToBlobOverride: { current: ((cb: any) => void) | null } = {
-  current: null,
-};
-
-/**
- * Replace `document.createElement('canvas')` so toBlob and getContext('2d')
- * return jsdom-friendly mocks. Other tag names pass through unchanged.
- * Returns the spy so callers can restore it if needed.
- */
-export function installCanvasMock(): () => void {
-  const origCreateElement = document.createElement.bind(document);
-  const spy = vi
-    .spyOn(document, 'createElement')
-    .mockImplementation((tag: string, options?: any) => {
-      const el = origCreateElement(tag, options);
-      if (tag === 'canvas') {
-        const canvasEl = el as HTMLCanvasElement;
-        const origGetContext = canvasEl.getContext.bind(canvasEl);
-        (canvasEl as any).getContext = (type: string, ...args: any[]) => {
-          if (type === '2d') {
-            return { putImageData: vi.fn(), drawImage: vi.fn() };
-          }
-          return origGetContext(type, ...args);
-        };
-        (el as HTMLCanvasElement).toBlob = vi.fn((cb: any) => {
-          if (canvasToBlobOverride.current) {
-            canvasToBlobOverride.current(cb);
-          } else {
-            cb(new Blob(['test'], { type: 'image/png' }));
-          }
-        });
-      }
-      return el;
-    });
-  return () => spy.mockRestore();
-}
+// [ui.md/O3][P10] Removed unused exports `canvasToBlobOverride` and
+// `installCanvasMock`: no test file in `recording-panel/` imports them.
+// `screenshot-strategy.test.ts` declares its own local `canvasToBlobOverride`
+// + inline createElement spy; the helper version was dead code.
 
 /** Build the test double for SceneManager. */
 export function createMockSceneManager(): any {

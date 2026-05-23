@@ -88,6 +88,32 @@ describe('computePickBufferSize', () => {
       h: MAX_PICK_BUFFER_DIM,
     });
   });
+
+  // [rendering.md/O3][P10] consolidated from picking-materials.test.ts to
+  // keep computePickBufferSize coverage in one canonical location (the
+  // function lives next to PickingSystem; picking-materials.test.ts now
+  // imports it transitively for the boundary case below).
+  it('caps only the axis that exceeds the limit (5120x1440 → asymmetric)', () => {
+    // 5120 / 2 = 2560 → capped; 1440 / 2 = 720 → kept
+    expect(computePickBufferSize(5120, 1440)).toEqual({
+      w: MAX_PICK_BUFFER_DIM,
+      h: 720,
+    });
+  });
+
+  it('floors fractional values (rounds DOWN, not nearest)', () => {
+    // 1921/2 = 960.5 → 960; 1081/2 = 540.5 → 540
+    expect(computePickBufferSize(1921, 1081)).toEqual({ w: 960, h: 540 });
+  });
+
+  // [rendering.md/G8] negative inputs are not an expected runtime case
+  // (canvas dimensions are always >= 0), but the contract is that the
+  // function never returns a value below the documented floor of 1.
+  it('clamps negative inputs to 1 pixel (defensive contract)', () => {
+    expect(computePickBufferSize(-100, -100)).toEqual({ w: 1, h: 1 });
+    expect(computePickBufferSize(-1, 1080)).toEqual({ w: 1, h: 540 });
+    expect(computePickBufferSize(1920, -1)).toEqual({ w: 960, h: 1 });
+  });
 });
 
 describe('PickingSystem — registration', () => {

@@ -414,7 +414,12 @@ describe('AnimationController', () => {
       controller.stopAnimation();
       expect(controller.isActive).toBe(false);
     });
+  });
 
+  // [scene.md/O1][P10] Moved out of `describe('getters', ...)` — frame-start/end
+  // event-bus emission is not a getter; it's an integration with the cross-layer
+  // event bus that fires from inside the rAF loop body.
+  describe('event bus integration', () => {
     it('emits frame-start and frame-end on the event bus per frame', async () => {
       const { eventBus } = await import('../../../utils/cross-layer/event-bus');
       const startListener = vi.fn();
