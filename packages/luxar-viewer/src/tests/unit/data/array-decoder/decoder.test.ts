@@ -35,7 +35,7 @@
  * --------------------------------------------------------------------
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
 import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
 import * as zarr from '../../../../data/zarr';
@@ -1494,6 +1494,203 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // LUT
       expect(ArrayDecoder.isLUTEncoded(lutAttrs)).toBe(true);
       expect(ArrayDecoder.isBroadcasted(lutAttrs)).toBe(false);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // [data.md/G6][P5] Boundary cases identified by the audit:
+  //   • decode() with expectedElements mismatch (warns, returns decoded size)
+  //   • LUT lookup with lutMode === 'scalar'
+  //   • dequantizeRange over the boundary (0 and max_int)
+  // These were the three named gaps in G6; this block closes them.
+  // ════════════════════════════════════════════════════════════════════════
+
+  describe('decode() — expectedElements mismatch (G6 boundary)', () => {
+    it('returns the LUT-decoded size and warns when expectedElements disagrees', async () => {
+      // For LUT (row mode) the decoded size = n_indices * k. Passing a
+      // deliberately wrong expectedElements must warn but NOT throw, and
+      // the returned array length must come from the LUT decode, not from
+      // expectedElements (line 187-193 of decoder.ts).
+      const { array, attrs } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        // Pass an expectedElements that disagrees with what the LUT will produce.
+        // The LUT test fixture has 1000 indices × k=3 → 3000 elements.
+        const wrongExpected = 12345;
+        const decoded = await decoder.decode(array, attrs, wrongExpected);
+        // The returned size is the LUT decode size (1000 * 3), NOT the
+        // wrong expected value — the loader trusts the decoded result.
+        expect(decoded.length).toBe(1000 * 3);
+        expect(decoded.length).not.toBe(wrongExpected);
+      } finally {
+        consoleWarnSpy.mockRestore();
+        consoleLogSpy.mockRestore();
+      }
+    });
+
+    it('throws when broadcasted encoding has neither n_elements nor expectedElements', async () => {
+      // Boundary: broadcasted encoding requires SOME way to determine the
+      // target count. If both n_elements (metadata) AND expectedElements
+      // (caller) are missing, decode() must throw with a diagnostic
+      // pointing to the offending zarr path. This pins the C4 contract
+      // that the loader is honest about missing inputs instead of
+      // silently producing a zero-length array.
+      const fakeAttrs: ArrayMetadata = {
+        encoding: { name: 'broadcasted' }, // no n_elements
+      };
+      const fakeArray = {
+        path: '/fake/broadcasted',
+        shape: [1, 3],
+        chunks: [1, 3],
+        dtype: '<f4',
+        attrs: {},
+        get: async () => ({ data: new Float32Array([1, 2, 3]), shape: [1, 3], stride: [3, 1] }),
+      } as unknown as Parameters<ArrayDecoder['decode']>[0];
+
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      // No expectedElements either → must throw, message must include the
+      // zarr path so the producer can locate the bad metadata.
+      await expect(decoder.decode(fakeArray, fakeAttrs)).rejects.toThrow(
+        /requires encoding\.n_elements/
+      );
+    });
+
+    it('returns an empty Float32Array when broadcasted encoding has expectedElements=0', async () => {
+      // Boundary: expectedElements=0 with broadcasted encoding is a valid
+      // request (e.g. an empty range query). Source line 64-66 short-circuits
+      // BEFORE reading from zarr — the result must be a zero-length
+      // Float32Array. A mutation that read from zarr anyway would explode
+      // in production because zarrita can't materialize empty arrays.
+      const fakeAttrs: ArrayMetadata = {
+        encoding: { name: 'broadcasted', n_elements: 1000 },
+      };
+      const getSpy = vi.fn();
+      const fakeArray = {
+        path: '/x',
+        shape: [1, 3],
+        chunks: [1, 3],
+        dtype: '<f4',
+        attrs: {},
+        get: getSpy,
+      } as unknown as Parameters<ArrayDecoder['decode']>[0];
+
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = await decoder.decode(fakeArray, fakeAttrs, 0);
+      expect(result).toBeInstanceOf(Float32Array);
+      expect(result.length).toBe(0);
+      // Zarr read MUST have been skipped on the short-circuit path.
+      expect(getSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('decodeLUTIndices — scalar mode (G6 boundary)', () => {
+    it('emits one element per index in scalar mode (NOT one per k-tuple)', () => {
+      // Source line 356-376: scalar mode uses k=1 output regardless of
+      // any feature dimension. A LUT with 5 scalar entries indexed by
+      // [0,2,4,1] must produce [lut[0], lut[2], lut[4], lut[1]] — exactly
+      // 4 outputs. A mutation that fell through to row mode would multiply
+      // by k and return 4*k values.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const metadata = {
+        lut: [10, 20, 30, 40, 50],
+        lutMode: 'scalar',
+        k: 1,
+      };
+      const indices = new Float32Array([0, 2, 4, 1]);
+      const decoded = decoder.decodeLUTIndices(indices, metadata);
+
+      expect(decoded.length).toBe(4);
+      expect(Array.from(decoded)).toEqual([10, 30, 50, 20]);
+    });
+
+    it('throws on empty LUT in scalar mode', () => {
+      // Source line 362-364: empty LUT in scalar mode must throw a clear
+      // error rather than silently producing all-zero output.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const metadata = {
+        lut: [] as number[],
+        lutMode: 'scalar',
+        k: 1,
+      };
+      const indices = new Float32Array([0]);
+      expect(() => decoder.decodeLUTIndices(indices, metadata)).toThrow(/empty/i);
+    });
+
+    it('throws on out-of-range index in scalar mode', () => {
+      // Source line 370-372: out-of-range scalar index must throw with a
+      // diagnostic message identifying the index and the LUT size.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const metadata = {
+        lut: [1, 2, 3],
+        lutMode: 'scalar',
+        k: 1,
+      };
+      const indices = new Float32Array([5]); // 5 ≥ lut.length=3
+      expect(() => decoder.decodeLUTIndices(indices, metadata)).toThrow(/out of range/i);
+    });
+  });
+
+  describe('dequantizeRange — domain boundaries (G6 boundary)', () => {
+    it('maps the integer 0 to the lower bound exactly', () => {
+      // Boundary: quantized 0 → bounds[0]. A mutation that swapped
+      // bounds[0]/bounds[1] or that used a wrong scale would fail this.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = decoder.dequantizeRange(new Uint8Array([0]), {
+        bounds: [-10, 20],
+        dtype: 'uint8',
+        isLogSpace: false,
+      });
+      expect(result.length).toBe(1);
+      expect(result[0]).toBeCloseTo(-10, 6);
+    });
+
+    it('maps the integer 255 to the upper bound exactly (uint8 max)', () => {
+      // Boundary: quantized 255 → bounds[1]. uint8 max_int=255 per source
+      // line 428-429. A mutation using 256 (off-by-one) would land
+      // slightly above bounds[1].
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = decoder.dequantizeRange(new Uint8Array([255]), {
+        bounds: [-10, 20],
+        dtype: 'uint8',
+        isLogSpace: false,
+      });
+      expect(result.length).toBe(1);
+      expect(result[0]).toBeCloseTo(20, 6);
+    });
+
+    it('maps uint16 max (65535) to the upper bound exactly', () => {
+      // Boundary: same test for uint16 (max_int=65535 per source line 430-431).
+      // A mutation that hard-coded the uint8 divisor would map 65535 to
+      // a value far above bounds[1] with this fixture.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = decoder.dequantizeRange(new Uint16Array([65535]), {
+        bounds: [0, 1],
+        dtype: 'uint16',
+        isLogSpace: false,
+      });
+      expect(result.length).toBe(1);
+      expect(result[0]).toBeCloseTo(1.0, 6);
+    });
+
+    it('produces a monotone-increasing output for monotone-increasing input', () => {
+      // Property: dequantization is a monotone (affine) map. This pins
+      // that mutation cannot introduce a sign flip without detection.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const input = new Uint8Array([0, 64, 128, 192, 255]);
+      const result = decoder.dequantizeRange(input, {
+        bounds: [0, 100],
+        dtype: 'uint8',
+        isLogSpace: false,
+      });
+      for (let i = 1; i < result.length; i++) {
+        expect(result[i]).toBeGreaterThan(result[i - 1]);
+      }
+      // And both endpoints sit exactly on the boundary.
+      expect(result[0]).toBeCloseTo(0, 6);
+      expect(result[result.length - 1]).toBeCloseTo(100, 6);
     });
   });
 });

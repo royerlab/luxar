@@ -92,7 +92,9 @@ describe('effective-radius-calculator', () => {
       const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
 
       // R_effective = √(1² - 1²) = 0
-      expect(result[0]).toBeCloseTo(0, 5);
+      // [ndim.md/C4][P2] strict equality — boundary is exactly zero,
+      // a tight check kills mutants that return tiny non-zero values.
+      expect(result[0]).toBe(0);
     });
 
     it('MED-12: exact-boundary point (D === R) returns exactly 0 via sqrt path, not fallback', () => {
@@ -156,8 +158,9 @@ describe('effective-radius-calculator', () => {
       expect(result[0]).toBeCloseTo(1.0, 5);
       // Point 2: √(0.5² - 0.3²) = √(0.25 - 0.09) = √0.16 = 0.4
       expect(result[1]).toBeCloseTo(0.4, 5);
-      // Point 3: √(2² - 0.5²) = √(4 - 0.25) = √3.75 ≈ 1.936
-      expect(result[2]).toBeCloseTo(1.936, 2);
+      // Point 3: √(2² - 0.5²) = √(4 - 0.25) = √3.75
+      // [ndim.md/C3][P5] use Float32-appropriate precision (5 digits, ~1e-5).
+      expect(result[2]).toBeCloseTo(Math.sqrt(3.75), 5);
     });
 
     it('should handle complex mixed spatial and non-spatial dimensions', () => {
@@ -186,8 +189,10 @@ describe('effective-radius-calculator', () => {
 
       // Discrete dims (time, channel) match exactly
       // Only depth (dim 4) contributes spatial distance: 0.3 - 0 = 0.3
-      // R_effective = √(1² - 0.3²) = √0.91 ≈ 0.954
-      expect(result[0]).toBeCloseTo(0.954, 2);
+      // R_effective = √(1² - 0.3²) = √0.91
+      // [ndim.md/C3][P5] use Float32-appropriate precision against the
+      // exact expected value (not a rounded literal).
+      expect(result[0]).toBeCloseTo(Math.sqrt(0.91), 5);
     });
   });
 

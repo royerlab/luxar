@@ -142,14 +142,30 @@ describe('UIComponent', () => {
       expect(component.getElement().classList.contains('test-component--visible')).toBe(false);
     });
 
-    it('should toggle visibility', () => {
+    it('toggle() flips visibility AND mirrors it in the visible-modifier class + body-attached status', () => {
+      // [ui.md/W6][P2] Previously asserted only isVisible() boolean flip.
+      // Strengthen by pinning the three observables in lockstep:
+      // (1) isVisible() return
+      // (2) CSS class 'test-component--visible' presence
+      // (3) DOM attachment to document.body
       const component = new TestComponent({ title: 'Test' });
+      const el = component.getElement();
+      const visibleClass = 'test-component--visible';
 
       expect(component.isVisible()).toBe(false);
+      expect(el.classList.contains(visibleClass)).toBe(false);
+      expect(document.body.contains(el)).toBe(false);
+
       component.toggle();
       expect(component.isVisible()).toBe(true);
+      expect(el.classList.contains(visibleClass)).toBe(true);
+      expect(document.body.contains(el)).toBe(true);
+
       component.toggle();
       expect(component.isVisible()).toBe(false);
+      expect(el.classList.contains(visibleClass)).toBe(false);
+      // Element reference identity preserved across toggle cycles.
+      expect(component.getElement()).toBe(el);
     });
   });
 

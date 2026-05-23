@@ -215,4 +215,51 @@ describe('applyScaledNoiseSettings', () => {
       fpnSigma: 0.02,
     });
   });
+
+  // [rendering.md/G][P5] NaN / Infinity boundary cases. The function does
+  // not (and per the docstring's "noise model" should not) clamp these:
+  // NaN/Inf inputs propagate verbatim into the shader sigmas. Pinning the
+  // contract makes any future clamp / guard introduction explicit.
+  it('propagates DPRScale=NaN: all three outputs become NaN', () => {
+    const { stub, setDetectorNoise } = makeMegaShader(true);
+    applyScaledNoiseSettings({
+      megaShader: stub,
+      currentDPRScale: Number.NaN,
+      baseNoiseSettings: { readoutSigma: 0.02, photonGain: 1.0, fpnSigma: 0.01 },
+    });
+    expect(setDetectorNoise).toHaveBeenCalledTimes(1);
+    const call = setDetectorNoise.mock.calls[0][0];
+    expect(Number.isNaN(call.readoutSigma)).toBe(true);
+    expect(Number.isNaN(call.photonGain)).toBe(true);
+    expect(Number.isNaN(call.fpnSigma)).toBe(true);
+  });
+
+  it('propagates DPRScale=+Infinity: photonGain and sigmas are Infinity', () => {
+    const { stub, setDetectorNoise } = makeMegaShader(true);
+    applyScaledNoiseSettings({
+      megaShader: stub,
+      currentDPRScale: Number.POSITIVE_INFINITY,
+      baseNoiseSettings: { readoutSigma: 0.02, photonGain: 1.0, fpnSigma: 0.01 },
+    });
+    expect(setDetectorNoise).toHaveBeenCalledTimes(1);
+    const call = setDetectorNoise.mock.calls[0][0];
+    expect(call.readoutSigma).toBe(Number.POSITIVE_INFINITY);
+    expect(call.photonGain).toBe(Number.POSITIVE_INFINITY);
+    expect(call.fpnSigma).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('DPRScale=-Infinity: sigmas → -Inf, photonGain → +Inf (k²)', () => {
+    const { stub, setDetectorNoise } = makeMegaShader(true);
+    applyScaledNoiseSettings({
+      megaShader: stub,
+      currentDPRScale: Number.NEGATIVE_INFINITY,
+      baseNoiseSettings: { readoutSigma: 0.02, photonGain: 1.0, fpnSigma: 0.01 },
+    });
+    expect(setDetectorNoise).toHaveBeenCalledTimes(1);
+    const call = setDetectorNoise.mock.calls[0][0];
+    expect(call.readoutSigma).toBe(Number.NEGATIVE_INFINITY);
+    // k² for k = -Infinity is +Infinity.
+    expect(call.photonGain).toBe(Number.POSITIVE_INFINITY);
+    expect(call.fpnSigma).toBe(Number.NEGATIVE_INFINITY);
+  });
 });
