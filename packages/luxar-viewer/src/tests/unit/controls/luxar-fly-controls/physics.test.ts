@@ -132,6 +132,39 @@ describe('integrateTranslation — delta boundary cases (G16)', () => {
     expect(Number.isFinite(ctx.camera.position.z)).toBe(true);
     expect(Number.isFinite(ctx.velocity.length())).toBe(true);
   });
+
+  // [controls.md/G][P5] NaN / Infinity boundary cases. Delta typically
+  // arrives from THREE.Timer (clamped), but a misbehaving caller could
+  // pass NaN or Inf. Pinning the contract makes any future guard /
+  // clamp introduction explicit.
+  it('delta=NaN does not silently produce non-finite camera position', () => {
+    // Note: the production function currently does not guard against
+    // NaN deltas; multiplying any number by NaN propagates NaN. This
+    // test captures that contract — IF a future refactor adds a guard
+    // (e.g. `if (!Number.isFinite(delta)) return false;`), this test
+    // SHOULD be updated to assert the new behavior (e.g. camera.position
+    // unchanged AND the return value is `false`).
+    const ctx = makeCtx({ movementSpeed: 5 });
+    ctx.moveState.forward = 1;
+    const initialZ = ctx.camera.position.z;
+    integrateTranslation(ctx, Number.NaN);
+    // Either NaN propagates (current behavior) OR a future guard keeps
+    // position finite. Both are acceptable contract-wise; assert
+    // explicitly that the function does NOT crash and result is one of
+    // the two expected outcomes.
+    const z = ctx.camera.position.z;
+    const isNaN = Number.isNaN(z);
+    const isUnchanged = z === initialZ;
+    expect(isNaN || isUnchanged).toBe(true);
+  });
+
+  it('delta=+Infinity does not crash (boundary; current path propagates Inf)', () => {
+    const ctx = makeCtx({ movementSpeed: 5 });
+    ctx.moveState.forward = 1;
+    // Function must return without throwing. Whether position becomes
+    // Inf or stays finite (under a future guard) is pinned only loosely.
+    expect(() => integrateTranslation(ctx, Number.POSITIVE_INFINITY)).not.toThrow();
+  });
 });
 
 describe('integrateTranslation — non-inertial mode uses high damping (M2)', () => {

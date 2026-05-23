@@ -165,35 +165,51 @@ describe('OPFSStore', () => {
     });
 
     it('should update LRU order on get', async () => {
+      // [cache.md/W13][P2] Previous version had a "Order counter should have
+      // increased" comment but only asserted `count === 2`. Drive the
+      // LRU-order contract directly by inspecting the internal `order` field
+      // on the index entries: after the access to key1, key1's order MUST be
+      // greater than key2's (most-recently-used).
       await store.set('key1', new Uint8Array(10));
       await store.set('key2', new Uint8Array(10));
 
-      // Access key1 (should update order)
+      const idx = (store as any).index as Map<string, { size: number; order: number }>;
+      const k1Before = idx.get('key1')!.order;
+      const k2Before = idx.get('key2')!.order;
+      expect(k2Before).toBeGreaterThan(k1Before); // key2 set after key1
+
+      // Access key1 — should bump its order above key2.
       await store.get('key1');
 
-      // Order counter should have increased
+      const k1After = idx.get('key1')!.order;
+      const k2After = idx.get('key2')!.order;
+      expect(k1After).toBeGreaterThan(k2After);
+      // key2's order is untouched by the unrelated get.
+      expect(k2After).toBe(k2Before);
+
       const stats = store.getStats();
       expect(stats.count).toBe(2);
     });
 
-    it('should detect corrupted data via size mismatch', async () => {
-      // Note: This test validates the corruption detection logic.
-      // The simplified mock doesn't track bucketed paths, so we test
-      // by directly manipulating the stats/index instead.
+    it('happy-path round-trip preserves byte content (sized payload)', async () => {
+      // [cache.md/W14][P2] Renamed from "should detect corrupted data via
+      // size mismatch": that prior name claimed to verify a contract the
+      // body never exercised (the corruption-detection branch lives in a
+      // later test at ~L701). Recast as the legitimate happy-path round-trip
+      // it actually is, and pin the assertion to byte-for-byte equality
+      // rather than `toBeDefined() + byteLength`.
       const data = new Uint8Array(1000);
+      for (let i = 0; i < 1000; i++) data[i] = (i * 7) & 0xff;
       await store.set('test.key', data);
 
-      // Verify data was stored
       const stats = store.getStats();
       expect(stats.size).toBe(1000);
       expect(stats.count).toBe(1);
 
-      // The corruption detection logic checks: entry.size !== data.byteLength
-      // This is tested implicitly when the file system returns wrong-sized data.
-      // With the simplified mock, we verify the happy path works correctly.
       const retrieved = await store.get('test.key');
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.byteLength).toBe(1000);
+      // Exact-bytes equality: any silent truncation / mid-payload corruption
+      // would now fail.
+      expect(retrieved).toEqual(data);
     });
   });
 
@@ -217,10 +233,14 @@ describe('OPFSStore', () => {
     });
 
     it('should handle nested paths', async () => {
-      await store.set('a/b/c/data.bin', new Uint8Array(100));
+      // [cache.md/Wn][P2] Strengthen from `toBeDefined() + byteLength` to
+      // exact-bytes equality, which catches any path-mangling regression that
+      // returns a buffer of the right size but the wrong contents.
+      const data = new Uint8Array(100);
+      for (let i = 0; i < 100; i++) data[i] = i & 0xff;
+      await store.set('a/b/c/data.bin', data);
       const retrieved = await store.get('a/b/c/data.bin');
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.byteLength).toBe(100);
+      expect(retrieved).toEqual(data);
     });
   });
 
@@ -564,33 +584,44 @@ describe('OPFSStore', () => {
 
   describe('Metadata Persistence', () => {
     it('should persist metadata on dispose', async () => {
+      // [cache.md/Wn][P2] Previously asserted `toBeDefined()` then guarded
+      // the field-shape assertions behind `if (metaStr)` — meaning a
+      // regression that produced an empty/falsy string would silently skip
+      // the inner asserts. Drop the if and force unconditional shape checks.
       await store.set('key1', new Uint8Array(1000));
       store.setContentHash('test-hash');
 
       await store.dispose();
 
-      // Check that metadata was written
       const metaStr = mockFS.metaFiles.get('_cache_meta.json');
-      expect(metaStr).toBeDefined();
-
-      if (metaStr) {
-        const meta = JSON.parse(metaStr);
-        expect(meta.baseUrl).toBe('https://example.com/data.zarr');
-        expect(meta.contentHash).toBe('test-hash');
-        expect(meta.totalSize).toBe(1000);
-      }
+      expect(typeof metaStr).toBe('string');
+      const meta = JSON.parse(metaStr as string);
+      expect(meta.baseUrl).toBe('https://example.com/data.zarr');
+      expect(meta.contentHash).toBe('test-hash');
+      expect(meta.totalSize).toBe(1000);
     });
 
     it('dispose during pending metadata save awaits the in-flight save', async () => {
-      // Trigger scheduleMetadataSave by mutating state, then await dispose.
-      // The in-flight save tracker means dispose must wait for the save
-      // to complete before returning.
+      // [cache.md/W27][P2] Previous version asserted only `metaFiles.get(...)
+      // .toBeDefined()`. The mere presence of the file says nothing about
+      // whether dispose actually awaited the save (the file could appear from
+      // a still-pending timer-driven save). Strengthen by pinning the
+      // serialized contents — only a completed save writes the post-set
+      // totalSize. A premature dispose return would leave a stale/empty
+      // payload OR (because the file is checked synchronously, with no
+      // post-dispose yield) no payload at all.
       await store.set('key1', new Uint8Array(100));
       // Wait > METADATA_SAVE_DELAY to start the save.
       await new Promise((r) => setTimeout(r, 1100));
       await store.dispose();
-      // Metadata is now persisted.
-      expect(mockFS.metaFiles.get('_cache_meta.json')).toBeDefined();
+      const metaStr = mockFS.metaFiles.get('_cache_meta.json');
+      expect(typeof metaStr).toBe('string');
+      const meta = JSON.parse(metaStr as string);
+      // The save flushed the post-set state — totalSize reflects the 100-byte
+      // payload, not a pre-set zero (which would indicate dispose returned
+      // before the save resolved).
+      expect(meta.totalSize).toBe(100);
+      expect(Array.isArray(meta.entries) || typeof meta.entries === 'object').toBe(true);
     });
 
     it('set/get/touch after dispose are no-ops', async () => {
@@ -756,11 +787,14 @@ describe('OPFSStore', () => {
 
   describe('Edge Cases', () => {
     it('should handle zero-size files', async () => {
+      // [cache.md/Wn][P2] Strengthen `toBeDefined()` → exact-bytes via
+      // `toEqual(new Uint8Array(0))`. The previous pair (`toBeDefined()` +
+      // `byteLength === 0`) was satisfied by `null as any` if a regression
+      // ever made `get` return null-coerced empties; exact equality nails it.
       await store.set('empty', new Uint8Array(0));
 
       const retrieved = await store.get('empty');
-      expect(retrieved).toBeDefined();
-      expect(retrieved?.byteLength).toBe(0);
+      expect(retrieved).toEqual(new Uint8Array(0));
 
       const stats = store.getStats();
       expect(stats.size).toBe(0);
@@ -768,13 +802,21 @@ describe('OPFSStore', () => {
     });
 
     it('should handle rapid sequential writes', async () => {
-      for (let i = 0; i < 100; i++) {
-        await store.set(`key${i}`, new Uint8Array(1000));
+      // [cache.md/W16][P2] Previous `count > 0 && size <= 100MB` was
+      // trivially satisfied (a regression that wrote only the first key
+      // would still pass `> 0`). The store's maxSize is 1MB (see beforeEach
+      // setup), so 100 × 1000-byte writes total exactly 100 000 bytes —
+      // well within capacity, so all 100 should be retained. Pin counts
+      // and total size exactly.
+      const N = 100;
+      const BYTES = 1000;
+      for (let i = 0; i < N; i++) {
+        await store.set(`key${i}`, new Uint8Array(BYTES));
       }
 
       const stats = store.getStats();
-      expect(stats.count).toBeGreaterThan(0);
-      expect(stats.size).toBeLessThanOrEqual(100 * 1024 * 1024);
+      expect(stats.count).toBe(N);
+      expect(stats.size).toBe(N * BYTES);
     });
 
     it('should handle concurrent operations', async () => {

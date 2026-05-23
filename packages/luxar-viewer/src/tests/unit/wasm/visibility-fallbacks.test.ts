@@ -2,15 +2,24 @@
  * Unit tests for the WASM TypeScript-fallback visibility / spatial helpers:
  * - spatial.query_chunks_for_view
  * - points.compute_nd_visibility_points
+ * - lines.compute_nd_visibility_lines
  * - gsplats.compute_nd_visibility_gsplats
  *
  * Pure math on typed arrays, no mocks. The same fixtures double as
  * cross-implementation reference data for the Rust→WASM build.
+ *
+ * [wasm.md/G][P8] three-geometry symmetry: Lines was previously absent from
+ * this file; round 7 fills the gap by adding parallel happy-path / far-away /
+ * mixed / zero-segments cases.
+ * [wasm.md/G][P5] WASM 16-dim boundary: round 7 adds ndim=16 (in-range) and
+ * ndim=17 (out-of-WASM-range, exercises JS fallback path) cases for all
+ * three geometries.
  */
 
 import { describe, it, expect } from 'vitest';
 import { query_chunks_for_view } from '../../../wasm/typescript/spatial';
 import { compute_nd_visibility_points } from '../../../wasm/typescript/points';
+import { compute_nd_visibility_lines } from '../../../wasm/typescript/lines';
 import { compute_nd_visibility_gsplats } from '../../../wasm/typescript/gsplats';
 
 describe('query_chunks_for_view', () => {
@@ -283,5 +292,301 @@ describe('compute_nd_visibility_gsplats', () => {
     );
     expect(n).toBe(0);
     expect(Array.from(output)).toEqual([99, 99]); // untouched
+  });
+});
+
+// [wasm.md/G][P8] Three-geometry symmetry: Lines visibility was missing from
+// this file. The Points and GSplats sections above pin the analogous cases.
+describe('compute_nd_visibility_lines', () => {
+  it('a segment with both endpoints at the slice is visible', () => {
+    // 3D segment from (0,0,0) → (0,0,0) — both at slice with non-zero tolerance.
+    const vertices = new Float32Array([0, 0, 0, 0, 0, 0]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([0, 0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      new Float32Array([0, 0, 0]),
+      new Float32Array([0.1, 0.1, 0.1]),
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+
+  it('a segment with only one endpoint inside is visible (endpoint-based OR)', () => {
+    // v0 inside, v1 far away → segment is visible (per docstring).
+    const vertices = new Float32Array([0, 0, 0, 100, 100, 100]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([0, 0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      new Float32Array([0, 0, 0]),
+      new Float32Array([0.1, 0.1, 0.1]),
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+
+  it('a segment with both endpoints far is hidden', () => {
+    const vertices = new Float32Array([100, 0, 0, 100, 100, 100]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([0, 0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      new Float32Array([0, 0, 0]),
+      new Float32Array([0.1, 0.1, 0.1]),
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('per-vertex width extends visibility (mirrors point.radius contract)', () => {
+    // Endpoint at distance 5 along x, width=10 → effectiveTolerance=10.1,
+    // normalized=5/10.1≈0.495, distSq≈0.245 < 1 → visible.
+    const vertices = new Float32Array([5, 0, 0, 100, 100, 100]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([10, 0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      new Float32Array([0, 0, 0]),
+      new Float32Array([0.1, 0.1, 0.1]),
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+  });
+
+  it('mixed visibility across many segments returns the correct count + mask', () => {
+    // 3 segments in 1D: [0,0] (visible), [100,100] (hidden), [0.05,100] (visible — v0 inside)
+    const vertices = new Float32Array([0, 0, 100, 100, 0.05, 100]);
+    const segments = new Uint32Array([0, 1, 2, 3, 4, 5]);
+    const widths = new Float32Array([0, 0, 0, 0, 0, 0]);
+    const output = new Uint8Array(3);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      new Float32Array([0]),
+      new Float32Array([0.1]),
+      1,
+      3,
+      output
+    );
+    expect(n).toBe(2);
+    expect(Array.from(output)).toEqual([1, 0, 1]);
+  });
+
+  it('numSegments=0 returns 0 and writes nothing', () => {
+    const output = new Uint8Array(2).fill(99);
+    const n = compute_nd_visibility_lines(
+      new Float32Array(0),
+      new Uint32Array(0),
+      new Float32Array(0),
+      new Float32Array([0]),
+      new Float32Array([0.1]),
+      1,
+      0,
+      output
+    );
+    expect(n).toBe(0);
+    expect(Array.from(output)).toEqual([99, 99]); // untouched
+  });
+});
+
+// [wasm.md/G][P5] WASM 16-dim boundary tests. The JS fallback supports
+// arbitrary ndim (CLAUDE.md: "For >16D data: TypeScript fallback is used
+// automatically"). Pin the upper-boundary contract for all three geometry
+// types: ndim=16 (in-WASM-range) and ndim=17 (above WASM range — fallback
+// path). If a refactor accidentally introduces a fixed-size buffer in the
+// JS fallback that mirrors the WASM 16-cap, these tests fail loudly.
+describe('TypeScript fallback at WASM 16-dim boundary', () => {
+  describe('compute_nd_visibility_points', () => {
+    it('handles ndim=16 (WASM boundary, in range) correctly', () => {
+      const ndim = 16;
+      const positions = new Float32Array(ndim); // single point at origin
+      const radii = new Float32Array([0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('handles ndim=17 (above WASM range, JS fallback only) correctly', () => {
+      const ndim = 17;
+      // Point at all-zeros, slice at all-zeros, tolerance per-dim → visible.
+      const positions = new Float32Array(ndim);
+      const radii = new Float32Array([0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('handles ndim=17 with a far-away point (verifies fallback distance calculation)', () => {
+      const ndim = 17;
+      const positions = new Float32Array(ndim);
+      positions[5] = 100; // far along dimension 5
+      const radii = new Float32Array([0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(0);
+      expect(output[0]).toBe(0);
+    });
+  });
+
+  describe('compute_nd_visibility_lines', () => {
+    it('handles ndim=16 (WASM boundary, in range) correctly', () => {
+      const ndim = 16;
+      const vertices = new Float32Array(2 * ndim); // both vertices at origin
+      const segments = new Uint32Array([0, 1]);
+      const widths = new Float32Array([0, 0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('handles ndim=17 (above WASM range, JS fallback only) correctly', () => {
+      const ndim = 17;
+      const vertices = new Float32Array(2 * ndim);
+      const segments = new Uint32Array([0, 1]);
+      const widths = new Float32Array([0, 0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+  });
+
+  describe('compute_nd_visibility_gsplats', () => {
+    it('handles ndim=16 (WASM boundary, in range) correctly', () => {
+      const ndim = 16;
+      // Cholesky packed lower-triangular size = ndim*(ndim+1)/2.
+      const choleskySize = (ndim * (ndim + 1)) / 2;
+      const centers = new Float32Array(ndim);
+      // Identity-ish Cholesky: diagonal entries = 1, off-diag = 0.
+      // Lower-triangular packed layout: [L00, L10, L11, L20, L21, L22, ...]
+      const cholesky = new Float32Array(choleskySize);
+      let idx = 0;
+      for (let row = 0; row < ndim; row++) {
+        for (let col = 0; col <= row; col++) {
+          cholesky[idx++] = col === row ? 1 : 0;
+        }
+      }
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_gsplats(
+        centers,
+        cholesky,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('handles ndim=17 (above WASM range, JS fallback only) correctly', () => {
+      const ndim = 17;
+      const choleskySize = (ndim * (ndim + 1)) / 2;
+      const centers = new Float32Array(ndim);
+      const cholesky = new Float32Array(choleskySize);
+      let idx = 0;
+      for (let row = 0; row < ndim; row++) {
+        for (let col = 0; col <= row; col++) {
+          cholesky[idx++] = col === row ? 1 : 0;
+        }
+      }
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_gsplats(
+        centers,
+        cholesky,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
   });
 });

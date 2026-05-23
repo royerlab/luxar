@@ -163,6 +163,45 @@ describe('StringController', () => {
 
       expect(result).toBe(controller);
     });
+
+    // [ui.md/G — boundary cases on gui library components] Empty / long /
+    // special-character labels. Pinned because UI labels can come from
+    // arbitrary user data (dataset metadata) and a regression that
+    // mishandled any of these inputs would surface as a crash or XSS.
+
+    it('accepts an empty-string label and writes it to the label element', () => {
+      controller.name('');
+      const label = controller.domElement.querySelector('.luxar-gui__controller-name');
+      expect(label).not.toBeNull();
+      expect(label?.textContent).toBe('');
+    });
+
+    it('accepts a very long label (300 chars) without truncating the underlying textContent', () => {
+      const longLabel = 'A'.repeat(300);
+      controller.name(longLabel);
+      const label = controller.domElement.querySelector('.luxar-gui__controller-name');
+      // textContent must contain the full payload (any display-side
+      // truncation is CSS-only and not observable here).
+      expect(label?.textContent?.length).toBe(300);
+      expect(label?.textContent).toBe(longLabel);
+    });
+
+    it('escapes special characters in the label by using textContent, not innerHTML (XSS safety)', () => {
+      // textContent assignment is the safe path — a regression that
+      // switched to innerHTML would interpret the markup. We assert by
+      // checking innerHTML serializes the entities, not raw '<' / '&'.
+      const payload = '<img src=x onerror=alert(\'xss\')>&\'"';
+      controller.name(payload);
+      const label = controller.domElement.querySelector(
+        '.luxar-gui__controller-name'
+      ) as HTMLElement;
+      expect(label).not.toBeNull();
+      // Should NOT contain a real <img> child — the literal characters
+      // were assigned to textContent and re-serialized as entities.
+      expect(label.querySelector('img')).toBeNull();
+      // The original characters survive a textContent round-trip:
+      expect(label.textContent).toBe(payload);
+    });
   });
 
   describe('dispose()', () => {

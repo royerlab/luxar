@@ -100,10 +100,20 @@ describe('LayersPanel — construction', () => {
     showToastMock.mockClear();
   });
 
-  it('starts hidden with empty layer state', () => {
+  it('starts hidden with empty layer state and does NOT inject any DOM into the container', () => {
+    // [ui.md/W2][P2] Previously asserted isVisible()===false and count===0,
+    // which collapses to "did not crash". Strengthen: the constructor
+    // must not eagerly create the panel DOM — that's done lazily in
+    // initFromScene(). A regression that built the panel eagerly would
+    // pollute the container.
+    expect(container.children.length).toBe(0);
     const panel = new LayersPanel(container, animationController);
     expect(panel.isVisible()).toBe(false);
     expect(panel.layerState.count).toBe(0);
+    // Container should remain empty until initFromScene is called.
+    expect(container.children.length).toBe(0);
+    // No selection state either.
+    expect(panel.layerState.getSelected().length).toBe(0);
   });
 
   it('layerState getter returns the same instance across calls', () => {
@@ -113,16 +123,23 @@ describe('LayersPanel — construction', () => {
     expect(state1).toBe(state2);
   });
 
-  it('show() before initFromScene is a no-op (no panelEl yet)', () => {
+  it('show() before initFromScene is a no-op — panel stays hidden and DOM is untouched', () => {
+    // [ui.md/W2][P2] Previously only asserted isVisible()===false.
+    // Strengthen: container DOM must also stay empty (no late panel
+    // creation as a side effect of show()).
     const panel = new LayersPanel(container, animationController);
     panel.show();
     expect(panel.isVisible()).toBe(false);
+    expect(container.children.length).toBe(0);
   });
 
-  it('hide() before initFromScene is a no-op', () => {
+  it('hide() before initFromScene is a no-op — no DOM created, no exception thrown', () => {
+    // [ui.md/W2][P2] Previously only asserted !toThrow() and isVisible()===false.
+    // Strengthen by checking the container is still empty.
     const panel = new LayersPanel(container, animationController);
     expect(() => panel.hide()).not.toThrow();
     expect(panel.isVisible()).toBe(false);
+    expect(container.children.length).toBe(0);
   });
 });
 
