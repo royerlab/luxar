@@ -14,7 +14,8 @@
  * see utils.md OOS3) so any future hardening is intentional.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, test } from 'vitest';
+import * as fc from 'fast-check';
 import { escapeHtml } from '../../../utils/escape-html';
 
 describe('escapeHtml', () => {
@@ -100,6 +101,90 @@ describe('escapeHtml', () => {
       expect(count(out, '&gt;')).toBe(2);
       expect(count(out, '&quot;')).toBe(2);
       expect(count(out, '&amp;')).toBe(1);
+    });
+  });
+
+  describe('property tests [utils.md/H-candidate][P12]', () => {
+    // Counts non-overlapping occurrences of `sub` in `s`.
+    const count = (s: string, sub: string): number => s.split(sub).length - 1;
+
+    test('escape never decreases the length of the string', () => {
+      // Each substitution either leaves length unchanged (no special chars)
+      // or strictly increases it (entities are >= 2 chars longer than the
+      // single char they replace). A mutation that drops a substitution
+      // (or returns the input verbatim under some condition) would still
+      // pass — except this property forces the entity-shape contract on
+      // *all* of <, >, &, ", '.
+      fc.assert(
+        fc.property(fc.string({ maxLength: 64 }), (s) => {
+          const escaped = escapeHtml(s);
+          expect(escaped.length).toBeGreaterThanOrEqual(s.length);
+        })
+      );
+    });
+
+    test('safe strings (no special chars) are pass-through (identity)', () => {
+      // Restrict to ASCII letters/digits/spaces — none of which appear in
+      // the substitution set. The function must be identity here.
+      const safeChar = fc.constantFrom(
+        ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?'.split('')
+      );
+      fc.assert(
+        fc.property(fc.array(safeChar, { maxLength: 64 }), (chars) => {
+          const s = chars.join('');
+          expect(escapeHtml(s)).toBe(s);
+        })
+      );
+    });
+
+    test('output never contains any of the raw special chars after escape', () => {
+      // Injectivity-of-shape: every <, >, &, ", \' in the input must be
+      // rewritten in the output. Raw `<`, `>`, `"`, `'` cannot survive any
+      // valid escape — they all have substitutions that do not include the
+      // raw char. `&` IS allowed in output (entity prefix) but only as part
+      // of one of five known entities; total `&` count in output equals the
+      // sum of entity occurrences.
+      const specialOrAlnum = fc.constantFrom(
+        ...'<>&"\'abcdefghijklmnopqrstuvwxyz0123456789 '.split('')
+      );
+      fc.assert(
+        fc.property(fc.array(specialOrAlnum, { maxLength: 64 }), (chars) => {
+          const s = chars.join('');
+          const out = escapeHtml(s);
+          expect(count(out, '<')).toBe(0);
+          expect(count(out, '>')).toBe(0);
+          expect(count(out, '"')).toBe(0);
+          expect(count(out, "'")).toBe(0);
+          const ampInOut = count(out, '&');
+          const entityCount =
+            count(out, '&amp;') +
+            count(out, '&lt;') +
+            count(out, '&gt;') +
+            count(out, '&quot;') +
+            count(out, '&#39;');
+          expect(ampInOut).toBe(entityCount);
+        })
+      );
+    });
+
+    test('input ampersand count equals output &amp; count when no other specials present', () => {
+      // Isolated ampersand invariant: when the input contains only `&` and
+      // non-special chars, every `&` becomes exactly one `&amp;`. This pins
+      // the first-escape-ampersand-rule across arbitrary inputs.
+      const safeNonSpecial = fc.constantFrom(
+        ...'abcdefghijklmnopqrstuvwxyz0123456789 '.split('')
+      );
+      fc.assert(
+        fc.property(
+          fc.array(fc.oneof(fc.constant('&'), safeNonSpecial), { maxLength: 32 }),
+          (chars) => {
+            const s = chars.join('');
+            const ampsIn = count(s, '&');
+            const out = escapeHtml(s);
+            expect(count(out, '&amp;')).toBe(ampsIn);
+          }
+        )
+      );
     });
   });
 });

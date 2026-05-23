@@ -279,6 +279,43 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
   });
 
+  describe('registerArrayBounds normalization [cache.md/G5][P5]', () => {
+    it('strips a leading slash so bounds are usable from both call sites', () => {
+      // [cache.md/G5][P5] Source comment at chunk-prefetcher.ts:289-296
+      // explicitly normalizes the leading slash so zarrita keys (with
+      // leading `/`) and loader paths (without) both find the same
+      // bounds — but no test directly drove the leading-slash path.
+      //
+      // The contract we pin: when the producer registers with leading
+      // slash, the lookup via the SAME shape (slashed key) still finds
+      // bounds and dispatches neighbors. Mutating the source to drop the
+      // `if (normalized !== arrayPath) this.maxChunkIndices.set(arrayPath, ...)`
+      // line would break the slashed-form lookup, which this test pins.
+      const slashedStore = new MockStore();
+      const p = new ChunkPrefetcher(slashedStore as any, { enabled: true });
+      p.registerArrayBounds('/leading/path', [10240, 10240], [1024, 1024]);
+
+      // Access via the SLASHED key — must prefetch neighbors because
+      // the bounds lookup succeeds via the `arrayPath` entry.
+      p.onAccess('/leading/path/1.1');
+      expect(slashedStore.getResult.mock.calls.length).toBeGreaterThan(0);
+
+      // A fresh prefetcher registered WITHOUT a leading slash must also
+      // succeed when accessed via the un-slashed form (the canonical
+      // case — control for the slashed test above).
+      const unSlashedStore = new MockStore();
+      const p2 = new ChunkPrefetcher(unSlashedStore as any, { enabled: true });
+      p2.registerArrayBounds('leading/path', [10240, 10240], [1024, 1024]);
+      p2.onAccess('leading/path/1.1');
+      expect(unSlashedStore.getResult.mock.calls.length).toBeGreaterThan(0);
+
+      // Symmetry — same neighbor count from both registration forms.
+      expect(slashedStore.getResult.mock.calls.length).toBe(
+        unSlashedStore.getResult.mock.calls.length
+      );
+    });
+  });
+
   describe('Configuration', () => {
     it('should respect enabled flag', () => {
       const disabledPrefetcher = new ChunkPrefetcher(mockStore as any, { enabled: false });
@@ -442,29 +479,54 @@ describe('ChunkPrefetcher - Unit Tests', () => {
   });
 
   describe('Statistics', () => {
-    it('should return accurate statistics', async () => {
-      const statsPrefetcher = new ChunkPrefetcher(mockStore as any, {
+    it('should return accurate statistics [cache.md/W21][P2]', async () => {
+      // [cache.md/W21][P2] Previous version conflated `queued + inFlight === 4`
+      // into a single sum. That assertion is satisfied by *any* split of the 4
+      // neighbors between the two counters — including a regression that puts
+      // all 4 into one bucket. Strengthen by pinning each counter exactly,
+      // using a blocking mock so the dispatch state is observable.
+      //
+      // With maxConcurrent=2 and a 4-neighbor onAccess, the deterministic
+      // split is exactly 2 inFlight (the dispatched ones) + 2 queued.
+      const resolvers: Array<(value: { ok: true; value: Uint8Array }) => void> = [];
+      const slowMockStore = {
+        getResult: vi.fn().mockImplementation(
+          () =>
+            new Promise<{ ok: true; value: Uint8Array }>((resolve) => {
+              resolvers.push((v) => resolve(v));
+            })
+        ),
+        setPrefetcher: vi.fn(),
+      };
+      const statsPrefetcher = new ChunkPrefetcher(slowMockStore as any, {
         enabled: true,
         maxConcurrent: 2,
       });
-
-      // Register bounds so prefetcher generates adjacent chunks
       statsPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
 
       statsPrefetcher.onAccess('data/1.1'); // 4 neighbors
 
-      // Check initial state
+      // Wait until processQueue has dispatched as many as it can.
+      await waitFor(() => slowMockStore.getResult.mock.calls.length >= 2);
+
       const stats1 = statsPrefetcher.getStats();
       expect(stats1.enabled).toBe(true);
-      expect(stats1.queued + stats1.inFlight).toBe(4);
+      // Exact split, not just a sum: 2 dispatched + 2 awaiting a free slot.
+      expect(stats1.inFlight).toBe(2);
+      expect(stats1.queued).toBe(2);
 
-      // Wait for completion
+      // Resolve all four fetches so the queue drains.
+      resolvers.forEach((r) => r({ ok: true, value: new Uint8Array([1]) }));
+      // Allow chained .finally() ⇒ processQueue dispatches the remaining 2.
+      await waitFor(() => slowMockStore.getResult.mock.calls.length >= 4);
+      // Resolve the second wave too.
+      resolvers.slice(2).forEach((r) => r({ ok: true, value: new Uint8Array([1]) }));
+
       await waitFor(() => {
         const s = statsPrefetcher.getStats();
         return s.inFlight === 0 && s.queued === 0;
       });
 
-      // Check final state
       const stats2 = statsPrefetcher.getStats();
       expect(stats2.queued).toBe(0);
       expect(stats2.inFlight).toBe(0);
@@ -594,6 +656,35 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(local.getStats().queuedHigh).toBe(1);
       expect(local.getStats().queuedNormal).toBe(0);
       local.dispose();
+    });
+
+    it('enqueueWithPriority with an empty iterable does NOT trigger processQueue [cache.md/G15][P5]', () => {
+      // [cache.md/G15][P5] Source guards `if (added > 0) processQueue()`
+      // at line 158 — but the early-return for the empty-iterable case
+      // and the `enabled || isDisposed` guard at line 153 had no test pin.
+      // Pin: an empty input must not trigger a fetch.
+      const local = new ChunkPrefetcher(mockStore as any, { enabled: true });
+      mockStore.getResult.mockClear();
+      local.enqueueWithPriority([], 'high');
+      local.enqueueWithPriority([], 'normal');
+      expect(mockStore.getResult).not.toHaveBeenCalled();
+      expect(local.getStats().queuedHigh).toBe(0);
+      expect(local.getStats().queuedNormal).toBe(0);
+      local.dispose();
+    });
+
+    it('enqueueWithPriority after dispose() is a no-op [cache.md/G15][P5]', () => {
+      // [cache.md/G15][P5] The `if (!this.enabled || this.isDisposed) return`
+      // guard had no test pin. Pin: post-dispose enqueue must not enqueue,
+      // not dispatch, and not throw.
+      const local = new ChunkPrefetcher(mockStore as any, { enabled: true });
+      local.dispose();
+      mockStore.getResult.mockClear();
+      expect(() => local.enqueueWithPriority(['k'], 'high')).not.toThrow();
+      expect(() => local.enqueueWithPriority(['k'], 'normal')).not.toThrow();
+      expect(mockStore.getResult).not.toHaveBeenCalled();
+      expect(local.getStats().queuedHigh).toBe(0);
+      expect(local.getStats().queuedNormal).toBe(0);
     });
 
     it(

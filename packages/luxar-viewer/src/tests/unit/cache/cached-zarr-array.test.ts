@@ -93,6 +93,50 @@ describe('cached-zarr-array', () => {
       expect(wrapped.chunks).toEqual([50, 3]);
     });
 
+    it('passes through every direct-access property in the proxy short-list [cache.md/G13][P5]', () => {
+      // [cache.md/G13][P5] The proxy lists 12 properties for direct access
+      // (cached-zarr-array.ts:109-124): attrs, shape, dtype, chunks, order,
+      // fill_value, fillValue, dimensionNames, compressor, filters, codec,
+      // codecs. Pre-audit only 4 were exercised; the other 8 were silently
+      // uncovered — a regression dropping any of them from the list would
+      // fall through to the generic Reflect.get path and crash on zarrita's
+      // private-field getters. Pin all 12 here.
+      const sentinel = {
+        attrs: { foo: 'bar' },
+        shape: [10, 20],
+        dtype: 'int32',
+        chunks: [5, 10],
+        order: 'C',
+        fill_value: 0,
+        fillValue: 0,
+        dimensionNames: ['z', 'y'],
+        compressor: { id: 'blosc' },
+        filters: [{ id: 'delta' }],
+        codec: { name: 'zstd' },
+        codecs: [{ name: 'zstd' }],
+        getChunk: vi.fn(),
+      };
+      const wrapped = wrapWithCache(sentinel as any, cache, '/sentinel') as unknown as Record<
+        string,
+        unknown
+      >;
+
+      // Each property must round-trip *by reference* (proxy reads the same
+      // value object directly off `target`, not via Reflect.get).
+      expect(wrapped.attrs).toBe(sentinel.attrs);
+      expect(wrapped.shape).toBe(sentinel.shape);
+      expect(wrapped.dtype).toBe(sentinel.dtype);
+      expect(wrapped.chunks).toBe(sentinel.chunks);
+      expect(wrapped.order).toBe(sentinel.order);
+      expect(wrapped.fill_value).toBe(sentinel.fill_value);
+      expect(wrapped.fillValue).toBe(sentinel.fillValue);
+      expect(wrapped.dimensionNames).toBe(sentinel.dimensionNames);
+      expect(wrapped.compressor).toBe(sentinel.compressor);
+      expect(wrapped.filters).toBe(sentinel.filters);
+      expect(wrapped.codec).toBe(sentinel.codec);
+      expect(wrapped.codecs).toBe(sentinel.codecs);
+    });
+
     it('should handle different chunk coordinates as separate cache entries', async () => {
       const mockArray = createMockZarrArray();
       const wrapped = wrapWithCache(mockArray, cache, '/points/positions');

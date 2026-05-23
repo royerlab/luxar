@@ -11,6 +11,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fc from 'fast-check';
 import { withTimeout } from '../../../../../workers/worker-pool/timeout/with-timeout';
 import { combineSignals } from '../../../../../workers/worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from '../../../../../workers/worker-pool/timeout/pick-timeout-ms';
@@ -317,5 +318,43 @@ describe('getConfiguredWorkerCount — pure helper (G8, H2)', () => {
       value: undefined,
     });
     expect(getConfiguredWorkerCount(0)).toBe(3);
+  });
+
+  // workers.md [H2][P12] fast-check property test: getConfiguredWorkerCount
+  // is monotonic in configCount within [1, cap] and idempotent above the
+  // cap (output never decreases as input grows past cap). For configCount=0
+  // or <0 the auto branch fires (cap). All outputs are clamped to >=1.
+  it('[property] result is always in [1, cap] regardless of configCount [workers.md/H2][P12]', () => {
+    // Pin navigator to a known cap to make the property check deterministic.
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { hardwareConcurrency: 8 },
+    });
+    const cap = 7;
+    fc.assert(
+      fc.property(fc.integer({ min: -1000, max: 1000 }), (n) => {
+        const result = getConfiguredWorkerCount(n);
+        return result >= 1 && result <= cap;
+      }),
+      { numRuns: 200 }
+    );
+  });
+
+  it('[property] idempotent above cap: result(n) === result(n+k) for n,k > cap [workers.md/H2][P12]', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { hardwareConcurrency: 8 },
+    });
+    const cap = 7;
+    fc.assert(
+      fc.property(
+        fc.integer({ min: cap + 1, max: 100 }),
+        fc.integer({ min: 0, max: 1000 }),
+        (n, k) => {
+          return getConfiguredWorkerCount(n) === getConfiguredWorkerCount(n + k);
+        }
+      ),
+      { numRuns: 100 }
+    );
   });
 });

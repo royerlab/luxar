@@ -230,6 +230,27 @@ describe('ValidationQueue.serialize', () => {
     await p3probe;
     expect(cancelled).toBe(true);
   });
+
+  it('cancel(unknownId) is a safe no-op [cache.md/G11][P5]', async () => {
+    // [cache.md/G11][P5] cancel on an id with no entry must not throw and
+    // must not perturb any unrelated queue. The comment in the source
+    // implies safety but no test pinned it.
+    const id = freshId('unrelated');
+    const taskGate = deferred<void>();
+    const p = ValidationQueue.serialize(id, async () => {
+      await taskGate.promise;
+    });
+    await flush();
+
+    // Cancel a totally separate, never-registered id — must not throw.
+    expect(() => ValidationQueue.cancel('never-registered-id')).not.toThrow();
+    expect(() => ValidationQueue.cancel('')).not.toThrow();
+
+    // Unrelated cancels do not interfere with the live queue: the original
+    // task is still pending and resolves normally when we release it.
+    taskGate.resolve();
+    await p; // No timeout — would hang if the unrelated cancel had aborted it.
+  });
 });
 
 describe('getRemoteContentHash', () => {

@@ -409,7 +409,11 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect(result.centers3D.length).toBe(0);
   });
 
-  it('non-zero splats invokes compute_gsplats_attenuation', async () => {
+  it('non-zero splats: compute_gsplats_attenuation receives the expected shaped args [workers.md/W5][P3]', async () => {
+    // workers.md [W5][P3] strengthening: previously only asserted call-count.
+    // Pin the argument shape so a refactor that re-ordered or dropped the
+    // positions/cholesky/amplitudes buffers, or shifted ndim/splatCount,
+    // would surface as a failed shape match.
     const { mod, wasm } = await loadWorker();
     const splatCount = 2;
     const ndim = 3;
@@ -435,6 +439,19 @@ describe('projectGSplatsTo3D — happy paths', () => {
     });
 
     expect(wasm.compute_gsplats_attenuation).toHaveBeenCalledTimes(1);
+    const callArgs = (wasm.compute_gsplats_attenuation as any).mock.calls[0];
+    // positions: Float32Array of size splatCount * ndim
+    expect(callArgs[0]).toBeInstanceOf(Float32Array);
+    expect((callArgs[0] as Float32Array).length).toBe(splatCount * ndim);
+    // cholesky: Float32Array of size splatCount * k
+    expect(callArgs[1]).toBeInstanceOf(Float32Array);
+    expect((callArgs[1] as Float32Array).length).toBe(splatCount * k);
+    // amplitudes: Float32Array of size splatCount
+    expect(callArgs[2]).toBeInstanceOf(Float32Array);
+    expect((callArgs[2] as Float32Array).length).toBe(splatCount);
+    // visibility (out param) is a Uint8Array of size splatCount
+    expect(callArgs[9]).toBeInstanceOf(Uint8Array);
+    expect((callArgs[9] as Uint8Array).length).toBe(splatCount);
   });
 });
 

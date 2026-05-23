@@ -248,6 +248,29 @@ describe('SegmentedLRUCache', () => {
       expect(stats.metadataSize).toBe(1500);
       expect(stats.chunksSize).toBe(2000);
     });
+
+    it('clamps chunksSize to 0 when totalSize < MIN_METADATA_SIZE (10MB) [cache.md/G6][P5]', () => {
+      // [cache.md/G6][P5] Pre-audit boundary: a regression that flipped the
+      // `Math.max(0, ...)` in the source to allow negative chunksSize would
+      // corrupt eviction but pass current tests. Pin: with totalSize=1MB
+      // (well below the 10MB metadata floor), the chunks segment holds
+      // nothing (every chunk write must immediately be rejected/evicted).
+      const tiny = new SegmentedLRUCache(1024 * 1024);
+
+      // A 100-byte chunk goes to the chunks segment. With chunksSize===0
+      // budget, the entry must immediately be rejected (oversized) or
+      // evicted; the chunks-count and chunks-size remain at 0.
+      tiny.set('chunk', new Uint8Array(100));
+      const stats = tiny.getStats();
+      expect(stats.chunksSize).toBe(0);
+      expect(stats.chunksCount).toBe(0);
+
+      // Metadata, on the other hand, fits in the 10MB floor.
+      tiny.set('.zmetadata', new Uint8Array(1000));
+      const stats2 = tiny.getStats();
+      expect(stats2.metadataCount).toBe(1);
+      expect(stats2.metadataSize).toBe(1000);
+    });
   });
 
   describe('Real-World Zarr Patterns', () => {

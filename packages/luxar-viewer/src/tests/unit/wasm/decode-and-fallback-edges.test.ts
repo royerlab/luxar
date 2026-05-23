@@ -1,0 +1,200 @@
+/**
+ * Edge-case tests for WASM TypeScript-fallback decode and processing routines.
+ *
+ * Round 8 follow-up to wasm.md gap analysis. Closes:
+ *   - [wasm.md/G6][P5] decode_quantized minVal == maxVal (degenerate range)
+ *   - [wasm.md/G6][P5] decode_log_scalar maxLog=0 and negative
+ *   - [wasm.md/G12][P5] mahalanobis_distance ndim=1 (forward-sub identity)
+ *   - [wasm.md/G4][P5] compute_gsplats_attenuation numHidden=ndim (all hidden)
+ *   - [wasm.md/G9][P5] clip_segment_single parallel-segment (dv < 1e-10)
+ *
+ * Pure math on typed arrays — no mocks. All cases exercise the TS fallback
+ * code path; the WASM binary, when present, must match these results
+ * (covered separately by wasm-vs-typescript.test.ts).
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  decode_quantized_u8,
+  decode_quantized_u16,
+  decode_log_scalar_u8,
+  decode_log_scalar_u16,
+} from '../../../wasm/typescript/decode';
+import { mahalanobis_distance } from '../../../wasm/typescript/gsplats-processing';
+import { compute_gsplats_attenuation } from '../../../wasm/typescript/gsplats-processing';
+import { clip_segment_single } from '../../../wasm/typescript/lines-clipping';
+
+describe('decode_quantized — degenerate range (minVal === maxVal) [wasm.md/G6]', () => {
+  // When minVal === maxVal the scale becomes zero; every output entry must
+  // collapse to the constant value, irrespective of the input byte.
+  it('u8: emits the constant value for every input byte', () => {
+    const data = new Uint8Array([0, 64, 128, 255]);
+    const output = new Float32Array(4);
+    decode_quantized_u8(data, 3.14, 3.14, output);
+    // Float32 rounds 3.14 → ~3.140000104904175; use closeness.
+    for (let i = 0; i < 4; i++) {
+      expect(output[i]).toBeCloseTo(3.14, 5);
+    }
+  });
+
+  it('u16: emits the constant value for every input word (-1.5 is exact in Float32)', () => {
+    const data = new Uint16Array([0, 32768, 65535]);
+    const output = new Float32Array(3);
+    decode_quantized_u16(data, -1.5, -1.5, output);
+    // -1.5 is exactly representable in Float32.
+    expect(Array.from(output)).toEqual([-1.5, -1.5, -1.5]);
+  });
+
+  it('u8: zero-length input leaves output untouched', () => {
+    const output = new Float32Array(3).fill(42);
+    decode_quantized_u8(new Uint8Array(0), 0, 10, output);
+    expect(Array.from(output)).toEqual([42, 42, 42]);
+  });
+});
+
+describe('decode_log_scalar — maxLog boundary [wasm.md/G6]', () => {
+  // maxLog=0 collapses every output to expm1(0) = 0.
+  it('u8: maxLog=0 produces 0 for every input byte', () => {
+    const data = new Uint8Array([0, 64, 128, 255]);
+    const output = new Float32Array(4);
+    decode_log_scalar_u8(data, 0, output);
+    expect(Array.from(output)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('u16: maxLog=0 produces 0 for every input word', () => {
+    const data = new Uint16Array([0, 1000, 65535]);
+    const output = new Float32Array(3);
+    decode_log_scalar_u16(data, 0, output);
+    expect(Array.from(output)).toEqual([0, 0, 0]);
+  });
+
+  // Negative maxLog produces decreasing-then-negative outputs:
+  // expm1(positive * negative) = expm1(negative) ∈ (-1, 0).
+  it('u8: negative maxLog produces monotonically non-positive outputs', () => {
+    const data = new Uint8Array([0, 255]);
+    const output = new Float32Array(2);
+    decode_log_scalar_u8(data, -2.0, output);
+    expect(output[0]).toBeCloseTo(0, 5); // expm1(0) = 0
+    expect(output[1]).toBeCloseTo(Math.expm1(-2.0), 5); // ≈ -0.8647
+    expect(output[1]).toBeLessThan(output[0]); // monotone decreasing
+  });
+});
+
+describe('mahalanobis_distance — ndim=1 [wasm.md/G12]', () => {
+  // For ndim=1 the packed Cholesky is a single diagonal entry L[0,0].
+  // Forward substitution reduces to y[0] = diff[0] / L[0,0], and
+  // ||y|| = |y[0]|. Pins the trivial 1D case so a refactor of the
+  // packedIndex helper doesn't silently break the degenerate path.
+  it('ndim=1: returns |diff/L00|', () => {
+    const diff = new Float32Array([4]);
+    const packedL = new Float32Array([2]); // L[0,0] = 2
+    expect(mahalanobis_distance(diff, packedL, 1)).toBeCloseTo(2, 5); // 4/2 = 2
+  });
+
+  it('ndim=1: negative diff returns positive distance (norm)', () => {
+    const diff = new Float32Array([-3]);
+    const packedL = new Float32Array([1.5]);
+    expect(mahalanobis_distance(diff, packedL, 1)).toBeCloseTo(2, 5); // |-3/1.5| = 2
+  });
+
+  it('ndim=1: zero diff returns 0 distance', () => {
+    const diff = new Float32Array([0]);
+    const packedL = new Float32Array([1]);
+    expect(mahalanobis_distance(diff, packedL, 1)).toBe(0);
+  });
+
+  it('ndim=1: degenerate diagonal (L00 ~ 0) yields 0 distance (defensive)', () => {
+    // Source uses `diag > 1e-10 ? val / diag : 0` to clamp degenerate
+    // Cholesky cells. A tiny diagonal collapses the contribution.
+    const diff = new Float32Array([10]);
+    const packedL = new Float32Array([1e-12]); // below epsilon
+    expect(mahalanobis_distance(diff, packedL, 1)).toBe(0);
+  });
+});
+
+describe('compute_gsplats_attenuation — numHidden=ndim [wasm.md/G4]', () => {
+  // Boundary: every dimension is hidden, no displayed dim. The marginal
+  // Cholesky covers the full ndim and the attenuation depends on full-
+  // dimensional Mahalanobis distance to the slice. Pins the "all hidden"
+  // case so a mutant that special-cases numHidden < ndim only would fail.
+  it('every dim hidden: splat at slice yields attenuation 1, far splat yields ~0', () => {
+    const ndim = 3;
+    // 2 splats, 3D, with identity Cholesky (packed lower-tri, 6 entries each).
+    const positions = new Float32Array([
+      0, 0, 0, // splat 0 at slice
+      10, 10, 10, // splat 1 far
+    ]);
+    const choleskyEntries = [
+      1, // L00
+      0, 1, // L10 L11
+      0, 0, 1, // L20 L21 L22
+    ];
+    const cholesky = new Float32Array([...choleskyEntries, ...choleskyEntries]);
+    const amplitudes = new Float32Array([1, 1]);
+    const slicePos = new Float32Array([0, 0, 0]);
+    const hiddenDims = new Uint32Array([0, 1, 2]); // all hidden
+
+    const visibility = new Uint8Array(2);
+    const attenuation = new Float32Array(2);
+
+    const count = compute_gsplats_attenuation(
+      positions,
+      cholesky,
+      amplitudes,
+      slicePos,
+      hiddenDims,
+      ndim,
+      2,
+      0.01,
+      3.0,
+      visibility,
+      attenuation
+    );
+
+    // Splat 0: diff=0 in every dim → Mahalanobis 0 → attenuation 1.
+    expect(attenuation[0]).toBeCloseTo(1.0, 5);
+    expect(visibility[0]).toBe(1);
+
+    // Splat 1: diff=(10,10,10), Mahalanobis ≈ sqrt(300) ≈ 17.3,
+    // well beyond 3σ truncation → attenuation = 0 by C0 clamp.
+    expect(attenuation[1]).toBe(0);
+    expect(visibility[1]).toBe(0);
+    expect(count).toBe(1);
+  });
+});
+
+describe('clip_segment_single — parallel-to-slice edge case (dv < 1e-10) [wasm.md/G9]', () => {
+  // When p1[dim] === p2[dim] in a hidden dimension, the segment is
+  // parallel to the slice in that dimension. The source skips that
+  // dim via `if (Math.abs(dv) < 1e-10) continue;`. A mutant that
+  // dropped this guard would divide by zero and yield NaN/Infinity
+  // t-values downstream.
+  it('parallel hidden-dim with both endpoints inside slice is fully visible', () => {
+    // 4D segment; dim 3 is hidden. Both endpoints sit at exactly the
+    // slice center → dv = 0 in dim 3.
+    const p1 = new Float32Array([0, 0, 0, 5]);
+    const p2 = new Float32Array([10, 10, 10, 5]); // same dim-3 value
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+    const result = clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+    expect(result[0]).toBe(1.0); // visible
+    expect(result[1]).toBeCloseTo(0.0, 5);
+    expect(result[2]).toBeCloseTo(1.0, 5);
+  });
+
+  it('parallel hidden-dim with both endpoints OUTSIDE the slice is invisible', () => {
+    // Same dv=0 contract, but now both endpoints sit outside slice.tol.
+    // Source classifies both endpoints as "not in slice" on the same
+    // side → Case E (invisible). The parallel skip only kicks in for
+    // the intersection-parameter path, not the same-side guard, so the
+    // segment is rejected before reaching the `dv` branch.
+    const p1 = new Float32Array([0, 0, 0, 10]);
+    const p2 = new Float32Array([10, 10, 10, 10]); // both at hidden=10
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+    const result = clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+    expect(result[0]).toBe(0.0); // not visible
+  });
+});

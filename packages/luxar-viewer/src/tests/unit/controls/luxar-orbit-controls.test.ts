@@ -471,15 +471,41 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('dispose', () => {
-    it('should not throw on dispose', () => {
+    it('dispose() detaches pointer/wheel/contextmenu listeners on dom element [controls.md/W10][P2]', () => {
+      // controls.md [W10][P2] strengthening: was `.not.toThrow()` only.
+      // The contract is that dispose() calls removeEventListener for each
+      // of the 6 event types it registered (pointerdown/pointermove/
+      // pointerup/pointercancel/wheel/contextmenu). Spy on the dom
+      // element's removeEventListener and confirm each is called. A
+      // regression that forgot one removal would surface here.
       controls = new LuxarOrbitControls(camera, domElement);
-      expect(() => controls.dispose()).not.toThrow();
+      const removeSpy = vi.spyOn(domElement, 'removeEventListener');
+      controls.dispose();
+      const removedEvents = new Set(removeSpy.mock.calls.map((c) => c[0]));
+      expect(removedEvents.has('pointerdown')).toBe(true);
+      expect(removedEvents.has('pointermove')).toBe(true);
+      expect(removedEvents.has('pointerup')).toBe(true);
+      expect(removedEvents.has('pointercancel')).toBe(true);
+      expect(removedEvents.has('wheel')).toBe(true);
+      expect(removedEvents.has('contextmenu')).toBe(true);
+      removeSpy.mockRestore();
     });
 
-    it('should clean up ortho view-axis rotation handler', () => {
+    it('dispose() removes the ortho view-axis wheel listener [controls.md/W10][P2]', () => {
+      // controls.md [W10][P2] strengthening: was `.not.toThrow()` only.
+      // After enabling ortho view-axis rotation and disposing, the
+      // viewAxisRotationHandler private slot must be null so the wheel
+      // path is detached (no leak on the dom element).
       controls = new LuxarOrbitControls(camera, domElement);
       controls.enableViewAxisRotation();
-      expect(() => controls.dispose()).not.toThrow();
+      expect((controls as unknown as { viewAxisRotationHandler: unknown }).viewAxisRotationHandler)
+        .not.toBeNull();
+      controls.dispose();
+      // After dispose, the handler reference must be null/undefined so a
+      // future wheel event can't fire through it.
+      const handler = (controls as unknown as { viewAxisRotationHandler: unknown })
+        .viewAxisRotationHandler;
+      expect(handler === null || handler === undefined).toBe(true);
     });
   });
 
