@@ -62,6 +62,10 @@ describe('points handler', () => {
       dispose: vi.fn(),
     };
     const queue = new ViewStateQueue();
+    // Spy on forgetPath so we can pin the actual contract (data.md, C3 fixed:
+    // previously the test had no expect() at all — the comment said
+    // "Indirect assertion: prev-state map is empty for /p" but never asserted).
+    const forgetPathSpy = vi.spyOn(queue, 'forgetPath');
     queue.dispatchPrefetch('/p', baseViewState, loader); // seed prev
     await loadAndStage('/p', loader, makeSession(), {
       rootGroup: new THREE.Group(),
@@ -71,11 +75,11 @@ describe('points handler', () => {
       extendedToleranceCache: new Map(),
       deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
     });
-    // After forgetPath, dispatching again with a delta should NOT fire
-    // (treated as first-call since prev was dropped).
-    queue.dispatchPrefetch('/p', { ...baseViewState, slicePosition: [0, 0, 0, 5] }, loader);
-    // First-call after forget — no dispatch.
-    // (Indirect assertion: prev-state map is empty for /p.)
+    // The skip path MUST call forgetPath('/p') exactly once.
+    expect(forgetPathSpy).toHaveBeenCalledTimes(1);
+    expect(forgetPathSpy).toHaveBeenCalledWith('/p');
+    // updateView must NOT have been called (skip path short-circuits before).
+    expect(loader.updateView).not.toHaveBeenCalled();
   });
 
   it('returns the staged commit on a successful load', async () => {

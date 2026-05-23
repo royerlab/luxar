@@ -22,6 +22,16 @@
  * Tests live here (not in the per-material spec files) so that a single
  * shader-pattern rename is forced to update one centralized place
  * rather than slipping through.
+ *
+ * Audit acknowledgment (rendering.md [W2], [EXCLUDED-CATEGORY:
+ * shader-tsl-parity]): every assertion in this file is intentionally
+ * an `expect(SHADER_SOURCE).toMatch(/regex/)` — see project memory
+ * "Keep GLSL shaders as reference" + the TSL/GLSL parity harness.
+ * These checks are documented "regression locks" and are explicitly
+ * excluded from the mutation-killing rubric. Do NOT replace with
+ * behavioural assertions: the GLSL3 sources are retained as the
+ * reference implementation and these tests are the only thing pinning
+ * the optimization patterns at the string level.
  */
 
 import { describe, it, expect } from 'vitest';

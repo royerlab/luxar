@@ -105,6 +105,15 @@ export function validateColorMode(
  * stored row-major (NumPy) rather than column-major (THREE.js / OpenGL),
  * which is almost always a producer bug — column-major translation lives
  * at indices [12,13,14], row-major at [3,7,11].
+ *
+ * Edge case (both translation bands non-zero): a producer bug that
+ * encodes a row-major matrix WITH a non-zero col-major slot (e.g.
+ * row-major + shear, or row-major + scale touching index 12) used to
+ * pass silently as "probably column-major". The current contract is to
+ * throw a descriptive "ambiguous" error so the producer fixes the
+ * encoding rather than letting the viewer place geometry in the wrong
+ * location. Genuine column-major matrices have a `[0, 0, 0, 1]` last
+ * row, so we use indices [3, 7, 11] as the disambiguator.
  */
 export function validateTransformFormat(transform: readonly number[]): void {
   const colMajorTranslation = [transform[12], transform[13], transform[14]];
@@ -119,6 +128,17 @@ export function validateTransformFormat(transform: readonly number[]): void {
         'instead of column-major (THREE.js). Translation detected at ' +
         'indices [3,7,11] instead of [12,13,14]. Python should transpose ' +
         'before storing: matrix.T.ravel().tolist()'
+    );
+  }
+
+  if (rowMajorNonZero && colMajorNonZero) {
+    throw new Error(
+      'Transform matrix is ambiguous — likely producer bug. Both the ' +
+        'column-major translation slots [12,13,14] AND the row-major ' +
+        'slots [3,7,11] contain non-zero values, so the major cannot be ' +
+        'inferred. A correct column-major matrix has its last row ' +
+        '[3,7,11,15] equal to [0,0,0,1]. Fix the producer to write a ' +
+        'proper column-major matrix (Python: matrix.T.ravel().tolist()).'
     );
   }
 }

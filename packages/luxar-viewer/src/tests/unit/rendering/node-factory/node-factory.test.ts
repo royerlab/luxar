@@ -1,14 +1,20 @@
 /**
- * Unit tests for NodeFactory.
+ * Unit tests for NodeFactory (located under `tests/unit/rendering/node-factory/`
+ * to match the production source layout at `src/rendering/node-factory/`).
  *
  * Tests geometry creation, validation, and transform utilities.
  * NodeFactory is the single source of truth for these operations.
+ *
+ * rendering.md O2 fix: this file previously lived under
+ * `tests/unit/data/node-factory.test.ts`, conflating rendering and
+ * data-loader test scopes. Moved to mirror the source-tree layout
+ * (P10: tests follow source themes).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { NodeFactory } from '../../../rendering/node-factory';
-import type { LoadedPointsData } from '../../../data/data-loader-types';
+import { NodeFactory } from '../../../../rendering/node-factory';
+import type { LoadedPointsData } from '../../../../data/data-loader-types';
 
 // Helper to create mock LoadedPointsData
 function createMockPointsData(
@@ -283,6 +289,95 @@ describe('NodeFactory', () => {
       const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
       expect(() => factory.validateTransformFormat(identity)).not.toThrow();
+    });
+
+    // rendering.md G1 boundary cases for validateTransformFormat:
+    //   1. Both col-major AND row-major slots non-zero → guard throws
+    //      with an "ambiguous" message. A genuine column-major matrix
+    //      always has its last row [3,7,11,15] equal to [0,0,0,1], so
+    //      a non-zero value at any of those indices alongside a
+    //      non-zero col-major translation is a producer bug we refuse
+    //      to interpret silently (MED-24).
+    //   2. Near-zero translation: |v| ≤ 0.001 must NOT trigger the
+    //      row-major heuristic (the threshold is the floating-point
+    //      tolerance used in the source).
+    it('should throw "ambiguous" when both col-major and row-major translation slots are non-zero', () => {
+      // [3]=5 (row-major slot), [12]=10 (col-major slot). Ambiguous.
+      // Producer must fix the encoding so the last row is [0,0,0,1].
+      const ambiguous = [
+        1,
+        0,
+        0,
+        5, // index 3: non-zero (row-major slot)
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        10, // index 12: non-zero (col-major slot)
+        0,
+        0,
+        1,
+      ];
+      expect(() => factory.validateTransformFormat(ambiguous)).toThrow(/ambiguous/);
+    });
+
+    it('should NOT throw when row-major slot is just under the 0.001 threshold', () => {
+      // |0.0009| < 0.001 → does not register as "non-zero translation".
+      const subThreshold = [
+        1,
+        0,
+        0,
+        0.0009, // index 3: below threshold
+        0,
+        1,
+        0,
+        0.0009, // index 7: below threshold
+        0,
+        0,
+        1,
+        0.0009, // index 11: below threshold
+        0,
+        0,
+        0,
+        1,
+      ];
+      expect(() => factory.validateTransformFormat(subThreshold)).not.toThrow();
+    });
+
+    it('should throw when row-major slot is just above the 0.001 threshold', () => {
+      // |0.002| > 0.001 → registers; col-major slots are zero so it's
+      // unambiguously row-major. Pins the exact threshold direction.
+      const overThreshold = [
+        1,
+        0,
+        0,
+        0.002,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+      ];
+      expect(() => factory.validateTransformFormat(overThreshold)).toThrow(/row-major/);
+    });
+
+    it('error message references the [3,7,11] vs [12,13,14] index contract', () => {
+      // P9: name what the assertion actually pins — the public error
+      // message guides producers toward `matrix.T.ravel().tolist()`.
+      const rowMajor = [1, 0, 0, 5, 0, 1, 0, 10, 0, 0, 1, 15, 0, 0, 0, 1];
+      expect(() => factory.validateTransformFormat(rowMajor)).toThrow(/3,7,11/);
+      expect(() => factory.validateTransformFormat(rowMajor)).toThrow(/12,13,14/);
     });
   });
 

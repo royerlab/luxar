@@ -213,6 +213,53 @@ describe('runDisposePipeline', () => {
       expect(s.clears.datasetBrowser).toHaveBeenCalledOnce();
     });
 
+    it('disposes subsystems in the documented order (G19): animation→...→sceneManager', () => {
+      // core.md G19 closure: previously `disposes every subsystem
+      // exactly once` did NOT assert ordering. The teardown contract
+      // requires animation first (so the loop stops emitting events
+      // before listeners disappear), overlays/picking/browser before
+      // input-handler (those routes wire through input handler),
+      // sceneManager after renderingControls. Pin the relative order
+      // between load-bearing pairs — the absolute order of unrelated
+      // pairs can shift safely (e.g. adaptiveDPRManager vs scaleBar).
+      const s = makeStubs();
+      const order: string[] = [];
+
+      s.animationController.dispose.mockImplementation(() => order.push('animation'));
+      s.adaptiveDPRManager.dispose.mockImplementation(() => order.push('adaptiveDPR'));
+      s.overlayManager.dispose.mockImplementation(() => order.push('overlay'));
+      s.pickingSystem.dispose.mockImplementation(() => order.push('picking'));
+      s.labelLoader.dispose.mockImplementation(() => order.push('labelLoader'));
+      s.imageLabelLoader.dispose.mockImplementation(() => order.push('imgLoader'));
+      s.datasetBrowser.close.mockImplementation(() => order.push('browser'));
+      s.inputHandler.dispose.mockImplementation(() => order.push('input'));
+      s.renderingControls.dispose.mockImplementation(() => order.push('rendering'));
+      s.sceneManager.dispose.mockImplementation(() => order.push('scene'));
+
+      runDisposePipeline(makePorts(s));
+
+      const idx = (label: string) => order.indexOf(label);
+
+      // animation must be before all UI / rendering subsystems.
+      expect(idx('animation')).toBeLessThan(idx('rendering'));
+      expect(idx('animation')).toBeLessThan(idx('input'));
+      expect(idx('animation')).toBeLessThan(idx('scene'));
+
+      // Overlay-routed components (overlayManager, picking, label
+      // loaders, datasetBrowser) tear down BEFORE input-handler
+      // because they're wired through it.
+      expect(idx('overlay')).toBeLessThan(idx('input'));
+      expect(idx('picking')).toBeLessThan(idx('input'));
+      expect(idx('labelLoader')).toBeLessThan(idx('input'));
+      expect(idx('imgLoader')).toBeLessThan(idx('input'));
+      expect(idx('browser')).toBeLessThan(idx('input'));
+
+      // input-handler runs before renderingControls and sceneManager,
+      // which both run before the singletons (asserted above).
+      expect(idx('input')).toBeLessThan(idx('rendering'));
+      expect(idx('rendering')).toBeLessThan(idx('scene'));
+    });
+
     it('disposes singletons last and in order: monitor → loader → workerPool', async () => {
       const { disposeWorkerPool } = await import('../../../../../workers/worker-pool');
       const order: string[] = [];
@@ -379,6 +426,29 @@ describe('runDisposePipeline', () => {
       runDisposePipeline(makePorts(s));
 
       expect(order).toEqual(['pickingEvents', 'events']);
+    });
+
+    it('dispose pipeline releases pickingEvents before overlayManager (HIGH-12)', () => {
+      // The picking system's mousemove handler closes over the overlay
+      // manager. If overlayManager is disposed first, a synchronously
+      // dispatched mousemove between the two safeDispose calls would
+      // null-deref on the disposed overlay. Release the listeners first.
+      const s = makeStubs();
+      const order: string[] = [];
+      const origPickingDispose = s.pickingEvents.dispose.bind(s.pickingEvents);
+      s.pickingEvents.dispose = vi.fn(() => {
+        order.push('pickingEvents');
+        origPickingDispose();
+      });
+      s.overlayManager.dispose.mockImplementation(() => order.push('overlayManager'));
+
+      runDisposePipeline(makePorts(s));
+
+      const pickingIdx = order.indexOf('pickingEvents');
+      const overlayIdx = order.indexOf('overlayManager');
+      expect(pickingIdx).toBeGreaterThanOrEqual(0);
+      expect(overlayIdx).toBeGreaterThanOrEqual(0);
+      expect(pickingIdx).toBeLessThan(overlayIdx);
     });
   });
 });

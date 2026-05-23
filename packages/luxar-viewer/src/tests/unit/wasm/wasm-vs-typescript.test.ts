@@ -34,7 +34,14 @@ const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 /**
- * Helper to compare Float32Arrays within tolerance
+ * Helper to compare Float32Arrays within tolerance.
+ *
+ * NOTE (wasm.md C3): default epsilon `1e-5` is appropriate for typical
+ * Float32 single-step operations. For multi-step algorithms that accumulate
+ * rounding error per dimension (e.g. `mahalanobis_distance` does ndim
+ * forward-substitution steps), call sites should pass a scaled epsilon —
+ * e.g. `arraysAlmostEqual(a, b, 1e-5 * Math.sqrt(ndim))` for ndim > 3 —
+ * to avoid silently missing WASM-vs-TS divergence at high dimensions.
  */
 function arraysAlmostEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 1e-5): boolean {
   if (a.length !== b.length) return false;

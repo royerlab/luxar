@@ -6,6 +6,8 @@
  * slicing state, and initialization utilities.
  */
 
+import { log, Modules } from '../utils/log';
+
 /**
  * Metadata describing the properties and behavior of a single dimension.
  *
@@ -110,11 +112,43 @@ export function initializeDims(
   totalElements: number,
   metadata?: DimensionMetadata[]
 ): SimpleDims {
+  // HIGH-5: empty point clouds are legitimate; avoid dividing by zero and
+  // returning Infinity (which then failed Number.isInteger with a misleading
+  // "0 elements for 0 points" error). Infer ndim from metadata when given,
+  // else default to 3 (the common spatial case). `displayed` stays empty —
+  // there is nothing to display.
+  if (numPoints === 0) {
+    const ndim = metadata && metadata.length > 0 ? metadata.length : 3;
+    return {
+      ndim,
+      currentStep: new Array(ndim).fill(0),
+      displayed: [],
+      metadata: metadata ?? [],
+    };
+  }
+
   // Calculate number of dimensions from array size
   const ndim = totalElements / numPoints;
 
   if (!Number.isInteger(ndim)) {
     throw new Error(`Invalid positions array: ${totalElements} elements for ${numPoints} points`);
+  }
+
+  // HIGH-5: previously we silently truncated when metadata.length < ndim, so
+  // datasets with partial metadata fell through to the "no dim marked for
+  // display" fallback and authoring bugs went unnoticed. Pad with defaults
+  // and warn so callers see the gap.
+  let effectiveMetadata = metadata;
+  if (metadata && metadata.length > 0 && metadata.length < ndim) {
+    log.warning(
+      Modules.DIMS,
+      `dims metadata has ${metadata.length} entries but ndim=${ndim}; ` +
+        'padding with default dims so the slice navigator works.'
+    );
+    effectiveMetadata = [...metadata];
+    for (let i = metadata.length; i < ndim; i++) {
+      effectiveMetadata.push({ name: `dim${i}`, unit: '', scale: 1.0 });
+    }
   }
 
   // Initialize all dimensions at position 0 (minimum value)
@@ -123,11 +157,11 @@ export function initializeDims(
 
   // Determine which dimensions to display in the 3D scene
   let displayed: number[];
-  if (metadata && metadata.length > 0) {
+  if (effectiveMetadata && effectiveMetadata.length > 0) {
     // Respect explicit display preferences from metadata
     displayed = [];
-    for (let i = 0; i < ndim && i < metadata.length; i++) {
-      const shouldDisplay = metadata[i].display === true;
+    for (let i = 0; i < ndim && i < effectiveMetadata.length; i++) {
+      const shouldDisplay = effectiveMetadata[i].display === true;
       if (shouldDisplay && displayed.length < 3) {
         displayed.push(i);
       }
@@ -148,7 +182,7 @@ export function initializeDims(
     ndim,
     currentStep,
     displayed,
-    metadata,
+    metadata: effectiveMetadata,
   };
 }
 

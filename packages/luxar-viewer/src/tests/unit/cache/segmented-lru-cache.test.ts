@@ -302,7 +302,10 @@ describe('SegmentedLRUCache', () => {
       expect(stats.misses).toBe(3);
     });
 
-    it('should track hits and misses accurately for metadata files', () => {
+    it('should track hits and misses accurately for metadata files (exact counts)', () => {
+      // cache.md W22 fix: previous version asserted `misses >= 1` which
+      // allowed silent miss-count drift. Each get() routes to exactly one
+      // segment, so 2 hits + 1 miss → exactly 2 hits and exactly 1 miss.
       cache.set('.zmetadata', new Uint8Array(100));
       cache.set('.zarray', new Uint8Array(100));
 
@@ -312,8 +315,7 @@ describe('SegmentedLRUCache', () => {
 
       const stats = cache.getStats();
       expect(stats.hits).toBe(2);
-      // Miss counts both segments being checked
-      expect(stats.misses).toBeGreaterThanOrEqual(1);
+      expect(stats.misses).toBe(1);
     });
 
     it('should reset hit/miss counters on clear()', () => {
@@ -333,14 +335,16 @@ describe('SegmentedLRUCache', () => {
       expect(stats.misses).toBe(0);
     });
 
-    it('should track hits for promoted items from chunks to metadata lookup', () => {
-      // When we get() a metadata file, it first checks metadata segment (hit)
+    it('counts a single metadata get() as exactly 1 hit + 0 misses (no cross-segment double-count)', () => {
+      // cache.md W23 fix: renamed from 'should track hits for promoted
+      // items from chunks to metadata lookup' which was misleading — the
+      // body tests a single set+get of metadata, not any "promotion".
       cache.set('.zmetadata', new Uint8Array(100));
-      cache.get('.zmetadata'); // Should be a hit in metadata segment
+      cache.get('.zmetadata');
 
       const stats = cache.getStats();
       expect(stats.hits).toBe(1);
-      expect(stats.misses).toBe(0); // No misses because found in first segment
+      expect(stats.misses).toBe(0);
     });
   });
 

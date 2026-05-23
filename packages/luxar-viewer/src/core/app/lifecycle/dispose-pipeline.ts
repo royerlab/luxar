@@ -97,6 +97,13 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
     ports.colormapLegend?.dispose();
     ports.clearColormapLegend();
   });
+  // pickingEvents is reusable: dispose() leaves it empty for next initPicking().
+  // HIGH-12: dispose BEFORE overlayManager. The picking system's mousemove
+  // handler closes over the overlay manager; disposing the overlay first
+  // would leave a window in which a synchronously-dispatched mousemove can
+  // hit a null-deref on the disposed overlay. Releasing the listeners first
+  // closes that race.
+  safeDispose('pickingEvents', () => ports.pickingEvents.dispose());
   // Clear recording-panel back-reference before overlayManager dispose.
   safeDispose('overlayManager', () => {
     ports.recordingPanel?.setOverlayManager(null);
@@ -111,8 +118,6 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
     ports.layersPanel?.dispose();
     ports.clearLayersPanel();
   });
-  // pickingEvents is reusable: dispose() leaves it empty for next initPicking().
-  safeDispose('pickingEvents', () => ports.pickingEvents.dispose());
   safeDispose('pickingSystem', () => {
     ports.pickingSystem?.dispose();
     ports.clearPickingSystem();

@@ -21,6 +21,7 @@ import { invalidateCachedByteSize } from './geometry-bytes';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PointsAttributeTypes, PooledBuffer } from './pool-stats';
+import { chooseCapacity } from './capacity';
 
 /** Base per-instance attribute layout for pooled points geometries. */
 const POINTS_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
@@ -149,7 +150,7 @@ function growPointsGeometry(
   neededCount: number,
   types: PointsAttributeTypes
 ): void {
-  const newCapacity = Math.ceil(neededCount * 1.5);
+  const newCapacity = chooseCapacity(neededCount);
   invalidateCachedByteSize(geometry);
   rebuildInterleavedBuffer(
     geometry as THREE.InstancedBufferGeometry,
@@ -213,9 +214,15 @@ export class PointsBufferAdapter {
             pointCount,
             active.attributeTypes
           );
-          active.capacity = Math.ceil(pointCount * 1.5);
+          active.capacity = chooseCapacity(pointCount);
           active.lastUsedFrame = host.frameCount;
           host.stats.capacityGrowths++;
+          // growPointsGeometry reallocates the interleaved buffer (a real
+          // GPU buffer creation), so bump the per-type allocation counter
+          // to keep `typeStats.points.allocations` in sync with actual
+          // GPU buffer churn. Without this, the data-loading-monitor
+          // reuse-rate metric underreports grows as "free" reuses.
+          host.typeStats.points.allocations++;
           host._lastAcquireRebuilt = true;
           return preparePointsGeometryForDraw(active.geometry, pointCount);
         }
@@ -245,7 +252,7 @@ export class PointsBufferAdapter {
     }
 
     host._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(pointCount * 1.5);
+    const capacity = chooseCapacity(pointCount);
     const geometry = createPointsGeometry(capacity, types);
 
     const newBuffer: PooledBuffer = {

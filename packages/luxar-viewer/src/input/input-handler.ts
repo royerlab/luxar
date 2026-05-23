@@ -472,7 +472,12 @@ export class InputHandler {
    * @private
    */
   private setupControlEvents(): void {
-    const startAnimation = this.animationController.startAnimation;
+    // Use arrow functions so the `startAnimation` lookup is late-bound
+    // on each event — if AnimationController swaps its `startAnimation`
+    // method (HMR / test injection), the new method runs. Capturing
+    // the bare method reference at construction time would freeze
+    // the listener to the original closure.
+    const startAnimation = (): void => this.animationController.startAnimation();
 
     this.sceneManager.controls.addEventListener('start', startAnimation);
     this.sceneManager.controls.addEventListener('change', startAnimation);
@@ -493,7 +498,11 @@ export class InputHandler {
    * @private
    */
   private setupUserInteractionEvents(): void {
-    const startAnimation = this.animationController.startAnimation;
+    // Late-bind the startAnimation lookup via arrow function — see
+    // setupControlEvents() for the rationale. A reference captured at
+    // construction would survive any controller-method swap and call
+    // the stale closure.
+    const startAnimation = (): void => this.animationController.startAnimation();
     const canvas = this.sceneManager.renderer.domElement;
 
     canvas.addEventListener('mousedown', startAnimation);

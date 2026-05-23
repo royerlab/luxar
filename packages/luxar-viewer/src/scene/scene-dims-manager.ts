@@ -243,6 +243,16 @@ export class SceneDimsManager {
       return;
     }
 
+    // Reject non-finite (NaN, ±Infinity) inputs — silently writing NaN into
+    // currentStep would poison every downstream slicing computation.
+    if (!Number.isFinite(value)) {
+      log.warning(
+        Modules.SCENE_DIMS,
+        `setDimensionValue: ignoring non-finite value ${value} for dim ${dimIndex}`
+      );
+      return;
+    }
+
     // Apply range constraints to prevent navigation beyond data bounds
     if (this.dimensionRanges) {
       const [min, max] = this.dimensionRanges[dimIndex];

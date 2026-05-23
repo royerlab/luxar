@@ -3,6 +3,21 @@
  *
  * Tests the orchestration of scene loading, spatial index integration,
  * hierarchical scene graph construction, and view updates.
+ *
+ * AUDIT NOTE (data.md W6 / W8 — open audit acknowledgment):
+ *   The `loadScene` and `updateView` describe blocks lean heavily on
+ *   `expect(scene).toBeDefined()` plus a single substantive check
+ *   (scene.name, sceneDimensions, etc.). The substantive check pins
+ *   the most load-bearing contract per test, but a fully rebalanced
+ *   suite would either (a) load against the real zarr fixtures in
+ *   `packages/luxar-viewer/tests/fixtures/` or (b) directly assert
+ *   the assembled scene-graph shape (child counts, names, transform
+ *   matrix values) for each branch. Both are structural refactors
+ *   declared OUT OF SCOPE for this audit pass — kept visible here so
+ *   the next test-quality pass can pick them up.
+ *
+ *   The W3 (material creation) and W4 (monitor integration) blocks
+ *   below were strengthened in-place.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -280,8 +295,11 @@ describe('SceneLoader', () => {
       expect(sceneLoader.getFailedLoaders().size).toBe(1);
     });
 
-    it('should not update geometry when no points are loaded', async () => {
-      // Mock loader returning empty data - include dispose method
+    it('routes the updateView call through the loader even for empty results (loader decides skip)', async () => {
+      // Renamed (was 'should not update geometry when no points are loaded')
+      // — the only assertion was that the loader's updateView was called, NOT
+      // that geometry-update was skipped. The test name lied about the contract
+      // (data.md, C5). Honest contract pinned here: updateView is invoked once.
       const mockLoader = {
         updateView: vi.fn().mockResolvedValue({
           metadata: { loadedPoints: 0 },
@@ -294,8 +312,7 @@ describe('SceneLoader', () => {
 
       await sceneLoader.updateView({});
 
-      // Geometry update should not happen for empty points
-      expect(mockLoader.updateView).toHaveBeenCalled();
+      expect(mockLoader.updateView).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -327,19 +344,97 @@ describe('SceneLoader', () => {
   });
 
   describe('monitor integration', () => {
-    it('should show monitor UI', () => {
-      // Just verify the method exists and doesn't throw
+    // data.md W4 fix [P2]: the previous three tests only asserted
+    // `not.toThrow()` because the default SceneLoader is constructed without
+    // a monitorFactory, so showMonitor/hideMonitor/toggleMonitor are no-ops.
+    // We now inject a stub factory so the SceneLoader owns a real monitor port
+    // and we can verify the delegation contract: each method must call its
+    // counterpart on the monitor port exactly once.
+
+    function makeMonitorStubs() {
+      const show = vi.fn();
+      const hide = vi.fn();
+      const toggle = vi.fn();
+      const dispose = vi.fn();
+      const factory = vi.fn().mockReturnValue({
+        show,
+        hide,
+        toggle,
+        dispose,
+        // Monitor port surface called from the dispose lifecycle.
+        disconnectAllLoaders: vi.fn(),
+        connectLoader: vi.fn(),
+        notifyLoadStart: vi.fn(),
+        notifyLoadEnd: vi.fn(),
+        notifyError: vi.fn(),
+      });
+      return { show, hide, toggle, dispose, factory };
+    }
+
+    it('showMonitor delegates to the monitor port', () => {
+      const stubs = makeMonitorStubs();
+      const loader = new SceneLoader(
+        {},
+        'test',
+        undefined,
+        stubs.factory as unknown as ConstructorParameters<typeof SceneLoader>[3]
+      );
+      try {
+        expect(stubs.factory).toHaveBeenCalledTimes(1);
+        expect(stubs.factory).toHaveBeenCalledWith('test-monitor');
+
+        loader.showMonitor();
+        expect(stubs.show).toHaveBeenCalledTimes(1);
+        expect(stubs.hide).not.toHaveBeenCalled();
+        expect(stubs.toggle).not.toHaveBeenCalled();
+      } finally {
+        loader.dispose();
+      }
+    });
+
+    it('hideMonitor delegates to the monitor port', () => {
+      const stubs = makeMonitorStubs();
+      const loader = new SceneLoader(
+        {},
+        'test',
+        undefined,
+        stubs.factory as unknown as ConstructorParameters<typeof SceneLoader>[3]
+      );
+      try {
+        loader.hideMonitor();
+        expect(stubs.hide).toHaveBeenCalledTimes(1);
+        expect(stubs.show).not.toHaveBeenCalled();
+        expect(stubs.toggle).not.toHaveBeenCalled();
+      } finally {
+        loader.dispose();
+      }
+    });
+
+    it('toggleMonitor delegates to the monitor port', () => {
+      const stubs = makeMonitorStubs();
+      const loader = new SceneLoader(
+        {},
+        'test',
+        undefined,
+        stubs.factory as unknown as ConstructorParameters<typeof SceneLoader>[3]
+      );
+      try {
+        loader.toggleMonitor();
+        expect(stubs.toggle).toHaveBeenCalledTimes(1);
+        expect(stubs.show).not.toHaveBeenCalled();
+        expect(stubs.hide).not.toHaveBeenCalled();
+      } finally {
+        loader.dispose();
+      }
+    });
+
+    it('show/hide/toggle are no-ops when no monitorFactory is injected', () => {
+      // Defensive: the default SceneLoader has no monitor. The methods
+      // must remain safe — must not throw and must not allocate a port.
       expect(() => sceneLoader.showMonitor()).not.toThrow();
-    });
-
-    it('should hide monitor UI', () => {
-      // Just verify the method exists and doesn't throw
       expect(() => sceneLoader.hideMonitor()).not.toThrow();
-    });
-
-    it('should toggle monitor UI', () => {
-      // Just verify the method exists and doesn't throw
       expect(() => sceneLoader.toggleMonitor()).not.toThrow();
+      expect((sceneLoader as unknown as { monitor: unknown }).monitor).toBeFalsy();
     });
   });
 
@@ -544,95 +639,118 @@ describe('SceneLoader', () => {
   });
 
   describe('material creation', () => {
-    beforeEach(() => {
+    // data.md W3 fix [P2]: previously all six tests only asserted
+    // `expect(material).toBeDefined()` + `expect(material.updateCameraParams).toBeDefined()`.
+    // Both fields are pre-populated by the materialManager mock at the top
+    // of this file, so the assertions held trivially for any input — a
+    // mutation that swapped radiusScale/sharpnessScale, dropped blending
+    // mode, or stopped honoring opacity/gamma defaults would still pass.
+    //
+    // The materialManager mock is the trust boundary (P3): we spy on
+    // `getPointMaterial` to pin the EXACT argument bag the factory sends.
+    // That ARGUMENT contract is what `createPointsMaterial` controls —
+    // the returned material object's internals belong to materialManager
+    // and are out of scope here.
+    let materialManagerMock: { getPointMaterial: ReturnType<typeof vi.fn> };
+
+    beforeEach(async () => {
       vi.clearAllMocks();
-    });
-
-    it('should create materials with correct radiusScale for uint8 radii', async () => {
-      const attrs = {
-        opacity: 1.0,
-        gamma: 1.0,
-        blending_mode: 'normal' as const,
+      // Re-resolve the mocked materialManager so we can inspect calls.
+      const mod = await import('../../../rendering/material-manager');
+      materialManagerMock = mod.materialManager as unknown as {
+        getPointMaterial: ReturnType<typeof vi.fn>;
       };
-      const radiusScale = 2.5; // maxRadius from node attrs
-      const sharpnessScale = 1.0;
-
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(
-        attrs,
-        radiusScale,
-        sharpnessScale
-      );
-
-      expect(material).toBeDefined();
-      expect(material.updateCameraParams).toBeDefined();
     });
 
-    it('should create materials with correct sharpnessScale for uint8 sharpness', async () => {
-      const attrs = {
-        opacity: 0.8,
-        gamma: 2.2,
-        blending_mode: 'additive' as const,
-      };
-      const radiusScale = 1.0;
-      const sharpnessScale = 31.0; // SHARPNESS_MAX constant
-
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(
-        attrs,
-        radiusScale,
-        sharpnessScale
-      );
-
-      expect(material).toBeDefined();
-      expect(material.updateCameraParams).toBeDefined();
-    });
-
-    it('should handle different blending modes', async () => {
-      const normalAttrs = { blending_mode: 'normal' as const };
-      const additiveAttrs = { blending_mode: 'additive' as const };
-
-      const material1 = (sceneLoader as any).nodeFactory.createPointsMaterial(
-        normalAttrs,
-        1.0,
-        1.0
-      );
-      const material2 = (sceneLoader as any).nodeFactory.createPointsMaterial(
-        additiveAttrs,
-        1.0,
+    it('forwards explicit radiusScale and sharpnessScale to the material manager', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial(
+        { opacity: 1.0, gamma: 1.0, blending_mode: 'normal' as const },
+        2.5,
         1.0
       );
 
-      expect(material1).toBeDefined();
-      expect(material2).toBeDefined();
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledTimes(1);
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          radiusScale: 2.5,
+          sharpnessScale: 1.0,
+          opacity: 1.0,
+          gamma: 1.0,
+          blendingMode: 'normal',
+        })
+      );
     });
 
-    it('should use default opacity and gamma when not specified', async () => {
-      const attrs = {}; // No opacity/gamma specified
+    it('forwards sharpnessScale=31 for uint8-sharpness scenes', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial(
+        { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' as const },
+        1.0,
+        31.0
+      );
 
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, 1.0, 1.0);
-
-      expect(material).toBeDefined();
-      expect(material.updateCameraParams).toBeDefined();
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sharpnessScale: 31.0,
+          radiusScale: 1.0,
+          opacity: 0.8,
+          gamma: 2.2,
+          blendingMode: 'additive',
+        })
+      );
     });
 
-    it('should pass through custom opacity and gamma values', async () => {
-      const attrs = {
-        opacity: 0.5,
-        gamma: 2.2,
-      };
+    it('propagates blendingMode distinctly for normal vs additive', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial(
+        { blending_mode: 'normal' as const },
+        1.0,
+        1.0
+      );
+      (sceneLoader as any).nodeFactory.createPointsMaterial(
+        { blending_mode: 'additive' as const },
+        1.0,
+        1.0
+      );
 
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs, 1.0, 1.0);
-
-      expect(material).toBeDefined();
-      expect(material.updateCameraParams).toBeDefined();
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledTimes(2);
+      const calls = materialManagerMock.getPointMaterial.mock.calls;
+      expect(calls[0][0].blendingMode).toBe('normal');
+      expect(calls[1][0].blendingMode).toBe('additive');
     });
 
-    it('should handle default radiusScale and sharpnessScale', async () => {
-      const attrs = {};
+    it('uses opacity=1.0 and gamma=1.0 as defaults when attrs omit them', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial({}, 1.0, 1.0);
 
-      const material = (sceneLoader as any).nodeFactory.createPointsMaterial(attrs); // No scales provided
+      // Note: the source defaults blending_mode to 'additive' when absent
+      // (see create-points-node.ts line ~179).
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opacity: 1.0,
+          gamma: 1.0,
+          blendingMode: 'additive',
+        })
+      );
+    });
 
-      expect(material).toBeDefined();
-      expect(material.updateCameraParams).toBeDefined();
+    it('passes through custom opacity and gamma values from attrs', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial({ opacity: 0.5, gamma: 2.2 }, 1.0, 1.0);
+
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          opacity: 0.5,
+          gamma: 2.2,
+        })
+      );
+    });
+
+    it('defaults radiusScale and sharpnessScale to 1.0 when callers omit them', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial({}); // No scales provided
+
+      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
+        expect.objectContaining({
+          radiusScale: 1.0,
+          sharpnessScale: 1.0,
+        })
+      );
     });
   });
 

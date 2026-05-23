@@ -147,7 +147,25 @@ describe('RangeSlider — track-fill geometry', () => {
   });
 
   it('handles a zero-width range gracefully (no NaN, no throw)', () => {
+    // W9 strengthening (P2): the prior test only asserted no-throw.
+    // Strengthen by also confirming (a) the fill element's geometry is
+    // not "NaN%" (the actual failure mode of a 1/(max-min) division),
+    // (b) bounds labels render the actual number 5, and (c) the inputs'
+    // value reflect the requested 5.
     expect(() => makeSlider({ min: 5, max: 5, valueLow: 5, valueHigh: 5 })).not.toThrow();
+
+    const fill = host.querySelector('.luxar-range-slider__track-fill') as HTMLElement;
+    expect(fill).toBeTruthy();
+    expect(fill.style.left).not.toContain('NaN');
+    expect(fill.style.width).not.toContain('NaN');
+
+    const { low, high } = getInputs();
+    expect(low.value).toBe('5');
+    expect(high.value).toBe('5');
+
+    const bounds = host.querySelectorAll('.luxar-range-slider__bound');
+    expect(bounds[0].textContent).toBe('5');
+    expect(bounds[1].textContent).toBe('5');
   });
 });
 

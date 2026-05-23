@@ -154,25 +154,25 @@ describe('WorkerPool.dispose — clears initPromise even with no workers', () =>
     vi.useRealTimers();
   });
 
-  it('a failed-init pool can be disposed and re-initialized', async () => {
-    // Pre-fix: dispose() reset initPromise only inside `if (workers.length > 0)`,
-    // so a pool that failed to init kept its rejected initPromise around.
-    // Subsequent initialize() returned the cached rejection instead of
-    // attempting a fresh init.
+  it('a failed-init pool clears initPromise on dispose so it can be re-initialized', async () => {
+    // workers.md W9 fix: previous version's tail assertion
+    // `expect(pool.getWorkerCount()).toBe(0)` was vacuous — count was
+    // already 0 from the failed init. Strengthen by checking the
+    // internal initPromise was reset (the actual contract the test
+    // header documents).
     const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 1000 }, 'rejects');
     const pool = new WorkerPool();
     await expect(pool.initialize()).rejects.toThrow();
     expect(pool.getWorkerCount()).toBe(0);
     expect(pool.isInitialized()).toBe(false);
 
-    // Calling dispose on a zero-worker pool used to be a no-op for
-    // initPromise. Now it always resets local state.
     pool.dispose();
 
-    // Re-initialize via reinitialize() (the pool's documented retry seam).
-    // We swap the comlink mock via a fresh module load; the reset in
-    // dispose() is the only thing that distinguishes pre/post fix on this
-    // instance.
+    // The contract this test documents: after dispose, the cached
+    // (rejected) initPromise must be cleared so a fresh initialize() can
+    // run. Inspect the internal field (named `initPromise`) — failing
+    // here means dispose did NOT reset it (the original bug).
+    expect((pool as unknown as { initPromise: Promise<void> | null }).initPromise).toBeNull();
     expect(pool.getWorkerCount()).toBe(0);
   });
 });

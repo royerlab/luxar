@@ -9,6 +9,15 @@
  * the strategy is constructed by the Panel with all its hooks wired up;
  * standalone construction would duplicate that wiring without
  * additional coverage.
+ *
+ * AUDIT NOTE (ui.md C2): several tests reach into private state via
+ * `(panel as any).session.X` and write to it (e.g.
+ * `session.isRecording = true`). That pins the INTERNAL field shape of
+ * session — a rename or restructuring of session state will break these
+ * tests even when behavior is unchanged. The "refuses screenshot while
+ * recording is active" assertion in particular could be driven through
+ * `startVideoRecording()` instead of mutating `session.isRecording`
+ * directly. Follow-up: route through public APIs where possible.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

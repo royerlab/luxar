@@ -169,6 +169,23 @@ export class WorkerPool {
         }
 
         if (this.workers.length === 0) {
+          // MED-22: `Promise.allSettled(workerPromises)` above blocks until
+          // every spawnWorker() has either resolved or rejected, and
+          // spawnWorker removes its worker from `pendingWorkers` in BOTH
+          // its success and catch paths. Under normal flow `pendingWorkers`
+          // is therefore empty here. Sweep defensively anyway to guarantee
+          // no orphan Workers leak out the throw — if a future spawnWorker
+          // refactor ever forgets the .delete() on some path, this keeps
+          // the contract ("no pending workers escape the empty-pool guard")
+          // intact rather than silently leaking.
+          for (const worker of this.pendingWorkers) {
+            try {
+              worker.terminate();
+            } catch {
+              // Already terminated by a concurrent dispose / spawn path.
+            }
+          }
+          this.pendingWorkers.clear();
           throw new Error(
             'Failed to initialize any data workers. ' +
               'Luxar requires WebAssembly and Web Workers support.'

@@ -128,7 +128,14 @@ export class DataMonitorManager {
   }
 
   /**
-   * Destroy all monitors and reset the manager
+   * Destroy all monitors and reset the manager.
+   *
+   * HIGH-8: also releases the cross-layer event-bus subscriptions taken in
+   * the constructor. Without this, `destroyAll()` (called outside the
+   * `disposeInstance` path — e.g. between dataset switches in tests) left
+   * stale handlers wired on the bus, keeping references to a monitor-less
+   * singleton alive and crashing on later `panel-cycle` / `panel-hide`
+   * emissions. The subscriptions list is cleared so this is idempotent.
    */
   destroyAll(): void {
     for (const monitor of this.monitors.values()) {
@@ -136,6 +143,10 @@ export class DataMonitorManager {
     }
     this.monitors.clear();
     this.defaultMonitorId = null;
+    for (const unsubscribe of this.busSubscriptions) {
+      unsubscribe();
+    }
+    this.busSubscriptions = [];
   }
 
   /**
@@ -213,11 +224,9 @@ export class DataMonitorManager {
    */
   static disposeInstance(): void {
     if (DataMonitorManager.instance) {
+      // destroyAll() now also releases the event-bus subscriptions
+      // (HIGH-8), so no extra unsubscribe loop is needed here.
       DataMonitorManager.instance.destroyAll();
-      for (const unsubscribe of DataMonitorManager.instance.busSubscriptions) {
-        unsubscribe();
-      }
-      DataMonitorManager.instance.busSubscriptions = [];
       DataMonitorManager.instance = null;
     }
   }

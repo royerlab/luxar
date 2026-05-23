@@ -37,6 +37,23 @@ describe('LRUCache', () => {
       expect(cache.delete('nonexistent')).toBe(false);
     });
 
+    it('delete() of missing key does not perturb currentSize bookkeeping', () => {
+      // MED-1 regression: prior code path computed `this.cache.get(key)`
+      // and then guarded with `if (value !== undefined)`. That worked in
+      // practice because Map.get returns undefined for missing keys, but
+      // the bookkeeping is now guarded by `cache.has(key)` so a future
+      // tweak (e.g. allowing stored undefined sentinels) cannot
+      // accidentally decrement currentSize on a no-op delete.
+      cache.set('present', new Uint8Array(40));
+      expect(cache.size).toBe(40);
+      // Repeatedly delete missing keys — size must stay at 40.
+      expect(cache.delete('ghost-a')).toBe(false);
+      expect(cache.delete('ghost-b')).toBe(false);
+      expect(cache.delete('ghost-c')).toBe(false);
+      expect(cache.size).toBe(40);
+      expect(cache.count).toBe(1);
+    });
+
     it('should clear all entries', () => {
       cache.set('key1', new Uint8Array(10));
       cache.set('key2', new Uint8Array(20));

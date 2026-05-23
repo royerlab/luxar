@@ -192,11 +192,17 @@ describe('Scale Bar', () => {
     });
 
     it('should not update DOM when not visible', () => {
+      // W8 strengthening (P2): also assert the bar element wasn't sized,
+      // since "no update" must mean neither label nor bar mutated.
       const scaleBar = new ScaleBar(createMockConfig());
       scaleBar.update();
 
-      const label = scaleBar.getElement().querySelector('.luxar-scale-bar__label');
+      const el = scaleBar.getElement();
+      const label = el.querySelector('.luxar-scale-bar__label');
+      const bar = el.querySelector('.luxar-scale-bar__bar') as HTMLElement;
       expect(label?.textContent).toBe('');
+      expect(bar.style.width).toBe('');
+      expect(scaleBar.isVisible()).toBe(false);
     });
 
     it('should update bar width and label when visible', () => {

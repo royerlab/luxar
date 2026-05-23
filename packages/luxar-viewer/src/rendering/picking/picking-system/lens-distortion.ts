@@ -45,6 +45,19 @@ export interface UVScratch {
  * Apply Brown–Conrady distortion to UV coordinates and write the result
  * into `out`. Returns `out` for ergonomic chaining.
  *
+ * Y-convention contract (MED-27): the input UV uses the picking-system's
+ * screen-space convention with **y=0 at the top of the canvas** and y=1
+ * at the bottom — the same convention as `event.clientY / height`.
+ * The GLSL reference at `rendering/post-processing/mega/shader.glsl.ts`
+ * (`applyDistortion`) and its TSL counterpart consume UV using the
+ * SAME top-down Y convention as of the parity tests in
+ * `lens-distortion.test.ts`. The distortion math is symmetric about
+ * `y = 0.5`, so a Y-flip in only one site would produce subtly stale
+ * picking coordinates without affecting any parity tests. If the GLSL
+ * is ever changed to flip Y internally (e.g. to follow GL's
+ * `y=0 at bottom` convention), update this function in lockstep and
+ * mirror the change in the parity harness.
+ *
  * Algorithm (must stay in sync with `mega/shader.glsl.ts::applyDistortion`):
  *   1. UV ∈ [0, 1] → normalised n ∈ [-1, 1].
  *   2. Radial distortion: `xd = (1 + k_x · r²) · xn` (likewise y).

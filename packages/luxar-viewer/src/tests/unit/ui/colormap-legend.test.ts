@@ -3,6 +3,15 @@
  *
  * Verifies the legend's reactive lifecycle: subscription to layer state,
  * hash-based skip on identical updates, and DOM structure of legend entries.
+ *
+ * AUDIT NOTE (ui.md C5): the tests below construct a hand-rolled
+ * LayerStateManager mock instead of a real instance. LayerStateManager is
+ * a sibling module in the same subpackage (with dedicated tests under
+ * `layers/layer-state.test.ts`), not a trust boundary. A regression
+ * where the legend reads `intensity/offset` instead of `displayMin/Max`
+ * from a real LayerStateManager would be invisible to this file because
+ * the mock returns whatever shape the test author wrote. Follow-up:
+ * construct a real LayerStateManager with stub source data.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -214,13 +223,50 @@ describe('ColormapLegend', () => {
     });
 
     it('falls back to gray fill for unknown colormap', () => {
-      layerState.setLayers([makeLayer({ colormap: 'nonexistent-colormap' })]);
-      const canvas = legend
-        .getElement()
-        .querySelector<HTMLCanvasElement>('.luxar-colormap-legend__gradient');
-      // Just ensure the canvas was created; the gray fill is internal to canvas
-      // and jsdom doesn't render canvas content.
+      // W5 strengthening (P2): canvas-pixel inspection isn't reliable in
+      // jsdom (no GL/2d render), but we can verify (a) the entry was still
+      // created, (b) canvas dimensions match the spec, (c) the layer's
+      // name and min/max labels rendered, and (d) the gradient does NOT
+      // get re-built when the unknown colormap is re-applied with the
+      // same min/max (hash sentinel still works on the fallback path).
+      layerState.setLayers([
+        makeLayer({
+          colormap: 'nonexistent-colormap',
+          name: 'mystery',
+          displayMin: 0,
+          displayMax: 42,
+        }),
+      ]);
+
+      const el = legend.getElement();
+      const entries = el.querySelectorAll('.luxar-colormap-legend__entry');
+      expect(entries.length).toBe(1);
+
+      const canvas = entries[0].querySelector<HTMLCanvasElement>('.luxar-colormap-legend__gradient');
       expect(canvas).toBeTruthy();
+      expect(canvas?.width).toBe(120);
+      expect(canvas?.height).toBe(12);
+
+      const nameEl = entries[0].querySelector('.luxar-colormap-legend__name');
+      expect(nameEl?.textContent).toBe('mystery');
+
+      const labels = entries[0].querySelectorAll('.luxar-colormap-legend__labels span');
+      expect(labels[0].textContent).toBe('0');
+      expect(labels[1].textContent).toBe('42');
+
+      // The fallback path must still respect the hash-skip optimisation.
+      layerState.setLayers([
+        makeLayer({
+          colormap: 'nonexistent-colormap',
+          name: 'mystery',
+          displayMin: 0,
+          displayMax: 42,
+        }),
+      ]);
+      const canvasAfterIdempotentUpdate = el.querySelector<HTMLCanvasElement>(
+        '.luxar-colormap-legend__gradient'
+      );
+      expect(canvasAfterIdempotentUpdate).toBe(canvas);
     });
   });
 });

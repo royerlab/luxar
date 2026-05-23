@@ -80,6 +80,28 @@ function makeGSplatMesh(
   return mesh;
 }
 
+function makeLineMesh(
+  segmentCount: number,
+  options: { name?: string; visible?: boolean; hasColormap?: boolean } = {}
+): THREE.Mesh {
+  // Lines render as THREE.Mesh + InstancedBufferGeometry (one instance
+  // per segment), matching the Points/GSplats symmetry contract.
+  // `computeDebugState` selects on `userData.nodeType === 'lines'`.
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.instanceCount = segmentCount;
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
+  const material = new THREE.ShaderMaterial({
+    vertexShader: 'void main() {}',
+    fragmentShader: 'void main() {}',
+    defines: options.hasColormap ? { USE_COLORMAP: 1 } : {},
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.userData = { nodeType: 'lines' };
+  if (options.name !== undefined) mesh.name = options.name;
+  if (options.visible !== undefined) mesh.visible = options.visible;
+  return mesh;
+}
+
 function makeContext(
   scene: THREE.Object3D,
   overrides: Partial<DebugStateContext> = {}
@@ -297,6 +319,91 @@ describe('computeDebugState', () => {
       const state = computeDebugState(makeContext(scene));
       expect(state.totalPoints).toBe(75);
       expect(state.totalGSplats).toBe(25);
+    });
+  });
+
+  describe('line mesh counting (core.md G17 three-geometry symmetry)', () => {
+    // Lines must be counted the same way Points and GSplats are
+    // (per-instance from InstancedBufferGeometry.instanceCount). A
+    // regression that dropped the lines branch would leave totalLines
+    // at 0 even when Lines exist in the scene.
+    it('counts a single line mesh by instance count (segment count)', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeLineMesh(50, { name: 'edges' }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalLines).toBe(50);
+      expect(state.lineMeshes).toHaveLength(1);
+      expect(state.lineMeshes[0].name).toBe('edges');
+      expect(state.lineMeshes[0].segmentCount).toBe(50);
+    });
+
+    it('reports hasColormap=true when material.defines.USE_COLORMAP is set', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeLineMesh(10, { name: 'cm', hasColormap: true }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.lineMeshes[0].hasColormap).toBe(true);
+    });
+
+    it('reports hasColormap=false when material.defines.USE_COLORMAP is absent', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeLineMesh(10, { name: 'plain', hasColormap: false }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.lineMeshes[0].hasColormap).toBe(false);
+    });
+
+    it('sums multiple line meshes into totalLines', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeLineMesh(30, { name: 'a' }));
+      scene.add(makeLineMesh(70, { name: 'b' }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalLines).toBe(100);
+      expect(state.lineMeshes).toHaveLength(2);
+    });
+
+    it('reports visible=false for hidden line meshes', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeLineMesh(10, { name: 'hidden', visible: false }));
+
+      const state = computeDebugState(makeContext(scene));
+      // Visibility is reported but still counted (consistent with
+      // points/gsplats — totalLines is the buffer count, not the
+      // rendered count).
+      expect(state.lineMeshes[0].visible).toBe(false);
+      expect(state.totalLines).toBe(10);
+    });
+
+    it('totalElements is points + gsplats + lines', () => {
+      // Symmetry check: the aggregate must be the sum of all three
+      // geometry types. A regression that dropped lines from the sum
+      // would surface here even if the per-geometry counts stayed
+      // correct.
+      const scene = new THREE.Scene();
+      scene.add(makePointCloud(100, { name: 'p' }));
+      scene.add(makeGSplatMesh(200, { name: 'g' }));
+      scene.add(makeLineMesh(300, { name: 'l' }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalPoints).toBe(100);
+      expect(state.totalGSplats).toBe(200);
+      expect(state.totalLines).toBe(300);
+      expect(state.totalElements).toBe(600);
+    });
+
+    it('skips Mesh without nodeType=lines userData', () => {
+      const scene = new THREE.Scene();
+      const geometry = new THREE.InstancedBufferGeometry();
+      geometry.instanceCount = 99;
+      const mesh = new THREE.Mesh(geometry);
+      // userData.nodeType not set → not counted.
+      scene.add(mesh);
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalLines).toBe(0);
+      expect(state.lineMeshes).toEqual([]);
     });
   });
 });

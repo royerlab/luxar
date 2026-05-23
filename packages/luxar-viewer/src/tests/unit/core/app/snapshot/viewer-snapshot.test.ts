@@ -186,13 +186,22 @@ describe('restoreSnapshot', () => {
   });
 
   it('skips dims when ndim mismatches the loaded scene', () => {
+    // core.md W11 strengthening: previously only asserted dimsApplied===false.
+    // Three orthogonal contracts to assert on the ndim-mismatch path:
+    //   1. result.dimsApplied is false (skip happened).
+    //   2. result.cameraApplied is TRUE — camera restore is independent
+    //      of the dims-block decision (mutation guard: a refactor that
+    //      bailed early on dim mismatch would break the camera path).
+    //   3. sceneDimsManager.currentStep is UNCHANGED by the failed restore
+    //      (the dim-3 value remains 1, not 0).
     loadDimsScene(4, [0, 0, 0, 1]);
     const sm = makePerspectiveSceneManager();
+    const spy = vi.spyOn(sceneDimsManager, 'setDimensionValue');
 
     const snapshot: ViewerSnapshot = {
       version: VIEWER_SNAPSHOT_VERSION,
       camera: {
-        position: [0, 0, 0],
+        position: [42, 0, 0],
         target: [0, 0, 0],
         up: [0, 1, 0],
         isOrtho: false,
@@ -211,6 +220,15 @@ describe('restoreSnapshot', () => {
       snapshot
     );
     expect(result.dimsApplied).toBe(false);
+    expect(result.cameraApplied).toBe(true); // camera still applied
+    expect(sm.camera.position.x).toBe(42); // camera DID move
+    // No per-dim writes were attempted.
+    expect(spy).not.toHaveBeenCalled();
+    // Existing currentStep is preserved exactly.
+    const dims = sceneDimsManager.getDims();
+    expect(dims?.currentStep[3]).toBe(1);
+
+    spy.mockRestore();
   });
 
   it('forwards currentStep values to sceneDimsManager when ndim matches', () => {

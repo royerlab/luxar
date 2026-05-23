@@ -150,7 +150,17 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Initialize orientation from current camera
     this.initializeFromCamera();
 
-    // Save initial state so reset() has a valid baseline
+    // Save initial state so reset() has a valid baseline.
+    //
+    // SEMANTICS: saveState() is invoked NOW, capturing the camera's
+    // position + orientation at construction time. If a caller mutates
+    // the camera AFTER constructing the controls (e.g. `new
+    // LuxarFlyControls(cam, dom); cam.position.set(...)`), those
+    // mutations will NOT be the reset baseline — they must call
+    // `controls.saveState()` again after the mutation to update it.
+    // All current callers (factories.ts::createFlyControls and the
+    // unit tests) configure the camera BEFORE construction, so this
+    // "saves NOW" contract holds without surprises.
     this.saveState();
 
     this.listenerDisposer = attachListeners({
@@ -326,7 +336,14 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   }
 
   /**
-   * Save current state (for reset functionality)
+   * Save current state (for reset functionality).
+   *
+   * Captures `camera.position` and the internal `orientation` quaternion
+   * at the time of the call — these become the snapshot restored by
+   * `reset()`. NOTE: the constructor invokes this once immediately after
+   * `initializeFromCamera`, so the baseline reflects the camera state at
+   * construction time. Callers that mutate the camera AFTER constructing
+   * the controls must call `saveState()` again to update the snapshot.
    */
   public saveState(): void {
     this.savedPosition.copy(this.camera.position);

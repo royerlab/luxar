@@ -536,6 +536,44 @@ describe('TypeScript Reference Implementation Tests', () => {
       expect(visible).toBe(1);
       expect(output[0]).toBeCloseTo(Math.sqrt(0.75), 5);
     });
+
+    it('MED-18: dims beyond spatialExtendDims.length default to spatial (documented fallback)', () => {
+      // The docstring pins the contract: dims `d >= spatialExtendDims.length`
+      // are treated as spatial (contribute to Pythagorean distance) rather
+      // than as discrete (which would silently apply the 0.5 exact-match
+      // tolerance). This test makes the documented default observable.
+      //
+      // Setup: 5D, but spatialExtendDims has only 3 entries (covers dims 0-2).
+      // Dims 3 and 4 are "missing" — must default to spatial.
+      // Display dims = [0,1,2]; point at (0,0,0, 0.3, 0.4) on hidden dims.
+      // Spatial default: D² = 0.09 + 0.16 = 0.25, R_eff = sqrt(0.75).
+      // Discrete-default would treat dims 3 & 4 as exact-match: |0.3|, |0.4|
+      // both <= 0.5 → match, no distance accumulated → R_eff = 1.0.
+      // The two paths yield clearly different outputs.
+      const positions = new Float32Array([0.0, 0.0, 0.0, 0.3, 0.4]);
+      const radii = new Float32Array([1.0]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0, 0.0]);
+      // Only 3 entries — dims 3 and 4 are beyond the array length.
+      const spatialExtend = new Uint8Array([1, 1, 1]);
+      const output = new Float32Array(1);
+
+      const visible = calculate_effective_radii(
+        positions,
+        radii,
+        displayDims,
+        slicePos,
+        spatialExtend,
+        5, // ndim = 5, but spatialExtend.length = 3
+        1,
+        output
+      );
+
+      expect(visible).toBe(1);
+      // Spatial default path: sqrt(1 - 0.25) = sqrt(0.75) ≈ 0.866.
+      // (Discrete default would yield 1.0.)
+      expect(output[0]).toBeCloseTo(Math.sqrt(0.75), 5);
+    });
   });
 
   // ============================================================================
@@ -682,6 +720,27 @@ describe('TypeScript Reference Implementation Tests', () => {
         expect(output[i * 3 + 1]).toBeCloseTo(0.6, 5);
         expect(output[i * 3 + 2]).toBeCloseTo(0.7, 5);
       }
+    });
+
+    // Regression: MED-19 — reject ambiguous middle-length inputs. Previously
+    // `value.length=2, elementsPerPoint=3` would silently produce a row of
+    // `[v0, v1, v0]` (mixed broadcast). Now it throws.
+    it('should throw on ambiguous value.length between 1 and elementsPerPoint', () => {
+      const value = new Float32Array([0.1, 0.2]); // length 2
+      const output = new Float32Array(9); // 3 points * 3 elements
+
+      expect(() => decode_broadcasted(value, 3, 3, output)).toThrow(
+        /value\.length must be 1.*or elementsPerPoint \(3\), got 2/
+      );
+    });
+
+    it('should throw on value.length greater than elementsPerPoint', () => {
+      const value = new Float32Array([0.1, 0.2, 0.3, 0.4]); // length 4
+      const output = new Float32Array(6); // 2 points * 3 elements
+
+      expect(() => decode_broadcasted(value, 2, 3, output)).toThrow(
+        /value\.length must be 1.*or elementsPerPoint \(3\), got 4/
+      );
     });
   });
 
@@ -1213,6 +1272,37 @@ describe('TypeScript Reference Implementation Tests', () => {
       expect(result[0]).toBe(1.0); // visible
       expect(result[1]).toBeCloseTo(0.45, 5); // t1 = (4.5 - 0) / 10
       expect(result[2]).toBeCloseTo(0.55, 5); // t2 = (5.5 - 0) / 10
+    });
+
+    it('MED-20: reusing a pre-allocated workspace buffer yields identical results across calls', () => {
+      // Hot loops call clip_segment_single per segment; passing a single
+      // workspace Uint8Array avoids per-call allocation while producing
+      // the same result as the allocating overload. The function must
+      // also zero stale bytes between calls (a previous call's display
+      // dims may differ from the current call's).
+      const slicePos = new Float32Array([0, 0, 0, 5]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+      const workspace = new Uint8Array(4);
+
+      // First call: displayDims=[0,1,2], one dim clipped
+      const p1a = new Float32Array([0, 0, 0, 0]);
+      const p2a = new Float32Array([10, 10, 10, 10]);
+      const ddA = new Uint32Array([0, 1, 2]);
+      const refA = clip_segment_single(p1a, p2a, slicePos, tolerance, ddA, 4);
+      const wsA = clip_segment_single(p1a, p2a, slicePos, tolerance, ddA, 4, workspace);
+      expect(Array.from(wsA)).toEqual(Array.from(refA));
+
+      // Second call with DIFFERENT displayDims — the workspace must be
+      // re-zeroed inside the function, otherwise dim 0 would still be
+      // marked as a display dim and the clip math would diverge.
+      const p1b = new Float32Array([0, 0, 5.2, 0]);
+      const p2b = new Float32Array([10, 10, 4.8, 10]);
+      const slicePosB = new Float32Array([0, 0, 5, 0]);
+      const toleranceB = new Float32Array([0.5, 1e10, 1e10, 1e10]);
+      const ddB = new Uint32Array([1, 2, 3]);
+      const refB = clip_segment_single(p1b, p2b, slicePosB, toleranceB, ddB, 4);
+      const wsB = clip_segment_single(p1b, p2b, slicePosB, toleranceB, ddB, 4, workspace);
+      expect(Array.from(wsB)).toEqual(Array.from(refB));
     });
   });
 

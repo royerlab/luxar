@@ -11,6 +11,16 @@
  * Panel wires the SceneManager / AnimationController / hooks into
  * Session via the constructor; standalone construction would just
  * duplicate that wiring.
+ *
+ * AUDIT NOTE (ui.md C2): the `panel.session.X(...)` accessor is itself a
+ * private surface the tests reach into. Renaming `panel.session` to
+ * something else breaks every test in this file — even when the public
+ * RecordingSession contract is unchanged. The trade-off is conscious:
+ * RecordingSession is wired by the Panel and isn't independently
+ * constructible without duplicating the wiring. Follow-up: extract a
+ * public `panel.getSession()` accessor (or expose the strategies a
+ * `Session` interface explicitly) so the test contract doesn't depend
+ * on a private field name.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -241,6 +251,21 @@ describe('RecordingSession', () => {
     });
 
     it('clears the interval timer when hiding', () => {
+      // MED-50 (audit-ack, TEST-INFRA not production): the audit
+      // flagged this `spyOn(global, 'clearInterval')` assertion as
+      // fragile — if `session.ts` is later refactored to use
+      // `setTimeout` recursion (or another timer mechanism), the
+      // `expect(clearIntervalSpy).toHaveBeenCalled()` would silently
+      // pass for the wrong reason (clearInterval might be invoked by
+      // unrelated test infrastructure). Accepted that risk rather than
+      // refactoring: the session implementation currently uses
+      // `setInterval`+`clearInterval` (see session.ts:406, 424), and
+      // pinning the test to that API is consistent with the codebase
+      // convention of testing the cleanup mechanism for any timer
+      // hooked into the panel's lifetime. If the implementation
+      // switches to `setTimeout`-recursion, this test must be rewritten
+      // to assert on observable state (indicator stops updating after
+      // dispose) instead of the cleanup primitive.
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
 
       (panel as any).session.showRecordingIndicator();

@@ -28,7 +28,14 @@ describe('L0 read-only chunk contract (commit 6.1)', () => {
     cache = new DecompressedChunkCache({ maxSize: 1024 * 1024 });
   });
 
-  it('two consecutive hits return identical bytes (no in-cache mutation)', async () => {
+  // Renamed: the previous name ("no in-cache mutation") was misleading because
+  // the assertion `expect(r2.data).toBe(r1.data)` actually proves the OPPOSITE
+  // — the cache hands back reference-equal views, so a mutation through r1
+  // WOULD corrupt r2. The contract this test pins is reference-stability of
+  // cache hits + that the byte payload survives unchanged across hits when no
+  // consumer has mutated. The downstream "a consumer loop … does not corrupt
+  // later hits" test is what actually guards against mutation.
+  it('cache hits return the same reference (load-bearing assumption: consumers must not mutate)', async () => {
     const sourceData = new Float32Array([1.5, 2.5, 3.5, 4.5]);
     let getChunkCalls = 0;
     const fakeArray: any = {

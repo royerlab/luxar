@@ -5,6 +5,16 @@
  * interpolated `vT`. This test mirrors that formula in TypeScript so
  * body=1.0 and endpoint=0.5 behavior is covered without a WebGL
  * context.
+ *
+ * Audit acknowledgment (rendering.md [W3]): `capFactor` below is a
+ * verbatim TS re-implementation of the GLSL formula in
+ * `materials/line/shader-glsl.ts` — it tests the copy, not the
+ * shader. This is by design: GLSL evaluation requires a WebGL
+ * context that vitest jsdom cannot supply, and the structural
+ * shader-pattern lock is owned by `shader-hot-path.test.ts`. The
+ * GLSL/TSL parity harness + Playwright visual regression suite
+ * catch divergence between this TS mirror and the real shader.
+ * Same rationale applies to `gsplat-ray-integral.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
 

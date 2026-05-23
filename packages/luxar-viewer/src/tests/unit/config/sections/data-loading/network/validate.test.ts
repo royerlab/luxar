@@ -154,4 +154,64 @@ describe('validateDataLoadingNetwork', () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid retry attempts'));
   });
+
+  // [G4][P5] / [G20][P5] Audit: the `validationTimeoutMs < 3000` warning
+  // branch (validate.ts:28-42) had no test. Cover the boundary explicitly:
+  // 3000 is allowed silently, 2999 fires the warning, and anything between
+  // 1 and 2999 must trigger it. The error branch (≤0) takes precedence so
+  // 0 still errors and never reaches the warning gate — assert that
+  // mutually-exclusive behaviour.
+  it('emits a "Very low cache validation timeout" warning when validationTimeoutMs < 3000', () => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.validationTimeoutMs = 2000;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('Very low cache validation timeout')
+    );
+    // Pinpoint that the warning message contains the actual ms value
+    // (a mutant that hardcodes the number would not).
+    expect(result.warnings).toContainEqual(expect.stringContaining('2000'));
+  });
+
+  it('emits the validation-timeout warning at the boundary minus 1 (2999)', () => {
+    // [P5] boundary first-class: the strict `< 3000` predicate fires at 2999.
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.validationTimeoutMs = 2999;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('Very low cache validation timeout')
+    );
+  });
+
+  it('does NOT emit the validation-timeout warning at the boundary (3000)', () => {
+    // [P5] boundary first-class: `< 3000` is strict, so 3000 is silent.
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.validationTimeoutMs = 3000;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(
+      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
+    ).toEqual([]);
+  });
+
+  it('does NOT emit the validation-timeout warning at high values', () => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.validationTimeoutMs = 5000;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(
+      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
+    ).toEqual([]);
+  });
+
+  it('error branch (validationTimeoutMs=0) suppresses the warning branch', () => {
+    // The source uses `else if` — 0 must error and NOT also warn,
+    // otherwise an operator sees both messages and the diagnostic is noisy.
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.validationTimeoutMs = 0;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(false);
+    expect(
+      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
+    ).toEqual([]);
+  });
 });

@@ -30,6 +30,20 @@ describe('isPermutation', () => {
     const entry: NdTransformEntry = { scale: 1.0, offset: 0.0 };
     expect(isPermutation(entry)).toBe(false);
   });
+
+  it('safely returns false for null and primitives', () => {
+    // HIGH-4 regression: previous `'permutation' in entry` form threw
+    // TypeError for null/primitives because `in` requires a non-null
+    // object. Zarr metadata is JSON-parsed at runtime so malformed
+    // nd_transform payloads (e.g. `null` for an entry, or a misplaced
+    // string) used to crash the loader instead of being rejected.
+    // Cast to the widened type the guard now declares.
+    expect(isPermutation(null)).toBe(false);
+    expect(isPermutation(undefined)).toBe(false);
+    expect(isPermutation(42 as unknown as NdTransformEntry)).toBe(false);
+    expect(isPermutation('permutation' as unknown as NdTransformEntry)).toBe(false);
+    expect(isPermutation(true as unknown as NdTransformEntry)).toBe(false);
+  });
 });
 
 describe('hasContentsMethod', () => {
@@ -104,6 +118,20 @@ describe('hasNdTransform', () => {
     expect(hasNdTransform(makeAttrs([]))).toBe(false);
     expect(hasNdTransform(makeAttrs([1, 2, 3]))).toBe(false);
   });
+
+  it('returns false when nd_transform is null (typeof null === "object" footgun fixed)', () => {
+    // types.md G4 / OOS fix: types/zarr.ts:hasNdTransform was previously
+    // accepting `null` because `typeof null === 'object'`, `null !== undefined`,
+    // and `!Array.isArray(null) === true`. The source now also checks
+    // `attrs.nd_transform !== null`, so the guard correctly rejects null.
+    // Downstream code that iterates the map's keys would have crashed.
+    const CURRENT_BEHAVIOR_ACCEPTS_NULL = false;
+    if (CURRENT_BEHAVIOR_ACCEPTS_NULL) {
+      expect(hasNdTransform(makeAttrs(null))).toBe(true);
+    } else {
+      expect(hasNdTransform(makeAttrs(null))).toBe(false);
+    }
+  });
 });
 
 describe('isPointsNode', () => {
@@ -115,6 +143,15 @@ describe('isPointsNode', () => {
     expect(isPointsNode({ type: 'lines' } as ZarrNodeAttrs)).toBe(false);
     expect(isPointsNode({ type: 'gsplats' } as ZarrNodeAttrs)).toBe(false);
     expect(isPointsNode({ type: 'group' } as ZarrNodeAttrs)).toBe(false);
+  });
+
+  it('returns false when type is undefined or attrs is empty', () => {
+    // types.md W7 fix: previous version didn't exercise `attrs.type === undefined`.
+    // The field is optional in the type (see zarr.ts:245); a missing type
+    // must logically return false. A regression that defaulted to "points"
+    // would have slipped through.
+    expect(isPointsNode({} as ZarrNodeAttrs)).toBe(false);
+    expect(isPointsNode({ type: undefined } as unknown as ZarrNodeAttrs)).toBe(false);
   });
 });
 

@@ -21,6 +21,12 @@
  * — those don't capture text input, so navigation keys should still fire
  * even if focus has landed on them after a click.
  *
+ * Canonical typing-detection helper. Both
+ * {@link InputHandler.isTypingInInput} and
+ * {@link InputContextManager.isTypingContext} delegate here so the
+ * two paths cannot diverge — a fix to this function propagates to
+ * every typing-aware code path.
+ *
  * @param activeElement - Result of `document.activeElement`, or any
  *   `Element | null` you want to classify.
  */

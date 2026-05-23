@@ -129,7 +129,13 @@ describe('WorkerPool.withTimeout', () => {
     expect(workers[1].terminate).toHaveBeenCalledTimes(1);
   });
 
-  it('clears the timeout when the call resolves first (no late firing)', async () => {
+  it('clears the timeout when the call resolves first (no late rejection after success)', async () => {
+    // workers.md W8 fix: previously advanced timers by 2000 but asserted
+    // nothing afterward. A regression that fired a late rejection would
+    // surface as an unhandled-rejection (which vitest may or may not
+    // catch). Strengthen by attaching a continuation onto the resolved
+    // promise and confirming it stays in the resolved state past the
+    // original timeout window.
     vi.useFakeTimers();
     const { WorkerPool } = await loadWorkerPool();
     const pool = new WorkerPool();
@@ -142,8 +148,17 @@ describe('WorkerPool.withTimeout', () => {
     resolveCall(7);
     expect(await raced).toBe(7);
 
-    // Advance past the original timeout — nothing should reject.
+    // Track whether the (resolved) `raced` ever transitions to rejected.
+    let lateRejection = false;
+    raced.catch(() => {
+      lateRejection = true;
+    });
+
+    // Advance past the original timeout — the cleared timer must not fire.
     vi.advanceTimersByTime(2000);
+    // Flush microtasks before asserting.
+    await Promise.resolve();
+    expect(lateRejection).toBe(false);
   });
 });
 

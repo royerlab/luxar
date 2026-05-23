@@ -176,6 +176,11 @@ describe('captureViewerState', () => {
     );
 
     expect(state.dimensions).toBeUndefined();
+    // The branch at viewer-state-capture.ts:81-86 gates the `animation` block
+    // on truthy `dims`. With no dims, animation must also be undefined — a
+    // regression that emitted `animation: []` would slip past a dimensions-only
+    // check.
+    expect(state.animation).toBeUndefined();
   });
 
   it('should handle missing background gracefully', () => {
@@ -203,5 +208,169 @@ describe('captureViewerState', () => {
     const parsed = JSON.parse(json);
     expect(parsed.camera.position).toEqual([1, 2, 3]);
     expect(parsed.bloom_enabled).toBe(true);
+  });
+
+  // [G11][P5] Audit: source narrows on `'isColor' in bg && bg.isColor`
+  // (viewer-state-capture.ts:58). If `scene.background` is a Texture
+  // (no `isColor`), `result.background_color` must stay undefined.
+  // Pre-audit only the `null` path was covered.
+  it('leaves background_color undefined when scene.background is a non-Color (e.g. Texture)', () => {
+    const sm = createMockSceneManager();
+    // Mimic a Three.Texture-shaped object: no `isColor` flag at all.
+    sm.scene.background = {
+      isTexture: true,
+      // Provide a getHexString() to prove the narrow is what gates the
+      // call — without `isColor` the code must NOT invoke getHexString.
+      getHexString: () => 'should-not-be-called',
+    } as any;
+
+    const state = captureViewerState(
+      sm,
+      createMockRenderingControls(),
+      createMockSceneDimsManager()
+    );
+
+    expect(state.background_color).toBeUndefined();
+  });
+
+  it('leaves background_color undefined when scene.background has isColor=false', () => {
+    // [P5] boundary: the predicate requires `bg.isColor === true`; an
+    // object with the property set to `false` must also be rejected.
+    const sm = createMockSceneManager();
+    sm.scene.background = {
+      isColor: false,
+      getHexString: () => 'should-not-be-called',
+    } as any;
+
+    const state = captureViewerState(
+      sm,
+      createMockRenderingControls(),
+      createMockSceneDimsManager()
+    );
+
+    expect(state.background_color).toBeUndefined();
+  });
+});
+
+// [G10][P5,P8] Audit: the per-dimension `animation` block
+// (viewer-state-capture.ts:89-111) was completely uncovered.
+// We deliberately put these tests in their own `describe` so the
+// mock fixtures don't pollute the smoke-path tests above.
+describe('captureViewerState — animation block', () => {
+  function createMockAnimationManager(states: Array<Record<string, unknown> | null>) {
+    return {
+      getState: (i: number) => states[i] ?? null,
+    } as any;
+  }
+
+  function buildState(perDimStates: Array<Record<string, unknown> | null>, hasDims = true) {
+    return captureViewerState(
+      // Reuse the local helper bodies above
+      {
+        camera: {
+          position: { x: 1, y: 2, z: 3 },
+          up: { x: 0, y: 1, z: 0 },
+          fov: 47,
+          near: 0.1,
+          far: 1000,
+        },
+        scene: { background: null },
+        controls: { getFocusTarget: () => ({ x: 0, y: 0, z: 0 }) },
+      } as any,
+      { settings: {} } as any,
+      hasDims
+        ? ({
+            getDims: () => ({
+              ndim: perDimStates.length,
+              currentStep: new Array(perDimStates.length).fill(0),
+              displayed: [1, 2, 3],
+              metadata: [],
+            }),
+          } as any)
+        : ({ getDims: () => null } as any),
+      createMockAnimationManager(perDimStates)
+    );
+  }
+
+  it('captures per-dimension animation state when animationManager is provided', () => {
+    const state = buildState([
+      null,
+      { isPlaying: true, targetFPS: 30, loopMode: 'loop', direction: 'forward' },
+      null,
+    ]);
+
+    expect(state.animation).toBeDefined();
+    expect(state.animation).toHaveLength(3);
+    // Untouched dims must serialize as empty objects (per source line 104).
+    expect(state.animation![0]).toEqual({});
+    expect(state.animation![2]).toEqual({});
+    expect(state.animation![1]).toEqual({
+      playing: true,
+      target_fps: 30,
+      loop: 'loop',
+      direction: 'forward',
+    });
+  });
+
+  it('omits animation entirely when NO dimension has playing/queued state (hasAnyState=false)', () => {
+    // [P5] symmetry: source uses an explicit `hasAnyState` flag — if NO
+    // dimension reports state, the block must NOT emit an `animation: []`
+    // or `[{}, {}, ...]` placeholder. Pre-audit this branch was untested.
+    const state = buildState([null, null, null]);
+    expect(state.animation).toBeUndefined();
+  });
+
+  it('omits animation when animationManager is provided but dims are missing', () => {
+    // [G10] guard: even with an animationManager passed in, if dims === null,
+    // the source's `if (animationManager && dims)` short-circuits and
+    // animation must remain undefined.
+    const state = buildState([{ isPlaying: true, targetFPS: 30, loopMode: 'loop', direction: 'forward' }], false);
+    expect(state.animation).toBeUndefined();
+  });
+});
+
+// [W4][P3] / [G12][P5] Audit: the `vi.mock('../../themes/theme-manager')`
+// at the top of this file short-circuits `ThemeManager.getInstance()` to
+// a known fixture, which means the `try/catch` at lines 73-77 of source
+// (the "ThemeManager not initialized" path) was completely untested.
+//
+// We can exercise the catch by passing an explicit `themeManager` whose
+// `getCurrentTheme()` throws — that flows through the same try/catch
+// without touching the module-level singleton (no `vi.doMock` gymnastics
+// needed, no production-source edits).
+describe('captureViewerState — ThemeManager catch branch', () => {
+  it('omits result.theme when the supplied themeManager.getCurrentTheme() throws', () => {
+    const throwingTM = {
+      getCurrentTheme: () => {
+        throw new Error('ThemeManager not initialized');
+      },
+    } as any;
+
+    const state = captureViewerState(
+      {
+        camera: {
+          position: { x: 0, y: 0, z: 0 },
+          up: { x: 0, y: 1, z: 0 },
+          fov: 47,
+          near: 0.1,
+          far: 1000,
+        },
+        scene: { background: null },
+        controls: { getFocusTarget: () => ({ x: 0, y: 0, z: 0 }) },
+      } as any,
+      { settings: {} } as any,
+      { getDims: () => null } as any,
+      undefined,
+      throwingTM
+    );
+
+    // The catch must SWALLOW the throw; capture must still produce a
+    // ZarrViewerConfig, just without the `theme` field. A regression that
+    // re-threw or set `theme` to a sentinel string would fail here.
+    expect(state).toBeDefined();
+    expect(state.theme).toBeUndefined();
+    // Other required fields stay populated — the catch is local to
+    // the theme block (line 72-78), not a global escape.
+    expect(state.camera).toBeDefined();
   });
 });

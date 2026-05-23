@@ -180,8 +180,23 @@ export function composeNdTransforms(...transforms: NdTransformMap[]): NdTransfor
  */
 export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: string): NdTransformMap {
   const chain: NdTransformMap[] = [];
+  // Guard against malformed scene graphs that contain the same node
+  // reference twice (cycles or shared subtrees). Without this, a cycle
+  // would push the same nd_transform onto `chain` repeatedly, then the
+  // backtrack `pop()` would only undo one push per `findPath` frame —
+  // resulting in either an infinite recursion or a chain with duplicate
+  // entries that gets double-composed downstream.
+  const visited = new Set<SceneNode>();
 
   function findPath(node: SceneNode, path: string): boolean {
+    if (visited.has(node)) {
+      throw new Error(
+        `computeWorldNdTransform: malformed scene graph — node "${node.path}" ` +
+          'encountered twice (cycle or shared reference). Aborting traversal.'
+      );
+    }
+    visited.add(node);
+
     if (node.attrs.nd_transform) {
       chain.push(node.attrs.nd_transform as NdTransformMap);
     }

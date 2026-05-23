@@ -22,6 +22,9 @@ export interface TrackedWorkerHandle {
 }
 
 export function selectLeastBusy(workers: WorkerInstance[]): TrackedWorkerHandle {
+  if (workers.length === 0) {
+    throw new Error('selectLeastBusy: workers array is empty');
+  }
   // Find worker with least active queries
   let leastBusyIndex = 0;
   let minQueries = workers[0].activeQueries;

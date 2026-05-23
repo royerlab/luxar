@@ -131,13 +131,13 @@ export class LRUCache<V> {
   }
 
   delete(key: string): boolean {
-    const value = this.cache.get(key);
-    if (value !== undefined) {
-      this.onEvict?.(key, value);
-      this.currentSize -= this.getSize(value);
-      return this.cache.delete(key);
+    if (!this.cache.has(key)) {
+      return false;
     }
-    return false;
+    const value = this.cache.get(key)!;
+    this.onEvict?.(key, value);
+    this.currentSize -= this.getSize(value);
+    return this.cache.delete(key);
   }
 
   clear(): void {

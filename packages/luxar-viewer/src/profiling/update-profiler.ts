@@ -99,6 +99,10 @@ class SessionImpl implements UpdateSession {
   private ended = false;
   private readonly parent: SessionImpl | null;
   private readonly profiler: UpdateProfiler;
+  // Set by markSkipped() so end() bypasses duration measurement + EMA.
+  // Without this flag, skipped entries still record the begin→markSkipped→end
+  // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
+  private skipBypassesEMA = false;
 
   constructor(name: string, parent: SessionImpl | null, profiler: UpdateProfiler) {
     this.entry = {
@@ -126,19 +130,28 @@ class SessionImpl implements UpdateSession {
     if (this.ended) return;
     this.ended = true;
 
-    const duration = performance.now() - this.startTime;
-    this.entry.lastMs = duration;
-    this.entry.count++;
-
-    // Update EMA
-    if (this.entry.count === 1) {
-      this.entry.avgMs = duration;
+    if (this.skipBypassesEMA) {
+      // markSkipped() already set lastMs/avgMs to 0; do NOT measure duration
+      // or apply the EMA, otherwise the begin→markSkipped→end overhead would
+      // leak into the persistent state, contradicting the JSDoc claim that
+      // skipped entries are zero-duration.
+      this.entry.count++;
+      this.entry.overBudget = false;
     } else {
-      this.entry.avgMs = EMA_ALPHA * duration + (1 - EMA_ALPHA) * this.entry.avgMs;
-    }
+      const duration = performance.now() - this.startTime;
+      this.entry.lastMs = duration;
+      this.entry.count++;
 
-    // Check budget
-    this.entry.overBudget = duration > FRAME_BUDGET_MS;
+      // Update EMA
+      if (this.entry.count === 1) {
+        this.entry.avgMs = duration;
+      } else {
+        this.entry.avgMs = EMA_ALPHA * duration + (1 - EMA_ALPHA) * this.entry.avgMs;
+      }
+
+      // Check budget
+      this.entry.overBudget = duration > FRAME_BUDGET_MS;
+    }
 
     // Merge into profiler's persistent state
     this.profiler._mergeEntry(this.entry, this.parent?.entry.name);
@@ -154,9 +167,12 @@ class SessionImpl implements UpdateSession {
       skipped: true,
       skipReason: reason,
     };
-    // Skipped entries have 0 duration
+    // Skipped entries have 0 duration. Flag set so end() bypasses the EMA
+    // entirely — otherwise end() would overwrite lastMs/avgMs with the
+    // begin→markSkipped→end overhead.
     this.entry.lastMs = 0;
     this.entry.avgMs = 0;
+    this.skipBypassesEMA = true;
   }
 
   getEntry(): TimingEntry {
@@ -354,17 +370,27 @@ export class UpdateProfiler {
    * @returns Result of fn()
    */
   time<T>(name: string, fn: () => T): T {
+    const prev = this.currentSessionContext;
     const session = this.begin(name);
+    // Set this session as the current context so nested time()/begin() calls
+    // become children of it (the context/ambient pattern advertised in the
+    // class docstring).
+    this.currentSessionContext = session;
     try {
       const result = fn();
       // Handle promises
       if (result instanceof Promise) {
+        // Restore context immediately so subsequent synchronous code at the
+        // caller's level does not see this session as the active parent.
+        this.currentSessionContext = prev;
         return result.finally(() => session.end()) as T;
       }
       session.end();
+      this.currentSessionContext = prev;
       return result;
     } catch (e) {
       session.end();
+      this.currentSessionContext = prev;
       throw e;
     }
   }
@@ -434,8 +460,16 @@ export class UpdateProfiler {
 
   /**
    * Reset all timing data
+   *
+   * Clears active-session state too: if reset() is called mid-update, any
+   * stale RootSession / currentSessionContext / per-id sessions are dropped
+   * so that subsequent endUpdate() / timeTopLevel() calls don't try to merge
+   * into the freshly rebuilt rootEntry under a name they no longer own.
    */
   reset(): void {
+    this.activeSession = null;
+    this.currentSessionContext = null;
+    this.activeSessions.clear();
     this.rootEntry = {
       name: 'Total Update',
       lastMs: 0,
@@ -497,10 +531,9 @@ export class UpdateProfiler {
     this.rootEntry.overBudget = entry.lastMs > FRAME_BUDGET_MS;
     this.rootEntry.metadata = entry.metadata;
 
-    // Merge children
-    for (const child of entry.children) {
-      this.mergeChildEntry(this.rootEntry.children, child);
-    }
+    // Note: children are NOT re-merged here. Each child session merges itself
+    // via its own SessionImpl.end() → _mergeEntry path. Re-merging here would
+    // double-increment count and double-apply the EMA on every child.
   }
 
   /**
@@ -543,10 +576,10 @@ export class UpdateProfiler {
       existing.overBudget = entry.lastMs > FRAME_BUDGET_MS;
       existing.metadata = entry.metadata;
 
-      // Merge children recursively
-      for (const child of entry.children) {
-        this.mergeChildEntry(existing.children, child);
-      }
+      // Note: children are NOT re-merged here. Each child session merges itself
+      // via its own SessionImpl.end() → _mergeEntry path (which walks the
+      // persistent tree to find its parent). Re-merging here would
+      // double-increment count and double-apply the EMA for every descendant.
     } else {
       // Add new entry (first time seeing this path)
       // Deep clone to avoid reference issues

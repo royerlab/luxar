@@ -71,11 +71,22 @@ async function detectRendererAPI(): Promise<RendererAPI> {
     try {
       // `requestAdapter` resolves to `null` when no adapter is
       // available (e.g. driver flag off, hardware unsupported).
+      //
+      // MED-33: request the discrete / high-performance adapter so
+      // this probe predicts the same adapter the 3D renderer will
+      // ultimately select. Browsers may otherwise return the
+      // low-power (integrated) adapter, which could falsely report
+      // WebGPU as unavailable on systems where only the discrete
+      // adapter is exposed.
       const adapter = await (
         navigator as Navigator & {
-          gpu: { requestAdapter: () => Promise<unknown> };
+          gpu: {
+            requestAdapter: (options?: {
+              powerPreference?: 'low-power' | 'high-performance';
+            }) => Promise<unknown>;
+          };
         }
-      ).gpu.requestAdapter();
+      ).gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (adapter) return 'webgpu';
     } catch {
       // Older Safari / Firefox-on-some-platforms throws rather than

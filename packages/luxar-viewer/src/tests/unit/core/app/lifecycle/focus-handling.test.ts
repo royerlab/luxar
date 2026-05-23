@@ -94,7 +94,10 @@ describe('installFocusHandling', () => {
       expect(anim.startAnimation).not.toHaveBeenCalled();
     });
 
-    it('NO startAnimation when recordingPanel is undefined and focus fires (no throw)', () => {
+    it('startAnimation when recordingPanel is undefined and focus fires (optional-chain short-circuit treats as not-recording)', () => {
+      // Name fix (core.md W14): the previous name said "NO startAnimation"
+      // but the assertion was `toHaveBeenCalledOnce`. The contract IS that
+      // missing recording panel == not recording, so startAnimation fires.
       installFocusHandling({
         events,
         animationController: asAnim(anim),

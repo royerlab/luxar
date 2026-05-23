@@ -114,7 +114,20 @@ export function handlePointerDown(ctx: OrbitInputCtx, event: PointerEvent): void
   }
 
   ctx.pointers.push(event);
-  ctx.pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
+  // MED-36: reuse the Vector2 already in pointerPositions for this
+  // pointerId when present (mutate via .set()) instead of allocating a
+  // fresh one per pointerdown. handlePointerUp clears the entry on
+  // release, so this is a no-op in the steady single-pointer case; for
+  // re-entrant pointerdowns on the same id (e.g. dragged-into events)
+  // it saves an allocation and preserves Vector2 identity across the
+  // sequence, matching the file-level "no allocation" contract used in
+  // pan.ts / update.ts.
+  const existing = ctx.pointerPositions.get(event.pointerId);
+  if (existing !== undefined) {
+    existing.set(event.clientX, event.clientY);
+  } else {
+    ctx.pointerPositions.set(event.pointerId, new THREE.Vector2(event.clientX, event.clientY));
+  }
 
   if (event.pointerType === 'touch') {
     ctx.onTouchStart();

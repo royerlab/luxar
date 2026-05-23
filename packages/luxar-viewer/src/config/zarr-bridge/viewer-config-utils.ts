@@ -8,6 +8,14 @@
 
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { RenderingSettings } from '../types';
+import { log, Modules } from '../../utils/log';
+
+/**
+ * Module-local set of camelCase keys we have already warned about, so that
+ * each unknown RenderingSettings field surfaces exactly once instead of
+ * spamming the console on repeated calls. Exported for tests to reset.
+ */
+export const _warnedUnknownRenderingKeys = new Set<string>();
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.
@@ -140,11 +148,21 @@ export function renderingSettingsToZarr(
 ): Partial<ZarrViewerConfig> {
   const result: Record<string, unknown> = {};
 
+  // Iterate the INPUT keys (not REVERSE_SETTINGS_MAP) so that future-added
+  // RenderingSettings fields missing from the bridge map are still dropped
+  // (preserving backwards-compat with older zarr files) but surface a single
+  // warning per unknown key, instead of being silently invisible.
   for (const [camelKey, value] of Object.entries(settings)) {
     if (value === undefined) continue;
     const snakeKey = REVERSE_SETTINGS_MAP[camelKey];
     if (snakeKey) {
       result[snakeKey] = value;
+    } else if (!_warnedUnknownRenderingKeys.has(camelKey)) {
+      _warnedUnknownRenderingKeys.add(camelKey);
+      log.warning(
+        Modules.RENDERING_CONTROLS,
+        `renderingSettingsToZarr: dropping unknown RenderingSettings key "${camelKey}" — add it to RENDERING_SETTINGS_MAP to persist.`
+      );
     }
   }
 

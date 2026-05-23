@@ -290,6 +290,22 @@ describe('InputHandler Utilities', () => {
       const result = calculateFovChange(160, 200, 0.1);
       expect(result).toBe(170); // config.camera.fovMax = 170
     });
+
+    // input.md C3 fix: previous tests skipped the clamp boundary itself.
+    // Adding the in-range/out-of-range boundary pair so any change to the
+    // clamp predicate (e.g. `>` ↔ `>=`) is caught.
+    it('returns currentFov when already at the clamp upper boundary (170) with positive delta', () => {
+      expect(calculateFovChange(170, 50, 0.1)).toBe(170);
+    });
+
+    it('returns currentFov when already at the clamp lower boundary (10) with negative delta', () => {
+      expect(calculateFovChange(10, -50, 0.1)).toBe(10);
+    });
+
+    it('returns 169 when one step below the max (boundary pin for the upper clamp)', () => {
+      // currentFov + delta*sensitivity = 168 + 10*0.1 = 169 (in range, no clamp).
+      expect(calculateFovChange(168, 10, 0.1)).toBe(169);
+    });
   });
 
   describe('shouldBlockShortcut', () => {
@@ -440,5 +456,11 @@ describe('InputHandler Type Definitions', () => {
     const module = await import('../../../input/input-handler');
     expect(module.InputHandler).toBeDefined();
     expect(typeof module.InputHandler).toBe('function');
+    // input.md G12 fix: pin the actual class shape — the prototype
+    // must expose `init` and `dispose` (the lifecycle contract). A
+    // `typeof === 'function'` check alone would still pass for any
+    // exported function, including a stub.
+    expect(typeof module.InputHandler.prototype.init).toBe('function');
+    expect(typeof module.InputHandler.prototype.dispose).toBe('function');
   });
 });
