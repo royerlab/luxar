@@ -119,11 +119,20 @@ describe('MaterialManager', () => {
       expect(material.fragmentShader).toContain('uniform mediump float invGamma');
       expect(material.fragmentShader).toContain('out vec4 fragColor');
 
-      // Test REAL uniforms initialized (with pre-computed pointSizeFactor)
-      expect(material.uniforms.pointSizeFactor).toBeDefined();
-      expect(material.uniforms.maxPointSize).toBeDefined();
-      expect(material.uniforms.opacity).toBeDefined();
-      expect(material.uniforms.invGamma).toBeDefined();
+      // [rendering.md/W2][P2] strengthened from toBeDefined() to specific
+      // uniform-value assertions: a mutant that drops a uniform initialiser
+      // (or returns an empty `{}` for `material.uniforms`) would previously
+      // pass the toBeDefined() check on a stubbed object. Now we pin the
+      // constructor-time values from material-glsl.ts:93-101.
+      expect(material.uniforms.opacity.value).toBe(1.0); // props.opacity
+      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0, 5); // 1/gamma=1
+      // pointSizeFactor + maxPointSize are pre-computed from a default
+      // resolution Y / FOV. They MUST be finite positives — a uniform
+      // initialised to `null`/`undefined`/`NaN`/0 would surface here.
+      expect(material.uniforms.pointSizeFactor.value).toBeGreaterThan(0);
+      expect(Number.isFinite(material.uniforms.pointSizeFactor.value)).toBe(true);
+      expect(material.uniforms.maxPointSize.value).toBeGreaterThan(0);
+      expect(Number.isFinite(material.uniforms.maxPointSize.value)).toBe(true);
     });
 
     it('should respect custom opacity', () => {

@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import fc from 'fast-check';
 import { selectLeastBusy } from '../../../../../workers/worker-pool/selection/least-busy';
 import { nextRoundRobin } from '../../../../../workers/worker-pool/selection/round-robin';
 import {
@@ -144,6 +145,28 @@ describe('nextRoundRobin (G11, H3)', () => {
     nextRoundRobin([w0, w1], 0);
     expect(w0.activeQueries).toBe(3);
     expect(w1.activeQueries).toBe(4);
+  });
+
+  // workers.md [H3][P12] fast-check property test: nextRoundRobin's
+  // contract for valid in-range cursors. nextIndex must equal
+  // (cursor + 1) mod length and instance must be workers[cursor].
+  // (The function assumes cursor is in [0, length); the wrap is in
+  // nextIndex, which is the caller-stored value for the NEXT call.)
+  it('[property] nextIndex = (cursor + 1) mod length for valid in-range cursor [workers.md/H3][P12]', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 32 }).chain((poolSize) =>
+          fc.tuple(fc.constant(poolSize), fc.integer({ min: 0, max: poolSize - 1 }))
+        ),
+        ([poolSize, cursor]) => {
+          const workers = Array.from({ length: poolSize }, (_, i) => makeInstance(0, `w${i}`));
+          const result = nextRoundRobin(workers, cursor);
+          const expectedNext = (cursor + 1) % poolSize;
+          return result.nextIndex === expectedNext && result.instance === workers[cursor];
+        }
+      ),
+      { numRuns: 200 }
+    );
   });
 });
 

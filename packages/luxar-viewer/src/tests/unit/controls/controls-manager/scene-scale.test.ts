@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import { deriveScaleLimits } from '../../../../controls/controls-manager/scene-scale';
 import { config } from '../../../../config';
 
@@ -64,5 +65,45 @@ describe('deriveScaleLimits', () => {
     expect(Number.isFinite(r.minDist)).toBe(true);
     expect(Number.isFinite(r.maxDist)).toBe(true);
     expect(Number.isFinite(r.flySpeed)).toBe(true);
+  });
+
+  // controls.md [H8][P12] fast-check property test: deriveScaleLimits is a
+  // pure linear map of the diagonal. The two invariants below cover the
+  // contract over the realistic-input domain (diagonals in [1e-3, 1e9]).
+  it('[property] minDist < maxDist for all positive diagonals [controls.md/H8][P12]', () => {
+    fc.assert(
+      fc.property(fc.double({ min: 1e-3, max: 1e9, noNaN: true }), (d) => {
+        const r = deriveScaleLimits(d);
+        return r.minDist < r.maxDist && r.minDist > 0 && Number.isFinite(r.maxDist);
+      }),
+      { numRuns: 200 }
+    );
+  });
+
+  it('[property] is linear: scale(k*d) = k * scale(d) for k > 0 [controls.md/H8][P12]', () => {
+    // Linearity is the deepest property of the formula. For any
+    // positive d and k, deriveScaleLimits(k*d) must equal k * deriveScaleLimits(d)
+    // component-wise (within float tolerance).
+    fc.assert(
+      fc.property(
+        fc.double({ min: 1, max: 1e6, noNaN: true }),
+        fc.double({ min: 0.01, max: 100, noNaN: true }),
+        (d, k) => {
+          const r1 = deriveScaleLimits(d);
+          const r2 = deriveScaleLimits(k * d);
+          // Relative tolerance: 1e-9 of the larger value (handles wide
+          // dynamic range without underflow on small components).
+          const tolMin = Math.max(1e-12, Math.abs(k * r1.minDist) * 1e-9);
+          const tolMax = Math.max(1e-12, Math.abs(k * r1.maxDist) * 1e-9);
+          const tolFly = Math.max(1e-12, Math.abs(k * r1.flySpeed) * 1e-9);
+          return (
+            Math.abs(r2.minDist - k * r1.minDist) < tolMin &&
+            Math.abs(r2.maxDist - k * r1.maxDist) < tolMax &&
+            Math.abs(r2.flySpeed - k * r1.flySpeed) < tolFly
+          );
+        }
+      ),
+      { numRuns: 200 }
+    );
   });
 });

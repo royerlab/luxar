@@ -168,12 +168,20 @@ describe('SceneLoader', () => {
     });
 
     it('should handle missing scene dimensions gracefully', async () => {
+      // [data.md/W6][P2] Strengthen: also pin (a) the scene is a real
+      // THREE.Group (not just a truthy stub) and (b) that userData lacks
+      // any sceneDimensions-adjacent keys — guards against a regression
+      // that wrote the wrong key (e.g. `scene_dimensions`) and silently
+      // satisfied the original toBeDefined() check.
       mockZarrGroup.attrs = {}; // No scene_dimensions
 
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
       expect(scene).toBeDefined();
+      expect(scene.name).toBe('LuxarScene');
       expect(scene.userData.sceneDimensions).toBeUndefined();
+      // Defensive: confirm the snake_case mistake is not silently present.
+      expect((scene.userData as Record<string, unknown>).scene_dimensions).toBeUndefined();
     });
 
     it('should build scene graph hierarchy correctly', async () => {
@@ -243,8 +251,18 @@ describe('SceneLoader', () => {
       }));
 
       // Should NOT throw an error - handles missing spatial index gracefully for 3D datasets
+      // [data.md/W6][P2] Strengthen: previously only asserted scene was defined.
+      // The production contract on the missing-spatial-index branch is
+      // (a) the loadScene call resolves with a real LuxarScene root, and
+      // (b) the SceneLoader still attempts to register a loader for the
+      // points node — the actual `load-all` fallback lives inside the
+      // PointsSpatialIndexLoader, not in SceneLoader. So we pin scene
+      // shape AND the existence of the registered loader entry.
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       expect(scene).toBeDefined();
+      expect(scene.name).toBe('LuxarScene');
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      expect(loaders.has('/points')).toBe(true);
     });
   });
 
@@ -522,12 +540,22 @@ describe('SceneLoader', () => {
     }, 15000);
 
     it('should handle enumeration failures gracefully', async () => {
+      // [data.md/W6][P2] Strengthen: pin the fallback contract explicitly.
+      // With no `contents()` method on the store, the loader cannot
+      // enumerate children — production behavior is to fall back to the
+      // root group only, NOT crash. Verify (a) we get a real LuxarScene
+      // group, (b) no spatial-index loaders were registered (no children
+      // to enumerate means no points/lines/gsplats loaders), (c) sceneDimensions
+      // still comes through from the root attrs.
       mockStore.contents = undefined; // No contents method
 
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
-      // Should fall back to root only
       expect(scene).toBeDefined();
+      expect(scene.name).toBe('LuxarScene');
+      expect(scene.userData.sceneDimensions).toEqual(mockZarrGroup.attrs.scene_dimensions);
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      expect(loaders.size).toBe(0);
     });
   });
 
@@ -1088,6 +1116,13 @@ describe('SceneLoader', () => {
     });
 
     it('should handle validation with ViewStateManager', async () => {
+      // [data.md/W6][P2] Strengthen: previously only asserted scene was
+      // defined. The substantive contract is that the inverted-range
+      // dimension (max < min) still survives into the loader's view state —
+      // the implementation chooses to load rather than reject. Pin both
+      // (a) scene is a real LuxarScene group, and (b) the inverted range
+      // surfaces in the loader's saved viewState (slicePosition has the
+      // right length for the 2 dims that were declared).
       const dimensionsWithIssues = {
         scene_dimensions: {
           dimensions: [
@@ -1099,9 +1134,13 @@ describe('SceneLoader', () => {
 
       mockZarrGroup.attrs = dimensionsWithIssues;
 
-      // Should not throw, even with validation issues - handles them gracefully
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       expect(scene).toBeDefined();
+      expect(scene.name).toBe('LuxarScene');
+      const viewState = (sceneLoader as any).viewState;
+      // ViewState has one entry per declared dim.
+      expect(viewState.slicePosition.length).toBe(2);
+      expect(viewState.tolerance.length).toBe(2);
     });
 
     it('should handle invalid dimensions gracefully', async () => {
@@ -1146,8 +1185,20 @@ describe('SceneLoader', () => {
       };
 
       // Should handle gracefully even with too many displayed dimensions
+      // [data.md/W6][P2] Strengthen: pin the contract that the loader
+      // capped displayed dims to 3 (the documented limit). With 4 dims
+      // marked display=true, the saved viewState should still have
+      // displayDims of length <= 3.
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       expect(scene).toBeDefined();
+      expect(scene.name).toBe('LuxarScene');
+      const viewState = (sceneLoader as any).viewState;
+      expect(viewState.displayDims.length).toBeLessThanOrEqual(3);
+      // The first three displayed dimensions (indices 0, 1, 2) survive;
+      // the 4th (index 3) is dropped from displayDims.
+      expect(viewState.displayDims).toContain(0);
+      expect(viewState.displayDims).toContain(1);
+      expect(viewState.displayDims).toContain(2);
     });
 
     it('does NOT toast on a 16D scene (≤ WASM ceiling)', async () => {

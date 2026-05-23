@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import * as THREE from 'three';
 import {
   projectOnTrackball,
@@ -69,6 +70,26 @@ describe('projectOnTrackball — H1 normalization invariant', () => {
       const p = projectOnTrackball(x, y, r);
       expect(p.z).toBeLessThanOrEqual(center.z + 1e-10);
     }
+  });
+
+  // controls.md [H1][P12] property test: every projection result is a
+  // unit-length vector regardless of the (x, y, r) input. This is the
+  // deepest invariant of the function (it underpins arcball rotation
+  // computing valid quaternion axes). 200 randomised samples cover both
+  // the sphere-branch and hyperboloid-branch regions.
+  it('[property] ||project(x, y, r)|| = 1 for arbitrary inputs [controls.md/H1][P12]', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: -5, max: 5, noNaN: true }),
+        fc.double({ min: -5, max: 5, noNaN: true }),
+        fc.double({ min: 0.1, max: 10, noNaN: true }),
+        (x, y, r) => {
+          const p = projectOnTrackball(x, y, r);
+          return Math.abs(p.length() - 1) < 1e-8;
+        }
+      ),
+      { numRuns: 200 }
+    );
   });
 });
 

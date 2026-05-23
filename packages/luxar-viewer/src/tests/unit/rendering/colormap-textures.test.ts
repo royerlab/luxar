@@ -48,7 +48,14 @@ describe('colormap-textures', () => {
   describe('getColormapTexture', () => {
     it('returns builtin texture for named colormaps', () => {
       const tex = getColormapTexture('viridis');
+      // [rendering.md/W][P2] strengthened: pin both presence and the
+      // canonical 256x1 DataTexture shape. A mutant returning `null`
+      // would previously pass the toBeDefined() check on a stubbed
+      // texture; the dimension assertion forces the source to deliver
+      // a real DataTexture.
       expect(tex).toBeDefined();
+      expect(tex!.image.width).toBe(256);
+      expect(tex!.image.height).toBe(1);
     });
 
     it('returns custom texture when name is "custom" with LUT data', () => {
@@ -72,8 +79,16 @@ describe('colormap-textures', () => {
     it('creates a texture from raw LUT data', () => {
       const lut = new Uint8Array(768).fill(128);
       const tex = createCustomColormapTexture(lut);
+      // [rendering.md/W][P2] strengthened: pin shape + image data byte
+      // count. A 768-byte (256 RGB) LUT must produce a 256x1 texture
+      // whose backing buffer length matches.
       expect(tex).toBeDefined();
       expect(tex.image.width).toBe(256);
+      expect(tex.image.height).toBe(1);
+      // Backing buffer is RGBA (256 * 4 = 1024) regardless of the input
+      // RGB layout — DataTexture format conversion happens inside the
+      // factory.
+      expect((tex.image.data as Uint8Array).length).toBe(1024);
     });
   });
 

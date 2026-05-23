@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, test, vi } from 'vitest';
+import * as fc from 'fast-check';
 import {
   SpatialQueryBuilder,
   buildQueryPosition,
@@ -10,6 +11,7 @@ import {
   type ChunkSpatialIndex,
   type BaseViewState,
 } from '../../../../../data/loaders';
+import type { LoadRange } from '../../../../../data/loaders';
 import type { DimensionMetadata } from '../../../../../types/dims';
 import * as toleranceComputer from '../../../../../data/loaders/spatial-query/tolerance-computer';
 
@@ -128,6 +130,78 @@ describe('mergeRanges', () => {
   });
 
   it('handles empty input', () => {
+    expect(mergeRanges([])).toEqual([]);
+  });
+});
+
+// [data.md/H2][P12] mergeRanges — algebraic invariants.
+//   - Idempotence: merge(merge(rs)) === merge(rs).
+//   - Permutation invariance: shuffling input doesn't change the result.
+//   - Coverage invariance: every position covered by `rs` is covered by
+//     `mergeRanges(rs)` and vice versa (union of intervals is preserved).
+//   - Non-overlap output: in the result, no two adjacent ranges overlap or touch.
+//   - Sorted output: results come out start-ascending.
+describe('mergeRanges — algebraic invariants (data.md H2)', () => {
+  // Generator: arbitrary [start, end) range with start < end, bounded.
+  const rangeArb: fc.Arbitrary<LoadRange> = fc
+    .tuple(fc.integer({ min: 0, max: 1000 }), fc.integer({ min: 1, max: 200 }))
+    .map(([start, len]) => ({ start, end: start + len }));
+
+  const rangesArb = fc.array(rangeArb, { minLength: 0, maxLength: 50 });
+
+  test('idempotence: merge(merge(rs)) === merge(rs)', () => {
+    fc.assert(
+      fc.property(rangesArb, (rs) => {
+        const once = mergeRanges(rs);
+        const twice = mergeRanges(once);
+        expect(twice).toEqual(once);
+      })
+    );
+  });
+
+  test('permutation invariance: shuffling the input does not change the result', () => {
+    fc.assert(
+      fc.property(rangesArb, fc.func(fc.integer({ min: 0, max: 1000 })) as fc.Arbitrary<() => number>, (rs, hash) => {
+        const a = mergeRanges(rs);
+        // Stable shuffle via random comparator backed by `hash`.
+        const shuffled = [...rs].sort(() => hash() - hash());
+        const b = mergeRanges(shuffled);
+        expect(b).toEqual(a);
+      })
+    );
+  });
+
+  test('output is sorted ascending with no overlapping or touching pairs', () => {
+    fc.assert(
+      fc.property(rangesArb, (rs) => {
+        const merged = mergeRanges(rs);
+        for (let i = 1; i < merged.length; i++) {
+          // strictly start-ascending
+          expect(merged[i].start).toBeGreaterThan(merged[i - 1].start);
+          // adjacent ranges in the output do NOT touch or overlap —
+          // mergeRanges fuses any two ranges with `next.start <= prev.end`.
+          expect(merged[i].start).toBeGreaterThan(merged[i - 1].end);
+        }
+      })
+    );
+  });
+
+  test('coverage invariance: union of intervals is preserved', () => {
+    // Sample positions covered by input vs output and verify they agree
+    // exactly. The position-set is bounded so we can enumerate it cheaply.
+    fc.assert(
+      fc.property(rangesArb, (rs) => {
+        const covers = (ranges: LoadRange[], x: number): boolean =>
+          ranges.some((r) => r.start <= x && x < r.end);
+        const merged = mergeRanges(rs);
+        for (let x = 0; x <= 1200; x++) {
+          expect(covers(rs, x)).toBe(covers(merged, x));
+        }
+      })
+    );
+  });
+
+  test('empty in, empty out (identity)', () => {
     expect(mergeRanges([])).toEqual([]);
   });
 });

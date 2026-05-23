@@ -424,6 +424,25 @@ describe('DimensionAnimationManager', () => {
 
       expect(manager.getState(3)).toBeUndefined();
     });
+
+    it('clears the pendingUpdates set so a stale dimIndex cannot trigger a post-dispose update', () => {
+      // [scene.md/G12][P8] The audit notes that dispose() must clear the
+      // per-dimension `pendingUpdates` Set. Without this, a frame that
+      // happened to run after dispose() (rare race) could attempt to
+      // setDimensionValue on a torn-down manager. Pin the cleared state.
+      // The Set is private; we access it via bracket notation — keeping
+      // the test off the public surface, but the contract is precise.
+      manager.play(3);
+      // Force a pending update for dim 3 (simulating mid-flight state).
+      const pending = (manager as unknown as { pendingUpdates: Set<number> }).pendingUpdates;
+      pending.add(3);
+      pending.add(4);
+      expect(pending.size).toBe(2);
+
+      manager.dispose();
+
+      expect(pending.size).toBe(0);
+    });
   });
 
   describe('getState', () => {

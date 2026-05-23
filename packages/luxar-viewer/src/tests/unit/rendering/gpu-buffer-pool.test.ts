@@ -52,10 +52,24 @@ describe('GPUBufferPool', () => {
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
       expect((geom as THREE.InstancedBufferGeometry).instanceCount).toBe(1000);
       expect(geom.drawRange.count).toBe(6);
-      expect(geom.getAttribute('aCenter')).toBeDefined();
-      expect(geom.getAttribute('aColor')).toBeDefined();
-      expect(geom.getAttribute('aRadius')).toBeDefined();
-      expect(geom.getAttribute('aSharpness')).toBeDefined();
+      // [rendering.md/W][P2] strengthened from toBeDefined() to specific
+      // itemSize / type assertions matching the points-adapter contract
+      // (POINTS_ATTRIBUTE_LAYOUT in gpu-buffer-pool/points-adapter.ts).
+      // A mutant that returned the wrong attribute (e.g. swapping Center
+      // and Color, or dropping itemSize=3 → 1) would previously pass the
+      // toBeDefined() check.
+      const aCenter = geom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
+      expect(aCenter).toBeInstanceOf(THREE.InterleavedBufferAttribute);
+      expect(aCenter.itemSize).toBe(3); // x, y, z
+      const aColor = geom.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+      expect(aColor).toBeInstanceOf(THREE.InterleavedBufferAttribute);
+      expect(aColor.itemSize).toBe(3); // r, g, b
+      const aRadius = geom.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
+      expect(aRadius).toBeInstanceOf(THREE.InterleavedBufferAttribute);
+      expect(aRadius.itemSize).toBe(1);
+      const aSharpness = geom.getAttribute('aSharpness') as THREE.InterleavedBufferAttribute;
+      expect(aSharpness).toBeInstanceOf(THREE.InterleavedBufferAttribute);
+      expect(aSharpness.itemSize).toBe(1);
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1);
