@@ -509,7 +509,7 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
     }
   });
 
-  it('refuses to scale below the dprFloor set by a failed probe', () => {
+  it('refuses to scale TO OR below the dprFloor set by a failed probe', () => {
     const m = new AdaptiveDPRManager();
     try {
       m.setRenderer(renderer);
@@ -521,11 +521,46 @@ describe('AdaptiveDPRManager — U-shape probe', () => {
       expect(m.getState().dprFloor).toBeCloseTo(probedDPR, 5);
       expect(m.getCurrentDPR()).toBe(2.0); // reverted to native
 
-      // Eval again with FPS=20 → would normally trigger scaleDown to 1.4.
-      // The new floor is 1.4, so newDPR = max(1.4, 2.0*0.7) = 1.4 — the
-      // change is exactly to the floor, NOT below. DPR clamps to floor.
+      // Eval again with FPS=20 → scaleDown proposes 2.0 * 0.7 = 1.4,
+      // which equals the floor that was just set by the failed probe.
+      // The floor MUST block moves to that DPR — otherwise we'd
+      // re-fire the same failed probe and oscillate (this is the
+      // c.elegans-demo "Probe rejected ... will retry in 30s" loop
+      // that fires every ~2s instead of every 30s).
       evaluateWithFPS(m, 5000, 20);
-      expect(m.getCurrentDPR()).toBeGreaterThanOrEqual(probedDPR);
+      expect(m.getCurrentDPR()).toBe(2.0); // stayed at native, no re-probe
+      expect(m.getState().probing).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not oscillate at the floor across many evaluations after a failed probe', () => {
+    // Regression guard for the AdaptiveDPR oscillation: every
+    // evaluation after a rejected probe used to re-fire scaleDown at
+    // the floor (because `Math.max(dprFloor, proposed)` clamped TO
+    // the floor instead of strictly above it), causing a 2-second
+    // probe-reject-revert cycle to repeat throughout the 30s TTL
+    // window. The fix blocks scaleDown when `proposed <= dprFloor`.
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(renderer);
+
+      // Trigger a rejected probe → floor lands at scaleDownFactor*native.
+      evaluateWithFPS(m, 1000, 20);
+      const probedDPR = m.getCurrentDPR();
+      evaluateWithFPS(m, 3000, 20);
+      expect(m.getState().dprFloor).toBeCloseTo(probedDPR, 5);
+      expect(m.getCurrentDPR()).toBe(2.0);
+
+      // Hammer it: 10 further evaluations spaced 1s apart, all with
+      // poor FPS. The floor must keep us pinned at native — no probe
+      // armed, no DPR oscillation.
+      for (let i = 0; i < 10; i++) {
+        evaluateWithFPS(m, 4000 + i * 1000, 20);
+        expect(m.getCurrentDPR()).toBe(2.0);
+        expect(m.getState().probing).toBe(false);
+      }
     } finally {
       restore();
     }

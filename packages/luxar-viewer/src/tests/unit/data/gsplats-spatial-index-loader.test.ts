@@ -106,14 +106,28 @@ describe('GSplatsSpatialIndexLoader', () => {
     });
 
     it('add + remove of a listener leaves no leak after dispose', () => {
+      // data.md W2 fix [P2]: parallel to W1 fix in lines-spatial-index-loader.
+      // Replaces `expect(true).toBe(true)` with observable Set-size transitions
+      // through the private `events: LoaderEventEmitter` whose `size` getter
+      // is part of the emitter's documented test-only surface
+      // (data/loaders/monitor-events.ts).
       const calls: MonitorEvent[] = [];
       const listener: MonitorEventListener = (event) => calls.push(event);
 
-      loader.addEventListener(listener);
-      loader.removeEventListener(listener);
-      loader.dispose();
+      const events = (loader as unknown as { events: { size: number } }).events;
 
-      expect(true).toBe(true);
+      expect(events.size).toBe(0);
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.removeEventListener(listener);
+      expect(events.size).toBe(0);
+
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.dispose();
+      expect(events.size).toBe(0);
+
+      expect(calls).toEqual([]);
     });
 
     it('returns an immutable snapshot from getMetrics', () => {

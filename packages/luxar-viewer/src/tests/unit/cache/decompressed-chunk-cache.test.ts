@@ -111,9 +111,12 @@ describe('DecompressedChunkCache', () => {
       // Adding third should evict first (LRU)
       smallCache.set(key3, chunk3);
 
-      // key1 should have been evicted (LRU)
+      // cache.md W26 fix: pin the full LRU contract — key1 evicted
+      // (oldest), key2 AND key3 both still present (most-recently used).
+      // Previous version only asserted key3 present, leaving a regression
+      // that evicts both key1 AND key2 invisible.
       expect(smallCache.has(key1)).toBe(false);
-      // key2 or key3 should still be there (at least one)
+      expect(smallCache.has(key2)).toBe(true);
       expect(smallCache.has(key3)).toBe(true);
     });
 
@@ -191,7 +194,13 @@ describe('DecompressedChunkCache', () => {
       expect(stats.size).toBeGreaterThan(800); // 2 * 400 bytes + overhead
     });
 
-    it('should track evictions', () => {
+    it('tracks evictions: evictions == (sets - count) holds exactly', () => {
+      // cache.md W25 fix: previous version asserted `evictions > 0`.
+      // Strengthen using the algebraic invariant: for a cache that never
+      // grows beyond `maxSize`, evictions equals the number of
+      // never-readded entries, i.e. (sets - currentCount). Three sets
+      // into a small cache yields a deterministic count + evictions
+      // pair whose sum is 3.
       const smallCache = new DecompressedChunkCache({ maxSize: 200 });
 
       const chunk: DecompressedChunk = {
@@ -205,7 +214,11 @@ describe('DecompressedChunkCache', () => {
       smallCache.set(DecompressedChunkCache.makeKey('/c', [0]), chunk);
 
       const stats = smallCache.getStats();
-      expect(stats.evictions).toBeGreaterThan(0);
+      // Conservation: count + evictions == sets (3).
+      expect(stats.count + stats.evictions).toBe(3);
+      // Sanity: at least one eviction must have occurred for a 200-byte
+      // cap holding 3 × 96-byte payloads.
+      expect(stats.evictions).toBeGreaterThanOrEqual(1);
     });
   });
 

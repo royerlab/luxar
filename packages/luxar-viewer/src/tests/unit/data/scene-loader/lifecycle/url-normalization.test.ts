@@ -58,3 +58,48 @@ describe('normalizeURL — relative URLs', () => {
     );
   });
 });
+
+describe('normalizeURL — trailing-slash contract (HIGH-6)', () => {
+  // The trailing slash on the output is INTENTIONAL and load-bearing:
+  // overlay-manager string-concats `${baseUrl}overlays/...` and would
+  // 404 without it. Downstream zarr / cache layers tolerate the slash
+  // (zarrita's FetchStore re-adds it; the cache layer's buildUrl strips
+  // it before joining). Pin the contract with explicit tests so a future
+  // refactor that thinks the slash is "unused" hits these assertions.
+
+  it('always produces a URL the zarr loader accepts (no double-slash 404 path)', () => {
+    // The cache layer's buildUrl strips trailing `/`s before joining
+    // child keys, so an extra trailing slash never produces a double-
+    // slash request — and a single trailing slash never produces a
+    // missing-separator concat like `.zarroverlays/...`. Verify that
+    // every entry-point form (slash, no slash, relative, absolute)
+    // converges to the same canonical slash-terminated form.
+    const ORIGIN = 'http://localhost:5173';
+    const canonical = 'http://example.com/data.zarr/';
+    expect(normalizeURL('http://example.com/data.zarr', ORIGIN)).toBe(canonical);
+    expect(normalizeURL('http://example.com/data.zarr/', ORIGIN)).toBe(canonical);
+    // Idempotent: feeding the function its own output is a no-op.
+    expect(normalizeURL(canonical, ORIGIN)).toBe(canonical);
+  });
+
+  it('output is ALWAYS slash-terminated (overlay-manager string-concat contract)', () => {
+    const ORIGIN = 'http://localhost:5173';
+    // overlay-manager builds child URLs via `${baseUrl}overlays/...`,
+    // so the contract is: baseUrl ends in `/`. Sample a representative
+    // mix of absolute / relative / empty / already-slashed inputs.
+    const inputs = [
+      'http://example.com/data',
+      'http://example.com/data/',
+      'https://cdn.example.com/scene.zarr',
+      'data/scene',
+      '/data/scene',
+      '/data/scene/',
+      '',
+      '/',
+    ];
+    for (const input of inputs) {
+      const out = normalizeURL(input, ORIGIN);
+      expect(out.endsWith('/')).toBe(true);
+    }
+  });
+});

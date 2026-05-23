@@ -30,7 +30,7 @@ describe('effective-radius-calculator', () => {
       const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
 
       // Point is exactly on slice plane, so effective radius = original radius
-      expect(result[0]).toBeCloseTo(1.0);
+      expect(result[0]).toBeCloseTo(1.0, 5);
     });
 
     it('should reduce radius based on distance in non-displayed spatial dimensions only', () => {
@@ -50,7 +50,7 @@ describe('effective-radius-calculator', () => {
       const result = calculateEffectiveRadii(positions, radii, viewState, config, 5);
 
       // R_effective = √(1² - 0.6²) = √(1 - 0.36) = √0.64 = 0.8
-      expect(result[0]).toBeCloseTo(0.8);
+      expect(result[0]).toBeCloseTo(0.8, 5);
     });
 
     it('should ignore non-spatial dimensions when calculating distance', () => {
@@ -72,7 +72,7 @@ describe('effective-radius-calculator', () => {
 
       // Should only consider distance in dim 3 (0.6), not dim 4 (discrete, exact match)
       // R_eff = sqrt(1^2 - 0.6^2) = sqrt(1 - 0.36) = sqrt(0.64) = 0.8
-      expect(result[0]).toBeCloseTo(0.8);
+      expect(result[0]).toBeCloseTo(0.8, 5);
     });
 
     it('should return zero for points at hypersphere boundary', () => {
@@ -92,7 +92,35 @@ describe('effective-radius-calculator', () => {
       const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
 
       // R_effective = √(1² - 1²) = 0
-      expect(result[0]).toBeCloseTo(0);
+      expect(result[0]).toBeCloseTo(0, 5);
+    });
+
+    it('MED-12: exact-boundary point (D === R) returns exactly 0 via sqrt path, not fallback', () => {
+      // Regression: previously `effectiveRadiusSquared > 0` sent the
+      // boundary case (D == R, value == 0) into the fallback branch. With
+      // `>= 0`, the exact-zero argument goes through Math.sqrt(0) === 0,
+      // which is mathematically the correct path and preserves the
+      // "boundary is just barely visible" semantic (returns 0 not via
+      // a discontinuous clamp from the negative side).
+      const positions = new Float32Array([0, 0, 0, 1.0]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0.1, 0.1, 0.1, 0.1],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [true, true, true, true],
+        maxRadius: 1.0,
+      };
+
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+
+      // Must be exactly 0 (not just close to 0) — sqrt(0) === 0.
+      expect(result[0]).toBe(0);
+      // And not NaN (would happen if the clamp were `> 0` AND tiny float
+      // drift made R² - D² fractionally negative without the fallback).
+      expect(Number.isNaN(result[0])).toBe(false);
     });
 
     it('should handle multiple points with different radii', () => {
@@ -125,9 +153,9 @@ describe('effective-radius-calculator', () => {
       const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
 
       // Point 1: √(1² - 0²) = 1.0
-      expect(result[0]).toBeCloseTo(1.0);
+      expect(result[0]).toBeCloseTo(1.0, 5);
       // Point 2: √(0.5² - 0.3²) = √(0.25 - 0.09) = √0.16 = 0.4
-      expect(result[1]).toBeCloseTo(0.4);
+      expect(result[1]).toBeCloseTo(0.4, 5);
       // Point 3: √(2² - 0.5²) = √(4 - 0.25) = √3.75 ≈ 1.936
       expect(result[2]).toBeCloseTo(1.936, 2);
     });
@@ -499,7 +527,7 @@ describe('effective-radius-calculator', () => {
       // Point 0: matches discrete, z=0 → full radius
       expect(result[0]).toBe(1.0);
       // Point 1: matches discrete, z=0.6 → reduced radius = sqrt(1 - 0.36) = 0.8
-      expect(result[1]).toBeCloseTo(0.8);
+      expect(result[1]).toBeCloseTo(0.8, 5);
       // Point 2: orbital mismatch → filtered
       expect(result[2]).toBe(0);
       // Point 3: time mismatch → filtered

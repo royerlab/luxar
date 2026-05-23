@@ -59,17 +59,43 @@ describe('applyViewerConfigState', () => {
     ports = makePorts();
   });
 
-  it('returns silently when viewerConfig is undefined', () => {
+  // core.md W12 strengthening: previously each "returns silently" test
+  // spot-checked 3 of the 8 port methods. A mutation that called
+  // `inputHandler.showDimensionSliders()` unconditionally would pass the
+  // 3-method spot check. Helper below assert NO port method on the
+  // entire ViewerConfigPorts surface fires.
+  function expectNoPortMethodsCalled(p: PortStubs): void {
+    expect(p.showHelp).not.toHaveBeenCalled();
+    expect(p.renderingControls.show).not.toHaveBeenCalled();
+    expect(p.renderingControls.hide).not.toHaveBeenCalled();
+    expect(p.performanceMonitor.show).not.toHaveBeenCalled();
+    expect(p.inputHandler.showDimensionSliders).not.toHaveBeenCalled();
+    expect(p.scaleBar?.show).not.toHaveBeenCalled();
+    expect(p.scaleBar?.hide).not.toHaveBeenCalled();
+    expect(p.layersPanel?.show).not.toHaveBeenCalled();
+    expect(p.layersPanel?.hide).not.toHaveBeenCalled();
+    expect(p.overlayManager?.show).not.toHaveBeenCalled();
+    expect(p.overlayManager?.hide).not.toHaveBeenCalled();
+    expect(p.setTheme).not.toHaveBeenCalled();
+    expect(p.setDimensionValue).not.toHaveBeenCalled();
+  }
+
+  it('returns silently when viewerConfig is undefined (NO port method fires)', () => {
     applyViewerConfigState(undefined, asPorts(ports));
-    expect(ports.showHelp).not.toHaveBeenCalled();
-    expect(ports.renderingControls.show).not.toHaveBeenCalled();
-    expect(ports.setTheme).not.toHaveBeenCalled();
+    expectNoPortMethodsCalled(ports);
   });
 
-  it('returns silently when viewerConfig is empty', () => {
+  it('returns silently when viewerConfig is empty (NO port method fires)', () => {
     applyViewerConfigState({}, asPorts(ports));
-    expect(ports.showHelp).not.toHaveBeenCalled();
-    expect(ports.renderingControls.show).not.toHaveBeenCalled();
+    expectNoPortMethodsCalled(ports);
+  });
+
+  it('returns silently when viewerConfig.ui is an empty object', () => {
+    // Boundary: `{ ui: {} }` is NOT the same as `undefined`. The
+    // `if (ui)` branch is taken but every nested `=== true` check
+    // short-circuits because every property is missing.
+    applyViewerConfigState({ ui: {} }, asPorts(ports));
+    expectNoPortMethodsCalled(ports);
   });
 
   describe('UI panel visibility', () => {
@@ -116,10 +142,27 @@ describe('applyViewerConfigState', () => {
     });
 
     it('show_scale_bar is a no-op when scaleBar is absent', () => {
+      // core.md W13 strengthening: previously this test only asserted
+      // that ports.scaleBar (configured to be absent in the setup)
+      // was undefined — which is trivially true. The real contract is
+      // that:
+      //   (a) the call doesn't throw on the absent port, AND
+      //   (b) OTHER ports (renderingControls, layersPanel, etc.) are
+      //       unaffected by the absent-scaleBar branch.
       ports = makePorts({ scaleBar: false });
-      applyViewerConfigState({ ui: { show_scale_bar: true } }, asPorts(ports));
-      // No assertion needed beyond "does not throw" — null guard inside.
+      expect(() =>
+        applyViewerConfigState(
+          {
+            ui: { show_scale_bar: true, show_rendering_controls: true, show_layers: true },
+          },
+          asPorts(ports)
+        )
+      ).not.toThrow();
       expect(ports.scaleBar).toBeUndefined();
+      // Adjacent ports were still called — the absent-scaleBar branch
+      // didn't short-circuit the whole UI block.
+      expect(ports.renderingControls.show).toHaveBeenCalled();
+      expect(ports.layersPanel?.show).toHaveBeenCalled();
     });
 
     it('show_layers: true → layersPanel.show() when present', () => {
@@ -133,9 +176,20 @@ describe('applyViewerConfigState', () => {
     });
 
     it('show_layers is a no-op when layersPanel is absent', () => {
+      // W13 strengthening: same pattern as show_scale_bar — assert
+      // adjacent ports are still reached.
       ports = makePorts({ layersPanel: false });
-      applyViewerConfigState({ ui: { show_layers: true } }, asPorts(ports));
+      expect(() =>
+        applyViewerConfigState(
+          {
+            ui: { show_layers: true, show_rendering_controls: true, show_scale_bar: true },
+          },
+          asPorts(ports)
+        )
+      ).not.toThrow();
       expect(ports.layersPanel).toBeUndefined();
+      expect(ports.renderingControls.show).toHaveBeenCalled();
+      expect(ports.scaleBar?.show).toHaveBeenCalled();
     });
 
     it('show_overlays: true → overlayManager.show() when present', () => {
@@ -149,9 +203,19 @@ describe('applyViewerConfigState', () => {
     });
 
     it('show_overlays is a no-op when overlayManager is absent', () => {
+      // W13 strengthening: same pattern.
       ports = makePorts({ overlayManager: false });
-      applyViewerConfigState({ ui: { show_overlays: true } }, asPorts(ports));
+      expect(() =>
+        applyViewerConfigState(
+          {
+            ui: { show_overlays: true, show_rendering_controls: true, show_layers: true },
+          },
+          asPorts(ports)
+        )
+      ).not.toThrow();
       expect(ports.overlayManager).toBeUndefined();
+      expect(ports.renderingControls.show).toHaveBeenCalled();
+      expect(ports.layersPanel?.show).toHaveBeenCalled();
     });
 
     it('applies all UI fields in one shot', () => {

@@ -149,48 +149,78 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('panning', () => {
-    it('should move target when panning', () => {
+    it('moves target by the deterministic pan formula (W9 strengthening)', () => {
+      // W9 strengthening: was `target.x !== targetBefore.x`. Pan math is
+      // pure and fully deterministic — assert the exact magnitude.
+      // Formula (perspective, screenSpacePanning):
+      //   panLeft.dist = (deltaX * height * panSpeed) / clientHeight
+      //   height = 2 * distance * tan(fov/2 * π/180)
+      // For our camera: distance=5, fov=60, clientHeight=600, panSpeed=1.
+      // jsdom doesn't compute layout from CSS, so clientHeight reports 0;
+      // override it to match the mocked getBoundingClientRect.
+      Object.defineProperty(domElement, 'clientHeight', {
+        configurable: true,
+        get: () => 600,
+      });
+      Object.defineProperty(domElement, 'clientWidth', {
+        configurable: true,
+        get: () => 800,
+      });
+      const fovRad = (60 * Math.PI) / 180;
+      const height = 2 * 5 * Math.tan(fovRad / 2);
+      const expectedX = -(100 * height * 1) / 600; // panLeft direction = -X for identity orientation
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
-
       const targetBefore = controls.target.clone();
-      // Simulate pan
+
       (controls as any).pan(100, 0); // Pan 100px right
       controls.update();
 
-      // Target should have moved
-      expect(controls.target.x).not.toBeCloseTo(targetBefore.x);
+      // Target should have moved by expectedX in world X (camera matrix col 0
+      // is world X axis when orientation = identity).
+      expect(controls.target.x - targetBefore.x).toBeCloseTo(expectedX, 5);
+      // Y and Z untouched.
+      expect(controls.target.y).toBeCloseTo(targetBefore.y, 5);
+      expect(controls.target.z).toBeCloseTo(targetBefore.z, 5);
     });
   });
 
   describe('zooming', () => {
-    it('should change distance for perspective camera', () => {
+    it('changes perspective distance by the deterministic zoom formula (W12)', () => {
+      // W12 strengthening: was `distance < distBefore` only. The applyZoomScale
+      // formula for perspective is `currentDistance * (1 + zoomDelta)`
+      // (no damping). With zoomDelta=-0.5 and distance=5, expected=2.5.
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
 
       const distBefore = (controls as any).distance;
-      // Zoom in
       (controls as any).zoomDelta = -0.5;
       controls.update();
-
-      expect((controls as any).distance).toBeLessThan(distBefore);
+      // Expected: distance * (1 + zoomDelta) = 5 * 0.5 = 2.5.
+      expect((controls as any).distance).toBeCloseTo(distBefore * 0.5, 5);
     });
 
-    it('should change camera.zoom for orthographic camera', () => {
+    it('changes ortho zoom by the deterministic formula (W12)', () => {
+      // W12 strengthening: applyZoomScale for ortho computes
+      // `cam.zoom / scale` where scale = 1 + zoomDelta. zoomDelta=-0.5 →
+      // scale=0.5 → new zoom = 1 / 0.5 = 2.0 (zoom in).
       const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
       orthoCam.position.set(0, 0, 5);
       orthoCam.lookAt(0, 0, 0);
       orthoCam.updateMatrixWorld();
 
-      controls = new LuxarOrbitControls(orthoCam, domElement, { enableDamping: false });
+      controls = new LuxarOrbitControls(orthoCam, domElement, {
+        enableDamping: false,
+        minZoom: 0.001,
+        maxZoom: 1000,
+      });
       controls.update();
 
-      const zoomBefore = orthoCam.zoom;
-      // Zoom in (negative delta = zoom in for ortho)
+      const zoomBefore = orthoCam.zoom; // default = 1
       (controls as any).zoomDelta = -0.5;
       controls.update();
-
-      expect(orthoCam.zoom).not.toBeCloseTo(zoomBefore);
+      // Expected: zoomBefore / (1 - 0.5) = 1 / 0.5 = 2.0
+      expect(orthoCam.zoom).toBeCloseTo(zoomBefore / 0.5, 5);
     });
 
     it('should clamp distance to min/max', () => {
@@ -253,20 +283,39 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('auto-rotation', () => {
-    it('should rotate when autoRotate is enabled', () => {
+    it('sweeps the camera by the deterministic per-frame angle (W11)', () => {
+      // W11 strengthening: was `position.distanceTo(posBefore) > 0.01`.
+      // The runUpdateStep formula is:
+      //   angle_per_frame = (2π/60) * autoRotateSpeed * dt
+      // We feed an explicit dt to update() so the swept angle is fully
+      // deterministic. After N frames the camera should have rotated
+      // by N * angle_per_frame around screen-up (the world Y axis when
+      // orientation = identity at construction).
+      const speed = 50;
+      const dt = 1 / 60;
+      const anglePerFrame = ((2 * Math.PI) / 60) * speed * dt;
+      const frames = 10;
+      const expectedAngle = anglePerFrame * frames;
+
       controls = new LuxarOrbitControls(camera, domElement, {
         enableDamping: false,
         autoRotate: true,
-        autoRotateSpeed: 50, // Very fast for test visibility
+        autoRotateSpeed: speed,
       });
-      controls.update(); // initial
+      controls.update(dt); // initial
 
       const posBefore = camera.position.clone();
-      // Run multiple frames to accumulate rotation
-      for (let i = 0; i < 10; i++) controls.update();
+      for (let i = 0; i < frames; i++) controls.update(dt);
 
-      const moved = camera.position.distanceTo(posBefore);
-      expect(moved).toBeGreaterThan(0.01);
+      // Initial: camera at (0,0,5), target=(0,0,0), screen-up = world-Y.
+      // After rotating around Y by total angle θ, camera position:
+      //   x = 5*sin(θ), z = 5*cos(θ), y=0
+      // (positive sin → camera moved in +X for positive angle).
+      // Distance from initial = 5 * sqrt(2 - 2*cos(θ)).
+      const expectedDistance = 5 * Math.sqrt(2 - 2 * Math.cos(expectedAngle));
+      const actualDistance = camera.position.distanceTo(posBefore);
+      // 4-decimal tolerance allows for accumulated quaternion-normalization drift.
+      expect(actualDistance).toBeCloseTo(expectedDistance, 3);
     });
 
     it('should not rotate when autoRotate is disabled', () => {
@@ -370,11 +419,54 @@ describe('LuxarOrbitControls', () => {
       controls.update();
       expect(camera.position.x).not.toBeCloseTo(savedPos.x);
 
-      // Reset
+      // Reset — restoration is deterministic (saved state is copied verbatim),
+      // so Float32 precision (~1e-5) is the appropriate tolerance, not the
+      // one-decimal `1` precision that was previously used.
       controls.reset();
-      expect(camera.position.x).toBeCloseTo(savedPos.x, 1);
-      expect(camera.position.y).toBeCloseTo(savedPos.y, 1);
-      expect(camera.position.z).toBeCloseTo(savedPos.z, 1);
+      expect(camera.position.x).toBeCloseTo(savedPos.x, 5);
+      expect(camera.position.y).toBeCloseTo(savedPos.y, 5);
+      expect(camera.position.z).toBeCloseTo(savedPos.z, 5);
+    });
+
+    it('reset() restores camera.zoom for perspective cameras too (HIGH-13)', () => {
+      // PerspectiveCamera also has a `.zoom` field that affects the projection
+      // matrix (telephoto-style zoom-in without FOV change). Previously
+      // saveState() hard-coded zoom0 = 1 for non-ortho cameras, so reset()
+      // silently dropped any user-modified perspective zoom. zoom0 must now
+      // be saved unconditionally and reset() must restore + updateProjectionMatrix.
+      camera.zoom = 1.0;
+      controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
+      controls.saveState(); // baseline zoom = 1.0
+
+      // User zooms in.
+      camera.zoom = 2.5;
+      camera.updateProjectionMatrix();
+      const projBefore = camera.projectionMatrix.elements[0];
+
+      controls.reset();
+      expect(camera.zoom).toBeCloseTo(1.0, 5);
+      // updateProjectionMatrix() must run so the projection actually changes.
+      expect(camera.projectionMatrix.elements[0]).not.toBeCloseTo(projBefore, 5);
+    });
+
+    it('reset() restores camera.zoom for orthographic cameras (regression)', () => {
+      const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+      orthoCam.position.set(0, 0, 5);
+      orthoCam.lookAt(0, 0, 0);
+      orthoCam.updateMatrixWorld();
+      orthoCam.zoom = 1.0;
+
+      const orthoControls = new LuxarOrbitControls(orthoCam, domElement, {
+        enableDamping: false,
+      });
+      orthoControls.saveState();
+
+      orthoCam.zoom = 3.0;
+      orthoCam.updateProjectionMatrix();
+
+      orthoControls.reset();
+      expect(orthoCam.zoom).toBeCloseTo(1.0, 5);
+      orthoControls.dispose();
     });
   });
 

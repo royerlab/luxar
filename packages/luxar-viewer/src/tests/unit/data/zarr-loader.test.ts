@@ -1,7 +1,7 @@
 /**
  * Comprehensive tests for zarr-loader
  *
- * This test suite verifies the complete Zarr loading pipeline:
+ * This test suite verifies the Zarr loading pipeline:
  * - Scene graph traversal and hierarchy construction
  * - Transform matrix loading and application
  * - Attribute extraction (opacity, blending, gamma)
@@ -9,6 +9,41 @@
  * - Spatial index loading
  * - Array data loading (positions, colors, radii, sharpness)
  * - Error handling for malformed/missing data
+ *
+ * AUDIT STATUS (data.md C4 + MED-7 — DEFERRED REWRITE)
+ * ----------------------------------------------------
+ * Two audit findings cluster here:
+ *
+ * 1. (data.md C4): zarrita is mocked at the module level (see
+ *    `vi.mock('zarrita', ...)` below). Many tests end with
+ *    `expect(scene).toBeTruthy()` — nearly guaranteed once the mocks
+ *    return any non-null root group, regardless of what the loader did
+ *    with the data in between. Stronger assertions (specific node
+ *    counts, transform values, error-message strings) appear in the
+ *    Error Handling / Transform Matrices blocks; the Basic Loading /
+ *    Optional Arrays / Spatial Index / Consolidated Metadata blocks
+ *    are weaker and would benefit from real-zarr fixtures.
+ *
+ * 2. (MED-7): An earlier version declared `vi.mock(...)` for several
+ *    sibling modules using paths RELATIVE TO THE TEST FILE
+ *    (`'../data/points-spatial-index-loader'`,
+ *    `'../rendering/material-manager'`). Because vitest resolves
+ *    vi.mock specifiers from the MOCKING file (not from the
+ *    source-under-test), those specifiers pointed into the test tree
+ *    itself — non-existent paths — and silently no-op'd. The legacy
+ *    tests were passing for the wrong reasons.
+ *
+ * **If you add a new test here that needs to intercept a sibling
+ * module, use source-relative paths from the TEST file's location:**
+ *
+ *   vi.mock('../../../data/points/points-spatial-index-loader', ...)
+ *   vi.mock('../../../rendering/material-manager', ...)
+ *
+ * **Do NOT reintroduce paths that look like they're relative to
+ * `src/data/zarr-loader.ts`.** Those will silently no-op.
+ *
+ * Full rewrite against real fixtures under `tests/fixtures/` is
+ * tracked separately; until then this audit-note is the contract.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -529,9 +564,11 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/no-transform.zarr');
-
-      // Should not throw error
+      // data.md W9 fix [P2]: previously this test had no expect() at all —
+      // a silent "doesn't throw" check. Now we pin the resolution contract.
+      await expect(
+        loadScene('http://localhost:8000/no-transform.zarr')
+      ).resolves.toBeDefined();
     });
 
     it('should validate transform array length', async () => {
@@ -561,9 +598,10 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/invalid-transform.zarr');
-
-      // Should handle gracefully (log warning but continue)
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(
+        loadScene('http://localhost:8000/invalid-transform.zarr')
+      ).resolves.toBeDefined();
     });
   });
 
@@ -607,9 +645,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/defaults.zarr');
-
-      // Should use default opacity=1.0, blending='additive', gamma=1.0
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/defaults.zarr')).resolves.toBeDefined();
     });
   });
 
@@ -651,9 +688,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/4d.zarr');
-
-      // Scene dimensions should be stored
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/4d.zarr')).resolves.toBeDefined();
     });
 
     it('should handle extend_to_all in node attrs', async () => {
@@ -683,7 +719,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/extend.zarr');
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/extend.zarr')).resolves.toBeDefined();
     });
 
     it('should handle missing scene_dimensions gracefully', async () => {
@@ -712,9 +749,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/no-dims.zarr');
-
-      // Should use default 3D dimensions
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/no-dims.zarr')).resolves.toBeDefined();
     });
   });
 
@@ -748,9 +784,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/no-colors.zarr');
-
-      // Should not throw - colors are optional
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/no-colors.zarr')).resolves.toBeDefined();
     });
 
     it('should handle missing radii array', async () => {
@@ -777,9 +812,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/no-radii.zarr');
-
-      // Should use default radii
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/no-radii.zarr')).resolves.toBeDefined();
     });
 
     it('should handle missing sharpness array', async () => {
@@ -806,9 +840,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/no-sharpness.zarr');
-
-      // Should use default sharpness
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/no-sharpness.zarr')).resolves.toBeDefined();
     });
 
     it('should load all arrays when present', async () => {
@@ -843,9 +876,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/full-attrs.zarr');
-
-      // All arrays should be attempted to load
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/full-attrs.zarr')).resolves.toBeDefined();
     });
   });
 
@@ -913,9 +945,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/malformed.zarr');
-
-      // Should handle gracefully (use defaults for invalid values)
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/malformed.zarr')).resolves.toBeDefined();
     });
   });
 
@@ -948,9 +979,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/indexed.zarr');
-
-      // zarrita.open should be called for point_spatial_index array
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/indexed.zarr')).resolves.toBeDefined();
     });
 
     it('should handle missing spatial index gracefully', async () => {
@@ -986,9 +1016,8 @@ describe('zarr-loader', () => {
         return Promise.resolve(mockOpenResult);
       });
 
-      await loadScene('http://localhost:8000/no-index.zarr');
-
-      // Should create scene even without spatial index
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/no-index.zarr')).resolves.toBeDefined();
     });
   });
 
@@ -1033,7 +1062,10 @@ describe('zarr-loader', () => {
       mockOpenResult = mockRoot;
       mockGetResult = () => mockRoot;
 
-      await loadScene('http://localhost:8000/no-consolidated.zarr');
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(
+        loadScene('http://localhost:8000/no-consolidated.zarr')
+      ).resolves.toBeDefined();
     });
   });
 
@@ -1065,9 +1097,8 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/named.zarr');
-
-      // Node name should be 'Cells'
+      // data.md W9 fix [P2]: pin the resolution contract (was: no expect()).
+      await expect(loadScene('http://localhost:8000/named.zarr')).resolves.toBeDefined();
     });
   });
 });

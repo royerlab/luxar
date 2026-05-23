@@ -13,6 +13,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// AUDIT NOTE (input.md C2): this mock replaces the sceneDimsManager
+// singleton (sibling internal module, not an external boundary). A
+// refactor that renames any method (e.g. setDimensionValue →
+// updateDimension) would silently leave this test green because the
+// mock contract is whatever the test author wrote. Treating the
+// sceneDimsManager as the integration seam with the scene graph is
+// defensible — it's effectively the "data layer" boundary for input —
+// but the alternative is exercising AnimationShortcuts against the
+// real singleton in jsdom. Follow-up.
 vi.mock('../../../../../scene/scene-dims-manager', () => ({
   sceneDimsManager: {
     getDims: vi.fn(),

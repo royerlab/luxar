@@ -6,6 +6,15 @@
  * default fallbacks kick in when optional setters are skipped, and the
  * Cholesky packing layout (lower-triangular, ndim*(ndim+1)/2 floats per
  * splat) is correct.
+ *
+ * AUDIT NOTE (builders.md C2): stochastic generators (withVaryingWidths,
+ * withRandomPositions, withRandomVertices, withVaryingAmplitudes) run
+ * UNSEEDED here. The withVaryingWidths test (above) now asserts variance
+ * + length, which catches "always-min"/"always-mid" implementations, but
+ * the broader principle — seed Math.random with vi.spyOn(Math, 'random')
+ * and assert distribution-level invariants rather than bound-only —
+ * is a future cleanup. Builders are used by every other suite, so a
+ * faulty builder corrupts coverage broadly.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -21,9 +30,18 @@ describe('PointsBuilder smoke', () => {
     expect(data.dimensions).toBe(3);
   });
 
-  it('falls back to random positions when build() is called without explicit ones', () => {
+  it('falls back to random positions when build() is called without explicit ones (full default shape)', () => {
+    // builders.md W1/W2 fix: previously asserted only positions.length.
+    // Pin the full default-shape contract: nulls for optional attributes,
+    // correct numPoints/dimensions, Float32Array dtype.
     const data = new PointsBuilder().withPoints(10).withDimensions(4).build();
+    expect(data.positions).toBeInstanceOf(Float32Array);
     expect(data.positions.length).toBe(10 * 4);
+    expect(data.numPoints).toBe(10);
+    expect(data.dimensions).toBe(4);
+    expect(data.colors).toBeNull();
+    expect(data.radii).toBeNull();
+    expect(data.sharpness).toBeNull();
   });
 });
 
@@ -65,8 +83,18 @@ describe('LinesBuilder smoke', () => {
     expect(data.sharpness!.every((s) => s === 0.5)).toBe(true);
   });
 
-  it('honors withVaryingWidths within the requested range', () => {
+  it('honors withVaryingWidths within the requested range AND actually varies + is the right length', () => {
+    // builders.md C1 fix: previous version asserted bounds only, missing
+    // length + variance. A faulty implementation returning always-min or
+    // always-midpoint would have passed.
     const data = new LinesBuilder().withSegments(20).withVaryingWidths(0.2, 0.8).build();
+    expect(data.widths).toBeInstanceOf(Float32Array);
+    // Lines store vertex widths (2 per segment).
+    expect(data.widths.length).toBeGreaterThanOrEqual(20);
+    const distinct = new Set(Array.from(data.widths));
+    // For 20+ random samples in [0.2, 0.8] we expect many distinct values;
+    // an always-constant implementation would yield exactly 1.
+    expect(distinct.size).toBeGreaterThan(1);
     for (const w of data.widths) {
       expect(w).toBeGreaterThanOrEqual(0.2);
       expect(w).toBeLessThanOrEqual(0.8);

@@ -9,6 +9,17 @@
  * The tests bypass real Worker construction by injecting fakes into
  * the pool's `workers` array and forcing `initPromise` to resolved,
  * so we can run in jsdom without a Worker API.
+ *
+ * AUDIT NOTE (workers.md C3): the `makePool` helper mutates private fields
+ * of a real WorkerPool via `as any`. The tests exercise the public
+ * `runWithTimeout`/`getStats`/`getQueueDepth` paths but couple to the
+ * class internals (`pool.workers`, `pool.initPromise`,
+ * `pool.nextWorkerIndex`). The pure helpers `selectLeastBusy`,
+ * `nextRoundRobin`, `computeStats`, `computeQueueDepth` would be cleaner
+ * to call directly (they live in workers/worker-pool/selection/ +
+ * workers/worker-pool/stats.ts). Follow-up: extract direct unit tests
+ * for those pure helpers, then keep this file as the integration smoke
+ * for the WorkerPool wrapper.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WorkerPool } from '../../../../../workers/worker-pool';

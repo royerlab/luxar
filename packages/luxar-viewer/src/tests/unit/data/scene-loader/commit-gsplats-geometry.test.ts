@@ -68,4 +68,21 @@ describe('commitGSplatsGeometry', () => {
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
   });
+
+  // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts.
+  // Pin the pool-supplied dispatch path (previously untested for GSplats).
+  it('accepts a buffer-pool argument without throwing and still writes visibleSplatCount', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const mockPool: any = {
+      acquireGSplatsGeometry: () => ({ geometry: new THREE.BufferGeometry(), pointCount: 0 }),
+      updateGSplatsGeometry: () => undefined,
+      releaseGSplatsGeometry: () => undefined,
+      didLastAcquireRebuildAttributes: () => false,
+    };
+    expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool)).not.toThrow();
+    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
+  });
 });

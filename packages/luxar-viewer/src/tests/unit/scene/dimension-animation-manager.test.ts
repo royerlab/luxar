@@ -34,7 +34,14 @@ describe('DimensionAnimationManager', () => {
     sceneDimsManager = new SceneDimsManager();
     sceneDimsManager.initFromScene(mockScene);
 
-    // Create mock animation controller
+    // AUDIT NOTE (scene.md C2): the AnimationController stub below is
+    // hand-rolled with just `addPerFrameCallback`/`removePerFrameCallback`/
+    // `startAnimation`. AnimationController is a sibling internal class,
+    // not a trust boundary. The capture-and-replay-of-`perFrameCallback`
+    // pattern means a future refactor of how addPerFrameCallback is
+    // invoked (e.g. registering two callbacks) silently breaks the test
+    // path without a contract failure. Cleaner approach: construct a
+    // real AnimationController with a stubbed RAF.
     mockAnimationController = {
       addPerFrameCallback: vi.fn((_id: string, callback: () => void) => {
         perFrameCallback = callback;

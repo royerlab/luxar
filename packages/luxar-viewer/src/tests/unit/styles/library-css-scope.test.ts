@@ -45,7 +45,13 @@ function expandImports(file: string, seen = new Set<string>()): string {
  */
 const FORBIDDEN_SELECTORS = [
   /^body\s*[,{]/m,
+  // styles.md C2 fix: also catch body-with-class (`body.x`),
+  // body-with-attr (`body[data-theme]`), body-followed-by-pseudo
+  // (`body:hover`), and leading-whitespace-indented selectors that the
+  // strict `^body` anchors miss inside nested rules.
+  /^\s*body[\s.\[:#]/m,
   /^html\s*[,{]/m,
+  /^\s*html[\s.\[:#]/m,
   /^html\s*,\s*body\s*\{/m,
   /^\*\s*[,{]/m,
   /^::-webkit-scrollbar/m,
@@ -73,13 +79,10 @@ describe('Library CSS scope (embed safety)', () => {
       }
     }
 
-    if (offenders.length > 0) {
-      throw new Error(
-        'styles/index.css must not include global selectors that affect ' +
-          'host pages. Move these to styles/standalone.css:\n' +
-          offenders.map((o) => '  - ' + o).join('\n')
-      );
-    }
+    // styles.md C1 fix: previously used `throw new Error` which bypassed
+    // vitest's assertion-tracking and `expect`-aware reporters. Using an
+    // `expect` so the diff is visible in standard vitest output.
+    expect(offenders, offenders.join('\n  ')).toEqual([]);
   });
 
   it('styles/standalone.css still contains the global rules (sanity check)', () => {

@@ -93,6 +93,35 @@ describe('updateMaterialsForCurrentCamera', () => {
     expect(bufferSize.y).toBe(600);
   });
 
+  it('mutates the supplied bufferSize in place on each call (MED-47 contract)', () => {
+    // Regression for MED-47: the bufferSize is a borrowed, shared reference
+    // owned by SceneManager. Consumers that retain it across calls observe
+    // it mutate in place when the renderer's drawing-buffer size changes.
+    // This test pins the contract: callers MUST copy() if they want to
+    // keep the value, and the helper itself overwrites the prior contents.
+    const camera = new THREE.PerspectiveCamera();
+    const bufferSize = new THREE.Vector2(99, 99);
+    const ctx = makeCtx({ camera, bufferSize });
+
+    // First call — getDrawingBufferSize stub writes (800, 600).
+    updateMaterialsForCurrentCamera(ctx);
+    expect(bufferSize.x).toBe(800);
+    expect(bufferSize.y).toBe(600);
+
+    // Simulate a renderer resize and a second call. The same Vector2
+    // instance is mutated in place — a retainer of the reference would
+    // see its "saved" value silently overwritten.
+    (ctx.renderer.getDrawingBufferSize as ReturnType<typeof vi.fn>).mockImplementation(
+      (target: THREE.Vector2) => {
+        target.set(1024, 768);
+        return target;
+      }
+    );
+    updateMaterialsForCurrentCamera(ctx);
+    expect(bufferSize.x).toBe(1024);
+    expect(bufferSize.y).toBe(768);
+  });
+
   it('forwards bounds-cache near-cull margin (uses default 0.1 for empty cache)', () => {
     const camera = new THREE.PerspectiveCamera();
     const ctx = makeCtx({ camera });

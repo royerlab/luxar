@@ -1,10 +1,19 @@
 /**
- * Unit tests for Dimension Sliders
- * Tests critical fix: memory leaks from slider/dropdown event listeners
+ * Unit tests for Dimension Sliders.
+ * Tests critical fix: memory leaks from slider/dropdown event listeners.
+ *
+ * AUDIT NOTE (ui.md C3, resolved): the lifecycle tests previously pinned
+ * EXACT event-type strings that the implementation registered (input/
+ * keydown/etc.). They've been rewritten to assert observable post-dispose
+ * behavior: dispatch input/change/keydown/click on the SAME element after
+ * dispose and verify that `sceneDimsManager.setDimensionValue` is NOT
+ * called. Each test includes a pre-dispose sanity probe so a setup-time
+ * regression (handler never wired) is also caught.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DimensionSliders } from '../../../ui/dimension-sliders';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SimpleDims } from '../../../types/dims';
 
 // Mock scene dims manager
@@ -47,7 +56,11 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
   });
 
   describe('Slider Event Listener Cleanup', () => {
-    it('should properly remove all slider event listeners on dispose', () => {
+    // C3 strengthening (P1): the original tests asserted exact event-type
+    // strings on removeEventListener — coupling to impl. The strengthened
+    // form drives a real event after dispose and asserts the observable
+    // contract: setDimensionValue is NOT invoked (callback unfired).
+    it('post-dispose: slider input no longer routes to setDimensionValue', () => {
       const container = document.getElementById('test-container')!;
       const dims = createMockDims();
 
@@ -65,34 +78,31 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
         dimensionUnits: ['μm', 'μm', 'μm', 's', ''],
       });
 
-      // Get the created sliders
       const sliderElements = document.querySelectorAll('input[type="range"]');
       expect(sliderElements.length).toBeGreaterThan(0);
 
-      // Track event listeners
-      const removeEventSpy = vi.fn();
-      sliderElements.forEach((slider) => {
-        const original = slider.removeEventListener.bind(slider);
-        slider.removeEventListener = (type: string, listener: any, options?: any) => {
-          removeEventSpy(type);
-          original(type, listener, options);
-        };
+      // Sanity: a pre-dispose input mutation routes through to the manager.
+      vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+      const probe = sliderElements[0] as HTMLInputElement;
+      probe.value = String(Math.min(900, parseInt(probe.max) - 1));
+      probe.dispatchEvent(new Event('input'));
+      expect(sceneDimsManager.setDimensionValue).toHaveBeenCalled();
+
+      // Dispose, then probe post-dispose behavior.
+      sliders.dispose();
+      vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+
+      sliderElements.forEach((s, i) => {
+        const el = s as HTMLInputElement;
+        el.value = String(Math.min(700 + i, parseInt(el.max) || 1000));
+        el.dispatchEvent(new Event('input'));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
       });
 
-      // Dispose
-      sliders.dispose();
-
-      // Should have removed 'input' and 'keydown' for each slider
-      const inputRemoved = removeEventSpy.mock.calls.filter((call) => call[0] === 'input').length;
-      const keydownRemoved = removeEventSpy.mock.calls.filter(
-        (call) => call[0] === 'keydown'
-      ).length;
-
-      expect(inputRemoved).toBeGreaterThan(0);
-      expect(keydownRemoved).toBeGreaterThan(0);
+      expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
     });
 
-    it('should properly remove all dropdown event listeners on dispose', () => {
+    it('post-dispose: dropdown change/keydown no longer routes to setDimensionValue', () => {
       const container = document.getElementById('test-container')!;
       const dims = createMockDims();
 
@@ -109,34 +119,29 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
         dimensionNames: ['X', 'Y', 'Z', 'Time', 'Channel'],
       });
 
-      // Get the created dropdown (Channel dimension has < 10 categories)
+      // Channel dim (< 10 categories) becomes a dropdown.
       const dropdown = document.querySelector('select') as HTMLSelectElement;
       expect(dropdown).toBeTruthy();
 
-      // Track removals
-      const removeEventSpy = vi.fn();
-      const original = dropdown.removeEventListener.bind(dropdown);
-      dropdown.removeEventListener = (type: string, listener: any, options?: any) => {
-        removeEventSpy(type);
-        original(type, listener, options);
-      };
+      // Sanity: a pre-dispose change routes through to the manager.
+      vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+      dropdown.value = '1';
+      dropdown.dispatchEvent(new Event('change'));
+      expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(4, 1);
 
-      // Dispose
+      // Dispose, then probe post-dispose behavior.
       sliders.dispose();
+      vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
 
-      // Should remove: change, keydown
-      // Note: mouseenter, mouseleave, focus, blur are now handled by CSS :hover and :focus
-      const eventTypes = removeEventSpy.mock.calls.map((call) => call[0]);
-      expect(eventTypes).toContain('change');
-      expect(eventTypes).toContain('keydown');
-      // Hover/focus handlers no longer needed - CSS handles these states
-      expect(eventTypes).not.toContain('mouseenter');
-      expect(eventTypes).not.toContain('mouseleave');
-      expect(eventTypes).not.toContain('focus');
-      expect(eventTypes).not.toContain('blur');
+      dropdown.value = '2';
+      dropdown.dispatchEvent(new Event('change'));
+      dropdown.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+      dropdown.dispatchEvent(new KeyboardEvent('keydown', { key: ']' }));
+
+      expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
     });
 
-    it('should clean up event listeners when rebuilding sliders (createSliders)', () => {
+    it('rebuilding sliders detaches old listeners (input on stale slider is a no-op)', () => {
       const container = document.getElementById('test-container')!;
       const dims = createMockDims();
 
@@ -153,29 +158,27 @@ describe('DimensionSliders - Memory Leak Prevention', () => {
         dimensionNames: ['X', 'Y', 'Z', 'Time', 'Channel'],
       });
 
-      // Get initial sliders
-      const initialSliders = document.querySelectorAll('input[type="range"]');
+      const initialSliders = Array.from(
+        document.querySelectorAll('input[type="range"]')
+      ) as HTMLInputElement[];
+      expect(initialSliders.length).toBeGreaterThan(0);
 
-      // Access private createSliders method to test cleanup
-      const sliders_any = sliders as any;
+      // Rebuild sliders (simulates dimension change) — old listeners must be cleaned up.
+      (sliders as any).createSliders();
 
-      // Track removals
-      let removeCount = 0;
-      initialSliders.forEach((slider) => {
-        const original = slider.removeEventListener.bind(slider);
-        slider.removeEventListener = (type: string, listener: any, options?: any) => {
-          removeCount++;
-          original(type, listener, options);
-        };
+      // Confirm a fresh set was produced.
+      const rebuiltSliders = document.querySelectorAll('input[type="range"]');
+      expect(rebuiltSliders.length).toBeGreaterThan(0);
+
+      // Dispatching on the OLD sliders must not invoke setDimensionValue.
+      vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+      initialSliders.forEach((el) => {
+        el.value = '500';
+        el.dispatchEvent(new Event('input'));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
       });
+      expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
 
-      // Rebuild sliders (simulates dimension change)
-      sliders_any.createSliders();
-
-      // Should have removed listeners from old sliders
-      expect(removeCount).toBeGreaterThan(0);
-
-      // Clean up
       sliders.dispose();
     });
   });
@@ -315,7 +318,10 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     sliders.dispose();
   });
 
-  it('should properly remove toggle event listeners on dispose', () => {
+  it('post-dispose: toggle click/keydown no longer routes to setDimensionValue', () => {
+    // C3 strengthening (P1): behavioral post-dispose check rather than
+    // asserting that the implementation called removeEventListener with
+    // specific event-type strings.
     const container = document.getElementById('test-container')!;
     const sliders = new DimensionSliders({
       container,
@@ -331,23 +337,25 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
       dimensionNames: ['X', 'Y', 'Z', 'DAPI', 'GFP', 'Channel'],
     });
 
-    const toggleElements = document.querySelectorAll('.luxar-dimension-toggle');
+    const toggleElements = Array.from(
+      document.querySelectorAll('.luxar-dimension-toggle')
+    ) as HTMLElement[];
     expect(toggleElements.length).toBe(2);
 
-    // Track event listener removals
-    const removeEventSpy = vi.fn();
-    toggleElements.forEach((toggle) => {
-      const original = toggle.removeEventListener.bind(toggle);
-      toggle.removeEventListener = (type: string, listener: any, options?: any) => {
-        removeEventSpy(type);
-        original(type, listener, options);
-      };
-    });
+    // Sanity: clicking a toggle pre-dispose calls setDimensionValue.
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    toggleElements[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalled();
 
     sliders.dispose();
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
 
-    const eventTypes = removeEventSpy.mock.calls.map((call) => call[0]);
-    expect(eventTypes).toContain('click');
-    expect(eventTypes).toContain('keydown');
+    toggleElements.forEach((toggle) => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      toggle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      toggle.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+    });
+
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
   });
 });

@@ -43,8 +43,19 @@ describe('LayerStateManager colormap support', () => {
     expect(layer.colormap).toBeUndefined();
   });
 
-  it('supportsColormap is true for gsplats', () => {
+  it('supportsColormap is false for bare gsplats (no scalars, no colormap attr)', () => {
+    // Regression for MED-29: a gsplats layer with only positions/amplitudes/
+    // cholesky_factors has no scalar field to drive a colormap. The UI must
+    // NOT offer a colormap dropdown that would no-op when the user picks an
+    // entry. supportsColormap was previously hard-true for gsplats; now it
+    // gates on the same has_scalars / colormap attr that Points uses.
     mgr.initFromSceneGraph(makeSceneGraph([{}]));
+    const layer = mgr.getLayers()[0];
+    expect(layer.supportsColormap).toBe(false);
+  });
+
+  it('supportsColormap is true for gsplats with has_scalars', () => {
+    mgr.initFromSceneGraph(makeSceneGraph([{ has_scalars: true }]));
     const layer = mgr.getLayers()[0];
     expect(layer.supportsColormap).toBe(true);
   });

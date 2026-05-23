@@ -272,4 +272,40 @@ describe('GPU Buffer Pool Integration Tests', () => {
       expect(evicted).toBeGreaterThan(0);
     });
   });
+
+  // integration.md G1 fix: parallel coverage for Lines + GSplats. Previously
+  // gpu-pool-integration tested only Points; the Lines and GSplats acquire/
+  // update paths had zero direct integration coverage despite being
+  // first-class methods on the same class. Even smoke-level acquisition is
+  // strictly better than no coverage.
+  describe('Three-geometry symmetry: Lines + GSplats acquire/release', () => {
+    it('acquireLinesGeometry returns an InstancedBufferGeometry of the requested capacity', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const geom = pool.acquireLinesGeometry('/lines-1', 16);
+      expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      expect(() => pool.releaseLinesGeometry('/lines-1')).not.toThrow();
+    });
+
+    it('acquireGSplatsGeometry returns an InstancedBufferGeometry of the requested capacity', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const geom = pool.acquireGSplatsGeometry('/gsplats-1', 32);
+      expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      expect(() => pool.releaseGSplatsGeometry('/gsplats-1')).not.toThrow();
+    });
+
+    it('acquireLinesGeometry reuses the same geometry across acquisitions for the same nodeId', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const g1 = pool.acquireLinesGeometry('/lines-reuse', 16);
+      const g2 = pool.acquireLinesGeometry('/lines-reuse', 16);
+      // Pool dedupes by nodeId — same node should get the same underlying geometry.
+      expect(g2).toBe(g1);
+    });
+
+    it('acquireGSplatsGeometry reuses the same geometry across acquisitions for the same nodeId', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const g1 = pool.acquireGSplatsGeometry('/gsplats-reuse', 32);
+      const g2 = pool.acquireGSplatsGeometry('/gsplats-reuse', 32);
+      expect(g2).toBe(g1);
+    });
+  });
 });

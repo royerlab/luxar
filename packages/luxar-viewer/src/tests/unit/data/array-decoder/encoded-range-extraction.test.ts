@@ -161,7 +161,16 @@ describe('Encoded Array Range Extraction', () => {
       }
     });
 
-    it('should fail with WRONG elementsPerPoint (demonstrates the bug)', async () => {
+    it('extractRangesFromDecoded helper: WRONG elementsPerPoint produces under-sized output (helper-arithmetic pin)', async () => {
+      // data.md C1 fix: previous name "should fail with WRONG elementsPerPoint
+      // (demonstrates the bug)" misleadingly implies this tests the
+      // production loader. It does not. `extractRangesFromDecoded` is a
+      // LOCAL helper defined in this test file (see top), not the
+      // production code path. The real production loader's getActualElementsPerPoint
+      // path is exercised by the surrounding "should correctly extract
+      // ranges from …" tests. This test only verifies the helper's
+      // arithmetic — useful as documentation of the off-by-three bug
+      // shape but does NOT guard the production fix.
       const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -169,15 +178,11 @@ describe('Encoded Array Range Extraction', () => {
 
       const ranges: PointRange[] = [{ start: 0, end: 10 }];
 
-      // BUG SIMULATION: Use stored elementsPerPoint (1) instead of actual (3)
       const wrongElementsPerPoint = 1;
       const buggyExtracted = extractRangesFromDecoded(decoded, ranges, wrongElementsPerPoint);
 
-      // With the bug: 10 points × 1 = 10 elements (should be 30!)
+      // Helper arithmetic: 10 points × 1 = 10 (would have been 30 with correct epp).
       expect(buggyExtracted.length).toBe(10);
-
-      // This only copies 1/3 of the data - the exact bug we fixed!
-      // The user would see 2/3 of points missing/black
     });
   });
 
@@ -513,8 +518,14 @@ describe('Encoded Array Range Extraction', () => {
       expect(extracted1.length).toBe(100 * 3);
       expect(extracted2.length).toBe(100 * 3);
 
-      // If array_ref worked correctly, both extractions should have same structure
-      // (though not necessarily same values - depends on if arrays were truly identical)
+      // The two source colors arrays are constructed to be IDENTICAL in
+      // values (the array_ref fixture defines them that way), so array_ref
+      // working correctly means decoded2 === decoded1 byte-for-byte, and
+      // therefore extracted2 === extracted1. The previous comment
+      // ("not necessarily same values - depends on if arrays were truly
+      // identical") punted the load-bearing assertion — data.md C6 fix.
+      expect(Array.from(decoded2)).toEqual(Array.from(decoded1));
+      expect(Array.from(extracted2)).toEqual(Array.from(extracted1));
     });
   });
 

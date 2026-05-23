@@ -7,6 +7,15 @@
  * duration-timer cleanup, captureStream track cleanup, turntable
  * rotation registration, and Panel.dispose() routing through the
  * strategy.
+ *
+ * AUDIT NOTE (ui.md C2): the tests below mutate
+ * `(panel as any).videoRecordingStrategy.X` (e.g. `mediaRecorder =
+ * mockMediaRecorder`, `captureStream = fakeStream`). This pins the
+ * internal field shape of VideoRecordingStrategy; a refactor of the
+ * strategy's internal state will break these tests even with the public
+ * contract preserved. Follow-up: drive the same scenarios through
+ * `panel.startVideoRecording()` and verify observable effects
+ * (download blob shape, toast string, dispose-time track cleanup).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

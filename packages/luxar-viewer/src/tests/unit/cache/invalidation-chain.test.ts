@@ -100,7 +100,15 @@ describe('Invalidation chain (commit 9.1)', () => {
     expect(lateCb).not.toHaveBeenCalled();
   });
 
-  it('all callbacks run even when one of them throws', async () => {
+  it('callback chain pins current behavior: first callback always runs; later behavior depends on throw-interruptibility', async () => {
+    // cache.md W19 fix: previous test branched on `threw` and accepted
+    // either path, killing zero mutants. Now we pin EITHER outcome
+    // explicitly by running clearAll() and asserting on the post-hoc
+    // state: cb1 ran, cb2 ran (because the chain reached it before
+    // throwing), and we explicitly record whether cb3 ran. If the
+    // implementation flips between interruptible and resilient, this
+    // test fails with a clear "expected resilient, got interruptible"
+    // message rather than silently passing.
     const cb1 = vi.fn();
     const cb2 = vi.fn(() => {
       throw new Error('callback boom');
@@ -110,24 +118,28 @@ describe('Invalidation chain (commit 9.1)', () => {
     store.onInvalidate(cb2);
     store.onInvalidate(cb3);
 
-    // Current implementation forEach iterates and invokes each callback;
-    // a throwing callback can interrupt the chain. Document the actual
-    // behavior so future hardening is intentional, not accidental.
     let threw = false;
     try {
       await store.clearAll();
     } catch {
       threw = true;
     }
-    // At least the first callback must have run before the throw.
-    expect(cb1).toHaveBeenCalled();
-    if (threw) {
-      // If the chain is interruptible: cb3 may not have run. That's
-      // the current contract; the test serves as a behavioral baseline.
-      expect(cb2).toHaveBeenCalled();
+
+    // Load-bearing invariants regardless of the throw-interruptibility choice:
+    expect(cb1).toHaveBeenCalledTimes(1);
+    expect(cb2).toHaveBeenCalledTimes(1);
+
+    // PIN the current behavior explicitly. If a future commit flips
+    // resilience, this assertion fails with a clear signal, and the
+    // engineer can update the expected value (intentionally) rather
+    // than silently passing.
+    const CURRENT_BEHAVIOR_INTERRUPTIBLE = true;
+    if (CURRENT_BEHAVIOR_INTERRUPTIBLE) {
+      expect(threw).toBe(true);
+      expect(cb3).not.toHaveBeenCalled();
     } else {
-      // If the chain becomes resilient in the future, every callback runs.
-      expect(cb3).toHaveBeenCalled();
+      expect(threw).toBe(false);
+      expect(cb3).toHaveBeenCalledTimes(1);
     }
   });
 });

@@ -512,6 +512,71 @@ describe('bounds-math', () => {
       expect(transformed.min).toEqual({ x: -2, y: -3, z: -4 });
       expect(transformed.max).toEqual({ x: 2, y: 3, z: 4 });
     });
+
+    // scene.md C3: missing boundary cases for the perspective-division
+    // path. `transformBoundingBox` divides each corner by
+    // w = matrix[3]*x + matrix[7]*y + matrix[11]*z + matrix[15], so any
+    // matrix with non-zero perspective entries or matrix[15] != 1 changes
+    // the result. The tests above only cover identity / translation / scale
+    // matrices where w is always 1 — the divide path is unexercised.
+    it('handles matrix[15] != 1 (uniform projective scaling: result scales by 1/matrix[15])', () => {
+      const box = { min: { x: -1, y: -1, z: -1 }, max: { x: 1, y: 1, z: 1 } };
+      // Identity rotation + non-unit homogeneous w; should scale by 1/2.
+      const projective = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2];
+      const result = transformBoundingBox(box, projective);
+      expect(result.min).toEqual({ x: -0.5, y: -0.5, z: -0.5 });
+      expect(result.max).toEqual({ x: 0.5, y: 0.5, z: 0.5 });
+    });
+
+    // Bug fix: a perspective-projection matrix can produce w == 0 for points
+    // on the camera plane, which silently yielded Infinity/NaN coordinates
+    // before the epsilon guard was added. The result must always be finite.
+    it('returns a finite bounding box for a perspective projection that crosses the camera plane', () => {
+      // Box that straddles the camera plane (z spans -1..1).
+      const box: BoundingBox = {
+        min: { x: -1, y: -1, z: -1 },
+        max: { x: 1, y: 1, z: 1 },
+      };
+      // THREE.js-style perspective matrix (column-major, flat). The key
+      // property: matrix[11] = -1 (so w = -z), which makes corners with z=0
+      // produce w=0 → division by zero. We use a representative perspective
+      // matrix (fov ~90°, aspect 1, near 0.1, far 100):
+      //   m[0]=1, m[5]=1, m[10]≈-1.002, m[11]=-1, m[14]≈-0.2, m[15]=0.
+      // Any corner with z=0 produces w = -1*0 + 0 = 0.
+      // We pick a box with z=0 on one face by translating.
+      const boxOnPlane: BoundingBox = {
+        min: { x: -1, y: -1, z: 0 },
+        max: { x: 1, y: 1, z: 2 },
+      };
+      const perspective = [
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2002, 0,
+      ];
+      const result = transformBoundingBox(boxOnPlane, perspective);
+      // All six floats must be finite — no NaN, no ±Infinity.
+      for (const v of [
+        result.min.x,
+        result.min.y,
+        result.min.z,
+        result.max.x,
+        result.max.y,
+        result.max.z,
+      ]) {
+        expect(Number.isFinite(v)).toBe(true);
+      }
+      // And the original-box case (no z=0 corner) — make sure we didn't
+      // regress finite behaviour for sane perspective inputs.
+      const safeResult = transformBoundingBox(box, perspective);
+      for (const v of [
+        safeResult.min.x,
+        safeResult.min.y,
+        safeResult.min.z,
+        safeResult.max.x,
+        safeResult.max.y,
+        safeResult.max.z,
+      ]) {
+        expect(Number.isFinite(v)).toBe(true);
+      }
+    });
   });
 
   describe('projectBoundsToDisplayDims', () => {

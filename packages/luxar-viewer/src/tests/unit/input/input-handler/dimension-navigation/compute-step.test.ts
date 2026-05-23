@@ -162,6 +162,61 @@ describe('computeDimensionStep', () => {
     // Cyclic → wraps from 100+5 back into [0, 100], NOT clamped to 100
     expect(result!.newValue).not.toBe(100);
   });
+
+  // input.md G9 fix: direction=-1 with cyclic wrap (the symmetric case
+  // of the forward wrap test above).
+  it('cyclic + direction=-1 wraps from the lower bound back to the upper end', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 0, 0], // pinned at min
+      metadata: [
+        makeMetadata({ name: 'X', display: true }),
+        makeMetadata({ name: 'Y', display: true }),
+        makeMetadata({ name: 'Z', display: true }),
+        makeMetadata({ name: 'Time', cyclic: true, step: 5 }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0, 10],
+      [0, 10],
+      [0, 10],
+      [0, 100],
+      [0, 100],
+    ];
+    const result = computeDimensionStep(-1, 0, dims, ranges);
+    // Cyclic + going back from 0 by step=5: wraps to max - (0 - (-5)) % 100 = 95
+    expect(result!.newValue).toBe(95);
+    expect(result!.changed).toBe(true);
+  });
+
+  // input.md G10 fix: pin the rounding direction for discrete dims.
+  // calculateNextPosition uses Math.round AFTER applying step+direction:
+  // current=0.4, direction=+1, step=1 → 1.4 → Math.round → 1.
+  it('pins rounding direction for discrete dims (Math.round on the post-step value)', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 0.4, 0],
+      metadata: [
+        makeMetadata({ name: 'X', display: true }),
+        makeMetadata({ name: 'Y', display: true }),
+        makeMetadata({ name: 'Z', display: true }),
+        makeMetadata({ name: 'Time', discrete: true, step: 1 }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0, 10],
+      [0, 10],
+      [0, 10],
+      [0, 100],
+      [0, 100],
+    ];
+    // 0.4 + 1 = 1.4 → round → 1
+    const fwd = computeDimensionStep(1, 0, dims, ranges);
+    expect(fwd!.newValue).toBe(1);
+    // 0.4 - 1 = -0.6 → round → -1 → clamped to 0 (min)
+    const back = computeDimensionStep(-1, 0, dims, ranges);
+    expect(back!.newValue).toBe(0);
+  });
 });
 
 describe('getSelectedDimensionIndex', () => {

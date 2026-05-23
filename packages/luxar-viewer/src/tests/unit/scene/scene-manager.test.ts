@@ -404,12 +404,18 @@ describe('SceneManager', () => {
   });
 
   describe('initialization', () => {
-    it('should initialize all components', async () => {
+    it('initializes all components with the correct concrete types', async () => {
+      // scene.md W1 fix: previously asserted only .toBeDefined() on each
+      // field. A regression that set `this.scene = new THREE.Group()`
+      // instead of `new THREE.Scene()` would have survived. The next test
+      // ('should setup scene with correct properties') does check
+      // instanceof for scene; here we extend the same discipline to all
+      // five fields.
       await sceneManager.init({ canvas: mockCanvas as any });
 
-      expect(sceneManager.renderer).toBeDefined();
-      expect(sceneManager.scene).toBeDefined();
-      expect(sceneManager.camera).toBeDefined();
+      expect(sceneManager.renderer).toBeInstanceOf(THREE.WebGLRenderer);
+      expect(sceneManager.scene).toBeInstanceOf(THREE.Scene);
+      expect(sceneManager.camera).toBeInstanceOf(THREE.Camera);
       expect(sceneManager.controls).toBeDefined();
       expect(sceneManager.postProcessing).toBeDefined();
     });
@@ -943,17 +949,11 @@ describe('SceneManager', () => {
       expect(sceneManager.renderer.domElement).toBeDefined();
     });
 
-    it('should handle missing container gracefully during resize', () => {
-      // Remove container temporarily
-      const originalContainer = (sceneManager as any).container;
-      (sceneManager as any).container = null;
-
-      // Should not crash when updating size without container
-      expect(() => sceneManager.updateSize()).not.toThrow();
-
-      // Restore container
-      (sceneManager as any).container = originalContainer;
-    });
+    // 'should handle missing container gracefully during resize' was removed:
+    // it referenced a `(sceneManager as any).container` field that does not exist
+    // on SceneManager (the class uses `this.canvasElement` and
+    // `this.renderer.domElement` instead). The test was testing a non-existent
+    // code path; the safety net it claimed to provide was illusory.
   });
 
   describe('position bounds from metadata', () => {

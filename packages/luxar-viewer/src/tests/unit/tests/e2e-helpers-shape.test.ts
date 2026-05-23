@@ -7,6 +7,15 @@
  *   - assertNoShaderErrors / samplePixelAt are exported correctly.
  *   - The shader-error regex catches representative GLSL error
  *     messages (compile, link, attribute, uniform).
+ *
+ * IMPORTANT (tests-meta.md C1/C2): SHADER_ERROR_RX below is a LOCAL COPY
+ * that diverges intentionally from the real pattern in
+ * src/tests/e2e/helpers.ts:1228 (used by assertNoShaderErrors). The real
+ * regex is stricter — it requires e.g. `GLSL\s*(error|failure|failed)`
+ * rather than the bare `GLSL` match used here. This file is testing the
+ * local copy for documentation purposes; do not rely on it to predict
+ * the runtime behavior of assertNoShaderErrors. Keep the two patterns
+ * in sync MANUALLY when adding new browser-specific error variants.
  */
 import { describe, it, expect } from 'vitest';
 import { assertNoShaderErrors, samplePixelAt } from '../../e2e/helpers';
@@ -55,12 +64,13 @@ describe('shader-error regex coverage', () => {
     expect(SHADER_ERROR_RX.test(msg)).toBe(false);
   });
 
-  it('does NOT match Luxar info logs that mention "shader" only as a docstring', () => {
-    // Real Luxar log format prefixes a level emoji; "shader" appearing in
-    // an info-level log is FINE — the test should still match because
-    // assertNoShaderErrors filters by message content, not level. We
-    // accept the false positive risk; users see a clear failure with the
-    // offending text and can `allowedPatterns`-it if needed.
+  it('the local SHADER_ERROR_RX over-matches info logs that mention "shader" (acceptable for this docstring-test)', () => {
+    // tests-meta.md W4 fix: the previous comment claimed
+    // "assertNoShaderErrors filters by message content, not level". That's
+    // INCORRECT — the real helper at e2e/helpers.ts:1226 filters to
+    // `errors + warnings` only, so info-level logs never reach the regex
+    // in production. This test exercises only the local-copy regex; it
+    // accepts the false positive as a documentation artifact.
     const msg = '[ℹ️] [Renderer] reusing shader program from cache';
     expect(SHADER_ERROR_RX.test(msg)).toBe(true);
   });

@@ -153,6 +153,26 @@ describe('GSplats Types', () => {
       expect(CHOLESKY_SIZES['3D']).toBe(6);
       expect(CHOLESKY_SIZES['4D']).toBe(10);
     });
+
+    it('MED-44: covers 5D through 16D (the WASM dimension ceiling)', () => {
+      // Regression: the constant previously stopped at 4D even though
+      // LoadedGSplatsData and choleskyPackedSize support arbitrary ndim.
+      // A 5D+ caller indexing into the constant would have hit undefined
+      // and produced silently wrong stride math. The constant is now
+      // populated up to 16D (the WASM 16-dim limit per CLAUDE.md), and
+      // every entry must match `choleskyPackedSize(n) = n*(n+1)/2`.
+      for (let n = 2; n <= 16; n++) {
+        const key = `${n}D` as keyof typeof CHOLESKY_SIZES;
+        const value = (CHOLESKY_SIZES as Record<string, number>)[key];
+        expect(value).toBeDefined();
+        expect(value).toBe(choleskyPackedSize(n));
+        expect(value).toBe((n * (n + 1)) / 2);
+      }
+      // Spot-check a few specific values to lock in the table.
+      expect(CHOLESKY_SIZES['5D']).toBe(15);
+      expect(CHOLESKY_SIZES['8D']).toBe(36);
+      expect(CHOLESKY_SIZES['16D']).toBe(136);
+    });
   });
 });
 

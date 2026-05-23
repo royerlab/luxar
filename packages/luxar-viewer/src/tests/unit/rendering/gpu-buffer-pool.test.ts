@@ -3,7 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import {
+  GPUBufferPool,
+  __setMinInstanceCapacityForTesting,
+} from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
@@ -80,6 +83,31 @@ describe('GPUBufferPool', () => {
       expect(geom2).toBe(geom1); // Same geometry, grown
       const stats = pool.getStats();
       expect(stats.capacityGrowths).toBe(1);
+    });
+
+    it('grow path bumps byType.points.allocations (MED-11 regression)', () => {
+      // Regression for MED-11: the grow branch reallocates the interleaved
+      // buffer (real GPU buffer creation) but previously only bumped
+      // `stats.capacityGrowths`, leaving `typeStats.points.allocations`
+      // stale. The data-loading-monitor uses byType.points.allocations to
+      // compute reuse rates; without this fix, a workload of repeated
+      // grows reports an inflated reuse rate.
+      const data1 = createMockLoadedPointsData(1000);
+      const data2 = createMockLoadedPointsData(2000);
+      const data3 = createMockLoadedPointsData(4000);
+
+      pool.acquirePointsGeometry('node1', data1, 1000); // fresh allocation
+      const allocsAfterFirst = pool.getStats().byType.points.allocations;
+      expect(allocsAfterFirst).toBe(1);
+
+      pool.acquirePointsGeometry('node1', data2, 2000); // grow #1
+      expect(pool.getStats().byType.points.allocations).toBe(allocsAfterFirst + 1);
+
+      pool.acquirePointsGeometry('node1', data3, 4000); // grow #2
+      expect(pool.getStats().byType.points.allocations).toBe(allocsAfterFirst + 2);
+
+      // capacityGrowths should rise in lockstep on the grow branch.
+      expect(pool.getStats().capacityGrowths).toBe(2);
     });
 
     it('didLastAcquireRebuildAttributes is false on in-place reuse, true on grow', () => {
@@ -430,6 +458,61 @@ describe('GPUBufferPool', () => {
       // Should REUSE geometry (same types)
       expect(stats.allocations).toBe(1);
       expect(stats.reuses).toBe(1);
+    });
+  });
+
+  describe('Zero-count safety', () => {
+    it('never produces a zero-capacity interleaved buffer when count is 0', () => {
+      // Regression guard for the WebGPU "blank scene" issue. When a scene
+      // starts at a slice where no instances are visible, the pool used to
+      // allocate a buffer sized at `ceil(0 * 1.5) = 0` floats — a
+      // zero-length JS array never produces a real GPU buffer on Three's
+      // WebGPU backend, and any subsequent grow keeps the empty (or
+      // absent) GPU buffer bound. Drawing then fails with "Instance range
+      // … requires a larger buffer than the bound buffer size (0)".
+      //
+      // The fix is `chooseCapacity` + `DEFAULT_MIN_INSTANCE_CAPACITY` in
+      // gpu-buffer-pool.ts. The test setup file lowers the floor to zero
+      // so other tests can exercise the grow path; restore the production
+      // default for this specific assertion.
+      __setMinInstanceCapacityForTesting(null);
+      try {
+        const empty = new GPUBufferPool(20, 300, 5, 0);
+
+        const lineGeom = empty.acquireLinesGeometry('zero-lines', 0);
+        const lineBuf = (lineGeom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute)
+          .data;
+        expect((lineBuf.array as Float32Array).length).toBeGreaterThan(0);
+
+        const pointGeom = empty.acquirePointsGeometry(
+          'zero-points',
+          {
+            positions: new Float32Array(0),
+            colors: new Float32Array(0),
+            radii: undefined,
+            sharpness: undefined,
+            pointCount: 0,
+            ndim: 3,
+            metadata: {
+              totalPoints: 0,
+              loadedPoints: 0,
+              bounds: new THREE.Box3(),
+              usedSpatialIndex: false,
+            },
+          } as unknown as Parameters<typeof empty.acquirePointsGeometry>[1],
+          0
+        );
+        const pointBuf = (pointGeom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
+          .data;
+        expect((pointBuf.array as Float32Array).length).toBeGreaterThan(0);
+
+        const gsplatGeom = empty.acquireGSplatsGeometry('zero-gsplats', 0);
+        const gsplatBuf = (gsplatGeom.getAttribute('aCenter') as THREE.InterleavedBufferAttribute)
+          .data;
+        expect((gsplatBuf.array as Float32Array).length).toBeGreaterThan(0);
+      } finally {
+        __setMinInstanceCapacityForTesting(0);
+      }
     });
   });
 });

@@ -73,6 +73,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { bootstrapStandalone } from '../../../core/bootstrap';
+import { log } from '../../../utils/log';
 import type { UrlParams } from '../../../config/url-params';
 
 const CANVAS = {} as HTMLCanvasElement;
@@ -152,16 +153,33 @@ describe('bootstrapStandalone', () => {
     });
 
     it('logs a warning and falls back to default when the URL theme is invalid', async () => {
+      // core.md W1 strengthening: previously this test only asserted
+      // `.resolves.toBeDefined()`. The test's name promises a logged
+      // warning AND a fallback — both are now asserted directly.
+      const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
       mocks.setTheme.mockImplementationOnce(() => {
         throw new Error('Theme "invalid" not found');
       });
       // Should not throw — bootstrap catches the theme error and continues.
-      await expect(
-        bootstrapStandalone({
-          canvas: CANVAS,
-          urlParams: { ...EMPTY_PARAMS, theme: 'invalid' },
-        })
-      ).resolves.toBeDefined();
+      const app = await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, theme: 'invalid' },
+      });
+      expect(app).toBeDefined();
+
+      // Warning was logged: the message includes the bad theme id and
+      // mentions falling back to default.
+      const warningMsg = warnSpy.mock.calls
+        .map((args) => String(args[1] ?? ''))
+        .join('\n');
+      expect(warningMsg).toMatch(/invalid theme/i);
+      expect(warningMsg).toMatch(/invalid/);
+      expect(warningMsg).toMatch(/using default/i);
+
+      // init() still ran (fallback path), confirming bootstrap didn't
+      // abort on the theme failure.
+      expect(mocks.init).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
     });
 
     it('does not call setTheme when no urlParams.theme is provided', async () => {
@@ -174,6 +192,10 @@ describe('bootstrapStandalone', () => {
 
   describe('debug mode', () => {
     it('seeds window.__luxarDebug when urlParams.debug is true', async () => {
+      // core.md W8 strengthening: assert every documented field of the
+      // pre-init __luxarDebug shape (see core/bootstrap.ts:198-203). A
+      // regression that removed any of them would silently break the
+      // contracts with Playwright + visual-regression tests.
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: { ...EMPTY_PARAMS, debug: true },
@@ -181,6 +203,10 @@ describe('bootstrapStandalone', () => {
       expect(window.__luxarDebug).toBeDefined();
       expect(window.__luxarDebug?.version).toBe('1.0.0');
       expect(window.__luxarDebug?.app).toBeDefined();
+      expect(window.__luxarDebug?.consoleInterceptor).toBeDefined();
+      // showError is exposed so visual-regression specs can drive the
+      // error dialog directly (see bootstrap.ts:195-203 comment).
+      expect(typeof window.__luxarDebug?.showError).toBe('function');
     });
 
     it('seeds window.__luxarDebug when localStorage[luxar.debug] is "true"', async () => {

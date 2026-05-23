@@ -63,4 +63,26 @@ describe('commitLinesGeometry', () => {
     commitLinesGeometry(staged, root, null);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
   });
+
+  // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts. The
+  // Points test for the pool-supplied path is mirrored here so a regression
+  // in the Lines pool-dispatch path is caught (previously the buffer-pool
+  // branch in commitLinesGeometry had no direct coverage at all).
+  it('accepts a buffer-pool argument without throwing and still writes visibleSegmentCount', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    // Minimal pool stub — commitLinesGeometry's pool-supplied path should
+    // route through this object. We pin the contract that visibleSegmentCount
+    // is still written regardless of pool presence.
+    const mockPool: any = {
+      acquireLinesGeometry: () => ({ geometry: new THREE.BufferGeometry(), pointCount: 0 }),
+      updateLinesGeometry: () => undefined,
+      releaseLinesGeometry: () => undefined,
+      didLastAcquireRebuildAttributes: () => false,
+    };
+    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
+    expect(() => commitLinesGeometry(staged, root, mockPool)).not.toThrow();
+    expect(mesh.userData.visibleSegmentCount).toBe(11);
+  });
 });

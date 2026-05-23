@@ -3,6 +3,15 @@
  * from `data-loading-monitor/templates.ts`. These guard the small pure
  * helpers used by both the initial render and the per-tick patcher so
  * changes to the cache-tab UI stay in sync across both paths.
+ *
+ * AUDIT NOTE (ui.md C6): `renderCacheContent layout guards` block pins
+ * exact CSS class names (`luxar-cache-section__metrics--cols-3` etc.)
+ * and uses rendered HTML header strings ("L0 DECOMPRESSED CACHE" / "L1
+ * MEMORY CACHE" / "L2 OPFS CACHE") as `indexOf` anchors. A pure UI
+ * rename (e.g. shortening "MEMORY CACHE" to "MEMORY") would fail these
+ * tests without any real bug. Accepted as a deliberate layout-
+ * regression pin for now; if the UI strings churn frequently consider
+ * extracting them into named constants both source and test import.
  */
 
 import { describe, it, expect } from 'vitest';
