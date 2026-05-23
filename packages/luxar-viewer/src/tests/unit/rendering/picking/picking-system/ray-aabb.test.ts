@@ -145,4 +145,33 @@ describe('invalidateBoxCache', () => {
     expect(() => invalidateBoxCache(cache, 9999)).not.toThrow();
     expect(cache.size).toBe(1);
   });
+
+  // [rendering.md/G13][P5] pickId=0 is the background-sentinel in the
+  // pick-buffer (no node maps to 0). The cache must not store an entry
+  // for 0 in normal use, but the invalidate API should still treat 0 as
+  // a regular id — i.e. dropping a stray 0-entry should work just as it
+  // does for non-zero ids, and (mirroring the previous "unknown id"
+  // contract) a no-op when no such entry exists.
+  it('invalidateBoxCache(cache, 0) is a no-op when no 0-entry exists', () => {
+    const cache = new Map<number, THREE.Box3>();
+    cache.set(1, new THREE.Box3());
+    cache.set(2, new THREE.Box3());
+    expect(() => invalidateBoxCache(cache, 0)).not.toThrow();
+    expect(cache.size).toBe(2);
+    expect(cache.has(1)).toBe(true);
+    expect(cache.has(2)).toBe(true);
+  });
+
+  it('invalidateBoxCache(cache, 0) drops the 0-entry when one is present', () => {
+    // Defensive path: if a 0-entry somehow leaked in (e.g. a debugging
+    // tool injected one), the invalidation API drops it the same way
+    // as any other id. Pins the no-special-casing-of-0 contract.
+    const cache = new Map<number, THREE.Box3>();
+    cache.set(0, new THREE.Box3());
+    cache.set(1, new THREE.Box3());
+    invalidateBoxCache(cache, 0);
+    expect(cache.size).toBe(1);
+    expect(cache.has(0)).toBe(false);
+    expect(cache.has(1)).toBe(true);
+  });
 });

@@ -151,12 +151,20 @@ describe('PanelCoordinator.closeAll', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT crash when no datasetBrowser is registered', () => {
+  it('does NOT crash when no datasetBrowser is registered, but still runs the unconditional cleanup [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
+    // closeAll()'s contract is that the unconditional cleanups
+    // (hideHelpOverlay + clearError) still fire even when no optional
+    // panels (including datasetBrowser) are registered. Pin the
+    // unconditional channels — a mutation that gated them behind a
+    // datasetBrowser-presence check would otherwise survive.
+    vi.mocked(hideHelpOverlay).mockClear();
+    vi.mocked(clearError).mockClear();
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
-    expect(() =>
-      new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll()
-    ).not.toThrow();
+    new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll();
+    expect(hideHelpOverlay).toHaveBeenCalled();
+    expect(clearError).toHaveBeenCalled();
   });
 
   it('hides the layers panel when one is registered AND visible', () => {
@@ -267,12 +275,18 @@ describe('PanelCoordinator.closeAll', () => {
     expect(psHide).toHaveBeenCalledTimes(1);
   });
 
-  it('survives missing optional panels (renderingControls / dimensionSliders / recordingPanel = undefined)', () => {
-    const { console: debugConsole } = makeDebugConsole(false);
-    const { stats } = makePerformanceStats(false);
-    expect(() =>
-      new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll()
-    ).not.toThrow();
+  it('survives missing optional panels: cleanup still fires for the ones that ARE present [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
+    // The "missing optional panels" contract still requires the
+    // unconditional + present-panel paths to run. Verify the debug
+    // console / performance stats are queried (they are present), and
+    // the optional panels' undefined-guarded paths don't blow up.
+    const { console: debugConsole, hide: dcHide } = makeDebugConsole(true);
+    const { stats, hide: psHide } = makePerformanceStats(true);
+    new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll();
+    // debugConsole + performanceStats are present + visible → both hide.
+    expect(dcHide).toHaveBeenCalledTimes(1);
+    expect(psHide).toHaveBeenCalledTimes(1);
   });
 
   it('late-binds optional panels via setRenderingControls / setDimensionSliders / setRecordingPanel', () => {

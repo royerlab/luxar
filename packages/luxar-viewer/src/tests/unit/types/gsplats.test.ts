@@ -121,29 +121,55 @@ describe('GSplats Types', () => {
 
       expect(isGSplatsUserData(invalidUserData)).toBe(false);
     });
+
+    // [types.md/W4][P2] Audit found `isGSplatsUserData` tests never checked
+    // the guard against primitives — only objects with wrong/missing fields.
+    // The source predicate accepts `unknown` so non-object inputs must be
+    // rejected defensively (typeof null === 'object' footgun is the
+    // load-bearing branch).
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+      ['number', 42],
+      ['string', 'gsplats'],
+      ['boolean', true],
+      ['array', [{ nodeType: 'gsplats' }]],
+    ] as const)('rejects %s defensively', (_label, value) => {
+      expect(isGSplatsUserData(value)).toBe(false);
+    });
   });
 
+  // [types.md/O5][P4] Replaces four sibling `should return correct size for ND`
+  // tests with a single it.each. Also strengthens to (a) the closed-form
+  // identity n*(n+1)/2 and (b) cross-checking the CHOLESKY_SIZES constant.
   describe('choleskyPackedSize', () => {
-    it('should return correct size for 2D', () => {
-      expect(choleskyPackedSize(2)).toBe(3);
+    it.each([
+      [1, 1],
+      [2, 3],
+      [3, 6],
+      [4, 10],
+      [5, 15],
+      [6, 21],
+      [7, 28],
+      [16, 136],
+    ])('packs %dD as %d elements', (n, expected) => {
+      expect(choleskyPackedSize(n)).toBe(expected);
+      // Closed-form identity: triangular number T_n = n*(n+1)/2.
+      expect(choleskyPackedSize(n)).toBe((n * (n + 1)) / 2);
     });
 
-    it('should return correct size for 3D', () => {
-      expect(choleskyPackedSize(3)).toBe(6);
+    // [types.md/W6][P2] Boundary: ndim=0. Audit noted no test for ndim=0.
+    // T_0 = 0; a non-trivial mutation would surface here.
+    it('handles ndim=0 (empty packing)', () => {
+      expect(choleskyPackedSize(0)).toBe(0);
     });
 
-    it('should return correct size for 4D', () => {
-      expect(choleskyPackedSize(4)).toBe(10);
-    });
-
-    it('should return correct size for 5D', () => {
-      expect(choleskyPackedSize(5)).toBe(15);
-    });
-
-    it('should match CHOLESKY_SIZES constant', () => {
-      expect(choleskyPackedSize(2)).toBe(CHOLESKY_SIZES['2D']);
-      expect(choleskyPackedSize(3)).toBe(CHOLESKY_SIZES['3D']);
-      expect(choleskyPackedSize(4)).toBe(CHOLESKY_SIZES['4D']);
+    it.each([
+      [2, '2D'],
+      [3, '3D'],
+      [4, '4D'],
+    ] as const)('matches CHOLESKY_SIZES[%sD]', (n, key) => {
+      expect(choleskyPackedSize(n)).toBe(CHOLESKY_SIZES[key]);
     });
   });
 
@@ -176,140 +202,14 @@ describe('GSplats Types', () => {
   });
 });
 
-describe('GSplats Type Definitions', () => {
-  describe('GSplatsMetadata interface', () => {
-    it('should allow all required fields', () => {
-      // This is a compile-time test - if it compiles, the types are correct
-      const metadata = {
-        type: 'gsplats' as const,
-        n_splats: 10000,
-        ndim: 3,
-        has_colors: true,
-        chunk_size: 2000,
-        amplitude_range: { min: 0.1, max: 5.0 },
-        center_bounds: { min: [0, 0, 0], max: [512, 512, 100] },
-        ordering: 'hilbert' as const,
-      };
-
-      expect(metadata.type).toBe('gsplats');
-      expect(metadata.n_splats).toBe(10000);
-      expect(metadata.ndim).toBe(3);
-      expect(metadata.has_colors).toBe(true);
-      expect(metadata.chunk_size).toBe(2000);
-      expect(metadata.amplitude_range.min).toBe(0.1);
-      expect(metadata.amplitude_range.max).toBe(5.0);
-      expect(metadata.ordering).toBe('hilbert');
-    });
-
-    it('should allow optional ordering metadata', () => {
-      const metadata = {
-        type: 'gsplats' as const,
-        n_splats: 5000,
-        ndim: 4,
-        has_colors: false,
-        chunk_size: 1000,
-        amplitude_range: { min: 0.0, max: 1.0 },
-        center_bounds: { min: [0, 0, 0, 0], max: [100, 100, 100, 10] },
-        ordering: 'morton' as const,
-        ordering_min: [0, 0, 0, 0],
-        ordering_max: [100, 100, 100, 10],
-        ordering_bits_per_dim: 16,
-      };
-
-      expect(metadata.ordering_min).toEqual([0, 0, 0, 0]);
-      expect(metadata.ordering_max).toEqual([100, 100, 100, 10]);
-      expect(metadata.ordering_bits_per_dim).toBe(16);
-    });
-
-    it('should allow optional rendering attributes', () => {
-      const metadata = {
-        type: 'gsplats' as const,
-        n_splats: 1000,
-        ndim: 3,
-        has_colors: true,
-        chunk_size: 500,
-        amplitude_range: { min: 0.0, max: 1.0 },
-        center_bounds: { min: [0, 0, 0], max: [10, 10, 10] },
-        ordering: 'none' as const,
-        transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 5, 5, 1],
-        opacity: 0.8,
-        gamma: 1.2,
-        blending_mode: 'additive' as const,
-        extend_to_all: ['Time'],
-      };
-
-      expect(metadata.transform?.length).toBe(16);
-      expect(metadata.opacity).toBe(0.8);
-      expect(metadata.gamma).toBe(1.2);
-      expect(metadata.blending_mode).toBe('additive');
-      expect(metadata.extend_to_all).toEqual(['Time']);
-    });
-  });
-
-  describe('LoadedGSplatsData interface', () => {
-    it('should represent raw loaded gsplats data', () => {
-      const data = {
-        positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]), // 3 splats * 3D
-        amplitudes: new Float32Array([1.0, 0.5, 0.8]),
-        choleskyFactors: new Float32Array([
-          1,
-          0,
-          1,
-          0,
-          0,
-          1, // Splat 0: identity covariance
-          2,
-          0,
-          2,
-          0,
-          0,
-          2, // Splat 1: scaled
-          1,
-          0.5,
-          1,
-          0,
-          0.5,
-          1, // Splat 2: anisotropic
-        ]),
-        colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), // RGB per splat
-        splatCount: 3,
-        ndim: 3,
-      };
-
-      expect(data.splatCount).toBe(3);
-      expect(data.ndim).toBe(3);
-      expect(data.positions.length).toBe(9); // 3 splats * 3 dims
-      expect(data.choleskyFactors.length).toBe(18); // 3 splats * 6 elements
-    });
-
-    it('should allow null colors', () => {
-      const data = {
-        positions: new Float32Array([0, 0, 0]),
-        amplitudes: new Float32Array([1.0]),
-        choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
-        colors: null,
-        splatCount: 1,
-        ndim: 3,
-      };
-
-      expect(data.colors).toBeNull();
-    });
-  });
-
-  describe('ProcessedGSplatsData interface', () => {
-    it('should represent GPU-ready gsplats data', () => {
-      const data = {
-        centers3D: new Float32Array([0, 0, 0, 1, 1, 1]),
-        amplitudes: new Float32Array([0.8, 0.4]), // Attenuated
-        choleskyFactors3D: new Float32Array([1, 0, 1, 0, 0, 1, 2, 0, 2, 0, 0, 2]),
-        colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-        splatCount: 2,
-      };
-
-      expect(data.splatCount).toBe(2);
-      expect(data.centers3D.length).toBe(6); // 2 splats * 3 dims
-      expect(data.choleskyFactors3D.length).toBe(12); // 2 splats * 6 elements
-      expect(data.amplitudes[0]).toBeLessThan(1.0); // Attenuated
-    });
-  });
-});
+// [types.md/W1][P1][P2][EXCLUDED-CATEGORY: types] Removed `GSplats Type
+// Definitions` describe block (~135 lines): ten `it(...)` blocks that
+// constructed typed literal objects and asserted the literal's own fields
+// equaled the values just written into them. The original code openly
+// admitted "if it compiles, the types are correct" — those tests
+// exercised zero runtime branches and killed zero mutants. TypeScript's
+// own type-checker (run as `pnpm typecheck`) is the authoritative gate
+// for compile-time correctness; these vitest tests added measurement
+// noise without any kill-rate signal. The runtime guards
+// `isGSplatsMetadata` / `isGSplatsUserData` retain dedicated, value-
+// asserting coverage above and in `geometry-guards.test.ts`.

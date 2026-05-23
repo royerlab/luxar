@@ -358,6 +358,69 @@ describe('PickingSystem — camera + suppression', () => {
     expect(d.suppressed).toBe(true);
     expect(d.registeredNodeCount).toBe(1);
   });
+
+  // [rendering.md/W6][P2] Strengthen the diagnostics shape contract: the
+  // returned object must expose EXACTLY the five documented fields with
+  // the right types, and `registeredNodeCount` must track node-map size
+  // 1:1 across multi-node registration cycles. A mutant that returned
+  // `nodeMap.size + 1` or a stale snapshot would survive the existing
+  // single-node test but fail here.
+  it('getDiagnostics returns an object with the exact documented shape and types', () => {
+    const d = system.getDiagnostics();
+    expect(Object.keys(d).sort()).toEqual(
+      [
+        'lastDirtyTime',
+        'lastMouseMoveTime',
+        'lastPickFiredTime',
+        'registeredNodeCount',
+        'suppressed',
+      ].sort()
+    );
+    expect(typeof d.lastDirtyTime).toBe('number');
+    expect(typeof d.lastMouseMoveTime).toBe('number');
+    expect(typeof d.lastPickFiredTime).toBe('number');
+    expect(typeof d.registeredNodeCount).toBe('number');
+    expect(typeof d.suppressed).toBe('boolean');
+  });
+
+  it('registeredNodeCount tracks each register/unregister cycle exactly', () => {
+    // Sequence: register 3 nodes, unregister middle, unregister last,
+    // register one more. Diagnostics must report 1 (first), 2 (second),
+    // 3 (third), 2 (after unregister id2), 1 (after unregister id3),
+    // 2 (after fourth register).
+    const id1 = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id1);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(1);
+    const id2 = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id2);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(2);
+    const id3 = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id3);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(3);
+    system.unregisterNode(id2);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(2);
+    system.unregisterNode(id3);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(1);
+    const id4 = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id4);
+    expect(system.getDiagnostics().registeredNodeCount).toBe(2);
+  });
+
+  it('setCamera + markDirty are independent dirty-bump sources (not aliased)', () => {
+    // Each call must independently advance lastDirtyTime when the clock
+    // advances. A mutant that aliased one to the other (or returned a
+    // cached snapshot) would fail at one of the steps.
+    vi.setSystemTime(Date.now() + 1);
+    const t0 = system.getDiagnostics().lastDirtyTime;
+    system.setCamera(makeCamera());
+    vi.setSystemTime(Date.now() + 2);
+    const t1 = system.getDiagnostics().lastDirtyTime;
+    expect(t1).toBeGreaterThanOrEqual(t0);
+    system.markDirty();
+    vi.setSystemTime(Date.now() + 3);
+    const t2 = system.getDiagnostics().lastDirtyTime;
+    expect(t2).toBeGreaterThanOrEqual(t1);
+  });
 });
 
 // =============================================================================

@@ -4,8 +4,9 @@
  * Closes:
  *   - [wasm.md/H7][P12] radii_to_visibility_mask monotone in threshold
  *   - [wasm.md/H4][P12] compact_by_mask count_visible invariant
+ *   - [wasm.md/H5][P12] lerp(a, b, t) linearity
  *
- * Both algebraic properties: independent of input data, the function
+ * Algebraic properties: independent of input data, the function
  * outputs must satisfy a structural identity. A mutant flipping `>` to
  * `>=` or returning a wrong count would fail across the random sample.
  */
@@ -17,6 +18,7 @@ import {
   count_visible,
   compact_by_mask,
 } from '../../../wasm/typescript/projection';
+import { lerp } from '../../../wasm/typescript/lines-clipping';
 
 const finiteFloat = fc.float({
   min: Math.fround(-100),
@@ -84,6 +86,60 @@ describe('radii_to_visibility_mask — algebraic invariants', () => {
         }
       }),
       { numRuns: 50 }
+    );
+  });
+});
+
+describe('lerp — linearity invariants [wasm.md/H5]', () => {
+  // [wasm.md/H5][P12] lerp linearity: lerp(a, b, 0) === a; lerp(a, b, 1) === b;
+  // affine in t and (a, b) jointly. We pin the two endpoint identities and
+  // the additivity in t — lerp(a, b, t1) + lerp(a, b, t2) − a == lerp(a, b, t1+t2)
+  // when treated as a function of the offset, i.e. lerp(a, b, t) - a == t*(b - a).
+  test('endpoints: lerp(a, b, 0) === a; lerp(a, b, 1) ≈ b within FP roundoff', () => {
+    // t=0: `a + 0*(b-a)` reduces to `a + 0` which is bit-exact a (per IEEE-754).
+    // t=1: `a + (b-a)` is NOT bit-exact b for subnormal / denormal inputs —
+    // the subtract-then-add reorders to a precision-lossy form. Use a
+    // bounded relative-or-absolute tolerance.
+    fc.assert(
+      fc.property(finiteFloat, finiteFloat, (a, b) => {
+        expect(lerp(a, b, 0)).toBe(a);
+        // For finite a, b in [-100, 100], absolute FP error is dominated
+        // by max(|a|, |b|) * 2 * ULP(1). ULP(100) ≈ 1.42e-14. Use 1e-10
+        // as a comfortable upper bound that still catches mutants.
+        const got = lerp(a, b, 1);
+        expect(Math.abs(got - b)).toBeLessThan(1e-10);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  test('midpoint: lerp(a, b, 0.5) is within Float64 ULP of (a + b) / 2', () => {
+    fc.assert(
+      fc.property(finiteFloat, finiteFloat, (a, b) => {
+        // Use a small absolute tolerance since lerp uses `a + t*(b-a)` which
+        // is slightly different from `(a+b)/2` in floating-point arithmetic.
+        const got = lerp(a, b, 0.5);
+        const expected = (a + b) / 2;
+        expect(Math.abs(got - expected)).toBeLessThan(1e-3);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  test('reflection: lerp(a, b, t) + lerp(b, a, t) === a + b (within ULP)', () => {
+    // Symmetry property: swapping endpoints and using the same parameter t
+    // gives the complement. Pins the affine form `a + t(b-a)`.
+    fc.assert(
+      fc.property(
+        finiteFloat,
+        finiteFloat,
+        fc.float({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        (a, b, t) => {
+          const sum = lerp(a, b, t) + lerp(b, a, t);
+          expect(Math.abs(sum - (a + b))).toBeLessThan(1e-3);
+        }
+      ),
+      { numRuns: 100 }
     );
   });
 });

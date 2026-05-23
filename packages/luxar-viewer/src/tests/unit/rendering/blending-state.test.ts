@@ -125,3 +125,36 @@ describe('H.1 — getCompleteBlendingState canonical state per mode', () => {
     expect(second).toEqual(first);
   });
 });
+
+// [rendering.md/G11][P5] Opacity boundary tests for the normal-mode
+// `opacity >= 0.99` gate. NaN / Infinity / -0 / negative inputs are not
+// guarded in the source — pinning the IEEE-754 contract makes any future
+// clamp introduction deliberate.
+describe('normal-mode opacity boundary inputs', () => {
+  it('opacity=NaN ⇒ depthWrite=false (NaN >= 0.99 is false)', () => {
+    const s = getCompleteBlendingState('normal', Number.NaN);
+    expect(s.depthWrite).toBe(false);
+  });
+
+  it('opacity=+Infinity ⇒ depthWrite=true (Inf >= 0.99 is true)', () => {
+    const s = getCompleteBlendingState('normal', Number.POSITIVE_INFINITY);
+    expect(s.depthWrite).toBe(true);
+  });
+
+  it('opacity=-Infinity ⇒ depthWrite=false (-Inf >= 0.99 is false)', () => {
+    const s = getCompleteBlendingState('normal', Number.NEGATIVE_INFINITY);
+    expect(s.depthWrite).toBe(false);
+  });
+
+  it('opacity=-0 is treated the same as +0 ⇒ depthWrite=false', () => {
+    // IEEE-754: -0 == 0, and 0 >= 0.99 is false. A mutant that
+    // special-cased the sign would be visible here.
+    const s = getCompleteBlendingState('normal', -0);
+    expect(s.depthWrite).toBe(false);
+  });
+
+  it('negative opacity ⇒ depthWrite=false (preserves the >= 0.99 gate)', () => {
+    const s = getCompleteBlendingState('normal', -0.5);
+    expect(s.depthWrite).toBe(false);
+  });
+});

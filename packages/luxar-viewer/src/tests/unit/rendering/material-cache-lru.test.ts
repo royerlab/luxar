@@ -137,4 +137,38 @@ describe('MaterialManager LRU eviction', () => {
     const mm = new MaterialManager();
     expect(mm.getCacheStats().maxSize).toBe(7);
   });
+
+  // [rendering.md/G12][P5] maxSize=1 + re-insert SAME key. With a unit
+  // cap, every distinct insert evicts the prior; a cache HIT (same key)
+  // must NOT trigger an eviction — it merely promotes the existing entry.
+  // A mutant that ran the eviction loop on every getX call (regardless
+  // of whether it was a hit or miss) would inflate the eviction count
+  // and dispose the live material, breaking the hot-path.
+  it('maxSize=1: repeated get of the SAME key is a cache hit with no eviction', () => {
+    config.dataLoading.performance.materialCacheMaxSize = 1;
+    const mm = new MaterialManager();
+    const props = baseProps({ opacity: 0.42 });
+
+    const m1 = mm.getPointMaterial(props);
+    // Spy dispose to verify it does NOT fire on the cache hit.
+    let m1Disposed = false;
+    const origDispose = m1.dispose.bind(m1);
+    m1.dispose = () => {
+      m1Disposed = true;
+      origDispose();
+    };
+
+    const m2 = mm.getPointMaterial(props);
+    const m3 = mm.getPointMaterial(props);
+
+    // Same key returns the same material instance (cache HIT path).
+    expect(m2).toBe(m1);
+    expect(m3).toBe(m1);
+    // Dispose was never called on the live entry.
+    expect(m1Disposed).toBe(false);
+    // No evictions accumulated across the three hits.
+    const stats = mm.getCacheStats();
+    expect(stats.pointMaterials).toBe(1);
+    expect(stats.evictions).toBe(0);
+  });
 });

@@ -18,7 +18,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PointsBuilder, LinesBuilder, GSplatsBuilder } from '../../builders/test-data-builders';
+import {
+  PointsBuilder,
+  LinesBuilder,
+  GSplatsBuilder,
+  DimensionsBuilder,
+} from '../../builders/test-data-builders';
 
 describe('PointsBuilder smoke', () => {
   it('produces positions of length numPoints * dimensions when randomized', () => {
@@ -188,5 +193,92 @@ describe('GSplatsBuilder smoke', () => {
 
     // Pin the unused `amps` parameter so its shape is exercised by tests too.
     expect(amps.length).toBe(2);
+  });
+});
+
+// [builders.md/G13][P2] Pre-audit, no test did a deep-equality assertion on
+// the full `build()` return shape. A return that drops a key or adds an
+// extra key would not fail any assertion. The tests below pin the exact
+// key sets — a producer-side rename or omission becomes immediately loud.
+describe('build() return-shape contract [builders.md/G13][P2]', () => {
+  it('PointsBuilder.build() returns exactly { positions, colors, radii, sharpness, numPoints, dimensions }', () => {
+    const data = new PointsBuilder().withPoints(3).withDimensions(2).build();
+    expect(Object.keys(data).sort()).toEqual(
+      ['colors', 'dimensions', 'numPoints', 'positions', 'radii', 'sharpness'].sort()
+    );
+  });
+
+  it('LinesBuilder.build() returns exactly the canonical 8-key shape', () => {
+    const data = new LinesBuilder().withSegments(2).withDimensions(2).build();
+    expect(Object.keys(data).sort()).toEqual(
+      ['colors', 'dimensions', 'numSegments', 'segments', 'sharpness', 'vertices', 'widths'].sort()
+    );
+  });
+
+  it('GSplatsBuilder.build() returns exactly the canonical 6-key shape', () => {
+    const data = new GSplatsBuilder().withSplats(2).withDimensions(2).build();
+    expect(Object.keys(data).sort()).toEqual(
+      ['amplitudes', 'centers', 'choleskyFactors', 'colors', 'dimensions', 'numSplats'].sort()
+    );
+  });
+});
+
+// [builders.md/G7][P11] Pre-audit, `DimensionsBuilder` had ZERO tests
+// despite being one of the seven exported builders. Even covering the
+// load-bearing branches (withDisplayed slice-to-3, default-vs-overridden
+// ndim, time/channel dimension auto-extension) closes the biggest gap.
+describe('DimensionsBuilder smoke [builders.md/G7][P11]', () => {
+  it('produces 3D default config with displayed=[0,1,2] and 3 metadata entries', () => {
+    const dims = new DimensionsBuilder().build();
+    expect(dims.ndim).toBe(3);
+    expect(dims.displayed).toEqual([0, 1, 2]);
+    expect(dims.metadata).toHaveLength(3);
+  });
+
+  it('withDisplayed silently truncates to 3 indices (documented OOS behavior)', () => {
+    const dims = new DimensionsBuilder().withDisplayed(0, 1, 2, 3, 4).build();
+    // The setter truncates with `.slice(0, 3)` — pin the contract.
+    expect(dims.displayed).toEqual([0, 1, 2]);
+  });
+
+  it('withNDimensions extends currentStep to length===ndim with zeros', () => {
+    const dims = new DimensionsBuilder().withNDimensions(5).build();
+    expect(dims.ndim).toBe(5);
+    expect(dims.currentStep).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it('withSpatialDimensions populates the first 3 metadata entries as x/y/z', () => {
+    const dims = new DimensionsBuilder().withSpatialDimensions('um', [0, 50]).build();
+    const md = dims.metadata!;
+    expect(md[0].name).toBe('x');
+    expect(md[1].name).toBe('y');
+    expect(md[2].name).toBe('z');
+    expect(md[0].unit).toBe('um');
+    expect(md[0].range).toEqual([0, 50]);
+  });
+
+  it('withTimeDimension auto-extends ndim to 4 when applied on a 3D builder', () => {
+    const dims = new DimensionsBuilder().withTimeDimension([0, 5], 0.25).build();
+    expect(dims.ndim).toBe(4);
+    const md = dims.metadata!;
+    expect(md[3].name).toBe('time');
+    expect(md[3].step).toBe(0.25);
+  });
+
+  it('withChannelDimension auto-extends ndim to 5', () => {
+    const dims = new DimensionsBuilder().withChannelDimension(4).build();
+    expect(dims.ndim).toBe(5);
+    const md = dims.metadata!;
+    expect(md[4].name).toBe('channel');
+    expect(md[4].discrete).toBe(true);
+    expect(md[4].range).toEqual([0, 3]); // numChannels-1
+  });
+
+  it('withCurrentPosition writes into currentStep without exceeding ndim', () => {
+    const dims = new DimensionsBuilder()
+      .withNDimensions(4)
+      .withCurrentPosition(1, 2, 3, 4, 999) // 999 must NOT land
+      .build();
+    expect(dims.currentStep).toEqual([1, 2, 3, 4]);
   });
 });

@@ -687,6 +687,76 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(local.getStats().queuedNormal).toBe(0);
     });
 
+    it('evicts half of `seen` when MAX_SEEN_SIZE is exceeded [cache.md/G4][P5]', async () => {
+      // [cache.md/G4][P5] Source line 106-112 trims half the `seen` set when
+      // `seen.size > MAX_SEEN_SIZE` (10 000). This significant code path had
+      // no behavioral test — mutating the eviction count to a no-op would
+      // let the set grow unboundedly. Pin the contract via the observable
+      // invariant: re-feeding a previously-seen key after eviction triggers
+      // a fresh fetch (proves that key was forgotten).
+      //
+      // Use a 1-D bounds so each onAccess only triggers ±1 neighbor
+      // dispatch (cheap), and a non-blocking mock so the queue drains
+      // immediately. Register a span large enough to hold MAX_SEEN_SIZE
+      // distinct keys.
+      const fastStore = new MockStore();
+      const local = new ChunkPrefetcher(fastStore as any, {
+        enabled: true,
+        maxConcurrent: 16,
+      });
+      // 1-D: 12 000 chunks, each 1024 bytes → keys data/0 .. data/11999.
+      local.registerArrayBounds('data', [12000 * 1024], [1024]);
+
+      // Touch 10 001 distinct keys → exceeds MAX_SEEN_SIZE (10 000) on the
+      // 10 001-st insertion. Source evicts floor(10 000/2) = 5 000 oldest
+      // entries from the head of the iteration order (Set insertion order).
+      for (let i = 0; i < 10_001; i++) {
+        local.onAccess(`data/${i}`);
+      }
+
+      // Drain any in-flight dispatches before counting (mockStore.getResult
+      // resolves synchronously enough that this is a no-op in practice).
+      await waitFor(() => {
+        const s = local.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+
+      const callsBefore = fastStore.getResult.mock.calls.length;
+
+      // Key `data/0` was inserted FIRST → it must have been in the evicted
+      // half. Re-accessing it now triggers a *fresh* neighbor fan-out
+      // (mutation that disables the trim leaves the key in `seen` and
+      // the early-return at line 100 would prevent any new fetches).
+      fastStore.getResult.mockClear();
+      local.onAccess('data/0');
+      await waitFor(() => {
+        const s = local.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+
+      // After re-access, at least 1 neighbor fetch must have fired for
+      // `data/0` (the +1 neighbor `data/1` — and possibly its parsedCache
+      // re-entry). If the trim never ran, the seen-set early-return would
+      // produce 0 calls.
+      expect(fastStore.getResult.mock.calls.length).toBeGreaterThan(0);
+
+      // Sanity: data/10000 (the most-recent prior access) is still in `seen`,
+      // so re-accessing it triggers NO new fetches.
+      fastStore.getResult.mockClear();
+      local.onAccess('data/10000');
+      await waitFor(() => {
+        const s = local.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+      expect(fastStore.getResult.mock.calls.length).toBe(0);
+
+      // Total dispatches across the burst should be finite/bounded — not
+      // a runaway cascade.
+      expect(callsBefore).toBeGreaterThan(0);
+
+      local.dispose();
+    });
+
     it(
       'in-flight prefetch.finally does not re-enter processQueue after dispose',
       { timeout: 5_000 },
