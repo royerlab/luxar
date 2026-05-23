@@ -10,6 +10,22 @@
  */
 
 import { installAllMocks } from './mocks';
+import { __setMinInstanceCapacityForTesting } from '../rendering/gpu-buffer-pool';
+
+// Production scenes (real-WebGPU dispatch in particular) need a floor
+// on instance-capacity to sidestep a WebGPU zero-buffer rebinding bug
+// on grow — see the comment in `rendering/gpu-buffer-pool.ts` near
+// `DEFAULT_MIN_INSTANCE_CAPACITY` (256). That floor is the right
+// value for production but is far too coarse for unit tests that
+// legitimately want to exercise the grow path at small counts
+// (capacity 50 → 500 etc.).
+//
+// Lower the floor to zero for unit tests so capacity tracks the
+// requested count tightly. The grow-path semantics are unchanged; the
+// floor is purely an additional `Math.max` clamp. Tests that
+// specifically need to assert production-floor behaviour can call
+// `__setMinInstanceCapacityForTesting(null)` in a try/finally.
+__setMinInstanceCapacityForTesting(0);
 
 // Vitest 4 constructs mocks via `Reflect.construct(implementation, ...)`, which
 // throws `TypeError: ... is not a constructor` when the implementation is an

@@ -12,8 +12,15 @@
  *   - `recording-panel/screenshot-strategy.test.ts`
  *   - `recording-panel/video-recording-strategy.test.ts`
  *
- * The GUI is heavily mocked (createMockController/createMockFolder).
- * E2E tests cover real GUI structure and event propagation.
+ * AUDIT NOTE (ui.md C1, also recording-panel/{session,screenshot,video}.
+ * test.ts): `vi.mock('../../../ui/gui', ...)` mocks the project's own GUI
+ * library. That library is NOT an external trust boundary — it has
+ * dedicated tests under `ui/gui/core/*.test.ts` and runs cleanly under
+ * jsdom. The Panel could be exercised against the real GUI. The current
+ * shape leaves a regression in panel ↔ GUI wiring invisible (the mock
+ * always returns a controller-like object regardless of inputs). A
+ * follow-up should drop the GUI mock; until then, the per-strategy
+ * tests + E2E specs provide the load-bearing coverage.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

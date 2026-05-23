@@ -1,0 +1,229 @@
+/**
+ * Unit tests for luxar-fly-controls/physics.ts.
+ *
+ * Targets audit finding G16 (most numerically dense module in the
+ * subpackage — boundary cases: delta=0, sub-threshold tick, Q+E
+ * simultaneously, NaN-safe behavior), H6/H7 (linearity in movementSpeed,
+ * sub-threshold zeroing, equal-duration Q+E returns angular velocity to
+ * ~0), and M2 (mutation-suspect: dampingPower, velocityThreshold, sign
+ * of _v0.set(0,0,-1), lookState signs, inertial/non-inertial constant).
+ */
+
+import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import {
+  integrateTranslation,
+  integrateRotation,
+  type FlyPhysicsCtx,
+} from '../../../../controls/luxar-fly-controls/physics';
+import { config } from '../../../../config';
+
+function makeCtx(overrides: Partial<FlyPhysicsCtx> = {}): FlyPhysicsCtx {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.position.set(0, 0, 5);
+  return {
+    camera,
+    orientation: new THREE.Quaternion(), // identity → forward = -Z
+    velocity: new THREE.Vector3(),
+    angularVelocity: new THREE.Vector3(),
+    moveState: { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0 },
+    lookState: { horizontal: 0, vertical: 0, roll: 0 },
+    inertialMode: true,
+    damping: 0.999,
+    rotationDamping: 0.99,
+    movementSpeed: 1,
+    rotationSpeed: 1,
+    speedBoost: false,
+    ...overrides,
+  };
+}
+
+describe('integrateTranslation — direction signs (M2)', () => {
+  // _v0 = (0,0,-1).applyQuaternion(orientation): for identity → forward = -Z.
+  // M2 mutation: flipping this sign would survive orchestrator-level tests.
+
+  it('moveState.forward = 1 produces -Z velocity (forward = -Z for identity orient)', () => {
+    const ctx = makeCtx({ movementSpeed: 1 });
+    ctx.moveState.forward = 1;
+    integrateTranslation(ctx, 0.1);
+    // After v += forward * speed * delta: v.z = -0.1 (then damped, but sign preserved).
+    expect(ctx.velocity.z).toBeLessThan(0);
+  });
+
+  it('moveState.right = 1 produces +X velocity', () => {
+    const ctx = makeCtx({ movementSpeed: 1 });
+    ctx.moveState.right = 1;
+    integrateTranslation(ctx, 0.1);
+    expect(ctx.velocity.x).toBeGreaterThan(0);
+  });
+
+  it('moveState.up = 1 produces +Y velocity (world-up, not local-up)', () => {
+    // M2: vertical uses _v2.set(0,1,0) — world Y, not local Y.
+    const ctx = makeCtx({ movementSpeed: 1 });
+    ctx.moveState.up = 1;
+    // Even with rotated orientation, vertical should still produce +Y.
+    ctx.orientation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+    integrateTranslation(ctx, 0.1);
+    expect(ctx.velocity.y).toBeGreaterThan(0);
+  });
+});
+
+describe('integrateTranslation — H6: sub-threshold velocity zeroing', () => {
+  it('zeroes velocity when below the configured velocity threshold (boundary)', () => {
+    // H6 / M2: a velocity strictly below threshold must be set to zero.
+    const t = config.controls.fly.physics.velocityThreshold;
+    const ctx = makeCtx();
+    ctx.velocity.set(0, 0, t * 0.1); // strictly sub-threshold
+    const moved = integrateTranslation(ctx, 0.001);
+    expect(ctx.velocity.x).toBe(0);
+    expect(ctx.velocity.y).toBe(0);
+    expect(ctx.velocity.z).toBe(0);
+    expect(moved).toBe(false);
+  });
+
+  it('returns true (moved) when velocity is above threshold post-damping', () => {
+    const ctx = makeCtx({ movementSpeed: 10, damping: 0.999 });
+    ctx.moveState.forward = 1;
+    const moved = integrateTranslation(ctx, 0.1);
+    expect(moved).toBe(true);
+  });
+});
+
+describe('integrateTranslation — H6: linearity in movementSpeed', () => {
+  it('doubling movementSpeed doubles the resulting velocity (H6)', () => {
+    const ctxA = makeCtx({ movementSpeed: 1, damping: 1.0 }); // damping=1 → no decay
+    const ctxB = makeCtx({ movementSpeed: 2, damping: 1.0 });
+    ctxA.moveState.forward = 1;
+    ctxB.moveState.forward = 1;
+    integrateTranslation(ctxA, 0.1);
+    integrateTranslation(ctxB, 0.1);
+    expect(ctxB.velocity.length()).toBeCloseTo(2 * ctxA.velocity.length(), 5);
+  });
+
+  it('speedBoost=true multiplies the effective speed by 2', () => {
+    // M2: the speedBoost constant 2.0 must hold.
+    const ctxBaseline = makeCtx({ movementSpeed: 1, damping: 1.0, speedBoost: false });
+    const ctxBoost = makeCtx({ movementSpeed: 1, damping: 1.0, speedBoost: true });
+    ctxBaseline.moveState.forward = 1;
+    ctxBoost.moveState.forward = 1;
+    integrateTranslation(ctxBaseline, 0.1);
+    integrateTranslation(ctxBoost, 0.1);
+    expect(ctxBoost.velocity.length()).toBeCloseTo(2 * ctxBaseline.velocity.length(), 5);
+  });
+});
+
+describe('integrateTranslation — delta boundary cases (G16)', () => {
+  it('delta = 0 is a no-op (no velocity gain, position unchanged)', () => {
+    // P5 boundary: zero-time step must not produce movement.
+    const ctx = makeCtx({ movementSpeed: 5 });
+    ctx.moveState.forward = 1;
+    const initialPos = ctx.camera.position.clone();
+    integrateTranslation(ctx, 0);
+    expect(ctx.camera.position.equals(initialPos)).toBe(true);
+    // Velocity must remain zero (no accumulation since delta=0).
+    expect(ctx.velocity.length()).toBe(0);
+  });
+
+  it('large delta does not produce NaN/Infinity', () => {
+    // P5 boundary: 10s frame drop — sanity (no overflow).
+    const ctx = makeCtx({ movementSpeed: 10 });
+    ctx.moveState.forward = 1;
+    integrateTranslation(ctx, 10);
+    expect(Number.isFinite(ctx.camera.position.z)).toBe(true);
+    expect(Number.isFinite(ctx.velocity.length())).toBe(true);
+  });
+});
+
+describe('integrateTranslation — non-inertial mode uses high damping (M2)', () => {
+  it('non-inertial mode hard-codes damping=0.5 (constant, ignores ctx.damping)', () => {
+    // M2 mutation suspect: the 0.5 constant in `inertialMode ? damping : 0.5`.
+    // Verify: a ctx with damping=0.999 but inertialMode=false should damp
+    // hard like 0.5 (much faster decay than inertial path).
+    const ctxInertial = makeCtx({ inertialMode: true, damping: 0.999 });
+    const ctxNonInertial = makeCtx({ inertialMode: false, damping: 0.999 });
+    ctxInertial.velocity.set(10, 0, 0);
+    ctxNonInertial.velocity.set(10, 0, 0);
+    integrateTranslation(ctxInertial, 0.1);
+    integrateTranslation(ctxNonInertial, 0.1);
+    // Non-inertial must have decayed substantially more.
+    expect(ctxNonInertial.velocity.length()).toBeLessThan(ctxInertial.velocity.length());
+  });
+});
+
+describe('integrateRotation — H7: equal-duration Q+E returns angular velocity to ~0', () => {
+  it('Q-then-E (opposite roll inputs) leaves angular velocity ≈ 0 (inertial)', () => {
+    // H7 invariant: equal-duration Q then E returns angular velocity to ~0.
+    // First tick Q (roll=-1) accumulates -Z angular vel. Then second tick E
+    // (roll=+1) should cancel it (approximately, since damping intervenes).
+    const ctx = makeCtx({ inertialMode: true, rotationSpeed: 1, rotationDamping: 1.0 });
+    ctx.lookState.roll = -1;
+    integrateRotation(ctx, 0.1);
+    const afterQ = ctx.angularVelocity.length();
+    expect(afterQ).toBeGreaterThan(0);
+
+    ctx.lookState.roll = 1;
+    integrateRotation(ctx, 0.1);
+    expect(ctx.angularVelocity.length()).toBeLessThan(afterQ * 0.5);
+  });
+});
+
+describe('integrateRotation — sign conventions (M2)', () => {
+  // physics.ts: pitch = -lookState.vertical * rotationSpeed, yaw = -lookState.horizontal.
+
+  it('lookState.horizontal = 1 produces yaw with sign matching the formula (M2)', () => {
+    // M2 mutation: flipping the negation would silently swap left/right turn.
+    const ctx = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    ctx.lookState.horizontal = 1;
+    integrateRotation(ctx, 0.05);
+    // angularVelocity.y should be NEGATIVE (yaw axis = (0,1,0).applyQuat = (0,1,0)
+    // for identity orientation; yaw = -1 * 1 = -1).
+    expect(ctx.angularVelocity.y).toBeLessThan(0);
+  });
+
+  it('lookState.vertical = 1 produces pitch with sign matching the formula', () => {
+    const ctx = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    ctx.lookState.vertical = 1;
+    integrateRotation(ctx, 0.05);
+    // angularVelocity.x should be NEGATIVE (pitch axis = (1,0,0); pitch = -1 * 1 = -1).
+    expect(ctx.angularVelocity.x).toBeLessThan(0);
+  });
+
+  it('lookState.roll = 1 produces roll with sign matching the formula', () => {
+    const ctx = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    ctx.lookState.roll = 1;
+    integrateRotation(ctx, 0.05);
+    // roll axis = (0,0,-1) (camera forward); roll = +1 * 1 = +1.
+    // angularVelocity.z should be NEGATIVE (along -Z forward).
+    expect(ctx.angularVelocity.z).toBeLessThan(0);
+  });
+});
+
+describe('integrateRotation — delta boundary (G16)', () => {
+  it('delta = 0 produces no orientation change', () => {
+    const ctx = makeCtx({ inertialMode: true, rotationSpeed: 1 });
+    ctx.lookState.horizontal = 1;
+    const initialOrient = ctx.orientation.clone();
+    integrateRotation(ctx, 0);
+    expect(ctx.orientation.equals(initialOrient)).toBe(true);
+  });
+
+  it('sub-threshold angular velocity is zeroed', () => {
+    const t = config.controls.fly.physics.angularVelocityThreshold;
+    const ctx = makeCtx({ inertialMode: true });
+    ctx.angularVelocity.set(t * 0.1, 0, 0);
+    integrateRotation(ctx, 0.01);
+    expect(ctx.angularVelocity.length()).toBe(0);
+  });
+});
+
+describe('integrateRotation — Q+E simultaneous (boundary)', () => {
+  it('Q+E held together with cancelling lookState.roll=0 produces no roll', () => {
+    // P5 boundary: in the orchestrator, pressing Q then E with key release
+    // clears lookState.roll. The integrator's contract is: if roll=0, no
+    // accumulated roll torque.
+    const ctx = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    ctx.lookState.roll = 0;
+    integrateRotation(ctx, 0.05);
+    expect(ctx.angularVelocity.length()).toBe(0);
+  });
+});

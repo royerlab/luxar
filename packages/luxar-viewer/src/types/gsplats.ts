@@ -348,9 +348,25 @@ export function choleskyPackedSize(ndim: number): number {
 
 /**
  * Standard packed Cholesky sizes for common dimensions.
+ *
+ * Extended to 16D (the WASM 16-dimension ceiling — see CLAUDE.md
+ * "WASM 16-Dimension Limit"). For arbitrary ndim, prefer calling
+ * {@link choleskyPackedSize} directly. The values here are `n*(n+1)/2`.
  */
 export const CHOLESKY_SIZES = {
   '2D': 3, // [L00, L10, L11]
   '3D': 6, // [L00, L10, L11, L20, L21, L22]
   '4D': 10, // [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
+  '5D': 15,
+  '6D': 21,
+  '7D': 28,
+  '8D': 36,
+  '9D': 45,
+  '10D': 55,
+  '11D': 66,
+  '12D': 78,
+  '13D': 91,
+  '14D': 105,
+  '15D': 120,
+  '16D': 136,
 } as const;

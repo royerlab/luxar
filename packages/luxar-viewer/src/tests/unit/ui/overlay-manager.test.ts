@@ -236,18 +236,30 @@ describe('OverlayManager.dispose', () => {
   });
 
   it('clears configs and overlays so a stale dim-change is a no-op', async () => {
-    // The contract is "no DOM mutations after dispose". A direct
-    // listener-spy approach proved brittle (vi.spyOn against the
-    // singleton bound method failed to record post-dispose call) —
-    // assert the externally observable invariant instead by firing a
-    // dim-change-handler equivalent through the public surface.
+    // W4 strengthening (P2): the prior test only asserted
+    // `getVisibleOverlays() === []`. Strengthen by also (a) verifying the
+    // DOM is purged, (b) calling toggle()/show()/hide() on the disposed
+    // manager and confirming no overlay re-appears, (c) confirming a
+    // second loadOverlays after dispose has no effect (the manager
+    // should be inert).
     const manager = new OverlayManager();
-    await manager.loadOverlays([makeTextOverlay()], 'http://example.com');
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'a' }), makeTextOverlay({ name: 'b' })],
+      'http://example.com'
+    );
+    expect(document.querySelectorAll('.luxar-overlay').length).toBe(2);
+
     manager.dispose();
-    // After dispose, getVisibleOverlays must remain empty even after
-    // an internal updateVisibility() that the dispose path was
-    // supposed to unsubscribe from. We can't directly fire that, but
-    // we can show that loadOverlays state is fully cleared.
+
+    // DOM purged.
+    expect(document.querySelectorAll('.luxar-overlay').length).toBe(0);
+    expect(manager.getVisibleOverlays()).toEqual([]);
+
+    // Post-dispose public-surface calls must not resurrect overlays.
+    manager.show();
+    manager.hide();
+    manager.toggle();
+    expect(document.querySelectorAll('.luxar-overlay').length).toBe(0);
     expect(manager.getVisibleOverlays()).toEqual([]);
   });
 });

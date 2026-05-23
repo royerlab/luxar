@@ -321,9 +321,16 @@ export class AdaptiveDPRManager {
    */
   private scaleDown(timestamp: number, fps: number): void {
     const proposed = this.currentDPR * this.config.scaleDownFactor;
-    // Block scaleDown from crossing the U-shape floor. The floor
-    // starts at config.minDPR and is tightened whenever a probe fails.
-    const newDPR = Math.max(this.dprFloor, proposed);
+    // Block scaleDown from moving TO OR BELOW the U-shape floor. Using
+    // an early-return (rather than `Math.max(dprFloor, proposed)`) is
+    // load-bearing: when a probe is rejected, `dprFloor` is tightened
+    // to the probed value, and the next tick's `proposed` lands at
+    // that exact value. `Math.max` would clamp to the floor and re-fire
+    // the same failing probe every ~2s tick — the 30s TTL never gets a
+    // chance to expire. Returning early here keeps us at the current
+    // DPR until the TTL lifts the floor.
+    if (proposed <= this.dprFloor + 0.001) return;
+    const newDPR = proposed;
 
     // Only apply if there's a meaningful change
     if (Math.abs(newDPR - this.currentDPR) < 0.01) return;

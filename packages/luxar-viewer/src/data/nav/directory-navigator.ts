@@ -23,6 +23,15 @@ export interface NavigationResult {
 }
 
 /**
+ * Runtime guard for `DirectoryEntry.type`. Used to validate server-supplied
+ * strings (e.g. from `luxar serve` JSON listings or `.luxar-index.json`)
+ * before they enter the typed `DirectoryEntry` union.
+ */
+function isValidEntryType(t: unknown): t is 'file' | 'directory' | 'zarr' {
+  return t === 'file' || t === 'directory' || t === 'zarr';
+}
+
+/**
  * Multi-strategy directory navigator that works with various server types.
  */
 export class DirectoryNavigator {
@@ -196,12 +205,15 @@ export class DirectoryNavigator {
         if (contentType && contentType.includes('application/json')) {
           const data = await jsonResponse.json();
           if (data.entries && Array.isArray(data.entries)) {
-            // Parse JSON directory listing from luxar serve
+            // Parse JSON directory listing from luxar serve.
+            // The server-supplied `type` is validated at runtime rather than
+            // unsafely cast — a malformed or hostile server response can no
+            // longer inject arbitrary strings into the DirectoryEntry union.
             type ServeEntry = { name: string; type: string; size?: number };
             const entries: DirectoryEntry[] = data.entries.map((entry: ServeEntry) => ({
               name: entry.name,
               path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
-              type: entry.type as 'file' | 'directory' | 'zarr',
+              type: isValidEntryType(entry.type) ? entry.type : 'file',
               size: entry.size,
             }));
             return { entries };
@@ -358,9 +370,16 @@ export class DirectoryNavigator {
 
   /**
    * Get the full URL for a given path.
+   *
+   * Normalizes any leading slash on `path` so the result never contains a
+   * doubled `//` separator between the base URL and the path component.
+   * Double-slash URLs are interpreted by zarr loaders as an extra path
+   * component and cause 404s (see CLAUDE.md "Data Source URLs Must NOT
+   * Have Trailing Slash").
    */
   getFullUrl(path: string): string {
-    return this.baseUrl + path;
+    const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+    return this.baseUrl + cleanPath;
   }
 
   /**

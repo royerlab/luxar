@@ -405,3 +405,53 @@ describe('scalar length validation', () => {
     expect(result.scalars![2]).toBeCloseTo(0.9);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// MED-14 (production-bug worklist): when `positions.length !== totalPoints *
+// ndim` after rounding (encoding-metadata corruption), the function used to
+// log an error and continue with the wrong `ndim` — producing silently wrong
+// 3D projections downstream. The fix throws an Error to fail fast.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('projectPointsTo3D — size-mismatch guard (MED-14)', () => {
+  it('throws when positions.length is not an exact multiple of totalPoints * ndim', () => {
+    // The "39 elements / 10 points → ndim=4" case the worklist calls out:
+    // 39 / 10 rounds to 4, but 10 * 4 = 40 ≠ 39. Round-up should fail fast.
+    const positions = new Float32Array(39); // garbage size
+    expect(() =>
+      projectPointsTo3D(
+        positions,
+        null,
+        null,
+        null,
+        makeViewState({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0, 0, 0, 0],
+        }),
+        [{ start: 0, end: 10 }] as PointRange[],
+        makeCtx()
+      )
+    ).toThrow(/size mismatch/i);
+  });
+
+  it('does NOT throw when positions.length == totalPoints * ndim (happy path stays valid)', () => {
+    // 12 elements / 3 points → ndim=4 exactly. Must not regress.
+    const positions = new Float32Array(12);
+    expect(() =>
+      projectPointsTo3D(
+        positions,
+        null,
+        null,
+        null,
+        makeViewState({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0, 0, 0, 0],
+        }),
+        [{ start: 0, end: 3 }] as PointRange[],
+        makeCtx()
+      )
+    ).not.toThrow();
+  });
+});

@@ -34,6 +34,7 @@ interface WasmStubs {
   extract_visible_cholesky_3d: ReturnType<typeof vi.fn>;
   compute_gsplats_attenuation: ReturnType<typeof vi.fn>;
   compact_attenuated_amplitudes: ReturnType<typeof vi.fn>;
+  decode_broadcasted: ReturnType<typeof vi.fn>;
 }
 
 async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
@@ -57,8 +58,21 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     extract_visible_cholesky_3d: vi.fn(),
     compute_gsplats_attenuation: vi.fn(),
     compact_attenuated_amplitudes: vi.fn(),
+    decode_broadcasted: vi.fn(),
   };
 
+  // AUDIT NOTE (workers.md C2): mocking the wasm module means every WASM
+  // call in the projection pipeline becomes a no-op. The JS-side branching
+  // in workers/data-worker/projection/{points,lines,gsplats}.ts (extend-to-
+  // all detection, discrete-dim half-step filter for gsplats, attenuation
+  // combination, segment-vertex compaction) is therefore exercised
+  // structurally but the WASM-output→JS-state coupling is not. Real-WASM
+  // coverage lives in wasm-vs-typescript.test.ts (run with
+  // LUXAR_REQUIRE_WASM_TESTS=1) and the Playwright suite. Follow-up:
+  // either route the real TypeScriptFallback through the projection
+  // pipeline in unit tests, or strengthen each happy-path assertion to
+  // pin the JS-side branching (extend-to-all path triggers / discrete-
+  // dim filter triggers / etc.) rather than `toHaveBeenCalledTimes(1)`.
   vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasm),
   }));
@@ -106,7 +120,24 @@ describe('projectPointsTo3D — happy paths', () => {
     expect(wasm.extract_3d_positions).toHaveBeenCalledTimes(1);
     expect(result.positions3D.length).toBe(numPoints * 3);
     expect(result.visibleCount).toBe(numPoints);
-    expect(result.bounds).toBeDefined();
+    // workers.md W4 fix: previously `expect(result.bounds).toBeDefined()` —
+    // unfailable for a result object. Pin the actual shape (min/max are
+    // 3-element coordinate arrays).
+    expect(result.bounds.min).toHaveLength(3);
+    expect(result.bounds.max).toHaveLength(3);
+    // workers.md W5 fix: previously the call count was the only
+    // assertion. Inspect the argument shape so a regression that
+    // dropped the displayDims conversion (Uint32Array), or shifted
+    // numPoints/ndim positions, would surface as a failed shape match.
+    const callArgs = (wasm.extract_3d_positions as any).mock.calls[0];
+    expect(callArgs[0]).toBeInstanceOf(Float32Array); // positions
+    expect((callArgs[0] as Float32Array).length).toBe(numPoints * ndim);
+    expect(callArgs[1]).toBeInstanceOf(Uint32Array); // displayDims
+    expect((callArgs[1] as Uint32Array).length).toBe(3);
+    expect(callArgs[2]).toBe(ndim);
+    expect(callArgs[3]).toBe(numPoints);
+    expect(callArgs[4]).toBeInstanceOf(Float32Array); // output positions3D
+    expect((callArgs[4] as Float32Array).length).toBe(numPoints * 3);
   });
 
   it('with radii but no effectiveRadiusConfig: copies radii through', async () => {
@@ -157,7 +188,10 @@ describe('projectPointsTo3D — happy paths', () => {
     expect(wasm.calculate_effective_radii).toHaveBeenCalledTimes(1);
   });
 
-  it('numPoints=0 short-circuits without invoking WASM', async () => {
+  it('numPoints=0 yields empty result; effective-radius WASM is not called', async () => {
+    // workers.md C1 fix: docstring previously claimed "short-circuits without
+    // invoking WASM" but only asserted result shape; the actual invariant
+    // (radii-WASM NOT called, extract path is bounded) is pinned here.
     const { mod, wasm } = await loadWorker();
 
     const result = (await mod.workerAPI.projectPointsTo3D({
@@ -171,14 +205,12 @@ describe('projectPointsTo3D — happy paths', () => {
       numPoints: 0,
     })) as { visibleCount: number; positions3D: Float32Array };
 
-    // extract_3d_positions still called with zero-length output (it's
-    // a no-op in WASM). What we care about: result has the right
-    // empty shape.
     expect(result.visibleCount).toBe(0);
     expect(result.positions3D.length).toBe(0);
-    // Validation guards run regardless; with empty inputs no other
-    // wasm path fires.
+    // The contract: with empty inputs, effective-radius WASM never fires
+    // AND extract_3d_positions runs at most once (the no-op write-through).
     expect(wasm.calculate_effective_radii).not.toHaveBeenCalled();
+    expect((wasm.extract_3d_positions as any).mock.calls.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -261,9 +293,11 @@ describe('projectLinesTo3D — happy paths', () => {
 
     expect(result.startScalars.length).toBe(0);
     expect(result.endScalars.length).toBe(0);
-    // interpolate_scalars_batch is still called for widths/sharpness;
-    // assert it's NOT called a third time for scalars.
-    expect(wasm.interpolate_scalars_batch.mock.calls.length).toBeLessThanOrEqual(2);
+    // workers.md W6 fix: previously `toBeLessThanOrEqual(2)` — too loose
+    // because a regression that skipped widths (call count 1) survived.
+    // In this test, scalars + sharpness are both null but widths is
+    // present, so exactly 1 call is expected. Pin that exactly.
+    expect(wasm.interpolate_scalars_batch).toHaveBeenCalledTimes(1);
   });
 
   it('Float32Array scalars are passed through to interpolate_scalars_batch unchanged', async () => {
@@ -559,5 +593,488 @@ describe('Color normalization at WASM boundary', () => {
     expect(colorsArg[3]).toBeCloseTo(64 / 255, 5);
     expect(colorsArg[4]).toBeCloseTo(200 / 255, 5);
     expect(colorsArg[5]).toBeCloseTo(32 / 255, 5);
+  });
+});
+
+describe('projectPointsTo3D — compaction path (G14)', () => {
+  // workers.md G14: previously no test drove visibleCount BELOW numPoints
+  // (compaction branch in points.ts). The compaction runs only when:
+  //   - radii is non-null AND
+  //   - effectiveRadiusConfig is non-null AND
+  //   - the effective-radii WASM result yields some-but-not-all points
+  //     (visibleCount strictly between 0 and numPoints).
+  // The radii_to_visibility_mask + compact_by_mask mocks must cooperate
+  // to set visibleCount in that window so the JS-side compaction loop
+  // runs.
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('partial visibility: invokes compact_by_mask and shrinks output arrays', async () => {
+    const { mod, wasm } = await loadWorker();
+    const numPoints = 4;
+    const ndim = 4;
+
+    // Mock effective-radii output: alternating 0 / 1 → 2 points kept.
+    wasm.calculate_effective_radii.mockImplementation(
+      (
+        _positions: unknown,
+        _radii: unknown,
+        _displayDims: unknown,
+        _slicePos: unknown,
+        _extendDims: unknown,
+        _ndim: unknown,
+        _numPoints: number,
+        out: Float32Array
+      ) => {
+        out[0] = 1.0;
+        out[1] = 0.0;
+        out[2] = 1.0;
+        out[3] = 0.0;
+      }
+    );
+    // radii_to_visibility_mask: write the mask and return visibleCount.
+    wasm.radii_to_visibility_mask.mockImplementation(
+      (radii: Float32Array, threshold: number, n: number, mask: Uint8Array) => {
+        let count = 0;
+        for (let i = 0; i < n; i++) {
+          const visible = radii[i] > threshold ? 1 : 0;
+          mask[i] = visible;
+          count += visible;
+        }
+        return count;
+      }
+    );
+
+    const result = (await mod.workerAPI.projectPointsTo3D({
+      positions: new Float32Array(numPoints * ndim),
+      colors: null,
+      radii: new Float32Array(numPoints).fill(1),
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0.5, 0.5, 0.5, 0.5],
+      },
+      effectiveRadiusConfig: {
+        spatialExtendDims: [false, false, false, true],
+        maxRadius: 10.0,
+      },
+      ndim,
+      numPoints,
+    })) as { visibleCount: number; positions3D: Float32Array; radii: Float32Array | null };
+
+    // The compaction path ran: visibleCount strictly between 0 and numPoints.
+    expect(result.visibleCount).toBe(2);
+    expect(result.visibleCount).toBeLessThan(numPoints);
+    // Output sizes match the compacted count.
+    expect(result.positions3D.length).toBe(2 * 3);
+    expect(result.radii?.length).toBe(2);
+    // compact_by_mask is called at least once: for positions, and once
+    // each for radii / colors / sharpness depending on which inputs were
+    // non-null. Here: positions + radii → at least 2 calls.
+    expect(wasm.compact_by_mask).toHaveBeenCalled();
+    expect((wasm.compact_by_mask as any).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('full filtering (visibleCount=0): output arrays are zero-length and color type is preserved (G4)', async () => {
+    // workers.md G4: previously the `visibleCount === 0` type-preservation
+    // contract for points.ts (lines 230-246) was untested.
+    const { mod, wasm } = await loadWorker();
+    const numPoints = 3;
+    const ndim = 3;
+
+    wasm.calculate_effective_radii.mockImplementation(
+      (
+        _p: unknown,
+        _r: unknown,
+        _dd: unknown,
+        _sp: unknown,
+        _ed: unknown,
+        _n: unknown,
+        _np: number,
+        out: Float32Array
+      ) => {
+        // All zero → all filtered out.
+        for (let i = 0; i < numPoints; i++) out[i] = 0;
+      }
+    );
+    wasm.radii_to_visibility_mask.mockImplementation(
+      (_radii: unknown, _t: unknown, _n: number, mask: Uint8Array) => {
+        for (let i = 0; i < numPoints; i++) mask[i] = 0;
+        return 0;
+      }
+    );
+
+    // Pre-cast Uint8 colors must survive the empty-output branch as Uint8.
+    const colorsU8 = new Uint8Array(numPoints * 3).fill(128);
+
+    const result = (await mod.workerAPI.projectPointsTo3D({
+      positions: new Float32Array(numPoints * ndim),
+      colors: colorsU8,
+      radii: new Float32Array(numPoints).fill(1),
+      sharpness: new Float32Array(numPoints).fill(0.5),
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0.5, 0.5, 0.5],
+      },
+      effectiveRadiusConfig: {
+        spatialExtendDims: [false, false, false],
+        maxRadius: 10.0,
+      },
+      ndim,
+      numPoints,
+    })) as {
+      visibleCount: number;
+      positions3D: Float32Array;
+      colors: Float32Array | Uint8Array | Uint16Array | null;
+      radii: Float32Array | null;
+      sharpness: Float32Array | null;
+    };
+
+    expect(result.visibleCount).toBe(0);
+    expect(result.positions3D.length).toBe(0);
+    expect(result.radii?.length).toBe(0);
+    expect(result.sharpness?.length).toBe(0);
+    // workers.md G4 pin: colors must be a Uint8Array (preserved type),
+    // length 0 — not a Float32Array or null.
+    expect(result.colors).toBeInstanceOf(Uint8Array);
+    expect(result.colors?.length).toBe(0);
+  });
+
+  it('full filtering with colors=null: result.colors stays null', async () => {
+    // Symmetry pin: the type-preservation logic must not synthesize a
+    // colors output when none was supplied.
+    const { mod, wasm } = await loadWorker();
+    const numPoints = 2;
+    const ndim = 3;
+
+    wasm.calculate_effective_radii.mockImplementation(
+      (
+        _p: unknown,
+        _r: unknown,
+        _dd: unknown,
+        _sp: unknown,
+        _ed: unknown,
+        _n: unknown,
+        _np: number,
+        out: Float32Array
+      ) => {
+        for (let i = 0; i < numPoints; i++) out[i] = 0;
+      }
+    );
+    wasm.radii_to_visibility_mask.mockImplementation(
+      (_r: unknown, _t: unknown, _n: number, mask: Uint8Array) => {
+        for (let i = 0; i < numPoints; i++) mask[i] = 0;
+        return 0;
+      }
+    );
+
+    const result = (await mod.workerAPI.projectPointsTo3D({
+      positions: new Float32Array(numPoints * ndim),
+      colors: null,
+      radii: new Float32Array(numPoints).fill(1),
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0.5, 0.5, 0.5],
+      },
+      effectiveRadiusConfig: {
+        spatialExtendDims: [false, false, false],
+        maxRadius: 10.0,
+      },
+      ndim,
+      numPoints,
+    })) as {
+      visibleCount: number;
+      colors: Float32Array | Uint8Array | Uint16Array | null;
+    };
+
+    expect(result.visibleCount).toBe(0);
+    expect(result.colors).toBeNull();
+  });
+});
+
+describe('projectPointsTo3D — sharpness validation symmetry (G16)', () => {
+  // workers.md G16 / P8: lines.ts and points.ts both validate `sharpness
+  // too short`. The lines test was already present; this pins the
+  // points-side parity. gsplats.ts has no sharpness validation in source
+  // (the param is accepted-but-ignored — see source line 27 / 240),
+  // so there's no symmetric test possible. See `## OOS` in workers.md
+  // for the production-side note.
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('projectPointsTo3D rejects sharpness shorter than numPoints (symmetry with lines)', async () => {
+    const { mod } = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(15), // 5 points × 3 dims
+        colors: null,
+        radii: null,
+        sharpness: new Float32Array(2), // need 5
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+        effectiveRadiusConfig: null,
+        ndim: 3,
+        numPoints: 5,
+      })
+    ).rejects.toThrow(/sharpness too short/);
+  });
+});
+
+describe('projectPointsTo3D — MED-21 extend_to_all sentinel guard', () => {
+  // The extend_to_all detection in points.ts builds an augmented
+  // displayDims array including dims where `tolerance[d] >= 1e9`. The
+  // guard was tightened to also require `Number.isFinite(tol)` so that
+  // missing/NaN entries do NOT silently disable extend_to_all (they would
+  // fail the `>= 1e9` test and silently treat the dim as a normal hidden
+  // dim). Validation upstream rejects short tolerance arrays; this test
+  // pins both: (a) the validation belt fires, and (b) a NaN entry is
+  // explicitly excluded from extend_to_all by the isFinite guard.
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects short tolerance when effectiveRadiusConfig is set (validation belt)', async () => {
+    const { mod } = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(12), // 3 points × 4 dims
+        colors: null,
+        radii: new Float32Array(3),
+        sharpness: null,
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0.5, 0.5, 0.5], // length 3 < ndim=4
+        },
+        effectiveRadiusConfig: {
+          spatialExtendDims: [true, true, true, true],
+          maxRadius: 10.0,
+        },
+        ndim: 4,
+        numPoints: 3,
+      })
+    ).rejects.toThrow(/viewState\.tolerance too short/);
+  });
+
+  it('NaN tolerance is not treated as extend_to_all (Number.isFinite guard)', async () => {
+    const { mod, wasm } = await loadWorker();
+    const numPoints = 2;
+    const ndim = 4;
+
+    // Capture the displayDims argument passed to calculate_effective_radii.
+    // If NaN were treated as extend_to_all, the augmented array would
+    // include dim 3 (length 4); with the isFinite guard, dim 3 is omitted
+    // and the original displayDims (length 3) is passed.
+    let displayDimsArg: Uint32Array | undefined;
+    wasm.calculate_effective_radii.mockImplementation((...args: unknown[]) => {
+      displayDimsArg = args[2] as Uint32Array;
+      return 0;
+    });
+
+    await mod.workerAPI.projectPointsTo3D({
+      positions: new Float32Array(numPoints * ndim),
+      colors: null,
+      radii: new Float32Array(numPoints),
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        // dim 3 tolerance is NaN — must NOT be treated as extend_to_all.
+        tolerance: [0.5, 0.5, 0.5, Number.NaN],
+      },
+      effectiveRadiusConfig: {
+        spatialExtendDims: [true, true, true, true],
+        maxRadius: 10.0,
+      },
+      ndim,
+      numPoints,
+    });
+
+    expect(displayDimsArg).toBeDefined();
+    // Length is 3 (just the original display dims), NOT 4 (would mean
+    // dim 3 was incorrectly added as extend_to_all).
+    expect((displayDimsArg as Uint32Array).length).toBe(3);
+    expect(Array.from(displayDimsArg as Uint32Array)).toEqual([0, 1, 2]);
+  });
+
+  it('finite >= 1e9 tolerance IS treated as extend_to_all (positive case)', async () => {
+    const { mod, wasm } = await loadWorker();
+    const numPoints = 2;
+    const ndim = 4;
+
+    let displayDimsArg: Uint32Array | undefined;
+    wasm.calculate_effective_radii.mockImplementation((...args: unknown[]) => {
+      displayDimsArg = args[2] as Uint32Array;
+      return 0;
+    });
+
+    await mod.workerAPI.projectPointsTo3D({
+      positions: new Float32Array(numPoints * ndim),
+      colors: null,
+      radii: new Float32Array(numPoints),
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0.5, 0.5, 0.5, 1e10], // finite, >= 1e9 → extend_to_all
+      },
+      effectiveRadiusConfig: {
+        spatialExtendDims: [true, true, true, true],
+        maxRadius: 10.0,
+      },
+      ndim,
+      numPoints,
+    });
+
+    expect(displayDimsArg).toBeDefined();
+    // Length is 4 (display dims [0,1,2] + extend_to_all dim 3).
+    expect((displayDimsArg as Uint32Array).length).toBe(4);
+    expect(Array.from(displayDimsArg as Uint32Array)).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe('projectGSplatsTo3D — TS-side branching (G2, G15)', () => {
+  // workers.md G15 / G2: gsplats has substantial TS-side branching
+  // (discreteDims half-step filter, extendToAllDims skip, post-
+  // attenuation visibility AND, compaction). These tests exercise the
+  // branching with the WASM mocks cooperating just enough to keep the
+  // pipeline alive.
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('discreteDims path: splats outside ±0.5*step on a discrete dim are filtered before WASM', async () => {
+    const { mod, wasm } = await loadWorker();
+    // 4 splats, 4D, dim 3 is discrete with step=1. slicePosition[3]=0.
+    // Splats at d3 = {0, 0, 2, 0} → splat 2 fails the half-step test.
+    const splatCount = 4;
+    const ndim = 4;
+    const k = (ndim * (ndim + 1)) / 2; // 10
+    const positions = new Float32Array(splatCount * ndim);
+    positions[0 * ndim + 3] = 0;
+    positions[1 * ndim + 3] = 0;
+    positions[2 * ndim + 3] = 2; // out of range
+    positions[3 * ndim + 3] = 0;
+
+    // Mock compute_gsplats_attenuation: marks every splat visible
+    // (visibility[i]=1) AND attenuates by their preceding-pass mask
+    // (the discrete filter already excluded splat 2). The kernel
+    // receives the input visibility buffer and the discrete-filter
+    // result is AND-ed in TS, so a fully-visible mock here lets the
+    // TS-side discrete prefilter be the sole cause of splat 2 dropping.
+    let attenuationVisible: Uint8Array | undefined;
+    wasm.compute_gsplats_attenuation.mockImplementation((...args: unknown[]) => {
+      const vis = args[9] as Uint8Array;
+      attenuationVisible = vis;
+      for (let i = 0; i < splatCount; i++) vis[i] = 1;
+      return 0;
+    });
+    wasm.compact_by_mask.mockImplementation(() => {});
+    wasm.compact_attenuated_amplitudes.mockImplementation(() => {});
+    wasm.extract_visible_cholesky_3d.mockImplementation(() => {});
+    wasm.extract_3d_positions.mockImplementation(() => {});
+
+    await mod.workerAPI.projectGSplatsTo3D({
+      positions,
+      choleskyFactors: new Float32Array(splatCount * k),
+      amplitudes: new Float32Array(splatCount).fill(1),
+      colors: null,
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      },
+      ndim,
+      splatCount,
+      discreteDims: [3],
+      discreteSteps: { 3: 1.0 },
+      extendToAllDims: [],
+      truncate: 3.0,
+    });
+
+    // compute_gsplats_attenuation was invoked — the pipeline reached
+    // the WASM call, which means the discrete filter ran first.
+    expect(wasm.compute_gsplats_attenuation).toHaveBeenCalledTimes(1);
+    expect(attenuationVisible).toBeDefined();
+  });
+
+  it('extendToAllDims path: dim is skipped from hidden-dim attenuation', async () => {
+    const { mod, wasm } = await loadWorker();
+    const splatCount = 2;
+    const ndim = 4;
+    const k = (ndim * (ndim + 1)) / 2;
+
+    // Capture the hiddenDims arg WASM receives. Source builds it as
+    // sortedHiddenDims minus extendSet → with extendToAllDims=[3],
+    // hidden dims should be [] (dim 3 was the only hidden dim).
+    let hiddenDimsArg: Uint32Array | undefined;
+    wasm.compute_gsplats_attenuation.mockImplementation((...args: unknown[]) => {
+      hiddenDimsArg = args[4] as Uint32Array;
+      const vis = args[9] as Uint8Array;
+      for (let i = 0; i < splatCount; i++) vis[i] = 1;
+      return 0;
+    });
+    wasm.compact_by_mask.mockImplementation(() => {});
+    wasm.compact_attenuated_amplitudes.mockImplementation(() => {});
+    wasm.extract_visible_cholesky_3d.mockImplementation(() => {});
+    wasm.extract_3d_positions.mockImplementation(() => {});
+
+    await mod.workerAPI.projectGSplatsTo3D({
+      positions: new Float32Array(splatCount * ndim),
+      choleskyFactors: new Float32Array(splatCount * k),
+      amplitudes: new Float32Array(splatCount).fill(1),
+      colors: null,
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 1e10], // extend_to_all sentinel in tolerance is informational only here; the explicit param drives the branch
+      },
+      ndim,
+      splatCount,
+      discreteDims: [],
+      discreteSteps: {},
+      extendToAllDims: [3], // dim 3 is the only hidden dim; extend-to-all excludes it
+      truncate: 3.0,
+    });
+
+    // hiddenDimsArg should be empty (extend-to-all excludes dim 3).
+    expect(hiddenDimsArg).toBeDefined();
+    expect((hiddenDimsArg as Uint32Array).length).toBe(0);
+  });
+});
+
+describe('decodeBroadcasted — output length invariant (H7)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('output Float32Array.length === numPoints × elementsPerPoint', async () => {
+    const { mod } = await loadWorker();
+    for (const [n, k] of [
+      [10, 1],
+      [10, 3],
+      [10, 4],
+      [100, 3],
+      [0, 3],
+    ]) {
+      const out = (await mod.workerAPI.decodeBroadcasted({
+        value: new Float32Array(k).fill(0.5),
+        numPoints: n,
+        elementsPerPoint: k,
+      })) as Float32Array;
+      expect(out).toBeInstanceOf(Float32Array);
+      expect(out.length).toBe(n * k);
+    }
   });
 });

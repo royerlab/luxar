@@ -59,22 +59,44 @@ describe('DebugConsole - Critical Fixes', () => {
       expect(events.size).toBe(0);
     });
 
-    it('clean up all global drag + resize listeners on dispose', () => {
+    it('post-dispose: global mousemove does not mutate panel position or size', () => {
+      // C4 strengthening (P1): observable contract instead of exact count.
+      // The previous test asserted "2 mousemove + 2 mouseup removeEventListener
+      // calls", which pins the impl split between drag/resize subsystems.
+      // The load-bearing contract is: after dispose, document-level mouse
+      // events must not affect any DOM the panel previously owned.
       const debugConsole = new DebugConsole();
+      const panel = document.querySelector('.luxar-debug-console') as HTMLElement;
+      const header = panel.querySelector('.luxar-debug-console__header') as HTMLElement;
 
-      // Verify dispose removes listeners
-      const removeEventSpy = vi.spyOn(document, 'removeEventListener');
+      // Sanity: pre-dispose, a drag mutates panel.style.left/top.
+      header.dispatchEvent(
+        new MouseEvent('mousedown', { clientX: 10, clientY: 10, bubbles: true })
+      );
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 60, clientY: 80 }));
+      const draggedLeft = panel.style.left;
+      const draggedTop = panel.style.top;
+      expect(draggedLeft).not.toBe('');
+      expect(draggedTop).not.toBe('');
+      document.dispatchEvent(new MouseEvent('mouseup'));
 
       debugConsole.dispose();
 
-      // Should remove 4 listeners: 2 for drag (mousemove, mouseup) + 2 for resize (mousemove, mouseup)
-      const mousemoveCalls = removeEventSpy.mock.calls.filter((call) => call[0] === 'mousemove');
-      const mouseupCalls = removeEventSpy.mock.calls.filter((call) => call[0] === 'mouseup');
+      // Post-dispose: mousedown on the (now detached) header + mousemove
+      // on document must NOT call any of the panel's handlers. We assert
+      // by checking that the panel reference's inline style was not
+      // overwritten (the dispose path doesn't reset it; only an active
+      // drag handler would).
+      const leftBeforeProbe = panel.style.left;
+      const topBeforeProbe = panel.style.top;
+      header.dispatchEvent(
+        new MouseEvent('mousedown', { clientX: 200, clientY: 200, bubbles: true })
+      );
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 999, clientY: 999 }));
+      document.dispatchEvent(new MouseEvent('mouseup'));
 
-      expect(mousemoveCalls.length).toBe(2); // drag + resize
-      expect(mouseupCalls.length).toBe(2); // drag + resize
-
-      removeEventSpy.mockRestore();
+      expect(panel.style.left).toBe(leftBeforeProbe);
+      expect(panel.style.top).toBe(topBeforeProbe);
     });
   });
 

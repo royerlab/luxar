@@ -65,6 +65,51 @@ describe('validateCache', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
   });
 
+  // [G13][P5] Audit: pre-audit l0MaxSizeMB had only "negative" and "zero"
+  // coverage — NaN slips past `<= 0` (NaN comparisons are always false)
+  // and Infinity passes `> 0` but represents an unbounded cache.
+  it('rejects NaN cache.l0MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l0MaxSizeMB = NaN;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l0MaxSizeMB'));
+  });
+
+  it('rejects Infinity cache.l0MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l0MaxSizeMB = Number.POSITIVE_INFINITY;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l0MaxSizeMB'));
+  });
+
+  // [G14][P5] Audit: pre-audit l2MaxSizeMB only had Infinity coverage —
+  // the NaN/negative/zero classes were missing. Each must error.
+  it('rejects NaN cache.l2MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l2MaxSizeMB = NaN;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+  });
+
+  it('rejects negative cache.l2MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l2MaxSizeMB = -50;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+  });
+
+  it('rejects zero cache.l2MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l2MaxSizeMB = 0;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+  });
+
   // ---- opfsOperationTimeoutMs -----------------------------------------
 
   it('rejects NaN cache.opfsOperationTimeoutMs', () => {

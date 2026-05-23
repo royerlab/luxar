@@ -52,22 +52,22 @@ describe('Accumulator Integration Tests', () => {
       expect(result.colors).toBeDefined();
     });
 
-    it('should detect types on first fill', () => {
+    it('should detect Uint8 colors on first fill and surface dtype through public getData()', () => {
+      // integration.md C5 fix: previously this test reached into private state
+      // (`(accumulator as any).types` and `(accumulator as any).colorBuffer`).
+      // The observable contract is `getData(n).metadata.dtypes.colors === 'uint8'`
+      // and that the returned colors view is a Uint8Array — both visible via
+      // the public surface.
       const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
-      // First fill with Uint8 colors
       accumulator.fill(0, {
         positions: new Float32Array([1, 2, 3]),
         colors: new Uint8Array([255, 128, 0]),
       });
 
-      // Verify types were detected
-      expect((accumulator as any).types).toBeDefined();
-      expect((accumulator as any).types.color).toBe('Uint8Array');
-
-      // Verify buffer was created with correct type
-      const colorBuffer = (accumulator as any).colorBuffer;
-      expect(colorBuffer).toBeInstanceOf(Uint8Array);
+      const result = accumulator.getData(1);
+      expect(result.metadata.dtypes?.colors).toBe('uint8');
+      expect(result.colors).toBeInstanceOf(Uint8Array);
     });
 
     it('should return subarrays (views) not copies', () => {

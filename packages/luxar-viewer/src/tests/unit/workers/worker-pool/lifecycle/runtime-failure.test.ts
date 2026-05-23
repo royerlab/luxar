@@ -62,7 +62,10 @@ describe('WorkerPool runtime-error handling', () => {
     vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
   });
 
-  it('attaches onerror and onmessageerror handlers to each worker', async () => {
+  it('attaches onerror and onmessageerror handlers that actually trigger eviction when fired', async () => {
+    // workers.md W7 fix: previous version asserted only `typeof === 'function'`,
+    // which doesn't prove the handler invokes evictFailedWorker. Strengthen by
+    // firing one of the handlers and checking the pool count drops.
     const { WorkerPool, workers } = await loadWorkerPool(3);
     const pool = new WorkerPool();
     await pool.initialize();
@@ -72,6 +75,12 @@ describe('WorkerPool runtime-error handling', () => {
       expect(typeof w.onerror).toBe('function');
       expect(typeof w.onmessageerror).toBe('function');
     }
+
+    // Fire onerror on the first worker; pool count must drop by 1.
+    const beforeCount = pool.getWorkerCount();
+    const preventDefault = vi.fn();
+    workers[0].onerror?.({ preventDefault, message: 'test' } as unknown as ErrorEvent);
+    expect(pool.getWorkerCount()).toBe(beforeCount - 1);
   });
 
   it('removes a worker from the pool on runtime error and continues with reduced capacity', async () => {

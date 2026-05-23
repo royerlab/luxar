@@ -60,6 +60,15 @@ export type {
 export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 
 /**
+ * Capacity-sizing primitives moved to `gpu-buffer-pool/capacity.ts` so
+ * the per-geometry adapters can import them without re-importing this
+ * parent barrel (depcruise no-circular). Re-exported here for callers
+ * of the parent module (and the wider rationale for the
+ * `DEFAULT_MIN_INSTANCE_CAPACITY = 256` floor lives in that file).
+ */
+export { __setMinInstanceCapacityForTesting, chooseCapacity } from './gpu-buffer-pool/capacity';
+
+/**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.
  *
  * Manages separate pools for Points, Lines, and GSplats geometries,

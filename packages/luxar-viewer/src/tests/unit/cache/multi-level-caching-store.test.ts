@@ -118,32 +118,37 @@ describe('MultiLevelCachingStore', () => {
   });
 
   describe('Initialization', () => {
-    it('should initialize successfully', () => {
+    it('initializes with zero L1 hits/misses + zero L2 size on a fresh store', () => {
+      // cache.md W4 fix: previous version only asserted .toBeDefined() on
+      // stats.l1 / stats.l2 — unfailable since getStats() always returns
+      // populated objects. Pin the actual contract using the documented
+      // CacheStats fields (segmented-lru-cache.ts:75-85).
       const stats = store.getStats();
-      expect(stats.l1).toBeDefined();
-      expect(stats.l2).toBeDefined();
+      expect(stats.l1.hits).toBe(0);
+      expect(stats.l1.misses).toBe(0);
+      expect(stats.l1.evictions).toBe(0);
+      expect(stats.l2.size).toBe(0);
+      expect(stats.l2.count).toBe(0);
     });
 
-    it('should respect URL parameters', async () => {
+    it('routes through HTTP when noCache=true URL parameter is set', async () => {
       const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
       });
       await noCacheStore.init();
 
-      // Caching should be disabled
+      mocks.fetchedUrls.length = 0;
       await noCacheStore.get('.zmetadata');
+      // With caching disabled, every get() must hit the HTTP layer.
       expect(mocks.fetchedUrls.length).toBeGreaterThan(0);
     });
 
-    it('should enable debug mode via URL parameter', async () => {
-      const debugStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
-        debug: true,
-      });
-      await debugStore.init();
-
-      // Debug mode enabled (logs would appear if we captured console)
-      expect(debugStore).toBeDefined();
-    });
+    // Removed: 'should enable debug mode via URL parameter' was an unfailable
+    // .toBeDefined() check on the constructed store (constructors never
+    // return undefined). The debug-mode observable contract (extra log
+    // output) is exercised indirectly by the surrounding init tests; if
+    // a future change makes debug behavior independently observable, add
+    // a dedicated test then (cache.md W1).
   });
 
   describe('L1 → L2 → HTTP Cascade', () => {
@@ -252,29 +257,15 @@ describe('MultiLevelCachingStore', () => {
   });
 
   describe('Content Hash Validation', () => {
-    it('should validate cache on init', async () => {
-      // This happens automatically in init()
-      const stats = store.getStats();
-      expect(stats).toBeDefined();
-    });
-
-    it('should skip validation for datasets without content_hash', async () => {
-      global.fetch = vi.fn(async (url: string) => {
-        if (url.includes('.zattrs')) {
-          return {
-            ok: true,
-            async arrayBuffer() {
-              return new TextEncoder().encode(JSON.stringify({})).buffer; // No hash
-            },
-          } as Response;
-        }
-        return { ok: false } as Response;
-      }) as any;
-
-      const noHashStore = new MultiLevelCachingStore('https://example.com/no-hash.zarr');
-      await noHashStore.init(); // Should not throw
-      expect(noHashStore).toBeDefined();
-    });
+    // Removed: 'should validate cache on init' was an unfailable
+    // expect(stats).toBeDefined() check (cache.md W2). The init-time
+    // validation behavior is covered by the explicit clear-cache /
+    // TTL / content-hash-mismatch tests below.
+    // Removed: 'should skip validation for datasets without content_hash'
+    // was an expect(noHashStore).toBeDefined() check on a freshly-
+    // constructed store (cache.md W3). The actual no-hash semantics are
+    // covered by the 'records validationMode=none' test under
+    // 'opfsAvailable signals'.
 
     it('should clear cache when content hash changes', async () => {
       // Initial load with hash1
@@ -307,6 +298,13 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.size).toBeLessThanOrEqual(0);
     });
 
+    // NOTE: the following three tests stub `(store as any).l2Store` with a
+    // hand-rolled fake instead of driving the real OPFSStore cascade. The
+    // audit (cache.md, C3/C4) calls this a P3 violation (mocking an internal
+    // helper). A proper rewrite would mock OPFS at the `navigator.storage`
+    // boundary and let the production OPFSStore run. For now we strengthen
+    // the assertions to pin call-count exactness so call-routing mutations
+    // are still detected.
     it('external dataset without content_hash records validationMode=none by default (commit 6.3)', async () => {
       await store.init();
       const setValidationModeSpy = vi.fn();
@@ -330,6 +328,7 @@ describe('MultiLevelCachingStore', () => {
       const ac = new AbortController();
       await (store as any).doValidateCache(ac.signal);
 
+      expect(setValidationModeSpy).toHaveBeenCalledTimes(1);
       expect(setValidationModeSpy).toHaveBeenCalledWith('none');
     });
 
@@ -361,6 +360,7 @@ describe('MultiLevelCachingStore', () => {
         const ac = new AbortController();
         await (store as any).doValidateCache(ac.signal);
 
+        expect(setValidationModeSpy).toHaveBeenCalledTimes(1);
         expect(setValidationModeSpy).toHaveBeenCalledWith('ttl');
         expect(clearSpy).not.toHaveBeenCalled();
       } finally {
@@ -449,6 +449,92 @@ describe('MultiLevelCachingStore', () => {
 
       expect(clearL1Spy).toHaveBeenCalled();
       expect(setContentHashSpy).toHaveBeenCalledWith('new-hash');
+    });
+
+    it('CRIT-5: hash-mismatch cancels in-flight gets so they cannot repopulate L1 post-clear', async () => {
+      // Regression for the pendingGets race: an in-flight getResult that
+      // resolves AFTER doValidateCache detects a content-hash mismatch
+      // and clears L1/L2 must NOT write its (stale) bytes back into L1.
+      //
+      // Repro shape:
+      //   1. Start get('stale-chunk') with a deliberately gated fetch.
+      //   2. While the fetch is pending, drive doValidateCache with a
+      //      hash mismatch (which clears L1/L2 and must cancel
+      //      pendingGets).
+      //   3. Release the gated fetch.
+      //   4. Assert L1 is still empty — the cancelled in-flight get did
+      //      not resurrect stale data after the clear.
+      await store.init();
+
+      // Stub l2Store so doValidateCache hits the hash-mismatch branch.
+      const setContentHashSpy = vi.fn();
+      (store as any).l2Store = {
+        async clear() {},
+        async get() {
+          return undefined; // force the L3 path inside fetchKeyChain
+        },
+        async set() {},
+        getContentHash: () => 'old-hash',
+        setContentHash: setContentHashSpy,
+        setValidationMode: vi.fn(),
+        getValidationState: () => ({ mode: 'content-hash', lastValidatedAt: Date.now() }),
+        getStats: () => ({ size: 0, count: 0, reads: 0, writes: 0, misses: 0, available: true }),
+        async dispose() {},
+      };
+
+      // Gate the chunk fetch so the in-flight get is observably pending
+      // when validation fires.
+      let releaseChunk!: () => void;
+      const chunkGate = new Promise<void>((resolve) => {
+        releaseChunk = resolve;
+      });
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' }))
+                .buffer;
+            },
+          } as Response;
+        }
+        // Block the chunk fetch until releaseChunk() runs.
+        await chunkGate;
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([9, 9, 9, 9]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      // Kick off the in-flight get (do NOT await — it's gated).
+      const inflight = store.getResult('stale-chunk');
+
+      // Wait a microtask so getResult has registered the pendingGets entry.
+      await Promise.resolve();
+      expect((store as any).pendingGets.size).toBe(1);
+
+      // Trigger the hash-mismatch branch.
+      const ac = new AbortController();
+      await (store as any).doValidateCache(ac.signal);
+
+      // After validation: pendingGets must be drained (so a later get
+      // starts fresh) and the in-flight controller must have been aborted.
+      expect((store as any).pendingGets.size).toBe(0);
+
+      // Release the gated fetch so the in-flight get resolves.
+      releaseChunk();
+      const outcome = await inflight;
+
+      // The cancelled in-flight get returns a non-ok Result, and L1
+      // must NOT have been populated with the stale bytes.
+      expect(outcome.ok).toBe(false);
+      const l1Stats = store.getStats().l1;
+      expect(l1Stats.metadataCount).toBe(0);
+      expect(l1Stats.chunksCount).toBe(0);
+      expect(l1Stats.metadataSize).toBe(0);
+      expect(l1Stats.chunksSize).toBe(0);
     });
 
     it('should bypass cache when validating content_hash (critical fix)', async () => {
@@ -1297,20 +1383,24 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l1.chunksCount).toBeGreaterThan(0);
     });
 
-    it('should handle concurrent access', async () => {
+    it('should handle concurrent access — fetches each distinct chunk independently', async () => {
+      // cache.md W7 fix: previous version asserted `chunksCount + metadataCount >= 1`
+      // — satisfied by a regression that fetched only ONE chunk and aliased
+      // the others. Strengthen: distinct chunks must each produce a distinct
+      // result.
       const results = await Promise.all([
         store.get('chunk1'),
         store.get('chunk2'),
         store.get('chunk3'),
       ]);
 
-      // Verify all chunks were fetched
       expect(results.length).toBe(3);
       expect(results.every((r) => r !== undefined)).toBe(true);
 
+      // Three distinct chunk keys → at least 3 cached entries
+      // (chunksCount + metadataCount summed across segments).
       const stats = store.getStats();
-      // Should have items cached
-      expect(stats.l1.chunksCount + stats.l1.metadataCount).toBeGreaterThanOrEqual(1);
+      expect(stats.l1.chunksCount + stats.l1.metadataCount).toBeGreaterThanOrEqual(3);
     });
 
     it('should handle very large chunks', async () => {
@@ -1391,21 +1481,23 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l1.metadataCount).toBe(0);
     });
 
-    it('should handle mixed access patterns', async () => {
+    it('should handle mixed access patterns — routes each key to its segment, total exactly 4', async () => {
+      // cache.md W8 fix: previous version asserted `>= 1` which let any
+      // routing regression survive. Strengthen: 2 metadata keys (`.zarray`,
+      // `.zattrs`) + 2 chunk keys → exactly 2 in each segment.
       const r1 = await store.get('.zarray');
       const r2 = await store.get('chunk1');
       const r3 = await store.get('.zattrs');
       const r4 = await store.get('chunk2');
 
-      // Verify all data was fetched
       expect(r1).toBeDefined();
       expect(r2).toBeDefined();
       expect(r3).toBeDefined();
       expect(r4).toBeDefined();
 
       const stats = store.getStats();
-      // Should have items cached (may be in either segment)
-      expect(stats.l1.metadataCount + stats.l1.chunksCount).toBeGreaterThanOrEqual(1);
+      expect(stats.l1.metadataCount).toBe(2);
+      expect(stats.l1.chunksCount).toBe(2);
     });
   });
 
@@ -1499,6 +1591,26 @@ describe('MultiLevelCachingStore', () => {
 
       // Prefetcher should NOT have been called for L1 hit
       expect(mockPrefetcher.onAccess).not.toHaveBeenCalled();
+    });
+
+    it('MED-2: concurrent waiters on a coalesced fetch call onAccess() once', async () => {
+      // 10 concurrent get() calls for the same key share a single inflight
+      // L2/network chain via pendingGets. Without dedup each waiter called
+      // prefetcher.onAccess(key), burning seen-set work N times. The fix:
+      // only the originator of the inflight chain fans out onAccess; all
+      // other waiters skip the call entirely.
+      const mockPrefetcher = { onAccess: vi.fn() };
+      store.setPrefetcher(mockPrefetcher as any);
+
+      const N = 10;
+      const waiters = Array.from({ length: N }, () => store.get('coalesce.med2.chunk'));
+      const results = await Promise.all(waiters);
+
+      // All waiters got a real payload.
+      expect(results.every((r) => r !== null)).toBe(true);
+      // …but onAccess fired exactly once for the logical access.
+      expect(mockPrefetcher.onAccess).toHaveBeenCalledTimes(1);
+      expect(mockPrefetcher.onAccess).toHaveBeenCalledWith('coalesce.med2.chunk');
     });
 
     it('should dispose prefetcher and clear reference on dispose', async () => {

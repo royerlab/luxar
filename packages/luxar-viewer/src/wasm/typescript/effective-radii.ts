@@ -14,7 +14,14 @@
  * @param radii - Original point radii [numPoints]
  * @param displayDims - Dimensions to display (typically [0,1,2]) [numDisplayDims]
  * @param slicePosition - Current slice position [ndim]
- * @param spatialExtendDims - Which dims are spatial (1) vs discrete (0) [ndim]
+ * @param spatialExtendDims - Which dims are spatial (1) vs discrete (0).
+ *   Callers SHOULD pass an array of length `ndim` for explicit control.
+ *   For dimensions `d >= spatialExtendDims.length`, this implementation
+ *   DEFAULTS to spatial (treats the missing entry as `1`). This is the more
+ *   permissive fallback (extra dims contribute to the Pythagorean distance
+ *   instead of silently dropping the point as a discrete mismatch); production
+ *   callers in this codebase enforce `length >= ndim` at the worker boundary
+ *   (see `projectPointsTo3D`). [length: SHOULD be ndim]
  * @param ndim - Total number of dimensions
  * @param numPoints - Number of points
  * @param output - Output effective radii [numPoints]

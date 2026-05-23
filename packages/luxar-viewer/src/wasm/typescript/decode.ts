@@ -129,6 +129,12 @@ export function decode_lut_row_u16(
 
 /**
  * Broadcast a single value to all points.
+ *
+ * Contract: `value.length` must be either 1 (scalar broadcast to all
+ * `elementsPerPoint` slots) or exactly `elementsPerPoint` (per-element
+ * vector replicated across every point). Any other length is rejected
+ * because the previous "mixed broadcast" semantics produced surprising
+ * rows like `[v0, v1, v0]` for `value.length=2, elementsPerPoint=3`.
  */
 export function decode_broadcasted(
   value: Float32Array,
@@ -136,6 +142,11 @@ export function decode_broadcasted(
   elementsPerPoint: number,
   output: Float32Array
 ): void {
+  if (value.length !== 1 && value.length !== elementsPerPoint) {
+    throw new Error(
+      `decode_broadcasted: value.length must be 1 (broadcast) or elementsPerPoint (${elementsPerPoint}), got ${value.length}`
+    );
+  }
   for (let i = 0; i < numPoints; i++) {
     const outOffset = i * elementsPerPoint;
     for (let j = 0; j < elementsPerPoint; j++) {

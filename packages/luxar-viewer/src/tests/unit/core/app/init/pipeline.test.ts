@@ -183,24 +183,42 @@ describe('runInitPipeline', () => {
     });
 
     it('writes partial.animationController + downstream fields when sceneManager.init succeeds', async () => {
-      const { factories } = makeFactoryOverrides();
+      // core.md W7 strengthening + G18 (partial.sceneManager identity):
+      // previously 10 sequential `toBeDefined`s. A mutation that swapped
+      // two fields (e.g. `partial.performanceMonitor = animationController`)
+      // would survive `toBeDefined`. We now assert IDENTITY against the
+      // factory return values (so wrong-field-assigned regressions die),
+      // and confirm sceneManager is the EXACT object the factory returned.
+      const { factories, sceneStub } = makeFactoryOverrides();
       const ports = makePorts();
       ports.options.factories = factories as never;
       const partial: Partial<InitPipelineResult> = {};
 
       await runInitPipeline(ports, partial);
 
-      // Every subsystem is set on partial.
-      expect(partial.sceneManager).toBeDefined();
-      expect(partial.animationController).toBeDefined();
-      expect(partial.performanceMonitor).toBeDefined();
-      expect(partial.debugConsole).toBeDefined();
+      // G18: partial.sceneManager IS the factory's return value (not a
+      // copy / replacement) — dispose() reads this exact reference.
+      expect(partial.sceneManager).toBe(sceneStub as never);
+
+      // Identity checks on every factory-built field. Mutating any of
+      // these wires would now fail (e.g. swapping animationController
+      // and renderingControls).
+      expect(partial.animationController).toBe(factories.animationController.mock.results[0].value);
+      expect(partial.renderingControls).toBe(factories.renderingControls.mock.results[0].value);
+      expect(partial.recordingPanel).toBe(factories.recordingPanel.mock.results[0].value);
+      expect(partial.layersPanel).toBe(factories.layersPanel.mock.results[0].value);
+
+      // For the inline-constructed (non-factory) fields, type + shape
+      // are the strongest local invariants we can assert without
+      // pulling in the real constructors.
+      expect(partial.performanceMonitor).toMatchObject({ kind: 'perf-monitor' });
+      expect(partial.debugConsole).toMatchObject({ kind: 'debug-console' });
       expect(partial.adaptiveDPRManager).toBeDefined();
       expect(partial.resolutionIndicator).toBeDefined();
       expect(partial.inputHandler).toBeDefined();
-      expect(partial.renderingControls).toBeDefined();
-      expect(partial.recordingPanel).toBeDefined();
-      expect(partial.layersPanel).toBeDefined();
+
+      // sceneSrc is a string (P5 boundary), and EQUALS the supplied src.
+      expect(typeof partial.sceneSrc).toBe('string');
       expect(partial.sceneSrc).toBe('http://example.com/scene.zarr');
     });
 

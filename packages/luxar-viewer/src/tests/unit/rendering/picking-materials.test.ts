@@ -11,6 +11,7 @@ import { PointPickingMaterial } from '../../../rendering/picking/point/material'
 import { LinePickingMaterial } from '../../../rendering/picking/line/material';
 import { LinePickingTSLMaterial } from '../../../rendering/picking/line/material-tsl';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat/material';
+import { GSplatPickingTSLMaterial } from '../../../rendering/picking/gsplat/material-tsl';
 import {
   MAX_PICK_BUFFER_DIM,
   computePickBufferSize,
@@ -98,6 +99,27 @@ describe('LinePickingMaterial', () => {
     expect(material.uniforms.uResolution.value.y).toBe(1080);
     material.dispose();
   });
+
+  // rendering.md G2 fix: setSharpnessAllTwo was tested for the TSL Line
+  // picking material but not for the GLSL one. create-lines-node.ts:93 calls
+  // it on every line node, so a regression in the GLSL define-toggle would
+  // silently break sharpness=2 fast-path picking.
+  it('setSharpnessAllTwo(true) sets the LUXAR_SHARPNESS_TWO define on the GLSL material', () => {
+    const material = new LinePickingMaterial({ nodeId: 1 });
+    material.setSharpnessAllTwo(true);
+    // Source uses `defines.LUXAR_SHARPNESS_TWO = ''` as a presence flag
+    // (the GLSL `#ifdef` keys on presence, not value).
+    expect('LUXAR_SHARPNESS_TWO' in material.defines).toBe(true);
+    material.dispose();
+  });
+
+  it('setSharpnessAllTwo(false) clears the LUXAR_SHARPNESS_TWO define on the GLSL material', () => {
+    const material = new LinePickingMaterial({ nodeId: 1 });
+    material.setSharpnessAllTwo(true);
+    material.setSharpnessAllTwo(false);
+    expect('LUXAR_SHARPNESS_TWO' in material.defines).toBe(false);
+    material.dispose();
+  });
 });
 
 describe('GSplatPickingMaterial', () => {
@@ -127,6 +149,112 @@ describe('GSplatPickingMaterial', () => {
 
     expect(material.uniforms.uNearCull.value).toBe(0.5);
     expect(material.uniforms.uFx.value).toBeGreaterThan(0);
+    material.dispose();
+  });
+
+  // rendering.md G5 fix: GSplatPickingMaterial previously only had
+  // an instantiation test. Orthographic branch (uIsOrtho=1) is an
+  // independent code path in `computeFocalLength` (frustumHeight
+  // semantics, not tan(fov/2)), so it must be exercised separately
+  // to kill mutations to the `isOrtho ? 1 : 0` flag and the fy=fx
+  // assignment.
+  it('handles orthographic camera params (uIsOrtho=1)', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    const resolution = new THREE.Vector2(800, 600);
+    const frustumHeight = 10; // world units, ortho semantics
+
+    material.updateCameraParams(frustumHeight, resolution, true);
+
+    expect(material.uniforms.uIsOrtho.value).toBe(1);
+    // For ortho: focal = resolution.y / frustumHeight = 600 / 10 = 60.
+    // Both fx and fy must be set identically (square pixels assumption).
+    expect(material.uniforms.uFx.value).toBeCloseTo(60, 5);
+    expect(material.uniforms.uFy.value).toBeCloseTo(60, 5);
+    expect(material.uniforms.uFx.value).toBe(material.uniforms.uFy.value);
+    material.dispose();
+  });
+
+  it('updateCameraParams without nearCull leaves uNearCull at its default', () => {
+    // Pins the contract that nearCull is opt-in (mirrors LinePicking
+    // and the visual GSplat material).
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    const initialNearCull = material.uniforms.uNearCull.value;
+    const resolution = new THREE.Vector2(1920, 1080);
+
+    material.updateCameraParams(1.0, resolution, false);
+
+    expect(material.uniforms.uNearCull.value).toBe(initialNearCull);
+    material.dispose();
+  });
+});
+
+// rendering.md G3, G4 fix: GSplatPickingTSLMaterial had ZERO direct
+// tests despite being referenced by material-manager/factories.ts.
+// Mirrors the LinePickingTSLMaterial block above one-for-one — same
+// nodeId / camera-params / ortho-branch coverage (project memory
+// "three-geometry symmetry rule": Points/Lines/GSplats parallel tests).
+describe('GSplatPickingTSLMaterial', () => {
+  it('instantiates with correct nodeId uniform', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 99 });
+    expect(material.uniforms.uNodeId.value).toBe(99);
+    // Tighter truncation: 1.5σ — must match GLSL picking path.
+    expect(material.uniforms.uTruncate.value).toBe(1.5);
+    expect(material.uniforms.uTruncateSq.value).toBe(2.25);
+    material.dispose();
+  });
+
+  it('uses max projection mode (no uProjectionMode uniform)', () => {
+    // Symmetric with GSplatPickingMaterial (GLSL): picking shader
+    // hard-codes max projection; uProjectionMode is intentionally
+    // NOT exposed (see material-tsl.ts module preamble).
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    expect(material.uniforms.uProjectionMode).toBeUndefined();
+    material.dispose();
+  });
+
+  it('updateCameraParams (perspective) sets fx=fy and uIsOrtho=0', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    const resolution = new THREE.Vector2(1920, 1080);
+
+    material.updateCameraParams(1.0, resolution, false, 0.5);
+
+    expect(material.uniforms.uIsOrtho.value).toBe(0);
+    expect(material.uniforms.uNearCull.value).toBe(0.5);
+    expect(material.uniforms.uFx.value).toBeGreaterThan(0);
+    expect(material.uniforms.uFx.value).toBe(material.uniforms.uFy.value);
+    material.dispose();
+  });
+
+  it('updateCameraParams (orthographic) sets uIsOrtho=1 and matching ortho focal', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    const resolution = new THREE.Vector2(800, 600);
+    const frustumHeight = 10;
+
+    material.updateCameraParams(frustumHeight, resolution, true);
+
+    expect(material.uniforms.uIsOrtho.value).toBe(1);
+    // Mirror the GLSL ortho test: focal = res.y / frustumHeight = 60.
+    expect(material.uniforms.uFx.value).toBeCloseTo(60, 5);
+    expect(material.uniforms.uFy.value).toBeCloseTo(60, 5);
+    material.dispose();
+  });
+
+  it('updateCameraParams without nearCull preserves uNearCull default', () => {
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    const initial = material.uniforms.uNearCull.value;
+    material.updateCameraParams(1.0, new THREE.Vector2(800, 600), false);
+    expect(material.uniforms.uNearCull.value).toBe(initial);
+    material.dispose();
+  });
+
+  it('uniform proxy writes land on the underlying TSLNode (no .onUpdate bridge)', () => {
+    // Documents the IUniform-proxy contract called out in the TSL
+    // material's module preamble: mutating uniforms.uX.value must
+    // mutate node.value directly. Symmetric with how LinePickingTSL
+    // uniforms behave — and a cheap mutation-killer for the proxy.
+    const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
+    material.uniforms.uNodeId.value = 42;
+    expect(material.uniforms.uNodeId.value).toBe(42);
     material.dispose();
   });
 });
@@ -208,5 +336,16 @@ describe('computePickBufferSize', () => {
   it('clamps to a minimum of 1 pixel', () => {
     expect(computePickBufferSize(0, 0)).toEqual({ w: 1, h: 1 });
     expect(computePickBufferSize(1, 1)).toEqual({ w: 1, h: 1 });
+  });
+
+  // rendering.md G8: negative inputs aren't an expected runtime case
+  // (canvas dimensions are always ≥ 0), but the contract is that the
+  // function never returns a value below the documented floor of 1.
+  // Pins the defensive behaviour against future "fast-path" tweaks
+  // that drop the Math.max clamp.
+  it('clamps negative inputs to 1 pixel (defensive contract)', () => {
+    expect(computePickBufferSize(-100, -100)).toEqual({ w: 1, h: 1 });
+    expect(computePickBufferSize(-1, 1080)).toEqual({ w: 1, h: 540 });
+    expect(computePickBufferSize(1920, -1)).toEqual({ w: 960, h: 1 });
   });
 });

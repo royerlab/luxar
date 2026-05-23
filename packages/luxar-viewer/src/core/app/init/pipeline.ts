@@ -201,6 +201,16 @@ export async function runInitPipeline(
   // Inject the monitor factory into SceneLoaderManager so each
   // SceneLoader can resolve its UI monitor without the data/ layer
   // importing ui/ directly.
+  //
+  // NOTE: the `typeof document === 'undefined'` guard below is
+  // effectively dead in this pipeline — `sceneManager.init()` (called
+  // earlier in this function) constructs a real WebGL/WebGPU renderer
+  // and would throw long before reaching this factory in any genuine
+  // SSR run. We keep the guard purely as belt-and-braces for the case
+  // where the factory is invoked from a non-browser caller in the
+  // future (or from a fake-DOM unit test that mocks the renderer but
+  // not `document`). If you ever hoist SSR rejection to a single
+  // top-of-pipeline check, this branch can be removed.
   SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
     if (typeof document === 'undefined') return null;
     const mgr = DataMonitorManager.getInstance();

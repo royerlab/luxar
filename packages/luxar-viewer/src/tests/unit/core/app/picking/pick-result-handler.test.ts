@@ -11,6 +11,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { buildPickResultHandler } from '../../../../../core/app/picking/pick-result-handler';
+import { log } from '../../../../../utils/log';
 import type { PickResult } from '../../../../../rendering/picking/picking-system';
 
 type GetLabelFn = (path: string, idx: number) => Promise<string | null>;
@@ -182,7 +183,13 @@ describe('buildPickResultHandler', () => {
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith(null);
   });
 
-  it('clears hover and does not throw when a loader rejects', async () => {
+  it('clears hover and logs a warning when a loader rejects', async () => {
+    // core.md W15 strengthening: previously this test only asserted
+    // hover was cleared. The handler's contract explicitly logs a
+    // warning so debugging hover failures isn't silent. Pin the
+    // warning + the underlying error message so a regression that
+    // dropped log.warning (or wrapped the wrong scope) would fail.
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const s = makeStubs();
     s.getLabel.mockRejectedValue(new Error('zarr 404'));
     s.getImageUrl.mockResolvedValue(null);
@@ -194,6 +201,14 @@ describe('buildPickResultHandler', () => {
 
     await expect(handle(makeResult('/Cells', 0))).resolves.toBeUndefined();
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith(null);
+
+    // Warning was logged with the picking-callback context + the
+    // underlying error string.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0][1]);
+    expect(msg).toMatch(/Picking callback error/);
+    expect(msg).toMatch(/zarr 404/);
+    warnSpy.mockRestore();
   });
 
   it('is a no-op when overlayManager port is undefined', async () => {

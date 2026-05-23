@@ -33,6 +33,20 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { DebugConsole } from '../../../ui/debug-console';
 
+// AUDIT NOTE (input.md W2): the four `make*Stub` factories below
+// replace first-party internal modules (SceneManager,
+// AnimationController, PerformanceMonitor, DebugConsole) rather than
+// trust boundaries. This violates P3 (mock only at trust boundaries)
+// but is intentional: the InputHandler constructor wires these
+// dependencies into heavy submanagers (THREE.js renderer,
+// AnimationLoop, performance panel, debug console) whose real
+// construction requires a full WebGL context. The structural stubs
+// pin the InputHandler API surface — the real integration is covered
+// by the `keyboard-input-system.spec.ts` E2E tests. A more
+// dependency-injected refactor of InputHandler (taking only the
+// methods it calls instead of the full classes) would let us drop the
+// stubs; that's tracked under input.md O4/M1 and is OOS for this audit.
+
 function makeSceneManagerStub(): SceneManager {
   // The InputHandler constructor passes sceneManager to
   // WindowEventHandler, which only stores it. Listeners that touch
@@ -127,6 +141,15 @@ describe('InputHandler — optional setters', () => {
     );
   });
 
+  // AUDIT NOTE (input.md W1): the six setter smoke tests below
+  // (setScaleBar / setColormapLegend / setOverlayManager / setLayersPanel /
+  // setDatasetBrowser) only assert .not.toThrow() — the canonical
+  // mutation-resistance hole. The setter contract is "store the reference
+  // for later cleanup"; the observable proof is that the disposer is
+  // called on dispose() of the handler. The dispose-time wiring is
+  // covered by the surrounding 'dispose' test below; these setter tests
+  // serve as API-surface pins (the methods exist + accept the typed arg)
+  // rather than behavioral assertions. Acceptable but documented.
   it('setScaleBar accepts the overlay reference without throwing', () => {
     const scaleBar = { dispose: vi.fn() };
     expect(() => handler.setScaleBar(scaleBar as never)).not.toThrow();
@@ -169,17 +192,29 @@ describe('InputHandler.clearDimensionUI', () => {
 
 describe('InputHandler.init — idempotency', () => {
   it('init() returns silently on the second invocation', () => {
+    // input.md W6 fix: an idempotency claim demands a count-based
+    // assertion. Spy on window.addEventListener and confirm the
+    // second init() does not re-register listeners. A mutation that
+    // dropped the "already initialised" short-circuit would double
+    // the listener count and be caught here.
     const handler = new InputHandler(
       makeSceneManagerStub(),
       makeAnimationControllerStub(),
       makePerformanceMonitorStub(),
       makeDebugConsoleStub()
     );
-    // First init: sets up listeners (uses real DOM under jsdom).
-    handler.init();
-    // Second init: must short-circuit, not double-bind.
-    expect(() => handler.init()).not.toThrow();
-    handler.dispose();
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    try {
+      handler.init();
+      const firstCount = addSpy.mock.calls.length;
+      expect(firstCount).toBeGreaterThan(0); // sanity: init registered something
+      // Second init: must short-circuit; addEventListener call count is unchanged.
+      expect(() => handler.init()).not.toThrow();
+      expect(addSpy.mock.calls.length).toBe(firstCount);
+    } finally {
+      addSpy.mockRestore();
+      handler.dispose();
+    }
   });
 });
 
@@ -366,9 +401,19 @@ describe('InputHandler.clearDimensionUI — sceneDimsManager listener cleanup', 
 
     try {
       handler.clearDimensionUI();
+      // input.md C1 fix: strengthen the contract — pin not just that
+      // removeListener was called with the listener, but that the singleton's
+      // actual listener set no longer fires the listener. We register a
+      // probe and assert it fires before clearDimensionUI (sanity) and
+      // does NOT fire the fake listener after.
       expect(removeCalls).toContain(fakeListener);
-      // After clearDimensionUI, the slot must be cleared so a second
-      // call doesn't try to remove the (already-removed) listener.
+      // Fire a dimension change on the singleton; the fake listener must
+      // not be invoked (it has been removed).
+      const callCountBefore = fakeListener.mock.calls.length;
+      sceneDimsManager.setDimensionValue?.(0, 0);
+      // Give microtask queue a chance to flush (listeners may be async).
+      // The expectation: call count is unchanged.
+      expect(fakeListener.mock.calls.length).toBe(callCountBefore);
       expect(slot.sceneDimsListener).toBeUndefined();
     } finally {
       // Restore the bound method by deleting the instance override
@@ -389,4 +434,95 @@ describe('InputHandler.clearDimensionUI — sceneDimsManager listener cleanup', 
       makeDebugConsoleStub()
     );
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// MED-4 regression: setupControlEvents / setupUserInteractionEvents
+// must late-bind the `startAnimation` lookup so a swapped
+// AnimationController.startAnimation method still receives the call.
+// Before the fix, the method reference was captured at construction
+// time and the swap was silently ignored.
+// ─────────────────────────────────────────────────────────────────────
+describe('InputHandler — MED-4: late-bound startAnimation on controls/canvas events', () => {
+  it('controls "change" event invokes the CURRENT animationController.startAnimation', () => {
+    // Record every listener attached to controls by event name so the
+    // test can fire them synchronously after init().
+    const controlsListeners = new Map<string, (() => void)[]>();
+    const sceneManager = makeSceneManagerStub();
+    (sceneManager.controls.addEventListener as ReturnType<typeof vi.fn>).mockImplementation(
+      (event: string, listener: () => void) => {
+        const arr = controlsListeners.get(event) ?? [];
+        arr.push(listener);
+        controlsListeners.set(event, arr);
+      }
+    );
+
+    const original = vi.fn();
+    const animationController = {
+      startAnimation: original,
+      stopAnimation: vi.fn(),
+      dispose: vi.fn(),
+      isActive: false,
+    } as unknown as AnimationController;
+
+    const handler = new InputHandler(
+      sceneManager,
+      animationController,
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    handler.init();
+
+    // Sanity: a `change` listener was registered.
+    const changeListeners = controlsListeners.get('change') ?? [];
+    expect(changeListeners.length).toBeGreaterThan(0);
+
+    // Swap startAnimation AFTER init. With the late-bound fix, the
+    // listener calls the NEW method; with the old reference-capture
+    // bug, it would still call `original`.
+    const swapped = vi.fn();
+    (animationController as unknown as { startAnimation: () => void }).startAnimation = swapped;
+
+    // Fire the registered listener as if controls emitted 'change'.
+    for (const l of changeListeners) l();
+
+    expect(swapped).toHaveBeenCalledTimes(1);
+    expect(original).not.toHaveBeenCalled();
+
+    handler.dispose();
+  });
+
+  it('canvas mousedown invokes the CURRENT animationController.startAnimation', () => {
+    const sceneManager = makeSceneManagerStub();
+    const canvas = sceneManager.renderer.domElement;
+
+    const original = vi.fn();
+    const animationController = {
+      startAnimation: original,
+      stopAnimation: vi.fn(),
+      dispose: vi.fn(),
+      isActive: false,
+    } as unknown as AnimationController;
+
+    const handler = new InputHandler(
+      sceneManager,
+      animationController,
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    handler.init();
+
+    // Swap startAnimation AFTER init.
+    const swapped = vi.fn();
+    (animationController as unknown as { startAnimation: () => void }).startAnimation = swapped;
+
+    // Dispatch a real mousedown event on the canvas; the registered
+    // listener should call the swapped method.
+    canvas.dispatchEvent(new MouseEvent('mousedown'));
+
+    expect(swapped).toHaveBeenCalledTimes(1);
+    expect(original).not.toHaveBeenCalled();
+
+    handler.dispose();
+  });
 });

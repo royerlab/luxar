@@ -86,10 +86,12 @@ describe('WindowEventHandler', () => {
     });
 
     it('registers the wheel listener with passive: false', () => {
-      // The Ctrl/Cmd+wheel FOV handler calls preventDefault(); browsers
-      // can default wheel listeners on root targets to passive, in which
-      // case preventDefault is ignored and the page zooms while the FOV
-      // also changes. Verify the registration includes passive: false.
+      // input.md W7 fix: `addSpy.mock.calls.find(c => c[0] === 'wheel')`
+      // returns the FIRST matching call and would silently miss a
+      // mutation that registered two 'wheel' listeners (one with
+      // passive:false, one passive). Switch to `.filter(...)` to
+      // count the matches, assert exactly one wheel registration, and
+      // then verify its options.
       const { sceneManager } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const addSpy = vi.spyOn(window, 'addEventListener');
@@ -97,10 +99,10 @@ describe('WindowEventHandler', () => {
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      const wheelCall = addSpy.mock.calls.find((c) => c[0] === 'wheel');
-      expect(wheelCall).toBeDefined();
+      const wheelCalls = addSpy.mock.calls.filter((c) => c[0] === 'wheel');
+      expect(wheelCalls).toHaveLength(1); // exactly one wheel listener
       // Third arg is the options object.
-      expect(wheelCall![2]).toEqual(expect.objectContaining({ passive: false }));
+      expect(wheelCalls[0][2]).toEqual(expect.objectContaining({ passive: false }));
 
       addSpy.mockRestore();
     });
@@ -150,6 +152,21 @@ describe('WindowEventHandler', () => {
 
       window.dispatchEvent(new WheelEvent('wheel', { deltaY: -33, metaKey: true }));
       expect(updateFOV).toHaveBeenCalledWith(-33);
+    });
+
+    // input.md G11 fix: Shift+wheel is NOT a FOV change — only Ctrl
+    // and Meta gate the FOV path. Pin that Shift alone behaves like a
+    // plain wheel event (animation kick, no updateFOV) so a mutation
+    // that added `event.shiftKey` to the gate is caught.
+    it('Shift+wheel: only kicks the animation loop (Shift is not a FOV modifier)', () => {
+      const { sceneManager, updateFOV } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 50, shiftKey: true }));
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).not.toHaveBeenCalled();
     });
 
     it('Ctrl+wheel: switches rendering-controls preset to Custom and syncs', () => {

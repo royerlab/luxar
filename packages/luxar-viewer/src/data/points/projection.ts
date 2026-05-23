@@ -156,12 +156,15 @@ export function projectPointsTo3D(
       ? Math.round(positions.length / totalPoints)
       : ctx.chunkIndex?.metadata.ndim || 3;
 
-  // Validate the calculation
+  // Validate the calculation. Fail fast on size mismatch — proceeding
+  // with the rounded `ndim` produces silently wrong projections
+  // downstream (the per-point inner loop reads `positions[i * ndim + d]`
+  // with the wrong stride and writes garbage into positions3D).
   if (totalPoints > 0 && positions.length !== totalPoints * ndim) {
-    log.error(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Position data size mismatch: ${positions.length} elements for ${totalPoints} points ` +
-        `doesn't divide evenly (calculated ndim=${ndim}). This may indicate encoding metadata issues.`
+    throw new Error(
+      `[PointsProjection] Position data size mismatch: ${positions.length} elements ` +
+        `for ${totalPoints} points doesn't divide evenly (calculated ndim=${ndim}). ` +
+        'This indicates encoding metadata issues.'
     );
   }
 
@@ -500,8 +503,10 @@ export function projectPointsTo3D(
   if (targetBuffers && ctx.accumulator) {
     // Data is already in accumulator buffers (written directly during processing)
     // Just update metadata and return (ZERO allocations!)
+    // Note: `bounds` intentionally omitted — accumulator.getData() will
+    // recompute bounds from the position buffer, so passing the local
+    // `bounds` here would be a no-op (and would warn).
     ctx.accumulator.updateMetadata({
-      bounds,
       usedSpatialIndex: true,
     });
 

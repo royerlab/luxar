@@ -145,12 +145,13 @@ export class LayerStateManager {
 
         // Colormap support — groups inherit no colormap, but they do apply
         // a chosen colormap to every data descendant that can accept one.
+        // Gsplats only support a colormap when they actually have scalar
+        // data (`has_scalars`) or an authored `colormap`; a bare gsplats
+        // node with no scalars must NOT advertise colormap support, or
+        // the UI offers a no-op colormap dropdown.
         const colormap = node.attrs.colormap as string | undefined;
         const supportsColormap =
-          node.type === 'gsplats' ||
-          node.type === 'group' ||
-          !!node.attrs.has_scalars ||
-          !!colormap;
+          node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,

@@ -467,27 +467,50 @@ describe('PointsSpatialIndexLoader', () => {
     });
 
     it('should track active queries', async () => {
-      // Make zarr.get slower to allow checking active queries
-      (zarr.get as any).mockImplementation(
-        () =>
-          new Promise((resolve) => setTimeout(() => resolve({ data: new Float32Array(100) }), 10))
-      );
-
-      const viewState: ViewState = {
+      // data.md W5 fix [P2]: previous assertion was
+      // `expect(activeQueries.length).toBeGreaterThanOrEqual(0)` — a
+      // tautology that passes for any non-negative count.
+      //
+      // The fix is two-step:
+      //   1. Let chunk_bounds initialization complete with the original
+      //      mock so the loader is fully initialized.
+      //   2. Then re-mock zarr.get to block on a deferred promise for
+      //      data-array reads, deterministically observing an active
+      //      query mid-flight before releasing the gate.
+      const baseViewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5],
         tolerance: [0, 0, 0, 0.1],
       };
 
-      const loadPromise = loader.loadPoints(viewState);
+      // Pre-initialize the loader (chunk_bounds open + get).
+      await loader.loadPoints(baseViewState);
+      // After the first load, active queries must be empty.
+      expect(loader.getActiveQueries().length).toBe(0);
 
-      // Give a tiny bit of time for the query to start
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      // Now gate subsequent gets behind a deferred so we can catch the
+      // mid-flight state.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(
+        () => gate.then(() => ({ data: new Float32Array(100) }))
+      );
 
-      // Check active queries during loading
+      const loadPromise = loader.loadPoints({
+        ...baseViewState,
+        slicePosition: [0.5, 0.5, 0.5, 5],
+      });
+
+      // Yield microtasks so the loader has a chance to register the query.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      // Mid-flight: at least one active query MUST be tracked.
       const activeQueries = loader.getActiveQueries();
-      expect(activeQueries.length).toBeGreaterThanOrEqual(0); // May or may not catch it
+      expect(activeQueries.length).toBeGreaterThanOrEqual(1);
 
+      release();
       await loadPromise;
 
       // Should be cleared after completion

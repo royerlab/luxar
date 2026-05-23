@@ -44,7 +44,16 @@ export interface CameraMaterialsCtx {
   readonly camera: LuxarCamera;
   readonly scene: THREE.Scene;
   readonly boundsCache: SceneBoundsCache;
-  /** Pre-allocated Vector2 receiver for getDrawingBufferSize. */
+  /**
+   * Pre-allocated Vector2 receiver for getDrawingBufferSize.
+   *
+   * **Borrow contract**: This Vector2 is owned by SceneManager (a single
+   * shared instance) and is mutated on every camera-materials update.
+   * Downstream consumers MUST treat it as read-only and scoped to the
+   * current call. To retain the value across frames, `.copy()` it into
+   * private storage — never store the reference itself, or a subsequent
+   * resize will silently mutate your "saved" value.
+   */
   readonly bufferSize: THREE.Vector2;
 }
 

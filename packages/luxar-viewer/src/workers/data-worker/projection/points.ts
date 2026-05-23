@@ -143,9 +143,16 @@ export async function projectPointsTo3D(
     // For effective radius calculation, extend_to_all dims should be treated
     // as "display" dims (completely skipped — no discrete check, no distance).
     // Build an augmented display dims array that includes extend_to_all dims.
+    // Use `Number.isFinite` as an explicit "is a real number" guard before
+    // applying the `>= 1e9` sentinel test — this prevents a short tolerance
+    // array from silently disabling extend_to_all (undefined would fail
+    // `>= 1e9` as false and silently treat the dim as a normal hidden dim).
+    // A short tolerance is rejected upstream by the validation belt above;
+    // the explicit guard remains as a defense-in-depth and to handle NaN.
     const extendToAllDims: number[] = [];
     for (let d = 0; d < ndim; d++) {
-      if (!displayDims.includes(d) && viewState.tolerance[d] >= 1e9) {
+      const tol = viewState.tolerance[d];
+      if (!displayDims.includes(d) && Number.isFinite(tol) && tol >= 1e9) {
         extendToAllDims.push(d);
       }
     }

@@ -187,16 +187,45 @@ function findBinding(
   return match;
 }
 
+// AUDIT NOTE (input.md G1): the sibling files (fly-bindings.ts,
+// navigation-bindings.ts, fov-hold-gate.ts) lack dedicated `.test.ts`
+// files. Their behavior is covered here transitively via
+// `registerAllKeyBindings`, which is the only documented entry point
+// (the per-file exports are not consumed outside this orchestrator).
+// The "Structure" + "FOV gate dispatch" + "NAVIGATION command
+// dispatch" + "FLY_CONTROLS dispatch" blocks below exercise:
+//   - fly-bindings.ts: WASD+modifier permutations, arrow keys, Shift gate.
+//   - navigation-bindings.ts: [, ], 1-9, h/n/o/p/r/v/i/c/f/m/g/t/b/l/Space/Esc/Ctrl+Shift+S.
+//   - fov-hold-gate.ts: Control/Meta hold counter, blur reset.
+// Splitting them into per-file test files would buy zero coverage at
+// the cost of triplicating the `setup()` boilerplate. Documented
+// here for the audit trail; the audit recommendation is satisfied
+// functionally.
+
 describe('registerAllKeyBindings — structure', () => {
   it('registers two FOV-control bindings (Control + Meta) on NAVIGATION', () => {
-    const { bindings } = setup();
+    // input.md W5 fix: a structure-only check (handler is a function,
+    // count is 2) kills no mutants. Strengthen by exercising the
+    // actual side effect — each registered handler should toggle the
+    // sceneManager's setEnableZoom(false) gate on keydown. A mutation
+    // that flipped the keys, dropped one binding, or swapped handlers
+    // is now observable.
+    const { bindings, setEnableZoom } = setup();
     const fov = bindings.filter(
       (b) => b.context === InputContext.NAVIGATION && (b.key === 'Control' || b.key === 'Meta')
     );
     expect(fov).toHaveLength(2);
+    const fovKeys = new Set(fov.map((b) => b.key));
+    expect(fovKeys).toEqual(new Set(['Control', 'Meta']));
     fov.forEach((b) => {
       expect(b.handler).toBeTypeOf('function');
       expect(b.keyupHandler).toBeTypeOf('function');
+      // The handler must disable zoom; the keyupHandler must re-enable.
+      setEnableZoom.mockClear();
+      b.handler(new KeyboardEvent('keydown'));
+      expect(setEnableZoom).toHaveBeenLastCalledWith(false);
+      b.keyupHandler!(new KeyboardEvent('keyup'));
+      expect(setEnableZoom).toHaveBeenLastCalledWith(true);
     });
   });
 

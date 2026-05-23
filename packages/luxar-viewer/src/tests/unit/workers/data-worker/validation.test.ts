@@ -360,6 +360,32 @@ describe('data-worker validation — decode entry points', () => {
     ).rejects.toThrow(/lut length 4 is not divisible by k=3/);
   });
 
+  // MED-23: empty indices arrays must skip the O(n) out-of-range scan
+  // and return a zero-length Float32Array without invoking WASM.
+  it('decodeLUT short-circuits on empty scalar-mode indices', async () => {
+    const mod = await loadWorker();
+    const result = (await mod.workerAPI.decodeLUT({
+      indices: new Uint8Array(0),
+      lut: [0.1, 0.2, 0.3],
+      k: 1,
+      lutMode: 'scalar',
+    })) as Float32Array;
+    expect(result).toBeInstanceOf(Float32Array);
+    expect(result.length).toBe(0);
+  });
+
+  it('decodeLUT short-circuits on empty row-mode indices', async () => {
+    const mod = await loadWorker();
+    const result = (await mod.workerAPI.decodeLUT({
+      indices: new Uint8Array(0),
+      lut: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+      k: 3,
+      lutMode: 'row',
+    })) as Float32Array;
+    expect(result).toBeInstanceOf(Float32Array);
+    expect(result.length).toBe(0);
+  });
+
   it('decodeBroadcasted rejects non-positive elementsPerPoint', async () => {
     const mod = await loadWorker();
     await expect(

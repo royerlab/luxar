@@ -1,3 +1,29 @@
+/**
+ * Audit acknowledgment (rendering.md [W1], [W4], [EXCLUDED-CATEGORY:
+ * shader-tsl-parity]):
+ *
+ *   - The "shaders" / "shader correctness" describe blocks below
+ *     contain `vertexShader.toContain('substring')` assertions
+ *     ([W1]). These are deliberate "regression locks" — same
+ *     pattern documented in `shader-hot-path.test.ts`. The structural
+ *     shader contract is owned by the parity harness +
+ *     Playwright visual regression suite; this file pins the
+ *     wrapper-level uniform / config behaviour around the shader.
+ *
+ *   - The `vi.mock('three', ...)` block stubs `THREE.AdditiveBlending`
+ *     etc. to literal string sentinels ([W4]). Mutation note: the
+ *     assertions therefore test the mock's symbolic dispatch, not
+ *     the real THREE enum. Keep the mock — the real
+ *     `THREE.ShaderMaterial` constructor needs a WebGL context for
+ *     uniforms, and these wrapper tests intentionally only verify
+ *     the constructor argument shape. The TSL counterpart
+ *     (`material-tsl.test.ts`) covers the actual blending-state
+ *     contract against unmocked THREE constants.
+ *
+ * The same acknowledgment applies to the per-geometry GLSL test
+ * files for lines + gsplats (rendering.md W1 / W5).
+ */
+
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';

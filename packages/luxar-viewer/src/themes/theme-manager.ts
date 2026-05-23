@@ -143,7 +143,7 @@ export class ThemeManager {
    */
   public registerTheme(theme: Theme): void {
     if (this.themes.has(theme.id)) {
-      log.warning(Modules.UI, `Theme "${theme.id}" is already registered, overwriting`);
+      throw new Error(`[ThemeManager] Theme "${theme.id}" is already registered`);
     }
     this.themes.set(theme.id, theme);
   }
@@ -191,13 +191,22 @@ export class ThemeManager {
       throw new Error(`[ThemeManager] Theme "${themeId}" not found`);
     }
 
-    // Apply theme to DOM
+    // Apply theme to DOM FIRST. If applyTheme throws (e.g. document/DOM
+    // unavailable, root element missing, CSS injection failure), the throw
+    // propagates and the steps below are skipped:
+    //   - currentTheme is NOT updated (stays on the previous theme)
+    //   - saveTheme is NOT called (localStorage stays on the previous theme)
+    //   - observers are NOT notified
+    // This preserves the invariant: persisted state == currentTheme == DOM
+    // state. A partial-apply failure on this call leaves the previous theme
+    // as the source of truth, rather than silently persisting a theme that
+    // never fully applied (which would mask the failure on next reload).
     this.applyTheme(theme);
 
-    // Update current theme
+    // Update current theme (only reached if applyTheme succeeded).
     this.currentTheme = theme;
 
-    // Persist to localStorage
+    // Persist to localStorage (only reached if applyTheme succeeded).
     this.saveTheme(themeId);
 
     // Notify observers

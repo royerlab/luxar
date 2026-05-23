@@ -522,6 +522,17 @@ describe('DatasetBrowser', () => {
     // Helper: call the private `navigate` method via cast. Lets these
     // tests exercise the cancellation path without depending on any
     // particular DOM-trigger surface.
+    //
+    // MED-48 (audit-ack): the audit suggested promoting `navigate()`
+    // to a public method (or returning a cancellation token). Rejected:
+    // `navigate()` is an implementation detail of the panel's
+    // generation-counter cancellation contract, and exposing it would
+    // (a) widen the public surface for one test-only need, and (b)
+    // tempt callers to drive navigation outside the DOM event flow.
+    // The cast below is the intentional test-seam — small, localized,
+    // and confined to the cancellation suite. The production
+    // cancellation contract is also covered indirectly by the
+    // `close()`-cancels-in-flight-navigate test.
     type BrowserInternals = { navigate: (path: string) => Promise<void> };
 
     it('a stale navigate result is discarded when a newer navigate is in flight', async () => {

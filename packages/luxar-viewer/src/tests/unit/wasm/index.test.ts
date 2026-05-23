@@ -33,6 +33,28 @@ describe('initWasm', () => {
   });
 });
 
+describe('setWasmJsUrl', () => {
+  it('setWasmJsUrl("") resets the override to default (HIGH-7)', async () => {
+    // Set a bogus override, then reset via ''. The init path must NOT
+    // treat '' as a real override (which would resolve to an empty wasm
+    // URL via `?? defaultUrl` — `??` only catches `undefined`/`null`).
+    setWasmJsUrl('http://localhost:0/missing.js');
+    setWasmJsUrl('');
+    // After reset, initWasm goes through the default-URL path. The
+    // dynamic import still fails in jsdom and we fall back to TS, but
+    // crucially the loader does not throw with an empty/invalid URL.
+    const wasm = await initWasm();
+    expect(wasm).toBeInstanceOf(TypeScriptFallback);
+  });
+
+  it('setWasmJsUrl(undefined) also resets the override', async () => {
+    setWasmJsUrl('http://localhost:0/missing.js');
+    setWasmJsUrl(undefined);
+    const wasm = await initWasm();
+    expect(wasm).toBeInstanceOf(TypeScriptFallback);
+  });
+});
+
 describe('isWasmSupported', () => {
   it('returns true when WebAssembly + WebAssembly.instantiate exist', () => {
     expect(isWasmSupported()).toBe(true);

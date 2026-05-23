@@ -1,5 +1,14 @@
 /**
  * Unit tests for the Data Loading Monitor
+ *
+ * AUDIT NOTE (data.md W7 — open audit acknowledgment):
+ *   Many tests in this file lean on `expect(button).not.toBeNull()` style
+ *   DOM-presence assertions rather than verifying that clicking the button
+ *   exercises the documented state transition (minimize/maximize/close).
+ *   Strengthening would mean dispatching `MouseEvent('click')` events and
+ *   asserting the resulting class/visibility/style transitions, with at
+ *   least one anti-test per pair so a no-op handler is caught.
+ *   This refactor is OUT OF SCOPE for this audit pass.
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';

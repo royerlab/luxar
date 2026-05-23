@@ -27,6 +27,11 @@ describe('validateConfig', () => {
 
   describe('multiple errors', () => {
     it('should accumulate multiple errors from different categories', () => {
+      // [W3][P2] Audit: pre-strengthening this test only asserted
+      // `errors.length >= 3` — that survives a mutation where the
+      // dispatcher emits 3 copies of ONE category's error and skips
+      // the other two. Strengthened: assert each of the three
+      // perturbed sections produced its own keyed error message.
       // Smoke test that the dispatcher aggregates errors across sub-validators.
       // Per-section coverage lives in src/tests/unit/config/sections/.
       const cfg = cloneConfig();
@@ -38,6 +43,12 @@ describe('validateConfig', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThanOrEqual(3);
+      // Each of the three perturbed sections must contribute its own
+      // identifiable error string. A mutation that emitted the same
+      // error 3x or dropped a section would now fail.
+      expect(result.errors).toContainEqual(expect.stringContaining('camera FOV'));
+      expect(result.errors).toContainEqual(expect.stringContaining('exposure'));
+      expect(result.errors).toContainEqual(expect.stringContaining('network timeout'));
     });
   });
 });
@@ -72,6 +83,12 @@ describe('logValidationResults', () => {
     logValidationResults(result);
 
     expect(logSpy.success).toHaveBeenCalledWith(expect.stringContaining('validation passed'));
+    // [W5][P2] Audit: pre-strengthening these tests only checked
+    // a substring match, never that error/warning channels stayed
+    // silent on success. A mutation that ALSO emitted an error on
+    // success would have slipped past.
+    expect(logSpy.error).not.toHaveBeenCalled();
+    expect(logSpy.warning).not.toHaveBeenCalled();
   });
 
   it('should log errors when validation fails', () => {
@@ -87,6 +104,10 @@ describe('logValidationResults', () => {
     // Each error is also logged individually
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('Error 1'));
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('Error 2'));
+    // [W5][P2] Stronger: validation failure must NOT also log a "passed"
+    // success message; and error count must match the input (header + 2 errors).
+    expect(logSpy.success).not.toHaveBeenCalled();
+    expect(logSpy.error).toHaveBeenCalledTimes(3); // header + Error 1 + Error 2
   });
 
   it('should log warnings when present', () => {
@@ -100,6 +121,10 @@ describe('logValidationResults', () => {
 
     expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('1 warnings'));
     expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('Warning 1'));
+    // [W5][P2] Warnings + valid: success still fires (validation passed),
+    // errors stay silent, warnings == header + 1 warning.
+    expect(logSpy.error).not.toHaveBeenCalled();
+    expect(logSpy.warning).toHaveBeenCalledTimes(2);
   });
 
   it('should not log warnings when there are none', () => {

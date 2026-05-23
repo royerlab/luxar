@@ -113,10 +113,16 @@ describe('extractRenderingOverrides', () => {
   });
 
   it('should only include fields present in zarr config', () => {
+    // [W1][P2] Audit: pre-strengthening this test only checked 3 specific
+    // absent fields. A mutation that added spurious keys to the result
+    // (e.g. defaulting unknown keys) would have passed. Assert the exact
+    // result key set so any extra key kills the test.
     const overrides = extractRenderingOverrides({ bloom_enabled: true });
 
     expect(overrides.bloomEnabled).toBe(true);
-    // All other fields should be absent
+    // All other fields should be absent — total key set must be exactly {bloomEnabled}
+    expect(Object.keys(overrides)).toEqual(['bloomEnabled']);
+    expect(Object.keys(overrides)).toHaveLength(1);
     expect(overrides.bloomStrength).toBeUndefined();
     expect(overrides.toneMapping).toBeUndefined();
     expect(overrides.fov).toBeUndefined();
@@ -325,39 +331,66 @@ describe('renderingSettingsToZarr', () => {
 });
 
 describe('RENDERING_SETTINGS_MAP completeness', () => {
-  it('should have an entry for every non-camera RenderingSettings field that maps to zarr', () => {
-    // Verify the map has at least the critical fields
-    const requiredEntries = [
-      'bloom_enabled',
-      'bloom_strength',
-      'bloom_radius',
-      'bloom_threshold',
-      'bloom_levels',
-      'exposure',
-      'global_offset',
-      'global_gamma',
-      'tone_mapping',
-      'control_type',
-      'auto_rotate',
-      'cinematic_mode',
-      'vignette_enabled',
-      'vignette_darkness',
-      'vignette_offset',
-      'detector_noise_enabled',
-      'fxaa_enabled',
-      'msaa_enabled',
-      'msaa_samples',
-      'ssaa_enabled',
-      'ssaa_multiplier',
-      'chromatic_lens_distortion_enabled',
-      'fly_movement_speed',
-      'fly_inertial_mode',
-      'dynamic_clipping_enabled',
-      'adaptive_dpr_enabled',
-    ];
+  // [W2][P2] Audit: the prior `requiredEntries` loop only asserted the
+  // SNAKE key existed — never that it mapped to the EXPECTED camelCase
+  // name. A mutation that mapped `bloom_strength → 'bloomRadius'` would
+  // have passed. The bijection property test in
+  // viewer-config-utils.property.test.ts covers the full 47-entry map
+  // mechanically; here we keep explicit, named value-assertions for the
+  // audit-called-out entries (naturalDrag, auto_rotate_speed,
+  // chromatic_lens_*, fly_rotation_speed, ...) so they remain
+  // discoverable when reading this file in isolation.
+  const REQUIRED_PAIRS: Array<[string, string]> = [
+    ['bloom_enabled', 'bloomEnabled'],
+    ['bloom_strength', 'bloomStrength'],
+    ['bloom_radius', 'bloomRadius'],
+    ['bloom_threshold', 'bloomThreshold'],
+    ['bloom_levels', 'bloomLevels'],
+    ['exposure', 'exposure'],
+    ['global_offset', 'globalOffset'],
+    ['global_gamma', 'globalGamma'],
+    ['tone_mapping', 'toneMapping'],
+    ['control_type', 'controlType'],
+    ['auto_rotate', 'autoRotate'],
+    ['auto_rotate_speed', 'autoRotateSpeed'],
+    ['natural_drag', 'naturalDrag'],
+    ['cinematic_mode', 'cinematicMode'],
+    ['vignette_enabled', 'vignetteEnabled'],
+    ['vignette_darkness', 'vignetteDarkness'],
+    ['vignette_offset', 'vignetteOffset'],
+    ['detector_noise_enabled', 'detectorNoiseEnabled'],
+    ['detector_noise_readout_sigma', 'detectorNoiseReadoutSigma'],
+    ['detector_noise_photon_gain', 'detectorNoisePhotonGain'],
+    ['detector_noise_fpn_sigma', 'detectorNoiseFpnSigma'],
+    ['fxaa_enabled', 'fxaaEnabled'],
+    ['msaa_enabled', 'msaaEnabled'],
+    ['msaa_samples', 'msaaSamples'],
+    ['ssaa_enabled', 'ssaaEnabled'],
+    ['ssaa_multiplier', 'ssaaMultiplier'],
+    ['chromatic_lens_distortion_enabled', 'chromaticLensDistortionEnabled'],
+    ['chromatic_lens_distortion_x', 'chromaticLensDistortionX'],
+    ['chromatic_lens_distortion_y', 'chromaticLensDistortionY'],
+    ['chromatic_lens_dispersion', 'chromaticLensDispersion'],
+    ['chromatic_lens_principal_point_x', 'chromaticLensPrincipalPointX'],
+    ['chromatic_lens_principal_point_y', 'chromaticLensPrincipalPointY'],
+    ['chromatic_lens_focal_length_x', 'chromaticLensFocalLengthX'],
+    ['chromatic_lens_focal_length_y', 'chromaticLensFocalLengthY'],
+    ['chromatic_lens_skew', 'chromaticLensSkew'],
+    ['fly_movement_speed', 'flyMovementSpeed'],
+    ['fly_rotation_speed', 'flyRotationSpeed'],
+    ['fly_inertial_mode', 'flyInertialMode'],
+    ['fly_damping', 'flyDamping'],
+    ['fly_rotation_damping', 'flyRotationDamping'],
+    ['dynamic_clipping_enabled', 'dynamicClippingEnabled'],
+    ['adaptive_dpr_enabled', 'adaptiveDPREnabled'],
+  ];
 
-    for (const key of requiredEntries) {
-      expect(RENDERING_SETTINGS_MAP).toHaveProperty(key);
-    }
+  it.each(REQUIRED_PAIRS)('maps snake `%s` → camel `%s`', (snake, camel) => {
+    expect(RENDERING_SETTINGS_MAP[snake]).toBe(camel);
+  });
+
+  it('REQUIRED_PAIRS covers every entry in RENDERING_SETTINGS_MAP (no orphans)', () => {
+    // Force a follow-up when a new entry is added to the source map.
+    expect(REQUIRED_PAIRS.length).toBe(Object.keys(RENDERING_SETTINGS_MAP).length);
   });
 });

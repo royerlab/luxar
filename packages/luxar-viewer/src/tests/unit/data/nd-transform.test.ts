@@ -236,3 +236,218 @@ describe('computeWorldNdTransform', () => {
     expect(result).toEqual({ Time: { offset: 10 } });
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// data.md G5 fix [P5]: boundary cases — these are the cases that would let
+// production silently corrupt data if the inverse-query implementation
+// drifted. They are first-class boundary tests, not coverage filler.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
+  it('does not modify the world index when it is out of the permutation range (negative)', () => {
+    // Source guard: if (worldIndex >= 0 && worldIndex < inversePerm.length).
+    // A mutation that dropped the negative-side guard would silently write
+    // `undefined` into localSlice.
+    const ndTransform: NdTransformMap = {
+      Channel: { permutation: [2, 0, 1] }, // length 3 → valid worldIndex in [0,3)
+    };
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, -1], // world channel=-1 (out of range)
+      [1e10, 1e10, 1e10, 0],
+      ndTransform,
+      ['X', 'Y', 'Z', 'Channel'],
+      [0, 1, 2]
+    );
+    // Out-of-range → slicePosition unchanged from input.
+    expect(result.slicePosition[3]).toBe(-1);
+    // Sanity: didn't write `undefined`.
+    expect(result.slicePosition[3]).toBeDefined();
+  });
+
+  it('does not modify the world index when it is out of the permutation range (overflow)', () => {
+    const ndTransform: NdTransformMap = {
+      Channel: { permutation: [2, 0, 1] },
+    };
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 99], // world channel=99 (out of range)
+      [1e10, 1e10, 1e10, 0],
+      ndTransform,
+      ['X', 'Y', 'Z', 'Channel'],
+      [0, 1, 2]
+    );
+    expect(result.slicePosition[3]).toBe(99);
+    expect(result.slicePosition[3]).toBeDefined();
+  });
+
+  it('treats a single-element permutation as identity', () => {
+    // perm=[0] is the only valid length-1 permutation.
+    const ndTransform: NdTransformMap = {
+      Channel: { permutation: [0] },
+    };
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 0],
+      [1e10, 1e10, 1e10, 0],
+      ndTransform,
+      ['X', 'Y', 'Z', 'Channel'],
+      [0, 1, 2]
+    );
+    expect(result.slicePosition[3]).toBe(0);
+  });
+
+  it('treats an empty permutation as no-op (out of range for any input)', () => {
+    // perm=[] is degenerate but the function should not crash; every world
+    // index is out of range so the slice value passes through unchanged.
+    const ndTransform: NdTransformMap = {
+      Channel: { permutation: [] },
+    };
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 5],
+      [1e10, 1e10, 1e10, 0],
+      ndTransform,
+      ['X', 'Y', 'Z', 'Channel'],
+      [0, 1, 2]
+    );
+    expect(result.slicePosition[3]).toBe(5);
+  });
+
+  it('skips the dimension when scale === 0 (cannot invert)', () => {
+    // Source guard: if (scale === 0) continue;
+    const ndTransform: NdTransformMap = {
+      Time: { scale: 0, offset: 10 },
+    };
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 42],
+      [1e10, 1e10, 1e10, 5],
+      ndTransform,
+      ['X', 'Y', 'Z', 'Time'],
+      [0, 1, 2]
+    );
+    // Position and tolerance must pass through unchanged (no NaN/Infinity).
+    expect(result.slicePosition[3]).toBe(42);
+    expect(result.tolerance[3]).toBe(5);
+    expect(Number.isFinite(result.slicePosition[3])).toBe(true);
+    expect(Number.isFinite(result.tolerance[3])).toBe(true);
+  });
+});
+
+describe('composeNdTransforms — boundary cases (data.md G5)', () => {
+  it('composes three affine transforms in root-first order', () => {
+    // root: scale=2, offset=1 → effective_root(x) = 2x + 1
+    // mid: scale=3, offset=0 → effective_mid(x) = 3x
+    // leaf: scale=1, offset=4 → effective_leaf(x) = x + 4
+    //
+    // Composition (parent applied outermost):
+    //   y = leaf(x) = x + 4
+    //   y = mid(y) = 3(x+4) = 3x + 12
+    //   y = root(y) = 2(3x+12) + 1 = 6x + 25
+    //
+    // So composed: scale=6, offset=25.
+    const root: NdTransformMap = { Time: { scale: 2, offset: 1 } };
+    const mid: NdTransformMap = { Time: { scale: 3, offset: 0 } };
+    const leaf: NdTransformMap = { Time: { scale: 1, offset: 4 } };
+
+    const result = composeNdTransforms(root, mid, leaf);
+    expect((result.Time as { scale: number; offset: number }).scale).toBeCloseTo(6);
+    expect((result.Time as { scale: number; offset: number }).offset).toBeCloseTo(25);
+  });
+
+  it('composes three permutations correctly', () => {
+    // root: [1, 0, 2] (swap 0/1)
+    // mid:  [2, 1, 0] (swap 0/2)
+    // leaf: [0, 2, 1] (swap 1/2)
+    //
+    // For each leaf output index i, walk inward:
+    //   i=0: leaf[0]=0 → mid[0]=2 → root[2]=2
+    //   i=1: leaf[1]=2 → mid[2]=0 → root[0]=1
+    //   i=2: leaf[2]=1 → mid[1]=1 → root[1]=0
+    // Expected: [2, 1, 0]
+    const root: NdTransformMap = { Ch: { permutation: [1, 0, 2] } };
+    const mid: NdTransformMap = { Ch: { permutation: [2, 1, 0] } };
+    const leaf: NdTransformMap = { Ch: { permutation: [0, 2, 1] } };
+
+    const result = composeNdTransforms(root, mid, leaf);
+    expect((result.Ch as { permutation: number[] }).permutation).toEqual([2, 1, 0]);
+  });
+
+  it('identity composes with anything to yield the other (algebraic identity)', () => {
+    // P12 / H1 connection: identity composition is a property worth pinning.
+    const identity: NdTransformMap = {}; // empty = identity
+    const t: NdTransformMap = { Time: { scale: 7, offset: 3 } };
+
+    expect(composeNdTransforms(identity, t)).toEqual(t);
+    expect(composeNdTransforms(t, identity)).toEqual(t);
+  });
+
+  it('skips mixed affine+permutation under the same dim (no silent corruption)', () => {
+    // Source guard: if (!allPerm && !allAffine) continue;
+    // Mutation that dropped this guard would produce a nonsensical hybrid.
+    const t1: NdTransformMap = { Time: { permutation: [1, 0] } };
+    const t2: NdTransformMap = { Time: { scale: 2 } };
+
+    const result = composeNdTransforms(t1, t2);
+    // Time is dropped entirely because the entries are type-inconsistent.
+    expect(result.Time).toBeUndefined();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// MED-5 (production-bug worklist): `computeWorldNdTransform.findPath`
+// mutated a shared `chain` array without guarding against repeated node
+// references. A malformed scene graph that contains the same node twice
+// (cycle or shared subtree) used to double-push the same nd_transform,
+// causing the chain to be composed twice — silent corruption.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('computeWorldNdTransform — cycle / shared-reference safety (MED-5)', () => {
+  interface TestNode {
+    path: string;
+    type: string;
+    attrs: Record<string, any>;
+    hasSpatialIndex: boolean;
+    children: TestNode[];
+  }
+
+  it('throws a clear error on a self-referential cycle instead of looping silently', () => {
+    // Construct a cycle: root → A → A (self-ref). Without the visited
+    // guard this would recurse without termination; with the guard, it
+    // throws on the second visit.
+    const A: TestNode = {
+      path: '/A',
+      type: 'group',
+      attrs: { nd_transform: { Time: { offset: 7 } } },
+      hasSpatialIndex: false,
+      children: [],
+    };
+    A.children.push(A); // self-cycle
+    const root: TestNode = {
+      path: '/',
+      type: 'group',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [A],
+    };
+    expect(() => computeWorldNdTransform(root, '/NonExistent')).toThrow(
+      /malformed scene graph/i
+    );
+  });
+
+  it('throws when a node is reachable via two distinct paths (shared reference)', () => {
+    // Same node referenced as a child of two different parents — would
+    // double-compose its nd_transform without the visited set.
+    const shared: TestNode = {
+      path: '/Shared',
+      type: 'group',
+      attrs: { nd_transform: { Time: { scale: 3 } } },
+      hasSpatialIndex: false,
+      children: [],
+    };
+    const root: TestNode = {
+      path: '/',
+      type: 'group',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [shared, shared], // listed twice under the same parent
+    };
+    expect(() => computeWorldNdTransform(root, '/Target')).toThrow(/malformed scene graph/i);
+  });
+});

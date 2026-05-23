@@ -59,28 +59,44 @@ export function calculateEffectiveRadii(
     return spatialExtendDims[d];
   };
 
+  // MED-13: Precompute per-dimension invariants OUTSIDE the per-point loop.
+  // displayDims.includes(d) was O(displayDims.length) per check; tolerance,
+  // slicePosition, and isSpatialDim are also dimension-only (independent
+  // of i). Precomputing them once turns the inner work from
+  // O(ndim * displayDims.length * numPoints) into O(ndim * numPoints).
+  const isDisplayDim = new Array<boolean>(ndim);
+  const isExtendToAll = new Array<boolean>(ndim);
+  const isSpatial = new Array<boolean>(ndim);
+  const targetPos = new Array<number>(ndim);
+  for (let d = 0; d < ndim; d++) {
+    isDisplayDim[d] = displayDims.includes(d);
+    isExtendToAll[d] = viewState.tolerance[d] >= 1e9;
+    isSpatial[d] = isSpatialDim(d);
+    targetPos[d] = slicePosition[d] ?? 0;
+  }
+
   for (let i = 0; i < numPoints; i++) {
     const originalRadius = radii[i];
+    const base = i * ndim;
 
     // First check discrete dimensions for exact match
     let discreteMatch = true;
 
     for (let d = 0; d < ndim; d++) {
       // Skip displayed dimensions (they're in the viewing plane)
-      if (displayDims.includes(d)) {
+      if (isDisplayDim[d]) {
         continue;
       }
 
       // Skip extend_to_all dimensions (tolerance >= 1e9) — always visible
-      if (viewState.tolerance[d] >= 1e9) {
+      if (isExtendToAll[d]) {
         continue;
       }
 
       // For non-spatial (discrete) dimensions, require exact match
-      if (!isSpatialDim(d)) {
-        const value = positions[i * ndim + d];
-        // Use nullish coalescing (??) to only default to 0 for undefined/null, not for the value 0
-        const target = slicePosition[d] ?? 0;
+      if (!isSpatial[d]) {
+        const value = positions[base + d];
+        const target = targetPos[d];
         // Use tolerance for floating point comparison
         if (Math.abs(value - target) > discreteTolerance) {
           discreteMatch = false;
@@ -100,24 +116,23 @@ export function calculateEffectiveRadii(
 
     for (let d = 0; d < ndim; d++) {
       // Skip if dimension is displayed (it's in the viewing plane)
-      if (displayDims.includes(d)) {
+      if (isDisplayDim[d]) {
         continue;
       }
 
       // Skip extend_to_all dimensions — no distance contribution
-      if (viewState.tolerance[d] >= 1e9) {
+      if (isExtendToAll[d]) {
         continue;
       }
 
       // Skip if dimension is not spatial (already handled above)
-      if (!isSpatialDim(d)) {
+      if (!isSpatial[d]) {
         continue;
       }
 
       // This is a non-displayed spatial dimension - calculate distance
-      const value = positions[i * ndim + d];
-      // Use nullish coalescing (??) to only default to 0 for undefined/null, not for the value 0
-      const target = slicePosition[d] ?? 0;
+      const value = positions[base + d];
+      const target = targetPos[d];
       const distance = value - target;
       sumSquaredDistances += distance * distance;
     }
@@ -126,8 +141,12 @@ export function calculateEffectiveRadii(
     const radiusSquared = originalRadius * originalRadius;
     const effectiveRadiusSquared = radiusSquared - sumSquaredDistances;
 
-    // Clamp to zero for numerical stability (points at hypersphere boundary)
-    effectiveRadii[i] = effectiveRadiusSquared > 0 ? Math.sqrt(effectiveRadiusSquared) : 0;
+    // Clamp to zero for numerical stability (points at hypersphere boundary).
+    // Use `>= 0` so the exact-boundary case (D == R, where R² - D² == 0)
+    // returns 0 from the sqrt path rather than falling into the fallback;
+    // this also produces the mathematically correct R_eff = 0 instead of
+    // implicitly relying on the fallback for the boundary case.
+    effectiveRadii[i] = effectiveRadiusSquared >= 0 ? Math.sqrt(effectiveRadiusSquared) : 0;
   }
 
   return effectiveRadii;

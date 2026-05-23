@@ -290,6 +290,124 @@ describe('initPicking', () => {
     });
   });
 
+  describe('success path — both has_labels AND has_image_labels (core.md G15)', () => {
+    it('constructs BOTH loaders when a scene declares has_labels and has_image_labels', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabels: true, hasImageLabels: true }));
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      // Both loaders constructed (mutation guard: a regression that
+      // swapped `||` for `else if` between the two if-blocks would
+      // leave imageLabelLoader undefined in this case).
+      expect(LabelLoader).toHaveBeenCalledOnce();
+      expect(ImageLabelLoader).toHaveBeenCalledOnce();
+      expect(result.labelLoader).toBeDefined();
+      expect(result.imageLabelLoader).toBeDefined();
+      // PickingSystem still constructed once for the combined scene.
+      expect(PickingSystem).toHaveBeenCalledOnce();
+    });
+
+    it('constructs BOTH loaders when separate nodes declare has_labels and has_image_labels', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      // Scene with one labels-node and a separate image-labels-node.
+      const root = new THREE.Group();
+      root.name = 'LuxarScene';
+      const labelChild = new THREE.Group();
+      labelChild.userData = { attrs: { has_labels: true } };
+      const imageChild = new THREE.Group();
+      imageChild.userData = { attrs: { has_image_labels: true } };
+      root.add(labelChild);
+      root.add(imageChild);
+      const scene = new THREE.Scene();
+      scene.add(root);
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      expect(LabelLoader).toHaveBeenCalledOnce();
+      expect(ImageLabelLoader).toHaveBeenCalledOnce();
+      expect(result.labelLoader).toBeDefined();
+      expect(result.imageLabelLoader).toBeDefined();
+    });
+  });
+
+  describe('shouldPick predicate wiring (core.md G16)', () => {
+    it('wires setShouldPick on the PickingSystem with an overlay-aware predicate', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabels: true }));
+      const hasVisibleHoverOverlay = vi.fn().mockReturnValue(false);
+      const overlayManager = { hasVisibleHoverOverlay };
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => overlayManager as never,
+      });
+
+      // setShouldPick was called with a predicate function.
+      const ps = result.pickingSystem as unknown as {
+        setShouldPick: ReturnType<typeof vi.fn>;
+      };
+      expect(ps.setShouldPick).toHaveBeenCalledOnce();
+      const predicate = ps.setShouldPick.mock.calls[0][0] as () => boolean;
+      expect(typeof predicate).toBe('function');
+
+      // The predicate reads through the live overlayManager accessor.
+      // Initially no hover overlay is visible → shouldPick=false
+      // (picking system skips the GPU work).
+      expect(predicate()).toBe(false);
+      expect(hasVisibleHoverOverlay).toHaveBeenCalledOnce();
+
+      // Toggle the overlay state to "visible" — predicate sees the new
+      // value (live read, not snapshot) and returns true.
+      hasVisibleHoverOverlay.mockReturnValue(true);
+      expect(predicate()).toBe(true);
+    });
+
+    it('predicate returns false when getOverlayManager() returns undefined', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabels: true }));
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      const ps = result.pickingSystem as unknown as {
+        setShouldPick: ReturnType<typeof vi.fn>;
+      };
+      const predicate = ps.setShouldPick.mock.calls[0][0] as () => boolean;
+      // No overlay manager → ?? false → shouldPick=false. The picking
+      // system skips the GPU work because there's no consumer for the
+      // pick result.
+      expect(predicate()).toBe(false);
+    });
+  });
+
   describe('success path — listener wiring', () => {
     it('registers mousemove + mouseleave on canvas + resize on window via pickingEvents', async () => {
       (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
@@ -317,8 +435,17 @@ describe('initPicking', () => {
       expect(targets).toContain('mouseleave');
       expect(targets).toContain('resize');
 
-      // .add covers controls change/start/end + sceneManager camera-changed.
-      expect(addSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+      // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY 4 so
+      // a regression that double-registered a cleanup (or added a 5th
+      // listener without considering teardown) gets flagged. The four
+      // are: controls.removeEventListener('change' | 'start' | 'end')
+      // and sceneManager.removeEventListener('camera-changed') — see
+      // core/app/picking/init-picking.ts lines 144, 161, 162, 169.
+      expect(addSpy.mock.calls.length).toBe(4);
+      // Each registered cleanup is a function (not a value / object).
+      for (const call of addSpy.mock.calls) {
+        expect(typeof call[0]).toBe('function');
+      }
 
       // Direct addEventListener on controls + sceneManager (Three.js
       // EventDispatcher doesn't satisfy the EventTarget type).

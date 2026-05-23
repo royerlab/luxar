@@ -223,12 +223,22 @@ export class SceneLoaderManager {
    * default-loader id. Returns the loader instance for the caller to
    * dispose (sync or async). Centralizes the bookkeeping so the
    * fire-and-forget and awaitable variants stay in sync.
+   *
+   * Default-election contract: when the detached loader was the current
+   * default, the next default is the FIRST remaining loader by insertion
+   * order — i.e. the oldest loader still registered. This ordering is
+   * a stable property of `Map` and therefore deterministic across reloads
+   * for any given sequence of registrations. Callers that need a specific
+   * default should call `setDefault()` explicitly rather than relying on
+   * the implicit election.
    */
   private detachLoader(id: string): SceneLoader | null {
     const loader = this.loaders.get(id);
     if (!loader) return null;
     this.loaders.delete(id);
     if (this.defaultLoaderId === id) {
+      // Per the contract above: next default is the oldest remaining
+      // loader by registration order (Map insertion order).
       this.defaultLoaderId =
         this.loaders.size > 0 ? (this.loaders.keys().next().value ?? null) : null;
     }

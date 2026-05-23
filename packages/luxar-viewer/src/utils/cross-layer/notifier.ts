@@ -39,13 +39,22 @@ export interface NotifierBackend {
   clearError(): void;
 }
 
+// MED-42 (audit-ack): module-level singleton state is intentional, not
+// a code smell. The cross-layer notifier exists precisely BECAUSE
+// lower layers cannot import the concrete `ui/` helpers (CONVENTIONS.md
+// §10 layer order). Wrapping in a class with DI would require every
+// data/scene/input caller to thread a `Notifier` instance through its
+// constructor — defeating the point of a layer-bypass surface.
+// `setNotifierBackend` / `clearNotifierBackend` give tests full
+// control over the lifetime, and embedders that need per-app notifiers
+// can instantiate the concrete UI helpers directly.
 let backend: NotifierBackend | null = null;
 let warnedMissing = false;
 
 function warnIfMissing(method: string): void {
   if (!warnedMissing) {
     log.warning(
-      Modules.SCENE_MANAGER,
+      Modules.NOTIFIER,
       `notifier.${method} called before backend registered — message dropped. ` +
         'This is normal during early startup or unit tests; if you see this in ' +
         'production, the UI layer never called setNotifierBackend.'

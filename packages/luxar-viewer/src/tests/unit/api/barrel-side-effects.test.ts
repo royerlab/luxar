@@ -48,11 +48,88 @@ describe('Public barrel side effects', () => {
     expect(window.__luxarDebug).toBeUndefined();
   });
 
-  it('exposes LuxarApp, LuxarAppOptions, bootstrapStandalone, readUrlParams, StorageKeys', async () => {
+  it('exposes LuxarApp as a constructor that produces instances with init() and dispose()', async () => {
+    // api.md W1/G5 fix: previous version only checked `typeof === 'function'`.
+    // A mutant `export const LuxarApp = () => undefined;` would have passed.
+    // Pin that LuxarApp is a constructor and that produced instances expose
+    // the documented `init()` / `dispose()` lifecycle methods.
     const mod = await import('../../../index');
     expect(typeof mod.LuxarApp).toBe('function');
+    // Constructors have non-zero prototype property entries (or at least a
+    // constructor link); a plain arrow function does not. Belt + braces:
+    expect(typeof mod.LuxarApp.prototype).toBe('object');
+    expect(typeof mod.LuxarApp.prototype.init).toBe('function');
+    expect(typeof mod.LuxarApp.prototype.dispose).toBe('function');
+  });
+
+  it('exposes bootstrapStandalone, readUrlParams, normalizeDataSourceUrl as callable functions', async () => {
+    // api.md G1 fix: previous version pinned only 5 of 8 value exports.
+    // Add the 3 missing: normalizeDataSourceUrl + the rendering helpers.
+    const mod = await import('../../../index');
     expect(typeof mod.bootstrapStandalone).toBe('function');
     expect(typeof mod.readUrlParams).toBe('function');
+    expect(typeof mod.normalizeDataSourceUrl).toBe('function');
+  });
+
+  it('exposes rendering helpers (blending + colormap) as callable functions', async () => {
+    // api.md G1 fix: pin the 5 rendering helpers re-exported from index.ts
+    // (getCompleteBlendingState, applyBlendingStateToMaterial,
+    // supportsScalarColormap, applyColormapTextureToMaterial,
+    // applyScalarRangeToMaterial). Each is a STABLE public API per the
+    // module's own docstring; a regression that drops one is a breaking
+    // change that should be caught here.
+    const mod = await import('../../../index');
+    expect(typeof mod.getCompleteBlendingState).toBe('function');
+    expect(typeof mod.applyBlendingStateToMaterial).toBe('function');
+    expect(typeof mod.supportsScalarColormap).toBe('function');
+    expect(typeof mod.applyColormapTextureToMaterial).toBe('function');
+    expect(typeof mod.applyScalarRangeToMaterial).toBe('function');
+  });
+
+  it('exposes StorageKeys as a namespacing object with luxar.* prefixed string keys', async () => {
+    // api.md W2 fix: previous version only checked `typeof === 'object'`.
+    // Pin the namespacing contract: StorageKeys holds the `luxar.*`
+    // prefix strings used for localStorage namespacing. Some entries are
+    // functions (e.g. `rendering(sceneId)` builds a per-scene key), so
+    // we check that each non-function value is a `luxar.`-prefixed
+    // string, and that the function-valued entries actually return
+    // `luxar.`-prefixed strings when called.
+    const mod = await import('../../../index');
     expect(typeof mod.StorageKeys).toBe('object');
+    expect(mod.StorageKeys).not.toBeNull();
+    expect(Object.keys(mod.StorageKeys).length).toBeGreaterThan(0);
+
+    for (const value of Object.values(mod.StorageKeys)) {
+      if (typeof value === 'function') {
+        const built = (value as (s: string) => string)('test-scene');
+        expect(typeof built).toBe('string');
+        expect(built.startsWith('luxar.')).toBe(true);
+      } else {
+        expect(typeof value).toBe('string');
+        expect((value as string).startsWith('luxar.')).toBe(true);
+      }
+    }
+  });
+
+  it('does not leak additional unexpected exports (public surface lock)', async () => {
+    // api.md G3 fix: a mutation that adds a leaky export would silently
+    // expand the public surface and never fail any test. Pin the FULL
+    // value-export set; new public APIs must update this list.
+    const mod = await import('../../../index');
+    const valueExports = Object.keys(mod).sort();
+    expect(valueExports).toEqual(
+      [
+        'LuxarApp',
+        'StorageKeys',
+        'applyBlendingStateToMaterial',
+        'applyColormapTextureToMaterial',
+        'applyScalarRangeToMaterial',
+        'bootstrapStandalone',
+        'getCompleteBlendingState',
+        'normalizeDataSourceUrl',
+        'readUrlParams',
+        'supportsScalarColormap',
+      ].sort()
+    );
   });
 });

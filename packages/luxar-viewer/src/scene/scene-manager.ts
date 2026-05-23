@@ -193,7 +193,18 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   private readonly boundsCache = new SceneBoundsCache();
 
-  /** Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation) */
+  /**
+   * Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation).
+   *
+   * **Ownership contract**: This Vector2 instance is owned by SceneManager
+   * and is reused across every camera-materials update — every resize
+   * mutates it in place. Consumers reached via {@link makeCameraMaterialsCtx}
+   * MUST treat the supplied `bufferSize` as **read-only borrow scoped to
+   * the current call**. If a consumer needs to hold the value across
+   * frames, it must `.copy()` the Vector2 into its own storage, not
+   * retain the shared reference — otherwise the next resize will silently
+   * corrupt the held value.
+   */
   private readonly _bufferSize = new THREE.Vector2();
 
   /**

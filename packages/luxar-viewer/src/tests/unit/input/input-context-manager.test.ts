@@ -5,8 +5,12 @@
  * keyboard conflicts between different UI modes.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { InputContextManager, InputContext } from '../../../input/input-handler/context-manager';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  InputContextManager,
+  InputContext,
+  MAX_KEY_EVENT_DEPTH,
+} from '../../../input/input-handler/context-manager';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;
@@ -26,14 +30,34 @@ describe('InputContextManager', () => {
     });
 
     it('should be enabled by default', () => {
-      const event = new KeyboardEvent('keydown', { key: 'a' });
-      // If disabled, would return false immediately
-      manager.setEnabled(false);
-      expect(manager.handleKeyEvent(event, 'down')).toBe(false);
+      // input.md W3 fix: strengthen the assertion — pin the default enabled
+      // state by observing that a registered handler fires when the manager
+      // is freshly constructed (without an explicit setEnabled call). A
+      // mutation that flipped the default to `false` would otherwise be
+      // hidden behind two "returns false" outcomes that look identical.
+      //
+      // Use 'h' — 'a' is in flyModeKeys (blocked in NAVIGATION).
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      // Default state: the manager dispatches the binding.
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
 
+      // After explicit disable: dispatch is suppressed.
+      manager.setEnabled(false);
+      const event2 = new KeyboardEvent('keydown', { key: 'h' });
+      expect(manager.handleKeyEvent(event2, 'down')).toBe(false);
+      expect(handler).toHaveBeenCalledTimes(1); // unchanged
+
+      // Re-enable: dispatch resumes.
       manager.setEnabled(true);
-      // Now it processes the event (returns false because no binding, but processes)
-      expect(manager.handleKeyEvent(event, 'down')).toBe(false);
+      const event3 = new KeyboardEvent('keydown', { key: 'h' });
+      expect(manager.handleKeyEvent(event3, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -66,14 +90,25 @@ describe('InputContextManager', () => {
     });
 
     it('should not push same context twice', () => {
+      // input.md W4 fix: pin not just the stack-length invariant, but
+      // (a) the actual stack contents (no duplicate FLY_CONTROLS) and
+      // (b) that popping returns to the original context exactly once.
+      // The pre-strengthening test only asserted "length unchanged",
+      // which a mutation that grew the stack with a duplicate would
+      // still satisfy if the no-op guard short-circuited differently.
       manager.pushContext(InputContext.FLY_CONTROLS);
-      const debugInfo1 = manager.getDebugInfo();
-      const stackLength1 = debugInfo1.contextStack.length;
+      const before = manager.getDebugInfo().contextStack.slice();
+      expect(before).toEqual([InputContext.NAVIGATION]); // saved prior
 
-      manager.pushContext(InputContext.FLY_CONTROLS); // Same context
-      const debugInfo2 = manager.getDebugInfo();
+      manager.pushContext(InputContext.FLY_CONTROLS); // Same context — no-op
+      const after = manager.getDebugInfo().contextStack;
+      expect(after).toEqual(before); // identical contents, not just length
 
-      expect(debugInfo2.contextStack.length).toBe(stackLength1);
+      // Single pop returns to the saved prior context — confirms no
+      // duplicate FLY_CONTROLS was silently pushed.
+      manager.popContext();
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+      expect(manager.getDebugInfo().contextStack).toHaveLength(0);
     });
 
     it('should handle empty stack on pop', () => {
@@ -454,6 +489,187 @@ describe('InputContextManager', () => {
     });
   });
 
+  // input.md G8 fix: pin the exact value of the MAX_KEY_EVENT_DEPTH
+  // constant so a refactor that changed it (e.g. to 5 or 100) would
+  // surface the impact on documented behavior. 10 is "comfortably
+  // above any realistic UI depth" per the source comment.
+  describe('MAX_KEY_EVENT_DEPTH boundary', () => {
+    it('is exactly 10 (the documented depth ceiling)', () => {
+      expect(MAX_KEY_EVENT_DEPTH).toBe(10);
+    });
+
+    it('bails with a logged error when handleKeyEvent recurses past the limit', () => {
+      const localMgr = new InputContextManager();
+      // Register a handler that re-dispatches the same keyboard event
+      // through handleKeyEvent — would recurse infinitely without the
+      // depth guard.
+      const handler = vi.fn((event: KeyboardEvent) => {
+        localMgr.handleKeyEvent(event, 'down');
+      });
+      localMgr.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const result = localMgr.handleKeyEvent(event, 'down');
+      // The outer call dispatches, the recursion fires up to the cap,
+      // then handleKeyEvent returns false at the cap. Result of the
+      // outermost call is `true` (the binding fired).
+      expect(result).toBe(true);
+      // Handler should have been called exactly MAX_KEY_EVENT_DEPTH
+      // times before the guard short-circuits.
+      expect(handler.mock.calls.length).toBe(MAX_KEY_EVENT_DEPTH);
+    });
+  });
+
+  // input.md G6 fix: the existing "should allow Escape in typing
+  // context" test (lines 238-245) reflects the OLD behavior where
+  // Escape from a typing context was passed-through unhandled. The
+  // current code routes Escape through dispatchEscapeFromTypingContext,
+  // which fires the first matching Escape binding across every
+  // context (including the current one). This `it.skip` documents the
+  // post-refactor contract; un-skip when the OOS production bug is
+  // fixed.
+  describe('Escape in typing context (post-refactor contract)', () => {
+    it.skip('dispatches Escape through dispatchEscapeFromTypingContext to the navigation binding', () => {
+      const escapeHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: escapeHandler,
+      });
+      manager.setContext(InputContext.TYPING);
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      // Post-refactor: Escape MUST be dispatched to the registered
+      // NAVIGATION binding so the panel can close.
+      expect(handled).toBe(true);
+      expect(escapeHandler).toHaveBeenCalledWith(event);
+    });
+  });
+
+  // input.md G7 fix: passthrough cascade — when the current context
+  // has passthrough enabled and the key isn't bound there, the event
+  // should walk lower-priority contexts. Pin the cascade ordering.
+  describe('passthrough cascade', () => {
+    it('cascades a key through context priority order until a binding fires', () => {
+      const navHandler = vi.fn();
+      const dimHandler = vi.fn();
+
+      // Register on the lowest-priority context (NAVIGATION).
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navHandler,
+      });
+
+      // Stand in FLY_CONTROLS (priority 1, passthrough). 'h' is not
+      // in flyModeKeys/arrows allowedKeys so it falls through.
+      manager.setContext(InputContext.FLY_CONTROLS);
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(navHandler).toHaveBeenCalledWith(event);
+      expect(dimHandler).not.toHaveBeenCalled();
+    });
+
+    it('does NOT cascade when the current context disables passthrough', () => {
+      const navHandler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navHandler,
+      });
+
+      // TYPING context has passthrough: false, allowedKeys: [].
+      // The "Escape special-case" routes through dispatchEscapeFromTypingContext;
+      // for any non-Escape key, the typing branch returns true without
+      // dispatching to other contexts.
+      manager.setContext(InputContext.TYPING);
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true); // Blocked by typing
+      expect(navHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  // input.md G13 fix: typing-context detection examines
+  // document.activeElement directly. The existing tests pin the
+  // contenteditable / input / textarea cases; the missing branches
+  // are (a) range / checkbox / radio inputs MUST NOT block shortcuts,
+  // and (b) the select element MUST block.
+  describe('typing-context detection — input type variants', () => {
+    let probe: HTMLElement | null = null;
+    afterEach(() => {
+      if (probe?.parentNode) probe.parentNode.removeChild(probe);
+      probe = null;
+    });
+
+    it('does NOT treat range inputs (sliders) as typing context', () => {
+      const range = document.createElement('input');
+      range.type = 'range';
+      document.body.appendChild(range);
+      range.focus();
+      probe = range;
+
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      // Shortcut still fires — range is interactive, not text entry.
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('does NOT treat checkbox inputs as typing context', () => {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      document.body.appendChild(cb);
+      cb.focus();
+      probe = cb;
+
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('treats <select> as typing context (blocks shortcuts)', () => {
+      const select = document.createElement('select');
+      document.body.appendChild(select);
+      select.focus();
+      probe = select;
+
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true); // blocked
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
   describe('keydown vs keyup behavior', () => {
     it('should call handler on keydown', () => {
       const handler = vi.fn();
@@ -513,6 +729,207 @@ describe('InputContextManager', () => {
       expect(handled).toBe(false);
       expect(toggleHandler).toHaveBeenCalledTimes(1); // Still only once
       expect(toggleState).toBe(true); // Stays ON (doesn't toggle back)
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // HIGH-9 regression: typing-detection paths must not diverge.
+  //
+  // Before this fix, context-manager.ts had its own inlined DOM check
+  // duplicating focus-utils.ts::isTypingInInput. A fix to one path
+  // would silently miss the other. Both paths now delegate to the
+  // canonical focus-utils helper.
+  //
+  // Strategy: for each canonical activeElement classification, assert
+  // that InputContextManager's typing-context branch (observable via
+  // handleKeyEvent dropping non-Escape keys while a typing surface is
+  // focused) AGREES with the focus-utils helper's verdict.
+  // ─────────────────────────────────────────────────────────────────────
+  describe('HIGH-9: typing-detection agrees with focus-utils helper', () => {
+    afterEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    // Helper: probe the manager's view of "am I typing?" by registering
+    // a non-Escape binding and observing whether handleKeyEvent
+    // suppresses it. In a typing context, the manager intercepts
+    // non-Escape keys and returns true without invoking the handler.
+    const probeIsTyping = (mgr: InputContextManager): boolean => {
+      const handler = vi.fn();
+      mgr.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = mgr.handleKeyEvent(event, 'down');
+      // In typing context: handled === true and handler NOT called.
+      // In non-typing context: handler called.
+      return handled && handler.mock.calls.length === 0;
+    };
+
+    const cases: Array<{ name: string; build: () => HTMLElement; typing: boolean }> = [
+      {
+        name: 'plain text input',
+        build: () => {
+          const el = document.createElement('input');
+          el.type = 'text';
+          return el;
+        },
+        typing: true,
+      },
+      {
+        name: 'textarea',
+        build: () => document.createElement('textarea'),
+        typing: true,
+      },
+      {
+        name: 'contenteditable=true div',
+        build: () => {
+          const el = document.createElement('div');
+          el.setAttribute('contenteditable', 'true');
+          el.tabIndex = 0;
+          return el;
+        },
+        typing: true,
+      },
+      {
+        name: 'button',
+        build: () => document.createElement('button'),
+        typing: false,
+      },
+      {
+        name: 'plain div',
+        build: () => {
+          const el = document.createElement('div');
+          el.tabIndex = 0;
+          return el;
+        },
+        typing: false,
+      },
+      {
+        name: 'input type=range',
+        build: () => {
+          const el = document.createElement('input');
+          el.type = 'range';
+          return el;
+        },
+        typing: false,
+      },
+      {
+        name: 'input type=checkbox',
+        build: () => {
+          const el = document.createElement('input');
+          el.type = 'checkbox';
+          return el;
+        },
+        typing: false,
+      },
+    ];
+
+    for (const c of cases) {
+      it(`agrees with focus-utils for ${c.name}`, async () => {
+        // Import focus-utils canonical helper synchronously via dynamic
+        // import to avoid a hoisting hazard with the mocked top-level.
+        const { isTypingInInput } = await import(
+          '../../../input/input-handler/commands/focus-utils'
+        );
+
+        const el = c.build();
+        document.body.appendChild(el);
+        el.focus();
+
+        // Sanity: jsdom focus might not always set activeElement on
+        // every node. If activeElement is body for a non-typing case
+        // it's still a valid agreement (body is not typing).
+        const helperVerdict = isTypingInInput(document.activeElement);
+        expect(helperVerdict).toBe(c.typing);
+
+        const managerVerdict = probeIsTyping(new InputContextManager());
+        expect(managerVerdict).toBe(c.typing);
+
+        expect(managerVerdict).toBe(helperVerdict);
+      });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // MED-3 regression: Escape-from-typing must route both `handler` and
+  // `keyupHandler`. Previously, in a typing context, an Escape keyup
+  // would fall through to `return false` instead of looking up
+  // additional contexts for a keyupHandler match.
+  // ─────────────────────────────────────────────────────────────────────
+  describe('MED-3: dispatchEscapeFromTypingContext routes keyupHandler', () => {
+    afterEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    const enterTypingContext = (): void => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      document.body.appendChild(input);
+      input.focus();
+    };
+
+    it('invokes Escape keyupHandler from a typing context', () => {
+      enterTypingContext();
+      const keydownHandler = vi.fn();
+      const keyupHandler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: keydownHandler,
+        keyupHandler,
+      });
+
+      const event = new KeyboardEvent('keyup', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'up');
+
+      expect(handled).toBe(true);
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+      expect(keydownHandler).not.toHaveBeenCalled();
+    });
+
+    it('still invokes Escape main handler on keydown from typing context', () => {
+      enterTypingContext();
+      const keydownHandler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: keydownHandler,
+      });
+
+      const event = new KeyboardEvent('keydown', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'down');
+
+      expect(handled).toBe(true);
+      expect(keydownHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips bindings without a keyupHandler and finds a match in another context', () => {
+      enterTypingContext();
+      const navKeydownOnly = vi.fn();
+      const uiKeyupHandler = vi.fn();
+
+      // NAVIGATION binding has only a keydown handler — should be
+      // skipped on keyup dispatch.
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: navKeydownOnly,
+      });
+
+      // UI_INTERACTION binding has a keyupHandler — should fire.
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'Escape',
+        handler: vi.fn(),
+        keyupHandler: uiKeyupHandler,
+      });
+
+      const event = new KeyboardEvent('keyup', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'up');
+
+      expect(handled).toBe(true);
+      expect(uiKeyupHandler).toHaveBeenCalledTimes(1);
+      expect(navKeydownOnly).not.toHaveBeenCalled();
     });
   });
 });

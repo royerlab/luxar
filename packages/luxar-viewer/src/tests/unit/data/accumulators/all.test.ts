@@ -132,6 +132,59 @@ describe('LoadedPointsDataAccumulator', () => {
     expect(data.metadata.usedSpatialIndex).toBe(true);
   });
 
+  // MED-9 (production-bug worklist): `updateMetadata({ bounds })` used
+  // to silently drop the `bounds` argument with no signal to the caller.
+  // Now it warns so callers know their update was ignored. We can't
+  // easily intercept `log.warning` here without mocking, but we can
+  // pin the behavioral contract: bounds is ignored and `getData()` still
+  // computes fresh bounds from positions.
+  it('updateMetadata ignores `bounds` — bounds are always computed from positions (MED-9)', () => {
+    accumulator.fill(0, {
+      positions: new Float32Array([1, 2, 3, 4, 5, 6]), // two points
+    });
+    // Pass a wildly wrong bounds — it must be ignored.
+    const bogusBounds = new THREE.Box3(
+      new THREE.Vector3(-999, -999, -999),
+      new THREE.Vector3(999, 999, 999)
+    );
+    accumulator.updateMetadata({ bounds: bogusBounds });
+    const data = accumulator.getData(2);
+    // Bounds reflect actual positions, not the bogus value.
+    expect(data.metadata.bounds.min.x).toBe(1);
+    expect(data.metadata.bounds.max.x).toBe(4);
+    expect(data.metadata.bounds.min.x).not.toBe(-999);
+  });
+
+  // MED-10 (production-bug worklist): `filledCount` previously divided
+  // `colors.length / 3` unconditionally when positions were absent. If
+  // a future format ever uses 4-channel colors (or if a fill carries a
+  // 1-per-point attribute like radii without positions or colors), the
+  // count was wrong and `usedCount` advanced incorrectly. The fix
+  // prefers 1-per-point sources (radii/sharpness/scalars) over colors.
+  it('fill without positions uses radii length for usedCount (MED-10)', () => {
+    // First fill establishes types. Then a no-position fill with radii
+    // must advance usedCount by the radii length, not divide colors/3.
+    accumulator.fill(0, {
+      positions: new Float32Array([1, 2, 3]),
+      radii: new Float32Array([0.5]),
+    });
+    // Now grow capacity then check that a fill-after-grow with no
+    // positions but with radii of length 5 advances usedCount to 5
+    // (it would have to round-trip through ensureCapacity).
+    accumulator.ensureCapacity(100);
+    // Fill 5 more radii starting at offset 1 (no positions, no colors).
+    accumulator.fill(1, {
+      radii: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    });
+    // Growing again — the live prefix must be at least 6 (offset 1 + 5
+    // radii), so the position buffer must preserve the original [1,2,3].
+    accumulator.ensureCapacity(200);
+    const pos = accumulator.getPositionBuffer();
+    expect(pos[0]).toBe(1);
+    expect(pos[1]).toBe(2);
+    expect(pos[2]).toBe(3);
+  });
+
   it('should calculate memory usage correctly', () => {
     const stats = accumulator.getStats();
     // 32 bytes per point: pos(12) + color(12) + radii(4) + sharpness(4)

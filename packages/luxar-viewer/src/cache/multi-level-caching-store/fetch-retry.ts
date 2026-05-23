@@ -118,7 +118,7 @@ export async function fetchWithRetry(
       // do not synchronize their next attempts. Jitter is bounded by
       // MAX_RETRY_DELAY_MS so the worst-case wait stays predictable.
       const base = INITIAL_RETRY_DELAY_MS * 2 ** attempt;
-      const jitter = (Math.random() - 0.5) * 0.5 * base; // [-12.5%, +12.5%]
+      const jitter = (Math.random() - 0.5) * 0.5 * base; // [-25%, +25%]
       const delayMs = Math.min(Math.max(0, base + jitter), MAX_RETRY_DELAY_MS);
       await sleep(delayMs);
     }

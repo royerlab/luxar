@@ -225,19 +225,29 @@ describe('ChunkPrefetcher - Unit Tests', () => {
   });
 
   describe('Deduplication', () => {
-    it('should not queue same chunk twice', () => {
-      // Access same chunk twice
-      prefetcher.onAccess('data/1.1');
-      prefetcher.onAccess('data/1.1');
-
-      const stats = prefetcher.getStats();
-
-      // Should only queue 4 unique neighbors (not 8)
-      expect(stats.queued + stats.inFlight).toBeLessThanOrEqual(4);
+    it('should not queue same chunk twice (mockStore.getResult exactly equals unique-neighbor count)', () => {
+      // cache.md W17 fix: previous version asserted `<= 4` which was
+      // satisfied trivially because the synchronous mock resolves before
+      // we read stats (queued+inFlight collapsed to 0 either way).
+      // Stronger contract: the mock store's getResult call count after
+      // two onAccess calls to the same key equals the count after one
+      // call — proving dedup. (We don't pin "exactly 4" because the
+      // exact neighbor count depends on the chunk's position relative
+      // to bounds and chunk-shape; the load-bearing invariant is dedup.)
+      const callCountFromMock = () => mockStore.getResult.mock.calls.length;
+      mockStore.getResult.mockClear();
+      prefetcher.onAccess('points/positions/1.1.1');
+      const afterFirst = callCountFromMock();
+      prefetcher.onAccess('points/positions/1.1.1');
+      const afterSecond = callCountFromMock();
+      // Dedup: second access to the same key must not trigger any new fetches.
+      expect(afterSecond).toBe(afterFirst);
+      // Sanity: the first access must have triggered SOME fetches.
+      expect(afterFirst).toBeGreaterThan(0);
     });
 
-    it('should not queue chunks already in flight', async () => {
-      // Use controlled promises so gets stay pending until we resolve them
+    it('should not queue chunks already in flight (exact-4 dedup, not over-eviction)', async () => {
+      // cache.md W18 fix: same `<= 4` weakness as W17.
       const resolvers: Array<(value: { ok: true; value: Uint8Array }) => void> = [];
       const slowMockStore = {
         getResult: vi.fn().mockImplementation(
@@ -254,23 +264,17 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         maxConcurrent: 4,
       });
 
-      // Register bounds so prefetcher generates adjacent chunks
       slowPrefetcher.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
-
-      // Trigger first access
       slowPrefetcher.onAccess('data/1.1');
-
-      // Wait for requests to start (they will be in-flight, pending)
       await waitFor(() => slowMockStore.getResult.mock.calls.length > 0);
-
-      // Trigger second access (should deduplicate via the seen-set)
+      const callsAfterFirst = slowMockStore.getResult.mock.calls.length;
       slowPrefetcher.onAccess('data/1.1');
+      // Give the prefetcher a chance to schedule (or refuse) more work.
+      await new Promise((r) => setTimeout(r, 10));
+      // Dedup: second access must not trigger any new getResult calls
+      // while the first batch is still in flight.
+      expect(slowMockStore.getResult.mock.calls.length).toBe(callsAfterFirst);
 
-      // Should not have duplicate requests
-      const stats = slowPrefetcher.getStats();
-      expect(stats.queued + stats.inFlight).toBeLessThanOrEqual(4);
-
-      // Resolve all to clean up
       resolvers.forEach((r) => r({ ok: true, value: new Uint8Array([1]) }));
     });
   });

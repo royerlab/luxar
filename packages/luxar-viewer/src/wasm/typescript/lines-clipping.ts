@@ -20,6 +20,9 @@
  * - visible: 1.0 if any part of segment intersects slice, 0.0 otherwise
  * - t1: interpolation parameter for clipped start (0.0 = original start)
  * - t2: interpolation parameter for clipped end (1.0 = original end)
+ *
+ * MED-20: pass `workspace` (length >= ndim) to avoid per-call Uint8Array
+ * allocation in hot loops; the buffer is zeroed by this function before use.
  */
 export function clip_segment_single(
   p1: Float32Array,
@@ -27,12 +30,23 @@ export function clip_segment_single(
   slicePosition: Float32Array,
   tolerance: Float32Array,
   displayDims: Uint32Array,
-  ndim: number
+  ndim: number,
+  workspace?: Uint8Array
 ): Float32Array {
   let t1 = 0.0;
   let t2 = 1.0;
 
-  const displaySet = new Uint8Array(ndim);
+  // MED-20: reuse caller-provided workspace when available, otherwise
+  // allocate one. We zero the first `ndim` slots before populating —
+  // the caller may reuse the same buffer across many segments and we
+  // must not see stale 1s for non-display dims.
+  let displaySet: Uint8Array;
+  if (workspace !== undefined && workspace.length >= ndim) {
+    displaySet = workspace;
+    for (let i = 0; i < ndim; i++) displaySet[i] = 0;
+  } else {
+    displaySet = new Uint8Array(ndim);
+  }
   for (let i = 0; i < displayDims.length; i++) {
     displaySet[displayDims[i]] = 1;
   }

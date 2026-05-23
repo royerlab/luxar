@@ -119,6 +119,34 @@ describe('SceneDimsManager', () => {
       const dims = manager.getDims();
       expect(dims!.currentStep[3]).toBe(5.23); // Not quantized for continuous
     });
+
+    // Bug fix: NaN/Infinity inputs silently poisoned currentStep, breaking
+    // every downstream slicing computation. The guard at the top of
+    // setDimensionValue must reject non-finite values without mutating
+    // state or notifying observers.
+    it('ignores non-finite values (NaN, Infinity) without mutating state or notifying listeners', () => {
+      const listener = vi.fn();
+      manager.addListener(listener);
+
+      const before = [...manager.getDims()!.currentStep];
+
+      manager.setDimensionValue(3, NaN);
+      expect(manager.getDims()!.currentStep).toEqual(before);
+      expect(listener).not.toHaveBeenCalled();
+
+      manager.setDimensionValue(3, Infinity);
+      expect(manager.getDims()!.currentStep).toEqual(before);
+      expect(listener).not.toHaveBeenCalled();
+
+      manager.setDimensionValue(3, -Infinity);
+      expect(manager.getDims()!.currentStep).toEqual(before);
+      expect(listener).not.toHaveBeenCalled();
+
+      // Sanity: a valid value after still works and notifies.
+      manager.setDimensionValue(3, 5);
+      expect(manager.getDims()!.currentStep[3]).toBe(5);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('observer pattern', () => {
@@ -158,15 +186,17 @@ describe('SceneDimsManager', () => {
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it('should not notify when no actual change', () => {
+    it('still notifies listeners even when setDimensionValue is given the current value', () => {
+      // The implementation does not dedupe identical-value writes; listeners
+      // fire on every setDimensionValue call regardless of whether the value
+      // changed. This test pins that contract so we notice if dedup is added.
       const listener = vi.fn();
       manager.addListener(listener);
 
       const currentValue = manager.getDims()!.currentStep[3];
-      manager.setDimensionValue(3, currentValue); // Same value
+      manager.setDimensionValue(3, currentValue);
 
-      // Listener still called (implementation doesn't check for actual change)
-      expect(listener).toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 

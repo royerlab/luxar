@@ -62,16 +62,24 @@ describe('LuxarFlyControls', () => {
       customControls.dispose();
     });
 
-    it('should initialize camera orientation from current camera state', () => {
-      // Set camera to look in a specific direction
+    it('initializes orientation quaternion exactly from current camera quaternion (W4)', () => {
+      // W4 strengthening: was `forward.x > 0`. The contract is that
+      // controls.orientation === camera.quaternion at construction time
+      // (initializeFromCamera in luxar-fly-controls/camera-application.ts
+      // does `orientation.copy(camera.quaternion)`). Assert the full
+      // quaternion identity, not just a direction inequality.
+      camera.position.set(0, 0, 5);
       camera.lookAt(1, 0, 0);
+      camera.updateMatrixWorld();
+      const expectedQuat = camera.quaternion.clone();
 
       const newControls = new LuxarFlyControls(camera, domElement);
 
-      // Controls should maintain camera direction
-      const forward = new THREE.Vector3();
-      camera.getWorldDirection(forward);
-      expect(forward.x).toBeGreaterThan(0);
+      const actualQuat = (newControls as any).orientation as THREE.Quaternion;
+      expect(actualQuat.x).toBeCloseTo(expectedQuat.x, 5);
+      expect(actualQuat.y).toBeCloseTo(expectedQuat.y, 5);
+      expect(actualQuat.z).toBeCloseTo(expectedQuat.z, 5);
+      expect(actualQuat.w).toBeCloseTo(expectedQuat.w, 5);
 
       newControls.dispose();
     });
@@ -159,20 +167,31 @@ describe('LuxarFlyControls', () => {
       expect((controls as any).activeMouseAction).toBe('none');
     });
 
-    it('should apply angular velocity on right-drag mouse movement', () => {
-      // Set up right-drag state for rotation
-      (controls as any).activeMouseAction = 'rotate';
-      (controls as any).mouseX = 100;
-      (controls as any).mouseY = 100;
+    it('right-drag mousemove produces angular velocity via the full pipeline (C4 fix)', () => {
+      // C4 fix: previously this test forced private state
+      // (`activeMouseAction = 'rotate'`, `mouseX`, `mouseY`) and called
+      // the private `onMouseMove` directly, short-circuiting the public
+      // mousedown → mousemove pipeline. We now drive the full pipeline
+      // via real MouseEvents — exercises the actual handler chain and
+      // does not mutate private state.
+      const mouseDown = new MouseEvent('mousedown', {
+        button: 2, // right
+        clientX: 100,
+        clientY: 100,
+      });
+      (controls as any).onMouseDown(mouseDown);
 
-      // Move mouse to trigger angular velocity
       const mouseMove = new MouseEvent('mousemove', {
         clientX: 200,
         clientY: 200,
       });
       (controls as any).onMouseMove(mouseMove);
 
-      // Check that angular velocity was applied (not zero)
+      // angularVelocity is the contract observable to update().
+      // Reading it via `as any` is acknowledged: the field is internal,
+      // but its non-zero length is the only direct way to confirm the
+      // rotate path executed. The alternative (calling update() and
+      // observing camera quaternion change) is covered by other tests.
       expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
     });
 
@@ -305,27 +324,68 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('camera orientation', () => {
-    it('should update camera look direction with arrow keys', () => {
-      (controls as any).lookState.horizontal = 1; // Look right
+    it('right-arrow yaw rotates camera forward away from -X (W7 strengthening)', () => {
+      // W7 strengthening: was `rotation.y !== initialRotation`. The integrator
+      // negates lookState.horizontal when computing yaw torque around local Y,
+      // so horizontal=1 (right arrow) produces a NEGATIVE yaw about world Y
+      // (camera forward moves from -Z toward +X for an identity-orientation
+      // camera). Assert the direction, not just inequality.
+      camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 0); // forward = -Z
+      camera.updateMatrixWorld();
+      const newControls = new LuxarFlyControls(camera, domElement);
+      newControls.setInertialMode(false); // direct angular velocity, easier to reason about
 
-      const initialRotation = camera.rotation.y;
-      controls.update(0.016);
+      const initialForward = new THREE.Vector3();
+      camera.getWorldDirection(initialForward);
+      expect(initialForward.x).toBeCloseTo(0, 5);
+      expect(initialForward.z).toBeCloseTo(-1, 5);
 
-      // Camera should rotate
-      expect(camera.rotation.y).not.toBe(initialRotation);
+      (newControls as any).lookState.horizontal = 1; // right arrow
+      // Multiple ticks to accumulate measurable rotation past the damping
+      // threshold.
+      for (let i = 0; i < 5; i++) newControls.update(0.05);
+
+      const newForward = new THREE.Vector3();
+      camera.getWorldDirection(newForward);
+      // Right-arrow yaw moves the forward vector toward +X (when looking
+      // along -Z initially), i.e. forward.x increases past 0.
+      expect(newForward.x).toBeGreaterThan(0.01);
+
+      newControls.dispose();
     });
 
-    it('should handle smooth look at target', () => {
-      const target = new THREE.Vector3(10, 0, 0);
+    it('slerps half-way to target when smoothness=0.5 (W5 strengthening)', () => {
+      // W5 strengthening: was `forward.x > 0`. lookAtSmooth slerps
+      // orientation by `1 - smoothness` toward the lookAt quaternion.
+      // With smoothness=0.5, the camera should be ~half-way between
+      // initial and the look-at target. Compute the exact expected
+      // quaternion (slerp of initial and target).
+      camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 0); // forward = -Z
+      camera.updateMatrixWorld();
+      const startQuat = camera.quaternion.clone();
 
-      controls.lookAtSmooth(target, 0.5);
+      // Build the look-at target quaternion the same way the helper does.
+      const target = new THREE.Vector3(10, 0, 5); // straight +X from camera
+      const lookMat = new THREE.Matrix4().lookAt(
+        camera.position,
+        target,
+        new THREE.Vector3(0, 1, 0)
+      );
+      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMat);
 
-      // Should partially rotate toward target
-      const forward = new THREE.Vector3();
-      camera.getWorldDirection(forward);
+      // Fresh controls (so orientation = startQuat).
+      const fresh = new LuxarFlyControls(camera, domElement);
+      fresh.lookAtSmooth(target, 0.5); // → slerp(startQuat, targetQuat, 0.5)
 
-      // Should be looking more toward the target
-      expect(forward.x).toBeGreaterThan(0);
+      const expected = startQuat.clone().slerp(targetQuat, 0.5);
+      const actual = camera.quaternion;
+      // q and -q represent the same rotation; compare via abs(dot).
+      const dot = Math.abs(actual.dot(expected));
+      expect(dot).toBeCloseTo(1, 5);
+
+      fresh.dispose();
     });
 
     it('should handle immediate look at target', () => {
@@ -401,24 +461,39 @@ describe('LuxarFlyControls', () => {
       expect(changeHandler).not.toHaveBeenCalled();
     });
 
-    it('should handle strafe movement', () => {
-      (controls as any).moveState.right = 1;
+    it('strafe-right moves the camera toward +X for identity-orientation (W6)', () => {
+      // W6 strengthening: was `position.x !== initialX`. The integrator
+      // moves along the camera's local +X (right axis from orientation).
+      // With identity orientation, local +X == world +X.
+      camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+      const newControls = new LuxarFlyControls(camera, domElement, { movementSpeed: 10 });
+      newControls.setInertialMode(false);
+      (newControls as any).moveState.right = 1;
 
       const initialX = camera.position.x;
-      controls.update(0.016);
+      // Drive multiple ticks to ensure measurable movement past damping.
+      for (let i = 0; i < 5; i++) newControls.update(0.05);
 
-      // Should move right relative to camera
-      expect(camera.position.x).not.toBe(initialX);
+      // Strictly greater than (positive direction).
+      expect(camera.position.x).toBeGreaterThan(initialX + 0.001);
+      newControls.dispose();
     });
 
-    it('should handle vertical movement', () => {
-      (controls as any).moveState.up = 1;
+    it('Alt+W vertical-up moves camera toward +Y (W6)', () => {
+      // W6 strengthening: vertical strafe uses world-up (0,1,0) regardless
+      // of orientation. Assert strictly positive Y delta.
+      camera.position.set(0, 0, 5);
+      const newControls = new LuxarFlyControls(camera, domElement, { movementSpeed: 10 });
+      newControls.setInertialMode(false);
+      (newControls as any).moveState.up = 1;
 
       const initialY = camera.position.y;
-      controls.update(0.016);
+      for (let i = 0; i < 5; i++) newControls.update(0.05);
 
-      // Should move up
-      expect(camera.position.y).toBeGreaterThan(initialY);
+      expect(camera.position.y).toBeGreaterThan(initialY + 0.001);
+      newControls.dispose();
     });
   });
 
@@ -457,42 +532,53 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('roll controls', () => {
-    it('should roll left with Q key', () => {
-      // Simulate Q key press
-      const keyEvent = new KeyboardEvent('keydown', { key: 'q' });
-      window.dispatchEvent(keyEvent);
+    it('Q and E roll in opposite directions around the viewing axis (W8 strengthening)', () => {
+      // W8 strengthening: previously each test only asserted
+      // `orientation.equals(initialOrientation) === false`. A sign-flip
+      // mutation in physics.ts (`lookState.roll * rotationSpeed`) would
+      // survive both tests. Here we exercise BOTH keys and verify that:
+      //   1. After Q, the local-up vector tilts in one direction (around -Z).
+      //   2. After E, it tilts in the OPPOSITE direction.
+      // The two final up-vector x-components must have opposite signs.
 
-      const initialOrientation = (controls as any).orientation.clone();
+      // Q controls (fresh).
+      const qCam = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+      qCam.position.set(0, 0, 5);
+      qCam.lookAt(0, 0, 0);
+      qCam.updateMatrixWorld();
+      const qDom = document.createElement('div');
+      document.body.appendChild(qDom);
+      const qControls = new LuxarFlyControls(qCam, qDom);
+      qControls.setInertialMode(false);
+      (qControls as any).lookState.roll = -1; // Q
+      for (let i = 0; i < 3; i++) qControls.update(0.05);
+      const qUpAfter = new THREE.Vector3(0, 1, 0).applyQuaternion(qCam.quaternion);
 
-      // Update with time delta
-      controls.update(0.1);
+      // E controls (fresh).
+      const eCam = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+      eCam.position.set(0, 0, 5);
+      eCam.lookAt(0, 0, 0);
+      eCam.updateMatrixWorld();
+      const eDom = document.createElement('div');
+      document.body.appendChild(eDom);
+      const eControls = new LuxarFlyControls(eCam, eDom);
+      eControls.setInertialMode(false);
+      (eControls as any).lookState.roll = 1; // E
+      for (let i = 0; i < 3; i++) eControls.update(0.05);
+      const eUpAfter = new THREE.Vector3(0, 1, 0).applyQuaternion(eCam.quaternion);
 
-      // Orientation should have changed (roll applied)
-      const newOrientation = (controls as any).orientation;
-      expect(newOrientation.equals(initialOrientation)).toBe(false);
+      // For an initial -Z-facing camera with world-up = +Y, roll around
+      // the forward axis tilts the up-vector left or right (along ±X).
+      // Q and E must tilt to OPPOSITE sides — sign-flip mutant would
+      // produce same-sign outputs and fail this.
+      expect(Math.abs(qUpAfter.x)).toBeGreaterThan(0.01);
+      expect(Math.abs(eUpAfter.x)).toBeGreaterThan(0.01);
+      expect(Math.sign(qUpAfter.x)).not.toBe(Math.sign(eUpAfter.x));
 
-      // Clean up
-      const keyUpEvent = new KeyboardEvent('keyup', { key: 'q' });
-      window.dispatchEvent(keyUpEvent);
-    });
-
-    it('should roll right with E key', () => {
-      // Simulate E key press
-      const keyEvent = new KeyboardEvent('keydown', { key: 'e' });
-      window.dispatchEvent(keyEvent);
-
-      const initialOrientation = (controls as any).orientation.clone();
-
-      // Update with time delta
-      controls.update(0.1);
-
-      // Orientation should have changed (roll applied)
-      const newOrientation = (controls as any).orientation;
-      expect(newOrientation.equals(initialOrientation)).toBe(false);
-
-      // Clean up
-      const keyUpEvent = new KeyboardEvent('keyup', { key: 'e' });
-      window.dispatchEvent(keyUpEvent);
+      qControls.dispose();
+      eControls.dispose();
+      document.body.removeChild(qDom);
+      document.body.removeChild(eDom);
     });
 
     it('should combine roll with other rotations', () => {
@@ -584,20 +670,72 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('state management', () => {
-    it('should save state', () => {
-      // Should not throw
-      expect(() => controls.saveState()).not.toThrow();
+    it('saveState + reset is a roundtrip (camera position + orientation restored)', () => {
+      // Strengthened from "should save state / .not.toThrow()" which killed no
+      // mutants. The saved fields are observable on the public surface via
+      // reset(), so we exercise the full roundtrip.
+      const startPos = camera.position.clone();
+      const startQuat = camera.quaternion.clone();
+      controls.saveState();
+      // Mutate camera to force divergence.
+      camera.position.set(startPos.x + 50, startPos.y + 50, startPos.z + 50);
+      camera.quaternion.identity();
+      controls.reset();
+      expect(camera.position.x).toBeCloseTo(startPos.x, 5);
+      expect(camera.position.y).toBeCloseTo(startPos.y, 5);
+      expect(camera.position.z).toBeCloseTo(startPos.z, 5);
+      // Quaternion roundtrip (component-wise, accounting for q == -q).
+      const dot = Math.abs(camera.quaternion.dot(startQuat));
+      expect(dot).toBeCloseTo(1, 5);
+    });
+
+    it('constructor saveState() captures camera state at construction time (HIGH-14)', () => {
+      // Documents the "saves NOW" semantics: callers that mutate the camera
+      // AFTER constructing controls must call saveState() again. Without that
+      // explicit call, reset() restores the construction-time baseline (NOT
+      // the post-mutation state). This test pins that contract so a future
+      // refactor doesn't silently change reset() behaviour.
+      camera.position.set(1, 2, 3);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+
+      const c = new LuxarFlyControls(camera, domElement);
+
+      // Caller mutates the camera after construction — they did NOT call
+      // saveState() again, so reset() must restore (1, 2, 3), not the
+      // post-mutation position.
+      camera.position.set(99, 99, 99);
+      c.reset();
+      expect(camera.position.x).toBeCloseTo(1, 5);
+      expect(camera.position.y).toBeCloseTo(2, 5);
+      expect(camera.position.z).toBeCloseTo(3, 5);
+
+      // Re-saving after a mutation makes that the new baseline.
+      camera.position.set(7, 8, 9);
+      c.saveState();
+      camera.position.set(0, 0, 0);
+      c.reset();
+      expect(camera.position.x).toBeCloseTo(7, 5);
+      expect(camera.position.y).toBeCloseTo(8, 5);
+      expect(camera.position.z).toBeCloseTo(9, 5);
+
+      c.dispose();
     });
   });
 
   describe('cleanup', () => {
-    it('should remove event listeners on dispose', () => {
-      const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
-
+    it('keydown event has no effect after dispose() (no stale listeners)', () => {
+      // Strengthened from spy-on-removeEventListener (which only proved that
+      // SOME removeEventListener call happened, with no behavioral check).
+      // The contract is: after dispose, dispatching a keydown must not mutate
+      // moveState. We exercise this by triggering a keydown and confirming
+      // velocity is unchanged.
+      const velocityBefore = (controls as any).velocity.x;
       controls.dispose();
-
-      expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
-      expect(removeEventListenerSpy).toHaveBeenCalledWith('keyup', expect.any(Function));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', code: 'KeyD' }));
+      controls.update(0.016);
+      const velocityAfter = (controls as any).velocity.x;
+      expect(velocityAfter).toBe(velocityBefore);
     });
   });
 });

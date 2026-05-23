@@ -124,17 +124,32 @@ describe('LinesSpatialIndexLoader', () => {
     });
 
     it('add + remove of a listener leaves no leak after dispose', () => {
+      // data.md W1 fix [P2]: previous assertion was `expect(true).toBe(true)`
+      // (literal tautology — passes for any code change). The LoaderEventEmitter
+      // exposes a `size` getter (see `data/loaders/monitor-events.ts`), so we
+      // can observe the listener Set transitions directly:
+      //   add → size === 1, remove → 0, add → 1, dispose → 0.
+      // A mutation that no-ops add/remove or dispose would now flip a count.
       const calls: MonitorEvent[] = [];
       const listener: MonitorEventListener = (event) => calls.push(event);
 
-      loader.addEventListener(listener);
-      loader.removeEventListener(listener);
-      loader.dispose();
+      const events = (loader as unknown as { events: { size: number } }).events;
 
-      // No way to introspect listener size from the public surface, but
-      // the contract is "remove + dispose leaves no leaks" — the test
-      // passes if the calls above do not throw.
-      expect(true).toBe(true);
+      expect(events.size).toBe(0);
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.removeEventListener(listener);
+      expect(events.size).toBe(0);
+
+      // Re-add then dispose: dispose must also clear listeners.
+      loader.addEventListener(listener);
+      expect(events.size).toBe(1);
+      loader.dispose();
+      expect(events.size).toBe(0);
+
+      // The removed listener should not have fired (sanity check that
+      // event delivery is correctly gated on registration).
+      expect(calls).toEqual([]);
     });
 
     it('returns an immutable snapshot from getMetrics', () => {

@@ -263,5 +263,52 @@ describe('DirectoryNavigator', () => {
       const url = navigator.getFullUrl('path/to/file.txt');
       expect(url).toBe('http://localhost:8000/path/to/file.txt');
     });
+
+    // Regression: MED-38 — getFullUrl must not produce `//` between baseUrl
+    // and path. Double-slash URLs make the zarr loader treat the slash as an
+    // empty path component and return 404.
+    it('should normalize a leading slash on path (no double-slash)', () => {
+      const url = navigator.getFullUrl('/path/to/file.txt');
+      expect(url).toBe('http://localhost:8000/path/to/file.txt');
+      expect(url).not.toContain('//path');
+    });
+
+    it('should handle baseUrl with no trailing slash and a slash-prefixed path', () => {
+      const nav = new DirectoryNavigator('http://localhost:8000');
+      const url = nav.getFullUrl('/foo');
+      expect(url).toBe('http://localhost:8000/foo');
+    });
+  });
+
+  // Regression: MED-39 — runtime validation of server-supplied `type`.
+  describe('JSON Directory Listing: malformed type field', () => {
+    it('should coerce unknown `type` values to "file" instead of crashing', async () => {
+      // Zarr check fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // WebDAV fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // JSON response with malicious / malformed `type`
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => ({
+          entries: [
+            { name: 'evil', type: '__proto__', size: 0 },
+            { name: 'unknown', type: 'symlink', size: 1 },
+            { name: 'good.zarr', type: 'zarr', size: 2 },
+          ],
+        }),
+      });
+
+      const result = await navigator.navigate('listing');
+
+      expect(result.entries).toHaveLength(3);
+      // Both unknown types fall back to 'file' rather than being smuggled
+      // through the typed union.
+      expect(result.entries[0].type).toBe('file');
+      expect(result.entries[1].type).toBe('file');
+      // Valid types are preserved verbatim.
+      expect(result.entries[2].type).toBe('zarr');
+    });
   });
 });

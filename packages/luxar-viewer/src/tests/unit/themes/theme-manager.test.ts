@@ -5,6 +5,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ThemeManager } from '../../../themes/theme-manager';
+import { darkTheme } from '../../../themes/themes/dark.theme';
+import { lightTheme } from '../../../themes/themes/light.theme';
 
 describe('ThemeManager', () => {
   beforeEach(() => {
@@ -38,21 +40,25 @@ describe('ThemeManager', () => {
   });
 
   describe('Theme Registration', () => {
-    it('should register default themes on initialization', () => {
+    it('registers all four default themes (dark, light, frosted-glass, liquid-glass) on initialization', () => {
+      // themes.md W1 fix: previous version asserted `themes.length >= 3`
+      // and listed only three IDs. Four built-in themes are registered;
+      // a regression dropping `liquid-glass` would have slipped through.
       const manager = ThemeManager.getInstance();
       const themes = manager.getAllThemes();
+      const ids = themes.map((t) => t.id);
 
-      expect(themes.length).toBeGreaterThanOrEqual(3);
-      expect(themes.some((t) => t.id === 'dark')).toBe(true);
-      expect(themes.some((t) => t.id === 'light')).toBe(true);
-      expect(themes.some((t) => t.id === 'frosted-glass')).toBe(true);
+      expect(ids).toEqual(expect.arrayContaining(['dark', 'light', 'frosted-glass', 'liquid-glass']));
+      expect(themes.length).toBeGreaterThanOrEqual(4);
     });
 
     it('should retrieve theme by ID', () => {
+      // themes.md W2 fix: the `darkTheme.toBeDefined()` line was redundant
+      // — the next `darkTheme?.id` line already implies definedness.
+      // Drop the redundant assertion.
       const manager = ThemeManager.getInstance();
       const darkTheme = manager.getTheme('dark');
 
-      expect(darkTheme).toBeDefined();
       expect(darkTheme?.id).toBe('dark');
       expect(darkTheme?.name).toBe('Dark Theme');
     });
@@ -105,9 +111,12 @@ describe('ThemeManager', () => {
       expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.15)');
     });
 
-    it('should throw error for invalid theme ID', () => {
+    it('should throw error mentioning the missing theme ID for invalid input', () => {
+      // themes.md W3 fix: previous version only asserted .toThrow() with
+      // no message matcher. A mutation that threw a generic "Error" with
+      // no useful message would pass. Pin the message format.
       const manager = ThemeManager.getInstance();
-      expect(() => manager.setTheme('invalid')).toThrow();
+      expect(() => manager.setTheme('invalid')).toThrow(/invalid|not found|unknown/i);
     });
 
     it('should update currentTheme after switching', () => {
@@ -188,6 +197,44 @@ describe('ThemeManager', () => {
       expect(savedTheme).toBe('light');
     });
 
+    it('does NOT persist (and does NOT update currentTheme) if applyTheme throws partway', () => {
+      // HIGH-11 regression: prior to the fix, the contract that
+      // "persisted state == currentTheme == DOM state" was only implicit.
+      // If applyTheme throws after clearing/half-setting CSS variables,
+      // the previous theme MUST remain the source of truth in
+      // localStorage and in manager.currentTheme — otherwise a reload
+      // would silently mask the failure by loading a theme that never
+      // fully applied.
+      const manager = ThemeManager.getInstance();
+
+      // Establish a known-good baseline: 'light' fully applied + persisted.
+      manager.setTheme('light');
+      expect(localStorage.getItem('luxar.theme')) .toBe('light');
+      expect(manager.getCurrentTheme().id).toBe('light');
+
+      // Force the next applyTheme to throw. We stub the root element's
+      // setAttribute (used by applyTheme to write the data-theme attribute)
+      // so that the call fails partway through applyTheme — i.e. after
+      // clearThemeVariables() but before setCSSVariables() completes.
+      const root = document.documentElement;
+      const setAttrSpy = vi.spyOn(root, 'setAttribute').mockImplementation((name: string) => {
+        if (name === 'data-theme') {
+          throw new Error('simulated SSR / unmount: setAttribute unavailable');
+        }
+        // Other attributes pass through to the real impl (none expected here).
+      });
+
+      expect(() => manager.setTheme('dark')).toThrow(/setAttribute unavailable/);
+
+      // Persistence MUST be unchanged — we never reached saveTheme.
+      expect(localStorage.getItem('luxar.theme')).toBe('light');
+
+      // currentTheme MUST be unchanged — we never reached the assignment.
+      expect(manager.getCurrentTheme().id).toBe('light');
+
+      setAttrSpy.mockRestore();
+    });
+
     it('should load saved theme on initialization', () => {
       // Set theme in localStorage before creating manager
       localStorage.setItem('luxar.theme', 'frosted-glass');
@@ -216,33 +263,46 @@ describe('ThemeManager', () => {
   });
 
   describe('CSS Variable Injection', () => {
-    it('should inject all color variables', () => {
+    it('injects each color variable with the EXACT value from the active theme object', () => {
+      // themes.md W4 fix: previous version asserted only `value !== ""`.
+      // A mutation that swapped `darkTheme.colors.background.primary` with
+      // any other non-empty string would have survived. Pin the exact
+      // mapping from theme-object value → emitted CSS variable.
       const manager = ThemeManager.getInstance();
       manager.setTheme('dark');
 
-      const variables = [
-        '--luxar-bg-primary',
-        '--luxar-bg-secondary',
-        '--luxar-text-primary',
-        '--luxar-success',
-        '--luxar-warning',
-        '--luxar-error',
-      ];
+      const root = document.documentElement;
+      const getVar = (name: string) =>
+        getComputedStyle(root).getPropertyValue(name).trim();
 
-      variables.forEach((varName) => {
-        const value = getComputedStyle(document.documentElement).getPropertyValue(varName);
-        expect(value.trim()).not.toBe('');
-      });
+      // background.*
+      expect(getVar('--luxar-bg-primary')).toBe(darkTheme.colors.background.primary);
+      expect(getVar('--luxar-bg-secondary')).toBe(darkTheme.colors.background.secondary);
+      expect(getVar('--luxar-bg-tertiary')).toBe(darkTheme.colors.background.tertiary);
+
+      // text.*
+      expect(getVar('--luxar-text-primary')).toBe(darkTheme.colors.text.primary);
+      expect(getVar('--luxar-text-secondary')).toBe(darkTheme.colors.text.secondary);
+
+      // semantic.* — mutation swapping success/warning/error would now fail.
+      expect(getVar('--luxar-success')).toBe(darkTheme.colors.semantic.success);
+      expect(getVar('--luxar-warning')).toBe(darkTheme.colors.semantic.warning);
+      expect(getVar('--luxar-error')).toBe(darkTheme.colors.semantic.error);
     });
 
-    it('should inject typography variables', () => {
+    it('injects typography variables with the EXACT fontFamily.base from the theme', () => {
+      // themes.md W5 fix: previous version only asserted
+      // `fontBase.includes('apple-system')`. Pin the full string so a
+      // mutant that reorders the font-stack fails the assertion.
       const manager = ThemeManager.getInstance();
       manager.setTheme('dark');
 
-      const fontBase = getComputedStyle(document.documentElement).getPropertyValue(
-        '--luxar-font-base'
-      );
-      expect(fontBase).toContain('apple-system');
+      const fontBase = getComputedStyle(document.documentElement)
+        .getPropertyValue('--luxar-font-base')
+        .trim();
+      // CSS may normalize whitespace; trim and compare canonical forms.
+      const canonical = (s: string) => s.replace(/\s+/g, ' ').trim();
+      expect(canonical(fontBase)).toBe(canonical(darkTheme.typography.fontFamily.base));
     });
 
     it('should inject spacing variables', () => {
@@ -255,16 +315,39 @@ describe('ThemeManager', () => {
       expect(spacing8.trim()).toBe('16px');
     });
 
-    it('should clear old theme variables when switching', () => {
+    it('overwrites each shared variable with the new theme value on switch (no leftover dark values)', () => {
+      // themes.md W6 fix: the previous test claimed to verify
+      // "variables are updated, not duplicated" but only sampled ONE
+      // variable. A mutation that "clears nothing" would still see the
+      // new value in `--luxar-bg-primary` (it gets set, just not
+      // cleared). Strengthen by asserting MULTIPLE variables flipped to
+      // the new theme's values AND none retain dark values.
       const manager = ThemeManager.getInstance();
+      const root = document.documentElement;
+      const getVar = (name: string) =>
+        getComputedStyle(root).getPropertyValue(name).trim();
+
       manager.setTheme('dark');
+      // Sanity: dark values are live before the switch.
+      expect(getVar('--luxar-bg-primary')).toBe(darkTheme.colors.background.primary);
+      expect(getVar('--luxar-text-primary')).toBe(darkTheme.colors.text.primary);
+      expect(getVar('--luxar-success')).toBe(darkTheme.colors.semantic.success);
+
       manager.setTheme('light');
 
-      // Verify variables are updated, not duplicated
-      const bgColor = getComputedStyle(document.documentElement).getPropertyValue(
-        '--luxar-bg-primary'
-      );
-      expect(bgColor.trim()).toBe('#ffffff'); // Light theme value
+      // Every variable now reflects the LIGHT theme, with no leftover dark values.
+      expect(getVar('--luxar-bg-primary')).toBe(lightTheme.colors.background.primary);
+      expect(getVar('--luxar-text-primary')).toBe(lightTheme.colors.text.primary);
+      expect(getVar('--luxar-success')).toBe(lightTheme.colors.semantic.success);
+
+      // No variable still equals its dark-theme value (defends "duplicated, not cleared").
+      // (We only assert the ones where dark and light demonstrably differ.)
+      if (darkTheme.colors.background.primary !== lightTheme.colors.background.primary) {
+        expect(getVar('--luxar-bg-primary')).not.toBe(darkTheme.colors.background.primary);
+      }
+      if (darkTheme.colors.text.primary !== lightTheme.colors.text.primary) {
+        expect(getVar('--luxar-text-primary')).not.toBe(darkTheme.colors.text.primary);
+      }
     });
   });
 

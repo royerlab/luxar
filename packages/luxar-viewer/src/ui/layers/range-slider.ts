@@ -205,6 +205,14 @@ export class RangeSlider {
     const min = parseFloat(this.lowInput.min);
     const max = parseFloat(this.lowInput.max);
     const range = max - min;
+    // MED-30 (audit-ack, false-positive): the audit warned that a
+    // zero-width range would produce `style.width: 'NaN%'`. The guard
+    // below short-circuits BEFORE the `(value - min) / range` division
+    // would yield NaN, so the failure mode the audit described cannot
+    // occur. Regression test:
+    //   tests/unit/ui/range-slider.test.ts §"handles a zero-width
+    //   range gracefully" asserts the fill's left/width never contain
+    //   'NaN' after min===max construction.
     if (range <= 0) return;
 
     const low = parseFloat(this.lowInput.value);

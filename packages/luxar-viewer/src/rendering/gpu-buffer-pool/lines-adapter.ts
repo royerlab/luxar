@@ -17,6 +17,7 @@ import { invalidateCachedByteSize } from './geometry-bytes';
 import type { ProcessedLinesData } from '../../types/lines';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
+import { chooseCapacity } from './capacity';
 
 /**
  * Canonical per-segment attribute layout for pooled line geometries.
@@ -74,7 +75,7 @@ function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeom
 }
 
 function growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-  const newCapacity = Math.ceil(neededCount * 1.5);
+  const newCapacity = chooseCapacity(neededCount);
   invalidateCachedByteSize(geometry);
 
   const hasScalars = geometry.getAttribute('aStartScalar') !== undefined;
@@ -123,7 +124,7 @@ export class LinesBufferAdapter {
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
         growLinesGeometry(active.geometry as THREE.InstancedBufferGeometry, segmentCount);
-        active.capacity = Math.ceil(segmentCount * 1.5);
+        active.capacity = chooseCapacity(segmentCount);
         active.lastUsedFrame = host.frameCount;
         host.stats.capacityGrowths++;
         host._lastAcquireRebuilt = true;
@@ -148,7 +149,7 @@ export class LinesBufferAdapter {
     }
 
     host._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(segmentCount * 1.5);
+    const capacity = chooseCapacity(segmentCount);
     const geometry = createLinesGeometry(capacity);
 
     const newBuffer: PooledBuffer = {

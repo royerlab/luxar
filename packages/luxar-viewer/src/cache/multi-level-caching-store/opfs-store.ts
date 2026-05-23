@@ -327,6 +327,10 @@ export class OPFSStore {
     // entire navigate→createWritable→write→close chain is wrapped in
     // withTimeout so a hung handle cannot stall the cache.
     const timeoutMs = config.cache.opfsOperationTimeoutMs;
+    // HIGH-2 fix: a single broken write must count as 1 in writeFailures,
+    // not once per retry attempt. Track whether we've already counted a
+    // failure for this call so the second attempt doesn't double-count.
+    let writeFailedThisCall = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await withTimeout(
@@ -393,7 +397,10 @@ export class OPFSStore {
           this.buckets.invalidate(bucket);
           continue;
         }
-        this.writeFailures++;
+        if (!writeFailedThisCall) {
+          this.writeFailures++;
+          writeFailedThisCall = true;
+        }
         log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
       }
     }

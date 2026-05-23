@@ -13,6 +13,14 @@ import type { RenderingControls } from '../../ui/rendering-controls';
 import type { SceneDimsManager } from '../../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { ThemeManager } from '../../themes/theme-manager';
+import { log, Modules } from '../../utils/log';
+
+/**
+ * Module-local set of camelCase keys we have already warned about, so that
+ * each unknown field surfaces exactly once per page load instead of spamming
+ * the console on every state capture.
+ */
+const _warnedUnknownStateKeys = new Set<string>();
 
 /**
  * Capture the complete viewer state as a ZarrViewerConfig object.
@@ -61,11 +69,21 @@ export function captureViewerState(
   }
 
   // --- RenderingSettings → snake_case ---
+  // We iterate the INPUT keys (not REVERSE_SETTINGS_MAP) so that future-added
+  // RenderingSettings fields missing from the bridge map become visible. They
+  // are still dropped (round-trip safety with older zarr files), but a single
+  // warning per unknown key surfaces the silent loss for engineers to fix.
   for (const [camelKey, value] of Object.entries(settings)) {
     if (value === undefined) continue;
     const snakeKey = REVERSE_SETTINGS_MAP[camelKey];
     if (snakeKey) {
       (result as Record<string, unknown>)[snakeKey] = value;
+    } else if (!_warnedUnknownStateKeys.has(camelKey)) {
+      _warnedUnknownStateKeys.add(camelKey);
+      log.warning(
+        Modules.RENDERING_CONTROLS,
+        `captureViewerState: dropping unknown RenderingSettings key "${camelKey}" — add it to RENDERING_SETTINGS_MAP to persist.`
+      );
     }
   }
 

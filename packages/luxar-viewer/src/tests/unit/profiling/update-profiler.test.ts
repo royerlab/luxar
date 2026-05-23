@@ -8,16 +8,15 @@
  * `performance.now` via a controlled clock helper. For tests that only care
  * about ordering or non-negativity, we let the real clock run.
  *
- * Notes on behavior under test:
- * - The profiler's persistent `rootEntry.children[*].count` increments TWICE
- *   per measurement on the first merge — once when the child session ends and
- *   merges itself into the persistent root, and once again when the parent
- *   root session ends and re-merges its children. Subsequent updates only
- *   increment by 2 each. Tests therefore check >= bounds rather than exact
- *   counts on entries.
- * - `time()` does not push/pop `currentSessionContext`, so nested `time()`
- *   produces SIBLING entries under the root, not a parent/child hierarchy.
- *   Tests assert the observed flat behavior rather than assuming a stack.
+ * Contract under test (post-fix):
+ * - `rootEntry.children[*].count` increments exactly once per measurement:
+ *   each child session merges itself into the persistent tree at end(), and
+ *   the root session merges only its own counters (no re-merging of
+ *   children, which would double-count).
+ * - `time()` saves/restores `currentSessionContext`, so nested `time()` calls
+ *   build a parent/child hierarchy as the class docstring advertises.
+ * - Child `avgMs` therefore converges at the EMA rate (alpha=0.1), not at
+ *   half that rate.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -181,7 +180,10 @@ describe('UpdateProfiler — time() helpers', () => {
     expect(op!.count).toBeGreaterThanOrEqual(1);
   });
 
-  it('time() with an async function awaits and records its entry', async () => {
+  it('time() with an async function awaits and records its entry with non-zero duration', async () => {
+    // profiling.md W2 fix: previous version only asserted `toBeDefined`.
+    // Strengthen: the entry must have count >= 1 and a finite lastMs
+    // (so a mutation that skips the EMA update would be caught).
     profiler.beginUpdate();
     const out = await profiler.time('AsyncOp', async () => {
       await Promise.resolve();
@@ -190,10 +192,16 @@ describe('UpdateProfiler — time() helpers', () => {
     profiler.endUpdate();
     expect(out).toBe('done');
 
-    expect(findChild(profiler.getTimings(), 'AsyncOp')).toBeDefined();
+    const entry = findChild(profiler.getTimings(), 'AsyncOp');
+    expect(entry).toBeDefined();
+    expect(entry!.count).toBeGreaterThanOrEqual(1);
+    expect(Number.isFinite(entry!.lastMs)).toBe(true);
   });
 
-  it('time() ends the session even when the function throws synchronously', () => {
+  it('time() ends the session and records the entry even when the function throws synchronously', () => {
+    // profiling.md W3 fix: previous version only asserted findChild
+    // toBeDefined. Strengthen: the entry must be present AND have
+    // count >= 1, proving end() actually ran in the catch path.
     profiler.beginUpdate();
     expect(() =>
       profiler.time('Boom', () => {
@@ -202,10 +210,13 @@ describe('UpdateProfiler — time() helpers', () => {
     ).toThrow('nope');
     profiler.endUpdate();
 
-    expect(findChild(profiler.getTimings(), 'Boom')).toBeDefined();
+    const entry = findChild(profiler.getTimings(), 'Boom');
+    expect(entry).toBeDefined();
+    expect(entry!.count).toBeGreaterThanOrEqual(1);
   });
 
-  it('time() ends the session even when an async function rejects', async () => {
+  it('time() ends the session and records the entry even when an async function rejects', async () => {
+    // profiling.md W3 sibling fix (async).
     profiler.beginUpdate();
     await expect(
       profiler.time('AsyncBoom', async () => {
@@ -214,7 +225,9 @@ describe('UpdateProfiler — time() helpers', () => {
     ).rejects.toThrow('async-nope');
     profiler.endUpdate();
 
-    expect(findChild(profiler.getTimings(), 'AsyncBoom')).toBeDefined();
+    const entry = findChild(profiler.getTimings(), 'AsyncBoom');
+    expect(entry).toBeDefined();
+    expect(entry!.count).toBeGreaterThanOrEqual(1);
   });
 
   it('timeWithMeta() exposes the session for metadata before completion', async () => {
@@ -230,7 +243,11 @@ describe('UpdateProfiler — time() helpers', () => {
     expect(op?.metadata?.points).toBe(2200);
   });
 
-  it('timeTopLevel() supports concurrent operations under the root', async () => {
+  it('timeTopLevel() supports concurrent operations: each becomes a direct child of root with non-zero count', async () => {
+    // profiling.md W4 fix: previously asserted only the set of names.
+    // Strengthen by checking each child has count >= 1 (proving each
+    // session.end() actually ran) and is a DIRECT child of root, not
+    // a grandchild.
     profiler.beginUpdate();
     await Promise.all([
       profiler.timeTopLevel('A', async () => Promise.resolve()),
@@ -240,11 +257,18 @@ describe('UpdateProfiler — time() helpers', () => {
     profiler.endUpdate();
 
     const root = profiler.getTimings();
-    const names = root.children.map((c) => c.name).sort();
-    expect(names).toEqual(['A', 'B', 'C']);
+    const byName: Record<string, { count: number } | undefined> = {};
+    for (const c of root.children) byName[c.name] = c;
+    expect(Object.keys(byName).sort()).toEqual(['A', 'B', 'C']);
+    expect(byName['A']!.count).toBeGreaterThanOrEqual(1);
+    expect(byName['B']!.count).toBeGreaterThanOrEqual(1);
+    expect(byName['C']!.count).toBeGreaterThanOrEqual(1);
   });
 
-  it('timeTopLevel() returns its function result and propagates errors', async () => {
+  it('timeTopLevel() returns function result on happy path, propagates errors, AND still records the entry on the error path', async () => {
+    // profiling.md W5 fix: previous version asserted only existence of
+    // 'Pass' and 'Fail' entries. Strengthen by also pinning the count
+    // for both — proves the error path's end() actually ran.
     profiler.beginUpdate();
     const out = await profiler.timeTopLevel('Pass', async () => 'x');
     expect(out).toBe('x');
@@ -256,12 +280,23 @@ describe('UpdateProfiler — time() helpers', () => {
     ).rejects.toThrow('top-fail');
     profiler.endUpdate();
 
-    expect(findChild(profiler.getTimings(), 'Pass')).toBeDefined();
-    expect(findChild(profiler.getTimings(), 'Fail')).toBeDefined();
+    const pass = findChild(profiler.getTimings(), 'Pass');
+    const fail = findChild(profiler.getTimings(), 'Fail');
+    expect(pass).toBeDefined();
+    expect(fail).toBeDefined();
+    expect(pass!.count).toBeGreaterThanOrEqual(1);
+    expect(fail!.count).toBeGreaterThanOrEqual(1);
   });
 
-  it('beginTopLevel() returns NoOp when no update is active', () => {
+  it('beginTopLevel() returns a NoOp session whose methods are all idempotent no-ops when no update is active', () => {
+    // profiling.md W6 fix: previous version only asserted .not.toThrow() on
+    // end() + children.length === 0. The contract is broader: every
+    // method on the returned NoOp must be safe to call.
     const s = profiler.beginTopLevel('NoOp');
+    expect(() => s.end()).not.toThrow();
+    expect(() => s.setMetadata({ chunks: 1 })).not.toThrow();
+    expect(() => s.markSkipped('x')).not.toThrow();
+    // Re-end should also be safe (NoOp is idempotent).
     expect(() => s.end()).not.toThrow();
     expect(profiler.getTimings().children).toHaveLength(0);
   });
@@ -275,6 +310,42 @@ describe('UpdateProfiler — time() helpers', () => {
     expect(op?.lastMs).toBe(0);
     expect(op?.metadata?.skipped).toBe(true);
     expect(op?.metadata?.skipReason).toBe('extend_to_all');
+  });
+
+  it('skipped entries report lastMs===0 and avgMs===0 regardless of begin→markSkipped delay', () => {
+    // CRIT-1e: previously end() computed duration + applied the EMA BEFORE
+    // markSkipped() zeroed lastMs/avgMs — so a `skip()` call that had any
+    // real wall-clock delay between begin and markSkipped would leak that
+    // overhead into the persistent state. Now end() must bypass the EMA
+    // when markSkipped set the skip flag.
+    //
+    // We drive performance.now() via a controlled clock so we can guarantee
+    // a 100ms gap between begin and markSkipped, then assert lastMs===0
+    // and avgMs===0 on the persistent entry.
+    const clock = controlledClock();
+    try {
+      const p = new UpdateProfiler();
+      p.beginUpdate();
+
+      // Manual sequence so we can inject a delay between begin and
+      // markSkipped (skip() does them back-to-back so we can't use it here).
+      const session = p.begin('SlowSkip');
+      clock.advance(100); // 100ms of "work" before deciding to skip
+      session.markSkipped('decided_to_skip_late');
+      session.end();
+
+      p.endUpdate();
+
+      const op = findChild(p.getTimings(), 'SlowSkip');
+      expect(op).toBeDefined();
+      expect(op!.lastMs).toBe(0);
+      expect(op!.avgMs).toBe(0);
+      expect(op!.overBudget).toBe(false);
+      expect(op!.metadata?.skipped).toBe(true);
+      expect(op!.metadata?.skipReason).toBe('decided_to_skip_late');
+    } finally {
+      clock.restore();
+    }
   });
 });
 
@@ -357,7 +428,7 @@ describe('UpdateProfiler — timing math', () => {
 // ---------------------------------------------------------------------
 
 describe('UpdateProfiler — hierarchy', () => {
-  it('persistent root keeps a single entry per unique name across updates', () => {
+  it('root child count equals number of updates (no double-increment in mergeChildEntry)', () => {
     const profiler = new UpdateProfiler();
 
     profiler.beginUpdate();
@@ -371,16 +442,10 @@ describe('UpdateProfiler — hierarchy', () => {
     const root = profiler.getTimings();
     expect(root.children).toHaveLength(1);
     expect(root.children[0].name).toBe('Step');
-    // count is implementation-defined (the merge path increments more than
-    // once per measurement); the contract is "monotonically increasing".
-    expect(root.children[0].count).toBeGreaterThan(0);
+    expect(root.children[0].count).toBe(2);
   });
 
-  it('time() calls inside other time() calls become flat siblings under root', () => {
-    // The profiler does not push/pop currentSessionContext on time(), so a
-    // nested time('Inner') registers as a sibling of 'Outer' rather than a
-    // child. This test pins the documented behavior; if the profiler later
-    // gains real nesting, this test should be updated.
+  it('nested time() builds a parent/child hierarchy via currentSessionContext push/pop', () => {
     const profiler = new UpdateProfiler();
 
     profiler.beginUpdate();
@@ -389,11 +454,39 @@ describe('UpdateProfiler — hierarchy', () => {
     });
     profiler.endUpdate();
 
-    const names = profiler
-      .getTimings()
-      .children.map((c) => c.name)
-      .sort();
-    expect(names).toEqual(['Inner', 'Outer']);
+    const root = profiler.getTimings();
+    expect(root.children).toHaveLength(1);
+    expect(root.children[0].name).toBe('Outer');
+    expect(root.children[0].children).toHaveLength(1);
+    expect(root.children[0].children[0].name).toBe('Inner');
+  });
+
+  it('child avgMs converges at EMA rate (alpha=0.1), not double-EMA', () => {
+    // After 1st update: avgMs = 100 (seeded on count=1)
+    // After 2nd update with duration 50:
+    //   correct EMA: 0.1 * 50 + 0.9 * 100 = 95
+    //   buggy double-EMA would land near 0.1 * (0.1*50+0.9*100) + 0.9*100
+    //     i.e. mid-90s but biased; the strict assertion is that the value
+    //     equals 95 exactly under a controlled clock.
+    const clock = controlledClock();
+    try {
+      const profiler = new UpdateProfiler();
+
+      profiler.beginUpdate();
+      profiler.time('Step', () => clock.advance(100));
+      profiler.endUpdate();
+      const after1 = findChild(profiler.getTimings(), 'Step')!.avgMs;
+
+      profiler.beginUpdate();
+      profiler.time('Step', () => clock.advance(50));
+      profiler.endUpdate();
+      const after2 = findChild(profiler.getTimings(), 'Step')!.avgMs;
+
+      expect(after1).toBeCloseTo(100, 5);
+      expect(after2).toBeCloseTo(95, 5);
+    } finally {
+      clock.restore();
+    }
   });
 });
 
@@ -466,6 +559,33 @@ describe('UpdateProfiler — reset', () => {
     profiler.endUpdate();
 
     profiler.reset();
+
+    const root = profiler.getTimings();
+    expect(root.count).toBe(0);
+    expect(root.children).toHaveLength(0);
+    expect(root.lastMs).toBe(0);
+  });
+
+  it('reset() mid-update clears activeSession; subsequent endUpdate() is a no-op', () => {
+    // CRIT-1d: reset() must clear activeSession / currentSessionContext /
+    // activeSessions in addition to rebuilding rootEntry. Otherwise the
+    // dangling RootSession would later try to merge into a tree it no
+    // longer owns, polluting fresh root counters.
+    const profiler = new UpdateProfiler();
+
+    profiler.beginUpdate();
+    expect(profiler.isActive()).toBe(true);
+
+    // reset() mid-update — must wipe active-session state.
+    profiler.reset();
+    expect(profiler.isActive()).toBe(false);
+    // current() must return a NoOp session whose methods are safe to call
+    // (proves currentSessionContext was cleared).
+    expect(() => profiler.current().setMetadata({ chunks: 7 })).not.toThrow();
+
+    // Calling endUpdate() after reset() must not crash and must not
+    // increment the freshly-zeroed root counters.
+    expect(() => profiler.endUpdate()).not.toThrow();
 
     const root = profiler.getTimings();
     expect(root.count).toBe(0);

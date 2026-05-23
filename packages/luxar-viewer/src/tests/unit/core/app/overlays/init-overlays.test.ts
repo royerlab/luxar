@@ -17,6 +17,22 @@ import {
 import { OverlayManager } from '../../../../../ui/overlay-manager';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 
+// AUDIT NOTE (core.md W9): this file vi.mocks the entire OverlayManager
+// — the principal collaborator. The "construction" test on its own
+// asserts only that the constructor was called, which exercises the
+// test's own mock harness more than initOverlays. The other tests in
+// this file DO exercise meaningful contracts (loadOverlays argument
+// shapes, wire-up order between disposePrevious and construct, port
+// fan-out into inputHandler.setOverlayManager / recordingPanel.set*,
+// happy-path / null-root branches). The proper strengthening for the
+// pure-construction test is to drop the mock entirely and assert that
+// initOverlays returns an OverlayManager instance that satisfies the
+// downstream contract (e.g. `manager.dispose()` is callable, the
+// __luxarDebug probe sees a real reference). That's a multi-hour
+// refactor because OverlayManager pulls in zarr loaders + UI DOM
+// helpers; deferred behind a comment so a follow-up PR can address
+// it once OverlayManager has a simpler constructor seam.
+
 // Mock OverlayManager so we can intercept construction + loadOverlays.
 vi.mock('../../../../../ui/overlay-manager', () => {
   const loadOverlays = vi.fn().mockResolvedValue(undefined);

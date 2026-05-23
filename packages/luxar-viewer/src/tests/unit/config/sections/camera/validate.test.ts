@@ -172,4 +172,33 @@ describe('validateCamera', () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid FOV limits'));
   });
+
+  // [G15][P5] Audit: pre-audit `defaults.far` was tested only against
+  // `<= near` numerically. NaN slips past `<= near` (NaN comparisons
+  // are always false), and Infinity passes BOTH `<= near` and the bare
+  // numeric check — only the explicit `Number.isFinite()` guard catches
+  // them. Both must error.
+  it('rejects NaN camera far plane', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.far = NaN;
+    const result = invokeValidator(validateCamera, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera far plane'));
+  });
+
+  it('rejects +Infinity camera far plane', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.far = Number.POSITIVE_INFINITY;
+    const result = invokeValidator(validateCamera, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera far plane'));
+  });
+
+  it('rejects -Infinity camera far plane (would otherwise be < near)', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.far = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateCamera, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera far plane'));
+  });
 });

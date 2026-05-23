@@ -274,6 +274,17 @@ describe('SpatialQueryBuilder', () => {
     };
   }
 
+  // data.md W10 audit acknowledgment [P3]: the two `vi.spyOn(toleranceComputer,
+  // 'computeTolerance')` tests below intentionally test implementation
+  // coupling (that the builder routes through this helper) rather than
+  // pure behavior. The behavior — that the same tolerance is ultimately
+  // applied to the chunk-bound test — is covered indirectly by the
+  // `chunk overlap` and `pre-computed tolerance path` blocks lower in
+  // this file. Keeping the spy tests but noting the trade-off: a
+  // refactor that inlined `computeTolerance` into the builder would
+  // break these (false positive) without changing behavior. Acceptable
+  // because the helper is a public seam for the geometry-typed tolerance
+  // model and we want to detect accidental decoupling.
   describe('geometry-aware path', () => {
     it('delegates tolerance to computeTolerance with the given geometryType', async () => {
       const index = makeIndex(1, 3);

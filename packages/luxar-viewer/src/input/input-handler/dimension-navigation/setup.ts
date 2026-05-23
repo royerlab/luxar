@@ -218,7 +218,12 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
 
   // Trigger initial update now that listener is registered — ensures
   // data loads at the correct initial slice position whether or not
-  // a slider panel exists.
-  updateAllNDNodes(ctx);
+  // a slider panel exists. The result is intentionally not awaited
+  // (initDimensionSliders is synchronous), but an explicit `.catch`
+  // ensures rejected updates surface in the console instead of being
+  // swallowed by the unhandled-rejection global.
+  updateAllNDNodes(ctx).catch((err) => {
+    log.error(Modules.INPUT, 'updateAllNDNodes failed', err);
+  });
   ctx.animationController.startAnimation();
 }

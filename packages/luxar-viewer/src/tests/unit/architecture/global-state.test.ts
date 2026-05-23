@@ -134,6 +134,36 @@ describe('Global State Management', () => {
       const newDefault = manager.getDefaultLoader();
       expect(newDefault).toBeTruthy();
       expect(newDefault === loader2 || newDefault === loader3).toBe(true);
+      // Marking `loader3` as referenced — its presence ensures we exercise the
+      // multi-loader election path even though only loader2 is the expected pick.
+      void loader3;
+    });
+
+    // Regression: MED-37 — default election after destruction must follow
+    // Map insertion order (oldest remaining loader wins). This is the
+    // documented contract on `detachLoader` in scene-loader-manager.ts.
+    it('should elect the oldest remaining loader as the new default (deterministic)', () => {
+      const manager = SceneLoaderManager.getInstance();
+
+      // Insert in known order; only the first is the default.
+      manager.createLoader('a', undefined, true);
+      const b = manager.createLoader('b', undefined, false);
+      manager.createLoader('c', undefined, false);
+      manager.createLoader('d', undefined, false);
+
+      // Destroying the default ('a') must hand the crown to 'b' — the
+      // oldest *remaining* loader, not 'c' or 'd'.
+      manager.destroyLoader('a');
+      expect(manager.getDefaultLoader()).toBe(b);
+
+      // Destroying a non-default loader must not change the default.
+      manager.destroyLoader('c');
+      expect(manager.getDefaultLoader()).toBe(b);
+
+      // Destroying the last remaining loader must null the default.
+      manager.destroyLoader('b');
+      manager.destroyLoader('d');
+      expect(manager.getDefaultLoader()).toBeNull();
     });
   });
 
@@ -227,8 +257,18 @@ describe('Global State Management', () => {
   });
 
   describe('Integration with zarr-loader API', () => {
-    it('should not create global window variables', () => {
-      // Check that no global variables are created
+    it('does not create global window variables (post-operation strict check)', () => {
+      // architecture.md C1 fix: previously this asserted four hardcoded keys
+      // are undefined BEFORE any operation runs — passes on a clean jsdom
+      // regardless of what production code does. Now we perform an
+      // operation first and assert window stays clean.
+      const before = new Set(Object.keys(window));
+      const manager = SceneLoaderManager.getInstance();
+      manager.createLoader('integration-test');
+      const after = Object.keys(window);
+      const added = after.filter((k) => !before.has(k));
+      expect(added).toEqual([]);
+      // Belt-and-braces: the four legacy keys the original audit cared about.
       expect((window as any).__luxarSceneLoader).toBeUndefined();
       expect((window as any).__luxarLoader).toBeUndefined();
       expect((window as any).__luxarDataMonitor).toBeUndefined();
@@ -271,22 +311,22 @@ describe('Global State Management', () => {
   });
 
   describe('No global state pollution', () => {
-    it('should not pollute window object during normal operation', async () => {
-      const windowKeysBefore = Object.keys(window);
+    it('does not add ANY new keys to window during normal operation (strict)', async () => {
+      // architecture.md C1/C2 fix: previous version filtered new keys by the
+      // substring `luxar`/`loader`, so any pollution lacking those tokens
+      // (e.g. `window.__sceneState`, `window.__monitor`, `window.profiler`)
+      // would silently pass. Strict variant asserts NO new window keys
+      // appear at all.
+      const windowKeysBefore = new Set(Object.keys(window));
 
-      // Perform some operations
       const manager = SceneLoaderManager.getInstance();
       manager.createLoader('test');
 
-      const windowKeysAfter = Object.keys(window);
-
-      // No new keys should be added to window
-      const newKeys = windowKeysAfter.filter((key) => !windowKeysBefore.includes(key));
-      const luxarKeys = newKeys.filter(
-        (key) => key.toLowerCase().includes('luxar') || key.toLowerCase().includes('loader')
-      );
-
-      expect(luxarKeys).toHaveLength(0);
+      const newKeys = Object.keys(window).filter((key) => !windowKeysBefore.has(key));
+      // Note: jsdom may add internal accessor properties; if a future jsdom
+      // upgrade trips this, allow-list the specific runtime-internal key
+      // here (not a substring match).
+      expect(newKeys).toEqual([]);
     });
   });
 });
