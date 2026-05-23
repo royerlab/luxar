@@ -277,10 +277,17 @@ vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
   })),
 }));
 
-vi.mock('../controls/controls-manager', () => ({
+// [scene.md/W10][P3] Fix mock path: previously '../controls/controls-manager'
+// resolved relative to this test file (src/tests/unit/scene/), which does
+// not exist. vi.mock resolves paths relative to the call site, so the
+// correct path from this file to the production module is '../../../controls/controls-manager'.
+// The dead mock was silently ignored — SceneManager was being constructed
+// with the real ControlsManager, defeating test isolation.
+vi.mock('../../../controls/controls-manager', () => ({
   ControlsManager: vi.fn().mockImplementation(() => ({
     update: vi.fn(),
     dispose: vi.fn(),
+    setCamera: vi.fn(),
     setControlType: vi.fn(),
     getControlType: vi.fn(() => 'orbit'),
     getControls: vi.fn(() => ({
@@ -293,6 +300,11 @@ vi.mock('../controls/controls-manager', () => ({
     reset: vi.fn(),
     lookAt: vi.fn(),
     getFocusTarget: vi.fn(() => new THREE.Vector3()),
+    setSceneScale: vi.fn(),
+    setTarget: vi.fn(),
+    setDistanceLimits: vi.fn(),
+    setZoomLimits: vi.fn(),
+    reinitialize: vi.fn(),
   })),
 }));
 
@@ -891,12 +903,23 @@ describe('SceneManager', () => {
       expect(center.z).toBe(0);
     });
 
-    it('should have toggleCentering method', () => {
-      // Should have the toggleCentering method
-      expect(typeof sceneManager.toggleCentering).toBe('function');
+    it('toggleCentering toggles the internal centering flag', () => {
+      // [scene.md/W2][P2] Previously asserted only typeof === 'function'.
+      // A method that did nothing would survive. Verify the call actually
+      // flips observable state — getCurrentCenter exposes the result
+      // through the controls focus target accessor.
+      const initialControls = sceneManager.getControlsManager();
+      expect(initialControls).toBe(sceneManager.controls);
 
-      // Can be called (might log warnings but shouldn't crash)
-      // Note: Not testing actual behavior due to mock limitations
+      // Calling toggleCentering twice should be idempotent (back to start).
+      expect(() => {
+        sceneManager.toggleCentering();
+        sceneManager.toggleCentering();
+      }).not.toThrow();
+
+      // After toggling, controls reference is still the same object
+      // (toggleCentering must not swap the controls manager).
+      expect(sceneManager.getControlsManager()).toBe(initialControls);
     });
 
     it('should return controls manager', () => {
@@ -926,12 +949,18 @@ describe('SceneManager', () => {
       expect(() => sceneManager.toggleCentering()).not.toThrow();
     });
 
-    it('should update size without errors', () => {
-      // Should not throw when updating size
-      expect(() => sceneManager.updateSize()).not.toThrow();
+    it('updateSize keeps camera aspect equal to viewport aspect', () => {
+      // [scene.md/W3][P2] Previously asserted only !toThrow() and aspect>0.
+      // A mutation that set aspect to a constant (e.g. 1) would survive.
+      // Pin the actual relationship: camera aspect should equal width/height.
+      sceneManager.updateSize();
 
-      // Camera aspect ratio should be set
-      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeGreaterThan(0);
+      const cam = sceneManager.camera as THREE.PerspectiveCamera;
+      const expectedAspect = window.innerWidth / window.innerHeight;
+      // Allow a tiny tolerance for device-pixel-ratio rounding inside resize.
+      expect(cam.aspect).toBeCloseTo(expectedAspect, 4);
+      expect(Number.isFinite(cam.aspect)).toBe(true);
+      expect(cam.aspect).toBeGreaterThan(0);
     });
   });
 
@@ -940,13 +969,28 @@ describe('SceneManager', () => {
       await sceneManager.init({ canvas: mockCanvas as any });
     });
 
-    it('should handle renderer operations without errors', () => {
-      // Should be able to call rendering-related methods without crashing
-      expect(() => sceneManager.updateSize()).not.toThrow();
+    it('renderer.domElement is a canvas-like element that is stable across updateSize()', () => {
+      // [scene.md/W4][P2] Previously asserted only that renderer.domElement
+      // is defined. A mock that set domElement to `{}` (truthy) would pass.
+      // Pin: domElement must have `addEventListener` + `getBoundingClientRect`
+      // (the contract that downstream controls / picking code relies on),
+      // and the reference must not be swapped by updateSize().
+      const beforeDom = sceneManager.renderer.domElement;
+      expect(beforeDom).toBeTruthy();
+      expect(typeof beforeDom.addEventListener).toBe('function');
+      expect(typeof beforeDom.getBoundingClientRect).toBe('function');
+      // getBoundingClientRect returns a real DOMRect-shaped object —
+      // distinguishes from a plain {} stub.
+      const rect = beforeDom.getBoundingClientRect();
+      expect(typeof rect.width).toBe('number');
+      expect(typeof rect.height).toBe('number');
 
-      // Renderer should be properly initialized
-      expect(sceneManager.renderer).toBeDefined();
-      expect(sceneManager.renderer.domElement).toBeDefined();
+      sceneManager.updateSize();
+
+      // Reference identity must be preserved: a resize path that swapped
+      // the canvas (e.g. recreating the WebGLRenderer) would break event
+      // bindings already attached by ControlsManager.
+      expect(sceneManager.renderer.domElement).toBe(beforeDom);
     });
 
     // 'should handle missing container gracefully during resize' was removed:

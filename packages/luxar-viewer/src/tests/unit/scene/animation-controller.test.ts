@@ -214,11 +214,28 @@ describe('AnimationController', () => {
       expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
     });
 
-    it('should schedule next frame via requestAnimationFrame', () => {
+    it('schedules next frame via requestAnimationFrame and the callback advances the loop', () => {
+      // [scene.md/W9][P2] Previously only asserted rAF called with a fn,
+      // but never invoked the callback to check it advances the loop.
+      // A mutation that scheduled rAF with a no-op would survive.
       controller.startAnimation();
 
       expect(mockRAF).toHaveBeenCalledTimes(1);
-      expect(mockRAF).toHaveBeenCalledWith(expect.any(Function));
+      const rafCallback = mockRAF.mock.calls[0][0] as FrameRequestCallback;
+      expect(typeof rafCallback).toBe('function');
+
+      // Invoking the scheduled callback should run another animate() pass:
+      // - controls.update fires again
+      // - postProcessing.render fires again
+      // - rAF is re-scheduled
+      mockRAF.mockClear();
+      mockControls.update.mockClear();
+      mockPostProcessing.render.mockClear();
+      rafCallback(performance.now());
+
+      expect(mockControls.update).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+      expect(mockRAF).toHaveBeenCalledTimes(1);
     });
 
     // when WebGL context is lost, animation loop must
@@ -254,16 +271,25 @@ describe('AnimationController', () => {
       expect(mockCAF).toHaveBeenCalled();
     });
 
-    it('should clear idle timeout on stop', () => {
+    it('clears idle timeout on stop — no late idle-fire reactivates renderer or controls', () => {
+      // [scene.md/W11][P2] Previously advanced time 10000ms and only checked
+      // "no crash". A mutation that left the idle timeout alive (e.g. did
+      // not clearTimeout) would still pass. Pin observable state: after
+      // stop+advance, controls.update / postProcessing.render must NOT
+      // have been called again, and controller must remain inactive.
       controller.startAnimation();
+      const updateCallsBefore = mockControls.update.mock.calls.length;
+      const renderCallsBefore = mockPostProcessing.render.mock.calls.length;
 
-      // idleTimeout is set after startAnimation
       controller.stopAnimation();
+      expect(controller.isActive).toBe(false);
 
-      // Advancing time should not trigger any idle handler
+      // If timeout was alive, an idle-fire (or other timer-driven re-trigger)
+      // would re-invoke animate() and bump these counters.
       vi.advanceTimersByTime(10000);
-      // If timeout was properly cleared, no new stopAnimation call happens
-      // (no crash or unexpected behavior)
+      expect(mockControls.update.mock.calls.length).toBe(updateCallsBefore);
+      expect(mockPostProcessing.render.mock.calls.length).toBe(renderCallsBefore);
+      expect(controller.isActive).toBe(false);
     });
   });
 

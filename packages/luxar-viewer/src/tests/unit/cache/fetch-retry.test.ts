@@ -226,6 +226,29 @@ describe('fetchWithRetry', () => {
     expect(abortCount).toBeGreaterThan(0);
   });
 
+  // [cache.md/G10][P5] The "5xx then success on retry" branch was never
+  // exercised directly against `fetchWithRetry` — only via the multi-level
+  // store. This is the typical transient-outage flow.
+  it('5xx → 200 on retry returns the eventual success response', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls++;
+      return calls < 3 ? mockResponse(503) : mockResponse(200, 'hello');
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await promise;
+
+    // Eventually-successful response is surfaced exactly (status, body).
+    expect(response?.status).toBe(200);
+    expect(response?.ok).toBe(true);
+    // Exactly 3 calls: two 503s + one 200. NOT a 4th retry after success.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('caps backoff at MAX_RETRY_DELAY_MS (~500ms)', async () => {
     vi.useFakeTimers();
     const callTimes: number[] = [];

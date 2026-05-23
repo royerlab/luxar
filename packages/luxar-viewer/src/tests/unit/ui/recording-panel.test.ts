@@ -182,8 +182,19 @@ describe('RecordingPanel', () => {
   });
 
   describe('EXR sequence dispatch', () => {
-    it('initializes isEXRSequenceRecording to false', () => {
-      expect((panel as any).session.isEXRSequenceRecording).toBe(false);
+    it('initializes session recording flags to false on construction (no in-flight recording)', () => {
+      // [ui.md/W3][P2] Previously asserted only one private boolean. Reading
+      // private state remains brittle (OOS — promote to public observer),
+      // but we can at least pin all three session flags together so a
+      // mutation that flips one default is caught.
+      const session = (panel as any).session;
+      expect(session.isEXRSequenceRecording).toBe(false);
+      expect(session.isRecording).toBe(false);
+      expect(session.isOfflineCaptureActive).toBe(false);
+      // Sanity: stopVideoRecording on a fresh panel is a no-op (the
+      // early-return at line 237 of recording-panel.ts) — exercises the
+      // public surface that the private flags actually drive.
+      expect(() => panel.stopVideoRecording()).not.toThrow();
     });
 
     it('routes EXR format in any mode to the offline-capture strategy', async () => {

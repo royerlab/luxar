@@ -74,13 +74,23 @@ describe('messageMatchesFilter', () => {
 });
 
 describe('formatConsoleTimestamp', () => {
-  it('formats HH:mm:ss.SSS in 24-hour form', () => {
-    // 14:09:08 with 042ms — locale formatter uses comma as decimal in some
-    // jsdom builds, so allow either '.' or ',' as the millisecond separator.
+  it('formats HH:mm:ss.SSS in 24-hour form with exactly 3 ms digits and either . or , separator', () => {
+    // [ui.md/W10][P2] Previously the regex was permissive but the test
+    // name promised "HH:mm:ss.SSS" strictness. Strengthen by pinning the
+    // millisecond digit count to exactly 3, the locale-dependent decimal
+    // separator to one of two known values, and the exact ms string '042'
+    // (preserves leading zero). The hour:minute:second portion is locale-
+    // sensitive depending on the runner's timezone; just verify it has
+    // the right shape and is not the empty string.
     const date = new Date('2026-05-07T14:09:08.042Z');
     const result = formatConsoleTimestamp(date);
-    // shape: HH:mm:ss[.,]SSS
+    expect(result.length).toBeGreaterThan(0);
     expect(result).toMatch(/^\d{2}:\d{2}:\d{2}[.,]\d{3}$/);
+    // ms portion must be exactly '042' (3 digits, leading zero preserved).
+    expect(result.slice(-4)).toMatch(/^[.,]042$/);
+    // Decimal separator is one of '.' or ',' — no other punctuation.
+    const sep = result.slice(-4, -3);
+    expect(['.', ',']).toContain(sep);
   });
 
   it('preserves leading zeros for hours / minutes / seconds', () => {

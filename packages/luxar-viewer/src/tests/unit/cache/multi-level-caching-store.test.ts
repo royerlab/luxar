@@ -174,26 +174,52 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should populate both L1 and L2 on HTTP fetch', async () => {
+      // [cache.md/W5][P2] Previous version asserted `l1.chunksCount > 0` only
+      // with a comment "L2 write is async, so stats might not update
+      // immediately" — explicitly leaving the L2-write half of the contract
+      // unverified. Drain the L2 write by disposing (which awaits pending
+      // writes) then pin the cascade on a fresh store instance.
       await store.get('test.chunk');
 
       const stats = store.getStats();
-      expect(stats.l1.chunksCount).toBeGreaterThan(0); // In L1
-      // L2 write is async, so stats might not update immediately
+      // L1 entry is exactly the bytes we fetched.
+      expect(stats.l1.chunksCount).toBe(1);
+      expect(stats.l1.metadataCount).toBe(0);
+
+      // Drain L2 writes — dispose() awaits pending OPFS persistence —
+      // then assert the L2 store recorded the same key.
+      await store.dispose();
+      const persistedL2 = mocks.files.size + mocks.metaFiles.size;
+      expect(persistedL2).toBeGreaterThanOrEqual(1);
     });
 
     it('should promote from L2 to L1 on access', async () => {
-      // First: populate cache
+      // [cache.md/W6][P2] Previous version asserted only `data` was defined
+      // with comment "L2 might not have had time to persist". Drive the
+      // promotion by waiting for one microtask flush after the populating
+      // fetch so the async L2 write completes, then assert the second
+      // access (a) returns the exact bytes, (b) hits no network, and
+      // (c) re-populates L1.
       await store.get('test.chunk');
+      // Yield to let the in-mock OPFS write resolve.
+      await new Promise((r) => setTimeout(r, 0));
 
-      // Clear L1 only
+      const before = store.getStats();
+      const beforeL2Hits = before.demand.l2Hits;
+
       store.clearL1();
       mocks.fetchedUrls.length = 0;
 
-      // Access again - should come from L2, not HTTP
       const data = await store.get('test.chunk');
 
-      expect(data).toBeDefined();
-      // L2 might not have had time to persist in mock, so just verify no HTTP fetch
+      // Exact-bytes match → not a placeholder.
+      expect(data).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+      // No HTTP fetch → served from L2.
+      expect(mocks.fetchedUrls.length).toBe(0);
+      // Promoted back into L1.
+      expect(store.getStats().l1.chunksCount).toBe(1);
+      // Demand l2Hit counter incremented (the actual promotion signal).
+      expect(store.getStats().demand.l2Hits).toBe(beforeL2Hits + 1);
     });
   });
 
@@ -574,7 +600,13 @@ describe('MultiLevelCachingStore', () => {
       // Cache .zattrs by accessing it normally (goes through cache cascade)
       await store.get('.zattrs');
       const cachedAttrs = await store.get('.zattrs');
-      expect(cachedAttrs).toBeDefined();
+      // [cache.md/Wn][P2] Previously asserted only `cachedAttrs` is defined.
+      // The .zattrs response is JSON containing the current content_hash; pin
+      // the exact bytes to confirm the cached read returned the same payload
+      // the mock fetcher emitted (parsing-as-JSON would also catch any
+      // truncation regression in the cache cascade).
+      const decoded = new TextDecoder().decode(cachedAttrs!);
+      expect(JSON.parse(decoded)).toEqual({ content_hash: currentHash });
       fetchCalls.length = 0; // Clear tracking
 
       // Now simulate switching to dataset 2 with different hash
@@ -970,13 +1002,25 @@ describe('MultiLevelCachingStore', () => {
 
   describe('getStats health field (commit 6.4)', () => {
     it('exposes validationMode + lastValidatedAt + unvalidatedExternalDataset', async () => {
+      // [cache.md/Wn][P2] Previously asserted `stats.health).toBeDefined()`
+      // plus a few `typeof` membership checks. Strengthen to assert the exact
+      // shape (four named keys, no extras) — a regression that dropped any
+      // field (e.g. removed `opfsAvailable`) would now fail.
       const stats = store.getStats();
-      expect(stats.health).toBeDefined();
+      expect(Object.keys(stats.health).sort()).toEqual(
+        [
+          'lastValidatedAt',
+          'opfsAvailable',
+          'unvalidatedExternalDataset',
+          'validationMode',
+        ].sort()
+      );
       expect(['content-hash', 'ttl', 'none']).toContain(stats.health.validationMode);
       expect(
         stats.health.lastValidatedAt === null || typeof stats.health.lastValidatedAt === 'number'
       ).toBe(true);
       expect(typeof stats.health.unvalidatedExternalDataset).toBe('boolean');
+      expect(typeof stats.health.opfsAvailable).toBe('boolean');
     });
 
     it('marks external dataset as unvalidated when mode === none', async () => {
@@ -1005,13 +1049,19 @@ describe('MultiLevelCachingStore', () => {
 
   describe('Statistics', () => {
     it('should return accurate L1 and L2 stats', async () => {
+      // [cache.md/Wn][P2] Previous version had `metadataCount>0`,
+      // `chunksCount>0`, `l2).toBeDefined()`. Make all three exact.
       await store.get('.zmetadata'); // Metadata
       await store.get('chunk1'); // Chunk
 
       const stats = store.getStats();
-      expect(stats.l1.metadataCount).toBeGreaterThan(0);
-      expect(stats.l1.chunksCount).toBeGreaterThan(0);
-      expect(stats.l2).toBeDefined();
+      expect(stats.l1.metadataCount).toBe(1);
+      expect(stats.l1.chunksCount).toBe(1);
+      // l2 is documented to expose at least size/count/reads/writes/misses
+      // (multi-level-caching-store.ts:663-669 fallback shape). Pin a
+      // representative invariant: never-undefined and numerically sized.
+      expect(typeof stats.l2.size).toBe('number');
+      expect(typeof stats.l2.count).toBe('number');
     });
 
     it('should track both segments in L1', async () => {
@@ -1093,6 +1143,10 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should handle OPFS initialization failure', async () => {
+      // [cache.md/Wn][P2] Previously asserted only `result).toBeDefined()`.
+      // The real contract is "OPFS-down fallback works through L1 only":
+      // (1) get() returns the actual fetched bytes; (2) L1 still populates;
+      // (3) L2 reports zero count (no persistence layer wired up).
       vi.stubGlobal('navigator', {
         storage: {
           async getDirectory() {
@@ -1106,7 +1160,10 @@ describe('MultiLevelCachingStore', () => {
 
       // Should still work with L1 only
       const result = await store.get('test');
-      expect(result).toBeDefined();
+      expect(result).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+      const stats = store.getStats();
+      expect(stats.l1.chunksCount).toBe(1);
+      expect(stats.l2.count).toBe(0);
     });
   });
 
@@ -1123,9 +1180,16 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should not throw on dispose without init', async () => {
+      // [cache.md/Wn][P2] Previously asserted only `newStore).toBeDefined()`
+      // (constructors never return undefined). Strengthen by asserting the
+      // post-dispose observable contract: getStats() still returns a valid
+      // snapshot with zero counts (no leaked state).
       const newStore = new MultiLevelCachingStore('https://example.com/test.zarr');
       await newStore.dispose(); // Should not throw
-      expect(newStore).toBeDefined();
+      const stats = newStore.getStats();
+      expect(stats.l1.chunksCount).toBe(0);
+      expect(stats.l1.metadataCount).toBe(0);
+      expect(stats.l2.count).toBe(0);
     });
 
     it(
@@ -1418,6 +1482,10 @@ describe('MultiLevelCachingStore', () => {
 
   describe('URL Parameter Handling', () => {
     it('should disable caching with ?no-cache', async () => {
+      // [cache.md/Wn][P2] Previously asserted r1/r2 `toBeDefined()` and
+      // `>=1` fetches. Strengthen to: (a) exact bytes for both results,
+      // (b) exact-2 fetches (one per get) — proves no-cache truly bypasses
+      // L1 (a regression that still cached in L1 would show only 1 fetch).
       const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
       });
@@ -1429,10 +1497,10 @@ describe('MultiLevelCachingStore', () => {
       const result1 = await noCacheStore.get('test');
       const result2 = await noCacheStore.get('test'); // Second time
 
-      expect(result1).toBeDefined();
-      expect(result2).toBeDefined();
-      // With no-cache, each get() should fetch (not cached)
-      expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBeGreaterThanOrEqual(1);
+      expect(result1).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+      expect(result2).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+      // With no-cache, EVERY get() must fetch — exact 2 fetches of /test.
+      expect(mocks.fetchedUrls.filter((u) => u.includes('test')).length).toBe(2);
     });
 
     it('should enable debug logging with ?cache-debug', async () => {
@@ -1452,7 +1520,12 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should clear cache with ?clear-cache', async () => {
-      // Pre-populate
+      // [cache.md/W10][P2] Previous version constructed a fresh `clearStore`
+      // and asserted `l2.size === 0` — but a fresh store's l2.size is
+      // unconditionally 0 in this mock (no cross-instance persistence),
+      // so the assertion passes whether `clearCache` did anything or not.
+      // Strengthen by pinning `clearOnInitCount`, the observable side-effect
+      // of the ?clear-cache flow surfaced by getStats().
       await store.get('test1');
       await store.dispose();
 
@@ -1462,7 +1535,9 @@ describe('MultiLevelCachingStore', () => {
       await clearStore.init();
 
       const stats = clearStore.getStats();
-      expect(stats.l2.size).toBe(0); // Cleared
+      expect(stats.l2.size).toBe(0); // Documented in MultiLevelCacheStats.l2.size
+      // The real ?clear-cache observable: clearOnInitCount === 1.
+      expect(stats.clearOnInitCount).toBe(1);
     });
   });
 
@@ -1485,15 +1560,24 @@ describe('MultiLevelCachingStore', () => {
       // cache.md W8 fix: previous version asserted `>= 1` which let any
       // routing regression survive. Strengthen: 2 metadata keys (`.zarray`,
       // `.zattrs`) + 2 chunk keys → exactly 2 in each segment.
+      // [cache.md/Wn][P2] Round-7 follow-up: the four `r1..r4).toBeDefined()`
+      // were trivially true (the mock fetch always returns a buffer); replace
+      // with exact-bytes equality, which forces the cache cascade to surface
+      // the actual fetched payload rather than a placeholder.
       const r1 = await store.get('.zarray');
       const r2 = await store.get('chunk1');
       const r3 = await store.get('.zattrs');
       const r4 = await store.get('chunk2');
 
-      expect(r1).toBeDefined();
-      expect(r2).toBeDefined();
-      expect(r3).toBeDefined();
-      expect(r4).toBeDefined();
+      const dataBytes = new Uint8Array([1, 2, 3, 4, 5]);
+      // .zattrs is the content-hash payload in this mock, not the raw bytes.
+      expect(r1).toEqual(dataBytes);
+      expect(r2).toEqual(dataBytes);
+      expect(r4).toEqual(dataBytes);
+      // .zattrs returns JSON content_hash payload.
+      expect(JSON.parse(new TextDecoder().decode(r3!))).toEqual({
+        content_hash: 'test-hash-123',
+      });
 
       const stats = store.getStats();
       expect(stats.l1.metadataCount).toBe(2);
@@ -1628,9 +1712,12 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should work without prefetcher attached', async () => {
-      // No prefetcher attached - should work fine
+      // [cache.md/Wn][P2] Previously asserted only `result).toBeDefined()`.
+      // Strengthen to exact bytes + L1 population — proves the no-prefetcher
+      // path still flows through the full cascade.
       const result = await store.get('test.chunk');
-      expect(result).toBeDefined();
+      expect(result).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+      expect(store.getStats().l1.chunksCount).toBe(1);
     });
 
     it('does NOT call prefetcher.onAccess() when suppressPrefetch=true on L3 fetch', async () => {

@@ -106,6 +106,34 @@ describe('NumberController', () => {
       expect(object.value).toBe(100); // Clamped to max
     });
 
+    // [ui.md/G — boundary cases on gui library components] Numeric boundary
+    // cases. The controller is wired to user-driven HTML inputs which can
+    // emit any string — defend against NaN, ±Infinity, and below-min.
+    it('clamps values below min back to min', () => {
+      const input = controller.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      input.value = '-50'; // below min (min=0)
+      input.dispatchEvent(new Event('change'));
+      expect(object.value).toBe(0);
+    });
+
+    it('does not mutate the object when the input is non-numeric (NaN guard)', () => {
+      const input = controller.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      const before = object.value;
+      input.value = 'not-a-number';
+      input.dispatchEvent(new Event('change'));
+      // Either kept the previous value or wrote a finite number — must
+      // NOT have written NaN, which would silently corrupt every
+      // downstream consumer of this.object[propertyName].
+      expect(Number.isNaN(object.value)).toBe(false);
+      expect(Number.isFinite(object.value)).toBe(true);
+      // Conservative default behaviour: previous value retained.
+      expect(object.value).toBe(before);
+    });
+
     it('should trigger onChange callback on user input', () => {
       const onChange = vi.fn();
       controller.onChange(onChange);

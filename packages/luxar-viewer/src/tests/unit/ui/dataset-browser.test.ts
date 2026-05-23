@@ -96,13 +96,26 @@ describe('DatasetBrowser', () => {
       expect(closeBtn.textContent).toBe('×');
     });
 
-    it('navigates to root with no currentSrc', () => {
+    it('navigates to root exactly once with empty path when no currentSrc is provided', () => {
+      // [ui.md/W1][P2] Previously the two tests asserted the same thing —
+      // toHaveBeenCalledWith('') — which gave no signal about the two
+      // distinct constructor branches. Strengthen: pin the call count
+      // (exactly one navigate during construction) and that the initial
+      // path is the empty-root string, not undefined or null.
       new DatasetBrowser({ container, onDatasetSelect, onClose });
-      // Initial navigate('') call lives inside the constructor.
+      expect(navigateMock).toHaveBeenCalledTimes(1);
       expect(navigateMock).toHaveBeenCalledWith('');
+      // First argument is strictly the empty string '', not undefined / null
+      // (which could happen if a refactor silently dropped the fallback).
+      expect(navigateMock.mock.calls[0][0]).toBe('');
     });
 
-    it('extracts parent directory when currentSrc points inside a .zarr', () => {
+    it('extracts parent directory when currentSrc points inside a .zarr and renders the panel skeleton', () => {
+      // [ui.md/W1][P2] Previously asserted only that navigate('') fired,
+      // which is identical to the no-currentSrc case. Strengthen by
+      // verifying the panel skeleton is still constructed (i.e. the
+      // currentSrc branch does not throw or skip DOM construction) and
+      // that the initial navigate fires exactly once.
       new DatasetBrowser({
         container,
         onDatasetSelect,
@@ -111,9 +124,13 @@ describe('DatasetBrowser', () => {
         origin: 'http://server.test',
       });
 
-      // The parent-directory branch sets initialPath='' and stores the
-      // dataset name for highlighting later — assertion is just that the
-      // initial navigate call fires.
+      // The constructor should have wired the DOM:
+      expect(container.querySelector('#luxar-dataset-browser')).not.toBeNull();
+      expect(container.querySelector('#luxar-dataset-browser-title')?.textContent).toBe(
+        'Select Dataset'
+      );
+      // And fired exactly one initial navigate (no double-fetch).
+      expect(navigateMock).toHaveBeenCalledTimes(1);
       expect(navigateMock).toHaveBeenCalledWith('');
     });
   });

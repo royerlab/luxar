@@ -181,33 +181,43 @@ describe('Accumulator Integration Tests', () => {
       expect(data.metadata.dtypes!.sharpness).toBe('uint8');
     });
 
-    it('should handle type changes (recreate buffers)', () => {
-      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
-
-      // First fill: Uint8 colors
-      accumulator.fill(0, {
-        positions: new Float32Array(3),
+    it('should expose Uint8 vs Float32 color dtype via public getData() across separate instances', () => {
+      // integration.md C6 fix: previous version disposed one instance and
+      // constructed a second; the assertions inspected private
+      // `colorBuffer` state on each. That's two independent constructions,
+      // not "type-change handling". Rewrite to test the actual public
+      // contract: two accumulator instances with different color dtypes
+      // each surface the right typed-array view AND the right metadata
+      // dtype, via the public getData() surface. The test pins the
+      // observable behaviour the loader actually relies on. The
+      // "type-change within a single accumulator" path is not part of
+      // the public contract today (loaders dispose and recreate), so we
+      // assert only what production code actually depends on.
+      // [integration.md/C6][P1]
+      const accUint8 = new LoadedPointsDataAccumulator(1000, 3, 10000);
+      accUint8.fill(0, {
+        positions: new Float32Array([1, 2, 3]),
         colors: new Uint8Array([255, 128, 0]),
       });
+      const uint8Result = accUint8.getData(1);
+      expect(uint8Result.colors).toBeInstanceOf(Uint8Array);
+      expect(uint8Result.metadata.dtypes?.colors).toBe('uint8');
+      accUint8.dispose();
 
-      const colorBuffer1 = (accumulator as any).colorBuffer;
-      expect(colorBuffer1).toBeInstanceOf(Uint8Array);
-
-      // Dispose and reinit (simulate loader reset)
-      accumulator.dispose();
-      const accumulator2 = new LoadedPointsDataAccumulator(1000, 3, 10000);
-
-      // Second fill: Float32 colors (different type)
-      accumulator2.fill(0, {
-        positions: new Float32Array(3),
+      const accFloat32 = new LoadedPointsDataAccumulator(1000, 3, 10000);
+      accFloat32.fill(0, {
+        positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1.0, 0.5, 0.0]),
       });
+      const float32Result = accFloat32.getData(1);
+      expect(float32Result.colors).toBeInstanceOf(Float32Array);
+      expect(float32Result.metadata.dtypes?.colors).toBe('float32');
 
-      const colorBuffer2 = (accumulator2 as any).colorBuffer;
-      expect(colorBuffer2).toBeInstanceOf(Float32Array);
-
-      // Different types handled correctly
-      expect(colorBuffer1.constructor).not.toBe(colorBuffer2.constructor);
+      // Both dtypes round-trip through the public surface with distinct
+      // typed-array constructors. (The `.colors` field is typed as
+      // optional on the data interface but is asserted defined by the
+      // `toBeInstanceOf` checks above; non-null-assert is sound here.)
+      expect(uint8Result.colors!.constructor).not.toBe(float32Result.colors!.constructor);
     });
   });
 });

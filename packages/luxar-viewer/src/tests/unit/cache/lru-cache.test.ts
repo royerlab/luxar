@@ -221,11 +221,17 @@ describe('LRUCache', () => {
     });
 
     it('should handle single-item cache correctly', () => {
+      // [cache.md/Wn][P2] Previously asserted `get('key1')).toBeDefined()`.
+      // The value is a Uint8Array(50) of zeros, so a regression returning
+      // a wrong-sized buffer would still pass `toBeDefined()`. Pin exact
+      // length and a representative byte.
       cache.set('key1', new Uint8Array(50));
 
       expect(cache.size).toBe(50);
       expect(cache.count).toBe(1);
-      expect(cache.get('key1')).toBeDefined();
+      const got = cache.get('key1');
+      expect(got?.byteLength).toBe(50);
+      expect(got?.[0]).toBe(0);
 
       cache.clear();
       expect(cache.size).toBe(0);
@@ -268,6 +274,80 @@ describe('LRUCache', () => {
       // Earliest keys should be evicted
       expect(cache.has('key0')).toBe(false);
       expect(cache.has('key1')).toBe(false);
+    });
+
+    // [cache.md/G3][P5] Boundary: maxSize === 0 → degenerate cache that
+    // rejects any non-empty write (size > maxSize triggers the early return
+    // in set() at lru-cache.ts:106). Zero-byte values still slot in.
+    it('maxSize=0 degenerate cache rejects all non-empty writes', () => {
+      const zeroCache = new LRUCache<Uint8Array>(0, getSize);
+      zeroCache.set('key1', new Uint8Array(10));
+      expect(zeroCache.has('key1')).toBe(false);
+      expect(zeroCache.count).toBe(0);
+      expect(zeroCache.size).toBe(0);
+
+      // Zero-byte payload: size === maxSize === 0, so the size-overflow
+      // guard does NOT reject it. It is accepted but adds nothing to size.
+      zeroCache.set('empty', new Uint8Array(0));
+      expect(zeroCache.has('empty')).toBe(true);
+      expect(zeroCache.size).toBe(0);
+      expect(zeroCache.count).toBe(1);
+    });
+
+    // [cache.md/G3][P5] Boundary: eviction at exact-capacity boundary.
+    // Adding one byte beyond capacity must evict exactly enough to fit.
+    it('eviction triggers at size === maxSize + 1 (one byte over capacity)', () => {
+      // cache.maxSize is 100 (per beforeEach).
+      cache.set('a', new Uint8Array(100)); // fills cache exactly
+      expect(cache.size).toBe(100);
+      expect(cache.count).toBe(1);
+
+      // One additional byte → must evict a.
+      cache.set('b', new Uint8Array(1));
+      expect(cache.has('a')).toBe(false);
+      expect(cache.has('b')).toBe(true);
+      expect(cache.size).toBe(1);
+      expect(cache.count).toBe(1);
+      // The single eviction must have been counted.
+      expect(cache.evictionCount).toBe(1);
+    });
+
+    // [cache.md/G3][P5] Cache key boundary: empty-string key is accepted.
+    // (Empty key is a legitimate value in a Map; the LRU treats it as any
+    // other key.)
+    it('empty-string key roundtrips through set/get/has/delete', () => {
+      const payload = new Uint8Array([42]);
+      cache.set('', payload);
+      expect(cache.has('')).toBe(true);
+      expect(cache.get('')).toEqual(payload);
+      expect(cache.delete('')).toBe(true);
+      expect(cache.has('')).toBe(false);
+    });
+
+    // [cache.md/G3][P5] Cache key boundary: a key >1KB roundtrips intact.
+    // The LRU is a Map<string,V>, so long keys are pure hash overhead;
+    // pin the behavior in case a future change introduces key truncation
+    // or hashing that loses uniqueness at scale.
+    it('very long key (>1KB) roundtrips and is distinct from any prefix', () => {
+      const longKey = 'k'.repeat(1500);
+      const prefixKey = 'k'.repeat(750);
+      cache.set(longKey, new Uint8Array([1]));
+      cache.set(prefixKey, new Uint8Array([2]));
+      // Both distinct entries stored.
+      expect(cache.count).toBe(2);
+      expect(cache.get(longKey)).toEqual(new Uint8Array([1]));
+      expect(cache.get(prefixKey)).toEqual(new Uint8Array([2]));
+    });
+
+    // [cache.md/G3][P5] Cache key boundary: unicode key (multi-byte UTF-8
+    // sequences). LRU stores keys as JS strings, so this MUST work — but
+    // pin the contract so a regression (e.g. one that base64-encodes keys
+    // and uses btoa) cannot silently break it.
+    it('unicode key (multi-byte UTF-8 / emoji) roundtrips intact', () => {
+      const unicodeKey = '通道/データ/positions/🎯/0.0';
+      cache.set(unicodeKey, new Uint8Array([7, 8, 9]));
+      expect(cache.get(unicodeKey)).toEqual(new Uint8Array([7, 8, 9]));
+      expect(cache.has(unicodeKey)).toBe(true);
     });
   });
 
