@@ -192,7 +192,7 @@ export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: strin
     if (visited.has(node)) {
       throw new Error(
         `computeWorldNdTransform: malformed scene graph — node "${node.path}" ` +
-          `encountered twice (cycle or shared reference). Aborting traversal.`
+          'encountered twice (cycle or shared reference). Aborting traversal.'
       );
     }
     visited.add(node);

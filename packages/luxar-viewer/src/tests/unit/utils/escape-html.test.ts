@@ -88,7 +88,7 @@ describe('escapeHtml', () => {
 
   describe('full payload — all four entities at once preserve count', () => {
     it('escapes every special char exactly once in a mixed payload', () => {
-      const input = `<a href="x">&amp;</a>`;
+      const input = '<a href="x">&amp;</a>';
       const out = escapeHtml(input);
       // Each special char appears in the input the right number of times;
       // the output substitutes each occurrence with its entity. Count the

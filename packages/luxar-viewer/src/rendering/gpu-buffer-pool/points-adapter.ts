@@ -21,7 +21,7 @@ import { invalidateCachedByteSize } from './geometry-bytes';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PointsAttributeTypes, PooledBuffer } from './pool-stats';
-import { chooseCapacity } from '../gpu-buffer-pool';
+import { chooseCapacity } from './capacity';
 
 /** Base per-instance attribute layout for pooled points geometries. */
 const POINTS_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{

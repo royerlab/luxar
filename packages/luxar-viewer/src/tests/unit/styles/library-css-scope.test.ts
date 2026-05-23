@@ -49,9 +49,9 @@ const FORBIDDEN_SELECTORS = [
   // body-with-attr (`body[data-theme]`), body-followed-by-pseudo
   // (`body:hover`), and leading-whitespace-indented selectors that the
   // strict `^body` anchors miss inside nested rules.
-  /^\s*body[\s.\[:#]/m,
+  /^\s*body[\s.[:#]/m,
   /^html\s*[,{]/m,
-  /^\s*html[\s.\[:#]/m,
+  /^\s*html[\s.[:#]/m,
   /^html\s*,\s*body\s*\{/m,
   /^\*\s*[,{]/m,
   /^::-webkit-scrollbar/m,

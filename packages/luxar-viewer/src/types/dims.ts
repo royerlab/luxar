@@ -143,7 +143,7 @@ export function initializeDims(
     log.warning(
       Modules.DIMS,
       `dims metadata has ${metadata.length} entries but ndim=${ndim}; ` +
-        `padding with default dims so the slice navigator works.`
+        'padding with default dims so the slice navigator works.'
     );
     effectiveMetadata = [...metadata];
     for (let i = metadata.length; i < ndim; i++) {

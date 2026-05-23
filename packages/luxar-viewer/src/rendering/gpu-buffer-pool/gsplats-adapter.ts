@@ -19,7 +19,7 @@ import {
 import { invalidateCachedByteSize } from './geometry-bytes';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';
-import { chooseCapacity } from '../gpu-buffer-pool';
+import { chooseCapacity } from './capacity';
 
 /** Packed GSplats data ready for GPU upload (from gsplats/projection.ts). */
 export interface PackedGSplatsData {
