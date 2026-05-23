@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../data';
+import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -40,10 +40,10 @@ vi.mock('zarrita', () => ({
 // Mock the canonical SpatialQueryBuilder so the test exercises the loader's
 // orchestration rather than the AABB scan (which has its own unit tests).
 const mockExecute = vi.fn();
-vi.mock('../../../data/loaders/spatial-query/spatial-query-builder', async () => {
+vi.mock('../../../../data/loaders/spatial-query/spatial-query-builder', async () => {
   const actual = await vi.importActual<
-    typeof import('../../../data/loaders/spatial-query/spatial-query-builder')
-  >('../../../data/loaders/spatial-query/spatial-query-builder');
+    typeof import('../../../../data/loaders/spatial-query/spatial-query-builder')
+  >('../../../../data/loaders/spatial-query/spatial-query-builder');
   return {
     ...actual,
     SpatialQueryBuilder: vi.fn().mockImplementation(() => ({
@@ -52,7 +52,7 @@ vi.mock('../../../data/loaders/spatial-query/spatial-query-builder', async () =>
   };
 });
 
-import { SpatialQueryBuilder } from '../../../data/loaders';
+import { SpatialQueryBuilder } from '../../../../data/loaders';
 
 describe('PointsSpatialIndexLoader', () => {
   let loader: PointsSpatialIndexLoader;

@@ -15,26 +15,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// [styles.md/O2][P10] Shared @import-resolution helper extracted to
+// `_helpers/css-text.ts` to remove the bootstrap duplication this file
+// previously shared with data-loading-monitor-css.test.ts.
+import { expandImports } from './_helpers/css-text';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES_ROOT = resolve(HERE, '../../../styles');
-
-/** Inline @import directives recursively into a single CSS string. */
-function expandImports(file: string, seen = new Set<string>()): string {
-  const abs = resolve(file);
-  if (seen.has(abs)) return '';
-  seen.add(abs);
-  if (!existsSync(abs)) return '';
-
-  const source = readFileSync(abs, 'utf8');
-  return source.replace(/@import\s+['"]([^'"]+)['"]\s*;?/g, (_, importPath: string) => {
-    const importedAbs = resolve(dirname(abs), importPath);
-    return expandImports(importedAbs, seen);
-  });
-}
 
 /**
  * Match top-level CSS selectors that would clobber a host page. We do this

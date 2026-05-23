@@ -2,10 +2,12 @@
  * WASM vs TypeScript Performance Benchmarks
  *
  * Measures actual speedup of WASM implementations compared to TypeScript fallbacks.
- * Run with: pnpm test --run src/tests/unit/wasm/wasm-performance.bench.ts
+ * Run with: pnpm test --run src/tests/unit/wasm/wasm-performance.test.ts
  *
  * Note: These are benchmarks, not unit tests. They measure performance but don't
- * assert correctness (that's covered by wasm-vs-typescript.test.ts).
+ * assert correctness (that's covered by wasm-vs-typescript.test.ts). The audit
+ * (wasm.md [O3][P9]) flagged that the header pointed to a non-existent
+ * `.bench.ts` filename — header now matches the actual file path.
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';

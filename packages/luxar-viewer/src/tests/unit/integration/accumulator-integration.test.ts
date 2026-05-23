@@ -10,44 +10,57 @@ import { LoadedPointsDataAccumulator } from '../../../data/accumulators/points';
 
 describe('Accumulator Integration Tests', () => {
   describe('Points Loader Integration', () => {
-    it('should call accumulator methods when useAccumulators=true', () => {
+    // [integration.md/O4][P4] Split a single it() that bundled three
+    // independent contracts (ensureCapacity call, type init via fill, getData
+    // call + result shape) into three focused tests.
+
+    it('ensureCapacity() forwards its argument to the spy intact', () => {
       const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
-
-      // Spy on accumulator methods
       const ensureCapacitySpy = vi.spyOn(accumulator, 'ensureCapacity');
-      const getDataSpy = vi.spyOn(accumulator, 'getData');
 
-      // Simulate loader behavior
-      const mockData = {
-        positions: new Float32Array(3000),
-        colors: new Uint8Array(3000),
-        radii: new Float32Array(1000),
-        sharpness: new Float32Array(1000),
-      };
-
-      // This is what points-spatial-index-loader does at line 429
+      // This mirrors the call points-spatial-index-loader makes in its
+      // first-fill branch (no line number — refs drift).
+      // [integration.md/O2][P10] Removed brittle line-number reference.
       accumulator.ensureCapacity(1000);
 
-      // Verify ensureCapacity was called
       expect(ensureCapacitySpy).toHaveBeenCalledWith(1000);
+    });
 
-      // Initialize types (line 432-438)
-      if (!(accumulator as any).types) {
+    it('type-init via fill() succeeds when types are not yet seeded', () => {
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
+      accumulator.ensureCapacity(1000);
+
+      // First fill establishes the accumulator's color/radii/sharpness dtypes
+      // (the loader does this in its first-fill / type-init branch). It must
+      // not throw. [integration.md/O2][P10] Removed brittle line-number ref.
+      expect(() =>
         accumulator.fill(0, {
           positions: new Float32Array(3),
-          colors: mockData.colors.subarray(0, 3),
-          radii: mockData.radii.subarray(0, 1),
-          sharpness: mockData.sharpness.subarray(0, 1),
-        });
-      }
+          colors: new Uint8Array(3),
+          radii: new Float32Array(1),
+          sharpness: new Float32Array(1),
+        }),
+      ).not.toThrow();
+    });
 
-      // This is what happens at line 470 (via projectTo3D → getData)
+    it('getData(count) forwards count to the spy and returns positions + colors views', () => {
+      const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
+      const getDataSpy = vi.spyOn(accumulator, 'getData');
+
+      accumulator.ensureCapacity(1000);
+      accumulator.fill(0, {
+        positions: new Float32Array(3),
+        colors: new Uint8Array(3),
+        radii: new Float32Array(1),
+        sharpness: new Float32Array(1),
+      });
+
+      // This mirrors what happens inside the loader's projectTo3D → getData
+      // call. [integration.md/O2][P10] Removed brittle line-number ref.
       const result = accumulator.getData(1000);
 
-      // Verify getData was called
       expect(getDataSpy).toHaveBeenCalledWith(1000);
-
-      // Verify result is from accumulator (subarrays)
+      // Result must expose positions + colors via the public API.
       expect(result.positions).toBeDefined();
       expect(result.colors).toBeDefined();
     });

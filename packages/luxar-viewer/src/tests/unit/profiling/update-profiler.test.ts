@@ -123,15 +123,24 @@ describe('UpdateProfiler — session lifecycle', () => {
     profiler = new UpdateProfiler();
   });
 
-  it('reports inactive before any update', () => {
-    expect(profiler.isActive()).toBe(false);
-  });
-
-  it('reports active between beginUpdate and endUpdate', () => {
-    profiler.beginUpdate();
-    expect(profiler.isActive()).toBe(true);
-    profiler.endUpdate();
-    expect(profiler.isActive()).toBe(false);
+  // [profiling.md/O3][P9] Consolidate the parallel "inactive before" /
+  // "active between" pair into a single it.each over (action → expected
+  // isActive) — the two cases differ only by the action taken.
+  const setupNoop = (_p: UpdateProfiler): void => undefined;
+  const setupBegin = (p: UpdateProfiler): void => {
+    p.beginUpdate();
+  };
+  const setupBeginEnd = (p: UpdateProfiler): void => {
+    p.beginUpdate();
+    p.endUpdate();
+  };
+  it.each([
+    ['before any update', setupNoop, false],
+    ['inside an open update', setupBegin, true],
+    ['after the update ends', setupBeginEnd, false],
+  ] as const)('isActive() reports %s as %s', (_label, setup, expected) => {
+    setup(profiler);
+    expect(profiler.isActive()).toBe(expected);
   });
 
   it('current() returns a NoOp session when no update is active', () => {

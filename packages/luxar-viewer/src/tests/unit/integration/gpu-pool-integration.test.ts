@@ -10,6 +10,42 @@ import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 import * as THREE from 'three';
 
+// [integration.md/O3][P10] Fixture factory extracted from inline literals
+// that were repeated 5+ times across this file. Each call returns a fresh
+// LoadedPointsData with caller-controllable count, ndim, and color type
+// — so tests can express "the data I need" rather than re-typing 13 lines
+// of boilerplate per case. Float32 colors by default; pass `colorCtor`
+// for the Uint8 / type-mismatch paths.
+function makePointsData(
+  count: number,
+  opts: {
+    ndim?: number;
+    colorCtor?: Float32ArrayConstructor | Uint8ArrayConstructor;
+    componentsPerColor?: number;
+    radii?: boolean;
+    sharpness?: boolean;
+  } = {},
+): LoadedPointsData {
+  const ndim = opts.ndim ?? 3;
+  const componentsPerColor = opts.componentsPerColor ?? 3;
+  const ColorCtor = opts.colorCtor ?? Float32Array;
+  const data: LoadedPointsData = {
+    positions: new Float32Array(count * ndim),
+    colors: new ColorCtor(count * componentsPerColor),
+    pointCount: count,
+    ndim,
+    metadata: {
+      totalPoints: count,
+      loadedPoints: count,
+      bounds: new THREE.Box3(),
+      usedSpatialIndex: true,
+    },
+  };
+  if (opts.radii !== false) data.radii = new Float32Array(count);
+  if (opts.sharpness !== false) data.sharpness = new Float32Array(count);
+  return data;
+}
+
 describe('GPU Buffer Pool Integration Tests', () => {
   describe('Geometry Acquisition Verification', () => {
     it('should call acquirePointsGeometry when updating points', () => {
@@ -128,27 +164,9 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should reuse geometry when types match', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const data1: LoadedPointsData = {
-        positions: new Float32Array(3000),
-        colors: new Uint8Array(3000), // Uint8 colors
-        radii: new Float32Array(1000),
-        sharpness: new Float32Array(1000),
-        pointCount: 1000,
-        ndim: 3,
-        metadata: {
-          totalPoints: 1000,
-          loadedPoints: 1000,
-          bounds: new THREE.Box3(),
-          usedSpatialIndex: true,
-        },
-      };
-
-      const data2: LoadedPointsData = {
-        ...data1,
-        colors: new Uint8Array(2400), // Still Uint8, smaller
-        pointCount: 800,
-        metadata: { ...data1.metadata, loadedPoints: 800 },
-      };
+      // [integration.md/O3][P10] Factory-built fixtures replace duplicated literals.
+      const data1 = makePointsData(1000, { colorCtor: Uint8Array });
+      const data2 = makePointsData(800, { colorCtor: Uint8Array });
 
       const geom1 = pool.acquirePointsGeometry('/node1', data1, 1000);
       const geom2 = pool.acquirePointsGeometry('/node1', data2, 800);
@@ -161,25 +179,9 @@ describe('GPU Buffer Pool Integration Tests', () => {
     it('should NOT reuse geometry when types differ', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const dataUint8: LoadedPointsData = {
-        positions: new Float32Array(3000),
-        colors: new Uint8Array(3000), // Uint8
-        radii: new Float32Array(1000),
-        sharpness: new Float32Array(1000),
-        pointCount: 1000,
-        ndim: 3,
-        metadata: {
-          totalPoints: 1000,
-          loadedPoints: 1000,
-          bounds: new THREE.Box3(),
-          usedSpatialIndex: true,
-        },
-      };
-
-      const dataFloat: LoadedPointsData = {
-        ...dataUint8,
-        colors: new Float32Array(3000), // Float32 (different type!)
-      };
+      // [integration.md/O3][P10] Factory-built fixtures.
+      const dataUint8 = makePointsData(1000, { colorCtor: Uint8Array });
+      const dataFloat = makePointsData(1000, { colorCtor: Float32Array });
 
       const geom1 = pool.acquirePointsGeometry('/node1', dataUint8, 1000);
 

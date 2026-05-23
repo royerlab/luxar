@@ -1405,11 +1405,16 @@ describe('TypeScript Reference Implementation Tests', () => {
   });
 
   describe('lines_clipping: lerp', () => {
-    it('should interpolate scalar values', () => {
-      expect(lerp(0, 10, 0)).toBe(0);
-      expect(lerp(0, 10, 1)).toBe(10);
-      expect(lerp(0, 10, 0.5)).toBe(5);
-      expect(lerp(-10, 10, 0.5)).toBe(0);
+    // [wasm.md/O5][P4] Was four anonymous expect() lines in a single it().
+    // Each case has independent observable identity (endpoints + midpoint +
+    // symmetric range), and an it.each surfaces the failing case.
+    it.each([
+      { a: 0, b: 10, t: 0, expected: 0 },
+      { a: 0, b: 10, t: 1, expected: 10 },
+      { a: 0, b: 10, t: 0.5, expected: 5 },
+      { a: -10, b: 10, t: 0.5, expected: 0 },
+    ])('lerp($a, $b, $t) === $expected', ({ a, b, t, expected }) => {
+      expect(lerp(a, b, t)).toBe(expected);
     });
   });
 

@@ -244,7 +244,11 @@ describe('ControlsManager', () => {
     });
   });
 
-  describe('general control methods', () => {
+  // [controls.md/O2][P9] Split the former 'general control methods' block —
+  // it mixed enable/disable + saveState/reset + lookAt (orbit + fly variants).
+  // Each concern now lives in its own describe so the report names the
+  // failing concern cleanly.
+  describe('enable/disable', () => {
     it('should enable/disable controls', () => {
       controlsManager.setEnabled(false);
       expect(controlsManager.getControls()!.enabled).toBe(false);
@@ -252,7 +256,9 @@ describe('ControlsManager', () => {
       controlsManager.setEnabled(true);
       expect(controlsManager.getControls()!.enabled).toBe(true);
     });
+  });
 
+  describe('saveState/reset roundtrip', () => {
     it('saveState() then mutation then reset() roundtrips orbit camera+target', () => {
       // C1 strengthening: previously this whole describe block had two
       // spy-on-replaced-method tests (.reset and .saveState). Verify
@@ -282,7 +288,9 @@ describe('ControlsManager', () => {
       expect(controls.target.y).toBeCloseTo(expectedTarget.y, 5);
       expect(controls.target.z).toBeCloseTo(expectedTarget.z, 5);
     });
+  });
 
+  describe('lookAt', () => {
     it('should handle lookAt for orbit controls', () => {
       const target = new THREE.Vector3(1, 2, 3);
       controlsManager.lookAt(target);
@@ -384,35 +392,21 @@ describe('ControlsManager', () => {
   });
 
   describe('event handling', () => {
-    it('should forward change events from controls', () => {
-      const changeHandler = vi.fn();
-      controlsManager.addEventListener('change', changeHandler);
+    // [controls.md/O8][P4] Compacted three near-identical event-forwarding tests
+    // (change/start/end) into a single it.each — body is identical save for the
+    // event type string.
+    it.each([['change'], ['start'], ['end']] as const)(
+      'forwards %s events from inner controls to outer manager listeners',
+      (eventType) => {
+        const handler = vi.fn();
+        controlsManager.addEventListener(eventType, handler);
 
-      const controls = controlsManager.getControls() as any;
-      controls.dispatchEvent({ type: 'change' });
+        const controls = controlsManager.getControls() as any;
+        controls.dispatchEvent({ type: eventType });
 
-      expect(changeHandler).toHaveBeenCalled();
-    });
-
-    it('should forward start events from controls', () => {
-      const startHandler = vi.fn();
-      controlsManager.addEventListener('start', startHandler);
-
-      const controls = controlsManager.getControls() as any;
-      controls.dispatchEvent({ type: 'start' });
-
-      expect(startHandler).toHaveBeenCalled();
-    });
-
-    it('should forward end events from controls', () => {
-      const endHandler = vi.fn();
-      controlsManager.addEventListener('end', endHandler);
-
-      const controls = controlsManager.getControls() as any;
-      controls.dispatchEvent({ type: 'end' });
-
-      expect(endHandler).toHaveBeenCalled();
-    });
+        expect(handler).toHaveBeenCalled();
+      },
+    );
 
     it('should detach forwarded listeners from disposed controls when switching modes', () => {
       const oldControls = controlsManager.getControls() as any;

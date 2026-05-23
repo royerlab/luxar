@@ -19,10 +19,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as zarr from 'zarrita';
-import { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
-import type { SceneNode, ViewState } from '../../../data';
-import type { MonitorEvent, MonitorEventListener } from '../../../types/data-monitor-types';
-import { makeMockZarrLocation } from '../../builders/spatial-loader-fixtures';
+import { LinesSpatialIndexLoader } from '../../../../data/lines/lines-spatial-index-loader';
+import type { SceneNode, ViewState } from '../../../../data';
+import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
+import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -34,10 +34,10 @@ vi.mock('zarrita', () => ({
 // Mock the canonical SpatialQueryBuilder so the test exercises the loader's
 // orchestration rather than the AABB scan (which has its own unit tests).
 const mockExecute = vi.fn();
-vi.mock('../../../data/loaders/spatial-query/spatial-query-builder', async () => {
+vi.mock('../../../../data/loaders/spatial-query/spatial-query-builder', async () => {
   const actual = await vi.importActual<
-    typeof import('../../../data/loaders/spatial-query/spatial-query-builder')
-  >('../../../data/loaders/spatial-query/spatial-query-builder');
+    typeof import('../../../../data/loaders/spatial-query/spatial-query-builder')
+  >('../../../../data/loaders/spatial-query/spatial-query-builder');
   return {
     ...actual,
     SpatialQueryBuilder: vi.fn().mockImplementation(() => ({
@@ -46,7 +46,7 @@ vi.mock('../../../data/loaders/spatial-query/spatial-query-builder', async () =>
   };
 });
 
-import { SpatialQueryBuilder } from '../../../data/loaders';
+import { SpatialQueryBuilder } from '../../../../data/loaders';
 
 function makeLinesNode(overrides: Partial<SceneNode> = {}): SceneNode {
   return {
