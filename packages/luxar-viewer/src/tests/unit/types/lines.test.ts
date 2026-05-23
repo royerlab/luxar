@@ -99,6 +99,21 @@ describe('Lines Types', () => {
 
       expect(isLinesUserData(invalidUserData)).toBe(false);
     });
+
+    // [types.md/W5][P2] Audit found `isLinesUserData` tests never covered
+    // primitive / null / array inputs. Symmetric with the W4 fix in
+    // gsplats.test.ts — the guard accepts `unknown` and must reject
+    // non-object inputs defensively.
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+      ['number', 42],
+      ['string', 'lines'],
+      ['boolean', true],
+      ['array', [{ nodeType: 'lines' }]],
+    ] as const)('rejects %s defensively', (_label, value) => {
+      expect(isLinesUserData(value)).toBe(false);
+    });
   });
 
   describe('isValidLineType', () => {
@@ -119,111 +134,10 @@ describe('Lines Types', () => {
   });
 });
 
-describe('Lines Type Definitions', () => {
-  describe('LinesMetadata interface', () => {
-    it('should allow all required fields', () => {
-      // This is a compile-time test - if it compiles, the types are correct
-      const metadata = {
-        type: 'lines' as const,
-        n_vertices: 100,
-        n_segments: 50,
-        ndim: 3,
-        original_line_type: 'polyline' as const,
-        max_width: 0.5,
-        has_colors: true,
-        has_sharpness: true,
-        ordering: 'morton' as const,
-      };
-
-      expect(metadata.type).toBe('lines');
-      expect(metadata.n_vertices).toBe(100);
-      expect(metadata.n_segments).toBe(50);
-      expect(metadata.ndim).toBe(3);
-      expect(metadata.original_line_type).toBe('polyline');
-      expect(metadata.max_width).toBe(0.5);
-      expect(metadata.has_colors).toBe(true);
-      expect(metadata.has_sharpness).toBe(true);
-      expect(metadata.ordering).toBe('morton');
-    });
-
-    it('should allow optional ordering metadata', () => {
-      const metadata = {
-        type: 'lines' as const,
-        n_vertices: 100,
-        n_segments: 50,
-        ndim: 3,
-        original_line_type: 'segments' as const,
-        max_width: 0.1,
-        has_colors: false,
-        has_sharpness: false,
-        ordering: 'morton' as const,
-        vertex_ordering: {
-          ordering: 'morton' as const,
-          grid_shape: [10, 10, 10],
-          grid_origin: [0, 0, 0],
-          cell_size: [1, 1, 1],
-          position_bounds: { min: [0, 0, 0], max: [10, 10, 10] },
-          chunk_shape: [1024],
-          total_chunks: 10,
-          points_per_chunk: 100,
-        },
-      };
-
-      expect(metadata.vertex_ordering?.ordering).toBe('morton');
-      expect(metadata.vertex_ordering?.grid_shape).toEqual([10, 10, 10]);
-    });
-  });
-
-  describe('ClippedSegment interface', () => {
-    it('should represent visible clipped segment', () => {
-      const segment = {
-        p1: [0, 1, 2],
-        p2: [3, 4, 5],
-        t1: 0.25,
-        t2: 0.75,
-        visible: true,
-      };
-
-      expect(segment.visible).toBe(true);
-      expect(segment.p1).toEqual([0, 1, 2]);
-      expect(segment.p2).toEqual([3, 4, 5]);
-      expect(segment.t1).toBe(0.25);
-      expect(segment.t2).toBe(0.75);
-    });
-
-    it('should represent invisible segment', () => {
-      const segment = {
-        p1: [],
-        p2: [],
-        t1: 0,
-        t2: 0,
-        visible: false,
-      };
-
-      expect(segment.visible).toBe(false);
-    });
-  });
-
-  describe('ProcessedLinesData interface', () => {
-    it('should represent GPU-ready line data', () => {
-      const data = {
-        startPositions: new Float32Array([0, 0, 0, 1, 1, 1]),
-        endPositions: new Float32Array([1, 0, 0, 2, 1, 1]),
-        startColors: new Float32Array([1, 0, 0, 0, 1, 0]),
-        endColors: new Float32Array([1, 0, 0, 0, 1, 0]),
-        startWidths: new Float32Array([0.1, 0.2]),
-        endWidths: new Float32Array([0.15, 0.25]),
-        startSharpness: new Float32Array([1.0, 0.5]),
-        endSharpness: new Float32Array([1.0, 0.5]),
-        segmentLengths: new Float32Array([1.0, 1.414]),
-        startClipped: new Uint8Array([0, 1]),
-        endClipped: new Uint8Array([0, 0]),
-        segmentCount: 2,
-      };
-
-      expect(data.segmentCount).toBe(2);
-      expect(data.startPositions.length).toBe(6); // 2 segments * 3 components
-      expect(data.startClipped[1]).toBe(1); // Second segment start was clipped
-    });
-  });
-});
+// [types.md/W2][P1][P2][EXCLUDED-CATEGORY: types] Removed `Lines Type
+// Definitions` describe block (~107 lines): four `it(...)` blocks that
+// constructed typed literal objects and asserted the literal's own fields
+// equaled the values just written into them. Same pattern as gsplats W1 —
+// "if it compiles, the types are correct" — these tests exercised zero
+// runtime branches. TypeScript's own type-checker (`pnpm typecheck`) is
+// the authoritative gate for compile-time correctness.

@@ -638,4 +638,147 @@ describe('effective-radius-calculator', () => {
       expect(result[0]).toBe(1.0);
     });
   });
+
+  // [ndim.md/G3][P5] Small-ndim boundary tests. ndim=1 and ndim=2 are
+  // degenerate but legitimate (e.g. a 1D scatter or a 2D heatmap-style
+  // projection). The source has no special-cased small-ndim path, so a
+  // refactor that introduced one (e.g. an unrolled ndim>=3 loop) would
+  // silently break these inputs. Pin the per-ndim contract.
+  describe('small-ndim boundary', () => {
+    it('ndim=1 with single hidden spatial dim returns Pythagorean cross-section', () => {
+      // 1D point at position 0.6 from the slice; radius 1.0 with the
+      // hidden spatial dim contributing the full Pythagorean term.
+      const positions = new Float32Array([0.6]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [], // no displayed dims
+        slicePosition: [0],
+        tolerance: [0.5],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 1);
+      // R_eff = sqrt(1 - 0.36) = 0.8
+      expect(result[0]).toBeCloseTo(0.8, 5);
+    });
+
+    it('ndim=2 with one displayed + one hidden spatial dim follows Pythagoras', () => {
+      // 2D: dim 0 displayed, dim 1 hidden spatial. Point at (0, 0.6).
+      const positions = new Float32Array([0, 0.6]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [0],
+        slicePosition: [0, 0],
+        tolerance: [0.5, 0.5],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [true, true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 2);
+      // R_eff = sqrt(1 - 0.6²) = 0.8 — same as ndim=1 (extra displayed dim
+      // contributes nothing).
+      expect(result[0]).toBeCloseTo(0.8, 5);
+    });
+  });
+
+  // [ndim.md/G5][P5] Missing slicePosition entries default to 0 via `?? 0`
+  // (source line 75). A mutant that defaulted to undefined or NaN would
+  // silently corrupt the distance calculation. Pin the default-to-zero
+  // contract.
+  describe('missing slicePosition entries default to 0', () => {
+    it('undefined slicePosition[d] is treated as 0', () => {
+      // 4D point at (0, 0, 0, 0.6). slicePosition is short (only 3 entries),
+      // so position[3]=0.6 is computed against target=0 (default).
+      const positions = new Float32Array([0, 0, 0, 0.6]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        // Only 3 entries — slicePosition[3] is undefined → defaults to 0.
+        slicePosition: [0, 0, 0],
+        tolerance: [0.1, 0.1, 0.1, 0.5],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [true, true, true, true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+      // D = |0.6 - 0| = 0.6 → R_eff = sqrt(1 - 0.36) = 0.8
+      expect(result[0]).toBeCloseTo(0.8, 5);
+    });
+  });
+
+  // [ndim.md/G6][P5] discreteTolerance = 0.5 boundary. Source uses
+  // `Math.abs(value - target) > discreteTolerance` (strict >), so a point
+  // at EXACTLY 0.5 from the target passes the discrete check. A mutant
+  // that flipped to `>=` (or used `< 0.5`) would invert this boundary.
+  describe('discreteTolerance boundary (exact 0.5)', () => {
+    it('discrete-dim value at exactly 0.5 from target passes the threshold', () => {
+      // 4D: dims 1,2,3 displayed; dim 0 is discrete. Point at orbital
+      // exactly 0.5 from target 0 — strict `> 0.5` keeps it.
+      const positions = new Float32Array([0.5, 0, 0, 0]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [1, 2, 3],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0.1, 0.1, 0.1],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [false, true, true, true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+      // |0.5 - 0| = 0.5, NOT > 0.5 → discrete match holds → full radius
+      expect(result[0]).toBe(1.0);
+    });
+
+    it('discrete-dim value just above 0.5 (0.501) is filtered out', () => {
+      // Mirror test: 0.501 IS > 0.5 → discrete mismatch → radius clamped
+      // to 0. Together with the test above, this pins the strict-> contract.
+      const positions = new Float32Array([0.501, 0, 0, 0]);
+      const radii = new Float32Array([1.0]);
+      const viewState: ViewState = {
+        displayDims: [1, 2, 3],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0.1, 0.1, 0.1],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [false, true, true, true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+      expect(result[0]).toBe(0);
+    });
+  });
+
+  // [ndim.md/G11][P5] Negative radius input. The source squares the radius
+  // (R²), so a negative input produces a positive squared term — the math
+  // proceeds as if the radius were |R|. The clamp `effectiveRadiusSquared
+  // >= 0 ? Math.sqrt(...) : 0` then returns a non-negative result. Pins
+  // the squared-input symmetry — a mutant that ABS'd the radius differently
+  // would not survive.
+  describe('negative radius input', () => {
+    it('negative radius is treated as |radius| (R² is sign-insensitive)', () => {
+      // 4D point on slice in dims 0..2, distance 0.6 in hidden dim 3.
+      // Negative R=-1: R² = 1, so the result is the same as R=+1.
+      const positions = new Float32Array([0, 0, 0, 0.6]);
+      const radii = new Float32Array([-1.0]);
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0.1, 0.1, 0.1, 0.5],
+      };
+      const config: EffectiveRadiusConfig = {
+        spatialExtendDims: [true, true, true, true],
+        maxRadius: 1.0,
+      };
+      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+      // sqrt((-1)² - 0.6²) = sqrt(0.64) = 0.8 — still non-negative.
+      expect(result[0]).toBeCloseTo(0.8, 5);
+      // Output must be non-negative (the sqrt always returns >= 0).
+      expect(result[0]).toBeGreaterThanOrEqual(0);
+    });
+  });
 });

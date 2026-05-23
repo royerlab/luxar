@@ -247,8 +247,15 @@ describe('GSplatsSpatialIndexLoader', () => {
         };
 
         const result = await bodyLoader.loadGSplats(viewState);
-        expect(result).toBeDefined();
-        expect(result.positions).toBeDefined();
+        // [data.md/W][P2] Strengthen: pin concrete typed-array shape on the
+        // ordering='none' fallback path — production must still produce a
+        // Float32Array result (load-all path with no index).
+        expect(result.positions).toBeInstanceOf(Float32Array);
+        expect(result.amplitudes).toBeInstanceOf(Float32Array);
+        expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
+        // splatCount tracks positions length / ndim (3D in this fixture).
+        expect(result.positions.length % 3).toBe(0);
+        expect(result.splatCount).toBe(result.positions.length / 3);
       });
 
       it('should handle missing colors array gracefully', async () => {
@@ -278,9 +285,10 @@ describe('GSplatsSpatialIndexLoader', () => {
         };
 
         const result = await bodyLoader.loadGSplats(viewState);
-        expect(result.positions).toBeDefined();
-        expect(result.amplitudes).toBeDefined();
-        expect(result.choleskyFactors).toBeDefined();
+        // [data.md/W][P2] Strengthen typed-array shape assertions.
+        expect(result.positions).toBeInstanceOf(Float32Array);
+        expect(result.amplitudes).toBeInstanceOf(Float32Array);
+        expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
         expect(result.colors).toBeFalsy();
       });
 
@@ -601,7 +609,11 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         await bodyLoader.loadGSplats(viewState1);
         const result = await bodyLoader.updateView(viewState2);
-        expect(result).toBeDefined();
+        // [data.md/W][P2] Strengthen: updateView returns a fresh result with
+        // concrete typed-array fields, not just any truthy value.
+        expect(result.positions).toBeInstanceOf(Float32Array);
+        expect(result.amplitudes).toBeInstanceOf(Float32Array);
+        expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
         expect(SpatialQueryBuilder).toHaveBeenCalledTimes(2);
       });
     });

@@ -104,8 +104,20 @@ describe('exportViewerState', () => {
     expect((debug.lastExportedState as { mocked: boolean }).mocked).toBe(true);
   });
 
-  it('does NOT touch window.__luxarDebug when it is undefined', () => {
+  it('does NOT touch window.__luxarDebug when it is undefined, but still runs the export pipeline [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
+    // The contract is that the debug-hook is feature-detected — when
+    // `__luxarDebug` is undefined, the export still captures state and
+    // writes to the clipboard (only the debug mirror is skipped).
+    // Without these observable assertions, a regression that
+    // short-circuited the entire export when no debug hook was set
+    // would survive the smoke test.
     expect((window as unknown as { __luxarDebug?: unknown }).__luxarDebug).toBeUndefined();
-    expect(() => exportViewerState(makeCtx(true))).not.toThrow();
+    exportViewerState(makeCtx(true));
+    // captureViewerState + clipboard.writeText must still fire.
+    expect(captureViewerState).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    // __luxarDebug was undefined → must STILL be undefined (no auto-create).
+    expect((window as unknown as { __luxarDebug?: unknown }).__luxarDebug).toBeUndefined();
   });
 });

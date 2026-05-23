@@ -116,4 +116,47 @@ describe('MegaShaderMaterial', () => {
     bloomTexture.dispose();
     material.dispose();
   });
+
+  // [rendering.md/G15][P5] Dispersion clamp boundary cases. Source uses
+  // `Math.max(0, Math.min(1, value))` so the uniform must end up in [0,1].
+  // NaN / Infinity / negative inputs were previously untested — pin the
+  // IEEE-754 contract so any future guard introduction is deliberate.
+  it('setLensDistortion clamps negative dispersion to 0', () => {
+    const material = new MegaShaderMaterial();
+    material.setLensDistortion({ dispersion: -0.5 });
+    expect(material.uniforms.uDispersion.value).toBe(0);
+    material.dispose();
+  });
+
+  it('setLensDistortion clamps dispersion > 1 to 1 (uses Math.min)', () => {
+    const material = new MegaShaderMaterial();
+    material.setLensDistortion({ dispersion: 100 });
+    expect(material.uniforms.uDispersion.value).toBe(1);
+    material.dispose();
+  });
+
+  it('setLensDistortion clamps -Infinity dispersion to 0 (Math.max guard)', () => {
+    const material = new MegaShaderMaterial();
+    material.setLensDistortion({ dispersion: Number.NEGATIVE_INFINITY });
+    expect(material.uniforms.uDispersion.value).toBe(0);
+    material.dispose();
+  });
+
+  it('setLensDistortion clamps +Infinity dispersion to 1 (Math.min guard)', () => {
+    const material = new MegaShaderMaterial();
+    material.setLensDistortion({ dispersion: Number.POSITIVE_INFINITY });
+    expect(material.uniforms.uDispersion.value).toBe(1);
+    material.dispose();
+  });
+
+  it('setLensDistortion: NaN dispersion propagates as NaN (Math.max/min with NaN → NaN)', () => {
+    // Documents the IEEE-754 contract: `Math.max(0, Math.min(1, NaN))` is
+    // NaN. The shader is expected to handle NaN gracefully (or the caller
+    // is expected to guard upstream). A mutant that special-cased NaN would
+    // change this observable.
+    const material = new MegaShaderMaterial();
+    material.setLensDistortion({ dispersion: Number.NaN });
+    expect(Number.isNaN(material.uniforms.uDispersion.value)).toBe(true);
+    material.dispose();
+  });
 });

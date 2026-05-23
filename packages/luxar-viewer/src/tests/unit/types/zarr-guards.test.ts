@@ -98,6 +98,39 @@ describe('hasTransform', () => {
     expect(hasTransform(makeAttrs({}))).toBe(false);
     expect(hasTransform(makeAttrs(42))).toBe(false);
   });
+
+  // [types.md/G3][P5][P8] Audit found `hasTransform` had no test for:
+  //   - arrays containing NaN/Infinity (the guard checks length only — these
+  //     pass, which we PIN as current behavior so a future tightening is
+  //     intentional, not silent),
+  //   - typed-array inputs (Float32Array.length === 16 must NOT pass as a
+  //     16-element transform — the source uses `Array.isArray` which
+  //     rejects typed arrays).
+  it('accepts a 16-array containing NaN/Infinity values (length-only check is current behavior)', () => {
+    // The source `hasTransform` only asserts `Array.isArray && length===16`;
+    // it does NOT validate element finiteness. Downstream consumers (e.g.
+    // node-factory/validation.ts) tighten with finiteness checks. Pin the
+    // current behavior to surface a future tightening.
+    const t = Array.from({ length: 16 }, () => NaN);
+    expect(hasTransform(makeAttrs(t))).toBe(true);
+    const tinf = Array.from({ length: 16 }, () => Number.POSITIVE_INFINITY);
+    expect(hasTransform(makeAttrs(tinf))).toBe(true);
+  });
+
+  it('rejects Float32Array / Float64Array (typed arrays are NOT Array.isArray)', () => {
+    // Per MDN: `Array.isArray(new Float32Array(16)) === false`. A producer
+    // that writes a typed array instead of a JSON array must fail the
+    // guard — this pins the contract against a refactor that switches to
+    // `ArrayBuffer.isView` or a length-only check.
+    expect(hasTransform(makeAttrs(new Float32Array(16)))).toBe(false);
+    expect(hasTransform(makeAttrs(new Float64Array(16)))).toBe(false);
+  });
+
+  it('rejects sparse arrays of the wrong length (length-mismatch is the gate)', () => {
+    const sparse = new Array(15);
+    sparse[14] = 1;
+    expect(hasTransform(makeAttrs(sparse))).toBe(false);
+  });
 });
 
 describe('hasNdTransform', () => {
@@ -172,5 +205,17 @@ describe('hasSceneDimensions', () => {
       scene_dimensions: {},
     } as unknown as ZarrSceneAttrs;
     expect(hasSceneDimensions(attrs)).toBe(false);
+  });
+
+  // [types.md/G8][P5] Audit found no test for `scene_dimensions: { dimensions: [] }`.
+  // An empty-array dimensions list is structurally valid — the guard must
+  // narrow it as truthy so downstream code iterates an empty list rather
+  // than crashing on undefined. A mutation that tightened the guard to
+  // also require `dimensions.length > 0` would break legitimate 0-D scenes.
+  it('returns true when scene_dimensions.dimensions is an empty array (legal 0-D scene)', () => {
+    const attrs = {
+      scene_dimensions: { dimensions: [] },
+    } as unknown as ZarrSceneAttrs;
+    expect(hasSceneDimensions(attrs)).toBe(true);
   });
 });

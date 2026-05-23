@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import type { SimpleDims } from '../../../types/dims';
 import {
   getNonDisplayedDimensions,
@@ -231,6 +232,50 @@ describe('InputHandler Utilities', () => {
       const dims = createDims(3, [0, 1, 2]);
       const result = getNextDimensionIndex(0, 1, dims);
       expect(result).toBe(-1);
+    });
+
+    // input.md [H4][P12] fast-check property test: cycling forward then
+    // backward (from any currently-non-displayed start dim) returns to
+    // the starting dim. The function operates on the non-displayed
+    // dimension subset; forward(currentDim) then backward(result) must
+    // be a round-trip identity, exercising the wrap-around at both ends.
+    it('[property] forward then backward returns to start for any non-displayed dim [input.md/H4][P12]', () => {
+      fc.assert(
+        fc.property(
+          // ndim in [4, 12]; displayed = the first 3 dims (so non-displayed
+          // are [3, ndim)). We pick a startDim from the non-displayed range.
+          fc.integer({ min: 4, max: 12 }).chain((ndim) =>
+            fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))
+          ),
+          ([ndim, startDim]) => {
+            const dims = createDims(ndim, [0, 1, 2]);
+            const next = getNextDimensionIndex(startDim, 1, dims);
+            const back = getNextDimensionIndex(next, -1, dims);
+            return back === startDim;
+          }
+        ),
+        { numRuns: 200 }
+      );
+    });
+
+    // input.md [H4][P12] follow-up: backward then forward is also identity.
+    // Together with the prior property this pins the full inverse-relation
+    // contract — any sign-flip mutation in the wrap arithmetic would surface.
+    it('[property] backward then forward returns to start for any non-displayed dim [input.md/H4][P12]', () => {
+      fc.assert(
+        fc.property(
+          fc.integer({ min: 4, max: 12 }).chain((ndim) =>
+            fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))
+          ),
+          ([ndim, startDim]) => {
+            const dims = createDims(ndim, [0, 1, 2]);
+            const prev = getNextDimensionIndex(startDim, -1, dims);
+            const fwd = getNextDimensionIndex(prev, 1, dims);
+            return fwd === startDim;
+          }
+        ),
+        { numRuns: 200 }
+      );
     });
   });
 

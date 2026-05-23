@@ -202,9 +202,13 @@ describe('PointsSpatialIndexLoader', () => {
       };
 
       // Should not throw - creates a dummy spatial index instead
+      // [data.md/W5][P2] Strengthen: pin the concrete contract of the
+      // load-all fallback path — positions is a Float32Array sized as
+      // numPoints*3 (display dims = [0,1,2]), and pointCount tracks it.
       const result = await loader.loadPoints(viewState);
-      expect(result).toBeDefined();
-      expect(result.positions).toBeDefined();
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.positions.length % 3).toBe(0);
+      expect(result.pointCount).toBe(result.positions.length / 3);
     });
 
     it('should handle missing optional arrays gracefully', async () => {
@@ -412,7 +416,10 @@ describe('PointsSpatialIndexLoader', () => {
       const result = await loader.loadPoints(viewState);
 
       // Check that projection happened (should have 3D positions)
-      expect(result.positions).toBeDefined();
+      // [data.md/W][P2] Strengthen: instanceof + non-empty for the
+      // load-some-points happy path (the mock returns 2 visible points).
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.positions.length).toBeGreaterThan(0);
       expect(result.positions.length % 3).toBe(0); // Multiple of 3 for 3D points
       expect(result.ndim).toBe(4); // Original dimensionality preserved
     });
@@ -427,7 +434,9 @@ describe('PointsSpatialIndexLoader', () => {
       const result = await loader.loadPoints(viewState);
 
       expect(result.ndim).toBe(4);
-      expect(result.positions).toBeDefined();
+      // [data.md/W][P2] Strengthen: pin instanceof + the XYZ block shape.
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.positions.length % 3).toBe(0);
     });
 
     it('should fill missing dimensions with zeros', async () => {
@@ -618,8 +627,15 @@ describe('PointsSpatialIndexLoader', () => {
 
       const result = await loader.loadPoints(viewState);
 
-      // Should handle gracefully
-      expect(result).toBeDefined();
+      // Should handle gracefully — [data.md/W][P2] strengthen: pin the
+      // concrete contract on the "graceful-fallback" path.
+      // - positions is still a Float32Array (no exception thrown)
+      // - positions.length is a multiple of 3 (well-formed XYZ blocks,
+      //   even if zero or truncated)
+      // - pointCount is consistent with positions.length
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.positions.length % 3).toBe(0);
+      expect(result.pointCount).toBe(result.positions.length / 3);
     });
   });
 
@@ -640,7 +656,10 @@ describe('PointsSpatialIndexLoader', () => {
       await loader.loadPoints(viewState1);
       const result = await loader.updateView(viewState2);
 
-      expect(result).toBeDefined();
+      // [data.md/W][P2] Strengthen: updateView returns a fresh result
+      // with concrete typed-array fields, not just "any truthy value".
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.positions.length % 3).toBe(0);
       // Builder is constructed once per query (twice across the two views).
       expect(SpatialQueryBuilder).toHaveBeenCalledTimes(2);
     });

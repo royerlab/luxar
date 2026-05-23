@@ -173,9 +173,17 @@ describe('AnimationShortcuts handlers', () => {
     expect(togglePlay).not.toHaveBeenCalled();
   });
 
-  it('K: no-op when the animation manager is not yet constructed', () => {
+  it('K: no-op when the animation manager is not yet constructed [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
+    // The contract of the no-anim-manager branch is that NO sceneDims
+    // call fires (the handler must early-return before touching
+    // setDimensionValue / getDimensionRanges). Pin the observable
+    // side-effect-free invariant — a regression that called through to
+    // sceneDimsManager would survive a `.not.toThrow()` smoke check.
     const { findHandler } = setup(0, undefined);
-    expect(() => findHandler('k')()).not.toThrow();
+    findHandler('k')();
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+    expect(sceneDimsManager.getDimensionRanges).not.toHaveBeenCalled();
   });
 
   it('Home: jumps the selected dim to the range minimum', () => {
@@ -228,14 +236,23 @@ describe('AnimationShortcuts handlers', () => {
     expect(decreaseSpeed).toHaveBeenCalledWith(3);
   });
 
-  it('all handlers no-op cleanly when getDims returns null (no scene loaded)', () => {
+  it('all handlers no-op cleanly when getDims returns null (no scene loaded) [input.md/W1][P2]', () => {
+    // input.md [W1][P2] strengthening: previously 5x `.not.toThrow()`.
+    // The no-scene contract is that every animation/sceneDims side
+    // effect is skipped when getDims() returns null — pin all four
+    // observable channels rather than just the non-throw smoke.
     vi.mocked(sceneDimsManager.getDims).mockReturnValue(null);
-    const { manager } = makeAnimationManager();
+    const { manager, togglePlay, increaseSpeed, decreaseSpeed } = makeAnimationManager();
     const { findHandler } = setup(0, manager);
-    expect(() => findHandler('k')()).not.toThrow();
-    expect(() => findHandler('Home')()).not.toThrow();
-    expect(() => findHandler('End')()).not.toThrow();
-    expect(() => findHandler('ArrowUp')()).not.toThrow();
-    expect(() => findHandler('ArrowDown')()).not.toThrow();
+    findHandler('k')();
+    findHandler('Home')();
+    findHandler('End')();
+    findHandler('ArrowUp')();
+    findHandler('ArrowDown')();
+    // togglePlay / speed-up / speed-down all gated by getDims() — none fire.
+    expect(togglePlay).not.toHaveBeenCalled();
+    expect(increaseSpeed).not.toHaveBeenCalled();
+    expect(decreaseSpeed).not.toHaveBeenCalled();
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
   });
 });

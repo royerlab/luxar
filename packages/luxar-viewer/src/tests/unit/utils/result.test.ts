@@ -2,7 +2,8 @@
  * Tests for the Result<T, E> utility.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, test } from 'vitest';
+import * as fc from 'fast-check';
 import {
   ok,
   err,
@@ -129,5 +130,95 @@ describe('tryAsync', () => {
       (e) => (e instanceof Error ? e.message : 'unknown')
     );
     expect(r).toEqual(err('boom'));
+  });
+});
+
+// [utils.md/H1][P12] Functor laws for Result<T, E> — pinned over arbitrary
+// values and arbitrary mapping functions. These laws are the canonical
+// algebraic guarantees a Functor/Either must satisfy; any mutation that
+// breaks them (e.g. swapping mapOk and mapErr branches, or returning
+// `ok(undefined)` on error) would surface here.
+describe('Result functor laws [utils.md/H1][P12]', () => {
+  test('mapOk identity law: mapOk(r, id) ≡ r (for ok-side)', () => {
+    fc.assert(
+      fc.property(fc.integer(), (n) => {
+        const r = ok(n);
+        const mapped = mapOk(r, (x) => x);
+        expect(mapped).toEqual(r);
+      })
+    );
+  });
+
+  test('mapOk composition: mapOk(mapOk(r, f), g) ≡ mapOk(r, x => g(f(x)))', () => {
+    fc.assert(
+      fc.property(fc.integer(), (n) => {
+        const f = (x: number) => x * 2;
+        const g = (x: number) => x + 7;
+        const r = ok(n);
+        const stepwise = mapOk(mapOk(r, f), g);
+        const composed = mapOk(r, (x) => g(f(x)));
+        expect(stepwise).toEqual(composed);
+      })
+    );
+  });
+
+  test('mapErr identity law: mapErr(r, id) ≡ r (for err-side)', () => {
+    fc.assert(
+      fc.property(fc.string(), (s) => {
+        const r: Result<number, string> = err(s);
+        const mapped = mapErr(r, (e) => e);
+        expect(mapped).toEqual(r);
+      })
+    );
+  });
+
+  test('mapOk does not touch err values, mapErr does not touch ok values', () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.string(), (n, s) => {
+        const success: Result<number, string> = ok(n);
+        const failure: Result<number, string> = err(s);
+        // mapOk on err is identity-by-reference (verified by previous tests
+        // for ===, but here we assert structural).
+        expect(mapOk(failure, (x) => x * 99)).toEqual(failure);
+        // mapErr on ok is identity-by-reference.
+        expect(mapErr(success, (e) => `${e}!`)).toEqual(success);
+      })
+    );
+  });
+
+  test('unwrapOr returns the value when ok, the fallback when err', () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.integer(), fc.string(), (value, fallback, errMsg) => {
+        expect(unwrapOr<number, string>(ok(value), fallback)).toBe(value);
+        expect(unwrapOr<number, string>(err(errMsg), fallback)).toBe(fallback);
+      })
+    );
+  });
+
+  test('isOk and isErr are mutually exclusive for every Result', () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          fc.integer().map((n) => ok(n) as Result<number, string>),
+          fc.string().map((s) => err<string, number>(s) as Result<number, string>)
+        ),
+        (r) => {
+          expect(isOk(r) !== isErr(r)).toBe(true);
+        }
+      )
+    );
+  });
+
+  test('match routes correctly for every Result + every pair of handlers', () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.string(), (n, s) => {
+        const handlers = {
+          ok: (v: number) => `ok:${v}`,
+          err: (e: string) => `err:${e}`,
+        };
+        expect(match<number, string, string>(ok(n), handlers)).toBe(`ok:${n}`);
+        expect(match<number, string, string>(err(s), handlers)).toBe(`err:${s}`);
+      })
+    );
   });
 });

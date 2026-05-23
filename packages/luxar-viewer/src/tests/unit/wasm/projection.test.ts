@@ -207,6 +207,30 @@ describe('radii_to_visibility_mask', () => {
     expect(visible).toBe(1); // only the middle 1.0 passes
     expect(Array.from(out)).toEqual([0, 1, 0]);
   });
+
+  // [wasm.md/G13][P5] NaN threshold: comparison against NaN is always
+  // false, so every radius (including infinity) must be marked hidden.
+  // A mutant that special-cased a NaN threshold would survive without
+  // this pin.
+  it('threshold=NaN marks every radius hidden (x > NaN is always false)', () => {
+    const radii = new Float32Array([0, 1, 100, Number.POSITIVE_INFINITY]);
+    const out = new Uint8Array(4);
+    const visible = radii_to_visibility_mask(radii, NaN, 4, out);
+    expect(visible).toBe(0);
+    expect(Array.from(out)).toEqual([0, 0, 0, 0]);
+  });
+
+  // [wasm.md/G13][P5] Infinity threshold: comparison must drop every
+  // finite radius. Only +Infinity (if present) passes — and even then
+  // `Infinity > Infinity` is false (strict inequality), so all-finite
+  // and +Infinity radii are uniformly hidden.
+  it('threshold=+Infinity hides every finite radius (and +Infinity itself: strict >)', () => {
+    const radii = new Float32Array([0, 1, 1e30, Number.POSITIVE_INFINITY]);
+    const out = new Uint8Array(4);
+    const visible = radii_to_visibility_mask(radii, Number.POSITIVE_INFINITY, 4, out);
+    expect(visible).toBe(0);
+    expect(Array.from(out)).toEqual([0, 0, 0, 0]);
+  });
 });
 
 // [wasm.md/G8][P5] extract_3d_positions displayDims.length=0 and =1 cases.

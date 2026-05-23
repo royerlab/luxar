@@ -162,15 +162,20 @@ describe('projectPointsTo3D — happy paths', () => {
     expect(result.radii?.length).toBe(numPoints);
   });
 
-  it('with effectiveRadiusConfig: invokes calculate_effective_radii', async () => {
+  it('with effectiveRadiusConfig: invokes calculate_effective_radii with the expected buffer shape [workers.md/W5][P3]', async () => {
+    // workers.md [W5][P3] strengthening: previously call-count only. Inspect
+    // the buffer/array shape that flows OUT to WASM so a regression that
+    // re-ordered args, dropped the radii buffer, or shifted ndim/numPoints
+    // would surface as a failed shape match.
     const { mod, wasm } = await loadWorker();
     const numPoints = 4;
     const ndim = 4;
+    const radii = new Float32Array(numPoints);
 
     await mod.workerAPI.projectPointsTo3D({
       positions: new Float32Array(numPoints * ndim),
       colors: null,
-      radii: new Float32Array(numPoints),
+      radii,
       sharpness: null,
       viewState: {
         displayDims: [0, 1, 2],
@@ -186,6 +191,24 @@ describe('projectPointsTo3D — happy paths', () => {
     });
 
     expect(wasm.calculate_effective_radii).toHaveBeenCalledTimes(1);
+    const callArgs = (wasm.calculate_effective_radii as any).mock.calls[0];
+    // Production call order (workers/data-worker/projection/points.ts:165):
+    //   (positions, radii, displayDims, slicePos, spatialExtendDims, ndim, numPoints, out)
+    // Arg 0: positions (Float32Array, length numPoints * ndim).
+    expect(callArgs[0]).toBeInstanceOf(Float32Array);
+    expect((callArgs[0] as Float32Array).length).toBe(numPoints * ndim);
+    // Arg 1: radii (Float32Array, length numPoints).
+    expect(callArgs[1]).toBeInstanceOf(Float32Array);
+    expect((callArgs[1] as Float32Array).length).toBe(numPoints);
+    // Arg 2: displayDims as Uint32Array (3 displayed dims).
+    expect(callArgs[2]).toBeInstanceOf(Uint32Array);
+    // Some scalar/index arg is numPoints + ndim — search for both.
+    const scalarArgs = callArgs.filter((a: unknown) => typeof a === 'number');
+    expect(scalarArgs).toContain(numPoints);
+    expect(scalarArgs).toContain(ndim);
+    // The output buffer (last positional, Float32Array of length numPoints).
+    expect(callArgs[7]).toBeInstanceOf(Float32Array);
+    expect((callArgs[7] as Float32Array).length).toBe(numPoints);
   });
 
   it('numPoints=0 yields empty result; effective-radius WASM is not called', async () => {
@@ -240,13 +263,18 @@ describe('projectLinesTo3D — happy paths', () => {
     expect(result.visibleSegmentCount).toBe(0);
   });
 
-  it('valid 1-segment input invokes clip_segments_batch', async () => {
+  it('valid 1-segment input invokes clip_segments_batch with the expected buffer shape [workers.md/W5][P3]', async () => {
+    // workers.md [W5][P3] strengthening: previously call-count only. Pin
+    // the buffer shape that flows to WASM so a regression that re-ordered
+    // the segments/positions args or dropped the out-param tuple
+    // (visibility/t1/t2) is caught.
     const { mod, wasm } = await loadWorker();
     const ndim = 3;
     const numVertices = 2;
     const positions = new Float32Array(numVertices * ndim);
     const segments = new Uint32Array([0, 1]);
     const widths = new Float32Array([1.0, 1.0]);
+    const segmentCount = 1;
 
     await mod.workerAPI.projectLinesTo3D({
       positions,
@@ -261,10 +289,26 @@ describe('projectLinesTo3D — happy paths', () => {
         tolerance: [10, 10, 10],
       },
       ndim,
-      segmentCount: 1,
+      segmentCount,
     });
 
     expect(wasm.clip_segments_batch).toHaveBeenCalledTimes(1);
+    const callArgs = (wasm.clip_segments_batch as any).mock.calls[0];
+    // Production call order (workers/data-worker/projection/lines.ts:108):
+    //   (positions, segments, slicePos, tol, displayDims, ndim, segmentCount,
+    //    visibility, t1, t2)
+    // Arg 0: positions Float32Array of size numVertices * ndim.
+    expect(callArgs[0]).toBeInstanceOf(Float32Array);
+    expect((callArgs[0] as Float32Array).length).toBe(numVertices * ndim);
+    // Arg 1: segments Uint32Array of size segmentCount * 2.
+    expect(callArgs[1]).toBeInstanceOf(Uint32Array);
+    expect((callArgs[1] as Uint32Array).length).toBe(segmentCount * 2);
+    // Arg 4: displayDims Uint32Array (3 displayed dims).
+    expect(callArgs[4]).toBeInstanceOf(Uint32Array);
+    expect((callArgs[4] as Uint32Array).length).toBe(3);
+    // Arg 7: visibility Uint8Array of size segmentCount (out param).
+    expect(callArgs[7]).toBeInstanceOf(Uint8Array);
+    expect((callArgs[7] as Uint8Array).length).toBe(segmentCount);
   });
 
   it('scalars=null returns empty startScalars/endScalars and does not call interpolate_scalars_batch for scalars', async () => {

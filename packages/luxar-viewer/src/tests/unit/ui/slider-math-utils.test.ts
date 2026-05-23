@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import * as fc from 'fast-check';
 import {
   clampWithCyclicWrap,
   valueToFraction,
@@ -165,5 +166,72 @@ describe('clampInteger', () => {
   it('handles a single-value range', () => {
     expect(clampInteger(5, 7, 7)).toBe(7);
     expect(clampInteger(8, 7, 7)).toBe(7);
+  });
+});
+
+// ============================================================================
+// [ui.md/H2][P12] Property tests for valueToFraction <-> fractionToValue
+//
+// These two functions form an inverse pair on (min, max) with max > min.
+// The round-trip property is documented and partially tested (5 cases at
+// line 114-119); a property test extends coverage across the real number
+// line and catches mutations that would survive a fixed-example test
+// (e.g. flipping a sign, swapping min/max, off-by-one on the divisor).
+// ============================================================================
+
+describe('valueToFraction <-> fractionToValue (property tests)', () => {
+  it('[H2] fractionToValue(valueToFraction(v, lo, hi), lo, hi) == v for v in [lo, hi]', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: -1e6, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 1e-9, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        (lo, span, t) => {
+          // Build (lo, hi) with non-zero span; pick v inside the span via t in [0,1].
+          const hi = lo + span;
+          const v = lo + t * span;
+          const back = fractionToValue(valueToFraction(v, lo, hi), lo, hi);
+          // 12 decimal places tolerance: the helpers are pure double-precision math.
+          expect(back).toBeCloseTo(v, 9);
+        }
+      ),
+      { numRuns: 80 }
+    );
+  });
+
+  it('[H2] valueToFraction(fractionToValue(f, lo, hi), lo, hi) == f for f in [0, 1]', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: -1e6, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 1e-9, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        (lo, span, f) => {
+          const hi = lo + span;
+          const back = valueToFraction(fractionToValue(f, lo, hi), lo, hi);
+          expect(back).toBeCloseTo(f, 9);
+        }
+      ),
+      { numRuns: 80 }
+    );
+  });
+
+  it('[H2] valueToFraction is monotone non-decreasing in v on [lo, hi]', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: -1e3, max: 1e3, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 1e-6, max: 1e3, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        (lo, span, t1, t2) => {
+          const hi = lo + span;
+          const v1 = lo + Math.min(t1, t2) * span;
+          const v2 = lo + Math.max(t1, t2) * span;
+          const f1 = valueToFraction(v1, lo, hi);
+          const f2 = valueToFraction(v2, lo, hi);
+          expect(f2).toBeGreaterThanOrEqual(f1 - 1e-12);
+        }
+      ),
+      { numRuns: 60 }
+    );
   });
 });

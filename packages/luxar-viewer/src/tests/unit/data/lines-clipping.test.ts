@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import * as fc from 'fast-check';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -1010,5 +1011,147 @@ describe('createEmptyLinesData', () => {
     expect(a.positions).not.toBe(b.positions);
     expect(a.segments).not.toBe(b.segments);
     expect(a.widths).not.toBe(b.widths);
+  });
+});
+
+// ============================================================================
+// [data.md/H3][P12] Property tests for clipSegmentToSlice
+//
+// Three algebraic invariants of the nD slice-clipper that hold for every
+// (p1, p2, slicePos, tolerance, displayDims) tuple where the segment is
+// visible:
+//
+//   1. Endpoint symmetry: clipSegmentToSlice(p1, p2, ...) and
+//      clipSegmentToSlice(p2, p1, ...) describe the same 3D segment
+//      (endpoints possibly swapped) — order of vertices must not change
+//      the geometric outcome.
+//
+//   2. In-slice endpoints: when both p1 and p2 already lie strictly
+//      inside the per-hidden-dim slice tolerance, the result must be
+//      "visible" with t1=0, t2=1, and the 3D endpoints equal to the
+//      projection of (p1, p2) onto displayDims (no spurious clipping).
+//
+//   3. Interpolation consistency: the returned 3D endpoints must equal
+//      the displayDims-projection of `p1 + t * (p2 - p1)` for t = t1
+//      (start) and t = t2 (end). This pins the parameterization
+//      contract that downstream attribute-interpolation depends on.
+// ============================================================================
+
+describe('clipSegmentToSlice (property tests)', () => {
+  // Tight numeric arbitrary: 3D coordinates in [-100, 100], no NaN/Infinity.
+  // Math.fround is required because fc.float emits 32-bit floats and the
+  // production code does float32 math via Float32Array downstream.
+  const f = Math.fround;
+  const coordArb = fc.float({
+    min: f(-100),
+    max: f(100),
+    noNaN: true,
+    noDefaultInfinity: true,
+  });
+
+  it('[H3] endpoint symmetry: swap(p1,p2) -> swap(result.p1,result.p2), same visibility', () => {
+    // 4D inputs: 3 display dims + 1 hidden dim. Both endpoints inside
+    // the slice (tolerance is large) so visibility is guaranteed; this
+    // isolates the symmetry property from the visibility branch.
+    fc.assert(
+      fc.property(
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        (x1, y1, z1, w1, x2, y2, z2, w2) => {
+          const p1 = [x1, y1, z1, w1];
+          const p2 = [x2, y2, z2, w2];
+          const slicePos = [0, 0, 0, 0];
+          // Large tolerance on hidden dim => both endpoints always IN
+          const tolerance = [1e10, 1e10, 1e10, 1e10];
+          const displayDims = [0, 1, 2];
+
+          const r12 = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
+          const r21 = clipSegmentToSlice(p2, p1, slicePos, tolerance, displayDims);
+
+          expect(r12.visible).toBe(r21.visible);
+          if (!r12.visible) return;
+
+          // Reversed-input result must describe the same segment with
+          // endpoints swapped. We compare 3D-projected endpoints.
+          for (let i = 0; i < 3; i++) {
+            expect(r21.p1[i]).toBeCloseTo(r12.p2[i], 4);
+            expect(r21.p2[i]).toBeCloseTo(r12.p1[i], 4);
+          }
+        }
+      ),
+      { numRuns: 60 }
+    );
+  });
+
+  it('[H3] in-slice endpoints: t1=0, t2=1, 3D endpoints = projection(p1,p2)', () => {
+    // When both endpoints lie inside the slice along every hidden dim,
+    // no clipping should happen.
+    fc.assert(
+      fc.property(coordArb, coordArb, coordArb, coordArb, coordArb, coordArb, (x1, y1, z1, x2, y2, z2) => {
+        const p1 = [x1, y1, z1, 0]; // hidden-dim value = slice center
+        const p2 = [x2, y2, z2, 0];
+        const slicePos = [0, 0, 0, 0];
+        const tolerance = [1e10, 1e10, 1e10, 0.5];
+        const displayDims = [0, 1, 2];
+
+        const r = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
+
+        expect(r.visible).toBe(true);
+        expect(r.t1).toBe(0);
+        expect(r.t2).toBe(1);
+        // The 3D-projected endpoints must equal p1/p2 restricted to display dims.
+        expect(r.p1[0]).toBeCloseTo(x1, 4);
+        expect(r.p1[1]).toBeCloseTo(y1, 4);
+        expect(r.p1[2]).toBeCloseTo(z1, 4);
+        expect(r.p2[0]).toBeCloseTo(x2, 4);
+        expect(r.p2[1]).toBeCloseTo(y2, 4);
+        expect(r.p2[2]).toBeCloseTo(z2, 4);
+      }),
+      { numRuns: 60 }
+    );
+  });
+
+  it('[H3] interpolation consistency: result.p1 == proj(p1 + t1*(p2-p1)), result.p2 == proj(p1 + t2*(p2-p1))', () => {
+    // The t1, t2 fields are how downstream interpolation reproduces
+    // per-vertex attribute values at the clipped endpoints. Pin the
+    // contract that the 3D endpoints really do match lerp(p1, p2, t)
+    // restricted to displayDims for both t1 and t2.
+    fc.assert(
+      fc.property(
+        coordArb,
+        coordArb,
+        coordArb,
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        coordArb,
+        coordArb,
+        coordArb,
+        fc.float({ min: f(-10), max: f(10), noNaN: true, noDefaultInfinity: true }),
+        (x1, y1, z1, w1, x2, y2, z2, w2) => {
+          const p1 = [x1, y1, z1, w1];
+          const p2 = [x2, y2, z2, w2];
+          const slicePos = [0, 0, 0, 0];
+          const tolerance = [1e10, 1e10, 1e10, 0.5];
+          const displayDims = [0, 1, 2];
+
+          const r = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
+          if (!r.visible) return;
+
+          // Reconstruct lerp(p1, p2, t1) and lerp(p1, p2, t2) along display dims.
+          const lerpAt = (t: number, dim: number) => p1[dim] + t * (p2[dim] - p1[dim]);
+          for (let i = 0; i < 3; i++) {
+            const d = displayDims[i];
+            expect(r.p1[i]).toBeCloseTo(lerpAt(r.t1, d), 3);
+            expect(r.p2[i]).toBeCloseTo(lerpAt(r.t2, d), 3);
+          }
+        }
+      ),
+      { numRuns: 80 }
+    );
   });
 });

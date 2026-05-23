@@ -590,3 +590,156 @@ describe('TypeScript fallback at WASM 16-dim boundary', () => {
     });
   });
 });
+
+// [wasm.md/G][P5] Lower-boundary ndim parity tests for all three geometry
+// types. ndim=1 and ndim=2 are degenerate but legitimate inputs (e.g. a
+// 1D time series viewed as a 1D scatter or a 2D heatmap of line segments).
+// The JS fallback must not assume ndim>=3; a mutant that hard-coded a
+// 3-dim loop bound would survive without these tests.
+describe('TypeScript fallback at small-ndim boundary', () => {
+  describe('compute_nd_visibility_points', () => {
+    it('ndim=1: a point AT the slice with tolerance is visible', () => {
+      const positions = new Float32Array([0]);
+      const radii = new Float32Array([0]);
+      const slicePosition = new Float32Array([0]);
+      const tolerance = new Float32Array([0.5]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        1,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('ndim=1: a point FAR from the slice (beyond tolerance + radius) is hidden', () => {
+      const positions = new Float32Array([100]);
+      const radii = new Float32Array([0]);
+      const slicePosition = new Float32Array([0]);
+      const tolerance = new Float32Array([0.5]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        1,
+        1,
+        output
+      );
+      expect(n).toBe(0);
+      expect(output[0]).toBe(0);
+    });
+
+    it('ndim=2: mixed visibility across multiple points (validates per-dim accumulation)', () => {
+      // Three 2D points; slice at origin with tolerance [0.5, 0.5].
+      // Pt0: (0, 0)     → inside both → visible
+      // Pt1: (0.3, 0.3) → inside both → visible
+      // Pt2: (10, 10)   → far → hidden
+      const positions = new Float32Array([0, 0, 0.3, 0.3, 10, 10]);
+      const radii = new Float32Array([0, 0, 0]);
+      const slicePosition = new Float32Array([0, 0]);
+      const tolerance = new Float32Array([0.5, 0.5]);
+      const output = new Uint8Array(3);
+      const n = compute_nd_visibility_points(
+        positions,
+        radii,
+        slicePosition,
+        tolerance,
+        2,
+        3,
+        output
+      );
+      expect(n).toBe(2);
+      expect(Array.from(output)).toEqual([1, 1, 0]);
+    });
+  });
+
+  describe('compute_nd_visibility_lines', () => {
+    it('ndim=1: a segment with both endpoints AT the slice is visible', () => {
+      const vertices = new Float32Array([0, 0]);
+      const segments = new Uint32Array([0, 1]);
+      const widths = new Float32Array([0, 0]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        new Float32Array([0]),
+        new Float32Array([0.1]),
+        1,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('ndim=2: a segment spanning the slice along one axis is visible (endpoint-OR)', () => {
+      // v0 inside slice (0,0), v1 far in y. Endpoint-OR ⇒ visible.
+      const vertices = new Float32Array([0, 0, 0, 100]);
+      const segments = new Uint32Array([0, 1]);
+      const widths = new Float32Array([0, 0]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        new Float32Array([0, 0]),
+        new Float32Array([0.1, 0.1]),
+        2,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+  });
+
+  describe('compute_nd_visibility_gsplats', () => {
+    it('ndim=1: a gsplat centered at the slice is visible', () => {
+      // Packed lower-triangular Cholesky for 1D is just [L00].
+      const centers = new Float32Array([0]);
+      const cholesky = new Float32Array([1]); // identity covariance
+      const slicePosition = new Float32Array([0]);
+      const tolerance = new Float32Array([0.5]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_gsplats(
+        centers,
+        cholesky,
+        slicePosition,
+        tolerance,
+        1,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+
+    it('ndim=2: identity-covariance splat at the slice is visible', () => {
+      // 2D Cholesky packed: [L00, L10, L11] = [1, 0, 1] for identity.
+      const centers = new Float32Array([0, 0]);
+      const cholesky = new Float32Array([1, 0, 1]);
+      const slicePosition = new Float32Array([0, 0]);
+      const tolerance = new Float32Array([0.5, 0.5]);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_gsplats(
+        centers,
+        cholesky,
+        slicePosition,
+        tolerance,
+        2,
+        1,
+        output
+      );
+      expect(n).toBe(1);
+      expect(output[0]).toBe(1);
+    });
+  });
+});
