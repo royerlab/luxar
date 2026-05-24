@@ -541,6 +541,22 @@ class TestNodeTransformIntegration:
             g_child = g_plain.add_group("Child", transform=t1)
             assert np.allclose(g_child.world_transform, t1)
 
+            # [Python-R4/transforms-MAJOR] Mixed hierarchy with a SKIPPED
+            # level: grandparent has transform, parent has NONE, child
+            # has transform. world_transform must compose grandparent +
+            # child, treating the no-transform parent as identity. The
+            # original test only covered "parent has none, child has X"
+            # (depth 2) — the depth-3 skip is a structurally different
+            # path through the recursive walk.
+            g_gp = scene.add_group("Grandparent3", transform=t1)
+            g_intermediate = g_gp.add_group("IntermediateNoXform")
+            g_leaf = g_intermediate.add_group("Leaf", transform=t3)
+            # compose(t1, identity, t3) == compose(t1, t3)
+            assert np.allclose(g_leaf.world_transform, compose(t1, t3), atol=1e-6)
+            # Intermediate's own world_transform should equal t1 (its
+            # parent's) — the skipped level inherits without modification.
+            assert np.allclose(g_intermediate.world_transform, t1, atol=1e-6)
+
     def test_world_transform_matches_manual_compose(self, tmp_path) -> None:
         """Test world_transform gives same result as manual point transformation."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
