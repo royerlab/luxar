@@ -121,6 +121,16 @@ def _resolve_array(arr: np.ndarray) -> NDArray[np.uint8]:
 
     # Convert float [0, 1] to uint8
     if np.issubdtype(arr.dtype, np.floating):
+        # Reject NaN / Inf BEFORE the range check — NaN comparisons are
+        # always False, so a NaN entry would slip past `arr < 0` / `arr > 1`
+        # and silently produce garbage uint8 via `(NaN * 255).astype(uint8)`.
+        # Positive Inf would be caught by `arr > 1`, but the explicit check
+        # gives a clearer error than "range [0, 1]" for either case.
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(
+                "Float colormap values must be finite "
+                "(contains NaN or ±Inf)"
+            )
         if np.any(arr < 0) or np.any(arr > 1):
             raise ValueError("Float colormap values must be in [0, 1] range")
         arr = (arr * 255).round().astype(np.uint8)
