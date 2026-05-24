@@ -395,3 +395,93 @@ class TestMigrateFormat:
         np.testing.assert_array_equal(
             data.additive_sublods[1].centers, src_centers_1
         )
+
+    # [P5][P1] boundary: v1.0 with the smallest non-degenerate splat count (1)
+    def test_migrate_v1_0_single_splat_roundtrip(self, tmp_path: Path) -> None:
+        """v1.0 with a single splat migrates to a v2.0 file holding that splat."""
+        legacy = tmp_path / "single_v1_0.gsplats.zarr"
+        _make_v1_0(legacy, n=1)
+        out = tmp_path / "out.gsplats.zarr"
+        detected = migrate_format(legacy, out)
+        assert detected == "v1.0"
+        data = load_gsplats(out)
+        assert data.n_splats == 1
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 1
+        sub = data.additive_sublods[0]
+        assert sub.centers.shape == (1, 3)
+        assert sub.amplitudes.shape == (1,)
+        assert sub.cholesky_factors.shape == (1, 6)
+
+    # [P1][P8] full numeric roundtrip for v1.0 (parallels v1.1 test above)
+    def test_migrate_v1_0_numerical_equivalence(self, tmp_path: Path) -> None:
+        """v1.0 centers survive migration bit-identically; amplitudes and
+        cholesky factors survive within their respective quantization
+        tolerances (the v2.0 saver applies log/scalar quantization to
+        amplitudes and cholesky factors)."""
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        _make_v1_0(legacy, n=7)
+        src_root = zarr.open_group(str(legacy), mode="r")
+        src_centers = np.asarray(src_root["splats"]["centers"])
+        src_amps = np.asarray(src_root["splats"]["amplitudes"])
+        src_chol = np.asarray(src_root["splats"]["cholesky_factors"])
+
+        out = tmp_path / "out.gsplats.zarr"
+        migrate_format(legacy, out)
+        data = load_gsplats(out)
+        sub = data.additive_sublods[0]
+        # Centers are stored as float32 directly — bit-identical
+        np.testing.assert_array_equal(sub.centers, src_centers)
+        # Amplitudes go through log-scalar quantization — within ~1% of value
+        np.testing.assert_allclose(sub.amplitudes, src_amps, rtol=1e-2)
+        # Cholesky factors quantized but should remain close
+        np.testing.assert_allclose(sub.cholesky_factors, src_chol, atol=1e-2)
+
+    # [P8] colors preservation (metadata roundtrip)
+    def test_migrate_v1_0_with_colors_roundtrip(self, tmp_path: Path) -> None:
+        """v1.0 with uint8 colors preserves the colors array through migration."""
+        legacy = tmp_path / "with_colors_v1_0.gsplats.zarr"
+        n = 6
+        rng = np.random.default_rng(42)
+        colors = rng.integers(0, 256, size=(n, 3), dtype=np.uint8)
+
+        store = zarr.DirectoryStore(str(legacy))
+        root = zarr.group(store=store, overwrite=True)
+        root.attrs.update(
+            {
+                "format_version": "1.0",
+                "format_type": "gsplats_zarr",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "luxar_gsplats_version": "test",
+            }
+        )
+        splats = root.create_group("splats")
+        splats.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": n,
+                "ndim": 3,
+                "has_colors": True,
+                "ordering": "none",
+                "truncation_radius": 3.0,
+            }
+        )
+        splats.create_dataset(
+            "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
+        )
+        splats.create_dataset(
+            "amplitudes", data=rng.random(n).astype(np.float32)
+        )
+        splats.create_dataset("cholesky_factors", data=_identity_chol(n))
+        splats.create_dataset(
+            "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)
+        )
+        splats.create_dataset("colors", data=colors)
+        zarr.consolidate_metadata(store)
+
+        out = tmp_path / "out.gsplats.zarr"
+        migrate_format(legacy, out)
+        data = load_gsplats(out)
+        loaded_colors = data.additive_sublods[0].colors
+        assert loaded_colors is not None
+        np.testing.assert_array_equal(loaded_colors, colors)
