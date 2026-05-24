@@ -308,3 +308,71 @@ class TestChunkBounds:
         assert x_extent > 25  # ~30
         assert y_extent < 5  # ~3
         assert z_extent < 5  # ~3
+
+    # Regression test for production bug surfaced by Python round 7:
+    # compute_chunk_bounds_gsplats crashed with ZeroDivisionError when
+    # n_splats=0 (chunk_size resolved to 0 in _compute_chunk_size).
+    def test_chunk_bounds_empty_input(self) -> None:
+        """Zero-splat input returns an empty chunk-bounds array — no division
+        by zero, no exception."""
+        centers_3d = np.zeros((0, 3), dtype=np.float32)
+        cholesky_3d = np.zeros((0, 6), dtype=np.float32)
+        bounds_3d = compute_chunk_bounds_gsplats(
+            centers_3d, cholesky_3d, chunk_size=1024
+        )
+        assert bounds_3d.shape == (0, 3, 2)
+        assert bounds_3d.dtype == np.float32
+
+        # 2D variant for symmetry
+        centers_2d = np.zeros((0, 2), dtype=np.float32)
+        cholesky_2d = np.zeros((0, 3), dtype=np.float32)
+        bounds_2d = compute_chunk_bounds_gsplats(
+            centers_2d, cholesky_2d, chunk_size=1024
+        )
+        assert bounds_2d.shape == (0, 2, 2)
+
+    def test_chunk_bounds_empty_input_chunk_size_zero(self) -> None:
+        """Even with the historically-buggy chunk_size=0 (caused
+        ZeroDivisionError), the empty path returns a clean empty result."""
+        centers = np.zeros((0, 3), dtype=np.float32)
+        cholesky = np.zeros((0, 6), dtype=np.float32)
+        bounds = compute_chunk_bounds_gsplats(centers, cholesky, chunk_size=0)
+        assert bounds.shape == (0, 3, 2)
+
+
+class TestComputeChunkSize:
+    """Tests for the private chunk-size helper.
+
+    Pinning the n_splats=0 path because returning 0 here propagates to
+    `compute_chunk_bounds_gsplats` and triggered a ZeroDivisionError
+    (Python round 7 OOS fix).
+    """
+
+    def test_returns_positive_for_empty_input(self) -> None:
+        """Never return 0 — even when n_splats=0 — because callers divide
+        by the returned value."""
+        from luxar.gsplats.io.save_gsplats import _compute_chunk_size
+
+        assert _compute_chunk_size(0, ndim=3) >= 1
+        assert _compute_chunk_size(0, ndim=2) >= 1
+        assert _compute_chunk_size(0, ndim=5) >= 1
+
+    def test_caps_at_n_splats_when_small(self) -> None:
+        """When n_splats > 0 is small, chunk_size is capped at n_splats
+        (and still >= 1)."""
+        from luxar.gsplats.io.save_gsplats import _compute_chunk_size
+
+        # Single splat → chunk size 1
+        assert _compute_chunk_size(1, ndim=3) == 1
+        # 3 splats → chunk size 3 (capped)
+        assert _compute_chunk_size(3, ndim=3) == 3
+
+    def test_returns_target_bytes_chunk_for_large_input(self) -> None:
+        """For large n_splats the chunk size is dominated by the byte budget
+        (well over the smallest cap)."""
+        from luxar.gsplats.io.save_gsplats import _compute_chunk_size
+
+        # 1M splats: chunk size must be larger than the n_splats cap
+        cs = _compute_chunk_size(1_000_000, ndim=3)
+        assert cs >= 1024  # at least the floor from `max(1024, ...)`
+        assert cs <= 1_000_000  # not larger than the input

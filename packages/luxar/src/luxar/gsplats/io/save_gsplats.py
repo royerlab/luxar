@@ -47,8 +47,9 @@ def _compute_chunk_size(n_splats: int, ndim: int) -> int:
 
     chunk_elements = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
 
-    # Cap at total splats
-    chunk_elements = min(chunk_elements, n_splats)
+    # Cap at total splats, but never return 0 — downstream
+    # `compute_chunk_bounds_gsplats` divides by chunk_size.
+    chunk_elements = max(1, min(chunk_elements, n_splats))
 
     return chunk_elements
 
@@ -208,11 +209,13 @@ def _save_splat_arrays_to_group(
             compressor=compressor,
         )
 
-    # Write chunk_bounds (no encoding, single chunk)
+    # Write chunk_bounds (no encoding, single chunk). For empty input the
+    # chunk-bounds array is shape (0, ndim, 2); zarr rejects chunk size 0,
+    # so clamp the first dim to >= 1.
     splats_group.create_dataset(
         "chunk_bounds",
         data=chunk_bounds,
-        chunks=(chunk_bounds.shape[0], ndim, 2),
+        chunks=(max(1, chunk_bounds.shape[0]), ndim, 2),
         dtype=np.float32,
         compressor=compressor,
     )
