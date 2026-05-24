@@ -115,6 +115,21 @@ class TestServeIntegration:
         data = response.json()
         assert data["status"] == "ok"
 
+        # [Python-R6 / A-W2] Strengthen the health-endpoint contract:
+        # response must be JSON Content-Type (a regression that returned
+        # plain text "ok" would still satisfy the status==200 + json()
+        # parse if the json() happened to succeed on the bytes), AND
+        # response time must be sub-second on localhost (catches a
+        # regression that added a synchronous heavy operation to the
+        # /health handler).
+        assert "application/json" in response.headers.get("Content-Type", ""), (
+            f"/health must return JSON; got Content-Type "
+            f"{response.headers.get('Content-Type')!r}"
+        )
+        assert response.elapsed.total_seconds() < 2.0, (
+            f"/health took {response.elapsed.total_seconds():.3f}s; should be < 2s"
+        )
+
     def test_root_zarr_endpoint(self, test_server):
         """Test that root zarr endpoint returns correct metadata."""
         response = requests.get(f"{test_server}/.zattrs")
