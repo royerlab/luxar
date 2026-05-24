@@ -162,8 +162,10 @@ class TestJitterParsing:
         assert parse_jitter("\t0.1\n") == 0.1
 
     def test_invalid_format(self):
-        """Test invalid format raises ValueError."""
-        with pytest.raises(ValueError, match="could not convert string to float"):
+        """Test invalid format raises a curated 'Invalid jitter format' error
+        (was previously leaking Python's raw 'could not convert string to float').
+        """
+        with pytest.raises(ValueError, match="Invalid jitter format"):
             parse_jitter("abc")
 
     def test_out_of_range(self):
@@ -204,8 +206,10 @@ class TestPacketLossParsing:
         assert parse_packet_loss("\t0.01\n") == 0.01
 
     def test_invalid_format(self):
-        """Test invalid format raises ValueError."""
-        with pytest.raises(ValueError, match="could not convert string to float"):
+        """Test invalid format raises a curated 'Invalid packet loss format' error
+        (was previously leaking Python's raw 'could not convert string to float').
+        """
+        with pytest.raises(ValueError, match="Invalid packet loss format"):
             parse_packet_loss("abc")
 
     def test_out_of_range(self):
