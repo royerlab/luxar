@@ -103,6 +103,43 @@ class TestDimension:
         assert dim2.step == dim.step
         assert dim2.display == dim.display
 
+    # [Python-R1/dims-G4] Full-fidelity Dimension to_dict / from_dict
+    # round-trip. The existing test above only verifies a subset of
+    # fields; a mutation in from_dict that dropped `discrete`, `cyclic`,
+    # `scale`, `spatial`, or `description` would silently lose metadata
+    # for every scene that touched the affected dimension.
+    def test_dimension_full_field_roundtrip(self) -> None:
+        original = Dimension(
+            name="theta",
+            unit="rad",
+            range=(0.0, 6.283185307),
+            step=0.01,
+            display=True,
+            discrete=False,
+            cyclic=True,
+            scale=2.5,
+            spatial=True,
+            description="azimuthal angle around z-axis",
+        )
+
+        recovered = Dimension.from_dict(original.to_dict())
+        # Pin every field individually so a single dropped key fails
+        # with an obvious message rather than a vague dict-mismatch.
+        assert recovered.name == original.name
+        assert recovered.unit == original.unit
+        assert recovered.range == original.range
+        assert recovered.step == original.step
+        assert recovered.display == original.display
+        assert recovered.discrete == original.discrete
+        assert recovered.cyclic == original.cyclic
+        assert recovered.scale == original.scale
+        assert recovered.spatial == original.spatial
+        assert recovered.description == original.description
+
+        # And the full dict round-trip identity (catches added-fields
+        # drift in either to_dict OR from_dict).
+        assert original.to_dict() == recovered.to_dict()
+
 
 class TestDimensions:
     """Test the Dimensions container class."""

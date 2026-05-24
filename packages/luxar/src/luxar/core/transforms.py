@@ -195,8 +195,17 @@ def rotate(
     if axis_vector.shape != (3,):
         raise ValueError(f"Axis must be a 3D vector, got shape {axis_vector.shape}")
 
-    # Normalize axis
-    axis_vector = axis_vector / np.linalg.norm(axis_vector)
+    # Normalize axis. A zero-length (or numerically near-zero) axis
+    # silently produced a NaN-filled rotation matrix before this guard —
+    # downstream scenes then rendered as black void. Reject upfront with
+    # a clear message naming the offending input.
+    axis_norm = float(np.linalg.norm(axis_vector))
+    if axis_norm == 0.0:
+        raise ValueError(
+            f"rotate: axis vector {tuple(axis_vector.tolist())!r} has zero length; "
+            f"a rotation axis must be non-degenerate"
+        )
+    axis_vector = axis_vector / axis_norm
 
     radians = np.radians(degrees)
     cos_a = np.cos(radians)
@@ -320,12 +329,29 @@ def look_at(
     target_arr = np.array(target, dtype=np.float32)
     up_arr = np.array(up, dtype=np.float32)
 
-    # Calculate basis vectors
+    # Calculate basis vectors. Both norms below CAN be zero: eye == target
+    # collapses `forward` to the zero vector (caller's mistake), and `up`
+    # parallel to `forward` makes the cross product vanish. Either case
+    # silently produced NaN-filled matrices that propagated downstream
+    # (the camera renders nothing, often without any visible error).
+    # Raise upfront with the actionable cause.
     forward = target_arr - eye_arr
-    forward = forward / np.linalg.norm(forward)
+    forward_norm = float(np.linalg.norm(forward))
+    if forward_norm == 0.0:
+        raise ValueError(
+            f"look_at: eye and target are coincident ({tuple(eye)!r} == "
+            f"{tuple(target)!r}); cannot derive a forward direction"
+        )
+    forward = forward / forward_norm
 
     right = np.cross(forward, up_arr)
-    right = right / np.linalg.norm(right)
+    right_norm = float(np.linalg.norm(right))
+    if right_norm == 0.0:
+        raise ValueError(
+            f"look_at: up vector {tuple(up)!r} is parallel (or antiparallel) "
+            f"to the eye→target direction; cannot derive an orthonormal basis"
+        )
+    right = right / right_norm
 
     up_final = np.cross(right, forward)
 
