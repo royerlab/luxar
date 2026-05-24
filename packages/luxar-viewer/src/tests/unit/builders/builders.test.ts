@@ -285,10 +285,17 @@ describe('DimensionsBuilder smoke [builders.md/G7][P11]', () => {
     expect(dims.metadata).toHaveLength(3);
   });
 
-  it('withDisplayed silently truncates to 3 indices (documented OOS behavior)', () => {
-    const dims = new DimensionsBuilder().withDisplayed(0, 1, 2, 3, 4).build();
-    // The setter truncates with `.slice(0, 3)` — pin the contract.
-    expect(dims.displayed).toEqual([0, 1, 2]);
+  it('withDisplayed throws on > 3 indices instead of silent truncation', () => {
+    expect(() => new DimensionsBuilder().withDisplayed(0, 1, 2, 3, 4)).toThrow(
+      /at most 3 dimensions may be displayed/
+    );
+  });
+
+  it('withDisplayed accepts 0 / 1 / 2 / 3 indices unchanged', () => {
+    expect(new DimensionsBuilder().withDisplayed().build().displayed).toEqual([]);
+    expect(new DimensionsBuilder().withDisplayed(2).build().displayed).toEqual([2]);
+    expect(new DimensionsBuilder().withDisplayed(0, 1).build().displayed).toEqual([0, 1]);
+    expect(new DimensionsBuilder().withDisplayed(0, 1, 2).build().displayed).toEqual([0, 1, 2]);
   });
 
   it('withNDimensions extends currentStep to length===ndim with zeros', () => {

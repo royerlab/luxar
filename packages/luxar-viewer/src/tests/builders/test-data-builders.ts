@@ -472,10 +472,23 @@ export class DimensionsBuilder {
   }
 
   /**
-   * Set which dimensions are displayed
+   * Set which dimensions are displayed. The Luxar scene contract caps
+   * displayed dimensions at 3 (the visual XYZ axes); a caller passing
+   * more than 3 indices is asserting a stronger contract than the
+   * viewer can satisfy. Silently slicing to 3 hid this misuse.
+   *
+   * Now the builder throws on >3 indices so tests are forced to be
+   * explicit about which dims they want visible. Passing exactly 0–3
+   * is unchanged.
    */
   withDisplayed(...indices: number[]): this {
-    this.displayed = indices.slice(0, 3); // Max 3 displayed
+    if (indices.length > 3) {
+      throw new Error(
+        `DimensionsBuilder.withDisplayed: at most 3 dimensions may be displayed; ` +
+          `got ${indices.length} indices ${JSON.stringify(indices)}`
+      );
+    }
+    this.displayed = indices.slice();
     return this;
   }
 
