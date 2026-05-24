@@ -70,6 +70,31 @@ class TestBandwidthParsing:
         with pytest.raises(ValueError, match="must be positive"):
             parse_bandwidth("0mbps")
 
+    # [Python-R1/A-G6] Cross-unit + extreme-magnitude boundary cases.
+    # The existing per-unit tests use values like 500kbps / 1mbps / 1gbps;
+    # the conversion factors (Kbps → Mbps × 1/1000, Gbps → Mbps × 1000)
+    # could be swapped silently. A cross-unit equivalence assertion in a
+    # single test catches that. Plus denormalized and very-large inputs.
+    def test_units_consistent_across_magnitudes(self):
+        """1mbps == 1000kbps == 0.001gbps within float tolerance."""
+        v_m = parse_bandwidth("1mbps")
+        v_k = parse_bandwidth("1000kbps")
+        v_g = parse_bandwidth("0.001gbps")
+        assert abs(v_m - v_k) < 1e-9
+        assert abs(v_m - v_g) < 1e-9
+
+    def test_very_small_bandwidth_accepted(self):
+        """Denormalised tiny bandwidth (0.0001mbps = 100 bps) is positive
+        and accepted, even though it's far below typical viewer values."""
+        v = parse_bandwidth("0.0001mbps")
+        assert v == pytest.approx(0.0001)
+        assert v > 0
+
+    def test_very_large_bandwidth_accepted(self):
+        """Very large bandwidth (1e6 mbps) is parsed without overflow."""
+        v = parse_bandwidth("1000000mbps")
+        assert v == pytest.approx(1_000_000.0)
+
 
 class TestLatencyParsing:
     """Test latency string parsing."""
