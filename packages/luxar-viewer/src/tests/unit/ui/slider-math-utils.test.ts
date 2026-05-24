@@ -235,3 +235,100 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
     );
   });
 });
+
+// ============================================================================
+// [R11/D-H1+D-H2][P12] Property tests for fractionToThumbLeft and clampInteger.
+//
+// fractionToThumbLeft is the linear interpolation
+//   left = fraction * (containerWidth - thumbWidth)
+// so on a positive (containerWidth > thumbWidth) configuration it must be
+// monotone non-decreasing in `fraction` and satisfy the endpoint identities
+// (f=0 → 0; f=1 → containerWidth - thumbWidth). A mutation that swapped the
+// multiplication for division, or flipped the sign, would survive the fixed
+// example cases above (which only sample 0 / 0.5 / 1) but would fail this
+// property test across the full fraction range.
+//
+// clampInteger is the canonical clamp; the property test pins the range
+// invariant lo ≤ result ≤ hi over arbitrary inputs and the identity-on-
+// in-range case. A mutation that flipped `>` to `≥` in the upper bound
+// could survive fixed cases at the boundaries but fail random samples.
+// ============================================================================
+
+describe('fractionToThumbLeft (property tests)', () => {
+  it('[D-H1] is monotone non-decreasing in fraction when containerWidth ≥ thumbWidth', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 1, max: 2_000, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 100, noNaN: true, noDefaultInfinity: true }),
+        (f1, f2, containerWidth, thumbWidth) => {
+          // Constrain to the documented "thumb fits in container" regime.
+          fc.pre(thumbWidth <= containerWidth);
+          const lo = Math.min(f1, f2);
+          const hi = Math.max(f1, f2);
+          const l1 = fractionToThumbLeft(lo, containerWidth, thumbWidth);
+          const l2 = fractionToThumbLeft(hi, containerWidth, thumbWidth);
+          expect(l2).toBeGreaterThanOrEqual(l1 - 1e-9);
+        }
+      ),
+      { numRuns: 60 }
+    );
+  });
+
+  it('[D-H1] satisfies the endpoint identities f=0 → 0, f=1 → containerWidth - thumbWidth', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: 1, max: 2_000, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 2_000, noNaN: true, noDefaultInfinity: true }),
+        (containerWidth, thumbWidth) => {
+          // f=0 always lands at 0, regardless of widths.
+          expect(fractionToThumbLeft(0, containerWidth, thumbWidth)).toBeCloseTo(0, 9);
+          // f=1 lands at exactly containerWidth - thumbWidth (may be ≤ 0
+          // if thumb is wider; that's the documented caller responsibility).
+          expect(fractionToThumbLeft(1, containerWidth, thumbWidth)).toBeCloseTo(
+            containerWidth - thumbWidth,
+            9
+          );
+        }
+      ),
+      { numRuns: 80 }
+    );
+  });
+});
+
+describe('clampInteger (property tests)', () => {
+  it('[D-H2] result always satisfies lo ≤ result ≤ hi', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -1_000_000, max: 1_000_000 }),
+        fc.integer({ min: -1_000_000, max: 1_000_000 }),
+        fc.integer({ min: 0, max: 2_000_000 }),
+        (v, lo, span) => {
+          const hi = lo + span;
+          const r = clampInteger(v, lo, hi);
+          expect(r).toBeGreaterThanOrEqual(lo);
+          expect(r).toBeLessThanOrEqual(hi);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('[D-H2] identity-on-in-range: v ∈ [lo, hi] ⇒ result = v', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -1_000, max: 1_000 }),
+        fc.integer({ min: 0, max: 2_000 }),
+        fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+        (lo, span, t) => {
+          const hi = lo + span;
+          // pick v ∈ [lo, hi] by interpolation, then round to int
+          const v = Math.round(lo + t * span);
+          expect(clampInteger(v, lo, hi)).toBe(v);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});

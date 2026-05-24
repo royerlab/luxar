@@ -137,6 +137,18 @@ describe('validateDataLoadingNetwork', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
   });
 
+  // [R11/D-G3][P5] -Infinity coverage. A `<= 0` check that omits
+  // isFinite() catches -Infinity correctly (it IS ≤ 0), but a mutation
+  // that flipped to `< 0 && isFinite(v)` would let -Infinity through.
+  // Pin explicitly so the symmetric ±Infinity boundary is locked.
+  it('should error when network timeoutMs is -Infinity', () => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.timeoutMs = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+  });
+
   it('should error when maxConcurrent is non-integer', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.network.maxConcurrent = 2.5;

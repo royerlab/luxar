@@ -99,9 +99,48 @@ describe('validateScene', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene background color'));
   });
 
+  // [R11/D-C3][P5] Infinity is not an integer AND not finite — a mutation
+  // that applies isInteger() without first checking isFinite() (or vice
+  // versa) would surface differently for ±Infinity than for NaN. Pin both.
+  it('rejects Infinity backgroundColor', () => {
+    const cfg = cloneConfig();
+    cfg.scene.backgroundColor = Infinity;
+    const result = invokeValidator(validateScene, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene background color'));
+  });
+
+  it('rejects -Infinity backgroundColor', () => {
+    const cfg = cloneConfig();
+    cfg.scene.backgroundColor = -Infinity;
+    const result = invokeValidator(validateScene, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene background color'));
+  });
+
   it('rejects NaN defaultFitRatio', () => {
     const cfg = cloneConfig();
     cfg.scene.defaultFitRatio = NaN;
+    const result = invokeValidator(validateScene, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene fit ratio'));
+  });
+
+  // [R11/D-C2+D-G3][P5] defaultFitRatio ∈ [0, 1]; Infinity is out of
+  // range but a bare `> 1` check (without isFinite() upstream) would
+  // accept Infinity > 1 silently if the validator emits the OK branch
+  // via short-circuit. Symmetric to camera FOV Infinity coverage.
+  it('rejects Infinity defaultFitRatio', () => {
+    const cfg = cloneConfig();
+    cfg.scene.defaultFitRatio = Infinity;
+    const result = invokeValidator(validateScene, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene fit ratio'));
+  });
+
+  it('rejects -Infinity defaultFitRatio', () => {
+    const cfg = cloneConfig();
+    cfg.scene.defaultFitRatio = -Infinity;
     const result = invokeValidator(validateScene, cfg);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene fit ratio'));

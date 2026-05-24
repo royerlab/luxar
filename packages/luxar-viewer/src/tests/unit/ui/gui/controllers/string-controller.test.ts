@@ -202,6 +202,44 @@ describe('StringController', () => {
       // The original characters survive a textContent round-trip:
       expect(label.textContent).toBe(payload);
     });
+
+    // [R11/D-C4][P5/P9] Pin behaviour at two boundaries:
+    //
+    // 1. Very long labels (10k chars) — must NOT throw, NOT truncate at
+    //    the textContent layer (CSS display-side ellipsis is the only
+    //    legitimate truncation; DOM round-trip retains the full string).
+    //    A regression that capped textContent at, say, 1024 chars would
+    //    fail here.
+    //
+    // 2. Surrogate pairs — JS counts a single user-perceived emoji like
+    //    '🌌' (U+1F30C) as 2 UTF-16 code units. A regression that
+    //    iterated `label.length` and indexed character-by-character
+    //    (rather than using the full string) would corrupt the high
+    //    surrogate. textContent round-trip must preserve the codepoint
+    //    bytes exactly.
+    it('preserves a very long (10k char) label through textContent round-trip', () => {
+      const longLabel = 'B'.repeat(10_000);
+      expect(() => controller.name(longLabel)).not.toThrow();
+      const label = controller.domElement.querySelector(
+        '.luxar-gui__controller-name'
+      ) as HTMLElement;
+      expect(label.textContent?.length).toBe(10_000);
+      expect(label.textContent).toBe(longLabel);
+    });
+
+    it('preserves surrogate-pair / emoji codepoints in the label', () => {
+      // '🌌' = U+1F30C = '🌌' (2 UTF-16 code units)
+      // '👨‍👩‍👧' = ZWJ-joined family emoji (7 code units)
+      const payload = 'a🌌b👨‍👩‍👧c';
+      controller.name(payload);
+      const label = controller.domElement.querySelector(
+        '.luxar-gui__controller-name'
+      ) as HTMLElement;
+      expect(label.textContent).toBe(payload);
+      // Code-unit length is preserved exactly — corruption (e.g., losing
+      // the high surrogate) would produce a different length.
+      expect(label.textContent?.length).toBe(payload.length);
+    });
   });
 
   describe('dispose()', () => {
