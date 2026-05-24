@@ -293,11 +293,24 @@ def test_cli_help_commands(runner) -> None:
     assert result.exit_code == 0
     assert "luxar – build and serve Zarr-backed nD scenes" in result.stdout
 
-    # Test individual command help
+    # [Python-R3/A-W1] The per-command help test previously only checked
+    # that the command name appeared somewhere in stdout — a regression
+    # that produced empty help (or just printed the binary name) would
+    # silently pass. Strengthen by also requiring the "Usage:" header
+    # AND at least one --flag listing, which is the actual help-output
+    # contract every Click/Typer command satisfies.
     for command in ["demo", "serve", "info", "viewer"]:
         result = runner.invoke(app, [command, "--help"])
         assert result.exit_code == 0
         assert command in result.stdout.lower()
+        # Real help output always includes "Usage:" and at least one
+        # documented option flag (`--help` is universally present).
+        assert "Usage:" in result.stdout, (
+            f"{command} --help has no Usage: header; output was: {result.stdout!r}"
+        )
+        assert "--help" in result.stdout, (
+            f"{command} --help missing --help flag listing"
+        )
 
 
 def test_invalid_command(runner) -> None:
