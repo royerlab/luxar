@@ -56,4 +56,27 @@ describe('validateInput', () => {
       expect.stringContaining('Invalid input.defaultSensitivity')
     );
   });
+
+  // [R11/D-C1+D-G4][P5] Pin ±Infinity at the defaultSensitivity boundary.
+  // defaultSensitivity ∈ (0, 1] in practice; +Infinity > 1 (must reject)
+  // and -Infinity < 0 (must reject). Symmetric to FOV / fitRatio coverage.
+  it('rejects Infinity input.defaultSensitivity', () => {
+    const cfg = cloneConfig();
+    cfg.input.defaultSensitivity = Number.POSITIVE_INFINITY;
+    const result = invokeValidator(validateInput, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.stringContaining('Invalid input.defaultSensitivity')
+    );
+  });
+
+  it('rejects -Infinity input.defaultSensitivity', () => {
+    const cfg = cloneConfig();
+    cfg.input.defaultSensitivity = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateInput, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.stringContaining('Invalid input.defaultSensitivity')
+    );
+  });
 });
