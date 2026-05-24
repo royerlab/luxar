@@ -291,6 +291,70 @@ class TestSceneDimensions:
         assert scene.dimensions.dimensions[0].discrete is True
         assert scene.dimensions.dimensions[1].discrete is True
 
+        # [Python-R4/io-MAJOR] Pin POSITION-array round-trip in 5D, not
+        # just dimension METADATA. Previously the test verified only the
+        # Dimensions schema survived; the actual (100, 5) position array
+        # round-trip was untested — a regression that flattened the
+        # 4th/5th dimension or wrote only the first 3 columns would
+        # have passed every existing assertion. The spatial-index may
+        # reorder rows, so we sort lexicographically on both sides.
+        data = scene.get_points("points5d")
+        assert data["positions"].shape == (100, 5)
+        assert data["positions"].dtype == np.float32
+        sort_orig = np.lexsort(positions.T)
+        sort_load = np.lexsort(data["positions"].T)
+        np.testing.assert_allclose(
+            data["positions"][sort_load],
+            positions[sort_orig],
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="5D position values differ after round-trip",
+        )
+
+    def test_4d_scene_dimensions(self, tmp_path) -> None:
+        """Round-trip with 4D dimensions (time + xyz) — added to fill the
+        4D gap between test_3d_scene_dimensions and test_5d_scene_dimensions.
+        """
+        output_path = tmp_path / "test.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension(
+                    "time", unit="s", display=False, discrete=True, range=(0, 5)
+                ),
+                Dimension("x", unit="um"),
+                Dimension("y", unit="um"),
+                Dimension("z", unit="um"),
+            ]
+        )
+
+        positions = np.random.randn(80, 4).astype(np.float32)
+        positions[:, 0] = np.random.randint(0, 6, 80).astype(np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=dims)
+            compiler.write_points("points4d", positions)
+
+        scene = LuxarScene.load(output_path)
+        assert scene.dimensions is not None
+        assert len(scene.dimensions) == 4
+        assert scene.dimensions.names == ["time", "x", "y", "z"]
+        assert scene.dimensions.displayed == [1, 2, 3]
+        assert scene.dimensions.non_displayed == [0]
+
+        data = scene.get_points("points4d")
+        assert data["positions"].shape == (80, 4)
+        assert data["positions"].dtype == np.float32
+        sort_orig = np.lexsort(positions.T)
+        sort_load = np.lexsort(data["positions"].T)
+        np.testing.assert_allclose(
+            data["positions"][sort_load],
+            positions[sort_orig],
+            rtol=1e-6,
+            atol=1e-6,
+            err_msg="4D position values differ after round-trip",
+        )
+
     def test_categorical_dimensions(self, tmp_path) -> None:
         """Test round-trip with categorical dimensions."""
         output_path = tmp_path / "test.zarr"
