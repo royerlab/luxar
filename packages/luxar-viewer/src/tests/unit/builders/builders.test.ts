@@ -179,14 +179,21 @@ describe('GSplatsBuilder smoke', () => {
     expect(Array.from(data.amplitudes)).toEqual([1.0, 1.0]);
   });
 
-  it('preserves the explicit centers array reference on build()', () => {
+  // build() now returns CLONES of every typed-array field — see
+  // tests/builders/test-data-builders.ts. The previous "preserves the
+  // explicit X array reference" tests were locking in the aliasing bug
+  // (one mutation to the result of build() would leak into every prior
+  // build() output). Re-assert the safer contract: returned content
+  // equals the input but is NOT the same instance.
+  it('returns a fresh centers Float32Array equal to the input', () => {
     const centers = new Float32Array([0, 0, 0, 1, 1, 1]);
     const data = new GSplatsBuilder()
       .withSplats(2)
       .withDimensions(3)
       .withCenters(centers)
       .build();
-    expect(data.centers).toBe(centers);
+    expect(data.centers).not.toBe(centers);
+    expect(data.centers).toStrictEqual(centers);
   });
 
   it('clamps every withVaryingAmplitudes value into [min, max]', () => {
@@ -201,24 +208,41 @@ describe('GSplatsBuilder smoke', () => {
     }
   });
 
-  it('preserves the explicit cholesky array reference on build()', () => {
+  it('returns a fresh choleskyFactors Float32Array equal to the input', () => {
     const chol = new Float32Array(2 * 6).fill(0.25);
     const data = new GSplatsBuilder()
       .withSplats(2)
       .withDimensions(3)
       .withCholeskyFactors(chol)
       .build();
-    expect(data.choleskyFactors).toBe(chol);
+    expect(data.choleskyFactors).not.toBe(chol);
+    expect(data.choleskyFactors).toStrictEqual(chol);
   });
 
-  it('preserves the explicit colors array reference on build()', () => {
+  it('returns a fresh colors Float32Array equal to the input', () => {
     const colors = new Float32Array([1, 0, 0, 0, 1, 0]);
     const data = new GSplatsBuilder()
       .withSplats(2)
       .withDimensions(3)
       .withColors(colors)
       .build();
-    expect(data.colors).toBe(colors);
+    expect(data.colors).not.toBe(colors);
+    expect(data.colors).toStrictEqual(colors);
+  });
+
+  // Now pin the actual safety contract — mutating the build() return
+  // does NOT propagate back into the builder's internal state, and a
+  // second build() call returns yet-another fresh buffer.
+  it('isolates build() outputs from builder state and from each other', () => {
+    const builder = new GSplatsBuilder()
+      .withSplats(2)
+      .withDimensions(3)
+      .withCenters(new Float32Array([0, 0, 0, 1, 1, 1]));
+    const a = builder.build();
+    const b = builder.build();
+    expect(a.centers).not.toBe(b.centers);
+    a.centers[0] = 999;
+    expect(b.centers[0]).toBe(0);
   });
 });
 

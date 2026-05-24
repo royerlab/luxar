@@ -132,11 +132,16 @@ export class PointsBuilder {
       this.withRandomPositions();
     }
 
+    // Return FRESH copies of every typed array. Without cloning, two
+    // build() calls return the same buffer instance; a test that mutates
+    // the result of the first call would leak into every subsequent
+    // build() (and into any other test holding a reference). Float32Array
+    // construction with another typed array argument copies the bytes.
     return {
-      positions: this.positions!,
-      colors: this.colors,
-      radii: this.radii,
-      sharpness: this.sharpness,
+      positions: new Float32Array(this.positions!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
+      radii: this.radii ? new Float32Array(this.radii) : null,
+      sharpness: this.sharpness ? new Float32Array(this.sharpness) : null,
       numPoints: this.numPoints,
       dimensions: this.dimensions,
     };
@@ -270,12 +275,13 @@ export class LinesBuilder {
       for (let i = 0; i < seg.length; i++) seg[i] = i;
       this.segments = seg;
     }
+    // Clone every output buffer — see PointsBuilder.build() for rationale.
     return {
-      vertices: this.vertices!,
-      widths: this.widths!,
-      segments: this.segments!,
-      colors: this.colors,
-      sharpness: this.sharpness,
+      vertices: new Float32Array(this.vertices!),
+      widths: new Float32Array(this.widths!),
+      segments: new Uint32Array(this.segments!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
+      sharpness: this.sharpness ? new Float32Array(this.sharpness) : null,
       numSegments: this.numSegments,
       dimensions: this.dimensions,
     };
@@ -417,11 +423,12 @@ export class GSplatsBuilder {
     if (!this.choleskyFactors) {
       this.withIsotropicCovariance(0.1);
     }
+    // Clone every output buffer — see PointsBuilder.build() for rationale.
     return {
-      centers: this.centers!,
-      amplitudes: this.amplitudes!,
-      choleskyFactors: this.choleskyFactors!,
-      colors: this.colors,
+      centers: new Float32Array(this.centers!),
+      amplitudes: new Float32Array(this.amplitudes!),
+      choleskyFactors: new Float32Array(this.choleskyFactors!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
       numSplats: this.numSplats,
       dimensions: this.dimensions,
     };
