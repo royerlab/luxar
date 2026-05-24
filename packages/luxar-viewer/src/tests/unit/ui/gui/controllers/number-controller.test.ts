@@ -134,6 +134,73 @@ describe('NumberController', () => {
       expect(object.value).toBe(before);
     });
 
+    // [R11/D-C1+D-G2][P5/P7] Pin Infinity / very-large-finite behaviour at
+    // two layers:
+    //
+    // 1. DOM-level defense: HTML5 <input type="number"> rejects the literal
+    //    strings 'Infinity' / '-Infinity' (they are not valid float
+    //    literals per the HTML float-parsing grammar). The browser/jsdom
+    //    clears `.value` to '' and parseFloat('') = NaN — so the NaN guard
+    //    catches it and the model retains its prior value. A regression
+    //    that swapped <input type="number"> for type="text" (allowing
+    //    'Infinity' through) would silently break this defense.
+    // 2. setValue() bypasses the DOM: when an upstream caller programmatically
+    //    invokes `setValue(Infinity)`, clamp() must protect the model.
+    //    Pin both bounds — a mutation that drops `value > max` or
+    //    `value < min` in clamp would fail the corresponding case.
+    it('rejects "Infinity" string input via DOM number-input filtering', () => {
+      const input = controller.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      const before = object.value;
+      input.value = 'Infinity';
+      input.dispatchEvent(new Event('change'));
+      expect(Number.isFinite(object.value)).toBe(true);
+      expect(object.value).toBe(before);
+    });
+
+    it('rejects "-Infinity" string input via DOM number-input filtering', () => {
+      const input = controller.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      const before = object.value;
+      input.value = '-Infinity';
+      input.dispatchEvent(new Event('change'));
+      expect(Number.isFinite(object.value)).toBe(true);
+      expect(object.value).toBe(before);
+    });
+
+    // [R11/D-G2 — boundary in input-change path]
+    // A value just-above-max through the change event must clamp. Use a
+    // large finite value (1e6) — kills a clamp mutation that swaps
+    // `value > max` for `value >= max` or drops the upper bound entirely.
+    it('clamps very-large finite values from the change event to max', () => {
+      const input = controller.domElement.querySelector(
+        '.luxar-gui__input--number'
+      ) as HTMLInputElement;
+      input.value = '1000000'; // 1e6, valid HTML5 float literal
+      input.dispatchEvent(new Event('change'));
+      expect(object.value).toBe(100);
+    });
+
+    // [R11/D-G2 — boundary in slider input path]
+    // The slider path uses `constrainValue` on parseFloat(slider.value).
+    // jsdom's <input type="range"> clamps the value attribute internally to
+    // [min, max], so 1000 → 100 even before parseFloat runs. Pin that.
+    it('clamps slider values above max via the input event', () => {
+      const slider = controller.domElement.querySelector(
+        '.luxar-gui__slider'
+      ) as HTMLInputElement;
+      slider.value = '1000'; // valid float, above max=100
+      slider.dispatchEvent(new Event('input'));
+      expect(object.value).toBe(100);
+    });
+
+    // OOS NOTE [R11]: controller.setValue(value) at ui/gui/controller.ts:116
+    // does NOT clamp into [min, max] — programmatic callers can corrupt
+    // the model with Infinity / NaN / out-of-range. Logged in audit OOS
+    // for follow-up; not a test gap (the bug is in production code).
+
     it('should trigger onChange callback on user input', () => {
       const onChange = vi.fn();
       controller.onChange(onChange);

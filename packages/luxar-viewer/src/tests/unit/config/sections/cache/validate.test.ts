@@ -144,6 +144,35 @@ describe('validateCache', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
   });
 
+  // [R11/D-G3][P5] -Infinity coverage. A bare `> 0` check (without
+  // isFinite()) accepts +Infinity AND rejects -Infinity for the wrong
+  // reason: -Infinity < 0 is true, so the `< 0` path is taken with
+  // bypassed sign-handling, but a mutation that swapped to `>= 0`
+  // would let -Infinity through. Pin all three timeout/size fields.
+  it('rejects -Infinity cache.opfsOperationTimeoutMs', () => {
+    const cfg = cloneConfig();
+    cfg.cache.opfsOperationTimeoutMs = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
+  });
+
+  it('rejects -Infinity cache.l0MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l0MaxSizeMB = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l0MaxSizeMB'));
+  });
+
+  it('rejects -Infinity cache.l2MaxSizeMB', () => {
+    const cfg = cloneConfig();
+    cfg.cache.l2MaxSizeMB = Number.NEGATIVE_INFINITY;
+    const result = invokeValidator(validateCache, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+  });
+
   it('accepts positive cache.opfsOperationTimeoutMs', () => {
     const cfg = cloneConfig();
     cfg.cache.opfsOperationTimeoutMs = 5_000;

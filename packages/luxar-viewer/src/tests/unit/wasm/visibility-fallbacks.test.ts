@@ -529,6 +529,36 @@ describe('TypeScript fallback at WASM 16-dim boundary', () => {
       expect(n).toBe(1);
       expect(output[0]).toBe(1);
     });
+
+    // [R11/B-G3][P5/P8] Far-away counterpart at ndim=17 (mirrors the
+    // Points-fallback test above) — pins that the JS fallback's distance
+    // computation actually consults non-displayed dimensions, not just
+    // the first few. A regression that capped the loop at ndim=16 (or
+    // dropped out at the WASM boundary) would falsely report visible.
+    it('handles ndim=17 with a far-away segment (verifies fallback distance calculation)', () => {
+      const ndim = 17;
+      const vertices = new Float32Array(2 * ndim);
+      // Push BOTH endpoints far along dimension 5 (well outside tolerance).
+      vertices[5] = 100;
+      vertices[ndim + 5] = 100;
+      const segments = new Uint32Array([0, 1]);
+      const widths = new Float32Array([0, 0]);
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(0);
+      expect(output[0]).toBe(0);
+    });
   });
 
   describe('compute_nd_visibility_gsplats', () => {
@@ -587,6 +617,39 @@ describe('TypeScript fallback at WASM 16-dim boundary', () => {
       );
       expect(n).toBe(1);
       expect(output[0]).toBe(1);
+    });
+
+    // [R11/B-G3][P5/P8] Far-away counterpart at ndim=17 (mirrors the
+    // Points-fallback test above) — pins that the GSplat JS fallback's
+    // Mahalanobis distance computation actually consults non-displayed
+    // dimensions. With identity Cholesky and a center far along dim 5,
+    // the splat must NOT be visible.
+    it('handles ndim=17 with a far-away splat (verifies fallback distance calculation)', () => {
+      const ndim = 17;
+      const choleskySize = (ndim * (ndim + 1)) / 2;
+      const centers = new Float32Array(ndim);
+      centers[5] = 100; // far along dimension 5
+      const cholesky = new Float32Array(choleskySize);
+      let idx = 0;
+      for (let row = 0; row < ndim; row++) {
+        for (let col = 0; col <= row; col++) {
+          cholesky[idx++] = col === row ? 1 : 0; // identity → unit covariance
+        }
+      }
+      const slicePosition = new Float32Array(ndim);
+      const tolerance = new Float32Array(ndim).fill(0.1);
+      const output = new Uint8Array(1);
+      const n = compute_nd_visibility_gsplats(
+        centers,
+        cholesky,
+        slicePosition,
+        tolerance,
+        ndim,
+        1,
+        output
+      );
+      expect(n).toBe(0);
+      expect(output[0]).toBe(0);
     });
   });
 });

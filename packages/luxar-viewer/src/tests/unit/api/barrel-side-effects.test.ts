@@ -44,6 +44,24 @@ describe('Public barrel side effects', () => {
     expect(luxarChildren).toEqual([]);
   });
 
+  // [R11/C-G15][P5] Scan `document.head` too. A regression that injected
+  // `<style id="luxar-…">` or `<link id="luxar-…">` into the document
+  // head at module-load (a common pattern for CSS-in-JS libraries that
+  // forgot to gate behind init()) would slip past the body-only check.
+  // Match by id-prefix AND by class-prefix (CSS-in-JS libs frequently
+  // assign a class rather than an id).
+  it('does not inject any luxar-* <style> / <link> elements into document.head', () => {
+    const headChildren = Array.from(document.head.children);
+    const offenders = headChildren.filter((el) => {
+      const id = (el.id || '').startsWith('luxar-');
+      const className = (el.getAttribute('class') || '')
+        .split(/\s+/)
+        .some((c) => c.startsWith('luxar-'));
+      return id || className;
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it('does not set window.__luxarDebug', () => {
     expect(window.__luxarDebug).toBeUndefined();
   });

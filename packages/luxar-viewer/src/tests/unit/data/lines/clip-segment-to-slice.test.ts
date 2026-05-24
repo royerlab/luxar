@@ -117,6 +117,30 @@ describe('clipSegmentToSlice', () => {
       // 0 + t*(10-0) = 5.5 -> t = 0.55
       expect(result.t2).toBeCloseTo(0.55, 5);
     });
+
+    // [R11/B-G2][P5/P8] Mirror the prior Case-D test with the segment
+    // running in the opposite direction (dv < 0 in the source's
+    // intersection branch). The `else` arm at the dv-sign split is
+    // separate code; a regression that mutated `Math.max` ↔ `Math.min`
+    // in just one arm would survive the original test. Pin both
+    // visibility and the swapped (1-t2', 1-t1') symmetry.
+    it('clips both endpoints when segment crosses slice in the reverse direction', () => {
+      const p1 = [10, 10, 10, 10]; // OUT above (dim3 = 10)
+      const p2 = [0, 0, 0, 0]; // OUT below (dim3 = 0)
+
+      const result = clipSegmentToSlice(p1, p2, slicePos4D, tolerance4D, displayDims4D);
+
+      expect(result.visible).toBe(true);
+      expect(result.t1).toBeGreaterThan(0);
+      expect(result.t2).toBeLessThan(1);
+
+      // Reversed segment: t1 now hits the upper boundary (5.5).
+      // 10 + t*(0 - 10) = 5.5 -> 10 - 10t = 5.5 -> t = 0.45
+      expect(result.t1).toBeCloseTo(0.45, 5);
+      // t2 hits the lower boundary (4.5).
+      // 10 + t*(0 - 10) = 4.5 -> 10 - 10t = 4.5 -> t = 0.55
+      expect(result.t2).toBeCloseTo(0.55, 5);
+    });
   });
 
   describe('Case E: Both OUT, same side', () => {

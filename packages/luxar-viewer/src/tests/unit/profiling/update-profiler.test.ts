@@ -601,6 +601,17 @@ describe('UpdateProfiler — reset', () => {
     expect(root.children).toHaveLength(0);
     expect(root.lastMs).toBe(0);
   });
+
+  // [R11/A-G4 — OOS production bug surfaced]
+  // The reset() docstring promises that a "dangling RootSession" will not
+  // "merge into a tree it no longer owns, polluting fresh root counters."
+  // Empirical test (see audit aggregate `_round11_aggregate.md`): an
+  // in-flight `timeTopLevel('parallel-load', fn)` session whose `fn`
+  // resolves AFTER reset() DOES merge its child into the freshly-rebuilt
+  // root (root.children.length becomes 1, not 0). The session's parent
+  // reference appears to be re-resolved at end-time, not captured at
+  // begin-time. Test deliberately NOT added — it would lock in the
+  // contradiction. Filed as OOS for production-code follow-up.
 });
 
 describe('UpdateProfiler — beginUpdate when previous unfinished', () => {

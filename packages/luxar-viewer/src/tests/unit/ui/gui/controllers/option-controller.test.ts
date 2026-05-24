@@ -93,6 +93,36 @@ describe('OptionController', () => {
     });
   });
 
+  // [R11/D-G6][P5] Empty options array / empty options dict — the
+  // controller must not throw, must produce a select element, and must
+  // produce zero <option> children. A regression that called
+  // `options[0]` without a length check would crash on construction.
+  describe('with empty options', () => {
+    it('does not throw and produces a select with zero options when options is []', () => {
+      const obj: { mode: string } = { mode: 'orbit' };
+      const c = new OptionController(obj, 'mode', { options: [] });
+      try {
+        const select = c.domElement.querySelector('.luxar-gui__select');
+        expect(select).toBeInstanceOf(HTMLSelectElement);
+        expect(c.domElement.querySelectorAll('option')).toHaveLength(0);
+      } finally {
+        c.dispose();
+      }
+    });
+
+    it('does not throw and produces a select with zero options when options is {}', () => {
+      const obj: { mode: string } = { mode: 'orbit' };
+      const c = new OptionController(obj, 'mode', { options: {} });
+      try {
+        const select = c.domElement.querySelector('.luxar-gui__select');
+        expect(select).toBeInstanceOf(HTMLSelectElement);
+        expect(c.domElement.querySelectorAll('option')).toHaveLength(0);
+      } finally {
+        c.dispose();
+      }
+    });
+  });
+
   describe('setValue() / getValue()', () => {
     beforeEach(() => {
       object = { mode: 'orbit' };

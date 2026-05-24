@@ -7,6 +7,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { LoadedPointsDataAccumulator } from '../../../data/accumulators/points';
+import { LinesDataAccumulator } from '../../../data/accumulators/lines';
+import { GSplatsDataAccumulator } from '../../../data/accumulators/gsplats';
 
 describe('Accumulator Integration Tests', () => {
   describe('Points Loader Integration', () => {
@@ -231,6 +233,141 @@ describe('Accumulator Integration Tests', () => {
       // optional on the data interface but is asserted defined by the
       // `toBeInstanceOf` checks above; non-null-assert is sound here.)
       expect(uint8Result.colors!.constructor).not.toBe(float32Result.colors!.constructor);
+    });
+  });
+
+  // [R11/A-G1][P8] Three-geometry symmetry: Points coverage above is now
+  // mirrored on Lines and GSplats accumulators. The three geometries share
+  // the DataAccumulator contract (ensureCapacity / fill / getData /
+  // dispose); a test for one but not the others is a hidden coverage gap
+  // — see [[feedback_geometry_symmetry]]. These tests pin the public
+  // surface only (no reflection into private buffers).
+
+  describe('Lines Loader Integration', () => {
+    it('ensureCapacity() forwards (vertexCount, segmentCount) intact', () => {
+      const acc = new LinesDataAccumulator(/*vertices*/ 1024, /*segments*/ 512, /*ndim*/ 3);
+      const spy = vi.spyOn(acc, 'ensureCapacity');
+      acc.ensureCapacity(2048, 1024);
+      expect(spy).toHaveBeenCalledWith(2048, 1024);
+    });
+
+    it('type-init via fill() succeeds when types are not yet seeded', () => {
+      const acc = new LinesDataAccumulator(1024, 512, 3);
+      acc.ensureCapacity(1024, 512);
+      expect(() =>
+        acc.fill(/*segmentOffset*/ 0, /*vertexOffset*/ 0, {
+          positions: new Float32Array(3 * 3), // 3 vertices × ndim=3
+          segments: new Uint32Array([0, 1, 1, 2]), // 2 segments
+          widths: new Float32Array(3),
+          colors: new Uint8Array(3 * 3),
+          sharpness: new Float32Array(3),
+        }),
+      ).not.toThrow();
+    });
+
+    it('getData(segmentCount, vertexCount) returns positions + segments + widths views', () => {
+      const acc = new LinesDataAccumulator(1024, 512, 3);
+      const spy = vi.spyOn(acc, 'getData');
+      acc.ensureCapacity(1024, 512);
+      acc.fill(0, 0, {
+        positions: new Float32Array(3 * 3),
+        segments: new Uint32Array([0, 1, 1, 2]),
+        widths: new Float32Array(3),
+      });
+      const result = acc.getData(2, 3);
+      expect(spy).toHaveBeenCalledWith(2, 3);
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.segments).toBeInstanceOf(Uint32Array);
+      expect(result.widths).toBeInstanceOf(Float32Array);
+    });
+
+    it('exposes Uint8 vs Float32 color dtype across separate instances', () => {
+      const accUint8 = new LinesDataAccumulator(1024, 512, 3);
+      accUint8.fill(0, 0, {
+        positions: new Float32Array([1, 2, 3]),
+        segments: new Uint32Array([0, 0]),
+        widths: new Float32Array([1]),
+        colors: new Uint8Array([255, 128, 0]),
+      });
+      const u8 = accUint8.getData(1, 1);
+      expect(u8.colors).toBeInstanceOf(Uint8Array);
+      accUint8.dispose();
+
+      const accF32 = new LinesDataAccumulator(1024, 512, 3);
+      accF32.fill(0, 0, {
+        positions: new Float32Array([1, 2, 3]),
+        segments: new Uint32Array([0, 0]),
+        widths: new Float32Array([1]),
+        colors: new Float32Array([1.0, 0.5, 0.0]),
+      });
+      const f32 = accF32.getData(1, 1);
+      expect(f32.colors).toBeInstanceOf(Float32Array);
+
+      expect(u8.colors!.constructor).not.toBe(f32.colors!.constructor);
+    });
+  });
+
+  describe('GSplats Loader Integration', () => {
+    it('ensureCapacity() forwards its argument to the spy intact', () => {
+      const acc = new GSplatsDataAccumulator(/*initialCapacity*/ 1024, /*ndim*/ 3);
+      const spy = vi.spyOn(acc, 'ensureCapacity');
+      acc.ensureCapacity(4096);
+      expect(spy).toHaveBeenCalledWith(4096);
+    });
+
+    it('type-init via fill() succeeds when types are not yet seeded', () => {
+      const acc = new GSplatsDataAccumulator(1024, 3);
+      acc.ensureCapacity(1024);
+      // ndim=3 → cholesky k = 3*4/2 = 6 elements per splat
+      expect(() =>
+        acc.fill(0, {
+          positions: new Float32Array(3), // 1 splat × ndim=3
+          amplitudes: new Float32Array(1),
+          choleskyFactors: new Float32Array(6),
+          colors: new Uint8Array(3),
+        }),
+      ).not.toThrow();
+    });
+
+    it('getData(count) forwards count and returns positions + amplitudes + cholesky views', () => {
+      const acc = new GSplatsDataAccumulator(1024, 3);
+      const spy = vi.spyOn(acc, 'getData');
+      acc.ensureCapacity(1024);
+      acc.fill(0, {
+        positions: new Float32Array(3),
+        amplitudes: new Float32Array(1),
+        choleskyFactors: new Float32Array(6),
+      });
+      const result = acc.getData(1);
+      expect(spy).toHaveBeenCalledWith(1);
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect(result.amplitudes).toBeInstanceOf(Float32Array);
+      expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
+    });
+
+    it('exposes Uint8 vs Float32 color dtype across separate instances', () => {
+      const accUint8 = new GSplatsDataAccumulator(1024, 3);
+      accUint8.fill(0, {
+        positions: new Float32Array(3),
+        amplitudes: new Float32Array([1]),
+        choleskyFactors: new Float32Array(6),
+        colors: new Uint8Array([255, 128, 0]),
+      });
+      const u8 = accUint8.getData(1);
+      expect(u8.colors).toBeInstanceOf(Uint8Array);
+      accUint8.dispose();
+
+      const accF32 = new GSplatsDataAccumulator(1024, 3);
+      accF32.fill(0, {
+        positions: new Float32Array(3),
+        amplitudes: new Float32Array([1]),
+        choleskyFactors: new Float32Array(6),
+        colors: new Float32Array([1.0, 0.5, 0.0]),
+      });
+      const f32 = accF32.getData(1);
+      expect(f32.colors).toBeInstanceOf(Float32Array);
+
+      expect(u8.colors!.constructor).not.toBe(f32.colors!.constructor);
     });
   });
 });

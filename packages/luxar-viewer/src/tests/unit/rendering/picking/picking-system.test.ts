@@ -217,6 +217,28 @@ describe('PickingSystem — registration', () => {
     expect(cache.size).toBe(0);
   });
 
+  // [R11/C-G10][P5] Pin the pickId === 0 case explicitly. pickId 0 is
+  // the "no hit / background" sentinel — the cache should never carry an
+  // entry for it, and invalidateBoxes(0) is a no-op that drops nothing
+  // else. A regression that flipped an `if (pickId === 0) return` to
+  // `if (pickId === 0) cache.clear()` would catastrophically wipe valid
+  // entries on every background-pixel pick.
+  it('invalidateBoxes(0) (background sentinel) does not drop entries for nonzero pickIds', () => {
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
+    cache.set(1, new THREE.Box3());
+    cache.set(2, new THREE.Box3());
+
+    system.invalidateBoxes(0);
+
+    // Background sentinel must not touch real entries.
+    expect(cache.has(1)).toBe(true);
+    expect(cache.has(2)).toBe(true);
+    expect(cache.size).toBe(2);
+    // And critically: there is never an entry keyed at 0 — the
+    // sentinel is not stored, so invalidating it cannot find anything.
+    expect(cache.has(0)).toBe(false);
+  });
+
   it('unregisterNode drops the corresponding cached world AABB', () => {
     const id = system.allocatePickId();
     system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id);

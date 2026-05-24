@@ -91,6 +91,33 @@ describe('RangeSlider — construction', () => {
     expect(bounds[0].textContent).toBe('0');
     expect(bounds[1].textContent).toBe('1.235');
   });
+
+  // [R11/D-G1][P5] Pin behaviour for Infinity bounds. HTML5
+  // <input type="range"> rejects non-finite-numeric strings on
+  // `.value`/`.min`/`.max` assignment; the resulting DOM strings are
+  // empty (jsdom: '') or browser default. The contract: construction
+  // must NOT throw and the resulting slider must not produce NaN
+  // `valueAsNumber` reads. A regression that called `String(Infinity)
+  // = 'Infinity'` and then `.min = 'Infinity'` would leave the input
+  // in an inconsistent state.
+  it('survives Infinity bounds without throwing and yields finite valueAsNumber reads', () => {
+    expect(() =>
+      makeSlider({ min: 0, max: Infinity, valueLow: 0, valueHigh: 1 })
+    ).not.toThrow();
+    const { low, high } = getInputs();
+    // valueAsNumber must be finite (NaN read would silently propagate).
+    expect(Number.isFinite(low.valueAsNumber)).toBe(true);
+    expect(Number.isFinite(high.valueAsNumber)).toBe(true);
+  });
+
+  it('survives -Infinity bounds without throwing and yields finite valueAsNumber reads', () => {
+    expect(() =>
+      makeSlider({ min: -Infinity, max: 1, valueLow: 0, valueHigh: 0.5 })
+    ).not.toThrow();
+    const { low, high } = getInputs();
+    expect(Number.isFinite(low.valueAsNumber)).toBe(true);
+    expect(Number.isFinite(high.valueAsNumber)).toBe(true);
+  });
 });
 
 describe('RangeSlider — onChange invariant', () => {
