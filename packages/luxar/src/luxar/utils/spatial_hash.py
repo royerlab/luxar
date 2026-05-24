@@ -420,6 +420,19 @@ class BatchedSpatialHashGrid:
                     unique_keys_np=np_state["unique_keys_np"],
                     unique_starts_np=np_state["unique_starts_np"],
                 )
+            # [Python-OOS-triage / D-W1] Non-OOM GPU failures (kernel
+            # bugs, indexing overflow, unsupported dtype) used to
+            # propagate as a bare traceback with no indication that
+            # the GPU path was the offender — the user saw a generic
+            # PyTorch error and couldn't tell whether their data
+            # triggered it or the GPU backend itself was at fault.
+            # Log a clear "GPU build failed (not recoverable)" line
+            # BEFORE re-raising so the cause is unambiguous.
+            aprint(
+                "[BatchedSpatialHashGrid] GPU build failed and is NOT recoverable "
+                f"({type(exc).__name__}: {exc}); re-raising. "
+                "Pass fallback_to_cpu=True to allow OOM/unavailable-device fallback only."
+            )
             raise
 
         return cls(
