@@ -151,6 +151,49 @@ class TestTransformUtilities:
         # Single transform
         assert np.allclose(compose(t1), t1)
 
+    # [Python-R1/transforms-CRIT] Property tests for the three algebraic
+    # contracts compose() MUST satisfy: identity, associativity, and the
+    # documented application-order semantics. The existing example tests
+    # cover specific fixed orderings; a mutation that subtly broke
+    # associativity (e.g., inverted the `reversed(transforms)` walk) could
+    # still pass them.
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_identity_law(self, seed: int) -> None:
+        """compose(I, T) == compose(T, I) == T for every T."""
+        rng = np.random.default_rng(seed)
+        t = compose(
+            translate(*rng.uniform(-5, 5, 3)),
+            rotate_z(rng.uniform(-180, 180)),
+            scale(*rng.uniform(0.5, 2.0, 3)),
+        )
+        assert np.allclose(compose(identity(), t), t, atol=1e-6)
+        assert np.allclose(compose(t, identity()), t, atol=1e-6)
+
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_associativity(self, seed: int) -> None:
+        """compose(compose(T1, T2), T3) == compose(T1, compose(T2, T3))."""
+        rng = np.random.default_rng(seed)
+        t1 = translate(*rng.uniform(-5, 5, 3))
+        t2 = rotate_z(rng.uniform(-180, 180))
+        t3 = scale(*rng.uniform(0.5, 2.0, 3))
+
+        left = compose(compose(t1, t2), t3)
+        right = compose(t1, compose(t2, t3))
+        # float32 accumulator → looser tolerance than default 1e-8
+        assert np.allclose(left, right, atol=1e-5)
+
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_application_order_property(self, seed: int) -> None:
+        """compose(T1, T2) applied to a point == T2(T1(point))."""
+        rng = np.random.default_rng(seed)
+        t1 = translate(*rng.uniform(-5, 5, 3))
+        t2 = scale(*rng.uniform(0.5, 2.0, 3))
+        point = np.array([*rng.uniform(-1, 1, 3), 1.0])
+
+        combined = compose(t1, t2) @ point
+        sequential = t2 @ (t1 @ point)
+        assert np.allclose(combined, sequential, atol=1e-5)
+
     def test_compose_application_order(self) -> None:
         """Test that compose(T1, T2, T3) applies T1 first, then T2, then T3.
 
