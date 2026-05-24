@@ -103,6 +103,22 @@ class TestGetLauncherPath:
             with pytest.raises(LauncherNotBuiltError, match="make build-launchers"):
                 get_launcher_path("macos")
 
+    # [Python-R6 / A-W4] Pin that returned launcher paths point at FILES
+    # (not directories) and that the parent is the LAUNCHERS_DIR. The
+    # existing test only checked `.exists()` — a regression that pointed
+    # at the parent directory (which also "exists") would slip past.
+    def test_returned_path_is_file_in_launchers_dir(
+        self, fake_launchers_dir: Path
+    ) -> None:
+        with _patch_launchers(fake_launchers_dir):
+            for plat in SUPPORTED_PLATFORMS:
+                path = get_launcher_path(plat)
+                assert path.is_file(), f"{plat} launcher path is not a file: {path}"
+                assert path.parent == fake_launchers_dir, (
+                    f"{plat} launcher should be in LAUNCHERS_DIR, got parent "
+                    f"{path.parent}"
+                )
+
 
 # ─── macOS .app bundle ───────────────────────────────────────────────────────
 
