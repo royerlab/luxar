@@ -484,7 +484,7 @@ export class DimensionsBuilder {
   withDisplayed(...indices: number[]): this {
     if (indices.length > 3) {
       throw new Error(
-        `DimensionsBuilder.withDisplayed: at most 3 dimensions may be displayed; ` +
+        'DimensionsBuilder.withDisplayed: at most 3 dimensions may be displayed; ' +
           `got ${indices.length} indices ${JSON.stringify(indices)}`
       );
     }
