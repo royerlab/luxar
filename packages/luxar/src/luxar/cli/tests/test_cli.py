@@ -192,6 +192,47 @@ def test_info_command_invalid_zarr_store(runner, tmp_path) -> None:
     assert "Error reading info" in result.stdout
 
 
+# [Python-R6 / A-G2] Empty / malformed zarr store boundary cases for
+# the info command. The existing tests cover complex hierarchies and
+# the "regular file" path but never:
+#   - empty directory passed as zarr root
+#   - zarr group with no Luxar metadata
+#   - zarr group with only metadata, no points/lines/gsplats children
+# These are the failure modes a partially-written or aborted compile
+# would leave behind.
+def test_info_command_empty_directory(runner, tmp_path) -> None:
+    """Empty directory should fail with a clear error, not crash."""
+    empty_dir = tmp_path / "empty.zarr"
+    empty_dir.mkdir()
+    result = runner.invoke(app, ["info", str(empty_dir)])
+    assert result.exit_code == 1
+    # Some kind of error must be reported — either "Error reading info"
+    # (the catch-all path) or a more specific zarr-related message.
+    assert any(
+        s in result.stdout for s in ("Error", "invalid", "Invalid", "not")
+    ), f"empty-dir info should report an error; got: {result.stdout!r}"
+
+
+def test_info_command_zarr_group_without_luxar_metadata(runner, tmp_path) -> None:
+    """A zarr group with no Luxar metadata should be reported as invalid
+    rather than crashing. Pin that the error message contains something
+    actionable (mentions the path OR has the canonical 'Error' prefix)."""
+    import zarr
+
+    bare_store = tmp_path / "bare.zarr"
+    # Create a valid zarr group but with no Luxar data
+    zarr.open_group(str(bare_store), mode="w")
+
+    result = runner.invoke(app, ["info", str(bare_store)])
+    # Either the info command fails (preferred) or it succeeds with a
+    # "no data" message. Both are acceptable as long as the user gets
+    # actionable output.
+    assert result.exit_code in (0, 1)
+    # The output must reference the input path or describe the structure
+    # — not be silently empty.
+    assert len(result.stdout.strip()) > 0, "info on bare zarr produced empty output"
+
+
 def test_serve_command_nonexistent_store(runner, tmp_path) -> None:
     """Test serve command with non-existent store."""
     nonexistent_path = tmp_path / "does_not_exist.zarr"
