@@ -481,6 +481,38 @@ def test_demo_rejects_negative_points(runner, tmp_path) -> None:
     assert "must be positive" in result.stdout
 
 
+# [Python-R6 / A-G1] Type-validation boundary cases for --points.
+# Typer/Click should reject float and non-numeric inputs at the
+# argument-parsing layer with a Click-style "Invalid value" exit_code
+# (typically 2, not 1). Pin both type-rejection paths.
+def test_demo_rejects_float_points(runner, tmp_path) -> None:
+    """`--points 1.5` is a float; Typer's int annotation rejects it
+    with exit_code 2 (Click's "Invalid value" code) BEFORE our
+    `n_points <= 0` runtime guard fires."""
+    result = runner.invoke(
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "1.5"],
+    )
+    assert result.exit_code != 0
+    # Click error path: combined output contains either "Invalid value"
+    # or our runtime guard message. EITHER is correct so long as the
+    # demo command DOES NOT proceed (a regression that silently
+    # accepted 1.5 and floored to 1 would slip both checks).
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "Invalid" in combined or "must be" in combined or "is not a valid" in combined
+
+
+def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:
+    """`--points abc` is not numeric; Typer rejects at parse time."""
+    result = runner.invoke(
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "abc"],
+    )
+    assert result.exit_code != 0
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "Invalid" in combined or "is not a valid" in combined
+
+
 def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
     """Test that tree view shows correct icon for Lines (#9)."""
     store_path = tmp_path / "lines_scene.zarr"
