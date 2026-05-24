@@ -329,6 +329,50 @@ class TestColorEncoding:
             with pytest.raises(ValueError, match="color_mode"):
                 encoder.encode(data, group, "test", SemanticType.COLOR)
 
+    # [Python-R5 / encoding-MAJOR] Pin the FULL color_mode validation
+    # surface — every branch in _validate_input that constrains the
+    # (semantic_type, dtype, color_mode) triple. The existing test
+    # only covered "float color, color_mode=None". Add the four other
+    # rejection paths so a regression that flipped any branch (e.g.,
+    # accepting color_mode='Hdr' case-insensitively, or accepting
+    # color_mode='hdr' for uint8) would fail loudly.
+    def test_color_float_with_invalid_color_mode_string(self):
+        """color_mode must be exactly 'sdr' or 'hdr', not 'auto' or any
+        other string."""
+        data = np.random.rand(50, 3).astype(np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            with pytest.raises(ValueError, match="color_mode must be"):
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="auto"
+                )
+
+    def test_color_uint8_with_hdr_mode_rejected(self):
+        """Integer COLOR arrays are SDR storage; color_mode='hdr' is a
+        contract violation that must be caught upfront."""
+        data = (np.random.rand(50, 3) * 255).astype(np.uint8)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            with pytest.raises(ValueError, match="Integer COLOR arrays are SDR"):
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="hdr"
+                )
+
+    def test_color_negative_value_rejected_before_color_mode_branch(self):
+        """Colors must be non-negative regardless of color_mode — the
+        non-negative check fires before the color_mode dtype branch
+        so a -0.5 float color is caught even with color_mode unset."""
+        data = np.full((10, 3), -0.5, dtype=np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            with pytest.raises(ValueError, match="non-negative"):
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="sdr"
+                )
+
 
 class TestBoundedScalarEncoding:
     """Test BOUNDED_SCALAR semantic type encoding."""

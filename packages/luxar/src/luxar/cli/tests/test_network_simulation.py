@@ -60,6 +60,15 @@ class TestBandwidthParsing:
         with pytest.raises(ValueError, match="Invalid bandwidth format"):
             parse_bandwidth("500mb")  # Wrong unit
 
+    # [Python-R5] Suffix-matches-but-numeric-prefix-fails path. Before
+    # the round-5 try/except wrapping, `parse_bandwidth("xyzmbps")`
+    # leaked Python's raw `ValueError: could not convert string to float`
+    # instead of the curated "Invalid bandwidth format" message.
+    def test_invalid_prefix_with_valid_suffix_gives_curated_error(self):
+        for input_ in ("xyzmbps", "abckbps", "qwertygbps"):
+            with pytest.raises(ValueError, match="Invalid bandwidth format"):
+                parse_bandwidth(input_)
+
     def test_negative_value(self):
         """Test negative value raises ValueError."""
         with pytest.raises(ValueError, match="must be positive"):
@@ -128,6 +137,15 @@ class TestLatencyParsing:
 
         with pytest.raises(ValueError, match="Invalid latency format"):
             parse_latency("abc")  # Not a number
+
+    def test_invalid_prefix_with_valid_suffix_gives_curated_error(self):
+        """Same suffix-OK / prefix-fails path normalisation as
+        parse_bandwidth — `xyzms` and `abcs` must surface the curated
+        message, not Python's raw float() failure."""
+        with pytest.raises(ValueError, match="Invalid latency format"):
+            parse_latency("xyzms")
+        with pytest.raises(ValueError, match="Invalid latency format"):
+            parse_latency("abcs")
 
     def test_negative_value(self):
         """Test negative value raises ValueError."""
