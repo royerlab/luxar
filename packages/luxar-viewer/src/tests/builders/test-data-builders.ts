@@ -90,10 +90,28 @@ export class PointsBuilder {
   }
 
   /**
-   * Add uniform radii
+   * Set radii.
+   *
+   * Accepts either:
+   *  - a scalar (`number`) — broadcast to every point, OR
+   *  - an explicit `Float32Array` / `number[]` of length `numPoints` —
+   *    cloned into a fresh Float32Array so the builder owns its own
+   *    buffer (a later mutation by the caller cannot leak in).
+   *
+   * Mismatched-length arrays throw a clear error rather than silently
+   * truncating or zero-extending.
    */
-  withRadii(radius: number): this {
-    this.radii = new Float32Array(this.numPoints).fill(radius);
+  withRadii(radius: number | Float32Array | number[]): this {
+    if (typeof radius === 'number') {
+      this.radii = new Float32Array(this.numPoints).fill(radius);
+    } else {
+      if (radius.length !== this.numPoints) {
+        throw new Error(
+          `withRadii: array length ${radius.length} does not match numPoints ${this.numPoints}`
+        );
+      }
+      this.radii = new Float32Array(radius);
+    }
     return this;
   }
 
