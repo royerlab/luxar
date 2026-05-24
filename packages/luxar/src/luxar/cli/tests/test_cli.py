@@ -296,20 +296,24 @@ def test_cli_help_commands(runner) -> None:
     # [Python-R3/A-W1] The per-command help test previously only checked
     # that the command name appeared somewhere in stdout — a regression
     # that produced empty help (or just printed the binary name) would
-    # silently pass. Strengthen by also requiring the "Usage:" header
-    # AND at least one --flag listing, which is the actual help-output
-    # contract every Click/Typer command satisfies.
+    # silently pass. Strengthen by requiring BOTH the "Usage:" header
+    # AND the "Options" section header — both are universal in
+    # Click/Typer help output regardless of terminal width or rendering
+    # mode (the `--help` flag string itself can wrap on narrow CI
+    # terminals, so we can't anchor to it directly).
     for command in ["demo", "serve", "info", "viewer"]:
         result = runner.invoke(app, [command, "--help"])
         assert result.exit_code == 0
         assert command in result.stdout.lower()
-        # Real help output always includes "Usage:" and at least one
-        # documented option flag (`--help` is universally present).
+        # Anchor on the two structural headers Click/Typer always emit.
         assert "Usage:" in result.stdout, (
             f"{command} --help has no Usage: header; output was: {result.stdout!r}"
         )
-        assert "--help" in result.stdout, (
-            f"{command} --help missing --help flag listing"
+        # "Options" section is universal — Click renders it as "Options:"
+        # (Click) or "╭─ Options" (Typer's rich-rendered mode); the
+        # substring "Options" matches both.
+        assert "Options" in result.stdout, (
+            f"{command} --help missing Options section"
         )
 
 
