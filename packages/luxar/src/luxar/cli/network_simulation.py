@@ -127,18 +127,37 @@ def parse_bandwidth(bandwidth_str: str) -> float:
     """
     bandwidth_str = bandwidth_str.lower().strip()
 
-    if bandwidth_str.endswith("mbps"):
-        value = float(bandwidth_str[:-4])
-    elif bandwidth_str.endswith("kbps"):
-        value = float(bandwidth_str[:-4]) / 1000.0
-    elif bandwidth_str.endswith("gbps"):
-        value = float(bandwidth_str[:-4]) * 1000.0
-    else:
+    # The numeric-prefix `float(...)` calls below can raise Python's
+    # raw `ValueError: could not convert string to float` when the
+    # suffix matches but the prefix isn't numeric (e.g. "xyzmbps").
+    # Wrap them all in a try/except so the user sees the SAME curated
+    # message regardless of which parsing branch was reached. Mirrors
+    # the parse_jitter / parse_packet_loss normalization from #129.
+    try:
+        if bandwidth_str.endswith("mbps"):
+            value = float(bandwidth_str[:-4])
+        elif bandwidth_str.endswith("kbps"):
+            value = float(bandwidth_str[:-4]) / 1000.0
+        elif bandwidth_str.endswith("gbps"):
+            value = float(bandwidth_str[:-4]) * 1000.0
+        else:
+            raise ValueError(
+                f"Invalid bandwidth format: '{bandwidth_str}'. "
+                "Expected format: <number><unit> where unit is kbps, mbps, or gbps. "
+                "Examples: '1mbps', '500kbps', '2.5gbps'"
+            )
+    except ValueError as exc:
+        # Re-raise the curated message that ALREADY exists for the
+        # unknown-unit branch (above), AND raise the same shape for
+        # the numeric-prefix failure path. Use the original exception
+        # text if it's already curated; otherwise wrap.
+        if str(exc).startswith("Invalid bandwidth format"):
+            raise
         raise ValueError(
             f"Invalid bandwidth format: '{bandwidth_str}'. "
             "Expected format: <number><unit> where unit is kbps, mbps, or gbps. "
             "Examples: '1mbps', '500kbps', '2.5gbps'"
-        )
+        ) from None
 
     if value <= 0:
         raise ValueError(f"Bandwidth must be positive, got: {value}")
@@ -168,16 +187,28 @@ def parse_latency(latency_str: str) -> float:
     """
     latency_str = latency_str.lower().strip()
 
-    if latency_str.endswith("ms"):
-        value = float(latency_str[:-2])
-    elif latency_str.endswith("s") and not latency_str.endswith("ms"):
-        value = float(latency_str[:-1]) * 1000.0
-    else:
+    # Same normalization as parse_bandwidth — catch the float()
+    # ValueError from invalid numeric prefixes and re-raise with the
+    # curated "Invalid latency format" message regardless of branch.
+    try:
+        if latency_str.endswith("ms"):
+            value = float(latency_str[:-2])
+        elif latency_str.endswith("s") and not latency_str.endswith("ms"):
+            value = float(latency_str[:-1]) * 1000.0
+        else:
+            raise ValueError(
+                f"Invalid latency format: '{latency_str}'. "
+                "Expected format: <number><unit> where unit is ms or s. "
+                "Examples: '100ms', '1s', '0.5s'"
+            )
+    except ValueError as exc:
+        if str(exc).startswith("Invalid latency format"):
+            raise
         raise ValueError(
             f"Invalid latency format: '{latency_str}'. "
             "Expected format: <number><unit> where unit is ms or s. "
             "Examples: '100ms', '1s', '0.5s'"
-        )
+        ) from None
 
     if value < 0:
         raise ValueError(f"Latency cannot be negative, got: {value}")

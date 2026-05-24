@@ -382,3 +382,54 @@ class TestBroadcastToAllSlices:
 
         # Extra dimension should be preserved
         assert np.array_equal(new_pos[0:3, 4], new_pos[3:6, 4])
+
+    # [Python-R5 / validation-G3] Single-point broadcasting edge case. The
+    # existing tests use N≥3 points; a regression that special-cased
+    # "N>1" (slicing with assumptions about repeated rows) would slip
+    # past those. Pin that a single point broadcasts to exactly
+    # `n_non_displayed_slices` rows, with the displayed coords identical
+    # across slices and the non-displayed coord taking the documented
+    # discrete values.
+    def test_broadcast_single_point(self) -> None:
+        dims = Dimensions(
+            [
+                Dimension("x", "um", (-10, 10), 1, display=True),
+                Dimension("y", "um", (-10, 10), 1, display=True),
+                Dimension("z", "um", (-10, 10), 1, display=True),
+                Dimension(
+                    "time", "ms", (0, 2), 1, display=False, discrete=True
+                ),
+            ]
+        )
+        positions = np.array([[1.0, 2.0, 3.0, 0.0]], dtype=np.float32)
+        new_pos, _, _ = broadcast_to_all_slices(positions, None, None, dims)
+        # 1 input point × 3 time slices (0, 1, 2) → 3 rows
+        assert new_pos.shape == (3, 4)
+        # x/y/z preserved across slices
+        for slice_idx in range(3):
+            np.testing.assert_allclose(new_pos[slice_idx, :3], [1.0, 2.0, 3.0])
+        # Each row has a distinct time value covering 0, 1, 2
+        assert sorted(new_pos[:, 3].tolist()) == [0.0, 1.0, 2.0]
+
+    # [Python-R5 / validation-G3] Empty positions input. A regression
+    # that crashed on shape (0, D) instead of returning shape (0, D)
+    # unchanged would silently break the no-points scene case.
+    def test_broadcast_empty_positions(self) -> None:
+        dims = Dimensions(
+            [
+                Dimension("x", "um", (-10, 10), 1, display=True),
+                Dimension("y", "um", (-10, 10), 1, display=True),
+                Dimension("z", "um", (-10, 10), 1, display=True),
+                Dimension(
+                    "time", "ms", (0, 2), 1, display=False, discrete=True
+                ),
+            ]
+        )
+        positions = np.zeros((0, 4), dtype=np.float32)
+        new_pos, new_col, new_rad = broadcast_to_all_slices(
+            positions, None, None, dims
+        )
+        # Empty stays empty regardless of broadcast factor.
+        assert new_pos.shape == (0, 4)
+        assert new_col is None
+        assert new_rad is None

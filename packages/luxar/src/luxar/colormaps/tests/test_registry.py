@@ -156,6 +156,42 @@ class TestResolveColormap:
         with pytest.raises(ValueError, match="finite"):
             resolve_colormap(arr)
 
+    # [Python-R5 / D-G2] Custom float array round-trip: the
+    # `_resolve_array` pipeline does (float [0,1]) → (uint8 [0,255]) →
+    # (resample to 256). For a known input we can predict the
+    # resampled output within the documented ±1 uint8 rounding
+    # tolerance. Pin both endpoint anchoring AND the linear-ramp
+    # midpoint so a regression that swapped (round → floor) or
+    # dropped a column would show up.
+    def test_custom_float_array_resample_preserves_endpoints_and_midpoint(self) -> None:
+        # Linear ramp from black → pure red in 100 steps, requested
+        # at standard 256-entry LUT resolution.
+        n_in = 100
+        custom = np.zeros((n_in, 3), dtype=np.float32)
+        custom[:, 0] = np.linspace(0.0, 1.0, n_in, dtype=np.float32)
+        resolved = resolve_colormap(custom)
+        assert resolved.shape == (256, 3)
+        assert resolved.dtype == np.uint8
+
+        # Endpoint anchors (lossless after float→uint8 rounding).
+        np.testing.assert_array_equal(resolved[0], [0, 0, 0])
+        np.testing.assert_array_equal(resolved[-1], [255, 0, 0])
+
+        # Linear midpoint should be close to (128, 0, 0); allow ±2
+        # uint8 units for the combined rounding + resampling drift.
+        # Green / blue channels remain 0 (no interpolation crosstalk).
+        assert abs(int(resolved[128, 0]) - 128) <= 2
+        assert resolved[128, 1] == 0
+        assert resolved[128, 2] == 0
+
+        # Monotonicity on the active channel: a regression that
+        # reversed the LUT direction would fail this on a single
+        # comparison.
+        red_channel = resolved[:, 0]
+        assert (np.diff(red_channel.astype(int)) >= 0).all(), (
+            "red channel must be non-decreasing along the ramp"
+        )
+
     def test_reject_wrong_dtype(self) -> None:
         with pytest.raises(TypeError, match="uint8"):
             resolve_colormap(np.zeros((256, 3), dtype=np.int32))

@@ -193,6 +193,34 @@ class TestExportScene:
         with pytest.raises(ValueError, match="Invalid zarr store"):
             export_scene(source, output)
 
+    # [Python-R5 / A-G3] Permission-denied output directory: when the
+    # parent of the output path is not writable, export_scene should
+    # surface a clean OSError rather than crash mid-copy with partial
+    # state. The viewer-not-built path raises FileNotFoundError BEFORE
+    # any write occurs, so this test exercises the post-viewer-check
+    # path by mocking the viewer check to True and pointing output
+    # into a read-only directory.
+    def test_fails_on_readonly_output_parent(
+        self,
+        sample_scene: Path,
+        mock_viewer_dist: Path,
+        tmp_path: Path,
+    ) -> None:
+        readonly_parent = tmp_path / "readonly"
+        readonly_parent.mkdir()
+        readonly_parent.chmod(0o555)  # read + execute, no write
+        try:
+            output = readonly_parent / "export_attempt"
+            p1, p2 = _patch_viewer(mock_viewer_dist)
+            with p1, p2:
+                with pytest.raises((PermissionError, OSError)):
+                    export_scene(sample_scene, output)
+            # The attempted output dir must not have been created.
+            assert not output.exists()
+        finally:
+            # Restore permissions so pytest's tmp_path cleanup works.
+            readonly_parent.chmod(0o755)
+
     def test_fails_when_viewer_not_built(
         self, sample_scene: Path, tmp_path: Path
     ) -> None:
