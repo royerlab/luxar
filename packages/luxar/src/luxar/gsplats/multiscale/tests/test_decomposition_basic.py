@@ -156,12 +156,19 @@ class TestMultiScaleDecomposer:
                         f"Scale {i} should have <2% energy, got {scale_fraction:.2%}"
                     )
 
-        # Check that reconstruction has roughly the right energy
-        # (not necessarily perfect due to softplus nonlinearity)
+        # [Python-R3/B-W2] Reconstruction-energy conservation. The
+        # softplus nonlinearity is invertible-via-inverse-softplus at
+        # init; after `initialize_finest_scale` the recon should be
+        # within ~10% of the target energy, not a factor of 10. The
+        # previous (0.1, 10.0) window masked off-by-summation bugs;
+        # tighten to (0.85, 1.15) to actually catch them. (Audit ack:
+        # if a future change makes the softplus chain materially lossy
+        # this bound will need a documented loosen — but today the
+        # reconstruction IS tight here.)
         target_energy = torch.sum(target).item()
         recon_energy = torch.sum(reconstruction).item()
         energy_ratio = recon_energy / (target_energy + 1e-12)
-        assert 0.1 < energy_ratio < 10.0, (
+        assert 0.85 < energy_ratio < 1.15, (
             f"Reconstruction energy ratio unreasonable: {energy_ratio:.2f}"
         )
 
