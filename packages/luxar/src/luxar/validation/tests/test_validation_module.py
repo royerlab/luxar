@@ -92,6 +92,24 @@ class TestPositionValidation:
             n_points, n_dims = validate_positions_for_writing(positions)
         assert n_dims == 15
 
+    # [Python-R2/D-C3] Pin the documented contract: validate_positions_
+    # for_writing does NOT check dtype. Float64 / int32 / etc. all pass
+    # shape + finiteness validation; the validator returns only
+    # (n_points, n_dims) and explicitly leaves dtype conversion to the
+    # caller (downstream writers use ensure_float32 separately).
+    # A regression that added dtype-strict validation here would silently
+    # reject legitimate float64 inputs from upstream callers and would
+    # break this regression-lock test.
+    def test_validate_positions_dtype_not_checked(self) -> None:
+        """The validator accepts non-float32 dtypes — dtype conversion
+        is the caller's responsibility (see docstring + ensure_float32).
+        """
+        for dtype in [np.float64, np.float32, np.int32, np.int64]:
+            positions = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtype)
+            n_points, n_dims = validate_positions_for_writing(positions)
+            assert n_points == 2
+            assert n_dims == 3
+
 
 class TestColorValidation:
     """Test color validation with helpful errors."""
