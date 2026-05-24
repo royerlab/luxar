@@ -313,6 +313,71 @@ class TestConvergenceEdgeCases:
         assert stats["converged"]
         assert stats["actual_iters"] < 1000
 
+    # [P5][P1] Data-adaptive convergence: the auto-threshold is
+    # `0.01 * image_range`. Achieved best_max_abs_error must respect that
+    # adaptive bound on inputs of widely different amplitude. An absolute
+    # (non-adaptive) threshold would either falsely flag tiny-amplitude inputs
+    # as converged at initialization or fail to converge on large-amplitude
+    # inputs within reasonable iteration budgets.
+    def test_threshold_auto_scales_with_amplitude(self, simple_2d_image) -> None:
+        """Auto-threshold bound (1% of image range) is honoured at both
+        small and large amplitudes."""
+        for scale in (0.1, 1.0, 10.0):
+            V = simple_2d_image * scale
+            _, stats = decompose_image(
+                V, scales=[1, 2], n_iters=500, verbose=False
+            )
+            image_range = float(V.max() - V.min())
+            adaptive_threshold = 0.01 * image_range
+            assert stats["converged"], (
+                f"failed to converge at amplitude scale={scale}: "
+                f"err={stats['best_max_abs_error']:.4e} thresh={adaptive_threshold:.4e}"
+            )
+            # Achieved error must respect the adaptive (range-dependent) bound.
+            assert stats["best_max_abs_error"] < adaptive_threshold, (
+                f"scale={scale}: err={stats['best_max_abs_error']:.4e} "
+                f">= adaptive threshold {adaptive_threshold:.4e}"
+            )
+
+    # [P5] Parameter sensitivity: a tighter user-supplied threshold needs at
+    # least as many iterations as a looser one to satisfy the stricter bound.
+    def test_threshold_sensitivity_monotonic(self, simple_2d_image) -> None:
+        """Tightening max_abs_error_threshold does not decrease iteration count."""
+        loose_iters = []
+        for threshold in (0.05, 0.01, 0.001):
+            _, stats = decompose_image(
+                simple_2d_image,
+                scales=[1, 2],
+                n_iters=1000,
+                max_abs_error_threshold=threshold,
+                verbose=False,
+            )
+            loose_iters.append(stats["actual_iters"])
+        # Iteration counts should be monotonically non-decreasing as threshold
+        # tightens.
+        assert loose_iters[0] <= loose_iters[1] <= loose_iters[2], (
+            f"tighter threshold should need >= iterations: {loose_iters}"
+        )
+
+    # [P5] Edge case: a flat (constant) volume reconstructs trivially — any
+    # reasonable threshold should be hit within the first handful of iterations.
+    def test_flat_volume_converges_quickly(self) -> None:
+        """Constant-valued input converges in well under the iteration budget."""
+        flat = np.full((32, 32), 0.5, dtype=np.float32)
+        _, stats = decompose_image(
+            flat,
+            scales=[1, 2, 4],
+            n_iters=500,
+            max_abs_error_threshold=1e-3,
+            verbose=False,
+        )
+        assert stats["converged"]
+        # A flat input is the easiest possible decomposition — should not need
+        # anywhere near the full iteration budget.
+        assert stats["actual_iters"] < 250, (
+            f"flat input should converge fast, took {stats['actual_iters']} iters"
+        )
+
 
 class TestUpsampleForVisualization:
     """Test upsample_for_visualization helper function."""
