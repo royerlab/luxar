@@ -138,9 +138,25 @@ class TestExportScene:
         """FileExistsError when output exists and overwrite=False."""
         output = tmp_path / "existing"
         output.mkdir()
+        # [Python-R3/A-W3] Pin the contract more tightly: the original
+        # output content must be PRESERVED when the export raises, AND
+        # no partial new content can be written into it. Seed the dir
+        # with a marker file, then verify both:
+        #   (a) the marker survives intact
+        #   (b) no luxar-output files (serve.py, viewer/, etc.) were
+        #       created
+        marker = output / "preserved.txt"
+        marker.write_text("original content")
 
         with pytest.raises(FileExistsError, match="already exists"):
             export_scene(sample_scene, output)
+
+        # Marker survives intact.
+        assert marker.exists(), "FileExistsError path damaged original output"
+        assert marker.read_text() == "original content"
+        # No partial new content.
+        assert not (output / "serve.py").exists()
+        assert not (output / "viewer").exists()
 
     def test_overwrite_replaces_existing(
         self, sample_scene: Path, mock_viewer_dist: Path, tmp_path: Path

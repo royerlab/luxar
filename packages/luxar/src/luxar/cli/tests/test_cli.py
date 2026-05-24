@@ -293,11 +293,28 @@ def test_cli_help_commands(runner) -> None:
     assert result.exit_code == 0
     assert "luxar – build and serve Zarr-backed nD scenes" in result.stdout
 
-    # Test individual command help
+    # [Python-R3/A-W1] The per-command help test previously only checked
+    # that the command name appeared somewhere in stdout — a regression
+    # that produced empty help (or just printed the binary name) would
+    # silently pass. Strengthen by requiring BOTH the "Usage:" header
+    # AND the "Options" section header — both are universal in
+    # Click/Typer help output regardless of terminal width or rendering
+    # mode (the `--help` flag string itself can wrap on narrow CI
+    # terminals, so we can't anchor to it directly).
     for command in ["demo", "serve", "info", "viewer"]:
         result = runner.invoke(app, [command, "--help"])
         assert result.exit_code == 0
         assert command in result.stdout.lower()
+        # Anchor on the two structural headers Click/Typer always emit.
+        assert "Usage:" in result.stdout, (
+            f"{command} --help has no Usage: header; output was: {result.stdout!r}"
+        )
+        # "Options" section is universal — Click renders it as "Options:"
+        # (Click) or "╭─ Options" (Typer's rich-rendered mode); the
+        # substring "Options" matches both.
+        assert "Options" in result.stdout, (
+            f"{command} --help missing Options section"
+        )
 
 
 def test_invalid_command(runner) -> None:

@@ -193,6 +193,30 @@ class TestHierarchy:
         assert 1 <= pyramid.substitutive_levels[1].n_splats_total <= 16
         assert 1 <= pyramid.substitutive_levels[2].n_splats_total <= 4
 
+        # [Python-R3/B-C2] The above bounds-only assertions accept a
+        # degenerate "1 splat per level" output as valid. In practice,
+        # 64 splats compressed by factor-4 to 1 splat is a catastrophic
+        # collapse (a k-means bug that returned all-zero assignments
+        # would pass). For these isotropic 3D inputs, a healthy k-means
+        # run actually reaches close to the target — pin a tighter lower
+        # bound (≥ 25% of target) so a serious collapse is caught.
+        # Empty-bin tolerance is preserved by leaving the upper bound
+        # unchanged at the target.
+        target_l1 = 16  # ceil(64/4)
+        target_l2 = 4   # ceil(16/4)
+        assert pyramid.substitutive_levels[1].n_splats_total >= target_l1 // 4, (
+            f"level-1 collapsed to "
+            f"{pyramid.substitutive_levels[1].n_splats_total} splats "
+            f"(target {target_l1}); k-means likely producing too many empty bins"
+        )
+        assert pyramid.substitutive_levels[2].n_splats_total >= max(
+            target_l2 // 4, 1
+        ), (
+            f"level-2 collapsed to "
+            f"{pyramid.substitutive_levels[2].n_splats_total} splats "
+            f"(target {target_l2})"
+        )
+
     @pytest.mark.parametrize(
         "method", ["kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"]
     )
