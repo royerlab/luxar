@@ -26,6 +26,33 @@ from luxar import Dimension, Dimensions, LuxarScene, LuxarZarrCompiler, transfor
 class TestBasicRoundTrip:
     """Basic round-trip tests for points data."""
 
+    # [Python-R1/io-MAJOR] Single-point and empty-scene boundary cases.
+    # Every other test in this file uses >= 200 points; the empty / N=1
+    # paths exercise spatial-index degeneracies (a single point has no
+    # neighbours and the median-split has nothing to split) that the
+    # bulk tests never reach.
+    def test_single_point_roundtrip(self, tmp_path) -> None:
+        output_path = tmp_path / "test.zarr"
+        positions = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+        colors = np.array([[1.0, 0.0, 0.5]], dtype=np.float32)
+        radii = np.array([0.5], dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "single", positions, colors=colors, radii=radii
+            )
+
+        scene = LuxarScene.load(output_path)
+        data = scene.get_points("single")
+        assert data["positions"].shape == (1, 3)
+        np.testing.assert_allclose(data["positions"], positions, atol=1e-6)
+        assert data["colors"].shape == (1, 3)
+        np.testing.assert_allclose(data["colors"], colors, atol=1e-3)
+        assert data["radii"].shape == (1,)
+        np.testing.assert_allclose(data["radii"], radii, atol=1e-3)
+        assert data["metadata"]["n_points"] == 1
+
     def test_positions_only(self, tmp_path) -> None:
         """Test round-trip with positions only."""
         output_path = tmp_path / "test.zarr"

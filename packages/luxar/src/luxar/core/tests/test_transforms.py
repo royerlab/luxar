@@ -101,6 +101,18 @@ class TestTransformUtilities:
         rotated = t @ x_axis
         assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)  # X -> Y
 
+    # [Python-R1/transforms-CRIT] Zero-length axis previously produced
+    # a NaN-filled rotation matrix that silently corrupted every scene
+    # using the result. Pin the new ValueError, and the related case of
+    # a tuple zero-vector input.
+    def test_rotate_raises_on_zero_length_axis_array(self) -> None:
+        with pytest.raises(ValueError, match="zero length"):
+            rotate(90, np.array([0.0, 0.0, 0.0]))
+
+    def test_rotate_raises_on_zero_length_axis_tuple(self) -> None:
+        with pytest.raises(ValueError, match="zero length"):
+            rotate(45, (0.0, 0.0, 0.0))
+
     @pytest.mark.parametrize(
         "axis,angle,expected_func,test_id",
         [
@@ -150,6 +162,49 @@ class TestTransformUtilities:
 
         # Single transform
         assert np.allclose(compose(t1), t1)
+
+    # [Python-R1/transforms-CRIT] Property tests for the three algebraic
+    # contracts compose() MUST satisfy: identity, associativity, and the
+    # documented application-order semantics. The existing example tests
+    # cover specific fixed orderings; a mutation that subtly broke
+    # associativity (e.g., inverted the `reversed(transforms)` walk) could
+    # still pass them.
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_identity_law(self, seed: int) -> None:
+        """compose(I, T) == compose(T, I) == T for every T."""
+        rng = np.random.default_rng(seed)
+        t = compose(
+            translate(*rng.uniform(-5, 5, 3)),
+            rotate_z(rng.uniform(-180, 180)),
+            scale(*rng.uniform(0.5, 2.0, 3)),
+        )
+        assert np.allclose(compose(identity(), t), t, atol=1e-6)
+        assert np.allclose(compose(t, identity()), t, atol=1e-6)
+
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_associativity(self, seed: int) -> None:
+        """compose(compose(T1, T2), T3) == compose(T1, compose(T2, T3))."""
+        rng = np.random.default_rng(seed)
+        t1 = translate(*rng.uniform(-5, 5, 3))
+        t2 = rotate_z(rng.uniform(-180, 180))
+        t3 = scale(*rng.uniform(0.5, 2.0, 3))
+
+        left = compose(compose(t1, t2), t3)
+        right = compose(t1, compose(t2, t3))
+        # float32 accumulator → looser tolerance than default 1e-8
+        assert np.allclose(left, right, atol=1e-5)
+
+    @pytest.mark.parametrize("seed", [0, 1, 7, 42, 137])
+    def test_compose_application_order_property(self, seed: int) -> None:
+        """compose(T1, T2) applied to a point == T2(T1(point))."""
+        rng = np.random.default_rng(seed)
+        t1 = translate(*rng.uniform(-5, 5, 3))
+        t2 = scale(*rng.uniform(0.5, 2.0, 3))
+        point = np.array([*rng.uniform(-1, 1, 3), 1.0])
+
+        combined = compose(t1, t2) @ point
+        sequential = t2 @ (t1 @ point)
+        assert np.allclose(combined, sequential, atol=1e-5)
 
     def test_compose_application_order(self) -> None:
         """Test that compose(T1, T2, T3) applies T1 first, then T2, then T3.
@@ -289,6 +344,23 @@ class TestTransformUtilities:
         # Y axis should be close to Z (up)
         assert t[1, 2] > 0.9  # Y points mostly in Z direction
 
+    # [Python-R1/transforms-CRIT] look_at degenerate inputs previously
+    # produced NaN-filled matrices that propagated downstream (cameras
+    # silently render nothing). Pin the new actionable errors.
+    def test_look_at_raises_when_eye_equals_target(self) -> None:
+        with pytest.raises(ValueError, match="coincident"):
+            look_at((5, 5, 5), (5, 5, 5))
+
+    def test_look_at_raises_when_up_parallel_to_forward(self) -> None:
+        # forward direction is +Y, up is also +Y → cross product is zero
+        with pytest.raises(ValueError, match="parallel"):
+            look_at((0, 0, 0), (0, 1, 0), up=(0, 1, 0))
+
+    def test_look_at_raises_when_up_antiparallel_to_forward(self) -> None:
+        # forward is +Y, up is -Y → cross product is zero (still parallel)
+        with pytest.raises(ValueError, match="parallel"):
+            look_at((0, 0, 0), (0, 1, 0), up=(0, -1, 0))
+
     def test_to_from_list(self) -> None:
         """Test conversion to/from list."""
         # Create a transform
@@ -305,6 +377,44 @@ class TestTransformUtilities:
         # Test validation
         with pytest.raises(ValueError):
             from_list([1, 2, 3])  # Wrong size
+
+    # [Python-R1/transforms-CRIT] The to_list / from_list pair is the
+    # THREE.js bridge — NumPy stores 4x4 matrices row-major while THREE.js
+    # is column-major, so the translation vector lives at indices
+    # [0][3], [1][3], [2][3] in NumPy but at FLAT indices [12], [13], [14]
+    # in the THREE.js list (post-transpose). The round-trip identity test
+    # above hides this column/row pivot: a regression that dropped the
+    # transpose on BOTH sides would still pass it. Pin the indexing
+    # contract explicitly with a known translation; this kills mutations
+    # that touch only one side of the transpose.
+    def test_to_list_places_translation_at_three_js_indices_12_13_14(self) -> None:
+        t = translate(5, 7, 11)
+        values = to_list(t)
+        assert values[12] == 5.0
+        assert values[13] == 7.0
+        assert values[14] == 11.0
+        # The NumPy-row-major translation slot [3][3] (== flat index 15)
+        # is the bottom-right `1`; pin it so a mutation that ravelled
+        # without the transpose (NumPy [0][3]=5 → flat [3]) would also
+        # fail this assertion.
+        assert values[15] == 1.0
+        assert values[3] == 0.0  # NOT 5 — this is the dead-give-away of a missing transpose
+
+    def test_from_list_reads_translation_from_three_js_indices_12_13_14(self) -> None:
+        # Build a list with translation at THREE.js indices [12, 13, 14]
+        # and verify from_list places them at NumPy row-major [0][3],
+        # [1][3], [2][3].
+        values = [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            5, 7, 11, 1,   # translation row in THREE.js column-major flat
+        ]
+        m = from_list(values)
+        assert m[0, 3] == 5.0
+        assert m[1, 3] == 7.0
+        assert m[2, 3] == 11.0
+        assert m[3, 3] == 1.0
 
     def test_aliases(self) -> None:
         """Test function aliases."""

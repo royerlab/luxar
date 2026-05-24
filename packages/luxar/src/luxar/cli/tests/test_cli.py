@@ -66,6 +66,14 @@ def test_demo_command_no_serve_with_defaults(runner, tmp_path) -> None:
     assert result.exit_code == 0
     assert output_path.exists()
     assert "Generated 10,000 points" in result.stdout
+    # [Python-R1/A-C2] Validate the zarr is actually readable and carries
+    # the expected default-count shape — a mutation that produced an empty
+    # store, wrote to the wrong key, or skipped the colors attribute
+    # would slip past a path-only `exists()` check.
+    root = zarr.open_group(output_path, mode="r")
+    assert "LorenzAttractor" in root
+    assert root["LorenzAttractor"]["positions"].shape == (10_000, 3)
+    assert root["LorenzAttractor"]["colors"].shape == (10_000, 3)
 
 
 def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
@@ -79,6 +87,11 @@ def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
     assert result.exit_code == 0
     assert output_path.exists()
     assert "Generated 25 points" in result.stdout
+    # [Python-R1/A-C2] Short-option flags must produce the same zarr
+    # shape as long-option flags; pin the count round-trip.
+    root = zarr.open_group(output_path, mode="r")
+    assert "LorenzAttractor" in root
+    assert root["LorenzAttractor"]["positions"].shape == (25, 3)
 
 
 def test_demo_command_no_serve_failure(runner, tmp_path) -> None:
@@ -91,7 +104,14 @@ def test_demo_command_no_serve_failure(runner, tmp_path) -> None:
     )
 
     assert result.exit_code == 1
+    # [Python-R1/A-C1] The bare `"Error:" in stdout` check passed any
+    # error message — a regression that swallowed an unrelated error
+    # (TypeError, KeyboardInterrupt) and printed "Error: foo" would
+    # have silently slipped through. Verify both the marker AND that
+    # the message names the offending path so we know the failure
+    # came from the path-resolution code.
     assert "Error:" in result.stdout
+    assert "/invalid/path" in result.stdout or "invalid" in result.stdout.lower()
 
 
 def test_info_command_success(runner, sample_scene) -> None:

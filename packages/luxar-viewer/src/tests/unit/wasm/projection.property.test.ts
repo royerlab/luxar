@@ -96,13 +96,21 @@ describe('lerp — linearity invariants [wasm.md/H5]', () => {
   // the additivity in t — lerp(a, b, t1) + lerp(a, b, t2) − a == lerp(a, b, t1+t2)
   // when treated as a function of the offset, i.e. lerp(a, b, t) - a == t*(b - a).
   test('endpoints: lerp(a, b, 0) === a; lerp(a, b, 1) ≈ b within FP roundoff', () => {
-    // t=0: `a + 0*(b-a)` reduces to `a + 0` which is bit-exact a (per IEEE-754).
+    // t=0: `a + 0*(b-a)` reduces to `a + 0`. This is numerically equal to
+    // `a` but NOT bit-exact for the signed-zero edge case: `(-0) + 0 = +0`
+    // under IEEE-754, so `lerp(-0, b, 0)` returns `+0`. vitest's toBe
+    // uses Object.is semantics which distinguishes -0 from +0; use
+    // numeric equality (which treats +0 === -0) to express the actual
+    // contract — lerp's t=0 endpoint matches `a` numerically.
     // t=1: `a + (b-a)` is NOT bit-exact b for subnormal / denormal inputs —
     // the subtract-then-add reorders to a precision-lossy form. Use a
     // bounded relative-or-absolute tolerance.
     fc.assert(
       fc.property(finiteFloat, finiteFloat, (a, b) => {
-        expect(lerp(a, b, 0)).toBe(a);
+        const at_zero = lerp(a, b, 0);
+        // Numeric equality (===) treats +0 === -0 as true; Object.is would
+        // distinguish them. The IEEE contract is numeric, not bit-pattern.
+        expect(at_zero === a).toBe(true);
         // For finite a, b in [-100, 100], absolute FP error is dominated
         // by max(|a|, |b|) * 2 * ULP(1). ULP(100) ≈ 1.42e-14. Use 1e-10
         // as a comfortable upper bound that still catches mutants.

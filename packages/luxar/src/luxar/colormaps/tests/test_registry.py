@@ -112,6 +112,25 @@ class TestResolveColormap:
         with pytest.raises(ValueError, match="\\[0, 1\\]"):
             resolve_colormap(arr)
 
+    # [Python-R1/D-C2] NaN values would silently pass the `arr < 0` /
+    # `arr > 1` checks (NaN comparisons are always False) and produce
+    # garbage uint8 via `(NaN * 255).astype(uint8)`. The finiteness
+    # guard must fire BEFORE the range check; pin both NaN and ±Inf.
+    def test_reject_nan_float(self) -> None:
+        arr = np.array([[0, 0, 0], [np.nan, 1, 1]], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            resolve_colormap(arr)
+
+    def test_reject_positive_infinity_float(self) -> None:
+        arr = np.array([[0, 0, 0], [np.inf, 1, 1]], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            resolve_colormap(arr)
+
+    def test_reject_negative_infinity_float(self) -> None:
+        arr = np.array([[0, 0, 0], [-np.inf, 1, 1]], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            resolve_colormap(arr)
+
     def test_reject_wrong_dtype(self) -> None:
         with pytest.raises(TypeError, match="uint8"):
             resolve_colormap(np.zeros((256, 3), dtype=np.int32))

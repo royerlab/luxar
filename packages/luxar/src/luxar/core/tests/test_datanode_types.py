@@ -5,6 +5,93 @@ import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.datanode import DataNode
+from luxar.core.gsplats import GSplats
+from luxar.core.lines import Lines
+from luxar.core.points import Points
+
+
+# [Python-R1/core-MAJOR / feedback_geometry_symmetry] Points / Lines /
+# GSplats expose a parallel "common interface" of properties
+# (n_elements, has_colors, has_labels, has_image_labels) and follow the
+# same metadata-key convention. The original tests in this file exercise
+# Lines and GSplats individually; Points has no dedicated coverage at
+# the class level. A drift in any one type (e.g., a refactor that
+# renamed has_colors to has_color on Lines but not Points) would have
+# no symmetric test to surface it.
+#
+# The parametrize matrix below builds a minimal-metadata instance of
+# each type and asserts the four common properties are wired up to the
+# same metadata keys with the same boolean semantics. Type-specific
+# extras (Points.has_radii, Lines.has_widths, GSplats.has_amplitudes)
+# stay in their per-type tests below.
+@pytest.mark.parametrize(
+    "geometry_cls",
+    [Points, Lines, GSplats],
+    ids=["points", "lines", "gsplats"],
+)
+class TestGeometryTypeParity:
+    def test_common_properties_exist(self, geometry_cls) -> None:
+        node = geometry_cls(
+            "p",
+            metadata={"n_points": 7, "n_vertices": 7, "n_splats": 7, "ndim": 3},
+        )
+        # Every type exposes the same four "has-X" booleans plus
+        # n_elements with the same integer semantics.
+        assert isinstance(node.n_elements, int)
+        assert hasattr(node, "has_colors")
+        assert hasattr(node, "has_labels")
+        assert hasattr(node, "has_image_labels")
+
+    def test_has_colors_reads_metadata_key(self, geometry_cls) -> None:
+        node_no_colors = geometry_cls(
+            "p", metadata={"n_points": 0, "n_vertices": 0, "n_splats": 0}
+        )
+        assert node_no_colors.has_colors is False
+
+        node_with_colors = geometry_cls(
+            "p",
+            metadata={
+                "n_points": 0,
+                "n_vertices": 0,
+                "n_splats": 0,
+                "has_colors": True,
+            },
+        )
+        assert node_with_colors.has_colors is True
+
+    def test_has_labels_reads_metadata_key(self, geometry_cls) -> None:
+        no_labels = geometry_cls(
+            "p", metadata={"n_points": 0, "n_vertices": 0, "n_splats": 0}
+        )
+        assert no_labels.has_labels is False
+
+        with_labels = geometry_cls(
+            "p",
+            metadata={
+                "n_points": 0,
+                "n_vertices": 0,
+                "n_splats": 0,
+                "has_labels": True,
+            },
+        )
+        assert with_labels.has_labels is True
+
+    def test_has_image_labels_reads_metadata_key(self, geometry_cls) -> None:
+        no = geometry_cls(
+            "p", metadata={"n_points": 0, "n_vertices": 0, "n_splats": 0}
+        )
+        assert no.has_image_labels is False
+
+        yes = geometry_cls(
+            "p",
+            metadata={
+                "n_points": 0,
+                "n_vertices": 0,
+                "n_splats": 0,
+                "has_image_labels": True,
+            },
+        )
+        assert yes.has_image_labels is True
 
 
 class TestDataNodeNdim:
