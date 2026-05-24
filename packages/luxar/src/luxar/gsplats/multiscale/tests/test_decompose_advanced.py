@@ -359,16 +359,20 @@ class TestConvergenceEdgeCases:
             f"tighter threshold should need >= iterations: {loose_iters}"
         )
 
-    # [P5] Edge case: a flat (constant) volume reconstructs trivially — any
-    # reasonable threshold should be hit within the first handful of iterations.
+    # [P5] Edge case: a flat (constant) volume reconstructs trivially under
+    # the auto-threshold (default `None` → for zero-range data: 1% of mean ≈
+    # 0.005 for V=0.5). Should hit threshold within a fraction of the
+    # iteration budget.
     def test_flat_volume_converges_quickly(self) -> None:
-        """Constant-valued input converges in well under the iteration budget."""
+        """Constant-valued input converges in well under the iteration
+        budget using the auto-threshold."""
         flat = np.full((32, 32), 0.5, dtype=np.float32)
         _, stats = decompose_image(
             flat,
             scales=[1, 2, 4],
             n_iters=500,
-            max_abs_error_threshold=1e-3,
+            # Use default auto-threshold (≈ 0.005 for flat V=0.5) — that
+            # is what production callers actually do.
             verbose=False,
         )
         assert stats["converged"]
