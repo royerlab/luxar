@@ -41,6 +41,7 @@ def validate_array_shape(
     array: NDArray,
     expected_shape: Union[Tuple[int, ...], List[Tuple[int, ...]]],
     name: str = "array",
+    check_finite: bool = False,
 ) -> None:
     """Validate that an array has the expected shape.
 
@@ -48,9 +49,16 @@ def validate_array_shape(
         array: Array to validate
         expected_shape: Expected shape or list of acceptable shapes
         name: Name for error messages
+        check_finite: If True, additionally reject arrays containing NaN
+            or ±Inf. Defaults to False for backward compatibility; opt
+            in from callers whose contract forbids non-finite content
+            (most validation/* uses already check this separately;
+            new call sites should set check_finite=True at the boundary
+            rather than re-validating downstream).
 
     Raises:
-        ValueError: If array doesn't match expected shape(s)
+        ValueError: If array doesn't match expected shape(s), or if
+            ``check_finite=True`` and the array contains NaN / ±Inf.
     """
     if isinstance(expected_shape, list):
         if array.shape not in expected_shape:
@@ -64,4 +72,11 @@ def validate_array_shape(
             raise ValueError(
                 f"{name.capitalize()} must have shape {expected_shape}, "
                 f"got shape {array.shape}"
+            )
+
+    if check_finite and np.issubdtype(array.dtype, np.floating):
+        if not np.all(np.isfinite(array)):
+            raise ValueError(
+                f"{name.capitalize()} must contain only finite values "
+                f"(no NaN or ±Inf)"
             )

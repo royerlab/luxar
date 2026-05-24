@@ -65,10 +65,17 @@ def validate_positions_for_writing(
         context: Context for error messages
 
     Returns:
-        Tuple of (n_points, n_dims)
+        Tuple of (n_points, n_dims). NOTE the array itself is NOT
+        returned and is NOT dtype-converted: the validator deliberately
+        accepts any numeric dtype (float32/float64/int) and verifies
+        SHAPE + FINITENESS only. Callers that need float32 storage MUST
+        convert via ``ensure_float32`` (or equivalent) AFTER calling
+        this function — see the ``test_validate_positions_dtype_not_checked``
+        regression-lock test for the pinned contract.
 
     Raises:
-        ValidationError: If positions are invalid
+        ValidationError: If positions are invalid (wrong shape, empty,
+            zero-dimensional, or containing NaN / ±Inf).
     """
     if not isinstance(positions, np.ndarray):
         raise ValidationError(

@@ -123,6 +123,42 @@ class TestValidateArrayShape:
         with pytest.raises(ValueError, match="Array must have shape"):
             validate_array_shape(arr, (10,))
 
+    # [Python-R2/D-G5] Optional `check_finite=True` rejects NaN / ±Inf.
+    # Default behaviour (check_finite=False) is backward-compatible —
+    # the function still accepts non-finite content.
+    def test_check_finite_false_accepts_nan(self) -> None:
+        arr = np.array([[1.0, np.nan, 3.0]], dtype=np.float32)
+        # No exception: default does NOT validate content.
+        validate_array_shape(arr, (1, 3))
+
+    def test_check_finite_true_rejects_nan(self) -> None:
+        arr = np.array([[1.0, np.nan, 3.0]], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            validate_array_shape(arr, (1, 3), check_finite=True)
+
+    def test_check_finite_true_rejects_positive_inf(self) -> None:
+        arr = np.array([np.inf, 1.0, 2.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            validate_array_shape(arr, (3,), check_finite=True)
+
+    def test_check_finite_true_rejects_negative_inf(self) -> None:
+        arr = np.array([-np.inf, 1.0, 2.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            validate_array_shape(arr, (3,), check_finite=True)
+
+    def test_check_finite_true_accepts_all_finite(self) -> None:
+        arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        # No exception.
+        validate_array_shape(arr, (3,), check_finite=True)
+
+    def test_check_finite_true_skips_integer_dtype(self) -> None:
+        # Integers can't hold NaN/Inf — the finiteness check is a no-op
+        # for integer dtypes. (np.isfinite would either work or raise
+        # TypeError depending on numpy version; the guard makes the
+        # function dtype-safe.)
+        arr = np.array([1, 2, 3], dtype=np.int32)
+        validate_array_shape(arr, (3,), check_finite=True)
+
     def test_1d_array(self) -> None:
         """Test validation of 1D arrays."""
         arr = np.zeros(100)

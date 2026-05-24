@@ -42,6 +42,31 @@ class TestBuiltinColormaps:
         lut = get_builtin_lut("gray")
         np.testing.assert_array_equal(lut[255], [255, 255, 255])
 
+    # [Python-R2/D-W3] Pin EXACT uint8 boundary rounding at both ends of
+    # every linear-ramp builtin. The float→uint8 rounding (round-to-
+    # nearest-even at 0.5 inputs) can shift boundary values by ±1 under
+    # a refactor that swapped `round().astype(uint8)` for, say,
+    # `astype(uint8)` (truncation) — visible as off-by-one color at
+    # the ramp ends. The general-shape test above covers the centre;
+    # this one nails down the endpoints.
+    @pytest.mark.parametrize("name", ["green", "magenta", "cyan", "red", "blue", "yellow"])
+    def test_linear_ramp_endpoints_exact_uint8(self, name: str) -> None:
+        lut = get_builtin_lut(name)
+        # Index 0 is the all-black anchor for every linear ramp.
+        np.testing.assert_array_equal(lut[0], [0, 0, 0])
+        # Index 255 must be saturated on the active channel(s); no
+        # channel that started at 0 may have crept above 0 by rounding,
+        # and the active channel(s) must hit exactly 255.
+        expected_top = {
+            "green": [0, 255, 0],
+            "magenta": [255, 0, 255],
+            "cyan": [0, 255, 255],
+            "red": [255, 0, 0],
+            "blue": [0, 0, 255],
+            "yellow": [255, 255, 0],
+        }[name]
+        np.testing.assert_array_equal(lut[255], expected_top)
+
     def test_unknown_builtin_raises(self) -> None:
         with pytest.raises(KeyError):
             get_builtin_lut("nonexistent_colormap")
