@@ -497,6 +497,8 @@ def compute_chunk_bounds_gsplats(
         chunk_bounds: Bounding boxes, shape (num_chunks, d, 2)
     """
     n_splats, ndim = centers.shape
+    if n_splats == 0:
+        return np.zeros((0, ndim, 2), dtype=np.float32)
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
 
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)

@@ -413,6 +413,25 @@ class TestMigrateFormat:
         assert sub.amplitudes.shape == (1,)
         assert sub.cholesky_factors.shape == (1, 6)
 
+    # [P5] boundary: empty (n=0) was historically blocked by a
+    # ZeroDivisionError in compute_chunk_bounds_gsplats; both that crash
+    # and the empty migration round-trip are now exercised end-to-end.
+    def test_migrate_v1_0_empty_splats_roundtrip(self, tmp_path: Path) -> None:
+        """v1.0 with n=0 splats migrates to v2.0 preserving emptiness."""
+        legacy = tmp_path / "empty_v1_0.gsplats.zarr"
+        _make_v1_0(legacy, n=0)
+        out = tmp_path / "out.gsplats.zarr"
+        detected = migrate_format(legacy, out)
+        assert detected == "v1.0"
+        data = load_gsplats(out)
+        assert data.n_splats == 0
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 1
+        sub = data.additive_sublods[0]
+        assert sub.centers.shape == (0, 3)
+        assert sub.amplitudes.shape == (0,)
+        assert sub.cholesky_factors.shape == (0, 6)
+
     # [P1][P8] full numeric roundtrip for v1.0 (parallels v1.1 test above)
     def test_migrate_v1_0_numerical_equivalence(self, tmp_path: Path) -> None:
         """v1.0 centers survive migration bit-identically; amplitudes and
