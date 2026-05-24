@@ -97,6 +97,38 @@ class TestOnlineSpatialHashGrid:
         # Mutation of the returned array must not affect the grid's state.
         assert grid.points[0, 0] != 999.0
 
+    # [Python-R2/D-C1] Worst-case-density correctness. The class docstring
+    # promises has_neighbor_within() runs in O(1) amortized against the
+    # 3^ndim neighbor cells; with uniform random inputs the buckets stay
+    # small and the test never exercises the dense-bucket path. Pack many
+    # points into a single cell, then verify both:
+    #   - true-positive: a known point in the cluster is found by an
+    #     identical probe with distance ≥ 0, regardless of cluster size
+    #   - true-negative: a query well outside the 3-cell neighbour radius
+    #     does NOT report a neighbor even with the dense bucket present
+    @pytest.mark.parametrize("n_in_cell", [100, 1000, 10_000])
+    def test_dense_cluster_correctness(self, n_in_cell):
+        cell_size = 1.0
+        grid = SpatialHashGrid(cell_size=cell_size, ndim=3)
+        rng = np.random.RandomState(7)
+        # All points within a sub-cell volume — they live in the same
+        # bucket and the neighbor-scan must walk the whole list.
+        cluster = rng.uniform(0.05, 0.95, size=(n_in_cell, 3)).astype(np.float32)
+        for p in cluster:
+            grid.insert(p)
+
+        # True-positive: probe identical to a known cluster point. Any
+        # mutation that broke the bucket lookup (wrong cell key, dropped
+        # neighbor offset, missed self-cell scan) would fail to find it.
+        target = cluster[n_in_cell // 2]
+        assert grid.has_neighbor_within(target, 0.01) is True
+
+        # True-negative: probe more than 3 cells away — the 3^ndim
+        # neighbor expansion can't reach the cluster, regardless of how
+        # dense it is.
+        probe_far = np.array([100.0, 100.0, 100.0], dtype=np.float32)
+        assert grid.has_neighbor_within(probe_far, 0.5) is False
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Batched grid: NumPy backend correctness

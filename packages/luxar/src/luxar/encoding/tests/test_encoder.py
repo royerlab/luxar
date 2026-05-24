@@ -68,6 +68,36 @@ class TestBroadcasting:
             enc = arr.attrs["encoding"]
             assert enc["name"] != "broadcasted"
 
+    # [Python-R2/encoding-MAJOR] The non-zero broadcast_rtol / broadcast_atol
+    # branch in encoder._is_uniform was previously untested — every existing
+    # broadcasting test uses default tolerance 0.0 (exact equality). A
+    # near-uniform array (e.g., quantization noise around a constant) is
+    # the actual use case for the tolerance knobs; pin both the "still
+    # detected as uniform" and "non-uniform survives" cases.
+    def test_uniform_within_tolerance_is_broadcasted(self):
+        """Tiny per-element jitter within rtol IS detected as uniform."""
+        # Values differ by ~1e-7 (well below rtol=1e-5) — should be
+        # broadcasted with non-zero tolerance.
+        data = np.array([1.0, 1.0 + 1e-7, 1.0 - 1e-7], dtype=np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder(broadcast_rtol=1e-5, broadcast_atol=1e-7)
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+            enc = group["test"].attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+
+    def test_uniform_outside_tolerance_survives_full(self):
+        """Per-element jitter above the tolerance is NOT broadcasted."""
+        # Values differ by ~0.1 — well above the tolerance.
+        data = np.array([1.0, 1.1, 0.9], dtype=np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder(broadcast_rtol=1e-5, broadcast_atol=1e-7)
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+            enc = group["test"].attrs["encoding"]
+            # Non-uniform — encoder picks LUT or full storage, NOT broadcasted.
+            assert enc["name"] != "broadcasted"
+
 
 class TestLUTEncoding:
     """Test LUT encoding for arrays with limited unique values."""

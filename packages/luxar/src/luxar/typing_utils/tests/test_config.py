@@ -45,6 +45,28 @@ class TestConfigConstants:
             <= constants.MAX_CHUNK_BYTES
         )
 
+    # [Python-R2/D-G1] TARGET_CHUNK_BYTES is the "single source of truth"
+    # for the chunking heuristic; downstream consumers (io.compiler,
+    # gsplats.io) divide it by an element's itemsize to get an
+    # element-count target. Pin the invariant that the resulting
+    # element counts land in a sane range across the dtypes we actually
+    # use — if someone changes the constant to, say, 64 bytes by mistake,
+    # this test fails loudly rather than silently breaking every consumer.
+    def test_chunk_bytes_produces_sane_element_counts_for_common_dtypes(self) -> None:
+        import numpy as np
+
+        for dtype in [np.float32, np.float64, np.uint8, np.uint16, np.uint32, np.int64]:
+            itemsize = np.dtype(dtype).itemsize
+            elem_count = constants.TARGET_CHUNK_BYTES // itemsize
+            # Sane range: at least 10 elements per chunk (otherwise the
+            # per-chunk overhead dominates) and at most ~1M (otherwise
+            # we lose streaming granularity for the viewer).
+            assert 10 <= elem_count <= 1_000_000, (
+                f"TARGET_CHUNK_BYTES={constants.TARGET_CHUNK_BYTES} produces "
+                f"{elem_count} elements for dtype {dtype.__name__} (itemsize "
+                f"{itemsize}); out of the sane [10, 1_000_000] consumer range"
+            )
+
     def test_version_defaults(self) -> None:
         """Test version constants."""
         assert DEFAULT_VERSION in SUPPORTED_VERSIONS
