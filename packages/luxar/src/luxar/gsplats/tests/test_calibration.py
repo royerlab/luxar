@@ -327,6 +327,68 @@ class TestNoiseFloor:
         assert nf.sigma_hat == 0.0 or math.isnan(nf.sigma_hat)
         assert math.isinf(nf.psnr_max_db) or math.isnan(nf.psnr_max_db)
 
+    # [P5][P12] σ̂ tracks σ_true across multiple magnitudes — guards against
+    # estimator clipping/saturation at small or large noise levels.
+    @pytest.mark.parametrize("sigma_true", [0.005, 0.02, 0.05])
+    def test_sigma_recovered_across_magnitudes(self, sigma_true: float) -> None:
+        """σ̂ from a noisy smooth signal recovers σ_true within 30% across a
+        range of magnitudes."""
+        rng = np.random.default_rng(123)
+        Y, X, Z = np.meshgrid(
+            np.linspace(0, 1, 48),
+            np.linspace(0, 1, 48),
+            np.linspace(0, 1, 48),
+            indexing="ij",
+        )
+        signal = 0.5 + 0.3 * np.sin(2 * np.pi * X) * np.cos(2 * np.pi * Y)
+        V = (signal + sigma_true * rng.standard_normal(signal.shape)).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        nf = estimate_noise_floor(V)
+        # High-pass estimators should track σ_true linearly; allow 30% slack
+        # at extremes where the signal's high-frequency content interferes
+        # mildly with the Laplacian estimator.
+        assert abs(nf.sigma_hat - sigma_true) / sigma_true < 0.30, (
+            f"σ_true={sigma_true} σ̂={nf.sigma_hat:.5f} "
+            f"rel-err={abs(nf.sigma_hat - sigma_true) / sigma_true:.3f}"
+        )
+
+    # [P5][P8] σ̂ should not depend on signal morphology at fixed σ — verifies
+    # the ensemble median decouples noise from underlying structure.
+    def test_sigma_invariant_to_signal_shape(self) -> None:
+        """Same σ_true on different smooth signals yields σ̂ values within
+        50% of each other."""
+        rng = np.random.default_rng(7)
+        sigma_true = 0.03
+        shape = (48, 48, 48)
+        Y, X, Z = np.meshgrid(
+            np.linspace(0, 1, shape[0]),
+            np.linspace(0, 1, shape[1]),
+            np.linspace(0, 1, shape[2]),
+            indexing="ij",
+        )
+        # Three structurally-different smooth signals
+        signals = {
+            "sinusoid": 0.5 + 0.3 * np.sin(2 * np.pi * X) * np.cos(2 * np.pi * Y),
+            "radial": 0.5 + 0.3 * np.exp(
+                -((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) / 0.1
+            ),
+            "ramp": 0.2 + 0.6 * X,
+        }
+        sigmas = []
+        for sig in signals.values():
+            V = (sig + sigma_true * rng.standard_normal(shape)).astype(np.float32)
+            V = np.clip(V, 0, 1)
+            sigmas.append(estimate_noise_floor(V).sigma_hat)
+        ratio = max(sigmas) / min(sigmas)
+        assert ratio < 1.5, (
+            f"σ̂ should be shape-invariant; got {sigmas} (ratio {ratio:.3f})"
+        )
+        # And all values still within 35% of σ_true
+        for s in sigmas:
+            assert abs(s - sigma_true) / sigma_true < 0.35, (
+                f"σ̂={s} far from σ_true={sigma_true}"
+            )
+
 
 # -----------------------------------------------------------------------------
 # CalibrationResult round-trip
