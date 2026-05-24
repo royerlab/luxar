@@ -162,6 +162,37 @@ class TestColorValidation:
         with pytest.warns(UserWarning, match="HDR colors.*maximum value"):
             validate_colors_for_writing(colors, 100)
 
+    # [Python-R4 / D-W3] Pin the HDR-warning BOUNDARY explicitly. The
+    # validator warns when `max_val > 10.0` (strict). A mutation that
+    # flipped to `>= 10.0` would trigger spurious warnings on legitimate
+    # max-HDR data; a mutation that loosened to `> 100.0` would silence
+    # the warning on real overflow. Test both sides of the boundary.
+    def test_hdr_warning_silent_at_exactly_10(self) -> None:
+        """max=10.0 must NOT warn (the threshold is strict `> 10.0`)."""
+        colors = np.full((10, 3), 10.0, dtype=np.float32)
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any UserWarning would fail
+            validate_colors_for_writing(colors, 10)
+
+    def test_hdr_warning_fires_just_above_10(self) -> None:
+        """max just-above 10.0 (10.001) MUST warn."""
+        colors = np.full((10, 3), 10.0, dtype=np.float32)
+        colors[0, 0] = 10.001
+        with pytest.warns(UserWarning, match="HDR colors.*maximum value"):
+            validate_colors_for_writing(colors, 10)
+
+    def test_hdr_warning_does_not_fire_for_integer_dtypes(self) -> None:
+        """Integer color arrays are SDR storage in their native integer
+        range; the HDR warning is float-only by contract."""
+        colors = np.full((10, 3), 255, dtype=np.uint8)
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            validate_colors_for_writing(colors, 10)
+
 
 class TestRadiiValidation:
     """Test radii validation with helpful errors."""

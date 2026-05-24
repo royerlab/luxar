@@ -215,11 +215,16 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
           const hi = lo + span;
           const back = valueToFraction(fractionToValue(f, lo, hi), lo, hi);
           // f ∈ [0, 1], so the absolute tolerance is what matters here.
-          // The previous toBeCloseTo(f, 9) gates at < 5e-10 strict — and
-          // fast-check found inputs that produced exactly 5e-10 error on
-          // the cancellation boundary. Use a loose-but-mutation-killing
-          // 5e-9 absolute tolerance (≈ 8 decimal places).
-          expect(Math.abs(back - f)).toBeLessThanOrEqual(5e-9);
+          // History: started at toBeCloseTo(_, 9) which gates at <5e-10
+          // strict — fast-check found 5e-10 boundary inputs. PR #127
+          // loosened to 5e-9. PR #130 hit ANOTHER ULP-boundary edge
+          // case (5.0000000000004e-9, ~1e-22 above the bound). The
+          // catastrophic-cancellation regime keeps finding tighter and
+          // tighter boundary values; loosen by another order of magnitude
+          // to 1e-8 (still ≈ 7 decimal places, still kills any meaningful
+          // algorithmic regression — sign flip, factor-of-2, off-by-one
+          // would all push error into O(0.01)).
+          expect(Math.abs(back - f)).toBeLessThanOrEqual(1e-8);
         }
       ),
       { numRuns: 80 }

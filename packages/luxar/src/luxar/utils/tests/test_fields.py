@@ -124,6 +124,26 @@ class TestRk4Step:
         out = rk4_step(points, step_size=0.5, field=field)
         assert np.all(np.isnan(out))
 
+    # [Python-R4/D-W4] Pin RK4's step-size multiplier across a range of
+    # step sizes. For a CONSTANT field v=(c, 0, 0), the closed-form
+    # flow from x0 is x0 + c*h regardless of step size — RK4 integrates
+    # constants exactly. The original constant-field test pinned this
+    # at h=0.5 only; parametrize to catch a regression that scaled h
+    # incorrectly (e.g., dropped the h multiplier on k1, doubled it on
+    # k4, or coalesced the (k1 + 2k2 + 2k3 + k4) / 6 weights).
+    @pytest.mark.parametrize("step_size", [0.01, 0.1, 0.5, 1.0, 2.0])
+    def test_constant_field_step_size_scaling(self, step_size: float) -> None:
+        field = _make_constant_field((1.0, 0.0, 0.0))
+        points = np.array([[1.0, 1.0, 1.0]], dtype=np.float32)
+        out = rk4_step(points, step_size=step_size, field=field)
+        # Exact: (1 + step_size, 1, 1) — RK4 of a constant is exact.
+        np.testing.assert_allclose(
+            out[0],
+            [1.0 + step_size, 1.0, 1.0],
+            atol=1e-5,
+            err_msg=f"RK4 step-size scaling broken at h={step_size}",
+        )
+
 
 class TestAddReferenceCube:
     def test_calls_scene_add_lines_with_12_edges(self) -> None:

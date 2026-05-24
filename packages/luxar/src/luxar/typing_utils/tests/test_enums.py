@@ -224,6 +224,36 @@ class TestRenderingLimits:
         assert RenderingLimits.COLOR_SDR_MAX == 1.0
         assert RenderingLimits.COLOR_HDR_MAX == 10.0
 
+    # [Python-R4/D-W2] Class-attribute values alone don't enforce the
+    # actual invariants: GAMMA_MIN < GAMMA_MAX, OPACITY_MIN < OPACITY_MAX,
+    # SHARPNESS_MIN < SHARPNESS_MAX, SHARPNESS_MIN > 0, COLOR_SDR_MIN <
+    # COLOR_SDR_MAX, COLOR_SDR_MAX <= COLOR_HDR_MAX. A future edit that
+    # swapped a MIN/MAX pair would silently pass every existing test
+    # (each one anchors to a specific numeric value, so a swap reads
+    # the same constants but means the wrong thing). Pin the relational
+    # invariants so a swap surfaces immediately.
+    def test_rendering_limits_relational_invariants(self) -> None:
+        assert RenderingLimits.OPACITY_MIN < RenderingLimits.OPACITY_MAX
+        assert RenderingLimits.GAMMA_MIN < RenderingLimits.GAMMA_MAX
+        assert RenderingLimits.GAMMA_MIN > 0  # gamma=0 is undefined (∞ exponent)
+        assert RenderingLimits.SHARPNESS_MIN < RenderingLimits.SHARPNESS_MAX
+        assert RenderingLimits.SHARPNESS_MIN > 0  # sharpness must be positive
+        assert RenderingLimits.COLOR_SDR_MIN < RenderingLimits.COLOR_SDR_MAX
+        # HDR includes SDR: HDR's max must be at least SDR's max.
+        assert RenderingLimits.COLOR_HDR_MAX >= RenderingLimits.COLOR_SDR_MAX
+
+    def test_defaults_lie_within_rendering_limits(self) -> None:
+        # OPACITY default must be in [OPACITY_MIN, OPACITY_MAX]
+        assert RenderingLimits.OPACITY_MIN <= Defaults.OPACITY <= RenderingLimits.OPACITY_MAX
+        # GAMMA default in [GAMMA_MIN, GAMMA_MAX]
+        assert RenderingLimits.GAMMA_MIN <= Defaults.GAMMA <= RenderingLimits.GAMMA_MAX
+        # SHARPNESS default in [SHARPNESS_MIN, SHARPNESS_MAX]
+        assert (
+            RenderingLimits.SHARPNESS_MIN
+            <= Defaults.SHARPNESS
+            <= RenderingLimits.SHARPNESS_MAX
+        )
+
 
 class TestDefaults:
     """Tests for Defaults class."""
