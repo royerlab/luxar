@@ -191,8 +191,14 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
           const hi = lo + span;
           const v = lo + t * span;
           const back = fractionToValue(valueToFraction(v, lo, hi), lo, hi);
-          // 12 decimal places tolerance: the helpers are pure double-precision math.
-          expect(back).toBeCloseTo(v, 9);
+          // Pathological-cancellation regime (lo≈1e6, span≈1e-9) eats up
+          // most of the float64 mantissa during `(v - lo) / span`. Use a
+          // relative-or-absolute tolerance that scales with max(|lo|, |hi|);
+          // ~10 ULPs(1) gives 8 decimal places of headroom while still
+          // catching real algorithmic regressions (sign flip, factor-of-2,
+          // off-by-one in lerp would all drift by >> 1e-8 * |scale|).
+          const scale = Math.max(1, Math.abs(lo), Math.abs(hi));
+          expect(Math.abs(back - v)).toBeLessThanOrEqual(1e-8 * scale);
         }
       ),
       { numRuns: 80 }
@@ -208,7 +214,12 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
         (lo, span, f) => {
           const hi = lo + span;
           const back = valueToFraction(fractionToValue(f, lo, hi), lo, hi);
-          expect(back).toBeCloseTo(f, 9);
+          // f ∈ [0, 1], so the absolute tolerance is what matters here.
+          // The previous toBeCloseTo(f, 9) gates at < 5e-10 strict — and
+          // fast-check found inputs that produced exactly 5e-10 error on
+          // the cancellation boundary. Use a loose-but-mutation-killing
+          // 5e-9 absolute tolerance (≈ 8 decimal places).
+          expect(Math.abs(back - f)).toBeLessThanOrEqual(5e-9);
         }
       ),
       { numRuns: 80 }
