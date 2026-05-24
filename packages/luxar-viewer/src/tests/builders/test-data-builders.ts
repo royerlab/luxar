@@ -801,14 +801,19 @@ export class MockZarrArrayBuilder {
   }
 
   build(): any {
+    const chunkLen = this.chunks.reduce((a, b) => a * b, 1);
     return {
       shape: this.shape,
       chunks: this.chunks,
       dtype: this.dtype,
       metadata: this.metadata,
-      get: vi.fn().mockResolvedValue({
-        data: new Float32Array(this.chunks.reduce((a, b) => a * b, 1)),
-      }),
+      // Use mockImplementation (not mockResolvedValue) so EACH call
+      // returns a fresh Float32Array. mockResolvedValue captures one
+      // payload and reuses it forever — a test that mutated the
+      // returned `.data` would corrupt every subsequent get() call.
+      get: vi.fn().mockImplementation(async () => ({
+        data: new Float32Array(chunkLen),
+      })),
     };
   }
 }
