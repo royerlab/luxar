@@ -602,16 +602,38 @@ describe('UpdateProfiler — reset', () => {
     expect(root.lastMs).toBe(0);
   });
 
-  // [R11/A-G4 — OOS production bug surfaced]
-  // The reset() docstring promises that a "dangling RootSession" will not
-  // "merge into a tree it no longer owns, polluting fresh root counters."
-  // Empirical test (see audit aggregate `_round11_aggregate.md`): an
-  // in-flight `timeTopLevel('parallel-load', fn)` session whose `fn`
-  // resolves AFTER reset() DOES merge its child into the freshly-rebuilt
-  // root (root.children.length becomes 1, not 0). The session's parent
-  // reference appears to be re-resolved at end-time, not captured at
-  // begin-time. Test deliberately NOT added — it would lock in the
-  // contradiction. Filed as OOS for production-code follow-up.
+  // [R11/A-G4 — OOS fixed in this commit] When reset() lands while a
+  // timeTopLevel('parallel-load', fn) session is in flight, fn's eventual
+  // session.end() must NOT pollute the freshly-rebuilt root tree. The
+  // generation-counter gate in SessionImpl.end() drops the merge silently
+  // when the profiler's generation has advanced past the session's
+  // captured generation.
+  it('reset() during an in-flight timeTopLevel() session clears activeSessions and isolates the new root', async () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginUpdate();
+
+    let resolveInner!: () => void;
+    const innerWait = new Promise<void>((r) => {
+      resolveInner = r;
+    });
+
+    const inFlight = profiler.timeTopLevel('parallel-load', async () => {
+      await innerWait;
+      return 42;
+    });
+
+    profiler.reset();
+    expect(profiler.isActive()).toBe(false);
+
+    // Let the abandoned session resolve. Its session.end() must run
+    // (no exception) but its merge must NOT touch the new root tree.
+    resolveInner();
+    await expect(inFlight).resolves.toBe(42);
+
+    const root = profiler.getTimings();
+    expect(root.count).toBe(0);
+    expect(root.children).toHaveLength(0);
+  });
 });
 
 describe('UpdateProfiler — beginUpdate when previous unfinished', () => {

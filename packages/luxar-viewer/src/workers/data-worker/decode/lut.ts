@@ -53,12 +53,20 @@ export async function decodeLUT(
   // overhead on the common no-op call path; the WASM call below also
   // becomes a no-op against the zero-length output buffer.
   if (indices.length > 0 && entryCount > 0) {
-    for (let i = 0; i < indices.length; i++) {
-      if (indices[i] >= entryCount) {
-        throw new Error(
-          `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
-            `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
-        );
+    // Type-bound early-exit: if the LUT has as many entries as the
+    // index dtype's full domain (Uint8 → 256, Uint16 → 65 536), every
+    // possible index value is in range and the scan is provably
+    // redundant. Common cases — 256-entry Uint8 colormaps, full
+    // Uint16 categorical LUTs — skip the O(n) loop entirely.
+    const indexDomain = indices instanceof Uint8Array ? 256 : 65536;
+    if (entryCount < indexDomain) {
+      for (let i = 0; i < indices.length; i++) {
+        if (indices[i] >= entryCount) {
+          throw new Error(
+            `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
+              `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
+          );
+        }
       }
     }
   } else if (indices.length > 0 && entryCount === 0) {

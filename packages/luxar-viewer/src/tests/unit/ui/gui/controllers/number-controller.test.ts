@@ -196,10 +196,34 @@ describe('NumberController', () => {
       expect(object.value).toBe(100);
     });
 
-    // OOS NOTE [R11]: controller.setValue(value) at ui/gui/controller.ts:116
-    // does NOT clamp into [min, max] — programmatic callers can corrupt
-    // the model with Infinity / NaN / out-of-range. Logged in audit OOS
-    // for follow-up; not a test gap (the bug is in production code).
+    // [R11-OOS FIX] NumberController.setValue() now overrides the base
+    // controller's raw assignment to clamp into [min, max] and reject
+    // NaN / ±Infinity. The 4 tests below pin the new contract; a
+    // regression that re-introduced the raw super.setValue() call would
+    // fail every one of them.
+    it('clamps programmatic setValue(Infinity) to max', () => {
+      controller.setValue(Infinity);
+      expect(Number.isFinite(object.value)).toBe(true);
+      expect(object.value).toBe(100);
+    });
+
+    it('clamps programmatic setValue(-Infinity) to min', () => {
+      controller.setValue(-Infinity);
+      expect(Number.isFinite(object.value)).toBe(true);
+      expect(object.value).toBe(0);
+    });
+
+    it('clamps programmatic setValue(1e20) to max', () => {
+      controller.setValue(1e20);
+      expect(object.value).toBe(100);
+    });
+
+    it('rejects programmatic setValue(NaN) without mutating the model', () => {
+      const before = object.value;
+      controller.setValue(NaN);
+      expect(Number.isFinite(object.value)).toBe(true);
+      expect(object.value).toBe(before);
+    });
 
     it('should trigger onChange callback on user input', () => {
       const onChange = vi.fn();

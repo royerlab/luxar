@@ -241,6 +241,28 @@ export class NumberController extends Controller<number> {
     return clamp(value, this.minValue, this.maxValue);
   }
 
+  /**
+   * Override of `Controller.setValue` that:
+   *  - rejects NaN (would silently corrupt downstream comparisons), and
+   *  - clamps every other input — including ±Infinity and finite values
+   *    outside `[min, max]` — into the configured range via the same
+   *    `constrainValue` helper the DOM event paths use.
+   *
+   * Without this override the inherited base `setValue` performs a raw
+   * assignment, so a programmatic caller writing `setValue(NaN)` or
+   * `setValue(1e20)` would silently corrupt the model. Documented as a
+   * round-11 audit OOS finding.
+   */
+  public override setValue(value: number): this {
+    if (Number.isNaN(value)) {
+      // Refresh the display in case it drifted, but do NOT write NaN
+      // into the model — every comparison against it would be false.
+      this.updateDisplay();
+      return this;
+    }
+    return super.setValue(this.constrainValue(value));
+  }
+
   public override dispose(): void {
     clearTimeout(this.wheelFinishTimer);
     super.dispose();
