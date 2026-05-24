@@ -332,6 +332,23 @@ class TestTransformUtilities:
         # Y axis should be close to Z (up)
         assert t[1, 2] > 0.9  # Y points mostly in Z direction
 
+    # [Python-R1/transforms-CRIT] look_at degenerate inputs previously
+    # produced NaN-filled matrices that propagated downstream (cameras
+    # silently render nothing). Pin the new actionable errors.
+    def test_look_at_raises_when_eye_equals_target(self) -> None:
+        with pytest.raises(ValueError, match="coincident"):
+            look_at((5, 5, 5), (5, 5, 5))
+
+    def test_look_at_raises_when_up_parallel_to_forward(self) -> None:
+        # forward direction is +Y, up is also +Y → cross product is zero
+        with pytest.raises(ValueError, match="parallel"):
+            look_at((0, 0, 0), (0, 1, 0), up=(0, 1, 0))
+
+    def test_look_at_raises_when_up_antiparallel_to_forward(self) -> None:
+        # forward is +Y, up is -Y → cross product is zero (still parallel)
+        with pytest.raises(ValueError, match="parallel"):
+            look_at((0, 0, 0), (0, 1, 0), up=(0, -1, 0))
+
     def test_to_from_list(self) -> None:
         """Test conversion to/from list."""
         # Create a transform
