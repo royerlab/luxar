@@ -85,3 +85,39 @@ class TestAtomicCopytree:
         # No leaked .tmp_* sibling either.
         leaked = list(tmp_path.glob(".tmp_dst_*"))
         assert leaked == [], f"leaked temp directories: {leaked}"
+
+    # [Python-R2/D-W5] Strengthen the mid-copy failure scenario: simulate
+    # a REAL mid-copytree failure where the tmp dir is HALF-populated at
+    # the moment of the exception (not the prior test's "succeeded then
+    # raised" model). The cleanup path must still clear the tmp dir.
+    def test_failure_during_copytree_clears_half_populated_tmp(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        for i in range(5):
+            (src / f"f{i}.txt").write_text(f"content {i}")
+
+        dst = tmp_path / "dst"
+
+        def half_populating_failing_copytree(s, d, **kwargs):
+            # Manually create the destination directory and populate it
+            # with one file, then raise — emulating shutil.copytree that
+            # crashed after writing some but not all entries.
+            d_path = Path(d)
+            d_path.mkdir(parents=True, exist_ok=True)
+            (d_path / "f0.txt").write_text("partial")
+            raise OSError("disk full mid-copy")
+
+        with patch(
+            "luxar.utils.atomic_copy.shutil.copytree",
+            side_effect=half_populating_failing_copytree,
+        ):
+            with pytest.raises(OSError, match="disk full mid-copy"):
+                atomic_copytree(src, dst)
+
+        # The half-populated tmp must be gone; the dst must never have
+        # been created.
+        assert not dst.exists()
+        leaked = list(tmp_path.glob(".tmp_dst_*"))
+        assert leaked == [], f"half-populated temp dirs leaked: {leaked}"
