@@ -137,4 +137,32 @@ class TestFullEncodingRoundtrip:
 
         assert decoded.shape == data.shape
         assert decoded.dtype == np.float32
+
+    # [Python-R1/encoding-MAJOR] Empty-array roundtrip. encoder.py line 147
+    # short-circuits empty inputs via _write_passthrough; the round-trip
+    # path was never test-pinned. A regression that mangled the shape
+    # (e.g., flattened the (0, 3) into a 1-D zero-length) would slip
+    # past every non-empty test in this file.
+    def test_empty_1d_coordinate_roundtrip(self, tmp_path) -> None:
+        data = np.zeros((0,), dtype=np.float32)
+        decoded = self._roundtrip(tmp_path, data, SemanticType.POSITIVE_SCALAR)
+        assert decoded.shape == (0,)
+        assert decoded.dtype == np.float32
+        assert decoded.size == 0
+
+    def test_empty_2d_coordinate_roundtrip(self, tmp_path) -> None:
+        # Shape (0, 3) — the canonical "no points but the per-point
+        # dimensionality is preserved" form. A regression that flattened
+        # to (0,) would fail this shape assertion.
+        data = np.zeros((0, 3), dtype=np.float32)
+        decoded = self._roundtrip(tmp_path, data, SemanticType.COORDINATE)
+        assert decoded.shape == (0, 3)
+        assert decoded.dtype == np.float32
+
+    def test_empty_color_sdr_roundtrip(self, tmp_path) -> None:
+        data = np.zeros((0, 3), dtype=np.float32)
+        decoded = self._roundtrip(
+            tmp_path, data, SemanticType.COLOR, color_mode="sdr"
+        )
+        assert decoded.shape == (0, 3)
         np.testing.assert_array_equal(decoded, data)
