@@ -435,6 +435,57 @@ class TestChunkBoundsZarrAlignment:
         result = _calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
         assert result == (1024, 4)
 
+    # [Python-R6 / io-MAJOR] Dtype awareness — the byte-target heuristic
+    # MUST scale chunk size by element size. A uint8 array gets 4x as
+    # many elements per chunk as a float32 array of the same byte target
+    # (1 byte vs 4 bytes per element). A regression that hard-coded
+    # itemsize=4 would silently under-chunk uint8 colors / uint16 LUTs.
+    def test_calculate_intelligent_chunks_scales_with_dtype_itemsize(self) -> None:
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        # Float32: 65536 / 4 = 16384 elements per chunk
+        f32 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.float32))
+        # Uint8: 65536 / 1 = 65536 elements per chunk (4x more)
+        u8 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint8))
+        # Uint16: 65536 / 2 = 32768 elements per chunk (2x more than f32)
+        u16 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint16))
+
+        assert f32 == (16384,)
+        assert u8 == (65536,)
+        assert u16 == (32768,)
+        # Ratio invariant: u8 / f32 == 4, u16 / f32 == 2 (catches a
+        # regression that broke the formula without touching values).
+        assert u8[0] == 4 * f32[0]
+        assert u16[0] == 2 * f32[0]
+
+    def test_calculate_intelligent_chunks_clamps_small_arrays(self) -> None:
+        """If the dataset is smaller than the byte-target derived chunk,
+        the chunk shape matches the dataset shape exactly. A regression
+        that returned a chunk LARGER than the array would crash zarr."""
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        # 50 elements * 4 bytes = 200 bytes << 64 KiB target.
+        result = _calculate_intelligent_chunks((50,), dtype=np.dtype(np.float32))
+        assert result == (50,)  # clamped to actual array size
+
+        # 2D: shape smaller than target → match shape exactly.
+        result = _calculate_intelligent_chunks((50, 4), dtype=np.dtype(np.float32))
+        assert result == (50, 4)
+
+    def test_calculate_intelligent_chunks_handles_4d_shape(self) -> None:
+        """4D+ shapes use byte-based defaults per-dimension. Pin the
+        contract: every dim is clamped to min(shape_dim, target_elements)."""
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        # 4D shape with large dims; expect every chunk dim equal to
+        # min(shape_dim, target_elements=16384 for float32).
+        result = _calculate_intelligent_chunks(
+            (1000, 200, 100, 50), dtype=np.dtype(np.float32)
+        )
+        assert len(result) == 4
+        target = 65536 // 4  # 16384 for float32
+        assert result == tuple(min(s, target) for s in (1000, 200, 100, 50))
+
 
 class TestTransformCentralization:
     """Test centralized transform conversion."""
