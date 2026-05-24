@@ -147,10 +147,21 @@ export function decode_broadcasted(
       `decode_broadcasted: value.length must be 1 (broadcast) or elementsPerPoint (${elementsPerPoint}), got ${value.length}`
     );
   }
-  for (let i = 0; i < numPoints; i++) {
-    const outOffset = i * elementsPerPoint;
-    for (let j = 0; j < elementsPerPoint; j++) {
-      output[outOffset + j] = j < value.length ? value[j] : value[0];
+  // Two distinct hot paths — split them so neither carries the
+  // surprising "mixed broadcast" fallback (`j < value.length ? value[j]
+  // : value[0]`) the old impl exposed when value.length fell between 1
+  // and elementsPerPoint. The length guard above already rejects every
+  // other shape; the ternary at the read site was dead defensive code
+  // that obscured intent.
+  if (value.length === 1) {
+    const v = value[0];
+    output.fill(v, 0, numPoints * elementsPerPoint);
+  } else {
+    for (let i = 0; i < numPoints; i++) {
+      const outOffset = i * elementsPerPoint;
+      for (let j = 0; j < elementsPerPoint; j++) {
+        output[outOffset + j] = value[j];
+      }
     }
   }
 }

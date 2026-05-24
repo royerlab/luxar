@@ -90,10 +90,28 @@ export class PointsBuilder {
   }
 
   /**
-   * Add uniform radii
+   * Set radii.
+   *
+   * Accepts either:
+   *  - a scalar (`number`) — broadcast to every point, OR
+   *  - an explicit `Float32Array` / `number[]` of length `numPoints` —
+   *    cloned into a fresh Float32Array so the builder owns its own
+   *    buffer (a later mutation by the caller cannot leak in).
+   *
+   * Mismatched-length arrays throw a clear error rather than silently
+   * truncating or zero-extending.
    */
-  withRadii(radius: number): this {
-    this.radii = new Float32Array(this.numPoints).fill(radius);
+  withRadii(radius: number | Float32Array | number[]): this {
+    if (typeof radius === 'number') {
+      this.radii = new Float32Array(this.numPoints).fill(radius);
+    } else {
+      if (radius.length !== this.numPoints) {
+        throw new Error(
+          `withRadii: array length ${radius.length} does not match numPoints ${this.numPoints}`
+        );
+      }
+      this.radii = new Float32Array(radius);
+    }
     return this;
   }
 
@@ -132,11 +150,16 @@ export class PointsBuilder {
       this.withRandomPositions();
     }
 
+    // Return FRESH copies of every typed array. Without cloning, two
+    // build() calls return the same buffer instance; a test that mutates
+    // the result of the first call would leak into every subsequent
+    // build() (and into any other test holding a reference). Float32Array
+    // construction with another typed array argument copies the bytes.
     return {
-      positions: this.positions!,
-      colors: this.colors,
-      radii: this.radii,
-      sharpness: this.sharpness,
+      positions: new Float32Array(this.positions!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
+      radii: this.radii ? new Float32Array(this.radii) : null,
+      sharpness: this.sharpness ? new Float32Array(this.sharpness) : null,
       numPoints: this.numPoints,
       dimensions: this.dimensions,
     };
@@ -270,12 +293,13 @@ export class LinesBuilder {
       for (let i = 0; i < seg.length; i++) seg[i] = i;
       this.segments = seg;
     }
+    // Clone every output buffer — see PointsBuilder.build() for rationale.
     return {
-      vertices: this.vertices!,
-      widths: this.widths!,
-      segments: this.segments!,
-      colors: this.colors,
-      sharpness: this.sharpness,
+      vertices: new Float32Array(this.vertices!),
+      widths: new Float32Array(this.widths!),
+      segments: new Uint32Array(this.segments!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
+      sharpness: this.sharpness ? new Float32Array(this.sharpness) : null,
       numSegments: this.numSegments,
       dimensions: this.dimensions,
     };
@@ -417,11 +441,12 @@ export class GSplatsBuilder {
     if (!this.choleskyFactors) {
       this.withIsotropicCovariance(0.1);
     }
+    // Clone every output buffer — see PointsBuilder.build() for rationale.
     return {
-      centers: this.centers!,
-      amplitudes: this.amplitudes!,
-      choleskyFactors: this.choleskyFactors!,
-      colors: this.colors,
+      centers: new Float32Array(this.centers!),
+      amplitudes: new Float32Array(this.amplitudes!),
+      choleskyFactors: new Float32Array(this.choleskyFactors!),
+      colors: this.colors ? new Float32Array(this.colors) : null,
       numSplats: this.numSplats,
       dimensions: this.dimensions,
     };
@@ -447,10 +472,23 @@ export class DimensionsBuilder {
   }
 
   /**
-   * Set which dimensions are displayed
+   * Set which dimensions are displayed. The Luxar scene contract caps
+   * displayed dimensions at 3 (the visual XYZ axes); a caller passing
+   * more than 3 indices is asserting a stronger contract than the
+   * viewer can satisfy. Silently slicing to 3 hid this misuse.
+   *
+   * Now the builder throws on >3 indices so tests are forced to be
+   * explicit about which dims they want visible. Passing exactly 0–3
+   * is unchanged.
    */
   withDisplayed(...indices: number[]): this {
-    this.displayed = indices.slice(0, 3); // Max 3 displayed
+    if (indices.length > 3) {
+      throw new Error(
+        'DimensionsBuilder.withDisplayed: at most 3 dimensions may be displayed; ' +
+          `got ${indices.length} indices ${JSON.stringify(indices)}`
+      );
+    }
+    this.displayed = indices.slice();
     return this;
   }
 
@@ -763,14 +801,19 @@ export class MockZarrArrayBuilder {
   }
 
   build(): any {
+    const chunkLen = this.chunks.reduce((a, b) => a * b, 1);
     return {
       shape: this.shape,
       chunks: this.chunks,
       dtype: this.dtype,
       metadata: this.metadata,
-      get: vi.fn().mockResolvedValue({
-        data: new Float32Array(this.chunks.reduce((a, b) => a * b, 1)),
-      }),
+      // Use mockImplementation (not mockResolvedValue) so EACH call
+      // returns a fresh Float32Array. mockResolvedValue captures one
+      // payload and reuses it forever — a test that mutated the
+      // returned `.data` would corrupt every subsequent get() call.
+      get: vi.fn().mockImplementation(async () => ({
+        data: new Float32Array(chunkLen),
+      })),
     };
   }
 }

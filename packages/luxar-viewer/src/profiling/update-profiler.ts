@@ -103,6 +103,12 @@ class SessionImpl implements UpdateSession {
   // Without this flag, skipped entries still record the begin→markSkipped→end
   // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
   private skipBypassesEMA = false;
+  // Generation captured at construction. If the profiler's generation
+  // advances (because reset() was called) before this session ends, the
+  // session is considered "abandoned": its end() becomes a no-op merge,
+  // so an in-flight timeTopLevel() that resolves after reset() does NOT
+  // pollute the freshly-rebuilt root tree.
+  private readonly generation: number;
 
   constructor(name: string, parent: SessionImpl | null, profiler: UpdateProfiler) {
     this.entry = {
@@ -115,6 +121,7 @@ class SessionImpl implements UpdateSession {
     this.startTime = performance.now();
     this.parent = parent;
     this.profiler = profiler;
+    this.generation = profiler._currentGeneration();
 
     // Add to parent's children if we have a parent
     if (parent) {
@@ -129,6 +136,14 @@ class SessionImpl implements UpdateSession {
   end(): void {
     if (this.ended) return;
     this.ended = true;
+
+    // Generation gate: a reset() between begin() and end() bumps the
+    // profiler's generation, abandoning every session that was in flight
+    // at the time. Their end() walks must NOT merge into the new root
+    // tree (or any other freshly-rebuilt state). Drop silently.
+    if (this.generation !== this.profiler._currentGeneration()) {
+      return;
+    }
 
     if (this.skipBypassesEMA) {
       // markSkipped() already set lastMs/avgMs to 0; do NOT measure duration
@@ -258,6 +273,22 @@ export class UpdateProfiler {
   // Track the current session context for nested operations
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
+
+  // Generation counter, bumped on every reset(). Sessions capture the
+  // generation at construction; their end() is a no-op if the profiler's
+  // generation has advanced past theirs (the session was "abandoned").
+  // Internal: only the SessionImpl reads this — exposed via the package-
+  // private `_currentGeneration()` accessor below.
+  private generation = 0;
+
+  /**
+   * Internal: current generation counter. Read by `SessionImpl` to gate
+   * its `end()` merge against being abandoned by a reset() that landed
+   * mid-flight. NOT a public API.
+   */
+  _currentGeneration(): number {
+    return this.generation;
+  }
 
   // Listeners for UI updates
   private listeners = new Set<() => void>();
@@ -467,6 +498,10 @@ export class UpdateProfiler {
    * into the freshly rebuilt rootEntry under a name they no longer own.
    */
   reset(): void {
+    // Bump generation FIRST so any session whose end() runs *during*
+    // notifyListeners() (synchronous listener callbacks could trigger
+    // it) sees the new generation and bails out.
+    this.generation++;
     this.activeSession = null;
     this.currentSessionContext = null;
     this.activeSessions.clear();
