@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+from luxar.gsplats.gsplat_data import GSplatData
 
 from ._gsplat_data_helpers import (
     _make_2d_gsplat,
