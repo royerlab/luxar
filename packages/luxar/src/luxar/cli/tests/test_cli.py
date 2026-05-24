@@ -192,6 +192,47 @@ def test_info_command_invalid_zarr_store(runner, tmp_path) -> None:
     assert "Error reading info" in result.stdout
 
 
+# [Python-R6 / A-G2] Empty / malformed zarr store boundary cases for
+# the info command. The existing tests cover complex hierarchies and
+# the "regular file" path but never:
+#   - empty directory passed as zarr root
+#   - zarr group with no Luxar metadata
+#   - zarr group with only metadata, no points/lines/gsplats children
+# These are the failure modes a partially-written or aborted compile
+# would leave behind.
+def test_info_command_empty_directory(runner, tmp_path) -> None:
+    """Empty directory should fail with a clear error, not crash."""
+    empty_dir = tmp_path / "empty.zarr"
+    empty_dir.mkdir()
+    result = runner.invoke(app, ["info", str(empty_dir)])
+    assert result.exit_code == 1
+    # Some kind of error must be reported — either "Error reading info"
+    # (the catch-all path) or a more specific zarr-related message.
+    assert any(
+        s in result.stdout for s in ("Error", "invalid", "Invalid", "not")
+    ), f"empty-dir info should report an error; got: {result.stdout!r}"
+
+
+def test_info_command_zarr_group_without_luxar_metadata(runner, tmp_path) -> None:
+    """A zarr group with no Luxar metadata should be reported as invalid
+    rather than crashing. Pin that the error message contains something
+    actionable (mentions the path OR has the canonical 'Error' prefix)."""
+    import zarr
+
+    bare_store = tmp_path / "bare.zarr"
+    # Create a valid zarr group but with no Luxar data
+    zarr.open_group(str(bare_store), mode="w")
+
+    result = runner.invoke(app, ["info", str(bare_store)])
+    # Either the info command fails (preferred) or it succeeds with a
+    # "no data" message. Both are acceptable as long as the user gets
+    # actionable output.
+    assert result.exit_code in (0, 1)
+    # The output must reference the input path or describe the structure
+    # — not be silently empty.
+    assert len(result.stdout.strip()) > 0, "info on bare zarr produced empty output"
+
+
 def test_serve_command_nonexistent_store(runner, tmp_path) -> None:
     """Test serve command with non-existent store."""
     nonexistent_path = tmp_path / "does_not_exist.zarr"
@@ -438,6 +479,38 @@ def test_demo_rejects_negative_points(runner, tmp_path) -> None:
     )
     assert result.exit_code == 1
     assert "must be positive" in result.stdout
+
+
+# [Python-R6 / A-G1] Type-validation boundary cases for --points.
+# Typer/Click should reject float and non-numeric inputs at the
+# argument-parsing layer with a Click-style "Invalid value" exit_code
+# (typically 2, not 1). Pin both type-rejection paths.
+def test_demo_rejects_float_points(runner, tmp_path) -> None:
+    """`--points 1.5` is a float; Typer's int annotation rejects it
+    with exit_code 2 (Click's "Invalid value" code) BEFORE our
+    `n_points <= 0` runtime guard fires."""
+    result = runner.invoke(
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "1.5"],
+    )
+    assert result.exit_code != 0
+    # Click error path: combined output contains either "Invalid value"
+    # or our runtime guard message. EITHER is correct so long as the
+    # demo command DOES NOT proceed (a regression that silently
+    # accepted 1.5 and floored to 1 would slip both checks).
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "Invalid" in combined or "must be" in combined or "is not a valid" in combined
+
+
+def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:
+    """`--points abc` is not numeric; Typer rejects at parse time."""
+    result = runner.invoke(
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "abc"],
+    )
+    assert result.exit_code != 0
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "Invalid" in combined or "is not a valid" in combined
 
 
 def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:

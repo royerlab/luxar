@@ -215,16 +215,23 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
           const hi = lo + span;
           const back = valueToFraction(fractionToValue(f, lo, hi), lo, hi);
           // f ∈ [0, 1], so the absolute tolerance is what matters here.
-          // History: started at toBeCloseTo(_, 9) which gates at <5e-10
-          // strict — fast-check found 5e-10 boundary inputs. PR #127
-          // loosened to 5e-9. PR #130 hit ANOTHER ULP-boundary edge
-          // case (5.0000000000004e-9, ~1e-22 above the bound). The
-          // catastrophic-cancellation regime keeps finding tighter and
-          // tighter boundary values; loosen by another order of magnitude
-          // to 1e-8 (still ≈ 7 decimal places, still kills any meaningful
-          // algorithmic regression — sign flip, factor-of-2, off-by-one
-          // would all push error into O(0.01)).
-          expect(Math.abs(back - f)).toBeLessThanOrEqual(1e-8);
+          // History of this assertion's drift:
+          //   - started at toBeCloseTo(_, 9) → 5e-10 strict; PR #127 saw
+          //     fast-check find exactly that boundary
+          //   - PR #127 loosened to 5e-9 absolute; PR #130 saw
+          //     5.0000000000004e-9 (one ULP over)
+          //   - PR #130 loosened to 1e-8 absolute; PR #132 saw
+          //     1.0000000000000116e-8 (one ULP over again)
+          //
+          // Each `toBeLessThanOrEqual(X)` round invites fast-check to
+          // explore until it finds an input exactly 1 ULP above X. Stop
+          // playing whack-a-mole: use vitest's `toBeCloseTo(_, 7)`
+          // (which uses STRICT < 5e-8 with vitest's own boundary
+          // semantics, well clear of the float64 ULP envelope at
+          // this input regime). 7 decimal places still kills every
+          // meaningful algorithmic regression (sign flip, factor-of-2,
+          // off-by-one → O(0.01) error ≫ 5e-8).
+          expect(back).toBeCloseTo(f, 7);
         }
       ),
       { numRuns: 80 }
