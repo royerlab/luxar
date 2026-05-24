@@ -77,6 +77,19 @@ class TestCLAHEContrastEnhancement:
         assert region_after.std() > 0.01  # Has some variation
         assert torch.all(torch.isfinite(region_after))  # No NaNs or Infs
 
+        # [Python-R3/B-G8] Pin the output range: CLAHE on a [0, 1] input
+        # MUST produce a [0, 1] output (the histogram-equalisation step
+        # remaps the CDF, which is bounded). A regression that returned
+        # something like V_clahe + bias (or skipped the final
+        # normalisation) would slip past every "is modified" / "has
+        # variance" / "is finite" assertion above.
+        assert V_clahe.min() >= 0.0 - 1e-5, (
+            f"CLAHE output below [0, 1]: min={V_clahe.min().item():.3e}"
+        )
+        assert V_clahe.max() <= 1.0 + 1e-5, (
+            f"CLAHE output above [0, 1]: max={V_clahe.max().item():.3e}"
+        )
+
     def test_heterogeneous_image_balancing(self) -> None:
         """CLAHE should balance contrast across heterogeneous regions."""
         # Create image with varying background
