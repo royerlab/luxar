@@ -101,6 +101,18 @@ class TestTransformUtilities:
         rotated = t @ x_axis
         assert np.allclose(rotated[:3], [0, 1, 0], atol=1e-6)  # X -> Y
 
+    # [Python-R1/transforms-CRIT] Zero-length axis previously produced
+    # a NaN-filled rotation matrix that silently corrupted every scene
+    # using the result. Pin the new ValueError, and the related case of
+    # a tuple zero-vector input.
+    def test_rotate_raises_on_zero_length_axis_array(self) -> None:
+        with pytest.raises(ValueError, match="zero length"):
+            rotate(90, np.array([0.0, 0.0, 0.0]))
+
+    def test_rotate_raises_on_zero_length_axis_tuple(self) -> None:
+        with pytest.raises(ValueError, match="zero length"):
+            rotate(45, (0.0, 0.0, 0.0))
+
     @pytest.mark.parametrize(
         "axis,angle,expected_func,test_id",
         [

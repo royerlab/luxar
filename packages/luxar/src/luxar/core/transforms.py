@@ -195,8 +195,17 @@ def rotate(
     if axis_vector.shape != (3,):
         raise ValueError(f"Axis must be a 3D vector, got shape {axis_vector.shape}")
 
-    # Normalize axis
-    axis_vector = axis_vector / np.linalg.norm(axis_vector)
+    # Normalize axis. A zero-length (or numerically near-zero) axis
+    # silently produced a NaN-filled rotation matrix before this guard —
+    # downstream scenes then rendered as black void. Reject upfront with
+    # a clear message naming the offending input.
+    axis_norm = float(np.linalg.norm(axis_vector))
+    if axis_norm == 0.0:
+        raise ValueError(
+            f"rotate: axis vector {tuple(axis_vector.tolist())!r} has zero length; "
+            f"a rotation axis must be non-degenerate"
+        )
+    axis_vector = axis_vector / axis_norm
 
     radians = np.radians(degrees)
     cos_a = np.cos(radians)
