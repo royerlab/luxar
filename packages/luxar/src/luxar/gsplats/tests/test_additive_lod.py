@@ -65,8 +65,15 @@ def test_residual_energy_monotone(method: str) -> None:
     gram = _build_sparse_gram(data, sigmas=3.0)
     E = _residual_energy_curve(gram, order)
     diffs = np.diff(E)
-    # tolerate tiny floating-point fluctuations
-    assert (diffs <= 1e-9).all(), (
+    # [Python-R3/B-C1] Residual energy is computed in float32 by the
+    # sparse Gram accumulation. The previous `<= 1e-9` tolerance was
+    # tighter than float32's natural ULP at the magnitudes involved
+    # (typical residual ~ O(1), ULP ~ 1e-7) — a stochastic seed could
+    # produce a 1e-8 positive fluctuation and the test would fail
+    # spuriously. Loosen to `<= 1e-5` which is two orders of magnitude
+    # ABOVE float32 ULP and still kills any meaningful monotonicity
+    # regression (a real violation would push diffs into O(0.01)).
+    assert (diffs <= 1e-5).all(), (
         f"{method!r}: residual energy not monotone non-increasing; "
         f"max positive diff = {diffs.max():.3e}"
     )
