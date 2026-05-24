@@ -207,10 +207,21 @@ def parse_jitter(jitter_str: str) -> float:
     """
     jitter_str = jitter_str.strip()
 
-    if jitter_str.endswith("%"):
-        value = float(jitter_str[:-1]) / 100.0
-    else:
-        value = float(jitter_str)
+    try:
+        if jitter_str.endswith("%"):
+            value = float(jitter_str[:-1]) / 100.0
+        else:
+            value = float(jitter_str)
+    except ValueError:
+        # Normalize the raw Python ``could not convert string to float``
+        # exception to the same "Invalid <kind> format: ..." shape every
+        # other parse_* helper raises. Users running the CLI shouldn't
+        # see internal Python error messages.
+        raise ValueError(
+            f"Invalid jitter format: '{jitter_str}'. "
+            "Expected format: <number>% or decimal (0.0-1.0). "
+            "Examples: '10%', '0.1', '25%'"
+        ) from None
 
     if not 0.0 <= value <= 1.0:
         raise ValueError(
@@ -242,10 +253,19 @@ def parse_packet_loss(loss_str: str) -> float:
     """
     loss_str = loss_str.strip()
 
-    if loss_str.endswith("%"):
-        value = float(loss_str[:-1]) / 100.0
-    else:
-        value = float(loss_str)
+    try:
+        if loss_str.endswith("%"):
+            value = float(loss_str[:-1]) / 100.0
+        else:
+            value = float(loss_str)
+    except ValueError:
+        # Same normalization as parse_jitter above — curated message
+        # instead of leaking Python's raw float-conversion error.
+        raise ValueError(
+            f"Invalid packet loss format: '{loss_str}'. "
+            "Expected format: <number>% or decimal (0.0-1.0). "
+            "Examples: '1%', '0.05', '10%'"
+        ) from None
 
     if not 0.0 <= value <= 1.0:
         raise ValueError(
