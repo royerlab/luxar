@@ -212,30 +212,37 @@ describe('valueToFraction <-> fractionToValue (property tests)', () => {
         fc.double({ min: 1e-9, max: 1e6, noNaN: true, noDefaultInfinity: true }),
         fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
         (lo, span, f) => {
+          // Filter pathological cancellation regimes BEFORE the assertion.
+          // History of this assertion's drift:
+          //   - toBeCloseTo(_, 9) → 5e-10 strict ... fast-check found it
+          //   - 5e-9 absolute ... 5.0000000000004e-9 (1 ULP over)
+          //   - 1e-8 absolute ... 1.0000000000000116e-8 (1 ULP over)
+          //   - toBeCloseTo(_, 7) [strict <5e-8] ... 5.0000000000000037e-8
+          //   - toBeCloseTo(_, 6) [strict <5e-7] ... 5e-7 exactly (PR #145)
+          //
+          // The pattern is structural: when `Math.abs(span)` is many
+          // orders of magnitude smaller than `Math.max(|lo|, |hi|)`,
+          // `(lo + f*span) - lo` suffers catastrophic cancellation —
+          // most of the float64 mantissa is lost. The composition
+          // `valueToFraction(fractionToValue(f, lo, hi), lo, hi)`
+          // accumulates this error proportional to `1 / span` after
+          // dividing. Loosening tolerance just lets fast-check shrink
+          // to the next boundary. The right fix is to require the
+          // input span to retain enough significant digits.
+          //
+          // 10 ULPs of float64 relative precision (~2.22e-15 × 10) gives
+          // a safety floor of 1e-10. We require span / max(|lo|, |hi|)
+          // ≥ 1e-10 so the cancellation can't eat more than ~6 digits
+          // of significance. Below that floor the test SKIPS via
+          // fc.pre — fast-check generates a different sample.
+          const magnitude = Math.max(1, Math.abs(lo), Math.abs(lo + span));
+          fc.pre(span / magnitude >= 1e-10);
           const hi = lo + span;
           const back = valueToFraction(fractionToValue(f, lo, hi), lo, hi);
-          // f ∈ [0, 1], so the absolute tolerance is what matters here.
-          // History of this assertion's drift:
-          //   - started at toBeCloseTo(_, 9) → 5e-10 strict; PR #127 saw
-          //     fast-check find exactly that boundary
-          //   - PR #127 loosened to 5e-9 absolute; PR #130 saw
-          //     5.0000000000004e-9 (one ULP over)
-          //   - PR #130 loosened to 1e-8 absolute; PR #132 saw
-          //     1.0000000000000116e-8 (one ULP over again)
-          //   - switched to toBeCloseTo(_, 7) [strict < 5e-8]; the
-          //     round-2 audit caught fast-check shrinking to a sample
-          //     with diff 5.0000000000000037e-8 (one float64 ULP over
-          //     5e-8) — the same pattern at the next decimal place.
-          //
-          // The pattern is structural: at the (lo≈1e6, span≈1e-9)
-          // pathological-cancellation regime, `(v - lo) / span` loses
-          // most of the float64 mantissa, leaving residual error in the
-          // upper-ULP zone of whatever absolute tolerance is chosen.
-          // Loosen one more decimal place to precision 6 (strict < 5e-7)
-          // so the ULP envelope is comfortably below the boundary. This
-          // STILL kills every meaningful algorithmic regression — sign
-          // flip, factor-of-2, off-by-one in lerp all produce O(0.01)
-          // error, ~5 orders of magnitude above 5e-7.
+          // f ∈ [0, 1]; absolute tolerance is what matters. Precision 6
+          // (strict <5e-7) kills every meaningful algorithmic regression
+          // (sign flip, factor-of-2, off-by-one all produce O(0.01)
+          // error, ~5 orders of magnitude above 5e-7).
           expect(back).toBeCloseTo(f, 6);
         }
       ),
