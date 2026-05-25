@@ -53,6 +53,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     // Output has exactly 3 components per point.
     expect(result.pointCount).toBe(4);
     expect(result.positions.length).toBe(4 * 3);
+    expect(result.ndim).toBe(3);
     // The first point projects [0,0,0] → [0,0,0]; the second [1,2,3].
     expect(Array.from(result.positions.slice(0, 6))).toEqual([0, 0, 0, 1, 2, 3]);
   });
@@ -65,6 +66,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
 
     expect(result.pointCount).toBe(3);
     expect(result.positions.length).toBe(3 * 3);
+    expect(result.ndim).toBe(4);
     // 4D → 3D extraction with displayDims [0,1,2]: t dimension is dropped.
     expect(Array.from(result.positions)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
@@ -81,6 +83,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const result = projectPointsTo3D(positions, null, null, null, viewState5D, ranges, makeContext());
 
     expect(result.pointCount).toBe(2);
+    expect(result.ndim).toBe(5);
     // Point 1: positions[0,2,4] = [10, 30, 50]; point 2: positions[5,7,9] = [60, 80, 100].
     expect(Array.from(result.positions)).toEqual([10, 30, 50, 60, 80, 100]);
   });
@@ -96,6 +99,11 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const result = projectPointsTo3D(positions, null, null, null, viewState3D, ranges, ctx);
     expect(result.pointCount).toBe(0);
     expect(result.positions.length).toBe(0);
+    // The contract under test: ndim flows from chunkIndex.metadata.ndim
+    // when positions is empty. A mutant in projection.ts that returned a
+    // hardcoded 3 instead of chunkIndex?.metadata.ndim would survive
+    // without this assertion.
+    expect(result.ndim).toBe(7);
   });
 
   it('positions.length not divisible by totalPoints throws fast (MED-14)', () => {
