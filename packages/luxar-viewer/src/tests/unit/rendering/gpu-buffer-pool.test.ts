@@ -193,12 +193,12 @@ describe('GPUBufferPool', () => {
       // semantic per-instance accessors so the test works regardless
       // of whether the underlying storage is standalone or interleaved.
       for (let i = 0; i < 3; i++) {
-        expect(radAttr.getX(i)).toBeCloseTo(0.5);
-        expect(sharpAttr.getX(i)).toBeCloseTo(2.0);
+        expect(radAttr.getX(i)).toBeCloseTo(0.5, 5);
+        expect(sharpAttr.getX(i)).toBeCloseTo(2.0, 5);
         // White default color (R, G, B = 1.0).
-        expect(colAttr.getX(i)).toBeCloseTo(1.0);
-        expect(colAttr.getY(i)).toBeCloseTo(1.0);
-        expect(colAttr.getZ(i)).toBeCloseTo(1.0);
+        expect(colAttr.getX(i)).toBeCloseTo(1.0, 5);
+        expect(colAttr.getY(i)).toBeCloseTo(1.0, 5);
+        expect(colAttr.getZ(i)).toBeCloseTo(1.0, 5);
       }
     });
 
@@ -229,10 +229,10 @@ describe('GPUBufferPool', () => {
       // Defaults overwrite values left in the reused buffer from `full`.
       // Semantic accessors handle the interleaved storage transparently.
       for (let i = 0; i < 4; i++) {
-        expect(radAttr.getX(i)).toBeCloseTo(0.5);
-        expect(colAttr.getX(i)).toBeCloseTo(1.0);
-        expect(colAttr.getY(i)).toBeCloseTo(1.0);
-        expect(colAttr.getZ(i)).toBeCloseTo(1.0);
+        expect(radAttr.getX(i)).toBeCloseTo(0.5, 5);
+        expect(colAttr.getX(i)).toBeCloseTo(1.0, 5);
+        expect(colAttr.getY(i)).toBeCloseTo(1.0, 5);
+        expect(colAttr.getZ(i)).toBeCloseTo(1.0, 5);
       }
     });
   });

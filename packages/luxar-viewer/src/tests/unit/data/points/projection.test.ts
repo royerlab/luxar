@@ -401,8 +401,8 @@ describe('scalar length validation', () => {
     );
     expect(result.scalars).toBeDefined();
     expect(result.scalars!.length).toBe(3);
-    expect(result.scalars![0]).toBeCloseTo(0.1);
-    expect(result.scalars![2]).toBeCloseTo(0.9);
+    expect(result.scalars![0]).toBeCloseTo(0.1, 5);
+    expect(result.scalars![2]).toBeCloseTo(0.9, 5);
   });
 });
 

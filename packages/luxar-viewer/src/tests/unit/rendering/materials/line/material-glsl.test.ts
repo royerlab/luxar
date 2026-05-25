@@ -45,7 +45,7 @@ describe('LineMaterial', () => {
 
       // Default FOV is 60 degrees in radians
       const expectedFOV = (60 * Math.PI) / 180;
-      expect(material.uniforms.uFOV.value).toBeCloseTo(expectedFOV);
+      expect(material.uniforms.uFOV.value).toBeCloseTo(expectedFOV, 5);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
       expect(material.uniforms.uOpacity.value).toBe(1.0);
 
@@ -67,7 +67,7 @@ describe('LineMaterial', () => {
     it('should accept custom gamma', () => {
       const material = new LineMaterial({ gamma: 2.2 });
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.userData.gamma).toBe(2.2);
     });
 
@@ -200,7 +200,7 @@ describe('LineMaterial', () => {
 
       material.updateGamma(2.2);
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.userData.gamma).toBe(2.2);
     });
 
@@ -209,7 +209,7 @@ describe('LineMaterial', () => {
 
       material.updateGamma(0);
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001, 5);
       expect(material.userData.gamma).toBe(0.001);
     });
 
@@ -222,7 +222,7 @@ describe('LineMaterial', () => {
       const cloned = original.clone();
 
       expect(cloned.uniforms.uOpacity.value).toBe(0.5);
-      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(cloned.userData.gamma).toBe(2.2);
 
       // Ensure it's a new instance
@@ -488,7 +488,7 @@ describe('createInstancedLinesMesh', () => {
     const material = new LineMaterial();
     const mesh = createInstancedLinesMesh(config, material);
     const geometry = mesh.geometry;
-    expect(geometry.boundingBox!.min.x).toBeCloseTo(0);
-    expect(geometry.boundingBox!.max.x).toBeCloseTo(10);
+    expect(geometry.boundingBox!.min.x).toBeCloseTo(0, 5);
+    expect(geometry.boundingBox!.max.x).toBeCloseTo(10, 5);
   });
 });

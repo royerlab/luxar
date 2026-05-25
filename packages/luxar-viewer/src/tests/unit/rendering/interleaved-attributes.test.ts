@@ -165,9 +165,9 @@ describe('widenToFloat32', () => {
 
   it('divides by `divisor` to preserve the normalized [0,1] range', () => {
     const out = widenToFloat32(new Uint8Array([0, 128, 255]), 255);
-    expect(out[0]).toBeCloseTo(0.0);
-    expect(out[1]).toBeCloseTo(128 / 255);
-    expect(out[2]).toBeCloseTo(1.0);
+    expect(out[0]).toBeCloseTo(0.0, 5);
+    expect(out[1]).toBeCloseTo(128 / 255, 5);
+    expect(out[2]).toBeCloseTo(1.0, 5);
   });
 
   it('widens Uint16 sources as well', () => {

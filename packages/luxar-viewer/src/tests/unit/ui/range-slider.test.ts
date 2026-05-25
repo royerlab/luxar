@@ -232,7 +232,7 @@ describe('RangeSlider — bound wheel adjustment', () => {
     lowBound.dispatchEvent(evt);
 
     const { low } = getInputs();
-    expect(parseFloat(low.min)).toBeCloseTo(1);
+    expect(parseFloat(low.min)).toBeCloseTo(1, 5);
     expect(onBoundsChange).toHaveBeenCalled();
     void slider; // keep ref
   });
@@ -243,7 +243,7 @@ describe('RangeSlider — bound wheel adjustment', () => {
     const evt = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });
     highBound.dispatchEvent(evt);
     const { low } = getInputs();
-    expect(parseFloat(low.max)).toBeCloseTo(9);
+    expect(parseFloat(low.max)).toBeCloseTo(9, 5);
     expect(onBoundsChange).toHaveBeenCalled();
   });
 
@@ -259,7 +259,7 @@ describe('RangeSlider — bound wheel adjustment', () => {
     lowBound.dispatchEvent(evt);
     const { low } = getInputs();
     // Fine = step/10 = 0.1
-    expect(parseFloat(low.min)).toBeCloseTo(0.1);
+    expect(parseFloat(low.min)).toBeCloseTo(0.1, 5);
   });
 
   it('clamps min ≤ max when the bound is dragged past the other side', () => {
@@ -296,7 +296,7 @@ describe('RangeSlider — bound click-to-edit', () => {
     editor.value = '-0.5';
     editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     const { low } = getInputs();
-    expect(parseFloat(low.min)).toBeCloseTo(-0.5);
+    expect(parseFloat(low.min)).toBeCloseTo(-0.5, 5);
     expect(onBoundsChange).toHaveBeenCalledWith(-0.5, 1);
     // Editor is gone, label restored.
     expect(host.querySelector('.luxar-range-slider__bound-input')).toBeNull();

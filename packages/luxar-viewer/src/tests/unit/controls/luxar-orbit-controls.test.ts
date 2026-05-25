@@ -394,8 +394,8 @@ describe('LuxarOrbitControls', () => {
       const point = projectOnTrackball(0, 0, RADIUS);
       // At center: z should be maximum (top of sphere)
       expect(point.z).toBeGreaterThan(0.9);
-      expect(point.x).toBeCloseTo(0);
-      expect(point.y).toBeCloseTo(0);
+      expect(point.x).toBeCloseTo(0, 5);
+      expect(point.y).toBeCloseTo(0, 5);
     });
 
     it('should project edge of screen to hyperboloid', () => {
@@ -432,7 +432,7 @@ describe('LuxarOrbitControls', () => {
       // Move camera by panning
       (controls as any).pan(200, 100);
       controls.update();
-      expect(camera.position.x).not.toBeCloseTo(savedPos.x);
+      expect(camera.position.x).not.toBeCloseTo(savedPos.x, 5);
 
       // Reset — restoration is deterministic (saved state is copied verbatim),
       // so Float32 precision (~1e-5) is the appropriate tolerance, not the
