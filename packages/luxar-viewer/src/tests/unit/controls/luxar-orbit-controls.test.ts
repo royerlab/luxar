@@ -49,17 +49,21 @@ describe('LuxarOrbitControls', () => {
     it('should initialize from camera position', () => {
       controls = new LuxarOrbitControls(camera, domElement);
 
-      // Camera is at (0,0,5) looking at origin → distance = 5
-      expect(controls.target.x).toBeCloseTo(0);
-      expect(controls.target.y).toBeCloseTo(0);
-      expect(controls.target.z).toBeCloseTo(0);
+      // Camera is at (0,0,5) looking at origin → distance = 5. Target is
+      // initialised to exact origin (not derived from float arithmetic);
+      // use toBe for exact equality so a regression that adds even a
+      // sub-ULP perturbation is caught.
+      expect(controls.target.x).toBe(0);
+      expect(controls.target.y).toBe(0);
+      expect(controls.target.z).toBe(0);
     });
 
     it('should apply default configuration', () => {
       controls = new LuxarOrbitControls(camera, domElement);
 
       expect(controls.enableDamping).toBe(true);
-      expect(controls.dampingFactor).toBeCloseTo(0.25);
+      // Default config values are stored verbatim — no float arithmetic.
+      expect(controls.dampingFactor).toBe(0.25);
       expect(controls.enableRotate).toBe(true);
       expect(controls.enablePan).toBe(true);
       expect(controls.enableZoom).toBe(true);
@@ -75,11 +79,12 @@ describe('LuxarOrbitControls', () => {
         maxDistance: 100,
       });
 
-      expect(controls.dampingFactor).toBeCloseTo(0.1);
-      expect(controls.rotateSpeed).toBeCloseTo(2.0);
+      // Custom config values are stored verbatim — no float arithmetic.
+      expect(controls.dampingFactor).toBe(0.1);
+      expect(controls.rotateSpeed).toBe(2.0);
       expect(controls.enableRotate).toBe(false);
-      expect(controls.minDistance).toBeCloseTo(1);
-      expect(controls.maxDistance).toBeCloseTo(100);
+      expect(controls.minDistance).toBe(1);
+      expect(controls.maxDistance).toBe(100);
     });
   });
 
@@ -336,9 +341,11 @@ describe('LuxarOrbitControls', () => {
       const posBefore = camera.position.clone();
       controls.update();
 
-      expect(camera.position.x).toBeCloseTo(posBefore.x);
-      expect(camera.position.y).toBeCloseTo(posBefore.y);
-      expect(camera.position.z).toBeCloseTo(posBefore.z);
+      // With damping disabled and autoRotate off, the second update is a
+      // no-op — position must be EXACTLY preserved, not "approximately."
+      expect(camera.position.x).toBe(posBefore.x);
+      expect(camera.position.y).toBe(posBefore.y);
+      expect(camera.position.z).toBe(posBefore.z);
     });
   });
 

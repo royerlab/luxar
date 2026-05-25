@@ -14,15 +14,18 @@ vi.mock('../../../themes/theme-manager', () => ({
   },
 }));
 
-// Create mock objects
+// Create mock objects. IMPORTANT: settings.{fov,near,far} are the
+// source-of-truth (per viewer-state-capture.ts:55-58); camera.{fov,near,far}
+// are intentionally set to DIFFERENT values so a mutant that swapped the
+// source from settings → camera would be caught by the existing assertions.
 function createMockSceneManager() {
   return {
     camera: {
       position: { x: 1, y: 2, z: 3 },
       up: { x: 0, y: 1, z: 0 },
-      fov: 47,
-      near: 0.1,
-      far: 1000,
+      fov: 99, // distinct from settings.fov (47) — pinpoints source-of-truth
+      near: 99, // distinct from settings.near (0.1)
+      far: 99, // distinct from settings.far (1000)
     },
     scene: {
       background: {
