@@ -358,19 +358,17 @@ describe('DimensionAnimationManager', () => {
   });
 
   describe('error handling', () => {
-    it('returns a boolean for an out-of-range dimension index (no crash) and isAnimating reflects play result', () => {
-      // [scene.md/W7][P2] Previously asserted only `result.toBeDefined()`,
-      // which is trivially true for any boolean. The current implementation
-      // doesn't validate dimIndex bounds — it eagerly creates state and
-      // returns true. Pin the concrete contract: result is a boolean, and
-      // isAnimating() returns the same truthy value (state was created).
-      // If a future fix adds bounds validation, this test should be
-      // updated to assert (false, no callback registration).
+    it('play() with out-of-range dimIndex eagerly creates state and returns true; isAnimating agrees', () => {
+      // Pins current behaviour: play() does not validate dimIndex bounds
+      // — it creates state and returns true. If a future fix adds bounds
+      // validation, this test should be updated to assert (false, no
+      // callback registration). Pinning the exact boolean (not just
+      // typeof) is required so a future bounds-check that returns false
+      // is caught by this test failing.
       // OOS: bounds validation on dimIndex is a production-code concern.
       const result = manager.play(99);
-      expect(typeof result).toBe('boolean');
-      // Whatever play() returned, isAnimating must agree with it.
-      expect(manager.isAnimating(99)).toBe(result);
+      expect(result).toBe(true);
+      expect(manager.isAnimating(99)).toBe(true);
     });
 
     it('should pause animation on dimension value error', () => {
