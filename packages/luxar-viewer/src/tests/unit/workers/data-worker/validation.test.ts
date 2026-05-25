@@ -605,6 +605,31 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/sharpness too short/);
   });
 
+  it('projectLinesTo3D rejects scalars shorter than max-vertex+1', async () => {
+    // [workers OOS] Three-geometry symmetry: Points + GSplats validate
+    // their own scalars; this pins Lines must too. Pre-fix, a short
+    // scalars array reached `interpolate_scalars_batch` and panicked WASM
+    // (or returned garbage in the TS fallback).
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(30),
+        segments: new Uint32Array([0, 1, 2, 3]),
+        widths: new Float32Array(4),
+        colors: null,
+        sharpness: null,
+        scalars: new Float32Array(2), // need 4 (max-vertex=3 → minVertices=4)
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
+        ndim: 3,
+        segmentCount: 2,
+      })
+    ).rejects.toThrow(/scalars too short/);
+  });
+
   it('projectPointsTo3D rejects effectiveRadiusConfig.spatialExtendDims shorter than ndim', async () => {
     const mod = await loadWorker();
     await expect(
