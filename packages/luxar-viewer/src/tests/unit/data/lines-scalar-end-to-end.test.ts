@@ -95,7 +95,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
     acc.markScalarsLoaded();
     data = acc.getData(1, 1);
     expect(data.scalars).toBeInstanceOf(Float32Array);
-    expect(data.scalars![0]).toBeCloseTo(0.5);
+    expect(data.scalars![0]).toBeCloseTo(0.5, 5);
   });
 
   it('flips hasScalars on fill() with scalars', () => {
@@ -108,7 +108,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
     });
     const data = acc.getData(1, 1);
     expect(data.scalars).toBeInstanceOf(Float32Array);
-    expect(data.scalars![0]).toBeCloseTo(0.7);
+    expect(data.scalars![0]).toBeCloseTo(0.7, 5);
   });
 
   it('returns scalars: undefined when no scalars were filled', () => {
@@ -132,7 +132,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
     });
     acc.ensureCapacity(100);
     expect(acc.getScalarBuffer().length).toBeGreaterThanOrEqual(100);
-    expect(acc.getScalarBuffer()[0]).toBeCloseTo(0.25);
+    expect(acc.getScalarBuffer()[0]).toBeCloseTo(0.25, 5);
   });
 
   it('dispose() resets scalar state', () => {
@@ -167,8 +167,8 @@ describe('projectLinesTo3D scalar interpolation', () => {
     );
     expect(out.startScalars).toBeDefined();
     expect(out.endScalars).toBeDefined();
-    expect(out.startScalars![0]).toBeCloseTo(0.0);
-    expect(out.endScalars![0]).toBeCloseTo(1.0);
+    expect(out.startScalars![0]).toBeCloseTo(0.0, 5);
+    expect(out.endScalars![0]).toBeCloseTo(1.0, 5);
   });
 
   it('omits scalars from output when input has no scalars', () => {
@@ -235,8 +235,8 @@ describe('projectLinesTo3D scalar interpolation', () => {
     expect(out.startScalars).toBeInstanceOf(Float32Array);
     expect(out.endScalars).toBeInstanceOf(Float32Array);
     // Unclipped, t1=0 ⇒ start = scalar[0] = 64, t2=1 ⇒ end = scalar[1] = 192.
-    expect(out.startScalars![0]).toBeCloseTo(64);
-    expect(out.endScalars![0]).toBeCloseTo(192);
+    expect(out.startScalars![0]).toBeCloseTo(64, 5);
+    expect(out.endScalars![0]).toBeCloseTo(192, 5);
   });
 });
 
@@ -290,8 +290,8 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     // the first float of the stride (not necessarily this attribute's
     // first value). Use the semantic `getX(i)` API instead.
     const startAttr = g.getAttribute('aStartScalar');
-    expect(startAttr.getX(0)).toBeCloseTo(0.1);
-    expect(startAttr.getX(1)).toBeCloseTo(0.9);
+    expect(startAttr.getX(0)).toBeCloseTo(0.1, 5);
+    expect(startAttr.getX(1)).toBeCloseTo(0.9, 5);
   });
 
   it('growLinesGeometry preserves scalar attribute contents on resize', () => {
@@ -341,10 +341,10 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     expect(endCapacityAfter).toBeGreaterThan(endCapacityBefore);
     // Preserved contents at indices [0, 1] — semantic accessors handle
     // the new strided storage transparently.
-    expect(startAfter.getX(0)).toBeCloseTo(0.25);
-    expect(startAfter.getX(1)).toBeCloseTo(0.75);
-    expect(endAfter.getX(0)).toBeCloseTo(0.5);
-    expect(endAfter.getX(1)).toBeCloseTo(1.0);
+    expect(startAfter.getX(0)).toBeCloseTo(0.25, 5);
+    expect(startAfter.getX(1)).toBeCloseTo(0.75, 5);
+    expect(endAfter.getX(0)).toBeCloseTo(0.5, 5);
+    expect(endAfter.getX(1)).toBeCloseTo(1.0, 5);
   });
 
   it('reuses scalar attributes on subsequent commits', () => {
@@ -371,7 +371,7 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     pool.updateLinesGeometry(g, make(0.5, 0.6), 1);
     const attr2 = g.getAttribute('aStartScalar') as THREE.InterleavedBufferAttribute;
     expect(attr2).toBe(attr1); // same view instance — interleaved buffer reused
-    expect(attr2.getX(0)).toBeCloseTo(0.5);
+    expect(attr2.getX(0)).toBeCloseTo(0.5, 5);
   });
 });
 
@@ -407,7 +407,7 @@ describe('line-geometry mesh creation/update', () => {
     const startAttr = mesh.geometry.getAttribute('aStartScalar');
     // Pooled / standalone line attributes are now interleaved views —
     // use `getX(i)` for semantic per-instance reads.
-    expect(startAttr.getX(0)).toBeCloseTo(0.25);
+    expect(startAttr.getX(0)).toBeCloseTo(0.25, 5);
   });
 });
 

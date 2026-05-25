@@ -278,7 +278,7 @@ describe('distance3D', () => {
   it('should calculate Euclidean distance', () => {
     expect(distance3D([0, 0, 0], [1, 0, 0])).toBe(1);
     expect(distance3D([0, 0, 0], [3, 4, 0])).toBe(5); // 3-4-5 triangle
-    expect(distance3D([0, 0, 0], [1, 1, 1])).toBeCloseTo(Math.sqrt(3));
+    expect(distance3D([0, 0, 0], [1, 1, 1])).toBeCloseTo(Math.sqrt(3), 5);
   });
 
   it('should handle negative coordinates', () => {

@@ -22,14 +22,14 @@ describe('composeAttrs', () => {
       { opacity: 0.5, intensity: 2.0, gamma: 1.2 },
       { opacity: 0.5, intensity: 3.0, gamma: 1.5 },
     ]);
-    expect(e.opacity).toBeCloseTo(0.25);
-    expect(e.intensity).toBeCloseTo(6.0);
-    expect(e.gamma).toBeCloseTo(1.8);
+    expect(e.opacity).toBeCloseTo(0.25, 5);
+    expect(e.intensity).toBeCloseTo(6.0, 5);
+    expect(e.gamma).toBeCloseTo(1.8, 5);
   });
 
   it('sums offsets through the chain', () => {
     const e = composeAttrs([{ offset: 0.1 }, { offset: -0.05 }, { offset: 0.2 }]);
-    expect(e.offset).toBeCloseTo(0.25);
+    expect(e.offset).toBeCloseTo(0.25, 5);
   });
 
   it('uses nearest-set blending_mode (later overrides earlier)', () => {
@@ -55,7 +55,7 @@ describe('composeAttrs', () => {
 
   it('treats unset fields as identity (not 0)', () => {
     const e = composeAttrs([{ opacity: 0.5 }, {}]);
-    expect(e.opacity).toBeCloseTo(0.5);
+    expect(e.opacity).toBeCloseTo(0.5, 5);
     expect(e.intensity).toBe(1);
     expect(e.offset).toBe(0);
   });
@@ -94,9 +94,9 @@ describe('collectAncestorAttrs / getEffectiveAttrs', () => {
 
   it('composes an effective opacity of 0.25 for a 0.5×0.5 chain', () => {
     const e = getEffectiveAttrs(root, 'grp/pts');
-    expect(e.opacity).toBeCloseTo(0.25);
-    expect(e.intensity).toBeCloseTo(2.0);
-    expect(e.offset).toBeCloseTo(0.1);
+    expect(e.opacity).toBeCloseTo(0.25, 5);
+    expect(e.intensity).toBeCloseTo(2.0, 5);
+    expect(e.offset).toBeCloseTo(0.1, 5);
   });
 
   it('returns identity for a path that does not exist', () => {
@@ -153,7 +153,7 @@ describe('collectAncestorAttrs / getEffectiveAttrs', () => {
 
     it('composes effective opacity of 0.25 for slash-formatted paths', () => {
       const e = getEffectiveAttrs(slashRoot, '/CompositeLayer/GreenPart');
-      expect(e.opacity).toBeCloseTo(0.25);
+      expect(e.opacity).toBeCloseTo(0.25, 5);
     });
 
     it('returns identity for an unknown slash path', () => {

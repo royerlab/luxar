@@ -61,7 +61,7 @@ describe('projectLinesTo3D', () => {
 
     // Segment length for first segment
     const expectedLength = Math.sqrt(10 * 10 * 3);
-    expect(result.segmentLengths[0]).toBeCloseTo(expectedLength);
+    expect(result.segmentLengths[0]).toBeCloseTo(expectedLength, 5);
 
     // No clipping
     expect(result.startClipped[0]).toBe(0);

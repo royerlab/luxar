@@ -62,7 +62,7 @@ describe('accumulator scalar buffer', () => {
     });
     const data = acc.getData(1);
     expect(data.scalars).toBeInstanceOf(Float32Array);
-    expect(data.scalars![0]).toBeCloseTo(0.5);
+    expect(data.scalars![0]).toBeCloseTo(0.5, 5);
     expect(data.metadata.dtypes?.scalars).toBe('float32');
   });
 
@@ -128,8 +128,8 @@ describe('projectPointsTo3D scalar pass-through', () => {
     );
     expect(result.scalars).toBeDefined();
     expect(result.scalars!.length).toBe(3);
-    expect(result.scalars![0]).toBeCloseTo(0.1);
-    expect(result.scalars![2]).toBeCloseTo(0.9);
+    expect(result.scalars![0]).toBeCloseTo(0.1, 5);
+    expect(result.scalars![2]).toBeCloseTo(0.9, 5);
   });
 
   it('returns scalars: undefined when no scalars supplied', () => {
@@ -282,8 +282,8 @@ describe('GPUBufferPool scalar attribute', () => {
     expect(attr.itemSize).toBe(1);
     // Pooled attributes are now `InterleavedBufferAttribute` views
     // over a shared Float32 buffer — use the semantic `getX(i)` API.
-    expect(attr.getX(0)).toBeCloseTo(0.3);
-    expect(attr.getX(1)).toBeCloseTo(0.7);
+    expect(attr.getX(0)).toBeCloseTo(0.3, 5);
+    expect(attr.getX(1)).toBeCloseTo(0.7, 5);
   });
 
   it('widens Uint8 normalized scalar source to Float32 [0,1] when scalars are Uint8', () => {
@@ -310,7 +310,7 @@ describe('GPUBufferPool scalar attribute', () => {
     const attr = g.getAttribute('aScalar');
     // Stored as Float32 after the widen; semantic value at instance 0
     // is 128 / 255 ≈ 0.502.
-    expect(attr.getX(0)).toBeCloseTo(128 / 255);
+    expect(attr.getX(0)).toBeCloseTo(128 / 255, 5);
   });
 
   it('reuses the same geometry on subsequent acquire when scalar type matches', () => {

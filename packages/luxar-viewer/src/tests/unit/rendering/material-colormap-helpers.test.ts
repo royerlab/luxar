@@ -132,7 +132,7 @@ describe('applyScalarRangeToMaterial', () => {
     );
     applyScalarRangeToMaterial(mat, 0.5, 2.5);
     expect(mat.uniforms.uScalarMin.value).toBe(0.5);
-    expect(mat.uniforms.uScalarScale.value).toBeCloseTo(0.5);
+    expect(mat.uniforms.uScalarScale.value).toBeCloseTo(0.5, 5);
     expect(mat.userData.scalarRange).toEqual([0.5, 2.5]);
   });
 

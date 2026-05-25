@@ -23,7 +23,7 @@ describe('clampGamma', () => {
 
   it('passes valid values through unchanged', () => {
     for (const v of [0.5, 1.0, 2.2, 3.5, 4.99]) {
-      expect(clampGamma(v)).toBeCloseTo(v);
+      expect(clampGamma(v)).toBeCloseTo(v, 5);
     }
   });
 
@@ -165,8 +165,8 @@ describe('liveLayerAttrs', () => {
   it('derives intensity and offset from displayMin/displayMax', () => {
     // For [0, 1]: intensity=1, offset=0 (identity)
     const attrs = liveLayerAttrs(makeLayer({ displayMin: 0, displayMax: 1 }));
-    expect(attrs.intensity).toBeCloseTo(1.0);
-    expect(attrs.offset).toBeCloseTo(0.0);
+    expect(attrs.intensity).toBeCloseTo(1.0, 5);
+    expect(attrs.offset).toBeCloseTo(0.0, 5);
   });
 
   it('produces non-trivial intensity / offset for a [0.2, 0.8] window', () => {
@@ -174,6 +174,6 @@ describe('liveLayerAttrs', () => {
     // Whatever computeUniforms does, the window is narrower than [0, 1] so
     // intensity must scale up and offset must shift.
     expect(attrs.intensity).toBeGreaterThan(1.0);
-    expect(attrs.offset).not.toBeCloseTo(0);
+    expect(attrs.offset).not.toBeCloseTo(0, 5);
   });
 });

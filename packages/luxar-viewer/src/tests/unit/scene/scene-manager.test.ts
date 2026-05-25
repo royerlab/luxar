@@ -738,7 +738,7 @@ describe('SceneManager', () => {
 
       sceneManager.updateSize();
 
-      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600);
+      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600, 5);
     });
 
     it('preserves manual/adaptive DPR override across window resize', () => {

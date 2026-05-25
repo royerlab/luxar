@@ -532,7 +532,7 @@ describe('lazy scalar buffer allocation', () => {
     const data = acc.getData(2);
     expect(data.scalars).toBeInstanceOf(Float32Array);
     expect(data.scalars!.length).toBe(2);
-    expect(data.scalars![1]).toBeCloseTo(0.5);
+    expect(data.scalars![1]).toBeCloseTo(0.5, 5);
   });
 
   it('LinesDataAccumulator: scalar buffer stays empty when no scalars fill', () => {
@@ -562,7 +562,7 @@ describe('lazy scalar buffer allocation', () => {
     });
     const data = acc.getData(1, 1);
     expect(data.scalars).toBeInstanceOf(Float32Array);
-    expect(data.scalars![0]).toBeCloseTo(0.5);
+    expect(data.scalars![0]).toBeCloseTo(0.5, 5);
   });
 });
 
@@ -617,7 +617,7 @@ describe('accumulator growth uses usedCount subarray copy', () => {
     const out = acc.getData(300);
     expect(out.positions[0]).toBe(0);
     expect(out.positions[(300 - 1) * 3]).toBe(299);
-    expect(out.amplitudes[299]).toBeCloseTo(299.5);
+    expect(out.amplitudes[299]).toBeCloseTo(299.5, 5);
   });
 });
 

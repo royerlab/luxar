@@ -236,11 +236,11 @@ describe('setChromaticLensDistortionEnabled', () => {
     expect(mega.setLensDistortion).toHaveBeenCalledTimes(1);
     const arg = (mega.setLensDistortion as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(arg.distortion).toBeInstanceOf(THREE.Vector2);
-    expect(arg.distortion.x).toBeCloseTo(0.05);
-    expect(arg.distortion.y).toBeCloseTo(0.03);
+    expect(arg.distortion.x).toBeCloseTo(0.05, 5);
+    expect(arg.distortion.y).toBeCloseTo(0.03, 5);
     expect(arg.principalPoint).toBeInstanceOf(THREE.Vector2);
     expect(arg.focalLength).toBeInstanceOf(THREE.Vector2);
-    expect(arg.dispersion).toBeCloseTo(0.5);
+    expect(arg.dispersion).toBeCloseTo(0.5, 5);
     expect(arg.skew).toBe(0);
     expect(mega.toggleLensDistortion).toHaveBeenCalledWith(true);
   });
@@ -271,8 +271,8 @@ describe('updateChromaticLensDistortion', () => {
     updateChromaticLensDistortion(mega, { distortionX: 0.5 });
     const arg = (mega.setLensDistortion as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(arg.distortion).toBeInstanceOf(THREE.Vector2);
-    expect(arg.distortion.x).toBeCloseTo(0.5);
-    expect(arg.distortion.y).toBeCloseTo(0.2);
+    expect(arg.distortion.x).toBeCloseTo(0.5, 5);
+    expect(arg.distortion.y).toBeCloseTo(0.2, 5);
     // principalPoint / focalLength NOT touched (no X or Y supplied)
     expect(arg.principalPoint).toBeUndefined();
     expect(arg.focalLength).toBeUndefined();
@@ -316,8 +316,8 @@ describe('getLensDistortionParams', () => {
     // Mutate the returned distortion vector
     params!.distortion.set(99, 99);
     // The live uniform should be unchanged
-    expect((mega.uniforms.uDistortion.value as THREE.Vector2).x).toBeCloseTo(0.1);
-    expect((mega.uniforms.uDistortion.value as THREE.Vector2).y).toBeCloseTo(0.2);
+    expect((mega.uniforms.uDistortion.value as THREE.Vector2).x).toBeCloseTo(0.1, 5);
+    expect((mega.uniforms.uDistortion.value as THREE.Vector2).y).toBeCloseTo(0.2, 5);
   });
 
   it('snapshots scalar fields (skew, focalLength values) when enabled', () => {

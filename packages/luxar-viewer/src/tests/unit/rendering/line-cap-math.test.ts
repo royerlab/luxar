@@ -42,40 +42,40 @@ function capFactor(
 
 describe('line cap math (fragment-side)', () => {
   it('endpoint t=0: 0.5', () => {
-    expect(capFactor(0, 10, 1, false, false)).toBeCloseTo(0.5);
+    expect(capFactor(0, 10, 1, false, false)).toBeCloseTo(0.5, 5);
   });
 
   it('endpoint t=1: 0.5', () => {
-    expect(capFactor(1, 10, 1, false, false)).toBeCloseTo(0.5);
+    expect(capFactor(1, 10, 1, false, false)).toBeCloseTo(0.5, 5);
   });
 
   it('body well past endpoint (t=0.5 of long segment): 1.0', () => {
     // Long segment, narrow width: nearest endpoint is multiple widths away
-    expect(capFactor(0.5, 10, 1, false, false)).toBeCloseTo(1.0);
+    expect(capFactor(0.5, 10, 1, false, false)).toBeCloseTo(1.0, 5);
   });
 
   it('one half-width in: midpoint of ramp (≈0.75)', () => {
     // segmentLength=10, width=1 → at t=0.05, distFromStart=0.5 = 0.5*width
     // capRamp = 0.5; baseCap = 0.5 + 0.5*0.5 = 0.75
-    expect(capFactor(0.05, 10, 1, false, false)).toBeCloseTo(0.75);
+    expect(capFactor(0.05, 10, 1, false, false)).toBeCloseTo(0.75, 5);
   });
 
   it('start endpoint clipped → full intensity at t=0', () => {
-    expect(capFactor(0, 10, 1, true, false)).toBeCloseTo(1.0);
+    expect(capFactor(0, 10, 1, true, false)).toBeCloseTo(1.0, 5);
   });
 
   it('end endpoint clipped → full intensity at t=1', () => {
-    expect(capFactor(1, 10, 1, false, true)).toBeCloseTo(1.0);
+    expect(capFactor(1, 10, 1, false, true)).toBeCloseTo(1.0, 5);
   });
 
   it('zero width (degenerate) → cap is 1.0 (no ramp)', () => {
-    expect(capFactor(0.5, 10, 0, false, false)).toBeCloseTo(1.0);
+    expect(capFactor(0.5, 10, 0, false, false)).toBeCloseTo(1.0, 5);
   });
 
   it('short segment (length < 2*width): body never quite reaches 1.0', () => {
     // segmentLength=1, width=1 → max distToNearest = 0.5 (at t=0.5)
     // capRamp = 0.5, baseCap = 0.75
-    expect(capFactor(0.5, 1, 1, false, false)).toBeCloseTo(0.75);
+    expect(capFactor(0.5, 1, 1, false, false)).toBeCloseTo(0.75, 5);
   });
 
   it('cap is symmetric around t=0.5', () => {

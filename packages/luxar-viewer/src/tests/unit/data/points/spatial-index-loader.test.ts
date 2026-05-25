@@ -823,8 +823,8 @@ describe('PointsSpatialIndexLoader', () => {
       const result = await loader.loadPoints(viewState);
 
       expect(result.colors).toBeInstanceOf(Float32Array);
-      expect(result.colors![0]).toBeCloseTo(2.5);
-      expect(result.colors![4]).toBeCloseTo(1.8);
+      expect(result.colors![0]).toBeCloseTo(2.5, 5);
+      expect(result.colors![4]).toBeCloseTo(1.8, 5);
     });
 
     it('should restore original_dtype for encoded arrays', async () => {

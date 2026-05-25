@@ -300,7 +300,7 @@ describe('GSplatsProgressiveLoader', () => {
       lodC.updateView.mockResolvedValue(makeLodData(25, 3, { color: 'float32' }));
       const result = await loader.loadGSplats(baseViewState);
       expect(result.colors).toBeInstanceOf(Float32Array);
-      expect(result.colors?.[300]).toBeCloseTo(1.0);
+      expect(result.colors?.[300]).toBeCloseTo(1.0, 5);
     });
 
     it('keeps colors null when no LOD has colors', async () => {
