@@ -221,14 +221,38 @@ describe('LinesDataAccumulator', () => {
   });
 
   it('should grow both vertex and segment capacities (estimated)', () => {
-    // ensureCapacity with only vertex count estimates segments
+    // [integration.md OOS1] ensureCapacity with only vertex count now
+    // defaults segments to vertexCount (over-estimates for typical
+    // 1.5:1 meshes, exact for particle tracks). Previously the fallback
+    // was ceil(vertexCount/1.5) which UNDER-estimated for particle
+    // tracks and could silently truncate writes.
     // Initial capacity: 1000 vertices, 500 segments
     const grew = accumulator.ensureCapacity(1200); // 1200 vertices (exceeds 1000)
     expect(grew).toBe(true);
     // Vertices: 1000 → 1500 (grew)
-    // Segments: estimated as ceil(1200/1.5) = 800, exceeds 500 → grows
+    // Segments: estimated as vertexCount = 1200, exceeds 500 → grows to
+    // at least 1200. Under the old estimate it would have been only
+    // ceil(1200/1.5) = 800 — a particle-track caller relying on this
+    // fallback would have written past 800 into uninitialized buffer.
     const stats = accumulator.getStats();
-    expect(stats.capacity).toBeGreaterThanOrEqual(800); // segment capacity
+    expect(stats.capacity).toBeGreaterThanOrEqual(1200); // segment capacity
+  });
+
+  it('[integration.md OOS1] particle-track callback that OMITS segmentCount still has enough room', () => {
+    // The audit's "may be too small!" comment was the foot-gun: a caller
+    // that built a particle track (N vertices, N-1 segments) and forgot
+    // to pass segmentCount used to get only ceil(N/1.5) segment slots,
+    // truncating segment writes past that boundary. With the new
+    // vertexCount fallback, an N-vertex particle track always has at
+    // least N segment slots available — exact-fit-plus-one.
+    const acc = new LinesDataAccumulator(64, 32, 3);
+    // Caller knows there are 100 vertices but omits the segmentCount arg
+    // (perhaps it's not yet computed at allocation time).
+    acc.ensureCapacity(100);
+    const stats = acc.getStats();
+    // Pre-fix: capacity would have been only ceil(100/1.5) = 67.
+    // Post-fix: capacity ≥ 100 (the vertexCount fallback).
+    expect(stats.capacity).toBeGreaterThanOrEqual(100);
   });
 
   it('should use explicit segmentCount when provided', () => {
