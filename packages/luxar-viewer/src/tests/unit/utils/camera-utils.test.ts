@@ -40,7 +40,7 @@ describe('camera-utils', () => {
   describe('getCameraFovRadians', () => {
     it('should convert perspective FOV from degrees to radians', () => {
       const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
-      expect(getCameraFovRadians(cam)).toBeCloseTo(Math.PI / 2);
+      expect(getCameraFovRadians(cam)).toBeCloseTo(Math.PI / 2, 5);
     });
 
     it('should return 0 for orthographic camera', () => {
@@ -50,7 +50,7 @@ describe('camera-utils', () => {
 
     it('should handle 47-degree FOV (default)', () => {
       const cam = new THREE.PerspectiveCamera(47, 1, 0.1, 100);
-      expect(getCameraFovRadians(cam)).toBeCloseTo((47 * Math.PI) / 180);
+      expect(getCameraFovRadians(cam)).toBeCloseTo((47 * Math.PI) / 180, 5);
     });
   });
 
@@ -58,7 +58,7 @@ describe('camera-utils', () => {
     it('should update perspective camera aspect ratio', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       updateCameraAspect(cam, 1920, 1080);
-      expect(cam.aspect).toBeCloseTo(1920 / 1080);
+      expect(cam.aspect).toBeCloseTo(1920 / 1080, 5);
     });
 
     it('should scale orthographic frustum width while preserving height', () => {
@@ -67,31 +67,31 @@ describe('camera-utils', () => {
       updateCameraAspect(cam, 1920, 1080);
 
       // Height should be preserved
-      expect(cam.top - cam.bottom).toBeCloseTo(10);
+      expect(cam.top - cam.bottom).toBeCloseTo(10, 5);
       // Width should be adjusted for 16:9 aspect
       const expectedHalfWidth = 5 * (1920 / 1080);
-      expect(cam.left).toBeCloseTo(-expectedHalfWidth);
-      expect(cam.right).toBeCloseTo(expectedHalfWidth);
+      expect(cam.left).toBeCloseTo(-expectedHalfWidth, 5);
+      expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
     it('should handle square viewport for orthographic camera', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 800, 800);
 
-      expect(cam.left).toBeCloseTo(-5);
-      expect(cam.right).toBeCloseTo(5);
-      expect(cam.top).toBeCloseTo(5);
-      expect(cam.bottom).toBeCloseTo(-5);
+      expect(cam.left).toBeCloseTo(-5, 5);
+      expect(cam.right).toBeCloseTo(5, 5);
+      expect(cam.top).toBeCloseTo(5, 5);
+      expect(cam.bottom).toBeCloseTo(-5, 5);
     });
 
     it('should handle portrait viewport for orthographic camera', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 600, 1200);
 
-      expect(cam.top - cam.bottom).toBeCloseTo(10);
+      expect(cam.top - cam.bottom).toBeCloseTo(10, 5);
       const expectedHalfWidth = 5 * (600 / 1200);
-      expect(cam.left).toBeCloseTo(-expectedHalfWidth);
-      expect(cam.right).toBeCloseTo(expectedHalfWidth);
+      expect(cam.left).toBeCloseTo(-expectedHalfWidth, 5);
+      expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
     it('should call updateProjectionMatrix for both camera types', () => {
@@ -115,26 +115,26 @@ describe('camera-utils', () => {
     it('should return frustum height at default zoom (1.0)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       // top - bottom = 5 - (-5) = 10, zoom = 1
-      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10);
+      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
     it('should account for zoom level', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 2;
       // Effective height = (top - bottom) / zoom = 10 / 2 = 5
-      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(5);
+      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(5, 5);
     });
 
     it('should handle asymmetric frustum', () => {
       const cam = new THREE.OrthographicCamera(-3, 7, 8, -2, 0.1, 100);
       // top - bottom = 8 - (-2) = 10, zoom = 1
-      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10);
+      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
     it('should handle high zoom', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 100;
-      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(0.1);
+      expect(getOrthoFrustumHeight(cam)).toBeCloseTo(0.1, 5);
     });
   });
 });
