@@ -36,6 +36,21 @@ function makeGSplatsMesh(splatCount: number, opts: { spatialIndex?: boolean } = 
   return mesh;
 }
 
+function makeLinesMesh(
+  segmentCount: number,
+  opts: { spatialIndex?: boolean; instanceCount?: number } = {}
+): THREE.Mesh {
+  const geom = new THREE.InstancedBufferGeometry();
+  geom.instanceCount = opts.instanceCount ?? segmentCount;
+  const mesh = new THREE.Mesh(geom);
+  mesh.userData = {
+    nodeType: 'lines',
+    visibleSegmentCount: segmentCount,
+    ...(opts.spatialIndex ? { attrs: { has_spatial_index: true } } : {}),
+  };
+  return mesh;
+}
+
 describe('computeSceneStats', () => {
   it('returns null for a scene without a traverse method', () => {
     expect(computeSceneStats(null)).toBeNull();
@@ -49,6 +64,8 @@ describe('computeSceneStats', () => {
     expect(computeSceneStats(scene)).toEqual({
       pointsObjects: 0,
       totalPoints: 0,
+      linesObjects: 0,
+      totalSegments: 0,
       gsplatsObjects: 0,
       totalGSplats: 0,
       spatialIndexed: 0,
@@ -110,29 +127,77 @@ describe('computeSceneStats', () => {
     expect(stats.totalGSplats).toBe(0);
   });
 
-  it('counts spatialIndexed across both points and gsplats', () => {
+  // data.md OOS: three-geometry symmetry — Lines were entirely missing
+  // from SceneStats. These tests pin the new linesObjects + totalSegments
+  // contract parallel to Points / GSplats.
+  it('counts lines meshes and sums visible instance counts', () => {
+    const scene = new THREE.Group();
+    scene.add(makeLinesMesh(80)); // 80 segments
+    // Simulate over-allocated pooled geometry: instanceCount drawn (60)
+    // is less than the userData fallback (200).
+    scene.add(makeLinesMesh(200, { instanceCount: 60 }));
+
+    const stats = computeSceneStats(scene)!;
+    expect(stats.linesObjects).toBe(2);
+    // Both meshes have isInstancedBufferGeometry, so totalSegments uses
+    // instanceCount (80 + 60 = 140), NOT the userData fallback.
+    expect(stats.totalSegments).toBe(140);
+  });
+
+  it('falls back to visibleSegmentCount when geometry is not instanced (test synth path)', () => {
+    const scene = new THREE.Group();
+    // Synthesize a Lines mesh with a plain BufferGeometry to exercise the
+    // fallback branch — tests sometimes do this to avoid full GPU setup.
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry());
+    mesh.userData = { nodeType: 'lines', visibleSegmentCount: 42 };
+    scene.add(mesh);
+
+    const stats = computeSceneStats(scene)!;
+    expect(stats.linesObjects).toBe(1);
+    expect(stats.totalSegments).toBe(42);
+  });
+
+  it('counts a lines mesh with neither instanceCount nor visibleSegmentCount as contributing 0', () => {
+    const scene = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry());
+    mesh.userData = { nodeType: 'lines' }; // intentionally bare
+    scene.add(mesh);
+
+    const stats = computeSceneStats(scene)!;
+    expect(stats.linesObjects).toBe(1);
+    expect(stats.totalSegments).toBe(0);
+  });
+
+  it('counts spatialIndexed across points, lines, AND gsplats', () => {
     const scene = new THREE.Group();
     scene.add(makePoints(100, { spatialIndex: true }));
     scene.add(makePoints(50)); // no spatial index
+    scene.add(makeLinesMesh(80, { spatialIndex: true }));
+    scene.add(makeLinesMesh(40)); // no spatial index
     scene.add(makeGSplatsMesh(1000, { spatialIndex: true }));
     scene.add(makeGSplatsMesh(500)); // no spatial index
 
     const stats = computeSceneStats(scene)!;
-    expect(stats.spatialIndexed).toBe(2);
+    // 3 spatial-indexed objects across all three geometry types.
+    expect(stats.spatialIndexed).toBe(3);
     expect(stats.pointsObjects).toBe(2);
+    expect(stats.linesObjects).toBe(2);
     expect(stats.gsplatsObjects).toBe(2);
   });
 
-  it('descends into nested Groups', () => {
+  it('descends into nested Groups (including Lines)', () => {
     const scene = new THREE.Group();
     const subgroup = new THREE.Group();
     subgroup.add(makePoints(100));
+    subgroup.add(makeLinesMesh(75));
     subgroup.add(makeGSplatsMesh(50));
     scene.add(subgroup);
 
     const stats = computeSceneStats(scene)!;
     expect(stats.pointsObjects).toBe(1);
     expect(stats.totalPoints).toBe(100);
+    expect(stats.linesObjects).toBe(1);
+    expect(stats.totalSegments).toBe(75);
     expect(stats.gsplatsObjects).toBe(1);
     expect(stats.totalGSplats).toBe(50);
   });
