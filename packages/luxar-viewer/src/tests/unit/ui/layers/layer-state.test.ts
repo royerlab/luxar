@@ -11,16 +11,16 @@ import type { SceneNode } from '../../../../data/data-loader-types';
 describe('computeUniforms', () => {
   it('returns identity for [0, 1]', () => {
     const { intensity, offset } = computeUniforms(0, 1);
-    expect(intensity).toBeCloseTo(1.0);
-    expect(offset).toBeCloseTo(0.0);
+    expect(intensity).toBeCloseTo(1.0, 5);
+    expect(offset).toBeCloseTo(0.0, 5);
   });
 
   it('maps [0.2, 0.8] correctly', () => {
     const { intensity, offset } = computeUniforms(0.2, 0.8);
     // intensity = 1/(0.8 - 0.2) = 1/0.6 ≈ 1.667
-    expect(intensity).toBeCloseTo(1.0 / 0.6);
+    expect(intensity).toBeCloseTo(1.0 / 0.6, 5);
     // offset = -0.2 / 0.6 ≈ -0.333
-    expect(offset).toBeCloseTo(-0.2 / 0.6);
+    expect(offset).toBeCloseTo(-0.2 / 0.6, 5);
   });
 
   it('handles degenerate range (min ≈ max)', () => {
@@ -32,16 +32,16 @@ describe('computeUniforms', () => {
 
   it('handles HDR range [0, 5]', () => {
     const { intensity, offset } = computeUniforms(0, 5);
-    expect(intensity).toBeCloseTo(0.2);
-    expect(offset).toBeCloseTo(0.0);
+    expect(intensity).toBeCloseTo(0.2, 5);
+    expect(offset).toBeCloseTo(0.0, 5);
   });
 });
 
 describe('computeDisplayRange', () => {
   it('recovers [0, 1] from identity uniforms', () => {
     const { min, max } = computeDisplayRange(1.0, 0.0);
-    expect(min).toBeCloseTo(0);
-    expect(max).toBeCloseTo(1);
+    expect(min).toBeCloseTo(0, 5);
+    expect(max).toBeCloseTo(1, 5);
   });
 
   it('handles zero intensity gracefully', () => {
@@ -138,10 +138,10 @@ describe('LayerStateManager', () => {
   it('initializes display range from color_data_range', () => {
     mgr.initFromSceneGraph(makeSceneGraph([{ color_data_range: [0.1, 0.9] as [number, number] }]));
     const layer = mgr.getLayers()[0];
-    expect(layer.dataMin).toBeCloseTo(0.1);
-    expect(layer.dataMax).toBeCloseTo(0.9);
-    expect(layer.displayMin).toBeCloseTo(0.1);
-    expect(layer.displayMax).toBeCloseTo(0.9);
+    expect(layer.dataMin).toBeCloseTo(0.1, 5);
+    expect(layer.dataMax).toBeCloseTo(0.9, 5);
+    expect(layer.displayMin).toBeCloseTo(0.1, 5);
+    expect(layer.displayMax).toBeCloseTo(0.9, 5);
   });
 
   it('defaults data range to [0, 1] when absent', () => {
@@ -168,8 +168,8 @@ describe('LayerStateManager', () => {
     );
     const layer = mgr.getLayers()[0];
     // displayMax = (1 - 0) / 0.2 = 5 — beyond color_data_range's 0.973
-    expect(layer.displayMin).toBeCloseTo(0);
-    expect(layer.displayMax).toBeCloseTo(5);
+    expect(layer.displayMin).toBeCloseTo(0, 5);
+    expect(layer.displayMax).toBeCloseTo(5, 5);
     // Slider bounds must include the whole display range so the
     // <input type="range"> doesn't silently clamp the thumb on first render.
     expect(layer.dataMin).toBeLessThanOrEqual(layer.displayMin);
@@ -217,8 +217,8 @@ describe('LayerStateManager', () => {
     mgr.initFromSceneGraph(makeSceneGraph([{}]));
     mgr.setDisplayRange('layer_0', 0.2, 0.8);
     const layer = mgr.getLayers()[0];
-    expect(layer.displayMin).toBeCloseTo(0.2);
-    expect(layer.displayMax).toBeCloseTo(0.8);
+    expect(layer.displayMin).toBeCloseTo(0.2, 5);
+    expect(layer.displayMax).toBeCloseTo(0.8, 5);
   });
 
   it('applyToSelected mutates all selected layers', () => {

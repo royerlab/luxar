@@ -388,12 +388,12 @@ describe('NodeFactory', () => {
 
       factory.applyTransform(object, identity);
 
-      expect(object.position.x).toBeCloseTo(0);
-      expect(object.position.y).toBeCloseTo(0);
-      expect(object.position.z).toBeCloseTo(0);
-      expect(object.scale.x).toBeCloseTo(1);
-      expect(object.scale.y).toBeCloseTo(1);
-      expect(object.scale.z).toBeCloseTo(1);
+      expect(object.position.x).toBe(0);
+      expect(object.position.y).toBe(0);
+      expect(object.position.z).toBe(0);
+      expect(object.scale.x).toBe(1);
+      expect(object.scale.y).toBe(1);
+      expect(object.scale.z).toBe(1);
     });
 
     it('should apply translation correctly', () => {
@@ -403,9 +403,9 @@ describe('NodeFactory', () => {
 
       factory.applyTransform(object, translation);
 
-      expect(object.position.x).toBeCloseTo(5);
-      expect(object.position.y).toBeCloseTo(10);
-      expect(object.position.z).toBeCloseTo(15);
+      expect(object.position.x).toBe(5);
+      expect(object.position.y).toBe(10);
+      expect(object.position.z).toBe(15);
     });
 
     it('should apply scale correctly', () => {
@@ -415,9 +415,9 @@ describe('NodeFactory', () => {
 
       factory.applyTransform(object, scale);
 
-      expect(object.scale.x).toBeCloseTo(2);
-      expect(object.scale.y).toBeCloseTo(3);
-      expect(object.scale.z).toBeCloseTo(4);
+      expect(object.scale.x).toBe(2);
+      expect(object.scale.y).toBe(3);
+      expect(object.scale.z).toBe(4);
     });
 
     it('should throw on invalid transform length', () => {

@@ -50,19 +50,19 @@ describe('ray integral sigma', () => {
   it('isotropic Σ: precision-based and covariance-based formulas agree', () => {
     // Σ = σ² I → Σ⁻¹ = (1/σ²) I → 1/sqrt(rᵀΣ⁻¹r) = σ for any unit r
     const sigma = [4, 0, 0, 4, 0, 4]; // σ² = 4 → σ = 2
-    expect(rayIntegralSigma([1, 0, 0], sigma)).toBeCloseTo(2);
-    expect(rayIntegralSigma([0, 1, 0], sigma)).toBeCloseTo(2);
-    expect(rayIntegralSigma([0, 0, 1], sigma)).toBeCloseTo(2);
+    expect(rayIntegralSigma([1, 0, 0], sigma)).toBeCloseTo(2, 5);
+    expect(rayIntegralSigma([0, 1, 0], sigma)).toBeCloseTo(2, 5);
+    expect(rayIntegralSigma([0, 0, 1], sigma)).toBeCloseTo(2, 5);
     const oneOverRoot3 = 1 / Math.sqrt(3);
-    expect(rayIntegralSigma([oneOverRoot3, oneOverRoot3, oneOverRoot3], sigma)).toBeCloseTo(2);
+    expect(rayIntegralSigma([oneOverRoot3, oneOverRoot3, oneOverRoot3], sigma)).toBeCloseTo(2, 5);
   });
 
   it('diagonal anisotropic Σ along an eigenaxis: returns that axis std-dev', () => {
     // Σ = diag(1, 4, 9) → eigen std-devs (1, 2, 3) along x/y/z
     const sigma = [1, 0, 0, 4, 0, 9];
-    expect(rayIntegralSigma([1, 0, 0], sigma)).toBeCloseTo(1);
-    expect(rayIntegralSigma([0, 1, 0], sigma)).toBeCloseTo(2);
-    expect(rayIntegralSigma([0, 0, 1], sigma)).toBeCloseTo(3);
+    expect(rayIntegralSigma([1, 0, 0], sigma)).toBeCloseTo(1, 5);
+    expect(rayIntegralSigma([0, 1, 0], sigma)).toBeCloseTo(2, 5);
+    expect(rayIntegralSigma([0, 0, 1], sigma)).toBeCloseTo(3, 5);
   });
 
   it('rotated anisotropic Σ: precision and covariance disagree off-axis', () => {
@@ -74,9 +74,9 @@ describe('ray integral sigma', () => {
     // Along the major axis [1,1,0]/√2: precision-based sigma should equal 3
     // (the major axis std-dev of the original eigenbasis).
     const sqrt2inv = 1 / Math.sqrt(2);
-    expect(rayIntegralSigma([sqrt2inv, sqrt2inv, 0], sigma)).toBeCloseTo(3);
+    expect(rayIntegralSigma([sqrt2inv, sqrt2inv, 0], sigma)).toBeCloseTo(3, 5);
     // Along the minor axis [1,-1,0]/√2: precision-based sigma should equal 1.
-    expect(rayIntegralSigma([sqrt2inv, -sqrt2inv, 0], sigma)).toBeCloseTo(1);
+    expect(rayIntegralSigma([sqrt2inv, -sqrt2inv, 0], sigma)).toBeCloseTo(1, 5);
 
     // The covariance-based alternative would compute sqrt(rᵀΣr):
     //   along [1,1,0]/√2: sqrt(0.5*5 + 0.5*5 + 2*0.5*4) = sqrt(9) = 3 ✓ (luckily)
