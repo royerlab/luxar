@@ -138,6 +138,11 @@ export function initializeDims(
   // datasets with partial metadata fell through to the "no dim marked for
   // display" fallback and authoring bugs went unnoticed. Pad with defaults
   // and warn so callers see the gap.
+  //
+  // OOS-1 (round-2 audit): the inverse case — metadata.length > ndim — is
+  // silently truncated by the `i < effectiveMetadata.length` clamp in the
+  // display-determination loop below. That hides authoring bugs the other
+  // direction. Surface it with the same warning.
   let effectiveMetadata = metadata;
   if (metadata && metadata.length > 0 && metadata.length < ndim) {
     log.warning(
@@ -149,6 +154,12 @@ export function initializeDims(
     for (let i = metadata.length; i < ndim; i++) {
       effectiveMetadata.push({ name: `dim${i}`, unit: '', scale: 1.0 });
     }
+  } else if (metadata && metadata.length > ndim) {
+    log.warning(
+      Modules.DIMS,
+      `dims metadata has ${metadata.length} entries but ndim=${ndim}; ` +
+        `extra entries past index ${ndim - 1} will be ignored.`
+    );
   }
 
   // Initialize all dimensions at position 0 (minimum value)
@@ -210,6 +221,17 @@ export function getDimensionRanges(
   numPoints: number
 ): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
+
+  // Empty-dataset fast path. Without this, the [Infinity, -Infinity] init
+  // values leak to downstream consumers (camera bounds, slider ranges)
+  // which are not robust against unbounded extents. Return [0, 0]
+  // placeholders so consumers see a degenerate-but-finite bounding box.
+  if (numPoints === 0) {
+    for (let d = 0; d < ndim; d++) {
+      ranges.push([0, 0]);
+    }
+    return ranges;
+  }
 
   // Initialize ranges with extreme values for proper min/max calculation
   for (let d = 0; d < ndim; d++) {
