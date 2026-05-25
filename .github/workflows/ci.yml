@@ -45,6 +45,12 @@ jobs:
     defaults:
       run:
         working-directory: packages/luxar-viewer
+    env:
+      # Enforce the WASM-vs-TS parity tests at the smoke-check level. Without
+      # this, the parity harness silently skips on missing WASM artefacts; the
+      # WASM build step below populates public/wasm/ so the harness runs the
+      # real comparison and the smoke test verifies the artefacts are present.
+      LUXAR_REQUIRE_WASM_TESTS: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +64,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
+
       - run: pnpm install
+
+      # Build WASM so the WASM-vs-TS parity tests actually run (instead of
+      # silently skipping on a missing artefact, which previously meant the
+      # parity harness was dormant in CI). Combined with
+      # LUXAR_REQUIRE_WASM_TESTS=1 above, a missing artefact now hard-fails.
+      - name: Build WASM module
+        run: pnpm run build:wasm
 
       # Generate test fixtures (requires Python)
       - uses: actions/setup-python@v5
