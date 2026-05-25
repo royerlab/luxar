@@ -497,6 +497,34 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/colors too short/);
   });
 
+  it('projectGSplatsTo3D rejects sharpness shorter than splatCount (three-geometry symmetry)', async () => {
+    // [workers OOS] GSplats accepts sharpness for API parity but never
+    // reads it. Pre-fix, a caller bug producing a wrong-sized sharpness
+    // array flowed through silently. Now it surfaces with the same
+    // clear error the Points/Lines validation produces.
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectGSplatsTo3D({
+        positions: new Float32Array(15),
+        choleskyFactors: new Float32Array(30),
+        amplitudes: new Float32Array(5),
+        colors: null,
+        sharpness: new Float32Array(3), // need 5 (splatCount)
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
+        ndim: 3,
+        splatCount: 5,
+        discreteDims: [],
+        discreteSteps: {},
+        extendToAllDims: [],
+        truncate: 3.0,
+      })
+    ).rejects.toThrow(/sharpness too short/);
+  });
+
   it('querySpatialIndex rejects ndim out of [1, 16]', async () => {
     const mod = await loadWorker();
     await expect(
