@@ -38,6 +38,7 @@ describe('GSplats Types', () => {
     });
 
     it.each([
+      [1, '1D'],
       [2, '2D'],
       [3, '3D'],
       [4, '4D'],
@@ -53,14 +54,20 @@ describe('GSplats Types', () => {
       expect(CHOLESKY_SIZES['4D']).toBe(10);
     });
 
-    it('MED-44: covers 5D through 16D (the WASM dimension ceiling)', () => {
-      // Regression: the constant previously stopped at 4D even though
-      // LoadedGSplatsData and choleskyPackedSize support arbitrary ndim.
-      // A 5D+ caller indexing into the constant would have hit undefined
-      // and produced silently wrong stride math. The constant is now
-      // populated up to 16D (the WASM 16-dim limit per CLAUDE.md), and
-      // every entry must match `choleskyPackedSize(n) = n*(n+1)/2`.
-      for (let n = 2; n <= 16; n++) {
+    // OOS-3 (round-2 audit): the constant previously started at 2D, but
+    // LoadedGSplatsData permits ndim=1. A 1D consumer indexing
+    // `CHOLESKY_SIZES['1D']` would have hit `undefined` and produced
+    // silently wrong stride math. The 1D entry is now [L00] = 1.
+    it('covers 1D (the new degenerate-but-legal entry)', () => {
+      expect(CHOLESKY_SIZES['1D']).toBe(1);
+      expect(CHOLESKY_SIZES['1D']).toBe(choleskyPackedSize(1));
+    });
+
+    it('MED-44: covers 1D through 16D (full LoadedGSplatsData range up to the WASM ceiling)', () => {
+      // Every entry must match `choleskyPackedSize(n) = n*(n+1)/2` and be
+      // defined (i.e. no off-by-one in the constant table). Iterates from
+      // 1 to 16 inclusive so the 1D entry is covered too.
+      for (let n = 1; n <= 16; n++) {
         const key = `${n}D` as keyof typeof CHOLESKY_SIZES;
         const value = (CHOLESKY_SIZES as Record<string, number>)[key];
         expect(value).toBeDefined();
@@ -68,6 +75,7 @@ describe('GSplats Types', () => {
         expect(value).toBe((n * (n + 1)) / 2);
       }
       // Spot-check a few specific values to lock in the table.
+      expect(CHOLESKY_SIZES['1D']).toBe(1);
       expect(CHOLESKY_SIZES['5D']).toBe(15);
       expect(CHOLESKY_SIZES['8D']).toBe(36);
       expect(CHOLESKY_SIZES['16D']).toBe(136);

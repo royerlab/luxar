@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { initializeDims, type DimensionMetadata } from '../../../types/dims';
+import { initializeDims, getDimensionRanges, type DimensionMetadata } from '../../../types/dims';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,5 +91,65 @@ describe('initializeDims', () => {
     const dims = initializeDims(2, 8); // 4D
     expect(dims.ndim).toBe(4);
     expect(dims.displayed).toEqual([1, 2, 3]);
+  });
+
+  // OOS-1 (round-2 audit): the inverse of HIGH-5 (b) — metadata LONGER than
+  // ndim. Previously the `i < effectiveMetadata.length` clamp in the
+  // display-determination loop silently truncated extra entries. Now we
+  // emit a warning so authoring bugs surface.
+  it('warns when metadata is longer than ndim (extra entries ignored)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // ndim=2 (4 elements / 2 points) but 4 metadata entries
+    const metadata: DimensionMetadata[] = [
+      { name: 'x', unit: 'um', scale: 1, display: true },
+      { name: 'y', unit: 'um', scale: 1, display: true },
+      { name: 'extra1', unit: '', scale: 1 },
+      { name: 'extra2', unit: '', scale: 1 },
+    ];
+    const dims = initializeDims(2, 4, metadata);
+
+    expect(dims.ndim).toBe(2);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = warnSpy.mock.calls[0]?.[0] as string;
+    expect(msg).toContain('Dims');
+    expect(msg).toMatch(/4 entries but ndim=2/);
+    expect(msg).toMatch(/extra entries past index 1 will be ignored/);
+  });
+});
+
+describe('getDimensionRanges', () => {
+  it('returns [min, max] per dim for a non-empty point cloud', () => {
+    // 3 points × 2 dims: [(1, 10), (2, 20), (3, 30)]
+    const positions = new Float32Array([1, 10, 2, 20, 3, 30]);
+    const ranges = getDimensionRanges(positions, 2, 3);
+    expect(ranges).toEqual([
+      [1, 3],
+      [10, 30],
+    ]);
+  });
+
+  // OOS-2 (round-2 audit): on an empty point cloud, the old code returned
+  // [Infinity, -Infinity] per dim (the init values). Downstream consumers
+  // (camera bounds, slider ranges) were not robust to that. The fix
+  // returns [0, 0] placeholders.
+  it('returns [0, 0] placeholders for an empty point cloud (no Infinity leak)', () => {
+    const ranges = getDimensionRanges(new Float32Array(0), 3, 0);
+    expect(ranges).toEqual([
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ]);
+    // All values are finite — a downstream `bounds.expandByPoint(...)` will
+    // not poison itself with Infinity.
+    for (const [lo, hi] of ranges) {
+      expect(Number.isFinite(lo)).toBe(true);
+      expect(Number.isFinite(hi)).toBe(true);
+    }
+  });
+
+  it('returns an empty array for ndim=0 on an empty point cloud', () => {
+    const ranges = getDimensionRanges(new Float32Array(0), 0, 0);
+    expect(ranges).toEqual([]);
   });
 });
