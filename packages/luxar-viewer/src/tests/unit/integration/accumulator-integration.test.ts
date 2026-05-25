@@ -282,26 +282,34 @@ describe('Accumulator Integration Tests', () => {
     });
 
     it('exposes Uint8 vs Float32 color dtype across separate instances', () => {
+      // Use 2 distinct vertices and 1 real (non-self-loop) segment so the
+      // dtype-detection-on-first-fill contract is exercised on a
+      // non-degenerate input. Color buffer length matches the per-vertex
+      // 3-channel layout of the underlying accumulator.
       const accUint8 = new LinesDataAccumulator(1024, 512, 3);
       accUint8.fill(0, 0, {
-        positions: new Float32Array([1, 2, 3]),
-        segments: new Uint32Array([0, 0]),
-        widths: new Float32Array([1]),
-        colors: new Uint8Array([255, 128, 0]),
+        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
+        segments: new Uint32Array([0, 1]),
+        widths: new Float32Array([1, 1]),
+        colors: new Uint8Array([255, 128, 0, 0, 128, 255]),
       });
-      const u8 = accUint8.getData(1, 1);
+      const u8 = accUint8.getData(1, 2);
       expect(u8.colors).toBeInstanceOf(Uint8Array);
+      // Pin actual content so a mutant that swapped the buffer reference
+      // (handing back the wrong instance's view) would fail.
+      expect(Array.from(u8.colors as Uint8Array)).toEqual([255, 128, 0, 0, 128, 255]);
       accUint8.dispose();
 
       const accF32 = new LinesDataAccumulator(1024, 512, 3);
       accF32.fill(0, 0, {
-        positions: new Float32Array([1, 2, 3]),
-        segments: new Uint32Array([0, 0]),
-        widths: new Float32Array([1]),
-        colors: new Float32Array([1.0, 0.5, 0.0]),
+        positions: new Float32Array([1, 2, 3, 4, 5, 6]),
+        segments: new Uint32Array([0, 1]),
+        widths: new Float32Array([1, 1]),
+        colors: new Float32Array([1.0, 0.5, 0.0, 0.0, 0.5, 1.0]),
       });
-      const f32 = accF32.getData(1, 1);
+      const f32 = accF32.getData(1, 2);
       expect(f32.colors).toBeInstanceOf(Float32Array);
+      expect(Array.from(f32.colors as Float32Array)).toEqual([1.0, 0.5, 0.0, 0.0, 0.5, 1.0]);
 
       expect(u8.colors!.constructor).not.toBe(f32.colors!.constructor);
     });

@@ -89,10 +89,10 @@ describe('GPU Buffer Pool Integration Tests', () => {
       expect(geometry.getAttribute('aColor').itemSize).toBe(3);
     });
 
-    it('should call updatePointsGeometry after acquiring', () => {
+    it('updatePointsGeometry writes the supplied positions into the geometry attribute', () => {
       const pool = new GPUBufferPool(20, 300);
 
-      const mockData: LoadedPointsData = {
+      const mockData1: LoadedPointsData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 0, 0]),
         radii: new Float32Array([0.5]),
@@ -108,16 +108,26 @@ describe('GPU Buffer Pool Integration Tests', () => {
       };
 
       // Simulate what scene-loader does (lines 1415-1421)
-      const geometry = pool.acquirePointsGeometry('/node', mockData, 1);
+      const geometry = pool.acquirePointsGeometry('/node', mockData1, 1);
 
-      // Spy on update method
-      const updateSpy = vi.spyOn(pool, 'updatePointsGeometry');
+      // Re-update with DISTINCT data so we can observe a real mutation
+      // on the attribute buffer (not a tautology of "spy recorded its
+      // own call"). Pinning observable post-state catches a regression
+      // that no-ops updatePointsGeometry; a spy on the method does not.
+      const mockData2: LoadedPointsData = {
+        ...mockData1,
+        positions: new Float32Array([7, 8, 9]),
+      };
+      pool.updatePointsGeometry(geometry, mockData2, 1);
 
-      // Update geometry (line 1421)
-      pool.updatePointsGeometry(geometry, mockData, 1);
-
-      // Verify update was called
-      expect(updateSpy).toHaveBeenCalledWith(geometry, mockData, 1);
+      const centerAttr = geometry.getAttribute('aCenter') as THREE.BufferAttribute;
+      const buf = centerAttr.array as Float32Array;
+      // Observable post-state: positions actually written to the buffer.
+      // (needsUpdate is a write-only setter in THREE.BufferAttribute so
+      // we cannot read it back; the buffer mutation is the contract.)
+      expect(buf[0]).toBe(7);
+      expect(buf[1]).toBe(8);
+      expect(buf[2]).toBe(9);
     });
 
     it('should reuse geometry on subsequent updates (NOT dispose)', () => {
@@ -295,8 +305,14 @@ describe('GPU Buffer Pool Integration Tests', () => {
       // upper bound at 10 (no over-eviction into the active set).
       expect(evicted).toBeGreaterThanOrEqual(1);
       expect(evicted).toBeLessThanOrEqual(10);
-      // Sanity: pool stats now expose at least as many evictions.
-      expect(pool.getStats().evictions).toBeGreaterThanOrEqual(evicted);
+      // [integration.md/C6][P2] `evictions += evicted` happens inside
+      // evictUnused(), so the previous `>= evicted` assertion was a
+      // tautology guaranteed by construction. The exact equality is
+      // the real contract: the stats counter must equal the number
+      // returned by the single evictUnused() call. (No byte-budget
+      // evictions can have fired — maxPoolBytes defaults to ~512 MB
+      // and this test allocates <1 MB.)
+      expect(pool.getStats().evictions).toBe(evicted);
     });
   });
 

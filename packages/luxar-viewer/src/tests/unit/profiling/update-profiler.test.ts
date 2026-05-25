@@ -186,13 +186,10 @@ describe('UpdateProfiler — time() helpers', () => {
 
     const op = findChild(profiler.getTimings(), 'SyncOp');
     expect(op).toBeDefined();
-    expect(op!.count).toBeGreaterThanOrEqual(1);
+    expect(op!.count).toBe(1);
   });
 
   it('time() with an async function awaits and records its entry with non-zero duration', async () => {
-    // profiling.md W2 fix: previous version only asserted `toBeDefined`.
-    // Strengthen: the entry must have count >= 1 and a finite lastMs
-    // (so a mutation that skips the EMA update would be caught).
     profiler.beginUpdate();
     const out = await profiler.time('AsyncOp', async () => {
       await Promise.resolve();
@@ -203,14 +200,11 @@ describe('UpdateProfiler — time() helpers', () => {
 
     const entry = findChild(profiler.getTimings(), 'AsyncOp');
     expect(entry).toBeDefined();
-    expect(entry!.count).toBeGreaterThanOrEqual(1);
+    expect(entry!.count).toBe(1);
     expect(Number.isFinite(entry!.lastMs)).toBe(true);
   });
 
   it('time() ends the session and records the entry even when the function throws synchronously', () => {
-    // profiling.md W3 fix: previous version only asserted findChild
-    // toBeDefined. Strengthen: the entry must be present AND have
-    // count >= 1, proving end() actually ran in the catch path.
     profiler.beginUpdate();
     expect(() =>
       profiler.time('Boom', () => {
@@ -221,11 +215,10 @@ describe('UpdateProfiler — time() helpers', () => {
 
     const entry = findChild(profiler.getTimings(), 'Boom');
     expect(entry).toBeDefined();
-    expect(entry!.count).toBeGreaterThanOrEqual(1);
+    expect(entry!.count).toBe(1);
   });
 
   it('time() ends the session and records the entry even when an async function rejects', async () => {
-    // profiling.md W3 sibling fix (async).
     profiler.beginUpdate();
     await expect(
       profiler.time('AsyncBoom', async () => {
@@ -236,7 +229,7 @@ describe('UpdateProfiler — time() helpers', () => {
 
     const entry = findChild(profiler.getTimings(), 'AsyncBoom');
     expect(entry).toBeDefined();
-    expect(entry!.count).toBeGreaterThanOrEqual(1);
+    expect(entry!.count).toBe(1);
   });
 
   it('timeWithMeta() exposes the session for metadata before completion', async () => {
@@ -269,9 +262,9 @@ describe('UpdateProfiler — time() helpers', () => {
     const byName: Record<string, { count: number } | undefined> = {};
     for (const c of root.children) byName[c.name] = c;
     expect(Object.keys(byName).sort()).toEqual(['A', 'B', 'C']);
-    expect(byName['A']!.count).toBeGreaterThanOrEqual(1);
-    expect(byName['B']!.count).toBeGreaterThanOrEqual(1);
-    expect(byName['C']!.count).toBeGreaterThanOrEqual(1);
+    expect(byName['A']!.count).toBe(1);
+    expect(byName['B']!.count).toBe(1);
+    expect(byName['C']!.count).toBe(1);
   });
 
   it('timeTopLevel() returns function result on happy path, propagates errors, AND still records the entry on the error path', async () => {
@@ -465,9 +458,13 @@ describe('UpdateProfiler — hierarchy', () => {
 
     const root = profiler.getTimings();
     expect(root.children).toHaveLength(1);
-    expect(root.children[0].name).toBe('Outer');
-    expect(root.children[0].children).toHaveLength(1);
-    expect(root.children[0].children[0].name).toBe('Inner');
+    const outer = root.children[0];
+    expect(outer.name).toBe('Outer');
+    expect(outer.count).toBe(1);
+    expect(outer.children).toHaveLength(1);
+    const inner = outer.children[0];
+    expect(inner.name).toBe('Inner');
+    expect(inner.count).toBe(1);
   });
 
   it('child avgMs converges at EMA rate (alpha=0.1), not double-EMA', () => {

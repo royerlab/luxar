@@ -12,24 +12,44 @@
  * as an explicit factory the consumer must call.
  */
 
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeAll, vi } from 'vitest';
+
+type ConsoleMethod = 'log' | 'warn' | 'error' | 'info' | 'debug';
+const CONSOLE_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug'];
+
+interface BarrelTestGlobals {
+  __preBarrelConsole?: Record<ConsoleMethod, typeof console.log>;
+}
 
 describe('Public barrel side effects', () => {
   beforeAll(async () => {
-    // Snapshot console BEFORE the barrel is touched. Vitest may have
-    // wired its own console.* (jsdom polyfills, mock globals); we snapshot
-    // whatever's there so the assertion compares apples to apples.
-    (globalThis as { __preBarrelConsoleLog?: typeof console.log }).__preBarrelConsoleLog =
-      console.log;
+    // Reset module cache so the barrel import is observed FRESH in this
+    // process. Without this, a mutant that schedules a one-shot side
+    // effect via `if (!globalThis.__luxarLoaded) { ... mutate(); }` would
+    // slip through if any earlier test (in this or another file) already
+    // touched the barrel. [api.md/C2]
+    vi.resetModules();
+
+    // Snapshot ALL five console methods BEFORE the barrel is touched. The
+    // bootstrap path (core/bootstrap.ts → consoleInterceptor.patch())
+    // patches log/warn/error/info/debug; checking only `log` would let a
+    // regression that patches only `warn` slip through. [api.md/C1]
+    const snapshot = {} as Record<ConsoleMethod, typeof console.log>;
+    for (const m of CONSOLE_METHODS) {
+      snapshot[m] = console[m];
+    }
+    (globalThis as BarrelTestGlobals).__preBarrelConsole = snapshot;
 
     // Now import the barrel. Whatever is loaded here is what consumers see.
     await import('../../../index');
   });
 
-  it('does not patch console.log', () => {
-    const pre = (globalThis as { __preBarrelConsoleLog?: typeof console.log })
-      .__preBarrelConsoleLog;
-    expect(console.log).toBe(pre);
+  it('does not patch any of the five console methods (log/warn/error/info/debug)', () => {
+    const pre = (globalThis as BarrelTestGlobals).__preBarrelConsole;
+    expect(pre).toBeDefined();
+    for (const m of CONSOLE_METHODS) {
+      expect(console[m], `console.${m} was patched by barrel import`).toBe(pre![m]);
+    }
   });
 
   it('does not inject any --luxar-* CSS variables on documentElement', () => {
