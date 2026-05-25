@@ -24,9 +24,9 @@ describe('invertNdTransformForQuery', () => {
       [0, 1, 2] // X,Y,Z are displayed
     );
     // local_time = (50 - 10) / 2 = 20
-    expect(result.slicePosition[3]).toBeCloseTo(20.0);
+    expect(result.slicePosition[3]).toBeCloseTo(20.0, 5);
     // local_tolerance = 5 / |2| = 2.5
-    expect(result.tolerance[3]).toBeCloseTo(2.5);
+    expect(result.tolerance[3]).toBeCloseTo(2.5, 5);
     // Displayed dims unchanged
     expect(result.slicePosition[0]).toBe(0);
     expect(result.tolerance[0]).toBe(1e10);
@@ -63,9 +63,9 @@ describe('invertNdTransformForQuery', () => {
       [0, 1, 2]
     );
     // local = (75 - 100) / (-1) = 25
-    expect(result.slicePosition[3]).toBeCloseTo(25.0);
+    expect(result.slicePosition[3]).toBeCloseTo(25.0, 5);
     // tolerance = 10 / |-1| = 10
-    expect(result.tolerance[3]).toBeCloseTo(10.0);
+    expect(result.tolerance[3]).toBeCloseTo(10.0, 5);
   });
 
   it('should skip displayed dimensions', () => {
@@ -83,7 +83,7 @@ describe('invertNdTransformForQuery', () => {
     // X unchanged (displayed)
     expect(result.slicePosition[0]).toBe(100);
     // Time: (50 - 10) / 1 = 40
-    expect(result.slicePosition[3]).toBeCloseTo(40.0);
+    expect(result.slicePosition[3]).toBeCloseTo(40.0, 5);
   });
 
   it('should handle identity transform (no entries)', () => {
@@ -347,8 +347,8 @@ describe('composeNdTransforms — boundary cases (data.md G5)', () => {
     const leaf: NdTransformMap = { Time: { scale: 1, offset: 4 } };
 
     const result = composeNdTransforms(root, mid, leaf);
-    expect((result.Time as { scale: number; offset: number }).scale).toBeCloseTo(6);
-    expect((result.Time as { scale: number; offset: number }).offset).toBeCloseTo(25);
+    expect((result.Time as { scale: number; offset: number }).scale).toBeCloseTo(6, 5);
+    expect((result.Time as { scale: number; offset: number }).offset).toBeCloseTo(25, 5);
   });
 
   it('composes three permutations correctly', () => {

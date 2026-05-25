@@ -68,14 +68,14 @@ describe('rebuildInterleavedBuffer', () => {
     rebuildInterleavedBuffer(geometry, 4, SPECS_BASIC);
 
     const centerView = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-    expect(centerView.getX(0)).toBeCloseTo(1);
-    expect(centerView.getY(0)).toBeCloseTo(2);
-    expect(centerView.getZ(0)).toBeCloseTo(3);
-    expect(centerView.getX(1)).toBeCloseTo(4);
-    expect(centerView.getZ(1)).toBeCloseTo(6);
+    expect(centerView.getX(0)).toBe(1);
+    expect(centerView.getY(0)).toBe(2);
+    expect(centerView.getZ(0)).toBe(3);
+    expect(centerView.getX(1)).toBe(4);
+    expect(centerView.getZ(1)).toBe(6);
     const radiusView = geometry.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
-    expect(radiusView.getX(0)).toBeCloseTo(7);
-    expect(radiusView.getX(1)).toBeCloseTo(8);
+    expect(radiusView.getX(0)).toBe(7);
+    expect(radiusView.getX(1)).toBe(8);
   });
 
   it('binds an added attribute on spec-set growth without zeroing existing data', () => {
@@ -86,12 +86,12 @@ describe('rebuildInterleavedBuffer', () => {
     rebuildInterleavedBuffer(geometry, 2, SPECS_WITH_COLOR);
 
     const centerView = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-    expect(centerView.getX(0)).toBeCloseTo(1);
-    expect(centerView.getZ(1)).toBeCloseTo(6);
+    expect(centerView.getX(0)).toBe(1);
+    expect(centerView.getZ(1)).toBe(6);
     const colorView = geometry.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
     // Newly added attribute: zero-initialised.
-    expect(colorView.getX(0)).toBeCloseTo(0);
-    expect(colorView.getY(0)).toBeCloseTo(0);
+    expect(colorView.getX(0)).toBe(0);
+    expect(colorView.getY(0)).toBe(0);
   });
 
   it('drops attributes no longer in the spec set', () => {
@@ -138,11 +138,11 @@ describe('writePooledAttribute', () => {
     writePooledAttribute(geometry, 'aCenter', new Float32Array([10, 20, 30, 40, 50, 60]), 2);
 
     const view = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-    expect(view.getX(0)).toBeCloseTo(10);
-    expect(view.getY(0)).toBeCloseTo(20);
-    expect(view.getZ(0)).toBeCloseTo(30);
-    expect(view.getX(1)).toBeCloseTo(40);
-    expect(view.getZ(1)).toBeCloseTo(60);
+    expect(view.getX(0)).toBe(10);
+    expect(view.getY(0)).toBe(20);
+    expect(view.getZ(0)).toBe(30);
+    expect(view.getX(1)).toBe(40);
+    expect(view.getZ(1)).toBe(60);
   });
 
   it('writes a scalar attribute without touching neighbours in the interleaved buffer', () => {
@@ -153,11 +153,11 @@ describe('writePooledAttribute', () => {
     writePooledAttribute(geometry, 'aRadius', new Float32Array([99, 88]), 2);
 
     const centerView = geometry.getAttribute('aCenter') as THREE.InterleavedBufferAttribute;
-    expect(centerView.getX(0)).toBeCloseTo(1);
-    expect(centerView.getZ(1)).toBeCloseTo(6);
+    expect(centerView.getX(0)).toBe(1);
+    expect(centerView.getZ(1)).toBe(6);
     const radiusView = geometry.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
-    expect(radiusView.getX(0)).toBeCloseTo(99);
-    expect(radiusView.getX(1)).toBeCloseTo(88);
+    expect(radiusView.getX(0)).toBe(99);
+    expect(radiusView.getX(1)).toBe(88);
   });
 
   it('only writes the requested instance count, leaving remainder untouched', () => {
@@ -171,9 +171,9 @@ describe('writePooledAttribute', () => {
     writePooledAttribute(geometry, 'aRadius', new Float32Array([1, 2, 3, 4]), 2);
 
     const radiusView = geometry.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
-    expect(radiusView.getX(0)).toBeCloseTo(1);
-    expect(radiusView.getX(1)).toBeCloseTo(2);
-    expect(radiusView.getX(2)).toBeCloseTo(7);
-    expect(radiusView.getX(3)).toBeCloseTo(7);
+    expect(radiusView.getX(0)).toBe(1);
+    expect(radiusView.getX(1)).toBe(2);
+    expect(radiusView.getX(2)).toBe(7);
+    expect(radiusView.getX(3)).toBe(7);
   });
 });

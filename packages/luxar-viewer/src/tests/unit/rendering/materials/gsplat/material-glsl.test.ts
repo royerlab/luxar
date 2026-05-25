@@ -118,7 +118,7 @@ describe('GSplatMaterial', () => {
     it('should accept custom gamma', () => {
       const material = new GSplatMaterial({ gamma: 2.2 });
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.userData.gamma).toBe(2.2);
     });
 
@@ -350,7 +350,7 @@ describe('GSplatMaterial', () => {
 
       material.updateGamma(2.2);
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.userData.gamma).toBe(2.2);
     });
 
@@ -359,7 +359,7 @@ describe('GSplatMaterial', () => {
 
       material.updateGamma(0);
 
-      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 0.001, 5);
       expect(material.userData.gamma).toBe(0.001);
     });
 
@@ -374,7 +374,7 @@ describe('GSplatMaterial', () => {
 
       expect(cloned.uniforms.uOpacity.value).toBe(0.5);
       expect(cloned.uniforms.uTruncate.value).toBe(4.0);
-      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(cloned.userData.gamma).toBe(2.2);
 
       // Clone preserves alpha blend properties (prevents alpha accumulation)

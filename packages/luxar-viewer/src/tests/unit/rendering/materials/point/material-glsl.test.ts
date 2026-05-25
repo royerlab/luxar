@@ -92,7 +92,7 @@ describe('PointMaterial', () => {
 
       expect(material.uniforms.opacity.value).toBe(0.5);
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.blending).toBe('NormalBlending');
       // depthWrite is mode-derived (normal + opacity<0.99 → false),
       // matching the Line/GSplat canonical pattern.
@@ -223,7 +223,7 @@ describe('PointMaterial', () => {
       material.updateGamma(1.8);
 
       expect(material.userData.gamma).toBe(1.8); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 1.8);
+      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 1.8, 5);
     });
 
     it('should clone material with current values', () => {
@@ -236,7 +236,7 @@ describe('PointMaterial', () => {
 
       expect(cloned.uniforms.opacity.value).toBe(0.5);
       expect(cloned.userData.gamma).toBe(2.0); // gamma stored in userData
-      expect(cloned.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.0);
+      expect(cloned.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.0, 5);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);

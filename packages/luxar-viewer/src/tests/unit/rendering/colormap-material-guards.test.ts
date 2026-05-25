@@ -29,7 +29,7 @@ describe('Material colormap guards', () => {
       expect(mat.defines.USE_COLORMAP).toBe('');
       expect(mat.uniforms.uColormapTex.value).toBe(tex);
       expect(mat.uniforms.uScalarMin.value).toBe(0);
-      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1.0);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1.0, 5);
     });
 
     it('clone without colormap has no colormap uniforms', () => {

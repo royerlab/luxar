@@ -101,7 +101,7 @@ describe('MegaShaderMaterial', () => {
 
     expect(material.uniforms.uHdrScene.value).toBe(hdrTexture);
     expect(material.uniforms.uResolution.value.toArray()).toEqual([640, 480]);
-    expect(material.uniforms.uTime.value).toBeCloseTo(0.25);
+    expect(material.uniforms.uTime.value).toBeCloseTo(0.25, 5);
     expect(material.uniforms.uExposure.value).toBe(1.5);
     expect(material.uniforms.uGlobalOffset.value).toBe(-0.1);
     expect(material.uniforms.uGlobalGamma.value).toBe(0.001);

@@ -175,7 +175,7 @@ describe('DecompressedChunkCache', () => {
       cache.get(key);
       stats = cache.getStats();
       expect(stats.hits).toBe(1);
-      expect(stats.hitRate).toBeCloseTo(0.5); // 1 hit, 1 miss
+      expect(stats.hitRate).toBeCloseTo(0.5, 5); // 1 hit, 1 miss
     });
 
     it('should track size and count', () => {

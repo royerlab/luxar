@@ -157,7 +157,7 @@ describe('MaterialManager', () => {
       });
 
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
     });
 
     it('should set correct blending mode', () => {
@@ -192,7 +192,7 @@ describe('MaterialManager', () => {
         radiusScale: 1.0 / 255.0, // For uint8 radii
       });
 
-      expect(material.uniforms.radiusScale.value).toBeCloseTo(1.0 / 255.0);
+      expect(material.uniforms.radiusScale.value).toBeCloseTo(1.0 / 255.0, 5);
     });
 
     it('should handle sharpness scale parameter', () => {
@@ -205,7 +205,7 @@ describe('MaterialManager', () => {
         sharpnessScale: 1.0 / 255.0, // For uint8 sharpness
       });
 
-      expect(material.uniforms.sharpnessScale.value).toBeCloseTo(1.0 / 255.0);
+      expect(material.uniforms.sharpnessScale.value).toBeCloseTo(1.0 / 255.0, 5);
     });
   });
 
@@ -773,7 +773,7 @@ describe('MaterialManager', () => {
       // Verify GOG model in fragment shader
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
       expect(material.fragmentShader).toContain('pow(adjusted, vec3(invGamma))');
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
+      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
     });
   });
 
@@ -853,7 +853,7 @@ describe('MaterialManager', () => {
       });
 
       expect(material.userData.gamma).toBe(10.0); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(0.1);
+      expect(material.uniforms.invGamma.value).toBeCloseTo(0.1, 5);
     });
 
     it('should handle very small radius scale', () => {
@@ -866,7 +866,7 @@ describe('MaterialManager', () => {
         radiusScale: 0.00001,
       });
 
-      expect(material.uniforms.radiusScale.value).toBeCloseTo(0.00001);
+      expect(material.uniforms.radiusScale.value).toBeCloseTo(0.00001, 5);
     });
   });
 
