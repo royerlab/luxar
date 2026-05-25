@@ -102,10 +102,11 @@ describe('ControlsManager', () => {
       // Switch controls
       controlsManager.setControlType('fly');
 
-      // Camera position should be preserved
-      expect(camera.position.x).toBeCloseTo(10);
-      expect(camera.position.y).toBeCloseTo(20);
-      expect(camera.position.z).toBeCloseTo(30);
+      // Camera position is a Float32 round-trip; precision 5 (~1e-5) is
+      // the project norm for Float32-tolerant equality.
+      expect(camera.position.x).toBeCloseTo(10, 5);
+      expect(camera.position.y).toBeCloseTo(20, 5);
+      expect(camera.position.z).toBeCloseTo(30, 5);
     });
   });
 
@@ -532,9 +533,11 @@ describe('ControlsManager', () => {
       controlsManager.setControlType('orbit');
 
       const orbitControls = controlsManager.getControls() as LuxarOrbitControls;
-      expect(orbitControls.target.x).toBeCloseTo(1);
-      expect(orbitControls.target.y).toBeCloseTo(2);
-      expect(orbitControls.target.z).toBeCloseTo(3);
+      // Two-mode round-trip is deterministic; precision 5 is the
+      // project norm for Float32-tolerant equality.
+      expect(orbitControls.target.x).toBeCloseTo(1, 5);
+      expect(orbitControls.target.y).toBeCloseTo(2, 5);
+      expect(orbitControls.target.z).toBeCloseTo(3, 5);
     });
 
     it('should update camera reference via setCamera', () => {
