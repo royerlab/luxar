@@ -354,6 +354,7 @@ export function choleskyPackedSize(ndim: number): number {
  * {@link choleskyPackedSize} directly. The values here are `n*(n+1)/2`.
  */
 export const CHOLESKY_SIZES = {
+  '1D': 1, // [L00] — degenerate but legal: LoadedGSplatsData permits ndim=1
   '2D': 3, // [L00, L10, L11]
   '3D': 6, // [L00, L10, L11, L20, L21, L22]
   '4D': 10, // [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
