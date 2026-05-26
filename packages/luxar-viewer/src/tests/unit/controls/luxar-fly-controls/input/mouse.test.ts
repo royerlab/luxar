@@ -208,3 +208,72 @@ describe('handleMouseMove — gating', () => {
     expect(ctx.angularVelocity.length()).toBe(0);
   });
 });
+
+describe('handleMouseMove — rotated orientation [controls.md G17]', () => {
+  // [controls.md G17][P5] Prior coverage used only identity quaternions. The
+  // local-axis transformation `_v0.set(1,0,0).applyQuaternion(orientation)`
+  // was never exercised. A 90° yaw orientation (rotation about Y) sends
+  // the local-X axis to world-Z (negative). Strafing left/right should then
+  // produce a Z-component, not an X-component.
+  it('[G17] 90° yaw orientation: strafe-X maps to world-Z (local-X applyQuaternion exercised)', () => {
+    // Rotate orientation by 90° about world Y.
+    const orientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const { ctx, state } = makeCtx({ inertialMode: true, movementSpeed: 1, orientation });
+    state.activeMouseAction = 'strafe';
+    state.mouseX = 100;
+    state.mouseY = 100;
+
+    // Drag +200 px in X, 0 in Y.
+    handleMouseMove(ctx, new MouseEvent('mousemove', { clientX: 300, clientY: 100 }));
+
+    // _v0 was (1,0,0); after 90° Y-rotation → (0,0,-1).
+    // strafeScale = 1 * 0.005 = 0.005; deltaX = 200; impulse = -200 * 0.005 = -1.0.
+    // velocity.addScaledVector((0,0,-1), -1.0) → (0,0,+1.0).
+    expect(ctx.velocity.x).toBeCloseTo(0, 4);
+    expect(ctx.velocity.y).toBeCloseTo(0, 4);
+    expect(ctx.velocity.z).toBeCloseTo(1.0, 4);
+  });
+
+  it('[G17] 90° yaw orientation: rotate (right-drag) angular impulse uses rotated local axes', () => {
+    // For right-drag rotate: _v0=(1,0,0) and _v1=(0,1,0) are pitch/yaw axes
+    // expressed in WORLD frame. After 90° Y-rotation:
+    //   _v0 (was local-X) → world-(0,0,-1)
+    //   _v1 (was local-Y) → world-(0,1,0)  (Y is the rotation axis, invariant)
+    // Right-drag with deltaX=200, deltaY=0, lookSpeed=0.005:
+    //   torquePitch = 0
+    //   torqueYaw = -200 * 0.005 * 2.5 = -2.5
+    //   angularVelocity += (0,0,-1)*0 + (0,1,0)*(-2.5) = (0,-2.5,0)
+    const orientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const { ctx, state } = makeCtx({ orientation });
+    state.activeMouseAction = 'rotate';
+    state.mouseX = 100;
+    state.mouseY = 100;
+
+    handleMouseMove(ctx, new MouseEvent('mousemove', { clientX: 300, clientY: 100 }));
+
+    expect(ctx.angularVelocity.x).toBeCloseTo(0, 4);
+    expect(ctx.angularVelocity.y).toBeCloseTo(-2.5, 4);
+    expect(ctx.angularVelocity.z).toBeCloseTo(0, 4);
+  });
+
+  it('[G17] 180° yaw orientation: strafe-X flips sign vs identity (verifies orientation actually rotates the basis)', () => {
+    // 180° yaw: local-X → world-(-1,0,0). With same drag, velocity flips sign vs identity.
+    const orientationFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    const a = makeCtx({ inertialMode: true, movementSpeed: 2 });
+    const b = makeCtx({ inertialMode: true, movementSpeed: 2, orientation: orientationFlip });
+    a.state.activeMouseAction = 'strafe';
+    b.state.activeMouseAction = 'strafe';
+    a.state.mouseX = 100;
+    b.state.mouseX = 100;
+    a.state.mouseY = 100;
+    b.state.mouseY = 100;
+
+    const evt = new MouseEvent('mousemove', { clientX: 150, clientY: 100 });
+    handleMouseMove(a.ctx, evt);
+    handleMouseMove(b.ctx, evt);
+
+    // Identity: velocity.x = -(50 * 0.01) = -0.5; b: velocity.x = +0.5.
+    expect(a.ctx.velocity.x).toBeCloseTo(-0.5, 4);
+    expect(b.ctx.velocity.x).toBeCloseTo(0.5, 4);
+  });
+});
