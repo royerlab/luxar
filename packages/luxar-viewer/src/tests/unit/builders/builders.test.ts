@@ -17,7 +17,7 @@
  * faulty builder corrupts coverage broadly.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   PointsBuilder,
   LinesBuilder,
@@ -104,6 +104,33 @@ describe('LinesBuilder smoke', () => {
     for (const w of data.widths) {
       expect(w).toBeGreaterThanOrEqual(0.2);
       expect(w).toBeLessThanOrEqual(0.8);
+    }
+  });
+
+  it('[builders.md C1] withVaryingWidths uses the EXACT formula min + r*(max-min) [Math.random spy]', () => {
+    // builders.md C1[P6][P2]: prior test allowed mutations of the
+    // multiplier (e.g. `min + r * min` instead of `min + r * (max-min)`)
+    // to survive because the bounded-range check passes for any value
+    // in [min, max]. By spying on Math.random and injecting deterministic
+    // [0, 0.5, 1] samples we can assert exact outputs [min, mid, max].
+    const samples = [0, 0.5, 1];
+    let i = 0;
+    const spy = vi.spyOn(Math, 'random').mockImplementation(() => samples[i++ % samples.length]);
+    try {
+      const data = new LinesBuilder().withSegments(3).withVaryingWidths(0.2, 0.8).build();
+      // 3 segments → 3 width slots; with sample sequence [0, 0.5, 1] and
+      // formula `min + r*(max-min)` we expect:
+      //   r=0   → 0.2
+      //   r=0.5 → 0.5
+      //   r=1   → 0.8
+      // A mutation `min + r*min` (instead of `min + r*(max-min)`) would
+      // produce [0.2, 0.3, 0.4] — caught here.
+      const expected = [0.2, 0.5, 0.8];
+      for (let j = 0; j < expected.length; j++) {
+        expect(data.widths[j]).toBeCloseTo(expected[j], 5);
+      }
+    } finally {
+      spy.mockRestore();
     }
   });
 
