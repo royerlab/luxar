@@ -65,7 +65,7 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
       ]);
     });
 
-    it('background palette has primary/secondary/tertiary/overlay', () => {
+    it('background palette has primary/secondary/tertiary/overlay (all four distinct) [themes.md/G11]', () => {
       const bg = theme.colors.background;
       expect(typeof bg.primary).toBe('string');
       expect(typeof bg.secondary).toBe('string');
@@ -75,6 +75,10 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
       for (const v of [bg.primary, bg.secondary, bg.tertiary, bg.overlay]) {
         expect(v.length).toBeGreaterThan(0);
       }
+      // themes.md G11: a degenerate theme where all four backgrounds collapse
+      // to the same value would pass typeof/length checks but render flat. The
+      // four background layers must remain pairwise distinct.
+      expect(new Set([bg.primary, bg.secondary, bg.tertiary, bg.overlay]).size).toBe(4);
     });
 
     it('text palette has primary/secondary/muted', () => {

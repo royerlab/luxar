@@ -7,6 +7,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ThemeManager } from '../../../themes/theme-manager';
 import { darkTheme } from '../../../themes/themes/dark.theme';
 import { lightTheme } from '../../../themes/themes/light.theme';
+import { frostedGlassTheme } from '../../../themes/themes/frosted-glass.theme';
+import { liquidGlassTheme } from '../../../themes/themes/liquid-glass.theme';
+import type { Theme } from '../../../themes/types';
 
 describe('ThemeManager', () => {
   beforeEach(() => {
@@ -480,6 +483,270 @@ describe('ThemeManager', () => {
       expect(observerSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 'light' }));
 
       setItemSpy.mockRestore();
+    });
+  });
+
+  // themes.md G6 (defensive / unreachable via public API):
+  //   `getCurrentTheme` has a pre-init throw branch (theme-manager.ts:175-180),
+  //   but the singleton constructor calls `initializeTheme` which calls
+  //   `setTheme` — so `currentTheme` is non-null by the time the constructor
+  //   returns. The only ways to hit the throw are (a) calling
+  //   `getCurrentTheme` from inside the constructor (impossible from
+  //   userland) or (b) invoking dispose() then calling getCurrentTheme()
+  //   without re-getting the instance — that latter path is already covered
+  //   by the existing Disposal test "should clear current theme on dispose"
+  //   (line 517-523). Audit-acknowledged as defensive; no additional test.
+
+  // themes.md G8 — full ~60-key CSS-variable coverage. The prior `it.each`
+  // table at "CSS Variable Injection" only verified 8 of ~60 emitted
+  // variables, leaving the typography/spacing/radius/shadow/blur/opacity/
+  // transition/z-index families untested. A mutation that drops or
+  // mistypes any of those variables would have slipped through. We
+  // enumerate every variable theme-manager.ts emits, with its expected
+  // theme-object source.
+  describe('CSS Variable Injection — full ~60-key surface coverage [themes.md/G8]', () => {
+    const buildExpectedMap = (theme: Theme): Array<[string, string]> => {
+      // Some palette fields are typed as optional (see themes/types.ts:33-119
+      // for `text.inverse`, `semantic.highlight`, `border.focus`,
+      // `typography.fontFamily.display`). theme-manager.ts emits the
+      // `--luxar-*` only when the value is defined — and the four built-in
+      // themes all populate these fields. We filter undefined values so the
+      // table stays well-typed; the absence-case is already covered by the
+      // [G4] test above.
+      const entries: Array<[string, string | undefined]> = [
+        // Background palette (4)
+        ['--luxar-bg-primary', theme.colors.background.primary],
+        ['--luxar-bg-secondary', theme.colors.background.secondary],
+        ['--luxar-bg-tertiary', theme.colors.background.tertiary],
+        ['--luxar-bg-overlay', theme.colors.background.overlay],
+        // Text palette
+        ['--luxar-text-primary', theme.colors.text.primary],
+        ['--luxar-text-secondary', theme.colors.text.secondary],
+        ['--luxar-text-muted', theme.colors.text.muted],
+        ['--luxar-text-inverse', theme.colors.text.inverse],
+        // Semantic palette (5)
+        ['--luxar-success', theme.colors.semantic.success],
+        ['--luxar-warning', theme.colors.semantic.warning],
+        ['--luxar-error', theme.colors.semantic.error],
+        ['--luxar-info', theme.colors.semantic.info],
+        ['--luxar-highlight', theme.colors.semantic.highlight],
+        // Interactive palette (5)
+        ['--luxar-interactive-default', theme.colors.interactive.default],
+        ['--luxar-interactive-hover', theme.colors.interactive.hover],
+        ['--luxar-interactive-active', theme.colors.interactive.active],
+        ['--luxar-interactive-focus', theme.colors.interactive.focus],
+        ['--luxar-interactive-disabled', theme.colors.interactive.disabled],
+        // Border palette (4)
+        ['--luxar-border-default', theme.colors.border.default],
+        ['--luxar-border-subtle', theme.colors.border.subtle],
+        ['--luxar-border-strong', theme.colors.border.strong],
+        ['--luxar-border-focus', theme.colors.border.focus],
+        // Visualization palette (4)
+        ['--luxar-viz-hot', theme.colors.visualization.hot],
+        ['--luxar-viz-warm', theme.colors.visualization.warm],
+        ['--luxar-viz-cold', theme.colors.visualization.cold],
+        ['--luxar-viz-neutral', theme.colors.visualization.neutral],
+        // Typography — font families
+        ['--luxar-font-mono', theme.typography.fontFamily.mono],
+        ['--luxar-font-display', theme.typography.fontFamily.display],
+      // Typography — font sizes (8)
+      ['--luxar-text-xs', theme.typography.fontSize.xs],
+      ['--luxar-text-sm', theme.typography.fontSize.sm],
+      ['--luxar-text-base', theme.typography.fontSize.base],
+      ['--luxar-text-md', theme.typography.fontSize.md],
+      ['--luxar-text-lg', theme.typography.fontSize.lg],
+      ['--luxar-text-xl', theme.typography.fontSize.xl],
+      ['--luxar-text-2xl', theme.typography.fontSize['2xl']],
+      ['--luxar-text-3xl', theme.typography.fontSize['3xl']],
+      // Typography — font weights (4)
+      ['--luxar-font-normal', String(theme.typography.fontWeight.normal)],
+      ['--luxar-font-medium', String(theme.typography.fontWeight.medium)],
+      ['--luxar-font-semibold', String(theme.typography.fontWeight.semibold)],
+      ['--luxar-font-bold', String(theme.typography.fontWeight.bold)],
+      // Typography — line heights (3)
+      ['--luxar-line-tight', String(theme.typography.lineHeight.tight)],
+      ['--luxar-line-normal', String(theme.typography.lineHeight.normal)],
+      ['--luxar-line-relaxed', String(theme.typography.lineHeight.relaxed)],
+      // Spacing — all 12 keys (existing test only covered '8')
+      ['--luxar-spacing-0', theme.spacing[0]],
+      ['--luxar-spacing-1', theme.spacing[1]],
+      ['--luxar-spacing-2', theme.spacing[2]],
+      ['--luxar-spacing-3', theme.spacing[3]],
+      ['--luxar-spacing-4', theme.spacing[4]],
+      ['--luxar-spacing-5', theme.spacing[5]],
+      ['--luxar-spacing-6', theme.spacing[6]],
+      ['--luxar-spacing-10', theme.spacing[10]],
+      ['--luxar-spacing-12', theme.spacing[12]],
+      ['--luxar-spacing-16', theme.spacing[16]],
+      ['--luxar-spacing-20', theme.spacing[20]],
+      // Effects — border radius (5)
+      ['--luxar-radius-none', theme.effects.borderRadius.none],
+      ['--luxar-radius-sm', theme.effects.borderRadius.sm],
+      ['--luxar-radius-md', theme.effects.borderRadius.md],
+      ['--luxar-radius-lg', theme.effects.borderRadius.lg],
+      ['--luxar-radius-full', theme.effects.borderRadius.full],
+      // Effects — shadow (4)
+      ['--luxar-shadow-sm', theme.effects.shadow.sm],
+      ['--luxar-shadow-md', theme.effects.shadow.md],
+      ['--luxar-shadow-lg', theme.effects.shadow.lg],
+      ['--luxar-shadow-xl', theme.effects.shadow.xl],
+      // Effects — blur (4)
+      ['--luxar-blur-none', theme.effects.blur.none],
+      ['--luxar-blur-sm', theme.effects.blur.sm],
+      ['--luxar-blur-md', theme.effects.blur.md],
+      ['--luxar-blur-lg', theme.effects.blur.lg],
+      // Effects — opacity (4)
+      ['--luxar-opacity-disabled', String(theme.effects.opacity.disabled)],
+      ['--luxar-opacity-secondary', String(theme.effects.opacity.secondary)],
+      ['--luxar-opacity-hover', String(theme.effects.opacity.hover)],
+      ['--luxar-opacity-full', String(theme.effects.opacity.full)],
+      // Effects — transition (3)
+      ['--luxar-transition-fast', theme.effects.transition.fast],
+      ['--luxar-transition-normal', theme.effects.transition.normal],
+      ['--luxar-transition-slow', theme.effects.transition.slow],
+      // zIndex (5)
+      ['--luxar-z-base', String(theme.zIndex.base)],
+      ['--luxar-z-dropdown', String(theme.zIndex.dropdown)],
+      ['--luxar-z-modal', String(theme.zIndex.modal)],
+      ['--luxar-z-popover', String(theme.zIndex.popover)],
+      ['--luxar-z-tooltip', String(theme.zIndex.tooltip)],
+      ];
+      return entries.filter((e): e is [string, string] => e[1] !== undefined);
+    };
+
+    it.each(buildExpectedMap(darkTheme))(
+      'dark theme injects %s with exact value',
+      (cssVar, expected) => {
+        const manager = ThemeManager.getInstance();
+        manager.setTheme('dark');
+        const actual = getComputedStyle(document.documentElement)
+          .getPropertyValue(cssVar)
+          .trim();
+        // CSS may collapse whitespace in font-stack strings; normalize.
+        const canonical = (s: string) => s.replace(/\s+/g, ' ').trim();
+        expect(canonical(actual)).toBe(canonical(expected));
+      }
+    );
+
+    it.each(buildExpectedMap(lightTheme))(
+      'light theme injects %s with exact value',
+      (cssVar, expected) => {
+        const manager = ThemeManager.getInstance();
+        manager.setTheme('light');
+        const actual = getComputedStyle(document.documentElement)
+          .getPropertyValue(cssVar)
+          .trim();
+        const canonical = (s: string) => s.replace(/\s+/g, ' ').trim();
+        expect(canonical(actual)).toBe(canonical(expected));
+      }
+    );
+  });
+
+  describe('Boundary and error paths (themes.md G10, G12-G14)', () => {
+    it.each([
+      ['dark', darkTheme],
+      ['light', lightTheme],
+      ['frosted-glass', frostedGlassTheme],
+      ['liquid-glass', liquidGlassTheme],
+    ])('[G10] loadTheme restores %s from localStorage on construction', (savedId, expected) => {
+      // theme-manager.ts:233-241: the prior test only verified 'frosted-glass'.
+      // Extend to all four built-in themes so a regression in loadTheme that
+      // misrouted to the default for any one theme is caught.
+      localStorage.setItem('luxar.theme', savedId);
+
+      const manager = ThemeManager.getInstance();
+      expect(manager.getCurrentTheme().id).toBe(expected.id);
+    });
+
+    it('[G12] unsubscribe is idempotent — calling it twice is a safe no-op', () => {
+      // The prior unsubscribe test (line 151-166) only verified that a single
+      // unsubscribe stops further notifications. Idempotence — calling the
+      // returned unsubscribe a second time — was not asserted. A regression
+      // that throws on the second call (e.g. accessing a now-deleted observer)
+      // would slip through.
+      const manager = ThemeManager.getInstance();
+      const callback = vi.fn();
+      const unsubscribe = manager.onChange(callback);
+
+      manager.setTheme('light');
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      unsubscribe();
+      callback.mockClear();
+      expect(() => unsubscribe()).not.toThrow();
+
+      // Subsequent theme changes still do not call the callback.
+      manager.setTheme('dark');
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('[G13] switching liquid-glass → dark disconnects the refraction MutationObserver', () => {
+      // theme-manager.ts:263-265: glassRefractionObserverCleanup is invoked
+      // when applyTheme runs for a non-liquid-glass theme after liquid-glass
+      // was active. The prior tests verified rAF cancellation and SVG removal
+      // but did NOT verify the MutationObserver was actually disconnected.
+      // A regression that forgot to call cleanup would leave an orphan
+      // observer firing on every DOM mutation.
+      const disconnectSpy = vi.spyOn(MutationObserver.prototype, 'disconnect');
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      const disconnectCallsAfterLiquidGlass = disconnectSpy.mock.calls.length;
+
+      manager.setTheme('dark');
+
+      // Exactly one additional disconnect was triggered by the
+      // liquid-glass → dark transition (the cleanup() invocation).
+      expect(disconnectSpy.mock.calls.length).toBeGreaterThan(disconnectCallsAfterLiquidGlass);
+
+      disconnectSpy.mockRestore();
+    });
+
+    it('[G14] chained liquid-glass → liquid-glass → dark leaves no orphan rAF / SVG / observer', () => {
+      // theme-manager.ts:268-291: each setTheme call must cancel any in-flight
+      // refraction rAF from the previous apply AND disconnect any previously-
+      // installed observer before installing new ones. A regression that
+      // leaked between repeated liquid-glass applies (e.g. forgot to clear
+      // pendingRefractionRAF or to call the prior cleanup) would surface here.
+      let nextHandle = 1;
+      const issuedHandles: number[] = [];
+      const cancelledHandles: number[] = [];
+
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((_cb: FrameRequestCallback) => {
+          const handle = nextHandle++;
+          issuedHandles.push(handle);
+          return handle;
+        });
+      const cafSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((h: number) => {
+        cancelledHandles.push(h);
+      });
+      const disconnectSpy = vi.spyOn(MutationObserver.prototype, 'disconnect');
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      const firstHandle = issuedHandles[0];
+      const disconnectsAfterFirst = disconnectSpy.mock.calls.length;
+
+      // Second liquid-glass apply — must cancel the first rAF and disconnect
+      // the first observer before installing the new ones.
+      manager.setTheme('liquid-glass');
+      expect(cancelledHandles).toContain(firstHandle);
+      expect(disconnectSpy.mock.calls.length).toBeGreaterThan(disconnectsAfterFirst);
+      const secondHandle = issuedHandles[issuedHandles.length - 1];
+      const disconnectsAfterSecond = disconnectSpy.mock.calls.length;
+
+      // Switch to dark — must cancel the second rAF and disconnect the second
+      // observer; the SVG must be removed.
+      manager.setTheme('dark');
+      expect(cancelledHandles).toContain(secondHandle);
+      expect(disconnectSpy.mock.calls.length).toBeGreaterThan(disconnectsAfterSecond);
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
+
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+      disconnectSpy.mockRestore();
     });
   });
 
