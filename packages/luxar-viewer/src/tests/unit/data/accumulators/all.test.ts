@@ -588,7 +588,11 @@ describe('lazy scalar buffer allocation', () => {
     it("Float16Array scalars → dtypes.scalars === 'float16' (no longer silently 'float32')", () => {
       // Skip on environments without Float16Array (currently Node < 22.something).
       // The accumulator's own initializeTypes branch is guarded the same way.
-      const F16 = (globalThis as { Float16Array?: typeof Float32Array }).Float16Array;
+      // Cast through `unknown` because globalThis.Float16Array (when
+      // present) has its own constructor type that does not overlap
+      // with Float32Array — TypeScript rejects the direct cast.
+      const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor })
+        .Float16Array;
       if (typeof F16 === 'undefined') {
         return;
       }

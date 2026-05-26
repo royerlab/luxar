@@ -778,7 +778,7 @@ export class MockZarrArrayBuilder {
   private shape: number[] = [1000, 3];
   private chunks: number[] = [100, 3];
   private dtype: string = '<f4';
-  private metadata: any = {};
+  private metadata: Record<string, unknown> = {};
 
   withShape(...dims: number[]): this {
     this.shape = dims;
@@ -795,12 +795,27 @@ export class MockZarrArrayBuilder {
     return this;
   }
 
-  withMetadata(metadata: any): this {
+  withMetadata(metadata: Record<string, unknown>): this {
     this.metadata = metadata;
     return this;
   }
 
-  build(): any {
+  /**
+   * Output of `MockZarrArrayBuilder.build()`.
+   *
+   * [builders OOS] Pre-fix `build()` returned `any` — call sites had
+   * zero TypeScript guard against missing fields, typos, or shape
+   * drift in the mock surface. The audit flagged this as a real
+   * type-safety regression because the builder is used as a
+   * dependency in many test files (every consumer of zarr loader
+   * tests).
+   *
+   * Exported separately from the class so call sites can annotate
+   * `const arr: MockZarrArray = new MockZarrArrayBuilder()...build()`
+   * if they want a tight reference, even though the inferred type is
+   * already strict.
+   */
+  build(): MockZarrArray {
     const chunkLen = this.chunks.reduce((a, b) => a * b, 1);
     return {
       shape: this.shape,
@@ -816,4 +831,18 @@ export class MockZarrArrayBuilder {
       })),
     };
   }
+}
+
+/**
+ * Output shape of `MockZarrArrayBuilder.build()`. The `get` mock is
+ * the vi.fn factory the builder produces — typed loosely as
+ * `() => Promise<{ data: Float32Array }>` since downstream consumers
+ * mostly call it without arguments.
+ */
+export interface MockZarrArray {
+  shape: number[];
+  chunks: number[];
+  dtype: string;
+  metadata: Record<string, unknown>;
+  get: ReturnType<typeof vi.fn>;
 }
