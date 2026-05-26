@@ -490,6 +490,86 @@ describe('InputHandler Utilities', () => {
       const result = formatDimensionValue(5.234, 3, dims);
       expect(result).toBe('5.23');
     });
+
+    describe('degenerate step values [input.md G25]', () => {
+      // input.md G25[P5]: `Math.floor(Math.log10(meta.step))` produces
+      // -Infinity when step === 0. The `Math.max(0, ...)` clamp ensures
+      // negative-Infinity becomes Infinity, which Number.toFixed REJECTS
+      // with RangeError. Pin the actual behaviour so a future guard
+      // (e.g. `step > 0 ? ... : 2`) surfaces as an intentional change.
+      it('[G25] step === 0 falls back to default 2 decimals (truthy-guard at format.ts L35)', () => {
+        // Documents the actual behaviour: `meta?.step ? ... : 2` treats
+        // step=0 as falsy → uses default 2. A future hardening that
+        // expanded the guard to `step > 0 ? ... : 2` would be equivalent
+        // here. A regression that changed the truthy check to
+        // `meta?.step !== undefined` would expose the -Infinity bug
+        // (decimals=Infinity → toFixed throws RangeError).
+        const dims = createDims(
+          4,
+          [0, 1, 2],
+          [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 0 }]
+        );
+        const result = formatDimensionValue(5.234, 3, dims);
+        expect(result).toBe('5.23');
+      });
+
+      it('[G25] step undefined falls back to 2 decimal places (default branch)', () => {
+        // The `meta?.step` falsy check uses `?` not ternary truth-test, so
+        // undefined falls through to the `2` default. Pin that.
+        const dims = createDims(
+          4,
+          [0, 1, 2],
+          [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time' }]
+        );
+        const result = formatDimensionValue(5.234567, 3, dims);
+        expect(result).toBe('5.23');
+      });
+
+      it('[G25] step === 1 → 0 decimal places (Math.log10(1)=0 → -Math.floor(0)=0)', () => {
+        // Boundary: step=1 produces zero decimals (integer formatting).
+        const dims = createDims(
+          4,
+          [0, 1, 2],
+          [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 1 }]
+        );
+        const result = formatDimensionValue(5.7, 3, dims);
+        expect(result).toBe('6');
+      });
+
+      it('[G25] step === 10 → 0 decimal places (Math.log10(10)=1 → max(0, -1)=0)', () => {
+        // Symmetric upper-boundary test: when step is greater than 1, the
+        // `Math.max(0, ...)` clamp ensures decimals never goes negative.
+        const dims = createDims(
+          4,
+          [0, 1, 2],
+          [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'time', step: 10 }]
+        );
+        const result = formatDimensionValue(123.456, 3, dims);
+        expect(result).toBe('123');
+      });
+    });
+
+    describe('discrete .5 boundary [input.md G26]', () => {
+      // input.md G26[P5]: `Math.round(value)` for discrete dimensions —
+      // .5 rounding behaviour was not pinned. JS uses "round half away
+      // from -Infinity" (NOT banker's rounding): Math.round(0.5)=1,
+      // Math.round(-0.5)=0, Math.round(1.5)=2, Math.round(2.5)=3.
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'frame', discrete: true }]
+      );
+
+      it.each([
+        { input: 0.5, expected: '1' }, // Math.round(0.5) = 1
+        { input: 1.5, expected: '2' }, // Math.round(1.5) = 2
+        { input: 2.5, expected: '3' }, // Math.round(2.5) = 3
+        { input: -0.5, expected: '0' }, // Math.round(-0.5) = 0 (NOT -1)
+        { input: -1.5, expected: '-1' }, // Math.round(-1.5) = -1 (NOT -2)
+      ])('[G26] formats $input → "$expected" (JS-style round-half-up, not banker)', ({ input, expected }) => {
+        expect(formatDimensionValue(input, 3, dims)).toBe(expected);
+      });
+    });
   });
 });
 
