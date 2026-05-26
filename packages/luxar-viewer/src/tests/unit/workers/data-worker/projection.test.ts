@@ -162,7 +162,11 @@ describe('projectPointsTo3D — happy paths', () => {
     expect(result.radii?.length).toBe(numPoints);
   });
 
-  it('with effectiveRadiusConfig: invokes calculate_effective_radii with the expected buffer shape [workers.md/W5][P3]', async () => {
+  // workers.md/W5/P3: previously call-count only; now inspects WASM-bound
+  // buffer/array shape (radii/positions/displayDims) so a regression
+  // that reordered args, dropped the radii buffer, or shifted ndim/numPoints
+  // would surface as a failed shape match.
+  it('with effectiveRadiusConfig: invokes calculate_effective_radii with the expected buffer shape', async () => {
     // workers.md [W5][P3] strengthening: previously call-count only. Inspect
     // the buffer/array shape that flows OUT to WASM so a regression that
     // re-ordered args, dropped the radii buffer, or shifted ndim/numPoints
@@ -263,7 +267,11 @@ describe('projectLinesTo3D — happy paths', () => {
     expect(result.visibleSegmentCount).toBe(0);
   });
 
-  it('valid 1-segment input invokes clip_segments_batch with the expected buffer shape [workers.md/W5][P3]', async () => {
+  // workers.md/W5/P3: previously call-count only; now pins the WASM-bound
+  // buffer shape (segments array, vertices length, ndim, numSegments)
+  // so a regression that reordered args or dropped the segments buffer
+  // would surface as a failed shape match.
+  it('valid 1-segment input invokes clip_segments_batch with the expected buffer shape', async () => {
     // workers.md [W5][P3] strengthening: previously call-count only. Pin
     // the buffer shape that flows to WASM so a regression that re-ordered
     // the segments/positions args or dropped the out-param tuple
@@ -453,7 +461,10 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect(result.centers3D.length).toBe(0);
   });
 
-  it('non-zero splats: compute_gsplats_attenuation receives the expected shaped args [workers.md/W5][P3]', async () => {
+  // workers.md/W5/P3: previously call-count only; now pins the WASM-bound
+  // arg shape (centers, choleskyFactors length matching ndim*(ndim+1)/2 * N,
+  // slicePos, tolerance) so reorder/drop regressions are caught.
+  it('non-zero splats: compute_gsplats_attenuation receives the expected shaped args', async () => {
     // workers.md [W5][P3] strengthening: previously only asserted call-count.
     // Pin the argument shape so a refactor that re-ordered or dropped the
     // positions/cholesky/amplitudes buffers, or shifted ndim/splatCount,
