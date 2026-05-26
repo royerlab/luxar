@@ -34,14 +34,49 @@ describe('effective_radii: calculate_effective_radii', () => {
     expect(output[1]).toBeCloseTo(0.5, 5);
   });
 
-  it('should compute correct effective radius with hidden spatial dims', () => {
-    // 4D: point at distance 0.6 from slice in hidden dim
-    // R=1.0, D=0.6, R_eff = sqrt(1 - 0.36) = 0.8
-    const positions = new Float32Array([0.0, 0.0, 0.0, 0.6]);
+  // wasm.md O5 / Phase E3: the three Pythagorean-distance cases below
+  // (4D with one hidden dim, 5D point-on-the-radius boundary, 6D with two
+  // hidden dims) share the SAME input shape — one point with radius 1.0,
+  // displayDims = [0,1,2], slicePos at origin, all dims spatial — and
+  // vary only ndim and the hidden-dim coordinates. Parametrize so each
+  // case names itself on failure (e.g. "Pythagorean hidden-dim slicing:
+  // 5D, distance 1.0 (boundary)") instead of all surfacing as a generic
+  // "should compute correct effective radius" failure.
+  it.each<{
+    label: string;
+    ndim: number;
+    hiddenCoords: number[]; // values for dims 3..ndim-1
+    expectedVisible: number;
+    expectedReff: number;
+  }>([
+    {
+      label: '4D, hidden offset 0.6 -> R_eff = sqrt(1 - 0.36) = 0.8',
+      ndim: 4,
+      hiddenCoords: [0.6],
+      expectedVisible: 1,
+      expectedReff: 0.8,
+    },
+    {
+      label: '5D, distance 1.0 (boundary) -> R_eff = 0 (outside radius)',
+      ndim: 5,
+      hiddenCoords: [0.6, 0.8],
+      expectedVisible: 0,
+      expectedReff: 0,
+    },
+    {
+      label: '6D, distance sqrt(0.25) -> R_eff = sqrt(0.75) ≈ 0.866',
+      ndim: 6,
+      hiddenCoords: [0.3, 0.4, 0.0],
+      expectedVisible: 1,
+      expectedReff: Math.sqrt(0.75),
+    },
+  ])('Pythagorean hidden-dim slicing: $label', ({ ndim, hiddenCoords, expectedVisible, expectedReff }) => {
+    expect(hiddenCoords.length).toBe(ndim - 3);
+    const positions = new Float32Array([0.0, 0.0, 0.0, ...hiddenCoords]);
     const radii = new Float32Array([1.0]);
     const displayDims = new Uint32Array([0, 1, 2]);
-    const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0]);
-    const spatialExtend = new Uint8Array([1, 1, 1, 1]);
+    const slicePos = new Float32Array(ndim); // all zeros
+    const spatialExtend = new Uint8Array(ndim).fill(1);
     const output = new Float32Array(1);
 
     const visible = calculate_effective_radii(
@@ -50,37 +85,13 @@ describe('effective_radii: calculate_effective_radii', () => {
       displayDims,
       slicePos,
       spatialExtend,
-      4,
+      ndim,
       1,
       output
     );
 
-    expect(visible).toBe(1);
-    expect(output[0]).toBeCloseTo(0.8, 5);
-  });
-
-  it('should return zero when point is outside radius', () => {
-    // 5D: point at distance 1.0 from slice (sqrt(0.6² + 0.8²) = 1.0)
-    const positions = new Float32Array([0.0, 0.0, 0.0, 0.6, 0.8]);
-    const radii = new Float32Array([1.0]);
-    const displayDims = new Uint32Array([0, 1, 2]);
-    const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0, 0.0]);
-    const spatialExtend = new Uint8Array([1, 1, 1, 1, 1]);
-    const output = new Float32Array(1);
-
-    const visible = calculate_effective_radii(
-      positions,
-      radii,
-      displayDims,
-      slicePos,
-      spatialExtend,
-      5,
-      1,
-      output
-    );
-
-    expect(visible).toBe(0);
-    expect(output[0]).toBeCloseTo(0, 5);
+    expect(visible).toBe(expectedVisible);
+    expect(output[0]).toBeCloseTo(expectedReff, 5);
   });
 
   it('should filter discrete dimension mismatches', () => {
@@ -147,32 +158,6 @@ describe('effective_radii: calculate_effective_radii', () => {
 
     // Points with distance < 1 should be visible
     expect(visible).toBe(5000); // First half have distance < 1
-  });
-
-  it('should handle multiple hidden spatial dimensions', () => {
-    // 6D: display dims 0,1,2; hidden spatial dims 3,4,5
-    // Point at (0,0,0, 0.3, 0.4, 0) - distance = 0.5
-    // R=1.0, D=0.5, R_eff = sqrt(1 - 0.25) = sqrt(0.75) ≈ 0.866
-    const positions = new Float32Array([0.0, 0.0, 0.0, 0.3, 0.4, 0.0]);
-    const radii = new Float32Array([1.0]);
-    const displayDims = new Uint32Array([0, 1, 2]);
-    const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-    const spatialExtend = new Uint8Array([1, 1, 1, 1, 1, 1]);
-    const output = new Float32Array(1);
-
-    const visible = calculate_effective_radii(
-      positions,
-      radii,
-      displayDims,
-      slicePos,
-      spatialExtend,
-      6,
-      1,
-      output
-    );
-
-    expect(visible).toBe(1);
-    expect(output[0]).toBeCloseTo(Math.sqrt(0.75), 5);
   });
 
   it('MED-18: dims beyond spatialExtendDims.length default to spatial (documented fallback)', () => {
