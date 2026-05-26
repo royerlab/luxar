@@ -125,43 +125,55 @@ describe('effective-radius-calculator', () => {
       expect(Number.isNaN(result[0])).toBe(false);
     });
 
-    it('should handle multiple points with different radii', () => {
-      // Setup: 3 points at different distances
-      const positions = new Float32Array([
-        0,
-        0,
-        0,
-        0.0, // Point 1: on slice
-        0,
-        0,
-        0,
-        0.3, // Point 2: 0.3 away
-        0,
-        0,
-        0,
-        0.5, // Point 3: 0.5 away
-      ]);
-      const radii = new Float32Array([1.0, 0.5, 2.0]);
-      const viewState: ViewState = {
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 0],
-        tolerance: [0.1, 0.1, 0.1, 0.1],
-      };
-      const config: EffectiveRadiusConfig = {
-        spatialExtendDims: [true, true, true, true],
-        maxRadius: 2.0,
-      };
-
-      const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
-
-      // Point 1: √(1² - 0²) = 1.0
-      expect(result[0]).toBeCloseTo(1.0, 5);
-      // Point 2: √(0.5² - 0.3²) = √(0.25 - 0.09) = √0.16 = 0.4
-      expect(result[1]).toBeCloseTo(0.4, 5);
-      // Point 3: √(2² - 0.5²) = √(4 - 0.25) = √3.75
+    // ndim.md O2 / Phase E14: the previous test bundled three points
+    // with different {distance, radius} into one `it`, calling
+    // calculateEffectiveRadii ONCE on the 3-point input. A regression
+    // affecting only the mid-distance Pythagorean case (point 2) would
+    // surface as a generic "should handle multiple points with
+    // different radii" failure that doesn't name which point regressed.
+    //
+    // Split the multi-point call into a single shared-input call, then
+    // parametrize the per-point assertion via `it.each` so each
+    // failing case names the {hidden-dim distance, radius} pair that
+    // regressed (e.g. "per-point effective radius: distance=0.3,
+    // radius=0.5 → 0.4 (Pythagorean clip)").
+    it.each<{ pointIndex: number; distance: number; radius: number; expected: number; label: string }>([
+      { pointIndex: 0, distance: 0.0, radius: 1.0, expected: 1.0, label: 'on slice (no clip)' },
+      { pointIndex: 1, distance: 0.3, radius: 0.5, expected: 0.4, label: 'Pythagorean clip √(0.5²−0.3²)' },
       // [ndim.md/C3][P5] use Float32-appropriate precision (5 digits, ~1e-5).
-      expect(result[2]).toBeCloseTo(Math.sqrt(3.75), 5);
-    });
+      { pointIndex: 2, distance: 0.5, radius: 2.0, expected: Math.sqrt(3.75), label: 'Pythagorean clip √(2²−0.5²)' },
+    ])(
+      'per-point effective radius from a multi-point input: distance=$distance, radius=$radius → $expected ($label)',
+      ({ pointIndex, distance, radius, expected }) => {
+        // Single shared 3-point setup is constructed inside each row so
+        // the `calculateEffectiveRadii` contract for "multiple points
+        // with mixed radii in one call" is still exercised per row.
+        const positions = new Float32Array([
+          0, 0, 0, 0.0, // Point 0: on slice
+          0, 0, 0, 0.3, // Point 1: 0.3 away
+          0, 0, 0, 0.5, // Point 2: 0.5 away
+        ]);
+        const radii = new Float32Array([1.0, 0.5, 2.0]);
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 0],
+          tolerance: [0.1, 0.1, 0.1, 0.1],
+        };
+        const config: EffectiveRadiusConfig = {
+          spatialExtendDims: [true, true, true, true],
+          maxRadius: 2.0,
+        };
+        // Sanity: confirm the row's {distance, radius} matches the
+        // shared setup for the indexed point — guards against a future
+        // edit silently desyncing rows from the buffer.
+        expect(positions[pointIndex * 4 + 3]).toBeCloseTo(distance, 6);
+        expect(radii[pointIndex]).toBeCloseTo(radius, 6);
+
+        const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
+
+        expect(result[pointIndex]).toBeCloseTo(expected, 5);
+      }
+    );
 
     it('should handle complex mixed spatial and non-spatial dimensions', () => {
       // Setup: 6D data with spatial xyz, non-spatial time, spatial depth, non-spatial channel
