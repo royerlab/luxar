@@ -535,6 +535,52 @@ describe('lazy scalar buffer allocation', () => {
     expect(data.scalars![1]).toBeCloseTo(0.5, 5);
   });
 
+  // [integration.md OOS4] dtypes.scalars must self-report the actual
+  // on-disk dtype. Pre-fix, every non-Uint8 scalar surfaced as
+  // 'float32', silently collapsing Float16 → float32 even though the
+  // accumulator's internal type tracker (`PointsAccumulatorTypes.scalar`)
+  // distinguished them.
+  describe('LoadedPointsDataAccumulator: dtypes.scalars self-report', () => {
+    it("Float32Array scalars → dtypes.scalars === 'float32'", () => {
+      const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        scalars: new Float32Array([0.5]),
+      });
+      const data = acc.getData(1);
+      expect(data.metadata.dtypes!.scalars).toBe('float32');
+    });
+
+    it("Uint8Array scalars → dtypes.scalars === 'uint8'", () => {
+      const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        scalars: new Uint8Array([200]),
+      });
+      const data = acc.getData(1);
+      expect(data.metadata.dtypes!.scalars).toBe('uint8');
+    });
+
+    it("Float16Array scalars → dtypes.scalars === 'float16' (no longer silently 'float32')", () => {
+      // Skip on environments without Float16Array (currently Node < 22.something).
+      // The accumulator's own initializeTypes branch is guarded the same way.
+      const F16 = (globalThis as { Float16Array?: typeof Float32Array }).Float16Array;
+      if (typeof F16 === 'undefined') {
+        return;
+      }
+
+      const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        scalars: new F16([0.25]),
+      });
+      const data = acc.getData(1);
+      // The bug was: this asserted 'float32' (the silent collapse).
+      // The fix surfaces the true on-disk dtype.
+      expect(data.metadata.dtypes!.scalars).toBe('float16');
+    });
+  });
+
   it('LinesDataAccumulator: scalar buffer stays empty when no scalars fill', () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {

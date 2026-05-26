@@ -310,7 +310,17 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
                 : 'float32',
           radii: this.types?.radius === 'Uint8Array' ? 'uint8' : 'float32',
           sharpness: this.types?.sharpness === 'Uint8Array' ? 'uint8' : 'float32',
-          scalars: this.types?.scalar === 'Uint8Array' ? 'uint8' : 'float32',
+          // [integration.md OOS4] Float16 scalars must self-report as
+          // 'float16' so consumers can branch on the actual on-disk dtype.
+          // Pre-fix, every non-Uint8 scalar tagged as 'float32', silently
+          // hiding Float16 data even though `PointsAccumulatorTypes.scalar`
+          // explicitly tracks 'Float16Array' separately.
+          scalars:
+            this.types?.scalar === 'Uint8Array'
+              ? 'uint8'
+              : this.types?.scalar === 'Float16Array'
+                ? 'float16'
+                : 'float32',
         },
       },
     };
