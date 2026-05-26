@@ -165,7 +165,11 @@ describe('LinesSpatialIndexLoader', () => {
   // segments / vertices / widths / colors / sharpness data arrays.
   // ────────────────────────────────────────────────────────────────
 
-  describe('body coverage', () => {
+  // data.md O2 / Phase E16: previously `'body coverage'` — a
+  // coverage-driven name, not a behavior-driven one. Rename to surface
+  // what the inner block exercises (lines spatial-index initialization,
+  // query routing, and chunk metadata loading through mocked zarr fixtures).
+  describe('with mocked zarr fixtures', () => {
     let bodyLoader: LinesSpatialIndexLoader;
     let mockZarrLocation: { resolve: ReturnType<typeof vi.fn> };
     let mockNode: SceneNode;
