@@ -1718,17 +1718,21 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('should dispose prefetcher and clear reference on dispose', async () => {
+      // cache.md C5[P1] fix: prior version probed the private `(store as any).
+      // prefetcher` field. The public surface is `getPrefetcher()` — use it
+      // so a future refactor that changes the field name (or switches to a
+      // WeakRef / counter / Map) still exercises the same contract.
       const mockPrefetcher = {
         onAccess: vi.fn(),
         dispose: vi.fn(),
       };
 
       store.setPrefetcher(mockPrefetcher as any);
-      expect((store as any).prefetcher).toBe(mockPrefetcher);
+      expect(store.getPrefetcher()).toBe(mockPrefetcher);
 
       await store.dispose();
       expect(mockPrefetcher.dispose).toHaveBeenCalledTimes(1);
-      expect((store as any).prefetcher).toBeNull();
+      expect(store.getPrefetcher()).toBeNull();
     });
 
     it('should work without prefetcher attached', async () => {
