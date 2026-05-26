@@ -141,7 +141,10 @@ describe('EventManager', () => {
       expect(manager.count()).toBe(0);
     });
 
-    it('should work with no listeners added', () => {
+    // ui.md O9 / Phase E15: previously `'should work with no listeners added'`
+    // — vague (P9). Rename to surface the actual contract: removeAll()
+    // on an empty manager is a no-throw no-op and leaves the count at 0.
+    it('removeAll() is a no-throw no-op on a freshly-constructed manager', () => {
       expect(() => {
         manager.removeAll();
       }).not.toThrow();
