@@ -203,7 +203,11 @@ describe('WorkerPool.dispose — mid-init race', () => {
     expect(workers.every((w) => w.terminate.mock.calls.length === 1)).toBe(true);
   });
 
-  it('init1 → dispose → init2 successful → init1 settles late: pool.workers belongs to init2', async () => {
+  // workers.md O7 / Phase E27: previous name used arrow notation
+  // (`init1 → dispose → init2 ...`). Rewrite in the surrounding file's
+  // "does X when Y" style so the test name reads as a behavior
+  // assertion rather than a sequence diagram.
+  it('late settlement of a disposed init1 does NOT corrupt init2 workers', async () => {
     // Per-call init impl: first N calls (init1's workers) park forever
     // until released; subsequent calls (init2's workers) resolve immediately.
     const init1Releases: Array<() => void> = [];
