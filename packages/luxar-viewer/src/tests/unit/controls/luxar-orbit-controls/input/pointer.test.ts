@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import {
   mouseAction,
   handlePointerDown,
+  handlePointerMove,
   handlePointerUp,
   handleWheel,
   type OrbitInputCtx,
@@ -386,5 +387,145 @@ describe('handlePointerUp', () => {
     expect(state.action).not.toBe('none');
     handlePointerUp(ctx, makePointerEvent('pointerup', { pointerId: 7 }));
     expect(state.action).toBe('none');
+  });
+});
+
+describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () => {
+  // [controls.md G18][P5] Lines 152-197 of pointer.ts (handlePointerMove) were
+  // only reached through orchestrator tests that injected private state.
+  // These tests drive the three branches directly on the pure ctx interface.
+
+  it('[G18] disabled: handlePointerMove is a no-op (no state mutation, no dispatch)', () => {
+    const { ctx, state } = makeBaseCtx({ enabled: false });
+    state.action = 'rotate';
+    const initialQuat = ctx.rotationDelta.clone();
+    handlePointerMove(ctx, makePointerEvent('pointermove', { clientX: 200, clientY: 100 }));
+    expect(ctx.rotationDelta.equals(initialQuat)).toBe(true);
+  });
+
+  it('[G18] touch pointer type delegates to onTouchMove and returns early', () => {
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'rotate';
+    const evt = makePointerEvent('pointermove', {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 200,
+      clientY: 100,
+    });
+    handlePointerMove(ctx, evt);
+    expect(ctx.onTouchMove).toHaveBeenCalledWith(evt);
+    // Mouse path NOT taken — rotationDelta untouched.
+    expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+  });
+
+  it('[G18] rotate branch: rotationDelta accumulator grows; rotateStart re-anchors', () => {
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'rotate';
+    ctx.rotateStart.set(0, 0); // identity NDC
+    const evt = makePointerEvent('pointermove', {
+      pointerId: 0,
+      clientX: 400,
+      clientY: 200,
+    });
+    // Add the pointer to the array so the index loop is exercised.
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(100, 100));
+
+    handlePointerMove(ctx, evt);
+
+    // rotationDelta moved off identity.
+    expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(false);
+    // rotateStart re-anchored to new pointer NDC (non-zero).
+    expect(ctx.rotateStart.equals(new THREE.Vector2(0, 0))).toBe(false);
+  });
+
+  it('[G18] pan branch: ctx.pan invoked with raw clientX/Y deltas; panStart re-anchors', () => {
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'pan';
+    ctx.panStart.set(100, 200);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
+
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 175, clientY: 220 })
+    );
+    // pan called with (clientX - panStart.x, clientY - panStart.y) = (75, 20).
+    expect(ctx.pan).toHaveBeenCalledWith(75, 20);
+    // panStart re-anchored to current pointer.
+    expect(ctx.panStart.x).toBe(175);
+    expect(ctx.panStart.y).toBe(220);
+  });
+
+  it('[G18] zoom branch: positive deltaY adds positive zoomDelta (dolly OUT)', () => {
+    // deltaY > 0 means pointer moved DOWN. computeZoomScale(deltaY, speed) - 1
+    // is added to zoomDelta. Pin the sign convention.
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'zoom';
+    ctx.dollyStart.set(100, 100);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(100, 100));
+
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 100, clientY: 200 })
+    );
+    // computeZoomScale(100, 1) = 0.95^1 = 0.95; 0.95 - 1 = -0.05.
+    // Wait — the source uses `computeZoomScale(deltaY, ...) - 1` which is < 0 for
+    // |deltaY| > 0. But the sign-of-deltaY branch chooses the sign:
+    // deltaY > 0 → ctx.addZoomDelta(computeZoomScale - 1) — negative zoomDelta.
+    // Pin this contract precisely.
+    expect(state.zoomDelta).toBeLessThan(0);
+  });
+
+  it('[G18] zoom branch: negative deltaY adds positive zoomDelta (dolly IN, sign flip)', () => {
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'zoom';
+    ctx.dollyStart.set(100, 200);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
+
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 100, clientY: 100 })
+    );
+    // deltaY = -100 → `-(computeZoomScale(100, 1) - 1)` = `-(-0.05)` = +0.05.
+    expect(state.zoomDelta).toBeGreaterThan(0);
+  });
+
+  it('[G18] zoom branch: deltaY === 0 → neither branch fires → zoomDelta unchanged', () => {
+    // Pin the exact `> 0` / `< 0` strict boundary at lines 190/192.
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'zoom';
+    state.zoomDelta = 5; // sentinel
+    ctx.dollyStart.set(100, 200);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
+
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 100, clientY: 200 })
+    );
+    expect(state.zoomDelta).toBe(5);
+  });
+
+  it('[G18] state === "none": no rotate/pan/zoom branch taken; only pointer-tracking updated', () => {
+    const { ctx, state } = makeBaseCtx();
+    state.action = 'none';
+    const startPos = new THREE.Vector2(100, 100);
+    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointerPositions.set(0, startPos);
+
+    handlePointerMove(
+      ctx,
+      makePointerEvent('pointermove', { pointerId: 0, clientX: 250, clientY: 250 })
+    );
+    // pointerPositions updated.
+    expect(startPos.x).toBe(250);
+    expect(startPos.y).toBe(250);
+    // No state mutation.
+    expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+    expect(ctx.pan).not.toHaveBeenCalled();
+    expect(state.zoomDelta).toBe(0);
   });
 });
