@@ -301,10 +301,12 @@ describe('computeNDVisibilityLines — direct unit (G1)', () => {
 
     expect(result.visibleCount).toBe(0);
     expect(result.visibilityMask.length).toBe(0);
-    // Buffer was created (since `!buf` fires) — but length is min(0*1.5, …)
-    // = 0 from ceil(0). That's a contract worth pinning: pooled buffer is
-    // allocated even at numSegments=0 (degenerate but harmless).
-    expect(ctx.visibilityMaskBuffer).not.toBeNull();
+    // workers.md C5 fix: prior version pinned `visibilityMaskBuffer != null`,
+    // which documents an implementation accident (the `!buf` branch fires
+    // unconditionally even at numSegments=0). If the source is later
+    // optimised to skip allocation when numSegments===0, this assertion
+    // would fail for a non-bug. The behavioural contract is just "no
+    // crash, return zero-length mask" — that's what's asserted above.
   });
 
   it('grows pooled buffer to ≥ numSegments using 1.5x policy (symmetry with points) (P8)', async () => {
