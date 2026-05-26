@@ -164,6 +164,24 @@ describe('handleKeyDown — gating', () => {
     handleKeyDown(ctx, new KeyboardEvent('keydown', { key: 'w' }));
     expect(ctx.dispatch).toHaveBeenCalledWith('change');
   });
+
+  it('[controls.md G28] dispatches "change" on UNRECOGNIZED keys too (Space, Tab, /)', () => {
+    // controls.md G28[P8]: orbit's keyboard test has 5 cases including
+    // "non-arrow"; fly's keyboard previously had 4 ArrowKey tests but no
+    // "no recognised key" symmetry coverage. The fly handler unconditionally
+    // dispatches `change` at the end of every keydown (keyboard.ts L125).
+    // Pin this behaviour so a regression that wrapped dispatch in
+    // `if (recognized) {...}` would surface.
+    for (const k of ['Space', 'Tab', '/', 'Backquote', 'F1']) {
+      const { ctx, moveState } = makeCtx();
+      handleKeyDown(ctx, new KeyboardEvent('keydown', { key: k }));
+      // moveState DOES NOT change (no recognized binding).
+      expect(moveState.forward).toBe(0);
+      expect(moveState.back).toBe(0);
+      // But dispatch IS called — that's the documented contract.
+      expect(ctx.dispatch).toHaveBeenCalledWith('change');
+    }
+  });
 });
 
 describe('handleKeyDown — preventDefault contract (controls.md G13, G14)', () => {
