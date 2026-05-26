@@ -269,6 +269,52 @@ describe('OPFSStore', () => {
       const stats = store.getStats();
       expect(stats.count).toBe(0);
     });
+
+    // [cache OOS] Pre-fix, `delete(key)` decremented `totalSize` BEFORE
+    // calling `removeEntry()`. If removeEntry threw, totalSize was
+    // already decremented but the file remained on disk and the index
+    // still had the entry — three pieces of state out of sync. The next
+    // `set()` then evicted based on an under-counted totalSize. The
+    // post-fix order is removeEntry first, then totalSize + index
+    // updates only on success.
+    it('preserves totalSize and index when removeEntry throws (atomicity)', async () => {
+      // Seed an entry so totalSize and index are both populated.
+      const data = new Uint8Array(1000);
+      await store.set('victim', data);
+      const sizeBefore = store.getStats().size;
+      const countBefore = store.getStats().count;
+      expect(sizeBefore).toBeGreaterThan(0);
+      expect(countBefore).toBe(1);
+
+      // Swap in a removeEntry that throws to simulate an OPFS I/O error
+      // mid-delete (file locked by concurrent op, transient permission
+      // error, etc.). The previous removeEntry is restored after.
+      const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
+      mockFS.mockDirHandle.removeEntry = async () => {
+        throw new Error('simulated transient OPFS error');
+      };
+
+      try {
+        // delete() swallows the error in its own try/catch, so the call
+        // itself does not reject; we observe the effect via getStats().
+        await store.delete('victim');
+
+        // POST-FIX CONTRACT: removal failed, so all three pieces of
+        // state are unchanged — totalSize untouched, index unchanged.
+        const stats = store.getStats();
+        expect(stats.size).toBe(sizeBefore);
+        expect(stats.count).toBe(countBefore);
+      } finally {
+        mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+      }
+
+      // After restoring the working removeEntry, a retry succeeds and
+      // brings everything to consistent state.
+      await store.delete('victim');
+      const after = store.getStats();
+      expect(after.size).toBe(0);
+      expect(after.count).toBe(0);
+    });
   });
 
   describe('Clear Operations', () => {

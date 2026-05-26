@@ -412,24 +412,31 @@ export class OPFSStore {
   async delete(key: string): Promise<void> {
     if (!this.opfsRoot) return;
 
-    try {
-      // Update totalSize before deleting
-      const entry = this.index.get(key);
-      if (entry) {
-        this.totalSize -= entry.size;
-        this.totalSize = Math.max(0, this.totalSize);
-      }
+    const entry = this.index.get(key);
+    if (!entry) return;
 
-      // Get bucket and delete file from it
+    try {
+      // [cache OOS] Order matters: file removal must succeed BEFORE
+      // we update `totalSize` and the index. The previous order
+      // (totalSize decrement → removeEntry → index.delete) left the
+      // accumulator desynchronised when removeEntry threw — totalSize
+      // had already been decremented but the file was still on disk
+      // and the index still had the entry. The next `set()` then made
+      // eviction decisions based on the wrong size. With the new
+      // ordering, an exception in removeEntry leaves all three pieces
+      // of state — totalSize, index, disk — consistent as if delete()
+      // had never been called, so callers can retry safely.
       const bucket = getBucket(key);
       const bucketHandle = await this.buckets.getHandle(this.opfsRoot, bucket, false);
       if (bucketHandle) {
         const fileName = keyToFileName(key);
         await bucketHandle.removeEntry(fileName);
       }
+      this.totalSize = Math.max(0, this.totalSize - entry.size);
       this.index.delete(key);
     } catch {
-      // File doesn't exist, ignore
+      // File doesn't exist (or transient I/O error), ignore. State is
+      // unchanged so callers can retry.
     }
   }
 
