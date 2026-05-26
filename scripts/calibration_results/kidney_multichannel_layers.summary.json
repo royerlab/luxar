@@ -1,0 +1,55 @@
+{
+  "name": "kidney_multichannel_layers",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 138248,
+  "per_sample": [
+    {
+      "label": "kidney_multichannel_layers__ch0",
+      "k_star": 74658,
+      "type": "peak",
+      "confidence_db": 0.4101753690139205,
+      "volume_shape": [
+        16,
+        512,
+        512
+      ],
+      "elapsed_seconds": 497.0965211740113,
+      "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch0.json",
+      "noise_floor_psnr_db": 41.020151117836754
+    },
+    {
+      "label": "kidney_multichannel_layers__ch1",
+      "k_star": 74658,
+      "type": "peak",
+      "confidence_db": 0.4761678828767373,
+      "volume_shape": [
+        16,
+        512,
+        512
+      ],
+      "elapsed_seconds": 396.9210314489901,
+      "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch1.json",
+      "noise_floor_psnr_db": 44.32959767792898
+    },
+    {
+      "label": "kidney_multichannel_layers__ch2",
+      "k_star": 138248,
+      "type": "peak",
+      "confidence_db": 0.06102941068566636,
+      "volume_shape": [
+        16,
+        512,
+        512
+      ],
+      "elapsed_seconds": 236.94350844601286,
+      "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch2.json",
+      "noise_floor_psnr_db": 42.515087025907796
+    }
+  ],
+  "comment": "skimage kidney 3-channel ~16x512x512"
+}

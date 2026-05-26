@@ -157,8 +157,8 @@ TARGET_SIZE = 128  # Downscale to manageable size
 TIME_POINT = 0  # First time point
 
 # Progressive fitting parameters
-MAX_SPLATS = 1000
-MAX_SPLATS_PER_PASS = 200
+MAX_SPLATS = 12000
+MAX_SPLATS_PER_PASS = 2500
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
 DEVICE = None  # Auto-detect (cuda/mps/cpu)

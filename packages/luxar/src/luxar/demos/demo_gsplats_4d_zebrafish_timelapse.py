@@ -92,8 +92,8 @@ from luxar.utils.paths import get_demos_output_dir
 ZENODO_URL = "https://zenodo.org/api/records/1211599/files/cxcr4aMO2_290112.lsm/content"
 
 # Fitting parameters (progressive)
-MAX_SPLATS = 4000
-MAX_SPLATS_PER_PASS = 1000
+MAX_SPLATS = 2000
+MAX_SPLATS_PER_PASS = 500
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
 
