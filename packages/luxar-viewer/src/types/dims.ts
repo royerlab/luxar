@@ -112,6 +112,20 @@ export function initializeDims(
   totalElements: number,
   metadata?: DimensionMetadata[]
 ): SimpleDims {
+  // [types.md OOS-5] Defensive guard against negative / non-integer
+  // numPoints. The parameter is typed `number` (TypeScript has no
+  // "non-negative integer" refinement), so a buggy caller could pass
+  // a negative value or a float. The division-by-numPoints +
+  // Number.isInteger check below would not catch all negatives
+  // (e.g. -6 / -3 = 2 passes Number.isInteger), and downstream
+  // `new Array(ndim)` would throw a misleading RangeError far from
+  // the actual bug. Catch it here with a clear message.
+  if (!Number.isFinite(numPoints) || numPoints < 0 || !Number.isInteger(numPoints)) {
+    throw new Error(
+      `Invalid numPoints: ${numPoints} must be a non-negative integer`
+    );
+  }
+
   // HIGH-5: empty point clouds are legitimate; avoid dividing by zero and
   // returning Infinity (which then failed Number.isInteger with a misleading
   // "0 elements for 0 points" error). Infer ndim from metadata when given,
