@@ -57,21 +57,20 @@ const FORBIDDEN_SELECTORS = [
 
 describe('Library CSS scope (embed safety)', () => {
   it('styles/index.css contains no global / host-page selectors', () => {
+    // styles.md C3 fix: prior aggregate `expect(offenders).toEqual([])`
+    // produced a single message bundling every forbidden pattern's match.
+    // Switch to one assertion per pattern so a regression introducing
+    // a global selector surfaces with the specific pattern name in the
+    // failure header (not buried in a concatenated string).
     const css = expandImports(resolve(STYLES_ROOT, 'index.css'));
     expect(css.length).toBeGreaterThan(0);
 
-    const offenders: string[] = [];
     for (const pattern of FORBIDDEN_SELECTORS) {
       const match = css.match(pattern);
-      if (match) {
-        offenders.push(`${pattern.source} matched: "${match[0].slice(0, 80)}"`);
-      }
+      // The second arg to expect() supplies a label that appears in the
+      // diff header — pattern.source gives "body" / "^html" / "*{" etc.
+      expect(match, `forbidden selector ${pattern.source}`).toBeNull();
     }
-
-    // styles.md C1 fix: previously used `throw new Error` which bypassed
-    // vitest's assertion-tracking and `expect`-aware reporters. Using an
-    // `expect` so the diff is visible in standard vitest output.
-    expect(offenders, offenders.join('\n  ')).toEqual([]);
   });
 
   it('styles/standalone.css still contains the global rules (sanity check)', () => {
