@@ -292,6 +292,57 @@ describe('DimensionAnimationManager', () => {
       expect(state?.direction).toBe('backward'); // Should have reversed
     });
 
+    // scene.md C3[P5] three-loop-mode backward-direction parity: prior tests
+    // only covered forward-direction boundary cases. handleBoundary is a 6-
+    // case switch (forward × {loop, once, bounce} + backward × same) and
+    // only 3 of 6 were exercised. Add the missing backward triplet.
+    it('[scene.md C3] loop mode "loop" backward: at min, wraps to max', () => {
+      manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'backward' });
+
+      // Set to min
+      sceneDimsManager.setDimensionValue(3, 0);
+
+      // Simulate frame - should wrap to max
+      mockTime += 200;
+      if (perFrameCallback) {
+        perFrameCallback();
+      }
+
+      const newValue = sceneDimsManager.getDims()!.currentStep[3];
+      expect(newValue).toBe(10); // Wrapped from min to max.
+    });
+
+    it('[scene.md C3] loop mode "once" backward: at min, animation stops', () => {
+      manager.play(3, { targetFPS: 10, loopMode: 'once', direction: 'backward' });
+
+      // Set to min
+      sceneDimsManager.setDimensionValue(3, 0);
+
+      // Simulate frame - should stop
+      mockTime += 200;
+      if (perFrameCallback) {
+        perFrameCallback();
+      }
+
+      expect(manager.isAnimating(3)).toBe(false);
+    });
+
+    it('[scene.md C3] loop mode "bounce" backward: at min, reverses to forward', () => {
+      manager.play(3, { targetFPS: 10, loopMode: 'bounce', direction: 'backward' });
+
+      // Set to min
+      sceneDimsManager.setDimensionValue(3, 0);
+
+      // Simulate frame - should reverse direction
+      mockTime += 200;
+      if (perFrameCallback) {
+        perFrameCallback();
+      }
+
+      const state = manager.getState(3);
+      expect(state?.direction).toBe('forward'); // Should have reversed back.
+    });
+
     it('should handle backward direction', () => {
       manager.play(3, { targetFPS: 10, direction: 'backward' });
 
