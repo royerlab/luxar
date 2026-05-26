@@ -106,4 +106,32 @@ describe('deriveScaleLimits', () => {
       { numRuns: 200 }
     );
   });
+
+  describe('negative-diagonal boundary [controls.md G24]', () => {
+    // controls.md G24[P5]: the orchestrator guards `setSceneScale(<= 0)` but
+    // the pure-math helper does NOT clamp. Pin its actual contract (output
+    // sign matches input sign) so a regression introducing a silent clamp
+    // would surface here as an intentional contract change.
+    it('[G24] deriveScaleLimits(-1) produces NEGATIVE outputs in all three slots (no clamp)', () => {
+      const r = deriveScaleLimits(-1);
+      expect(r.minDist).toBeLessThan(0);
+      expect(r.maxDist).toBeLessThan(0);
+      expect(r.flySpeed).toBeLessThan(0);
+    });
+
+    it('[G24] deriveScaleLimits(0) produces 0 in all three slots (boundary)', () => {
+      const r = deriveScaleLimits(0);
+      expect(r.minDist).toBe(0);
+      expect(r.maxDist).toBe(0);
+      expect(r.flySpeed).toBe(0);
+    });
+
+    it('[G24] sign reflects input: deriveScaleLimits(-d) === -deriveScaleLimits(d)', () => {
+      const rPos = deriveScaleLimits(42);
+      const rNeg = deriveScaleLimits(-42);
+      expect(rNeg.minDist).toBeCloseTo(-rPos.minDist, 8);
+      expect(rNeg.maxDist).toBeCloseTo(-rPos.maxDist, 8);
+      expect(rNeg.flySpeed).toBeCloseTo(-rPos.flySpeed, 8);
+    });
+  });
 });
