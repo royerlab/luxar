@@ -224,10 +224,21 @@ describe('MultiLevelCachingStore', () => {
   });
 
   describe('per-tier demand counters', () => {
-    it('first fetch increments networkRequests; nothing in l1Hits/l2Hits', async () => {
+    // cache.md O2 / Phase E9: the previous test promised "first fetch
+    // increments networkRequests; nothing in l1Hits/l2Hits" but the
+    // body also asserted the fresh-store initial state
+    // (`{l1Hits: 0, l2Hits: 0, networkRequests: 0}`). Split: one test
+    // pins the initial demand-counter state on a fresh store; the
+    // other pins the first-fetch delta. A regression that initialised
+    // l1Hits to 7 surfaces as "fresh store..." rather than "first fetch
+    // increments networkRequests" — which doesn't match the broken
+    // behavior.
+    it('fresh store reports zero demand counters across all tiers', () => {
       const before = store.getStats().demand;
       expect(before).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+    });
 
+    it('first fetch increments networkRequests; nothing in l1Hits/l2Hits', async () => {
       await store.get('test.chunk');
 
       const after = store.getStats().demand;
