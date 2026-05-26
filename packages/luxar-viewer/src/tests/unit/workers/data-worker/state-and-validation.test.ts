@@ -141,7 +141,7 @@ describe('validateLineSegmentReferences — direct (H6, P5)', () => {
     }
   });
 
-  it('widths / colors / sharpness bounds also enforced against max-vertex+1', () => {
+  it('widths / colors / sharpness / scalars bounds also enforced against max-vertex+1', () => {
     // ndim=3, 2 segments [0,1, 2,3] → max-vertex=3, minVertices=4.
     const segs = new Uint32Array([0, 1, 2, 3]);
     const positions = new Float32Array(4 * 3); // exactly fits
@@ -163,12 +163,21 @@ describe('validateLineSegmentReferences — direct (H6, P5)', () => {
         sharpness: new Float32Array(3),
       })
     ).toThrow(/sharpness too short/);
+    // [workers OOS] scalars: 3 entries (need 4) → rejected.
+    // Pre-fix, the validator didn't check scalars at all, so a short
+    // scalars input reached interpolate_scalars_batch and panicked WASM.
+    expect(() =>
+      validateLineSegmentReferences('test', segs, 2, positions, 3, {
+        scalars: new Float32Array(3),
+      })
+    ).toThrow(/scalars too short/);
     // All exact-fit → passes.
     expect(() =>
       validateLineSegmentReferences('test', segs, 2, positions, 3, {
         widths: new Float32Array(4),
         colors: new Float32Array(12),
         sharpness: new Float32Array(4),
+        scalars: new Float32Array(4),
       })
     ).not.toThrow();
   });
