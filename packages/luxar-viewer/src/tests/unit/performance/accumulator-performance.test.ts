@@ -102,7 +102,15 @@ describe('Accumulator Performance Regression Tests', () => {
     });
 
     it('should have stable memory after multiple fill cycles', () => {
-      const initialMem = accumulator.getStats().memoryMB;
+      // performance.md C2[P2][P7] fix: prior `.toBe(initialMem)` did exact
+      // float equality on a derived value `(capacity * 32) / 1024 / 1024`,
+      // a latent bug-magnet against future refactors. The actual invariant
+      // is "capacity unchanged" — assert that directly + memoryMB via
+      // toBeCloseTo so a numerically-identical-but-not-bit-identical
+      // refactor (e.g. helper that re-orders ops) doesn't fail spuriously.
+      const initialStats = accumulator.getStats();
+      const initialMem = initialStats.memoryMB;
+      const initialCapacity = initialStats.capacity;
 
       // Fill and get 10 times
       for (let i = 0; i < 10; i++) {
@@ -113,8 +121,11 @@ describe('Accumulator Performance Regression Tests', () => {
         accumulator.getData(800);
       }
 
-      // Memory should be unchanged (no leaks, no growth)
-      expect(accumulator.getStats().memoryMB).toBe(initialMem);
+      const finalStats = accumulator.getStats();
+      // Primary invariant: capacity did not grow.
+      expect(finalStats.capacity).toBe(initialCapacity);
+      // Secondary: memoryMB unchanged within Float64 tolerance.
+      expect(finalStats.memoryMB).toBeCloseTo(initialMem, 7);
     });
   });
 
