@@ -790,19 +790,21 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
     });
 
-    it.skipIf(!wasmFilesExist)('lerp should match', () => {
-      const testCases = [
-        { a: 0, b: 10, t: 0 },
-        { a: 0, b: 10, t: 1 },
-        { a: 0, b: 10, t: 0.5 },
-        { a: -10, b: 10, t: 0.25 },
-      ];
-
-      for (const { a, b, t } of testCases) {
-        const tsResult = tsModule.lerp(a, b, t);
-        const wasmResult = wasmModule!.lerp(a, b, t);
-        expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-6);
-      }
+    // wasm.md O8[P4]: prior version embedded a `for (const ...)` loop with
+    // 4 cases. A single failing case was reported as "lerp should match" —
+    // no diagnostic about WHICH case failed. Parametrize via `it.each` so
+    // each case becomes its own named row and a single mismatch surfaces
+    // by its `t` value.
+    it.each([
+      { a: 0, b: 10, t: 0 },
+      { a: 0, b: 10, t: 1 },
+      { a: 0, b: 10, t: 0.5 },
+      { a: -10, b: 10, t: 0.25 },
+    ])('lerp WASM↔TS parity: lerp($a, $b, $t)', ({ a, b, t }) => {
+      if (!wasmFilesExist) return; // it.each doesn't support skipIf in this version
+      const tsResult = tsModule.lerp(a, b, t);
+      const wasmResult = wasmModule!.lerp(a, b, t);
+      expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-6);
     });
 
     it.skipIf(!wasmFilesExist)('lerp_vec3 should match', () => {
