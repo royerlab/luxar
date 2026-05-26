@@ -100,7 +100,7 @@ describe('Public barrel side effects', () => {
     expect(typeof mod.LuxarApp.prototype.dispose).toBe('function');
   });
 
-  it('exposes bootstrapStandalone, readUrlParams, normalizeDataSourceUrl as callable functions', async () => {
+  it('three URL/bootstrap entrypoints are runtime functions exported from the barrel [api.md O3]', async () => {
     // api.md G1 fix: previous version pinned only 5 of 8 value exports.
     // Add the 3 missing: normalizeDataSourceUrl + the rendering helpers.
     const mod = await import('../../../index');
