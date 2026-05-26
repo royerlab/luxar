@@ -995,11 +995,6 @@ describe('SceneManager', () => {
       expect(sceneManager.renderer.domElement).toBe(beforeDom);
     });
 
-    // 'should handle missing container gracefully during resize' was removed:
-    // it referenced a `(sceneManager as any).container` field that does not exist
-    // on SceneManager (the class uses `this.canvasElement` and
-    // `this.renderer.domElement` instead). The test was testing a non-existent
-    // code path; the safety net it claimed to provide was illusory.
   });
 
   describe('position bounds from metadata', () => {
