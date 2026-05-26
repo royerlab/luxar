@@ -141,17 +141,32 @@ describe('isHDRDisplay', () => {
     ).toBe(true);
   });
 
-  it('returns false when any single requirement is missing', () => {
-    expect(
-      isHDRDisplay(makeCaps({ hdr: false, deepColor: true, floatTextures: true, p3Gamut: true }))
-    ).toBe(false);
-    expect(
-      isHDRDisplay(makeCaps({ hdr: true, deepColor: false, floatTextures: true, p3Gamut: true }))
-    ).toBe(false);
-    expect(
-      isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: false, p3Gamut: true }))
-    ).toBe(false);
-    expect(isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: true }))).toBe(false); // no wide gamut
+  // utils.md O8 / Phase E22: previously one `it` bundled 4 independent
+  // "single missing requirement → not HDR" assertions in sequence. A
+  // regression that silently treated `floatTextures=false` as HDR-ok
+  // would surface as a generic "returns false when any single
+  // requirement is missing" failure without naming the offending
+  // capability. Parametrize via `it.each` over `{missing, caps}` so each
+  // failure names the specific capability that should have gated.
+  it.each<{ missing: string; caps: Parameters<typeof isHDRDisplay>[0] }>([
+    {
+      missing: 'hdr',
+      caps: makeCaps({ hdr: false, deepColor: true, floatTextures: true, p3Gamut: true }),
+    },
+    {
+      missing: 'deepColor',
+      caps: makeCaps({ hdr: true, deepColor: false, floatTextures: true, p3Gamut: true }),
+    },
+    {
+      missing: 'floatTextures',
+      caps: makeCaps({ hdr: true, deepColor: true, floatTextures: false, p3Gamut: true }),
+    },
+    {
+      missing: 'p3Gamut (wide gamut)',
+      caps: makeCaps({ hdr: true, deepColor: true, floatTextures: true }),
+    },
+  ])('isHDRDisplay returns false when $missing is missing', ({ caps }) => {
+    expect(isHDRDisplay(caps)).toBe(false);
   });
 
   it('returns false for the all-defaults capabilities', () => {
