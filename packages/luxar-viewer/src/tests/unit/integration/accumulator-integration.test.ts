@@ -10,7 +10,12 @@ import { LoadedPointsDataAccumulator } from '../../../data/accumulators/points';
 import { LinesDataAccumulator } from '../../../data/accumulators/lines';
 import { GSplatsDataAccumulator } from '../../../data/accumulators/gsplats';
 
-describe('Accumulator Integration Tests', () => {
+// integration.md O5 / Phase E26: previously the outer describe was
+// `'Accumulator Integration Tests'`, but the file's actual content is
+// direct unit tests of the accumulators' public API (no loader is
+// being tested — only the accumulator's spy-able surface). Rename to
+// surface scope ("Public API" reflects what the body asserts).
+describe('Accumulator Public API', () => {
   describe('Points Loader Integration', () => {
     // [integration.md/O4][P4] Split a single it() that bundled three
     // independent contracts (ensureCapacity call, type init via fill, getData
