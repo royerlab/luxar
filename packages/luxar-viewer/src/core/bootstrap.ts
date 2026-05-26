@@ -134,19 +134,38 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   }
 
   // Initialize the theme system early so loading-state UI is themed.
+  // [core OOS] Pre-fix, the inner try/catch only wrapped `setTheme(...)`.
+  // The else-branch's `themeManager.getCurrentTheme().name` could itself
+  // throw (corrupt localStorage hands a malformed theme name to
+  // theme-manager) and the throw would escape bootstrap — leaving the
+  // entire viewer un-initialized. Wrap the whole theme block so any
+  // unexpected throw downgrades to a warning + default-theme path
+  // instead of taking the page down.
   const themeManager = ThemeManager.getInstance();
-  if (urlParams.theme) {
-    try {
-      themeManager.setTheme(urlParams.theme);
-      log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${urlParams.theme}`);
-    } catch {
-      log.warning(Modules.LUXAR, `Invalid theme in URL: ${urlParams.theme}, using default`);
+  try {
+    if (urlParams.theme) {
+      try {
+        themeManager.setTheme(urlParams.theme);
+        log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${urlParams.theme}`);
+      } catch {
+        log.warning(Modules.LUXAR, `Invalid theme in URL: ${urlParams.theme}, using default`);
+      }
+    } else {
+      log.custom(
+        LogEmoji.START,
+        Modules.LUXAR,
+        `Theme system initialized: ${themeManager.getCurrentTheme().name}`
+      );
     }
-  } else {
-    log.custom(
-      LogEmoji.START,
+  } catch (error) {
+    // getCurrentTheme() — or any other theme-manager call above —
+    // threw unexpectedly. Realistic causes: corrupt localStorage,
+    // observer-callback exception, registerTheme race. Surface via
+    // log.warning so the gap is observable but proceed with bootstrap.
+    const message = error instanceof Error ? error.message : String(error);
+    log.warning(
       Modules.LUXAR,
-      `Theme system initialized: ${themeManager.getCurrentTheme().name}`
+      `Theme initialization failed unexpectedly: ${message}. Proceeding with default theme.`
     );
   }
 

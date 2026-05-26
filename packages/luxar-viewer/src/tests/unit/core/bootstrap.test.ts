@@ -188,6 +188,35 @@ describe('bootstrapStandalone', () => {
       // Still touches the manager to log the active theme.
       expect(mocks.getCurrentTheme).toHaveBeenCalled();
     });
+
+    // [core OOS] Pre-fix, the theme block's try/catch only wrapped
+    // setTheme. If the ELSE branch's `getCurrentTheme().name` threw —
+    // realistic if localStorage is corrupt and theme-manager throws
+    // mid-init — the exception escaped bootstrap entirely, leaving the
+    // viewer un-initialized. The outer try/catch downgrades to a
+    // warning + proceed.
+    it('downgrades a getCurrentTheme() throw to a warning and continues bootstrap', async () => {
+      const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      mocks.getCurrentTheme.mockImplementationOnce(() => {
+        throw new Error('corrupt localStorage');
+      });
+
+      // Should NOT throw — outer try/catch swallows.
+      const app = await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: EMPTY_PARAMS, // no urlParams.theme → enters else branch
+      });
+      expect(app).toBeDefined();
+
+      // Warning fires with the expected shape.
+      const warningMsg = warnSpy.mock.calls.map((args) => String(args[1] ?? '')).join('\n');
+      expect(warningMsg).toMatch(/Theme initialization failed unexpectedly.*corrupt localStorage/);
+      expect(warningMsg).toMatch(/Proceeding with default theme/);
+
+      // init() still ran (bootstrap continued past the theme block).
+      expect(mocks.init).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
+    });
   });
 
   describe('debug mode', () => {
