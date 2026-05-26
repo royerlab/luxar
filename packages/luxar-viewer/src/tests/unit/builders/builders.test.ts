@@ -52,7 +52,14 @@ describe('PointsBuilder smoke', () => {
 });
 
 describe('LinesBuilder smoke', () => {
-  it('produces canonical-shape vertices/widths/segments by default', () => {
+  // builders.md O4 / Phase E30: previously the test name listed three
+  // attribute names together (`vertices/widths/segments`), framing it
+  // as a multi-behavior phrase. Per P9 (one input class, one expected
+  // behavior), the test pins the default-build SHAPE contract: a
+  // numSegments=20, ndim=3 build produces the documented sizes and
+  // dtypes for every attribute (vertices, widths, segments, nulls for
+  // optional attrs). Rename to surface "default factory shape".
+  it('default build emits the documented sizes + dtypes for every attribute (numSegments=20, ndim=3)', () => {
     const data = new LinesBuilder().withSegments(20).withDimensions(3).build();
 
     expect(data.vertices).toBeInstanceOf(Float32Array);
