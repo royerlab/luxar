@@ -129,6 +129,17 @@ describe('createOrbitControls — three-way distance fallback (M5)', () => {
     c.dispose();
   });
 
+  it('[controls.md G23] keeps the default mapping when config.naturalDrag === false (explicit, not just unset)', () => {
+    // controls.md G23[P5]: prior test only covered `unset` (line 125-130).
+    // Pin the explicit `false` path so a regression flipping the factory's
+    // default (e.g. `if (!naturalDrag)` becoming `if (naturalDrag === undefined)`)
+    // would be caught here.
+    const c = createOrbitControls(makeCtx({ config: { naturalDrag: false } }));
+    expect(c.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    expect(c.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+    c.dispose();
+  });
+
   it('honors config.autoRotate and config.autoRotateSpeed', () => {
     const c = createOrbitControls(
       makeCtx({ config: { autoRotate: true, autoRotateSpeed: 3.5 } })
