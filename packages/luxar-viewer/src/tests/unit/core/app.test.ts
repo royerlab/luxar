@@ -20,20 +20,29 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // the `factory overrides` describe block below for an example of
 // injecting a SceneManager stub without `vi.mock`.
 
-// AUDIT NOTE (core.md C1): this file vi.mocks ~13 internal modules
-// (SceneManager, AnimationController, InputHandler, RenderingControls,
-// RecordingPanel, ScaleBar, DatasetBrowser, UICleanup, ErrorOverlay,
-// HelpOverlay, Layers, PerformanceMonitor, DebugConsole). Most are first-
-// party luxar modules — not external trust boundaries. Tests that assert
-// `expect(SceneManager).toHaveBeenCalledTimes(1)` exercise the test's own
-// mock harness more than the orchestrator. The per-module pipeline /
-// dispose / cross-link tests under `app/init/pipeline.test.ts` and
-// `app/lifecycle/dispose-pipeline.test.ts` cover the same contracts
-// against real ports — those are the load-bearing tests; this file's
-// orchestrator-wide construction-count checks are redundant safety net.
-// A follow-up cleanup pass should slim this file to the cases the
-// extracted helpers do NOT cover (e.g. the dataset-browser fork at the
-// init level), then delete the redundant constructor-call asserts.
+// AUDIT NOTE (core.md C1, C2, C3, C5): this file vi.mocks ~13 internal
+// modules (SceneManager, AnimationController, InputHandler,
+// RenderingControls, RecordingPanel, ScaleBar, DatasetBrowser, UICleanup,
+// ErrorOverlay, HelpOverlay, Layers, PerformanceMonitor, DebugConsole).
+// Most are first-party luxar modules — not external trust boundaries.
+//
+// Status:
+//   - The redundant construction-count asserts (initialization sequence
+//     describe block) duplicate `app/init/pipeline.test.ts`'s
+//     factory-dispatch tests against real ports — those are the
+//     load-bearing tests. Per audit Non-Goal 2 ("no deletion") this
+//     file's duplicates are kept as a redundant safety net until a
+//     follow-up cleanup pass.
+//   - `vi.stubGlobal('window', ...)` and `vi.stubGlobal('document', ...)`
+//     replace the jsdom globals for the whole file. Tests at ~lines
+//     870-911 read `mockAddEventListener.mock.calls` to find listeners
+//     because of this — only registration shape is verified, not real-
+//     event behavior. Real-event coverage lives in
+//     `app/lifecycle/focus-handling.test.ts`. Dropping the stubs is
+//     blocked on rewriting those ~5 tests; that is the next follow-up.
+//   - C5 (resolved in-file): the pre-init-invariant assertion was split
+//     out of "should set isInitialized to true after successful init"
+//     into its own test so the test name matches the contract.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
@@ -333,13 +342,22 @@ describe('LuxarApp', () => {
       expect(callOrder.indexOf('startAnimation')).toBeLessThan(callOrder.indexOf('loadSceneData'));
     });
 
+    it('initialized starts false on a freshly-constructed LuxarApp (pre-init invariant)', () => {
+      // core.md C5 fix: split off the construction-default assertion from
+      // the post-init test below. Previously both assertions lived in the
+      // same `it` block whose name only described the post-init state, so
+      // a regression where the constructor accidentally set `initialized=true`
+      // would have been technically caught here but mislabelled. The
+      // construction default is its own contract — test it on its own.
+      expect(app.initialized).toBe(false);
+    });
+
     it('should set isInitialized to true after successful init', async () => {
       // core.md W3 strengthening: previously a single-line "initialized===true"
       // assertion. Three observable side-effects MUST also be true after a
       // successful init() so mutations that flip `initialized` without
       // building the subsystems would still fail here.
       mockFetch.mockResolvedValue({ ok: true });
-      expect(app.initialized).toBe(false); // pre-init invariant
 
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
