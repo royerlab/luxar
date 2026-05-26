@@ -118,6 +118,51 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(mockStore.getResult).not.toHaveBeenCalled();
     });
 
+    // [cache OOS] V3 detection now uses an anchored regex
+    // /\/c\/\d+(\/\d+)*$/ instead of bare `includes('/c/')`. The
+    // pre-fix `.includes('/c/')` check would misclassify a key whose
+    // BASE PATH happens to contain `/c/` (e.g. a path through a
+    // directory called "cleanup") as v3 — corrupting the base-path
+    // extraction. With the anchor, only true v3 chunk keys (ending in
+    // /c/N/M/...) take the v3 branch.
+    it('does not misclassify v2 keys whose base path happens to contain /c/', async () => {
+      const debugPrefetcher = new ChunkPrefetcher(mockStore as any, {
+        enabled: true,
+        debug: true,
+      });
+
+      // v2-style key where the base path itself has "/c/" embedded
+      // (e.g. an array under a directory called "cleanup"). Bounds
+      // registered under the actual base path; the v2-style dot-separated
+      // chunk index is the trailing token.
+      debugPrefetcher.registerArrayBounds(
+        'scenes/cleanup/positions',
+        [10240, 10240, 10240],
+        [1024, 1024, 1024]
+      );
+      debugPrefetcher.onAccess('scenes/cleanup/positions/1.2.3');
+
+      await waitFor(() => {
+        const s = debugPrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+
+      const calls = mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
+
+      // The pre-fix code would have stripped `/c/positions/1.2.3` (anchor-
+      // less regex `/\/c\/[\d/]+$/`), producing basePath `scenes`, looking
+      // up unknown bounds, and short-circuiting to no prefetches. The
+      // post-fix v3 anchor doesn't match this key at all, so the v2
+      // branch runs and produces the correct ±1 adjacents.
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls).toContain('scenes/cleanup/positions/0.2.3');
+      expect(calls).toContain('scenes/cleanup/positions/2.2.3');
+      expect(calls).toContain('scenes/cleanup/positions/1.1.3');
+      expect(calls).toContain('scenes/cleanup/positions/1.3.3');
+      expect(calls).toContain('scenes/cleanup/positions/1.2.2');
+      expect(calls).toContain('scenes/cleanup/positions/1.2.4');
+    });
+
     it('should handle 1D chunks', () => {
       // Register bounds for 1D array with multiple chunks
       prefetcher.registerArrayBounds('data', [10240], [1024]);
