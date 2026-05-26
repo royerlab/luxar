@@ -22,8 +22,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   clearError: vi.fn(),
+  showError: vi.fn(),
   replaceBrowserDataSourceUrl: vi.fn(),
   DatasetBrowserCtor: vi.fn(),
+  logError: vi.fn(),
 }));
 
 vi.mock('../../../../../ui/dataset-browser', () => ({
@@ -31,9 +33,18 @@ vi.mock('../../../../../ui/dataset-browser', () => ({
 }));
 vi.mock('../../../../../ui/error-overlay', () => ({
   clearError: mocks.clearError,
+  showError: mocks.showError,
 }));
 vi.mock('../../../../../config/url-params', () => ({
   replaceBrowserDataSourceUrl: mocks.replaceBrowserDataSourceUrl,
+}));
+vi.mock('../../../../../utils/log', () => ({
+  log: {
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: mocks.logError,
+  },
+  Modules: { LUXAR: 'LUXAR' },
 }));
 
 import { showDatasetBrowser } from '../../../../../core/app/dataset/show-browser';
@@ -47,8 +58,10 @@ interface CapturedOpts {
 
 beforeEach(() => {
   mocks.clearError.mockReset();
+  mocks.showError.mockReset();
   mocks.replaceBrowserDataSourceUrl.mockReset();
   mocks.DatasetBrowserCtor.mockReset();
+  mocks.logError.mockReset();
   mocks.DatasetBrowserCtor.mockImplementation((opts: CapturedOpts) => ({
     close: vi.fn(),
     __opts: opts,
@@ -171,6 +184,34 @@ describe('showDatasetBrowser', () => {
       await opts.onDatasetSelect('http://example.com/data.zarr');
 
       expect(order).toEqual(['onSrcChange', 'loadDataset']);
+    });
+
+    // [core OOS] Pre-fix, loadDataset rejections became unhandled promise
+    // rejections (DatasetBrowser's onDatasetSelect signature is
+    // `Promise<void>` and the modal doesn't surface its own errors).
+    // Now we wrap the call: log + show the failure in the user-facing
+    // overlay, and re-throw so awaiting callers still see it.
+    it('surfaces a loadDataset failure via showError + log.error AND re-throws', async () => {
+      const ports = makePorts();
+      ports.loadDataset.mockRejectedValue(new Error('simulated zarr 404'));
+      showDatasetBrowser(ports);
+      const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
+
+      // Awaiting caller MUST see the rejection (regression guard).
+      await expect(opts.onDatasetSelect('http://example.com/bad.zarr')).rejects.toThrow(
+        /simulated zarr 404/
+      );
+
+      // AND the error overlay must be surfaced (silent-caller path).
+      expect(mocks.showError).toHaveBeenCalledWith(
+        expect.stringMatching(/Failed to load dataset.*simulated zarr 404/)
+      );
+      // AND log.error was called with the structured payload.
+      expect(mocks.logError).toHaveBeenCalledWith(
+        'LUXAR',
+        expect.stringMatching(/loadDataset failed for http:\/\/example\.com\/bad\.zarr.*simulated zarr 404/),
+        expect.any(Error)
+      );
     });
   });
 
