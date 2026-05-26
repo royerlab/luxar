@@ -566,4 +566,147 @@ describe('LuxarOrbitControls', () => {
       expect((controls as any).viewAxisRotationHandler).not.toBeNull();
     });
   });
+
+  describe('public applyOrbitRotation [controls.md G29]', () => {
+    // controls.md G29[P5]: applyOrbitRotation is the public method used by
+    // programmatic turntable recording. Previously only exercised via the
+    // C6 fix tests in private-state cleanup. Pin its direct contract here.
+    it('[G29] applyOrbitRotation(0) is a no-op (orientation unchanged)', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      const before = (controls as any).orientation.clone();
+      controls.applyOrbitRotation(0);
+      expect((controls as any).orientation.equals(before)).toBe(true);
+    });
+
+    it('[G29] applyOrbitRotation(angle, axis) is reversed by applyOrbitRotation(-angle, axis)', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      const before = (controls as any).orientation.clone();
+      const axis = new THREE.Vector3(0, 1, 0);
+      controls.applyOrbitRotation(0.5, axis);
+      controls.applyOrbitRotation(-0.5, axis);
+      // Within Float32 round-trip tolerance.
+      expect((controls as any).orientation.angleTo(before)).toBeLessThan(1e-5);
+    });
+
+    it('[G29] applyOrbitRotation(angle) with default axis uses screen-up (camera local Y)', () => {
+      // Default axis = (0,1,0).applyQuaternion(orientation). Pin that
+      // omitting the axis arg does NOT default to world-up.
+      controls = new LuxarOrbitControls(camera, domElement);
+      // Rotate orientation to make local-Y differ from world-Y.
+      const localTilt = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0),
+        Math.PI / 4
+      );
+      (controls as any).orientation.copy(localTilt);
+      const beforeQuat = (controls as any).orientation.clone();
+
+      controls.applyOrbitRotation(0.3); // no axis → screen-up
+
+      // Compute what world-up rotation would have produced for comparison.
+      const worldUpRot = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        0.3
+      );
+      const worldUpResult = beforeQuat.clone().premultiply(worldUpRot).normalize();
+
+      // The default-axis path must NOT equal the world-up path on a tilted
+      // orientation (screen-up != world-up here).
+      expect((controls as any).orientation.angleTo(worldUpResult)).toBeGreaterThan(1e-3);
+    });
+
+    it('[G29] applyOrbitRotation invokes applyToCamera (camera position updated)', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      const posBefore = camera.position.clone();
+      controls.applyOrbitRotation(Math.PI / 6, new THREE.Vector3(0, 1, 0));
+      // Camera position should have moved (orbited).
+      expect(camera.position.equals(posBefore)).toBe(false);
+    });
+  });
+
+  describe('public reinitialize [controls.md G30]', () => {
+    // controls.md G30[P5]: reinitialize is the public method that re-derives
+    // orientation/distance from current camera state. Only the manager-level
+    // forwarder is tested in controls-manager.test.ts:574-586.
+    it('[G30] reinitialize() clears rotationDelta, panDelta, zoomDelta, rollDelta', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      // Push state via the public applyOrbitRotation API (doesn't matter
+      // what — reinitialize must reset *every* delta accumulator).
+      controls.applyOrbitRotation(0.3);
+      // Set rollDelta directly via cast (it's a private accumulator).
+      (controls as any).rollDelta = 0.5;
+      (controls as any).zoomDelta = 1.2;
+      (controls as any).panDelta.set(1, 2, 3);
+
+      controls.reinitialize();
+
+      // All deltas reset.
+      expect((controls as any).rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+      expect((controls as any).panDelta.length()).toBe(0);
+      expect((controls as any).zoomDelta).toBe(0);
+      expect((controls as any).rollDelta).toBe(0);
+    });
+
+    it('[G30] reinitialize() re-derives orientation from the current camera (moving camera then calling reinitialize updates state)', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      const orientationBefore = (controls as any).orientation.clone();
+
+      // Externally move the camera (mimic: target changed).
+      camera.position.set(5, 0, 0);
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+
+      controls.reinitialize();
+
+      // Orientation should reflect the new camera view direction.
+      expect((controls as any).orientation.angleTo(orientationBefore)).toBeGreaterThan(0.1);
+    });
+  });
+
+  describe('public listenToKeyEvents / stopListenToKeyEvents [controls.md G31]', () => {
+    // controls.md G31[P5]: the orchestrator's keyboard wiring (which
+    // sets / clears keyboardDisposer) was not directly tested. Pin the
+    // contract: enabling sets a disposer, stopping clears it, double-call
+    // is idempotent.
+    it('[G31] listenToKeyEvents sets keyboardDisposer (idempotent on second call)', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      expect((controls as any).keyboardDisposer).toBeNull();
+
+      controls.listenToKeyEvents(window);
+      const firstDisposer = (controls as any).keyboardDisposer;
+      expect(firstDisposer).not.toBeNull();
+
+      // Idempotent: a second call MUST NOT replace the disposer (otherwise
+      // the original listener leaks).
+      controls.listenToKeyEvents(window);
+      expect((controls as any).keyboardDisposer).toBe(firstDisposer);
+    });
+
+    it('[G31] stopListenToKeyEvents clears the disposer; safe to call twice', () => {
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.listenToKeyEvents(window);
+      expect((controls as any).keyboardDisposer).not.toBeNull();
+
+      controls.stopListenToKeyEvents();
+      expect((controls as any).keyboardDisposer).toBeNull();
+
+      // Idempotent — must not throw.
+      expect(() => controls.stopListenToKeyEvents()).not.toThrow();
+    });
+
+    it('[G31] stopListenToKeyEvents disposes a previously attached listener (no leak across two cycles)', () => {
+      // Indirect test: attach, dispose, then attach again — the
+      // keyboardDisposer field should have a fresh disposer (not the old
+      // one, not null). A regression that broke disposal would leak
+      // closures across cycles.
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.listenToKeyEvents(window);
+      const firstDisposer = (controls as any).keyboardDisposer;
+      controls.stopListenToKeyEvents();
+      expect((controls as any).keyboardDisposer).toBeNull();
+      controls.listenToKeyEvents(window);
+      const secondDisposer = (controls as any).keyboardDisposer;
+      expect(secondDisposer).not.toBeNull();
+      expect(secondDisposer).not.toBe(firstDisposer);
+    });
+  });
 });
