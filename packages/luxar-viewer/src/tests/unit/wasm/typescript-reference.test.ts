@@ -1668,49 +1668,7 @@ describe('TypeScript Reference Implementation Tests', () => {
   });
 });
 
-// ============================================================================
-// UTILITY FUNCTIONS FOR COMPARISON TESTING
-// ============================================================================
-
-/**
- * Compare two arrays for exact equality (or within epsilon for floats)
- */
-export function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 0): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i] - b[i]) > epsilon) return false;
-  }
-  return true;
-}
-
-/**
- * Compare two float arrays within a tolerance
- */
-export function arraysAlmostEqual(
-  a: ArrayLike<number>,
-  b: ArrayLike<number>,
-  epsilon = 1e-6
-): boolean {
-  return arraysEqual(a, b, epsilon);
-}
-
-/**
- * Generate random test data for stress testing
- */
-export function generateRandomPoints(
-  numPoints: number,
-  ndim: number,
-  scale = 10
-): { positions: Float32Array; radii: Float32Array } {
-  const positions = new Float32Array(numPoints * ndim);
-  const radii = new Float32Array(numPoints);
-
-  for (let i = 0; i < numPoints * ndim; i++) {
-    positions[i] = (Math.random() - 0.5) * scale;
-  }
-  for (let i = 0; i < numPoints; i++) {
-    radii[i] = Math.random() * 2;
-  }
-
-  return { positions, radii };
-}
+// wasm.md O2/O13: helpers (`arraysEqual`, `arraysAlmostEqual`,
+// `generateRandomPoints`) moved to `src/tests/helpers/array-compare.ts`
+// — they were unused inside this file and no other test imported them
+// here. New code should import directly from that helper module.

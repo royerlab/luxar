@@ -20,6 +20,10 @@ import type { WasmModule } from '../../../wasm/types';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import {
+  arraysEqual as sharedArraysEqual,
+  arraysAlmostEqual as sharedArraysAlmostEqual,
+} from '../../helpers/array-compare';
 
 // WASM module reference (loaded dynamically)
 let wasmModule: WasmModule | null = null;
@@ -34,7 +38,12 @@ const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 /**
- * Helper to compare Float32Arrays within tolerance.
+ * Local wrappers around the shared helpers — preserve this file's
+ * historical defaults (1e-5 tolerance + a console.log diagnostic on
+ * mismatch) without forcing every call site to pass explicit args.
+ *
+ * The shared implementations are in src/tests/helpers/array-compare.ts
+ * (wasm.md O2/O13 dedup).
  *
  * NOTE (wasm.md C3): default epsilon `1e-5` is appropriate for typical
  * Float32 single-step operations. For multi-step algorithms that accumulate
@@ -44,25 +53,22 @@ const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
  * to avoid silently missing WASM-vs-TS divergence at high dimensions.
  */
 function arraysAlmostEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 1e-5): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i] - b[i]) > epsilon) {
-      console.log(`Mismatch at index ${i}: ${a[i]} vs ${b[i]} (diff: ${Math.abs(a[i] - b[i])})`);
-      return false;
+  const ok = sharedArraysAlmostEqual(a, b, epsilon);
+  if (!ok && a.length === b.length) {
+    // Diagnostic: log the FIRST mismatching index for debugging.
+    for (let i = 0; i < a.length; i++) {
+      if (Math.abs(a[i] - b[i]) > epsilon) {
+        console.log(`Mismatch at index ${i}: ${a[i]} vs ${b[i]} (diff: ${Math.abs(a[i] - b[i])})`);
+        break;
+      }
     }
   }
-  return true;
+  return ok;
 }
 
-/**
- * Helper to compare Uint8Arrays exactly
- */
 function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+  // Exact equality (epsilon=0 default in the shared helper).
+  return sharedArraysEqual(a, b);
 }
 
 beforeAll(async () => {
