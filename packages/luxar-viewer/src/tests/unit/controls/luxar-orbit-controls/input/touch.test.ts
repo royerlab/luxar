@@ -192,3 +192,145 @@ describe('handleTouchMove — single-finger pan', () => {
     expect(ctx.pan).toHaveBeenCalledWith(50, 30);
   });
 });
+
+describe('handleTouchMove — single-finger rotate (controls.md G20)', () => {
+  // [controls.md G20][P5] The rotate branch of handleTouchMove (touch.ts L40-49)
+  // is structurally untested: previous coverage only asserted `pan` is NOT
+  // called. Here we pin the rotation accumulator growth so a mutation that
+  // dropped `rotationDelta.multiply(deltaQuat)` (line 48) would be caught.
+  it('[G20] single-finger rotate accumulates rotationDelta (multiplies deltaQuat into accumulator)', () => {
+    const p = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const { ctx, state } = makeCtx([p]);
+    handleTouchStart(ctx); // state=rotate, rotateStart=NDC(100,100)
+    expect(state.action).toBe('rotate');
+
+    // Capture identity-baseline of rotationDelta.
+    const identity = new THREE.Quaternion();
+    expect(ctx.rotationDelta.equals(identity)).toBe(true);
+
+    // Move finger to a different NDC location (non-trivial drag).
+    ctx.pointers[0] = makePointerEvent({ pointerId: 1, clientX: 400, clientY: 200 });
+    handleTouchMove(ctx, ctx.pointers[0]);
+
+    // The accumulator must have moved off the identity quaternion.
+    expect(ctx.rotationDelta.equals(identity)).toBe(false);
+    // And remained a unit quaternion (no NaN/Infinity).
+    const len = Math.sqrt(
+      ctx.rotationDelta.x ** 2 +
+        ctx.rotationDelta.y ** 2 +
+        ctx.rotationDelta.z ** 2 +
+        ctx.rotationDelta.w ** 2
+    );
+    expect(len).toBeCloseTo(1.0, 5);
+  });
+
+  it('[G20] rotateStart is advanced to the new pointer NDC after each move (pin re-anchor)', () => {
+    // touch.ts L49: `ctx.rotateStart.copy(endNDC)` — without this, sequential
+    // drags would compound from the original start, not the latest position.
+    const p = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const { ctx } = makeCtx([p]);
+    handleTouchStart(ctx);
+    const startBefore = ctx.rotateStart.clone();
+
+    ctx.pointers[0] = makePointerEvent({ pointerId: 1, clientX: 400, clientY: 200 });
+    handleTouchMove(ctx, ctx.pointers[0]);
+
+    // rotateStart must have moved (re-anchored to the new NDC).
+    expect(ctx.rotateStart.equals(startBefore)).toBe(false);
+  });
+});
+
+describe('handleTouchMove — two-finger pan component (controls.md G21)', () => {
+  // [controls.md G21][P5] Two-finger handler does BOTH dolly AND pan; previous
+  // coverage only asserted the dolly side. Pin the pan call so a mutation
+  // that dropped lines 73-77 (the pan component) would be caught.
+  it('[G21] two-finger drag (no pinch) translates ctx.pan with centerX/centerY deltas', () => {
+    // Initial fingers at (100,100) and (300,100): distance=200, center=(200,100).
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 300, clientY: 100 });
+    const { ctx, state } = makeCtx([p1, p2]);
+    handleTouchStart(ctx);
+    state.action = 'zoom';
+
+    // Move BOTH fingers by the same offset (pure translation, no pinch):
+    // (150,150) and (350,150) → distance still 200, center now (250,150).
+    ctx.pointerPositions.get(1)!.set(150, 150);
+    ctx.pointerPositions.get(2)!.set(350, 150);
+
+    handleTouchMove(ctx, p2);
+
+    // Pan delta = newCenter - panStart = (250-200, 150-100) = (50, 50).
+    expect(ctx.pan).toHaveBeenCalledWith(50, 50);
+  });
+
+  it('[G21] panStart is re-anchored to the new center after each move', () => {
+    // Pin touch.ts L77 — without this, panStart would stay at the original
+    // center forever and subsequent pans would compound from gesture-start.
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 300, clientY: 100 });
+    const { ctx, state } = makeCtx([p1, p2]);
+    handleTouchStart(ctx);
+    state.action = 'zoom';
+
+    ctx.pointerPositions.get(1)!.set(150, 150);
+    ctx.pointerPositions.get(2)!.set(350, 150);
+    handleTouchMove(ctx, p2);
+
+    expect(ctx.panStart.x).toBeCloseTo(250, 5);
+    expect(ctx.panStart.y).toBeCloseTo(150, 5);
+  });
+
+  it('[G21] pointerPositions missing for one finger → early-return, no pan/zoom (defensive)', () => {
+    // touch.ts L59: `if (!p0 || !p1) return;` — guards against a stale
+    // pointer being removed from the map mid-gesture. Pin that early return.
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 300, clientY: 100 });
+    const { ctx, state } = makeCtx([p1, p2]);
+    handleTouchStart(ctx);
+    state.action = 'zoom';
+    state.zoomDelta = 0;
+    (ctx.pan as ReturnType<typeof vi.fn>).mockClear();
+
+    // Remove one finger from the position map (stale state).
+    ctx.pointerPositions.delete(1);
+
+    handleTouchMove(ctx, p2);
+
+    expect(state.zoomDelta).toBe(0);
+    expect(ctx.pan).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleTouchStart — zero-finger boundary (controls.md G22)', () => {
+  // [controls.md G22][P5] handleTouchStart with pointers.length===0 is the
+  // empty boundary — neither single-finger nor two-finger branch fires. State
+  // must NOT change. A mutation that changed the gate `=== 1` to `>= 0` or
+  // `>= 1` would be caught here.
+  it('[G22] pointers.length === 0: state stays "none"', () => {
+    const { ctx, state } = makeCtx([]);
+    handleTouchStart(ctx);
+    expect(state.action).toBe('none');
+  });
+
+  it('[G22] pointers.length === 0: rotateStart/panStart/dollyStart untouched', () => {
+    const { ctx } = makeCtx([]);
+    const r0 = ctx.rotateStart.clone();
+    const p0 = ctx.panStart.clone();
+    const d0 = ctx.dollyStart.clone();
+    handleTouchStart(ctx);
+    expect(ctx.rotateStart.equals(r0)).toBe(true);
+    expect(ctx.panStart.equals(p0)).toBe(true);
+    expect(ctx.dollyStart.equals(d0)).toBe(true);
+  });
+
+  it('[G22] pointers.length === 3 (three fingers): no branch matches, state stays "none"', () => {
+    // Symmetric to G22 — the touch.ts gates only check `=== 1` and `=== 2`,
+    // so >2 pointers also fall through. Lock this.
+    const p1 = makePointerEvent({ pointerId: 1, clientX: 100, clientY: 100 });
+    const p2 = makePointerEvent({ pointerId: 2, clientX: 200, clientY: 200 });
+    const p3 = makePointerEvent({ pointerId: 3, clientX: 300, clientY: 300 });
+    const { ctx, state } = makeCtx([p1, p2, p3]);
+    handleTouchStart(ctx);
+    expect(state.action).toBe('none');
+  });
+});
