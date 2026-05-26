@@ -44,31 +44,62 @@ describe('initializeDims', () => {
     expect(dims.metadata).toBe(metadata);
   });
 
-  it('pads short metadata with defaults and warns instead of silently truncating', () => {
+  it('pads short metadata with named defaults (behavior, no logging coupling)', () => {
+    // types.md C1[P1][P2] fix: split this test in two. The original
+    // bundled the **behaviour** (padded metadata entries) with a
+    // **logging side-effect** (`console.warn` spy). The behaviour
+    // contract is independent of how the warning is delivered — a
+    // future refactor that routes through `log.warning` or a structured
+    // logger should not break the behaviour test.
+    //
     // HIGH-5 (b) regression: ndim=4 but only 2 metadata entries used to
     // silently fall through to the spatial-default fallback. The fix
-    // pads metadata to length=ndim and emits a warning.
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
+    // pads metadata to length=ndim with sensible defaults.
     const metadata: DimensionMetadata[] = [
       { name: 't', unit: 's', scale: 1, display: false },
       { name: 'c', unit: '', scale: 1, display: false },
     ];
-    // 4 points × 4 dims = 16 elements
-    const dims = initializeDims(4, 16, metadata);
+    // Suppress the warning so the test output stays clean — but DON'T
+    // assert on it; that's the next test's job.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // 4 points × 4 dims = 16 elements
+      const dims = initializeDims(4, 16, metadata);
 
-    expect(dims.ndim).toBe(4);
-    expect(dims.metadata).toHaveLength(4);
-    expect(dims.metadata?.[0].name).toBe('t');
-    expect(dims.metadata?.[1].name).toBe('c');
-    // Padded entries get sensible defaults so the slice navigator works.
-    expect(dims.metadata?.[2].name).toBe('dim2');
-    expect(dims.metadata?.[3].name).toBe('dim3');
+      expect(dims.ndim).toBe(4);
+      expect(dims.metadata).toHaveLength(4);
+      expect(dims.metadata?.[0].name).toBe('t');
+      expect(dims.metadata?.[1].name).toBe('c');
+      // Padded entries get sensible defaults so the slice navigator works.
+      expect(dims.metadata?.[2].name).toBe('dim2');
+      expect(dims.metadata?.[3].name).toBe('dim3');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(msg).toContain('Dims');
-    expect(msg).toMatch(/2 entries but ndim=4/);
+  it('emits a warning when short metadata is padded (logging side-effect — IMPLEMENTATION DETAIL)', () => {
+    // types.md C1[P1][P2] note: this test couples to "log.warning goes
+    // through console.warn". A future refactor to a structured logger
+    // would break this test even though the production behaviour is
+    // still correct. The behaviour itself is verified above; this test
+    // is a documented side-effect pin so a missing warning is caught,
+    // not a behaviour contract.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const metadata: DimensionMetadata[] = [
+        { name: 't', unit: 's', scale: 1, display: false },
+        { name: 'c', unit: '', scale: 1, display: false },
+      ];
+      initializeDims(4, 16, metadata);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const msg = warnSpy.mock.calls[0]?.[0] as string;
+      expect(msg).toContain('Dims');
+      expect(msg).toMatch(/2 entries but ndim=4/);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('still throws for non-integer ndim (genuinely invalid)', () => {
