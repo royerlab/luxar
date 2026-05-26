@@ -72,18 +72,39 @@ describe('LinesBuilder smoke', () => {
     expect(data.dimensions).toBe(3);
   });
 
-  it('honors withWidths / withColors / withSharpness when provided', () => {
+  // builders.md O3 / Phase E6: the previous test bundled three
+  // independent LinesBuilder setters (`withWidths`, `withColors`,
+  // `withSharpness`) into one `it` with 6 assertions. A single-setter
+  // regression (e.g. withColors not allocating the array) surfaced as a
+  // generic "honors withWidths / withColors / withSharpness" failure
+  // requiring the diff to identify the offending setter. Split into
+  // three independent tests — each opts in to ONE setter and asserts
+  // only that setter's contract.
+  it('honors withWidths(value) by filling widths with the constant', () => {
     const data = new LinesBuilder()
       .withSegments(5)
       .withDimensions(3)
       .withWidths(2.5)
-      .withColors()
-      .withSharpness(0.5)
       .build();
-
     expect(data.widths.every((w) => w === 2.5)).toBe(true);
+  });
+
+  it('honors withColors() by allocating Float32Array of length numSegments * 2 * ndim', () => {
+    const data = new LinesBuilder()
+      .withSegments(5)
+      .withDimensions(3)
+      .withColors()
+      .build();
     expect(data.colors).toBeInstanceOf(Float32Array);
     expect(data.colors!.length).toBe(5 * 2 * 3);
+  });
+
+  it('honors withSharpness(value) by filling sharpness with the constant (length numSegments * 2)', () => {
+    const data = new LinesBuilder()
+      .withSegments(5)
+      .withDimensions(3)
+      .withSharpness(0.5)
+      .build();
     expect(data.sharpness).toBeInstanceOf(Float32Array);
     expect(data.sharpness!.length).toBe(5 * 2);
     expect(data.sharpness!.every((s) => s === 0.5)).toBe(true);
