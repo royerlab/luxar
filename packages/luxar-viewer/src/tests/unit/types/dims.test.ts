@@ -76,6 +76,33 @@ describe('initializeDims', () => {
     expect(() => initializeDims(2, 7)).toThrow(/Invalid positions array/);
   });
 
+  // [types.md OOS-5] Defensive numPoints guard. The parameter is typed
+  // `number` but TypeScript has no non-negative-integer refinement, so
+  // a buggy caller could pass a negative or fractional value.
+  // Pre-guard, `-6 / -3 = 2` would pass Number.isInteger and the
+  // downstream `new Array(ndim)` would throw RangeError far from the
+  // actual bug. Catch at the boundary with a clear message.
+  it('throws for negative numPoints (defensive)', () => {
+    expect(() => initializeDims(-3, 9)).toThrow(/Invalid numPoints: -3/);
+  });
+
+  it('throws for negative numPoints even when totalElements is also negative (no silent positive ndim)', () => {
+    // Pre-guard, -6/-3 = 2 would pass Number.isInteger and proceed.
+    expect(() => initializeDims(-3, -6)).toThrow(/Invalid numPoints: -3/);
+  });
+
+  it('throws for non-integer numPoints', () => {
+    expect(() => initializeDims(2.5, 10)).toThrow(/Invalid numPoints: 2\.5/);
+  });
+
+  it('throws for NaN numPoints', () => {
+    expect(() => initializeDims(Number.NaN, 9)).toThrow(/Invalid numPoints: NaN/);
+  });
+
+  it('throws for Infinity numPoints', () => {
+    expect(() => initializeDims(Number.POSITIVE_INFINITY, 9)).toThrow(/Invalid numPoints: Infinity/);
+  });
+
   it('respects display flags when metadata is complete', () => {
     const metadata: DimensionMetadata[] = [
       { name: 't', unit: 's', scale: 1, display: false },
