@@ -1,6 +1,7 @@
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import { clearError } from '../../../ui/error-overlay';
+import { clearError, showError } from '../../../ui/error-overlay';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
+import { log, Modules } from '../../../utils/log';
 import type { InputHandler } from '../../../input/input-handler';
 
 /**
@@ -45,8 +46,22 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       // open lands in the right directory.
       ports.onSrcChange(cleanUrl);
 
-      // Load the dataset
-      await ports.loadDataset(cleanUrl);
+      // [core OOS] Wrap `loadDataset` in try/catch. The DatasetBrowser
+      // modal's `onDatasetSelect` contract is `Promise<void>` — the
+      // modal doesn't surface rejections to the user, so without this
+      // wrapper a load failure (bad URL, transient network, malformed
+      // zarr) became an unhandled promise rejection silently. Now we
+      // log + show the failure in the user-facing error overlay before
+      // re-throwing so any awaiting caller still observes the
+      // rejection.
+      try {
+        await ports.loadDataset(cleanUrl);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
+        showError(`Failed to load dataset: ${message}`);
+        throw error;
+      }
     },
     onClose: () => {
       ports.onClose();
