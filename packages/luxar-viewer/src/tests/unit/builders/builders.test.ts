@@ -23,6 +23,7 @@ import {
   LinesBuilder,
   GSplatsBuilder,
   DimensionsBuilder,
+  ChunkBuilder,
 } from '../../builders/test-data-builders';
 
 describe('PointsBuilder smoke', () => {
@@ -337,5 +338,73 @@ describe('DimensionsBuilder smoke [builders.md/G7][P11]', () => {
       .withCurrentPosition(1, 2, 3, 4, 999) // 999 must NOT land
       .build();
     expect(dims.currentStep).toEqual([1, 2, 3, 4]);
+  });
+});
+
+// [builders OOS3] ChunkBuilder.withRandomData previously used bare
+// substring matching to pick the typed-array dtype:
+//   dtype.includes('u1') || dtype.includes('uint8')
+// which misclassified `'<u16'` and any future dtype string that
+// happened to contain `u1` or `uint8` as a substring. Now uses an
+// exact match against the static UINT8_DTYPES set.
+describe('ChunkBuilder.withRandomData dtype detection', () => {
+  it('routes the documented uint8 spellings to Uint8Array', () => {
+    for (const dtype of ['u1', '|u1', '<u1', '>u1', 'uint8']) {
+      const chunk = new ChunkBuilder()
+        .withShape(4, 4)
+        .withChunkShape(4, 4)
+        .withDtype(dtype)
+        .withRandomData()
+        .build();
+      expect(chunk.data, `dtype "${dtype}" → expected Uint8Array`).toBeInstanceOf(Uint8Array);
+      expect(chunk.data.length).toBe(16);
+    }
+  });
+
+  it('routes uint16 dtype `<u16` to Float32Array (NOT silently to Uint8Array)', () => {
+    // Pre-fix: `'<u16'`.includes('u1') === true → wrongly routed to Uint8Array.
+    // Post-fix: not in UINT8_DTYPES → falls through to Float32Array default.
+    const chunk = new ChunkBuilder()
+      .withShape(3)
+      .withChunkShape(3)
+      .withDtype('<u16')
+      .withRandomData()
+      .build();
+    expect(chunk.data).toBeInstanceOf(Float32Array);
+    expect(chunk.data).not.toBeInstanceOf(Uint8Array);
+  });
+
+  it('routes a hypothetical dtype whose name contains `uint8` to Float32Array', () => {
+    // Pre-fix: `'complex_uint8_v2'`.includes('uint8') === true → Uint8Array.
+    // Post-fix: exact-match set rejects it → Float32Array default.
+    const chunk = new ChunkBuilder()
+      .withShape(2)
+      .withChunkShape(2)
+      .withDtype('complex_uint8_v2')
+      .withRandomData()
+      .build();
+    expect(chunk.data).toBeInstanceOf(Float32Array);
+    expect(chunk.data).not.toBeInstanceOf(Uint8Array);
+  });
+
+  it('routes float dtypes to Float32Array (regression: must not regress with the new set check)', () => {
+    for (const dtype of ['<f4', '<f8', 'float32', 'float64']) {
+      const chunk = new ChunkBuilder()
+        .withShape(5)
+        .withChunkShape(5)
+        .withDtype(dtype)
+        .withRandomData()
+        .build();
+      expect(chunk.data, `dtype "${dtype}" → expected Float32Array`).toBeInstanceOf(Float32Array);
+    }
+  });
+
+  it('UINT8_DTYPES is a frozen contract referenced by tests', () => {
+    // Pin the exact set so a future caller can't silently grow the
+    // accept list (e.g. adding 'uint16' would be a behavior change
+    // that this test forces a deliberate update of).
+    expect([...ChunkBuilder.UINT8_DTYPES].sort()).toEqual(
+      ['<u1', '>u1', '|u1', 'u1', 'uint8'].sort()
+    );
   });
 });
