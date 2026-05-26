@@ -19,7 +19,7 @@ describe('sceneDimsManager (lazy singleton)', () => {
     expect(sceneDimsManager.getDims()).toBeNull();
   });
 
-  it('binds methods to the underlying instance (this is preserved)', () => {
+  it('destructured methods stay bound to the underlying instance', () => {
     // Methods are bound when read through the Proxy, so destructuring or
     // capturing a reference should still target the underlying instance.
     let calls = 0;
