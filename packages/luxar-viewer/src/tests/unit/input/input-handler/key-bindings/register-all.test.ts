@@ -384,6 +384,16 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
     expect(commands.handleEscape).toHaveBeenCalled();
   });
 
+  it('[input.md G7] Escape binding declares preventDefault: true', () => {
+    // input.md G7[P5]: prior test only asserted the handler fires. Pin
+    // the `preventDefault: true` flag on the Escape binding so a
+    // regression flipping it to false (which would let browser default
+    // Escape handling fire, e.g. exiting fullscreen) is caught here.
+    const { bindings } = setup();
+    const escape = findBinding(bindings, InputContext.NAVIGATION, 'Escape');
+    expect(escape.preventDefault).toBe(true);
+  });
+
   it('layers-panel L: swallowed when the active element is inside the panel', () => {
     const { bindings, panels } = setup();
     // Build a panel-like DOM element that activeElement reports as focused.
