@@ -33,7 +33,11 @@ describe('e2e helper exports', () => {
   });
 });
 
-describe('shader-error regex coverage', () => {
+// tests-meta.md O2 / Phase E25: previous describe was
+// `'shader-error regex coverage'`. The block tests a TEST-LOCAL copy
+// of the regex (not the helper's regex — that's intentional, the file
+// is documentation-only). Rename to surface scope.
+describe('local-copy shader-error regex (documentation-only)', () => {
   it('matches a Chromium-style fragment shader compile error', () => {
     const msg = 'WebGL: ERROR: 0:42: compilation error in fragment shader';
     expect(SHADER_ERROR_RX.test(msg)).toBe(true);
@@ -84,7 +88,9 @@ describe('shader-error regex coverage', () => {
     expect(SHADER_ERROR_RX.test(msg)).toBe(false);
   });
 
-  it('the local SHADER_ERROR_RX over-matches info logs that mention "shader" (acceptable for this docstring-test)', () => {
+  // tests-meta.md O3 / Phase E25: previous name was 100+ chars and
+  // embedded a justification. Shortened to behavior-stating.
+  it('local SHADER_ERROR_RX matches info logs containing the word "shader"', () => {
     // tests-meta.md W4 fix: the previous comment claimed
     // "assertNoShaderErrors filters by message content, not level". That's
     // INCORRECT — the real helper at e2e/helpers.ts:1226 filters to
