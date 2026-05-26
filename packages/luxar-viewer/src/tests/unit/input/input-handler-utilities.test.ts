@@ -165,6 +165,71 @@ describe('InputHandler Utilities', () => {
       // 9 + 3 = 12, wraps to 0 + (12 - 10) % 10 = 2
       expect(result).toBe(2);
     });
+
+    describe('negative-wrap formula [input.md G1]', () => {
+      // input.md G1[P5]: the negative-wrap branch (step-math.ts L122) uses
+      // `range[1] - ((range[0] - newPos) % rangeSize)` which is non-obvious.
+      // Prior tests only covered the positive-wrap direction; a modular-
+      // arithmetic mutant (`%` → `-`, or swapped operands) on the negative
+      // branch would survive without these tests.
+      it('[G1] step=15 from currentPos=0 with direction=-1 in [0,100] wraps to 85', () => {
+        // newPos = 0 + (-1) * 15 = -15. range[0] - newPos = 0 - (-15) = 15.
+        // 15 % 100 = 15. range[1] - 15 = 100 - 15 = 85.
+        const result = calculateNextPosition(0, -1, 15, [0, 100], false, true);
+        expect(result).toBe(85);
+      });
+
+      it('[G1] negative wrap past multiple range cycles: step=205 from currentPos=0 in [0,100] → 95', () => {
+        // newPos = -205. range[0] - newPos = 205. 205 % 100 = 5.
+        // range[1] - 5 = 95.
+        const result = calculateNextPosition(0, -1, 205, [0, 100], false, true);
+        expect(result).toBe(95);
+      });
+
+      it('[G1] negative wrap exactly one cycle: step=100 from currentPos=0 in [0,100] → 100', () => {
+        // newPos = -100. range[0] - newPos = 100. 100 % 100 = 0.
+        // range[1] - 0 = 100.
+        const result = calculateNextPosition(0, -1, 100, [0, 100], false, true);
+        expect(result).toBe(100);
+      });
+
+      it('[G1] negative range start: step=5 backward from -1 in [-10, 0] → -6 (no wrap, in range)', () => {
+        const result = calculateNextPosition(-1, -1, 5, [-10, 0], false, true);
+        expect(result).toBe(-6);
+      });
+
+      it('[G1] negative range start with wrap: step=15 backward from -1 in [-10, 0] → -6 (wraps)', () => {
+        // newPos = -16, range = [-10, 0], rangeSize=10.
+        // range[0] - newPos = -10 - (-16) = 6. 6 % 10 = 6. range[1] - 6 = -6.
+        const result = calculateNextPosition(-1, -1, 15, [-10, 0], false, true);
+        expect(result).toBe(-6);
+      });
+    });
+
+    describe('discrete + wrapAround combination [input.md G2]', () => {
+      // input.md G2[P5]: Math.round applies BEFORE clamp/wrap. The interaction
+      // of `discrete && wrapAround` was untested. Cyclic frame indices that
+      // round-then-wrap is a real use case (animated time dimensions).
+      it('[G2] discrete + wrap: fractional input rounds first, then wraps', () => {
+        // newPos = 9 + 3.4 = 12.4 → round → 12 → wrap to 2.
+        const result = calculateNextPosition(9, 1, 3.4, [0, 10], true, true);
+        expect(result).toBe(2);
+      });
+
+      it('[G2] discrete + wrap backward: rounds then wraps correctly', () => {
+        // newPos = 0 + (-1) * 2.4 = -2.4 → round → -2 → wrap.
+        // range[0] - newPos = 0 - (-2) = 2. 2 % 10 = 2. range[1] - 2 = 8.
+        const result = calculateNextPosition(0, -1, 2.4, [0, 10], true, true);
+        expect(result).toBe(8);
+      });
+
+      it('[G2] discrete + wrap: rounding pushes value JUST past the range, wraps to start', () => {
+        // newPos = 9.7 + 0.5 = 10.2 → round → 10 (still in range, no wrap).
+        // Test that the rounding happens before clamp.
+        const result = calculateNextPosition(9.7, 1, 0.5, [0, 10], true, true);
+        expect(result).toBe(10);
+      });
+    });
   });
 
   describe('mapKeyToDimension', () => {
