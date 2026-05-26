@@ -345,3 +345,53 @@ describe('integrateTranslation — exact-threshold boundary (controls.md G12)', 
     expect(moved).toBe(true);
   });
 });
+
+describe('integrateTranslation — step-order [controls.md G27]', () => {
+  // controls.md G27[P8]: orbit's update.test.ts has step-by-step coverage
+  // (steps 1–9). The fly equivalent ordering was implicit:
+  //    1. velocity.addScaledVector(_v3, delta)   ← accumulate input impulse
+  //    2. velocity.multiplyScalar(damping^t)     ← damping
+  //    3. camera.position.addScaledVector(velocity, delta) ← integrate to position
+  // A mutation that swapped steps 2 and 3 (integrate first, then damp)
+  // would mean position uses the UN-DAMPED velocity. The size of the
+  // position change discriminates the two orders.
+  it('[G27] damping applies BEFORE position integration (not after)', () => {
+    // Pre-load velocity such that no input contributes (forward=back=0,
+    // left=right=0, up=down=0). Then a single integrate step:
+    //   step1 (impulse): velocity unchanged (zero impulse from no keys)
+    //   step2 (damp):   velocity *= damping^(delta*dampingPower)
+    //   step3 (move):   position += DAMPED velocity * delta
+    // If steps 2/3 were swapped, position += UN-DAMPED velocity * delta —
+    // a STRICTLY LARGER displacement (since damping ∈ (0,1)).
+    const ctx = makeCtx({ damping: 0.9, inertialMode: true });
+    ctx.velocity.set(1, 0, 0); // initial velocity, no input keys pressed
+    const positionBefore = ctx.camera.position.clone();
+    const delta = 0.1;
+
+    integrateTranslation(ctx, delta);
+
+    const displacement = ctx.camera.position.x - positionBefore.x;
+    // Expected (correct order): position += (1 * 0.9^(0.1*dampingPower)) * 0.1.
+    // Wrong order (swap 2/3): position += 1 * 0.1 = 0.1.
+    expect(displacement).toBeLessThan(0.1); // damped order
+    expect(displacement).toBeGreaterThan(0); // sanity
+  });
+
+  it('[G27] non-inertial mode (effectiveDamping=0.5) damps MORE aggressively than inertial', () => {
+    // Pin the non-inertial branch at physics.ts L56:
+    //   effectiveDamping = inertialMode ? ctx.damping : 0.5
+    // Non-inertial uses 0.5 regardless of ctx.damping, producing a smaller
+    // displacement than inertial with high damping.
+    const ctxInertial = makeCtx({ damping: 0.99, inertialMode: true });
+    const ctxNon = makeCtx({ damping: 0.99, inertialMode: false });
+    ctxInertial.velocity.set(1, 0, 0);
+    ctxNon.velocity.set(1, 0, 0);
+
+    integrateTranslation(ctxInertial, 0.1);
+    integrateTranslation(ctxNon, 0.1);
+
+    const dInertial = ctxInertial.camera.position.x;
+    const dNon = ctxNon.camera.position.x;
+    expect(dNon).toBeLessThan(dInertial);
+  });
+});
