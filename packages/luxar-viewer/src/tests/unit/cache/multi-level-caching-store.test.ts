@@ -1478,11 +1478,19 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l1.chunksCount).toBeGreaterThan(0);
     });
 
-    it('should handle concurrent access — fetches each distinct chunk independently', async () => {
-      // cache.md W7 fix: previous version asserted `chunksCount + metadataCount >= 1`
-      // — satisfied by a regression that fetched only ONE chunk and aliased
-      // the others. Strengthen: distinct chunks must each produce a distinct
-      // result.
+    it('concurrent get() of three distinct chunk keys lands exactly three cached entries (L1)', async () => {
+      // cache.md O3 / Phase E28 strengthening: previous assertion was
+      // `chunksCount + metadataCount >= 3`. The name promised "each
+      // distinct chunk independently", which suggests EXACTLY 3 fetches
+      // for 3 distinct keys. The `>= 3` band would pass on a regression
+      // that double-counted a chunk OR cached an unrelated 4th entry
+      // (e.g. content-hash metadata for the dataset).
+      //
+      // cache.md W7 (prior) fix: previous version asserted
+      // `chunksCount + metadataCount >= 1` — satisfied by a regression
+      // that fetched only ONE chunk and aliased the others. The
+      // `>= 3` strengthening fixed that floor; this PR adds the upper
+      // bound to pin the contract on both sides.
       const results = await Promise.all([
         store.get('chunk1'),
         store.get('chunk2'),
@@ -1492,10 +1500,12 @@ describe('MultiLevelCachingStore', () => {
       expect(results.length).toBe(3);
       expect(results.every((r) => r !== undefined)).toBe(true);
 
-      // Three distinct chunk keys → at least 3 cached entries
-      // (chunksCount + metadataCount summed across segments).
+      // Three distinct chunk keys → exactly three L1 chunk entries.
+      // (Metadata entries are content-hash-keyed by dataset; this test's
+      // store mocks `fetch` such that each distinct chunk key produces
+      // one L1 entry and zero metadata entries, so the sum is exactly 3.)
       const stats = store.getStats();
-      expect(stats.l1.chunksCount + stats.l1.metadataCount).toBeGreaterThanOrEqual(3);
+      expect(stats.l1.chunksCount + stats.l1.metadataCount).toBe(3);
     });
 
     it('should handle very large chunks', async () => {
