@@ -128,11 +128,19 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       // Verify tracking is accurate
       expect(stats.allocations + stats.reuses).toBe(operations);
 
-      // Calculate reuse rate
+      // performance.md C4[P2] fix: prior `reuseRate > 0.2` was a very loose
+      // threshold for a deterministic counter test (no async / GPU / clock).
+      // The acquire pattern is fully deterministic — 100 ops across 10 node
+      // IDs (mod 10) with 5 varying counts (mod 5), releasing every 3rd op.
+      // Measured outcome: 7 allocations + 93 reuses. The variation in
+      // `count` widens the geometry's resize path on first acquire only;
+      // subsequent acquires reuse. Tighten the band to catch a halving
+      // regression (rate dropping below 0.7).
       const reuseRate = stats.reuses / operations;
-
-      // Should get some reuse (>20% for this pattern)
-      expect(reuseRate).toBeGreaterThan(0.2);
+      expect(reuseRate).toBeGreaterThanOrEqual(0.85);
+      expect(reuseRate).toBeLessThanOrEqual(1.0);
+      // Pin exact allocation count: 7 (deterministic given the pattern).
+      expect(stats.allocations).toBe(7);
     });
   });
 
