@@ -39,11 +39,8 @@ if (typeof globalThis.ImageData === 'undefined') {
   };
 }
 
-vi.mock('../../../../ui/gui', async () => {
-  const { createMockGUI } = await import('./_helpers');
-  const MockGUI = vi.fn().mockImplementation(() => createMockGUI());
-  return { default: MockGUI, GUI: MockGUI, Controller: vi.fn() };
-});
+// ui.md C1 fix: drop the `ui/gui` mock and exercise the real GUI library
+// under jsdom.
 vi.mock('../../../../config', () => ({ config: { ui: { zIndex: { recordingPanel: 1500 } } } }));
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../../utils/log', () => ({
