@@ -1,29 +1,21 @@
 /**
- * Lightweight integration smoke for worker-pool wiring under Node.
+ * Worker-config-defaults: the two Node-runnable facts about worker wiring.
  *
- * The real Worker API is unavailable in Node (jsdom), so the WorkerPool
- * lifecycle + WASM dispatch can only be exercised end-to-end in a browser.
- * That coverage lives in:
- *   - `src/tests/unit/integration/worker-pool/worker-pool.test.ts` (Node
- *     placeholder, `describe.skipIf(!hasWorkerAPI)`)
- *   - `src/tests/e2e/worker-wasm-integration.spec.ts` (Playwright)
+ * Moved from `src/tests/unit/integration/worker-integration.test.ts` per
+ * integration.md C1: the file's only assertions are a config-default
+ * check and a bare-import smoke, neither of which is an "integration"
+ * test. Its proper home is alongside other config-default tests under
+ * `src/tests/unit/config/`.
  *
- * This file's previous incarnation set up `vi.mock('../../../workers/worker-pool')`
- * but never imported anything from the mocked module — the mock was dead, and
- * every "worker" test asserted on locally-constructed `vi.fn()` objects that
- * were never wired to the production code. That made the file ~170 lines of
- * tests that could not fail under any production mutation
- * (delme/test-audit-luxar-viewer.src/integration.md, C1–C4).
- *
- * Rewrite: only test things that genuinely depend on production code reachable
- * from Node. Anything that needs the browser Worker API stays under
- * `integration/worker-pool/` or the Playwright suite.
+ * Real worker-API integration coverage lives in:
+ *   - `src/tests/unit/workers/worker-pool/*.test.ts` (per-helper unit tests)
+ *   - `src/tests/e2e/worker-wasm-integration.spec.ts` (Playwright, real browser)
  */
 
 import { describe, it, expect } from 'vitest';
 import { config } from '../../../config';
 
-describe('Worker integration — Node-side wiring smoke', () => {
+describe('Worker config defaults — Node-side wiring smoke', () => {
   it('worker config defaults route through useWebWorkers=true (production default)', () => {
     // This is the only meaningful contract we can pin in Node: the
     // production config defaults to using web workers. The default came from
