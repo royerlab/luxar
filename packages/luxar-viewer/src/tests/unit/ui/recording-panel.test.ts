@@ -12,15 +12,11 @@
  *   - `recording-panel/screenshot-strategy.test.ts`
  *   - `recording-panel/video-recording-strategy.test.ts`
  *
- * AUDIT NOTE (ui.md C1, also recording-panel/{session,screenshot,video}.
- * test.ts): `vi.mock('../../../ui/gui', ...)` mocks the project's own GUI
- * library. That library is NOT an external trust boundary — it has
- * dedicated tests under `ui/gui/core/*.test.ts` and runs cleanly under
- * jsdom. The Panel could be exercised against the real GUI. The current
- * shape leaves a regression in panel ↔ GUI wiring invisible (the mock
- * always returns a controller-like object regardless of inputs). A
- * follow-up should drop the GUI mock; until then, the per-strategy
- * tests + E2E specs provide the load-bearing coverage.
+ * RESOLVED (ui.md C1): the previous `vi.mock('../../../ui/gui', ...)` has
+ * been dropped — these tests now exercise the real GUI library, which has
+ * dedicated coverage under `ui/gui/core/*.test.ts` and runs cleanly in
+ * jsdom. A regression in the panel ↔ GUI wiring is now observable here
+ * instead of slipping through.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -50,55 +46,9 @@ if (typeof globalThis.ImageData === 'undefined') {
   };
 }
 
-// Mock the GUI module before importing RecordingPanel
-vi.mock('../../../ui/gui', () => {
-  function createMockElement(): any {
-    return {
-      style: {},
-      className: '',
-      classList: { add: vi.fn(), remove: vi.fn() },
-      closest: vi.fn().mockReturnValue({ classList: { add: vi.fn() }, setAttribute: vi.fn() }),
-      appendChild: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      querySelector: vi.fn().mockReturnValue({ readOnly: false, style: {}, cursor: '' }),
-    };
-  }
-
-  function createMockController() {
-    return {
-      name: vi.fn().mockReturnThis(),
-      onChange: vi.fn().mockReturnThis(),
-      show: vi.fn().mockReturnThis(),
-      hide: vi.fn().mockReturnThis(),
-      updateDisplay: vi.fn().mockReturnThis(),
-      domElement: createMockElement(),
-    };
-  }
-
-  function createMockFolder(): any {
-    return {
-      add: vi.fn().mockImplementation(() => createMockController()),
-      addFolder: vi.fn().mockImplementation(() => createMockFolder()),
-      close: vi.fn(),
-    };
-  }
-
-  const MockGUI = vi.fn().mockImplementation(() => ({
-    domElement: createMockElement(),
-    add: vi.fn().mockImplementation(() => createMockController()),
-    addFolder: vi.fn().mockImplementation(() => createMockFolder()),
-    show: vi.fn(),
-    hide: vi.fn(),
-    destroy: vi.fn(),
-  }));
-
-  return {
-    default: MockGUI,
-    GUI: MockGUI,
-    Controller: vi.fn(),
-  };
-});
+// ui.md C1 fix: the previous `vi.mock('../../../ui/gui', ...)` has been
+// dropped. The real GUI library is constructed and exercised; jsdom
+// supports its DOM operations (verified by `ui/gui/core/*.test.ts`).
 
 vi.mock('../../../config', () => ({
   config: {
@@ -332,16 +282,22 @@ describe('RecordingPanel', () => {
   });
 
   describe('GUI updateControlVisibility', () => {
+    // ui.md C1 fix: with the real GUI library, controller.hide() sets
+    // `domElement.style.display = 'none'` and the public `isVisible = false`
+    // (see ui/gui/controller.ts:189-193). Assert that observable instead
+    // of `toHaveBeenCalled()` on a mock-spy that no longer exists.
     it('Image mode hides video and turntable controls', () => {
       (panel as any).mode = 'image';
       (panel as any).options.outputFormat = 'webp';
       (panel as any).updateControlVisibility();
 
       for (const ctrl of (panel as any).videoControllers) {
-        expect(ctrl.hide).toHaveBeenCalled();
+        expect(ctrl.isVisible).toBe(false);
+        expect(ctrl.domElement.style.display).toBe('none');
       }
       for (const ctrl of (panel as any).turntableControllers) {
-        expect(ctrl.hide).toHaveBeenCalled();
+        expect(ctrl.isVisible).toBe(false);
+        expect(ctrl.domElement.style.display).toBe('none');
       }
     });
 
@@ -351,7 +307,8 @@ describe('RecordingPanel', () => {
       (panel as any).updateControlVisibility();
 
       for (const ctrl of (panel as any).imageControllers) {
-        expect(ctrl.hide).toHaveBeenCalled();
+        expect(ctrl.isVisible).toBe(false);
+        expect(ctrl.domElement.style.display).toBe('none');
       }
     });
 
@@ -360,11 +317,21 @@ describe('RecordingPanel', () => {
       (panel as any).options.outputFormat = 'mp4';
       (panel as any).updateControlVisibility();
 
-      for (const ctrl of (panel as any).videoControllers) {
-        expect(ctrl.show).toHaveBeenCalled();
-      }
+      // Turntable mode shows the video group (resolution / fps / codec)
+      // and the turntable group, but explicitly hides duration / sync /
+      // syncDim (computeControlVisibility: showVideoDuration=false,
+      // showSyncToggle=false, showSyncDimension=false for turntable).
+      // So at LEAST the core video controls are visible — assert that
+      // some are, not that all are.
+      const videoVisible = (panel as any).videoControllers.filter(
+        (c: { isVisible: boolean }) => c.isVisible
+      );
+      expect(videoVisible.length).toBeGreaterThan(0);
+
+      // The turntable group is fully shown in turntable mode.
       for (const ctrl of (panel as any).turntableControllers) {
-        expect(ctrl.show).toHaveBeenCalled();
+        expect(ctrl.isVisible).toBe(true);
+        expect(ctrl.domElement.style.display).not.toBe('none');
       }
     });
 
@@ -373,8 +340,10 @@ describe('RecordingPanel', () => {
       (panel as any).options.outputFormat = 'exr';
       (panel as any).updateControlVisibility();
 
-      expect((panel as any).qualityController.hide).toHaveBeenCalled();
-      expect((panel as any).transparentController.hide).toHaveBeenCalled();
+      expect((panel as any).qualityController.isVisible).toBe(false);
+      expect((panel as any).qualityController.domElement.style.display).toBe('none');
+      expect((panel as any).transparentController.isVisible).toBe(false);
+      expect((panel as any).transparentController.domElement.style.display).toBe('none');
     });
 
     it('auto-corrects format when switching to Video mode', () => {
@@ -382,13 +351,15 @@ describe('RecordingPanel', () => {
       (panel as any).options.outputFormat = 'webp';
       (panel as any).updateControlVisibility();
 
-      // Switch to Video mode — webp is not a valid video format,
-      // so updateControlVisibility should reset it to a video default.
+      // Switch to Video mode — webp is not a valid video format, so
+      // updateControlVisibility() should reset outputFormat to a video
+      // default. The auto-correction is observable through the public
+      // panel.options.outputFormat state.
       (panel as any).mode = 'video';
       (panel as any).updateControlVisibility();
 
-      // The format controller's updateDisplay() is called when auto-correction fires.
-      expect((panel as any).formatController.updateDisplay).toHaveBeenCalled();
+      const correctedFormat = (panel as any).options.outputFormat as string;
+      expect(['webm', 'mp4']).toContain(correctedFormat);
     });
   });
 });
