@@ -142,71 +142,51 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('mouse input handling', () => {
+    // controls.md C1-C4 fix: replace private `(controls as any).onMouseDown/Move/Up(e)`
+    // calls with real DOM dispatch. luxar-fly-controls/listeners.ts wires
+    // `mousedown` on `domElement` and `mousemove`/`mouseup` on `window`, so
+    // dispatching to those targets exercises the public listener-attachment
+    // path — a regression in `attachListeners` (e.g. wrong target, removed
+    // listener) is now caught here instead of slipping through.
     it('should handle right-drag for camera rotation', () => {
-      const mouseDown = new MouseEvent('mousedown', {
-        button: 2,
-        clientX: 100,
-        clientY: 100,
-      });
-      (controls as any).onMouseDown(mouseDown);
+      domElement.dispatchEvent(
+        new MouseEvent('mousedown', { button: 2, clientX: 100, clientY: 100 })
+      );
 
       expect((controls as any).activeMouseAction).toBe('rotate');
 
-      const mouseMove = new MouseEvent('mousemove', {
-        clientX: 150,
-        clientY: 120,
-      });
-      (controls as any).onMouseMove(mouseMove);
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 150, clientY: 120 }));
 
       // Should apply angular velocity for rotation
       expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
 
-      const mouseUp = new MouseEvent('mouseup', { button: 2 });
-      (controls as any).onMouseUp(mouseUp);
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 2 }));
 
       expect((controls as any).activeMouseAction).toBe('none');
     });
 
-    it('right-drag mousemove produces angular velocity via the full pipeline (C4 fix)', () => {
-      // C4 fix: previously this test forced private state
-      // (`activeMouseAction = 'rotate'`, `mouseX`, `mouseY`) and called
-      // the private `onMouseMove` directly, short-circuiting the public
-      // mousedown → mousemove pipeline. We now drive the full pipeline
-      // via real MouseEvents — exercises the actual handler chain and
-      // does not mutate private state.
-      const mouseDown = new MouseEvent('mousedown', {
-        button: 2, // right
-        clientX: 100,
-        clientY: 100,
-      });
-      (controls as any).onMouseDown(mouseDown);
+    it('right-drag mousemove produces angular velocity via the full pipeline', () => {
+      // controls.md C1 fix: drive the full pipeline via real MouseEvents so
+      // the public listener-attachment path is exercised. angularVelocity is
+      // read via `as any` because it's the documented observable — the
+      // alternative (calling update() and inspecting camera quaternion) is
+      // covered separately.
+      domElement.dispatchEvent(
+        new MouseEvent('mousedown', { button: 2, clientX: 100, clientY: 100 })
+      );
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 200, clientY: 200 }));
 
-      const mouseMove = new MouseEvent('mousemove', {
-        clientX: 200,
-        clientY: 200,
-      });
-      (controls as any).onMouseMove(mouseMove);
-
-      // angularVelocity is the contract observable to update().
-      // Reading it via `as any` is acknowledged: the field is internal,
-      // but its non-zero length is the only direct way to confirm the
-      // rotate path executed. The alternative (calling update() and
-      // observing camera quaternion change) is covered by other tests.
       expect((controls as any).angularVelocity.length()).toBeGreaterThan(0);
     });
 
     it('should handle left-drag for strafing', () => {
-      const mouseDown = new MouseEvent('mousedown', {
-        button: 0,
-        clientX: 100,
-        clientY: 100,
-      });
-      (controls as any).onMouseDown(mouseDown);
+      domElement.dispatchEvent(
+        new MouseEvent('mousedown', { button: 0, clientX: 100, clientY: 100 })
+      );
 
       expect((controls as any).activeMouseAction).toBe('strafe');
 
-      const mouseUp = new MouseEvent('mouseup', { button: 0 });
-      (controls as any).onMouseUp(mouseUp);
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
 
       expect((controls as any).activeMouseAction).toBe('none');
     });
@@ -220,17 +200,16 @@ describe('LuxarFlyControls', () => {
       controls.addEventListener('end', endHandler);
       controls.addEventListener('change', changeHandler);
 
-      // Right-drag for rotation dispatches events
-      const mouseDown = new MouseEvent('mousedown', { button: 2, clientX: 100, clientY: 100 });
-      (controls as any).onMouseDown(mouseDown);
+      // Right-drag dispatched through the real DOM listener wiring.
+      domElement.dispatchEvent(
+        new MouseEvent('mousedown', { button: 2, clientX: 100, clientY: 100 })
+      );
       expect(startHandler).toHaveBeenCalled();
 
-      const mouseMove = new MouseEvent('mousemove', { clientX: 150, clientY: 120 });
-      (controls as any).onMouseMove(mouseMove);
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 150, clientY: 120 }));
       expect(changeHandler).toHaveBeenCalled();
 
-      const mouseUp = new MouseEvent('mouseup', { button: 2 });
-      (controls as any).onMouseUp(mouseUp);
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 2 }));
       expect(endHandler).toHaveBeenCalled();
     });
   });
@@ -582,13 +561,14 @@ describe('LuxarFlyControls', () => {
     });
 
     it('should combine roll with other rotations', () => {
-      // Simulate Q (roll) + mouse look
-      const qKey = new KeyboardEvent('keydown', { key: 'q' });
-      window.dispatchEvent(qKey);
-
-      // Add some angular velocity via lookState
-      (controls as any).lookState.horizontal = 0.1;
-      (controls as any).lookState.vertical = 0.05;
+      // controls.md C5 fix: drive Q (roll) AND look state through the
+      // orchestrator's public handleKeyDown/handleKeyUp instead of mixing
+      // window.dispatchEvent + direct (controls as any).lookState mutation.
+      // ArrowLeft/ArrowUp set lookState.horizontal=-1 and vertical=-1 via
+      // the same code path the orchestrator wires for real keyboard input.
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'q' }));
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
 
       const initialOrientation = (controls as any).orientation.clone();
 
@@ -598,11 +578,9 @@ describe('LuxarFlyControls', () => {
       const newOrientation = (controls as any).orientation;
       expect(newOrientation.equals(initialOrientation)).toBe(false);
 
-      // Clean up
-      const qKeyUp = new KeyboardEvent('keyup', { key: 'q' });
-      window.dispatchEvent(qKeyUp);
-      (controls as any).lookState.horizontal = 0;
-      (controls as any).lookState.vertical = 0;
+      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'q' }));
+      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowLeft' }));
+      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowUp' }));
     });
   });
 
