@@ -60,19 +60,34 @@ describe('data-loading-monitor.css cache layout rules', () => {
     expect(body).toMatch(/grid-template-columns:\s*repeat\(\s*4\s*,\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*\)/);
   });
 
-  it('EFFECTIVE HIT RATE footer has explicit non-zero typography + spacing', () => {
-    // styles.md W2 fix: previous matched only `margin-top:` / `font-size:`
-    // / `color:` with NO value constraint, so `margin-top: 0` /
-    // `font-size: 0` would pass. Pin that the value is something non-zero
-    // (any unit) — a regression that nukes the visual spacing would now
-    // fail.
+  // styles.md O4 / Phase E20: previously one `it` bundled 3 CSS-property
+  // assertions on `.luxar-cache-total__demand` (margin-top, font-size,
+  // color). A regression that nuked only margin-top would surface as a
+  // generic "EFFECTIVE HIT RATE footer has explicit non-zero typography
+  // + spacing" failure without naming the broken property. Parametrize
+  // via it.each over {property, regex} tuples so each property fails
+  // by name (e.g. "EFFECTIVE HIT RATE footer property: margin-top
+  // (spacing)").
+  it.each<{ property: string; concern: string; regex: RegExp }>([
+    {
+      property: 'margin-top',
+      concern: 'spacing',
+      regex: /margin-top:\s*(?!0(?:;|\s)|0px|0em|0rem|0%)\S+/,
+    },
+    {
+      property: 'font-size',
+      concern: 'typography',
+      regex: /font-size:\s*(?!0(?:;|\s)|0px|0em|0rem)\S+/,
+    },
+    { property: 'color', concern: 'color', regex: /color:\s*\S+/ },
+  ])('EFFECTIVE HIT RATE footer property: $property ($concern)', ({ regex }) => {
+    // styles.md W2 fix: previous matched only the property name with NO
+    // value constraint, so `margin-top: 0` / `font-size: 0` would pass.
+    // Pin that the value is something non-zero (any unit) — a regression
+    // that nukes the visual spacing would now fail.
     const body = ruleBody(css, '.luxar-cache-total__demand');
     expect(body).not.toBe('');
-    // `margin-top: <number>` where the number is NOT just "0" — accept
-    // var(...) tokens or units. Mutation `margin-top: 0` fails this.
-    expect(body).toMatch(/margin-top:\s*(?!0(?:;|\s)|0px|0em|0rem|0%)\S+/);
-    expect(body).toMatch(/font-size:\s*(?!0(?:;|\s)|0px|0em|0rem)\S+/);
-    expect(body).toMatch(/color:\s*\S+/);
+    expect(body).toMatch(regex);
   });
 
   it('cache tab content reserves NON-ZERO bottom padding for the TOTAL section', () => {
