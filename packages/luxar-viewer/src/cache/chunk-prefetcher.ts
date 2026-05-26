@@ -308,9 +308,17 @@ export class ChunkPrefetcher {
     const indices = this.parseChunkIndices(key);
     if (!indices) return [];
 
-    // Extract base path (everything before the indices)
-    const isV3 = key.includes('/c/');
-    const basePath = isV3 ? key.replace(/\/c\/[\d/]+$/, '') : key.replace(/\/[\d.]+$/, '');
+    // Extract base path (everything before the indices).
+    // [cache OOS] V3 detection uses an anchored regex so a key whose
+    // base path itself contains `/c/` (e.g.
+    // `dataset/scenes/cleanup/positions/1.2.3`) is not misclassified
+    // as v3. Zarr v3 chunk keys end with `/c/<index>(/<index>)*`, so
+    // anchor the pattern to end-of-key. Production keys don't currently
+    // hit the pathological case, but the anchored regex defends against
+    // future naming conventions.
+    const v3ChunkPattern = /\/c\/\d+(\/\d+)*$/;
+    const isV3 = v3ChunkPattern.test(key);
+    const basePath = isV3 ? key.replace(v3ChunkPattern, '') : key.replace(/\/[\d.]+$/, '');
 
     // Normalize: strip leading slash for consistent lookup
     // (zarrita resolves paths with leading '/', but registerArrayBounds strips it)
