@@ -16,6 +16,12 @@ import { dirname, resolve } from 'node:path';
  * string. Visited files are tracked via the optional `seen` set so cycles
  * resolve to the empty string rather than infinite recursion.
  *
+ * Supports BOTH the bare-string form (`@import 'foo.css';`) and the
+ * `url(...)` form (`@import url('foo.css');` / `@import url(foo.css);`).
+ * styles.md C4: the prior regex only matched bare-string imports, so any
+ * future `@import url(...)` would silently skip — breaking the embed-safety
+ * contract under test in library-css-scope.test.ts.
+ *
  * Quietly returns '' for missing files — callers can length-check.
  */
 export function expandImports(file: string, seen = new Set<string>()): string {
@@ -25,7 +31,16 @@ export function expandImports(file: string, seen = new Set<string>()): string {
   if (!existsSync(abs)) return '';
 
   const source = readFileSync(abs, 'utf8');
-  return source.replace(/@import\s+['"]([^'"]+)['"]\s*;?/g, (_, importPath: string) => {
+  // Pattern matches both forms:
+  //   @import 'path';          (bare string)
+  //   @import "path";          (bare string, double-quote)
+  //   @import url('path');     (url-form, quoted)
+  //   @import url("path");
+  //   @import url(path);       (url-form, unquoted)
+  const importRe = /@import\s+(?:url\(\s*['"]?([^'")]+)['"]?\s*\)|['"]([^'"]+)['"])\s*;?/g;
+  return source.replace(importRe, (_, urlPath: string | undefined, bare: string | undefined) => {
+    const importPath = urlPath ?? bare;
+    if (!importPath) return '';
     const importedAbs = resolve(dirname(abs), importPath);
     return expandImports(importedAbs, seen);
   });
