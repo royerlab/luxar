@@ -29,12 +29,20 @@ describe('InputContextManager', () => {
       expect(debugInfo.contextStack).toHaveLength(0);
     });
 
-    it('should be enabled by default', () => {
+    // input.md O5 / Phase E7: the previous `should be enabled by default`
+    // test bundled THREE behaviors (default-enabled dispatch, disable
+    // suppression, re-enable resumption) into one `it`. A regression
+    // that broke only the re-enable path surfaced as a generic
+    // "should be enabled by default" failure that doesn't match the
+    // broken behavior. Split into two tests: one pins the documented
+    // default; the other pins the `setEnabled` toggle round-trip
+    // (true → false → true).
+    it('is enabled by default — registered handler fires without an explicit setEnabled call', () => {
       // input.md W3 fix: strengthen the assertion — pin the default enabled
       // state by observing that a registered handler fires when the manager
-      // is freshly constructed (without an explicit setEnabled call). A
-      // mutation that flipped the default to `false` would otherwise be
-      // hidden behind two "returns false" outcomes that look identical.
+      // is freshly constructed. A mutation that flipped the default to
+      // `false` would otherwise be hidden behind two "returns false"
+      // outcomes that look identical.
       //
       // Use 'h' — 'a' is in flyModeKeys (blocked in NAVIGATION).
       const handler = vi.fn();
@@ -43,21 +51,28 @@ describe('InputContextManager', () => {
         handler,
       });
       const event = new KeyboardEvent('keydown', { key: 'h' });
-      // Default state: the manager dispatches the binding.
       expect(manager.handleKeyEvent(event, 'down')).toBe(true);
       expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('setEnabled toggles dispatch: enabled → disabled suppresses, disabled → enabled resumes', () => {
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+      });
 
       // After explicit disable: dispatch is suppressed.
       manager.setEnabled(false);
       const event2 = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event2, 'down')).toBe(false);
-      expect(handler).toHaveBeenCalledTimes(1); // unchanged
+      expect(handler).toHaveBeenCalledTimes(0);
 
       // Re-enable: dispatch resumes.
       manager.setEnabled(true);
       const event3 = new KeyboardEvent('keydown', { key: 'h' });
       expect(manager.handleKeyEvent(event3, 'down')).toBe(true);
-      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handler).toHaveBeenCalledTimes(1);
     });
   });
 
