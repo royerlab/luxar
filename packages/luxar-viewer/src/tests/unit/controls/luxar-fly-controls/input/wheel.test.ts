@@ -155,3 +155,56 @@ describe('handleWheel — preventDefault contract', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('handleWheel — modifier precedence (controls.md G15)', () => {
+  it('[G15] ctrl+shift together: ctrl takes precedence — early return, no state change, no preventDefault', () => {
+    // controls.md G15: wheel.ts line 37 checks `event.ctrlKey || event.metaKey`
+    // and returns BEFORE the shift branch. So ctrl+shift means ctrl wins —
+    // the FOV passthrough behaviour. A mutation that swapped the branch
+    // ordering would let shift+ctrl roll the camera instead of passing
+    // through to the FOV controller.
+    const ctx = makeCtx();
+    const evt = makeWheelEvent(-100, { shiftKey: true, ctrlKey: true });
+    const pdSpy = vi.spyOn(evt, 'preventDefault');
+    handleWheel(ctx, evt);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.velocity.length()).toBe(0);
+    expect(pdSpy).not.toHaveBeenCalled();
+    expect(ctx.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('[G15] meta+shift together: meta takes precedence (macOS parity with ctrl)', () => {
+    // Symmetric to ctrl+shift since metaKey is OR-ed with ctrlKey at the
+    // gate. macOS users hold Cmd not Ctrl; pin the parity.
+    const ctx = makeCtx();
+    const evt = makeWheelEvent(-100, { shiftKey: true, metaKey: true });
+    const pdSpy = vi.spyOn(evt, 'preventDefault');
+    handleWheel(ctx, evt);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(pdSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleWheel — deltaY = 0 boundary (controls.md G16)', () => {
+  it('[G16] deltaY = 0: Math.sign(0) = 0 → delta = -0 → zero impulse, but dispatch still fires', () => {
+    // controls.md G16: some trackpads emit zero-delta wheel events. The
+    // function computes delta=-Math.sign(0)=-0 → impulse=0 → no velocity
+    // gain. preventDefault and dispatch still fire (the gate was passed).
+    const ctx = makeCtx({ movementSpeed: 5 });
+    const evt = makeWheelEvent(0);
+    const pdSpy = vi.spyOn(evt, 'preventDefault');
+    handleWheel(ctx, evt);
+    expect(ctx.velocity.length()).toBe(0);
+    expect(pdSpy).toHaveBeenCalledTimes(1);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+  });
+
+  it('[G16] deltaY = 0 with shift: zero roll impulse, dispatch still fires', () => {
+    // Symmetric path through the shift branch.
+    const ctx = makeCtx({ rotationSpeed: 5 });
+    const evt = makeWheelEvent(0, { shiftKey: true });
+    handleWheel(ctx, evt);
+    expect(ctx.angularVelocity.length()).toBe(0);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+  });
+});
