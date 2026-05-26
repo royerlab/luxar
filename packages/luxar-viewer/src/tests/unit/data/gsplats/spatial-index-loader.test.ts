@@ -143,7 +143,11 @@ describe('GSplatsSpatialIndexLoader', () => {
   // amplitudes / cholesky_factors / colors data arrays.
   // ────────────────────────────────────────────────────────────────
 
-  describe('body coverage', () => {
+  // data.md O2 / Phase E16: previously `'body coverage'` — a
+  // coverage-driven name, not a behavior-driven one. Rename to surface
+  // what the inner block exercises (gsplats spatial-index initialization,
+  // query routing, and chunk metadata loading through mocked zarr fixtures).
+  describe('with mocked zarr fixtures', () => {
     let bodyLoader: GSplatsSpatialIndexLoader;
     let mockZarrLocation: { resolve: ReturnType<typeof vi.fn> };
     let mockNode: SceneNode;
