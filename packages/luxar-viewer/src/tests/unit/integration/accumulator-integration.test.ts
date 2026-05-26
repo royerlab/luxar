@@ -108,34 +108,41 @@ describe('Accumulator Integration Tests', () => {
   });
 
   describe('Accumulator Buffer Reuse Verification', () => {
-    it('should reuse buffers across multiple loads', () => {
+    // integration.md O6 / Phase E18: previously one `it` bundled TWO
+    // distinct contracts of the buffer-reuse semantics:
+    //   (a) stats.allocations counter does NOT increment on a second
+    //       fill within capacity
+    //   (b) the actual ArrayBuffer behind the typed array is IDENTITY-
+    //       preserved across the second fill
+    // A regression that re-allocates the buffer but keeps the counter
+    // stable (or vice-versa) would surface as a generic
+    // "should reuse buffers..." failure. Split into two independent
+    // tests so failures name the specific reuse contract that broke.
+    function loadTwice() {
       const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
-
-      // First load
       accumulator.fill(0, {
         positions: new Float32Array(3000),
         colors: new Uint8Array(3000),
       });
-
       const stats1 = accumulator.getStats();
       const data1 = accumulator.getData(1000);
-
-      // Get buffer reference
       const buffer1 = data1.positions.buffer;
-
-      // Second load (simulate view update)
       accumulator.fill(0, {
-        positions: new Float32Array(2400), // Different data, same capacity
+        positions: new Float32Array(2400),
         colors: new Uint8Array(2400),
       });
-
       const stats2 = accumulator.getStats();
       const data2 = accumulator.getData(800);
+      return { stats1, stats2, data1, data2, buffer1 };
+    }
 
-      // Verify no new allocations (buffer reused)
+    it('second fill within capacity does NOT increment the allocation counter', () => {
+      const { stats1, stats2 } = loadTwice();
       expect(stats2.allocations).toBe(stats1.allocations);
+    });
 
-      // Verify same buffer reused
+    it('second fill within capacity preserves the ArrayBuffer identity of the typed positions array', () => {
+      const { data2, buffer1 } = loadTwice();
       expect(data2.positions.buffer).toBe(buffer1);
     });
 
