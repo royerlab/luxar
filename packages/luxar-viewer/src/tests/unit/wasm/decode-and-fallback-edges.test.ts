@@ -19,10 +19,14 @@ import {
   decode_quantized_u16,
   decode_log_scalar_u8,
   decode_log_scalar_u16,
+  decode_lut_scalar_u8,
+  decode_lut_scalar_u16,
+  decode_lut_row_u8,
+  decode_lut_row_u16,
 } from '../../../wasm/typescript/decode';
 import { mahalanobis_distance } from '../../../wasm/typescript/gsplats-processing';
 import { compute_gsplats_attenuation } from '../../../wasm/typescript/gsplats-processing';
-import { clip_segment_single } from '../../../wasm/typescript/lines-clipping';
+import { clip_segment_single, lerp_vec3 } from '../../../wasm/typescript/lines-clipping';
 
 describe('decode_quantized — degenerate range (minVal === maxVal) [wasm.md/G6]', () => {
   // When minVal === maxVal the scale becomes zero; every output entry must
@@ -272,5 +276,206 @@ describe('clip_segment_single — zero-length segment [wasm.md/G9]', () => {
     const displayDims = new Uint32Array([0, 1, 2]);
     const result = clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
     expect(result[0]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [wasm.md G6] decode round-trip (quantize → decode ≈ x within step).
+// The encoder is exercised by python tests; the TS-fallback decoder is
+// tested in isolation. This block pins the round-trip invariant for both
+// uint8 and uint16 encodings. A swapped `(maxVal-minVal)/N` vs `N/(maxVal-
+// minVal)` in either direction would survive each-direction-only tests but
+// fail here.
+// ---------------------------------------------------------------------------
+describe('decode_quantized round-trip [wasm.md G6]', () => {
+  // Inverse encoders mirroring the documented mapping in decode.ts:11/27.
+  function quantize_u8(values: Float32Array, minVal: number, maxVal: number): Uint8Array {
+    const inv = 255 / (maxVal - minVal);
+    const out = new Uint8Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+      out[i] = Math.max(0, Math.min(255, Math.round((values[i] - minVal) * inv)));
+    }
+    return out;
+  }
+  function quantize_u16(values: Float32Array, minVal: number, maxVal: number): Uint16Array {
+    const inv = 65535 / (maxVal - minVal);
+    const out = new Uint16Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+      out[i] = Math.max(0, Math.min(65535, Math.round((values[i] - minVal) * inv)));
+    }
+    return out;
+  }
+
+  it('[G6] u8: decode(quantize(x)) lands within one quantization step of x', () => {
+    const minVal = 0;
+    const maxVal = 10;
+    const step = (maxVal - minVal) / 255;
+    const values = new Float32Array([0, 1.234, 5.0, 7.777, 9.999]);
+    const encoded = quantize_u8(values, minVal, maxVal);
+    const decoded = new Float32Array(values.length);
+    decode_quantized_u8(encoded, minVal, maxVal, decoded);
+    for (let i = 0; i < values.length; i++) {
+      expect(Math.abs(decoded[i] - values[i])).toBeLessThanOrEqual(step);
+    }
+  });
+
+  it('[G6] u16: decode(quantize(x)) lands within one (tighter) quantization step of x', () => {
+    const minVal = -3.14;
+    const maxVal = 2.71;
+    const step = (maxVal - minVal) / 65535;
+    const values = new Float32Array([-3.14, -1.0, 0.0, 1.0, 2.71]);
+    const encoded = quantize_u16(values, minVal, maxVal);
+    const decoded = new Float32Array(values.length);
+    decode_quantized_u16(encoded, minVal, maxVal, decoded);
+    for (let i = 0; i < values.length; i++) {
+      expect(Math.abs(decoded[i] - values[i])).toBeLessThanOrEqual(step);
+    }
+  });
+
+  it('[G6] u8: decode is monotonic in input bytes (mutation-killer for sign-flipped scale)', () => {
+    // 0 → minVal, 255 → maxVal. A sign-flipped `(minVal - maxVal)/255` would
+    // produce a decreasing function — caught here.
+    const out = new Float32Array(3);
+    decode_quantized_u8(new Uint8Array([0, 128, 255]), -1, 1, out);
+    expect(out[0]).toBeLessThan(out[1]);
+    expect(out[1]).toBeLessThan(out[2]);
+    expect(out[0]).toBeCloseTo(-1, 5);
+    expect(out[2]).toBeCloseTo(1, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [wasm.md G7] LUT-decode out-of-bounds index and boundary cases.
+// decode_lut_scalar_* and decode_lut_row_* perform no bounds-checking on
+// the index — a stale or corrupt index would read past the LUT and store
+// `undefined`, which Float32Array stores as 0. Pin this documented (or
+// implicit) behaviour.
+// ---------------------------------------------------------------------------
+describe('decode_lut OOB and empty boundaries [wasm.md G7]', () => {
+  // Note: the audit hypothesised that Float32Array stores `undefined` as 0,
+  // but JS actually coerces `undefined → NaN` on assignment to a numeric
+  // typed array (TypedArray spec: ToNumber(undefined) = NaN, then ToFloat32(NaN)
+  // = NaN). So OOB LUT reads silently produce NaN. Pin this contract so any
+  // future hardening (e.g. throw on OOB, clamp to 0) surfaces as intentional.
+  it('[G7] scalar_u8: index >= lut.length reads undefined → Float32 stores NaN', () => {
+    const lut = new Float32Array([10, 20, 30]);
+    const indices = new Uint8Array([0, 5, 1]); // index 5 is OOB for lut.length=3
+    const out = new Float32Array(3);
+    decode_lut_scalar_u8(indices, lut, out);
+    expect(out[0]).toBe(10);
+    expect(Number.isNaN(out[1])).toBe(true);
+    expect(out[2]).toBe(20);
+  });
+
+  it('[G7] scalar_u16: OOB symmetric to u8 path', () => {
+    const lut = new Float32Array([10, 20, 30]);
+    const indices = new Uint16Array([0, 50000, 1]); // way OOB
+    const out = new Float32Array(3);
+    decode_lut_scalar_u16(indices, lut, out);
+    expect(out[0]).toBe(10);
+    expect(Number.isNaN(out[1])).toBe(true);
+    expect(out[2]).toBe(20);
+  });
+
+  it('[G7] row_u8: index*k + j >= lut.length reads undefined → row filled with NaN past boundary', () => {
+    // k=2, lut has 4 floats (rows 0..1). indices=[0, 1, 2]. Index 2 is OOB
+    // (row 2 would start at lut[4]); both slots become NaN.
+    const lut = new Float32Array([1, 2, 3, 4]);
+    const indices = new Uint8Array([0, 1, 2]);
+    const out = new Float32Array(6);
+    decode_lut_row_u8(indices, lut, 2, out);
+    expect(out[0]).toBe(1);
+    expect(out[1]).toBe(2);
+    expect(out[2]).toBe(3);
+    expect(out[3]).toBe(4);
+    expect(Number.isNaN(out[4])).toBe(true);
+    expect(Number.isNaN(out[5])).toBe(true);
+  });
+
+  it('[G7] row_u16: parallel to u8 path', () => {
+    const lut = new Float32Array([1, 2, 3, 4]);
+    const indices = new Uint16Array([0, 1, 30000]);
+    const out = new Float32Array(6);
+    decode_lut_row_u16(indices, lut, 2, out);
+    expect(out[0]).toBe(1);
+    expect(out[3]).toBe(4);
+    expect(Number.isNaN(out[4])).toBe(true);
+    expect(Number.isNaN(out[5])).toBe(true);
+  });
+
+  it('[G7] empty lut (lut.length === 0): every index reads OOB → all-NaN output', () => {
+    const lut = new Float32Array(0);
+    const indices = new Uint8Array([0, 1, 2]);
+    const out = new Float32Array(3);
+    decode_lut_scalar_u8(indices, lut, out);
+    for (let i = 0; i < 3; i++) expect(Number.isNaN(out[i])).toBe(true);
+  });
+
+  it('[G7] k === 0 (row-mode boundary): inner loop never executes, output untouched', () => {
+    // k=0 means each row has zero floats. Pre-fill out with sentinels; verify
+    // unchanged after decode_lut_row_u8 (the inner `for j < 0` is empty).
+    const lut = new Float32Array([1, 2, 3]);
+    const indices = new Uint8Array([0, 1, 2]);
+    const out = new Float32Array([99, 99, 99]);
+    decode_lut_row_u8(indices, lut, 0, out);
+    expect(Array.from(out)).toEqual([99, 99, 99]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [wasm.md G15] lerp_vec3 boundary and extrapolation coverage.
+// Prior round only had a happy-path t=0.5 test. Pin t=0/t=1 endpoints and
+// the algebraic extrapolation behaviour (t outside [0,1] is supported).
+// ---------------------------------------------------------------------------
+describe('lerp_vec3 boundary and extrapolation [wasm.md G15]', () => {
+  it('[G15] t=0 returns a (exactly, no FP drift)', () => {
+    const a = new Float32Array([1, 2, 3]);
+    const b = new Float32Array([10, 20, 30]);
+    const result = lerp_vec3(a, b, 0);
+    expect(Array.from(result)).toEqual([1, 2, 3]);
+  });
+
+  it('[G15] t=1 returns b (exactly)', () => {
+    const a = new Float32Array([1, 2, 3]);
+    const b = new Float32Array([10, 20, 30]);
+    const result = lerp_vec3(a, b, 1);
+    // `a + 1 * (b - a) = a + b - a = b`; Float32 round-trip should hit b exactly.
+    expect(result[0]).toBeCloseTo(10, 5);
+    expect(result[1]).toBeCloseTo(20, 5);
+    expect(result[2]).toBeCloseTo(30, 5);
+  });
+
+  it('[G15] t < 0 extrapolates BEHIND a (away from b)', () => {
+    // t=-1: result = a + (-1) * (b-a) = 2a - b. For a=(0,0,0), b=(2,4,6):
+    // result = (0,0,0) - (2,4,6) = (-2,-4,-6).
+    const a = new Float32Array([0, 0, 0]);
+    const b = new Float32Array([2, 4, 6]);
+    const result = lerp_vec3(a, b, -1);
+    expect(result[0]).toBeCloseTo(-2, 5);
+    expect(result[1]).toBeCloseTo(-4, 5);
+    expect(result[2]).toBeCloseTo(-6, 5);
+  });
+
+  it('[G15] t > 1 extrapolates PAST b (away from a)', () => {
+    // t=2: result = a + 2 * (b-a) = 2b - a. For a=(0,0,0), b=(1,1,1):
+    // result = (2,2,2).
+    const a = new Float32Array([0, 0, 0]);
+    const b = new Float32Array([1, 1, 1]);
+    const result = lerp_vec3(a, b, 2);
+    expect(result[0]).toBeCloseTo(2, 5);
+    expect(result[1]).toBeCloseTo(2, 5);
+    expect(result[2]).toBeCloseTo(2, 5);
+  });
+
+  it('[G15] linearity in t: lerp(a, b, t1+t2) = a + (t1+t2)(b-a) equals 2*lerp(a,b,(t1+t2)/2) - a', () => {
+    // Property-style check on a single fixture. With a=(0,0,0), b=(10,10,10),
+    // lerp(t=0.3) + lerp(t=0.7) should equal lerp(t=1.0) + lerp(t=0) = b + a = b.
+    const a = new Float32Array([0, 0, 0]);
+    const b = new Float32Array([10, 10, 10]);
+    const r03 = lerp_vec3(a, b, 0.3);
+    const r07 = lerp_vec3(a, b, 0.7);
+    for (let i = 0; i < 3; i++) {
+      expect(r03[i] + r07[i]).toBeCloseTo(b[i] + a[i], 5);
+    }
   });
 });
