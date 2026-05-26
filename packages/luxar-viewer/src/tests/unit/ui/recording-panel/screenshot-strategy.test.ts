@@ -67,17 +67,8 @@ vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: a
   return el;
 });
 
-vi.mock('../../../../ui/gui', async () => {
-  const { createMockController, createMockFolder, createMockGUI } = await import('./_helpers');
-  const MockGUI = vi.fn().mockImplementation(() => createMockGUI());
-  return {
-    default: MockGUI,
-    GUI: MockGUI,
-    Controller: vi.fn(),
-    createMockController,
-    createMockFolder,
-  };
-});
+// ui.md C1 fix: drop the `ui/gui` mock and exercise the real GUI library
+// under jsdom.
 vi.mock('../../../../config', () => ({ config: { ui: { zIndex: { recordingPanel: 1500 } } } }));
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
 vi.mock('../../../../utils/log', () => ({
