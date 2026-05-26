@@ -493,18 +493,54 @@ describe('InputHandler.clearDimensionUI — sceneDimsManager listener cleanup', 
 // time and the swap was silently ignored.
 // ─────────────────────────────────────────────────────────────────────
 describe('InputHandler — MED-4: late-bound startAnimation on controls/canvas events', () => {
-  it('controls "change" event invokes the CURRENT animationController.startAnimation', () => {
-    // Record every listener attached to controls by event name so the
-    // test can fire them synchronously after init().
-    const controlsListeners = new Map<string, (() => void)[]>();
+  // input.md O6 / Phase E8: previous version had TWO `it` blocks
+  // ("controls 'change'" + "canvas mousedown") testing the SAME
+  // late-binding fix — only the event source differs. Parametrize via
+  // `it.each` so each row names the specific event source on failure
+  // (e.g. "MED-4 late-bind: canvas mousedown"). The two tests differ
+  // only in how the listener is wired/fired:
+  //   - "controls 'change'": spies on controls.addEventListener and
+  //     replays captured listeners after the startAnimation swap.
+  //   - "canvas mousedown": dispatches a real DOM MouseEvent on the
+  //     renderer's canvas, which the production code wires via
+  //     canvas.addEventListener.
+  // Both paths must invoke the CURRENT animationController.startAnimation
+  // (post-swap), not the reference captured at init() time.
+  it.each<{
+    label: string;
+    wire: (sceneManager: ReturnType<typeof makeSceneManagerStub>) => () => void;
+  }>([
+    {
+      label: 'controls "change" event',
+      wire: (sceneManager) => {
+        const controlsListeners = new Map<string, (() => void)[]>();
+        (sceneManager.controls.addEventListener as ReturnType<typeof vi.fn>).mockImplementation(
+          (event: string, listener: () => void) => {
+            const arr = controlsListeners.get(event) ?? [];
+            arr.push(listener);
+            controlsListeners.set(event, arr);
+          }
+        );
+        return () => {
+          const changeListeners = controlsListeners.get('change') ?? [];
+          // Sanity: a `change` listener was registered at init().
+          expect(changeListeners.length).toBeGreaterThan(0);
+          for (const l of changeListeners) l();
+        };
+      },
+    },
+    {
+      label: 'canvas mousedown event',
+      wire: (sceneManager) => {
+        const canvas = sceneManager.renderer.domElement;
+        return () => {
+          canvas.dispatchEvent(new MouseEvent('mousedown'));
+        };
+      },
+    },
+  ])('MED-4 late-bind: $label invokes the CURRENT startAnimation', ({ wire }) => {
     const sceneManager = makeSceneManagerStub();
-    (sceneManager.controls.addEventListener as ReturnType<typeof vi.fn>).mockImplementation(
-      (event: string, listener: () => void) => {
-        const arr = controlsListeners.get(event) ?? [];
-        arr.push(listener);
-        controlsListeners.set(event, arr);
-      }
-    );
+    const fire = wire(sceneManager);
 
     const original = vi.fn();
     const animationController = {
@@ -521,10 +557,6 @@ describe('InputHandler — MED-4: late-bound startAnimation on controls/canvas e
       makeDebugConsoleStub()
     );
     handler.init();
-
-    // Sanity: a `change` listener was registered.
-    const changeListeners = controlsListeners.get('change') ?? [];
-    expect(changeListeners.length).toBeGreaterThan(0);
 
     // Swap startAnimation AFTER init. With the late-bound fix, the
     // listener calls the NEW method; with the old reference-capture
@@ -532,42 +564,7 @@ describe('InputHandler — MED-4: late-bound startAnimation on controls/canvas e
     const swapped = vi.fn();
     (animationController as unknown as { startAnimation: () => void }).startAnimation = swapped;
 
-    // Fire the registered listener as if controls emitted 'change'.
-    for (const l of changeListeners) l();
-
-    expect(swapped).toHaveBeenCalledTimes(1);
-    expect(original).not.toHaveBeenCalled();
-
-    handler.dispose();
-  });
-
-  it('canvas mousedown invokes the CURRENT animationController.startAnimation', () => {
-    const sceneManager = makeSceneManagerStub();
-    const canvas = sceneManager.renderer.domElement;
-
-    const original = vi.fn();
-    const animationController = {
-      startAnimation: original,
-      stopAnimation: vi.fn(),
-      dispose: vi.fn(),
-      isActive: false,
-    } as unknown as AnimationController;
-
-    const handler = new InputHandler(
-      sceneManager,
-      animationController,
-      makePerformanceMonitorStub(),
-      makeDebugConsoleStub()
-    );
-    handler.init();
-
-    // Swap startAnimation AFTER init.
-    const swapped = vi.fn();
-    (animationController as unknown as { startAnimation: () => void }).startAnimation = swapped;
-
-    // Dispatch a real mousedown event on the canvas; the registered
-    // listener should call the swapped method.
-    canvas.dispatchEvent(new MouseEvent('mousedown'));
+    fire();
 
     expect(swapped).toHaveBeenCalledTimes(1);
     expect(original).not.toHaveBeenCalled();
