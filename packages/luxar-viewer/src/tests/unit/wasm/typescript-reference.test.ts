@@ -1432,14 +1432,16 @@ describe('TypeScript Reference Implementation Tests', () => {
   });
 
   describe('lines_clipping: distance_3d', () => {
-    it('should calculate Euclidean distance', () => {
-      const a = new Float32Array([0, 0, 0]);
-      const b = new Float32Array([3, 4, 0]);
-
-      expect(distance_3d(a, b)).toBe(5); // 3-4-5 triangle
-
-      const c = new Float32Array([1, 1, 1]);
-      expect(distance_3d(a, c)).toBeCloseTo(Math.sqrt(3), 5);
+    // wasm.md O7[P4]: parametrize the previously-bundled two distance_3d
+    // cases via it.each so a single failure surfaces by label rather than
+    // both being lumped under "should calculate Euclidean distance".
+    it.each([
+      { label: '3-4-5 triangle (exact integer root)', a: [0, 0, 0], b: [3, 4, 0], expected: 5 },
+      { label: 'unit diagonal sqrt(3)', a: [0, 0, 0], b: [1, 1, 1], expected: Math.sqrt(3) },
+    ])('Euclidean distance: $label', ({ a, b, expected }) => {
+      const va = new Float32Array(a);
+      const vb = new Float32Array(b);
+      expect(distance_3d(va, vb)).toBeCloseTo(expected, 5);
     });
   });
 
