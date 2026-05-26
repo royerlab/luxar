@@ -123,24 +123,26 @@ describe('LuxarOrbitControls', () => {
       { axis: [0, 0, 1] as const, angle: Math.PI / 3, label: 'roll 60deg' },
       { axis: [1, 1, 0] as const, angle: Math.PI / 2, label: 'diagonal 90deg' },
     ])('preserves camera distance to target after $label rotation', ({ axis, angle }) => {
+      // controls.md C6 fix: use the public `applyOrbitRotation(angle, axis)`
+      // API instead of mutating private `rotationDelta`. applyOrbitRotation
+      // premultiplies the orientation quaternion and calls applyToCamera()
+      // directly — orthonormal rotation must preserve Euclidean distance
+      // to the target regardless of the rotation pipeline used.
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
 
       const distBefore = camera.position.distanceTo(controls.target);
 
-      const rotQuat = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(axis[0], axis[1], axis[2]).normalize(),
-        angle,
-      );
-      (controls as any).rotationDelta.multiply(rotQuat);
-      controls.update();
+      const rotAxis = new THREE.Vector3(axis[0], axis[1], axis[2]).normalize();
+      controls.applyOrbitRotation(angle, rotAxis);
 
       const distAfter = camera.position.distanceTo(controls.target);
       expect(distAfter).toBeCloseTo(distBefore, 3);
     });
 
     it('should not have gimbal lock when looking straight down', () => {
-      // Position camera straight above looking down
+      // controls.md C7 fix: drive rotation through the public
+      // applyOrbitRotation API instead of mutating private rotationDelta.
       camera.position.set(0, 5, 0.001); // Slightly off-axis to avoid degenerate lookAt
       camera.up.set(0, 0, -1);
       camera.lookAt(0, 0, 0);
@@ -150,10 +152,7 @@ describe('LuxarOrbitControls', () => {
       controls.update();
       const posBefore = camera.position.clone();
 
-      // Apply a rotation — should work smoothly without gimbal lock
-      const rotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.3);
-      (controls as any).rotationDelta.multiply(rotQuat);
-      controls.update();
+      controls.applyOrbitRotation(0.3, new THREE.Vector3(1, 0, 0));
 
       // Camera should have moved (not stuck at pole)
       const moved = camera.position.distanceTo(posBefore);
@@ -199,24 +198,29 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('zooming', () => {
-    it('changes perspective distance by the deterministic zoom formula (W12)', () => {
-      // W12 strengthening: was `distance < distBefore` only. The applyZoomScale
-      // formula for perspective is `currentDistance * (1 + zoomDelta)`
-      // (no damping). With zoomDelta=-0.5 and distance=5, expected=2.5.
+    it('zooms in (distance decreases) on wheel scroll-up', () => {
+      // controls.md C9 fix: drive the zoom via the public WheelEvent path on
+      // `domElement` (the listener registered at `luxar-orbit-controls.ts:195`)
+      // instead of writing `(controls as any).zoomDelta = -0.5`. The exact
+      // `applyZoomScale` formula is unit-tested in
+      // `luxar-orbit-controls/math/zoom.test.ts` and the gating + cancellation
+      // is in `luxar-orbit-controls/update.test.ts`; here we only need to
+      // verify that wheel-up is wired to the zoom-in branch end-to-end.
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
 
-      const distBefore = (controls as any).distance;
-      (controls as any).zoomDelta = -0.5;
+      const distBefore = camera.position.distanceTo(controls.target);
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
       controls.update();
-      // Expected: distance * (1 + zoomDelta) = 5 * 0.5 = 2.5.
-      expect((controls as any).distance).toBeCloseTo(distBefore * 0.5, 5);
+
+      const distAfter = camera.position.distanceTo(controls.target);
+      expect(distAfter).toBeLessThan(distBefore);
     });
 
-    it('changes ortho zoom by the deterministic formula (W12)', () => {
-      // W12 strengthening: applyZoomScale for ortho computes
-      // `cam.zoom / scale` where scale = 1 + zoomDelta. zoomDelta=-0.5 →
-      // scale=0.5 → new zoom = 1 / 0.5 = 2.0 (zoom in).
+    it('zooms ortho camera in (camera.zoom increases) on wheel scroll-up', () => {
+      // controls.md C9 fix (ortho variant): wheel scroll-up should increase
+      // camera.zoom (ortho-style zoom-in). The exact formula is covered in
+      // math/zoom.test.ts; we only verify the wiring here.
       const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
       orthoCam.position.set(0, 0, 5);
       orthoCam.lookAt(0, 0, 0);
@@ -229,14 +233,18 @@ describe('LuxarOrbitControls', () => {
       });
       controls.update();
 
-      const zoomBefore = orthoCam.zoom; // default = 1
-      (controls as any).zoomDelta = -0.5;
+      const zoomBefore = orthoCam.zoom;
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
       controls.update();
-      // Expected: zoomBefore / (1 - 0.5) = 1 / 0.5 = 2.0
-      expect(orthoCam.zoom).toBeCloseTo(zoomBefore / 0.5, 5);
+
+      expect(orthoCam.zoom).toBeGreaterThan(zoomBefore);
     });
 
     it('should clamp distance to min/max', () => {
+      // controls.md C10 fix: drive distance changes via the wheel path and
+      // observe through the camera-position public observable, not by
+      // mutating `(controls as any).distance` directly. Distance clamping is
+      // separately covered formally in update.test.ts (step 6).
       controls = new LuxarOrbitControls(camera, domElement, {
         enableDamping: false,
         minDistance: 2,
@@ -244,19 +252,31 @@ describe('LuxarOrbitControls', () => {
       });
       controls.update();
 
-      // Try to zoom past min
-      (controls as any).distance = 0.5;
-      controls.update();
-      expect((controls as any).distance).toBeGreaterThanOrEqual(2);
+      // Scroll up many times to drive distance past min — clamp must hold.
+      for (let i = 0; i < 200; i++) {
+        domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -500 }));
+        controls.update();
+      }
+      expect(camera.position.distanceTo(controls.target)).toBeGreaterThanOrEqual(2 - 1e-5);
 
-      // Try to zoom past max
-      (controls as any).distance = 20;
-      controls.update();
-      expect((controls as any).distance).toBeLessThanOrEqual(10);
+      // Scroll down many times to drive past max — clamp must hold.
+      for (let i = 0; i < 200; i++) {
+        domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 500 }));
+        controls.update();
+      }
+      expect(camera.position.distanceTo(controls.target)).toBeLessThanOrEqual(10 + 1e-5);
     });
   });
 
   describe('damping', () => {
+    // controls.md C8: these two tests inject through private `rotationDelta`
+    // because there is no public seam to enqueue a rotation that participates
+    // in the damping pipeline — `applyOrbitRotation` commits orientation
+    // directly and bypasses damping entirely. The proper test home is
+    // `luxar-orbit-controls/update.test.ts`, which accesses `rotationDelta`
+    // through the documented `OrbitUpdateCtx` seam. The orchestrator-level
+    // tests are kept here as integration coverage for the wiring between the
+    // private delta and update().
     it('should decay rotation velocity over multiple frames', () => {
       controls = new LuxarOrbitControls(camera, domElement, {
         enableDamping: true,
@@ -423,15 +443,17 @@ describe('LuxarOrbitControls', () => {
 
   describe('save/reset', () => {
     it('should restore to saved state', () => {
+      // controls.md C11 fix: move the camera through the public
+      // `applyOrbitRotation` API instead of calling the private `pan(dx, dy)`.
+      // The test contract is reset()-restores-saved-state; the SPECIFIC action
+      // that moved the camera is incidental.
       controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
       controls.update();
       controls.saveState();
 
       const savedPos = camera.position.clone();
 
-      // Move camera by panning
-      (controls as any).pan(200, 100);
-      controls.update();
+      controls.applyOrbitRotation(Math.PI / 4, new THREE.Vector3(0, 1, 0));
       expect(camera.position.x).not.toBeCloseTo(savedPos.x, 5);
 
       // Reset — restoration is deterministic (saved state is copied verbatim),
@@ -506,21 +528,27 @@ describe('LuxarOrbitControls', () => {
       removeSpy.mockRestore();
     });
 
-    it('dispose() removes the ortho view-axis wheel listener [controls.md/W10][P2]', () => {
-      // controls.md [W10][P2] strengthening: was `.not.toThrow()` only.
-      // After enabling ortho view-axis rotation and disposing, the
-      // viewAxisRotationHandler private slot must be null so the wheel
-      // path is detached (no leak on the dom element).
+    it('dispose() removes the ortho view-axis wheel listener [controls.md/W10][P2][C12]', () => {
+      // controls.md C12 fix: assert the BEHAVIORAL contract (no leak) rather
+      // than the private `viewAxisRotationHandler` nulling. After dispose, a
+      // shift+wheel event must NOT mutate orientation — the handler is
+      // detached from `domElement`.
       controls = new LuxarOrbitControls(camera, domElement);
       controls.enableViewAxisRotation();
-      expect((controls as unknown as { viewAxisRotationHandler: unknown }).viewAxisRotationHandler)
-        .not.toBeNull();
       controls.dispose();
-      // After dispose, the handler reference must be null/undefined so a
-      // future wheel event can't fire through it.
-      const handler = (controls as unknown as { viewAxisRotationHandler: unknown })
-        .viewAxisRotationHandler;
-      expect(handler === null || handler === undefined).toBe(true);
+
+      // Snapshot orientation before the post-dispose event.
+      const orientationBefore = (controls as any).orientation.clone();
+
+      // A shift+wheel event would normally trigger view-axis rotation. After
+      // dispose, the listener must be detached — orientation stays put.
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, shiftKey: true }));
+
+      const orientationAfter = (controls as any).orientation as THREE.Quaternion;
+      expect(orientationAfter.x).toBeCloseTo(orientationBefore.x, 10);
+      expect(orientationAfter.y).toBeCloseTo(orientationBefore.y, 10);
+      expect(orientationAfter.z).toBeCloseTo(orientationBefore.z, 10);
+      expect(orientationAfter.w).toBeCloseTo(orientationBefore.w, 10);
     });
   });
 
