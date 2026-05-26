@@ -186,6 +186,39 @@ describe('WindowEventHandler', () => {
       expect(settings.fovPreset).toBe('Custom');
       expect(syncCurrentState).toHaveBeenCalledTimes(1);
     });
+
+    it('[input.md G15] Ctrl+wheel without setRenderingControls: updateFOV fires but the if-guard prevents preset/sync', () => {
+      // input.md G15[P5]: prior tests asserted updateFOV was called, but
+      // did NOT prove the `if (this.renderingControls)` guard works. A
+      // mutation that removed the guard would crash on `undefined.settings`
+      // — but only when renderingControls is unset. Pin the no-crash
+      // contract explicitly for the unset path.
+      const { sceneManager, updateFOV } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      // INTENTIONALLY skip setRenderingControls() — it remains undefined.
+      handler.attach([]);
+
+      expect(() =>
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: 75, ctrlKey: true }))
+      ).not.toThrow();
+      expect(updateFOV).toHaveBeenCalledTimes(1);
+      expect(updateFOV).toHaveBeenCalledWith(75);
+    });
+
+    it('[input.md G15] Meta+wheel without setRenderingControls: same no-crash contract', () => {
+      // Symmetric: macOS users on Cmd+wheel must also not crash when
+      // renderingControls is unset. Pin both branches of the OR-gate.
+      const { sceneManager, updateFOV } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      expect(() =>
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: -33, metaKey: true }))
+      ).not.toThrow();
+      expect(updateFOV).toHaveBeenCalledWith(-33);
+    });
   });
 
   describe('fullscreenchange', () => {
