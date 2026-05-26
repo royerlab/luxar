@@ -147,39 +147,8 @@ describe('WorkerPool.initializeWithGuard — workerInitTimeoutMs:0 disables guar
   });
 });
 
-describe('WorkerPool.dispose — clears initPromise even with no workers', () => {
-  beforeEach(() => {
-    vi.unstubAllGlobals();
-    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
-    vi.useRealTimers();
-  });
-
-  it('[workers.md C4] a failed-init pool can be re-initialized cleanly after dispose (public contract)', async () => {
-    // workers.md C4[P10] fix: prior version probed the private
-    // `initPromise` field via cast. The public contract "dispose clears
-    // the cached (rejected) initPromise so re-initialization runs fresh"
-    // is observable via a follow-up `await pool.initialize()` succeeding
-    // (with a fresh-loader factory that doesn't reject). If dispose
-    // failed to clear the cached promise, the second call would resolve
-    // to the same rejection.
-    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 1000 }, 'rejects');
-    const pool = new WorkerPool();
-    await expect(pool.initialize()).rejects.toThrow();
-    expect(pool.getWorkerCount()).toBe(0);
-    expect(pool.isInitialized()).toBe(false);
-
-    pool.dispose();
-    expect(pool.getWorkerCount()).toBe(0);
-
-    // After dispose, calling initialize() again must NOT return the cached
-    // rejected promise. We expect EITHER a fresh rejection (same factory)
-    // OR clean resolve. The key contract is "fresh attempt" — assert that
-    // the new initialize() runs through the loader factory again (the
-    // mock-rejection re-fires) rather than instantly settling with the
-    // first promise's state. We pin "rejects again" rather than "is null".
-    await expect(pool.initialize()).rejects.toThrow();
-    // And the public observable state is consistent post-second-attempt.
-    expect(pool.getWorkerCount()).toBe(0);
-    expect(pool.isInitialized()).toBe(false);
-  });
-});
+// workers.md O5 / Phase E13: the `WorkerPool.dispose — clears
+// initPromise even with no workers` describe block was moved from here
+// to `dispose.test.ts` — its subject ("dispose clears initPromise") is
+// the dispose-themed file's concern, not the workerInitTimeoutMs:0
+// file's. See dispose.test.ts for the test body.

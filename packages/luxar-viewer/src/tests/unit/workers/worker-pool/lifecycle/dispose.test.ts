@@ -264,3 +264,44 @@ describe('WorkerPool.dispose — mid-init race', () => {
     expect(workers[3].terminate.mock.calls.length).toBe(0);
   });
 });
+
+// workers.md O5 / Phase E13: moved here from `init-timeout.test.ts` —
+// the test's subject is "dispose clears initPromise", which belongs
+// in this dispose-themed file, not in the workerInitTimeoutMs:0 file.
+describe('WorkerPool.dispose — clears initPromise even with no workers', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+    vi.useRealTimers();
+  });
+
+  it('[workers.md C4] a failed-init pool can be re-initialized cleanly after dispose (public contract)', async () => {
+    // workers.md C4[P10] fix: prior version probed the private
+    // `initPromise` field via cast. The public contract "dispose clears
+    // the cached (rejected) initPromise so re-initialization runs fresh"
+    // is observable via a follow-up `await pool.initialize()` succeeding
+    // (with a fresh-loader factory that doesn't reject). If dispose
+    // failed to clear the cached promise, the second call would resolve
+    // to the same rejection.
+    const rejectingInit = async () => {
+      throw new Error('init throws');
+    };
+    const { WorkerPool } = await loadWorkerPool(1, rejectingInit);
+    const pool = new WorkerPool();
+    await expect(pool.initialize()).rejects.toThrow();
+    expect(pool.getWorkerCount()).toBe(0);
+    expect(pool.isInitialized()).toBe(false);
+
+    pool.dispose();
+    expect(pool.getWorkerCount()).toBe(0);
+
+    // After dispose, calling initialize() again must NOT return the cached
+    // rejected promise. With the same factory (still rejecting), the new
+    // initialize() must re-run the loader factory — assert "rejects again"
+    // rather than "is null" so dispose's "clear cached initPromise"
+    // contract is observable.
+    await expect(pool.initialize()).rejects.toThrow();
+    expect(pool.getWorkerCount()).toBe(0);
+    expect(pool.isInitialized()).toBe(false);
+  });
+});
