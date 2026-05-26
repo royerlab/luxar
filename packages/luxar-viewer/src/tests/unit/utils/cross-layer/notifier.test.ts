@@ -60,14 +60,22 @@ describe('notifier — without a backend registered', () => {
     clearNotifierBackend();
   });
 
-  it('every method returns silently (no throw) when no backend is registered', () => {
-    expect(() => notifier.error('e')).not.toThrow();
-    expect(() => notifier.toast('t')).not.toThrow();
-    expect(() => notifier.showHelp()).not.toThrow();
-    expect(() => notifier.hideHelp()).not.toThrow();
-    expect(() => notifier.showLoading()).not.toThrow();
-    expect(() => notifier.hideLoading()).not.toThrow();
-    expect(() => notifier.clearError()).not.toThrow();
+  // utils.md O7 / Phase E21: previously one `it` bundled 7
+  // `.not.toThrow()` assertions across all notifier methods. A regression
+  // that made `notifier.showLoading()` throw on missing-backend would
+  // surface as a generic "every method returns silently..." failure
+  // without naming the offending method. Parametrize via `it.each` so
+  // each method is exercised in its own row.
+  it.each<{ method: string; invoke: (n: typeof notifier) => void }>([
+    { method: 'error', invoke: (n) => n.error('e') },
+    { method: 'toast', invoke: (n) => n.toast('t') },
+    { method: 'showHelp', invoke: (n) => n.showHelp() },
+    { method: 'hideHelp', invoke: (n) => n.hideHelp() },
+    { method: 'showLoading', invoke: (n) => n.showLoading() },
+    { method: 'hideLoading', invoke: (n) => n.hideLoading() },
+    { method: 'clearError', invoke: (n) => n.clearError() },
+  ])('notifier.$method returns silently when no backend is registered', ({ invoke }) => {
+    expect(() => invoke(notifier)).not.toThrow();
   });
 
   it('warns exactly once across many missing-backend calls', () => {
