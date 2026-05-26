@@ -85,4 +85,35 @@ describe('commitGSplatsGeometry', () => {
     expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool)).not.toThrow();
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
   });
+
+  // data.md C7[P2][P8] three-geometry symmetry: mirror the Points and Lines
+  // pool-path tests — assert acquire/update call counts AND that the
+  // mesh's geometry slot was replaced with the pool-acquired one. The
+  // pool branch does NOT call updateInstancedGSplatsMesh (that's the
+  // ELSE/no-pool path) — pin BOTH directions: pool path SKIPS the
+  // instanced-mesh update.
+  it('[C7] pool path: calls acquire/update exactly once, replaces mesh.geometry, SKIPS updateInstancedGSplatsMesh', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const beforeGeom = mesh.geometry;
+
+    const newGeometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireGSplatsGeometry: vi.fn(() => newGeometry),
+      updateGSplatsGeometry: vi.fn(),
+      releaseGSplatsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    commitGSplatsGeometry(makeStaged(7), root, pool as never);
+
+    expect(pool.acquireGSplatsGeometry).toHaveBeenCalledTimes(1);
+    expect(pool.updateGSplatsGeometry).toHaveBeenCalledTimes(1);
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(mesh.geometry).not.toBe(beforeGeom);
+    // Pool path skips updateInstancedGSplatsMesh — that's only the
+    // no-pool fallback path. Pin BOTH directions of the contract.
+    expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
+  });
 });

@@ -9,7 +9,7 @@
  * userData write on a real mesh.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
@@ -84,5 +84,34 @@ describe('commitLinesGeometry', () => {
     const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
     expect(() => commitLinesGeometry(staged, root, mockPool)).not.toThrow();
     expect(mesh.userData.visibleSegmentCount).toBe(11);
+  });
+
+  // data.md C6[P2][P8] three-geometry symmetry: the Points equivalent
+  // (commit-points-geometry.test.ts:75-92) asserts that
+  // (a) the mesh's geometry slot was REPLACED with the pool-acquired one,
+  // (b) acquireLinesGeometry was called EXACTLY once, and
+  // (c) updateLinesGeometry was called EXACTLY once.
+  // Pin the same contract for Lines so a mutation that swapped to the
+  // dispose+create fallback (or double-invoked update) is caught.
+  it('[C6] pool path: replaces mesh.geometry and calls acquire/update exactly once', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const beforeGeom = mesh.geometry;
+
+    const newGeometry = new THREE.BufferGeometry();
+    const pool = {
+      acquireLinesGeometry: vi.fn(() => newGeometry),
+      updateLinesGeometry: vi.fn(),
+      releaseLinesGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
+    };
+    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
+    commitLinesGeometry(staged, root, pool as never);
+
+    expect(mesh.geometry).toBe(newGeometry);
+    expect(mesh.geometry).not.toBe(beforeGeom);
+    expect(pool.acquireLinesGeometry).toHaveBeenCalledTimes(1);
+    expect(pool.updateLinesGeometry).toHaveBeenCalledTimes(1);
   });
 });
