@@ -197,17 +197,28 @@ export class LinesDataAccumulator implements DataAccumulator<
    * Ensure capacity for both vertices and segments.
    *
    * @param vertexCount - Actual vertex count needed
-   * @param segmentCount - Optional actual segment count (if not provided, estimates from vertex count)
+   * @param segmentCount - Optional actual segment count. When omitted,
+   *   defaults to `vertexCount`. This is exact for particle tracks
+   *   (N vertices → N-1 segments, ratio 1:1) and a safe over-estimate
+   *   for typical line meshes (ratio 1.5:1 vertices-to-segments).
    * @returns true if buffers grew
    *
-   * IMPORTANT: For particle tracks (N vertices, N-1 segments), the ratio is ~1:1 not 1.5:1.
-   * Always pass actual segment count when known to avoid silent buffer truncation!
+   * Always pass the actual segment count when known. The fallback is
+   * sized for safety, not for efficiency — under-sizing here causes
+   * silent buffer truncation when the loader later writes segments
+   * past the estimated boundary.
    */
   ensureCapacity(vertexCount: number, segmentCount?: number): boolean {
     this.assertNotDisposed('ensureCapacity');
     const neededVertices = vertexCount;
-    // Use actual segment count if provided, otherwise estimate (may be too small!)
-    const neededSegments = segmentCount ?? Math.ceil(vertexCount / 1.5);
+    // [integration.md OOS1] Fallback default: vertexCount. Previously the
+    // estimate was `Math.ceil(vertexCount / 1.5)` (~0.67 × vertexCount),
+    // which UNDER-estimates for particle tracks where N vertices yields
+    // N-1 segments (ratio ~1:1). Under-sizing silently truncated writes
+    // past the boundary in any caller that omitted segmentCount. The
+    // new default over-estimates for typical 1.5:1 meshes and is exact
+    // for particle tracks — pay a small memory cost for correctness.
+    const neededSegments = segmentCount ?? vertexCount;
 
     let grew = false;
 
