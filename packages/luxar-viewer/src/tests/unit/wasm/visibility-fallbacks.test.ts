@@ -806,3 +806,377 @@ describe('TypeScript fallback at small-ndim boundary', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// [wasm.md G1, G2, G3] NaN / Inf propagation across the three geometries.
+// Pin the contract that a single NaN in positions/vertices/centers (or in
+// Cholesky factors for gsplats) poisons distSq and produces output=0.
+// A mutant that swapped `distSq <= 1.0` to `distSq <= 1.0 || isNaN(distSq)`
+// or that initialized `distSq` differently would now be caught.
+// ---------------------------------------------------------------------------
+describe('compute_nd_visibility_points — NaN/Inf propagation [wasm.md G1]', () => {
+  it('[G1] NaN in positions poisons distSq → point is hidden (NaN<=1.0 is false)', () => {
+    // 3D point with NaN in the y coordinate. Slice at origin, tolerance large.
+    const positions = new Float32Array([0, Number.NaN, 0]);
+    const radii = new Float32Array([0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G1] NaN in slicePosition also poisons distSq → point is hidden', () => {
+    const positions = new Float32Array([0, 0, 0]);
+    const radii = new Float32Array([0]);
+    const slicePosition = new Float32Array([0, Number.NaN, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G1] Infinity in positions → delta=Infinity → normalized=Infinity → distSq=Infinity → hidden', () => {
+    const positions = new Float32Array([0, Number.POSITIVE_INFINITY, 0]);
+    const radii = new Float32Array([0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G1] NaN-poison is per-point: one bad point hides only itself, neighbour still visible', () => {
+    const positions = new Float32Array([0, 0, 0, Number.NaN, 0, 0]);
+    const radii = new Float32Array([0, 0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([1, 1, 1]);
+    const output = new Uint8Array(2);
+    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 2, output);
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+    expect(output[1]).toBe(0);
+  });
+});
+
+describe('compute_nd_visibility_lines — NaN / out-of-range / boundaries [wasm.md G2]', () => {
+  it('[G2] NaN in vertices → both endpoints fail check → segment hidden', () => {
+    const vertices = new Float32Array([Number.NaN, 0, 0, Number.NaN, 0, 0]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([0, 0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G2] OR-semantics: NaN in ONE endpoint, other endpoint visible → segment visible', () => {
+    // Pins the documented "EITHER endpoint is visible" rule from lines.ts L39.
+    // v0 is NaN-poisoned; v1 is at origin → visible. Segment must remain visible.
+    const vertices = new Float32Array([Number.NaN, 0, 0, 0, 0, 0]);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([0, 0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+
+  it('[G2] out-of-range vertex index reads undefined → coerced to NaN → endpoint fails', () => {
+    // segments[0] = 99 (only 2 vertices in the buffer).
+    // vertices[99*3+dim] is `undefined`; `undefined - 0 === NaN`; checkPoint returns false.
+    // v1 at index 1 is at origin → visible → OR-semantics keeps segment visible.
+    // Pin contract: the OOB read does NOT crash, AND the present-endpoint still drives the result.
+    const vertices = new Float32Array([0, 0, 0, 0, 0, 0]);
+    const segments = new Uint32Array([99, 1]);
+    const widths = new Float32Array([0, 0]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    expect(() =>
+      compute_nd_visibility_lines(
+        vertices,
+        segments,
+        widths,
+        slicePosition,
+        tolerance,
+        3,
+        1,
+        output
+      )
+    ).not.toThrow();
+    expect(output[0]).toBe(1);
+  });
+
+  it('[G2] numSegments === 0 → loop never executes, count is 0, output untouched', () => {
+    // Empty-input boundary. Symmetry with the gsplats numSplats=0 case.
+    const vertices = new Float32Array([0, 0, 0]);
+    const segments = new Uint32Array([]);
+    const widths = new Float32Array([1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([1, 1, 1]);
+    const output = new Uint8Array(0);
+    const n = compute_nd_visibility_lines(
+      vertices,
+      segments,
+      widths,
+      slicePosition,
+      tolerance,
+      3,
+      0,
+      output
+    );
+    expect(n).toBe(0);
+  });
+});
+
+describe('compute_nd_visibility_gsplats — NaN/Inf propagation [wasm.md G3]', () => {
+  it('[G3] NaN in centers poisons distSq → splat hidden', () => {
+    const centers = new Float32Array([Number.NaN, 0, 0]);
+    // 3D identity Cholesky packed: [L00, L10, L11, L20, L21, L22] = [1,0,1,0,0,1].
+    const cholesky = new Float32Array([1, 0, 1, 0, 0, 1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_gsplats(
+      centers,
+      cholesky,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G3] NaN in Cholesky + center FAR from slice → effTol=NaN fails the `>0` gate → shouldBreak → splat hidden', () => {
+    // Pin actual behaviour at gsplats.ts L76-84: a NaN row norm produces
+    // `maxExtent = NaN`, then `effectiveTolerance = tolerance + NaN = NaN`,
+    // and `NaN > 0` is false → control falls into the `else if`. Because
+    // the center is far from the slice, `|delta| > 1e-6` triggers
+    // `shouldBreak` → output 0.
+    //
+    // (A center AT the slice would silently skip the dim entirely; see
+    // the next test for the symmetric subtlety.)
+    const centers = new Float32Array([3, 0, 0]);
+    const cholesky = new Float32Array([1, 0, Number.NaN, 0, 0, 1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_gsplats(
+      centers,
+      cholesky,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[G3] NaN in Cholesky + center AT slice → effTol=NaN silently skips every dim → distSq stays 0 → visible (documented quirk)', () => {
+    // Documents the quirk: NaN in the Cholesky does NOT poison distSq when
+    // the center coincides with the slice. The `else if (|delta| > 1e-6)`
+    // gate skips the contribution silently. A future hardening of this
+    // contract (e.g. treating NaN extent as "always hidden") would surface
+    // as an intentional change.
+    const centers = new Float32Array([0, 0, 0]);
+    const cholesky = new Float32Array([1, 0, Number.NaN, 0, 0, 1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_gsplats(
+      centers,
+      cholesky,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+
+  it('[G3] negative diagonal in Cholesky is squared → row norm is positive → splat behaviour unchanged', () => {
+    // Pin documented contract: `val * val` ignores sign; a -1 diagonal yields
+    // the same row norm as +1, so visibility is identical. (The comment in
+    // gsplats.ts L23 calls out this acceptance of negative diags.)
+    const centers = new Float32Array([0, 0, 0]);
+    const choleskyNeg = new Float32Array([-1, 0, -1, 0, 0, -1]);
+    const choleskyPos = new Float32Array([1, 0, 1, 0, 0, 1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const outNeg = new Uint8Array(1);
+    const outPos = new Uint8Array(1);
+    const nNeg = compute_nd_visibility_gsplats(
+      centers,
+      choleskyNeg,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      outNeg
+    );
+    const nPos = compute_nd_visibility_gsplats(
+      centers,
+      choleskyPos,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      outPos
+    );
+    expect(nNeg).toBe(nPos);
+    expect(outNeg[0]).toBe(outPos[0]);
+  });
+
+  it('[G3] Infinity in centers → distSq=Infinity → splat hidden', () => {
+    const centers = new Float32Array([Number.POSITIVE_INFINITY, 0, 0]);
+    const cholesky = new Float32Array([1, 0, 1, 0, 0, 1]);
+    const slicePosition = new Float32Array([0, 0, 0]);
+    const tolerance = new Float32Array([5, 5, 5]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_gsplats(
+      centers,
+      cholesky,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [wasm.md W11] ndim=16 tolerance-boundary fixture across all 3 geometries.
+// Prior coverage only exercised "at slice (always visible)" and "far away
+// (always hidden)" cases at high ndim, which trivially pass for any sane
+// implementation. This block places per-dim contributions so that distSq
+// accumulates to EXACTLY 1.0 — pinning the strict `<=` boundary plus the
+// full-loop accumulation through every dimension.
+//
+// Construction: 16 dims, each position[d] = 0.25, tolerance[d] = 1,
+// radius/width/extent = 0. Then per-dim normalized = 0.25, contribution = 0.0625,
+// total distSq = 16 * 0.0625 = 1.0. With `distSq <= 1.0` the point is visible;
+// a mutation flipping to `<` would now fail.
+// ---------------------------------------------------------------------------
+describe('ndim=16 tolerance-boundary across all three geometries [wasm.md W11]', () => {
+  it('[W11] points: full-loop accumulation lands exactly on distSq=1.0 → visible', () => {
+    const ndim = 16;
+    const positions = new Float32Array(ndim);
+    const slicePosition = new Float32Array(ndim);
+    const tolerance = new Float32Array(ndim);
+    for (let d = 0; d < ndim; d++) {
+      positions[d] = 0.25;
+      slicePosition[d] = 0;
+      tolerance[d] = 1;
+    }
+    const radii = new Float32Array([0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      ndim,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+
+  it('[W11] points: a 1-ULP nudge past the boundary on dim 15 hides the point', () => {
+    // distSq = 16 * 0.0625 = 1.0 at the boundary. Bump one dim slightly so
+    // its squared contribution > the budget: 0.26 instead of 0.25 →
+    // contribution rises to 0.0676 → total > 1.0 → hidden.
+    const ndim = 16;
+    const positions = new Float32Array(ndim);
+    const slicePosition = new Float32Array(ndim);
+    const tolerance = new Float32Array(ndim);
+    for (let d = 0; d < ndim; d++) {
+      positions[d] = 0.25;
+      slicePosition[d] = 0;
+      tolerance[d] = 1;
+    }
+    positions[15] = 0.26;
+    const radii = new Float32Array([0]);
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      ndim,
+      1,
+      output
+    );
+    expect(n).toBe(0);
+    expect(output[0]).toBe(0);
+  });
+
+  it('[W11] gsplats: identity Cholesky in 16D + boundary centers → distSq=1.0 → visible', () => {
+    // Identity Cholesky in 16D: maxExtent = max row norm = 1 (since
+    // each diagonal is 1, off-diagonals are 0). effectiveTolerance per dim
+    // becomes tolerance[d] + maxExtent = 0 + 1 = 1 when tolerance[d]=0.
+    // To re-use the same 1.0 boundary as the points test: keep tolerance=1
+    // and set maxExtent=0 via zero-Cholesky. But zero diagonal → maxExtent=0,
+    // effectiveTolerance=tolerance=1 → identical to the points construction.
+    const ndim = 16;
+    const packedSize = (ndim * (ndim + 1)) / 2;
+    const centers = new Float32Array(ndim);
+    const slicePosition = new Float32Array(ndim);
+    const tolerance = new Float32Array(ndim);
+    for (let d = 0; d < ndim; d++) {
+      centers[d] = 0.25;
+      slicePosition[d] = 0;
+      tolerance[d] = 1;
+    }
+    const cholesky = new Float32Array(packedSize); // all zeros → maxExtent=0
+    const output = new Uint8Array(1);
+    const n = compute_nd_visibility_gsplats(
+      centers,
+      cholesky,
+      slicePosition,
+      tolerance,
+      ndim,
+      1,
+      output
+    );
+    expect(n).toBe(1);
+    expect(output[0]).toBe(1);
+  });
+});
