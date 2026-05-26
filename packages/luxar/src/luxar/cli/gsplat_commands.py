@@ -2671,7 +2671,16 @@ def calibrate_command(
     ),
     # Fit configuration (delegated to existing config loader)
     preset: str = typer.Option(
-        "standard", "--preset", help="Fit preset: draft, standard, hifi, ultra"
+        "n2s",
+        "--preset",
+        help=(
+            "Fit preset: draft, standard, hifi, ultra, n2s. "
+            "Default 'n2s' matches the manuscript's blind-spot protocol "
+            "(n_iters=20000, early_stop_patience=500, cull_retention=0.999) "
+            "so the held-out PSNR curve has enough optimiser budget to enter "
+            "the overfit regime at high K. Lower presets undertrain at high K "
+            "and bias K* upward."
+        ),
     ),
     config: Optional[Path] = typer.Option(
         None, "--config", help="YAML overrides for fit parameters"
@@ -2896,9 +2905,7 @@ def migrate_format_command(
         help="Legacy .gsplats.zarr (v1.0 or v1.1), .gsplats.zarr.zip/.tar.gz, "
         "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
     ),
-    output_path: Path = typer.Argument(
-        ..., help="Output .gsplats.zarr (v2.0)."
-    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v2.0)."),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output if it exists."
     ),
@@ -2922,9 +2929,7 @@ def migrate_format_command(
         from luxar.gsplats.io.migrate import migrate_format
 
         with asection(f"Migrating {input_path.name} → v2.0"):
-            detected = migrate_format(
-                input_path, output_path, overwrite=overwrite
-            )
+            detected = migrate_format(input_path, output_path, overwrite=overwrite)
             aprint(f"Detected legacy format: {detected}")
             if not quiet:
                 aprint(f"Wrote v2.0 file to {output_path}")
@@ -5189,7 +5194,12 @@ def lod_pyramid(
             )
         add_norm = additive_method.strip().replace("-", "_")
         valid_additive = {
-            "greedy", "self_energy", "mass", "amplitude", "spectral", "random",
+            "greedy",
+            "self_energy",
+            "mass",
+            "amplitude",
+            "spectral",
+            "random",
         }
         if add_norm not in valid_additive:
             raise typer.BadParameter(

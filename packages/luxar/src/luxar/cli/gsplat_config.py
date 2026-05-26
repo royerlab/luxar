@@ -36,26 +36,55 @@ class FitPreset(str, Enum):
     ULTRA = "ultra"
 
 
+# All presets share the manuscript's blind-spot / Noise2Self protocol as their
+# baseline (``cull_retention=0.999`` — i.e. no silent post-fit culling) and
+# vary only in optimiser budget (``n_iters`` + ``early_stop_patience``).
+#
+# Why this matters: the previous presets defaulted to the fitter's
+# ``cull_retention=0.95``, which silently dropped 5% of splats by amplitude
+# after every fit. Combined with too few iterations at high K, this made
+# ``luxar gsplat cal`` report artificially rising held-out PSNR ("signal
+# limited") instead of the true plateau / overfit curve the manuscript's
+# supp_doc/splat_count_vs_quality/run_noise2self.py recorded.  Aligning all
+# presets to the paper's profile fixes the cal protocol; users picking a
+# faster preset trade convergence quality but not protocol validity.
+#
+# ``n2s`` is the canonical name for the protocol — same numbers as ``ultra``,
+# kept explicit so it's clear which preset is the "paper reference".
 PRESETS: Dict[str, Dict[str, Any]] = {
     "draft": {
-        "n_iters": 500,
-        "early_stop_patience": 100,
+        "n_iters": 2_000,
+        "early_stop_patience": 200,
         "max_eccentricity": 10.0,
+        "cull_retention": 0.999,
     },
     "standard": {
-        "n_iters": 3000,
+        "n_iters": 5_000,
         "early_stop_patience": 300,
         "max_eccentricity": 10.0,
+        "cull_retention": 0.999,
     },
     "hifi": {
-        "n_iters": 6000,
-        "early_stop_patience": 500,
+        "n_iters": 10_000,
+        "early_stop_patience": 400,
         "max_eccentricity": 15.0,
+        "cull_retention": 0.999,
     },
     "ultra": {
-        "n_iters": 10000,
-        "early_stop_patience": 1000,
+        "n_iters": 20_000,
+        "early_stop_patience": 500,
         "max_eccentricity": 20.0,
+        "cull_retention": 0.999,
+    },
+    # Canonical alias for the manuscript's blind-spot protocol; identical to
+    # ``ultra`` (n_iters=20000, early_stop_patience=500, cull_retention=0.999)
+    # and the default for ``luxar gsplat cal``.  Kept named so users can pick
+    # the "paper" preset explicitly when reproducing supp_doc results.
+    "n2s": {
+        "n_iters": 20_000,
+        "early_stop_patience": 500,
+        "max_eccentricity": 10.0,
+        "cull_retention": 0.999,
     },
 }
 
