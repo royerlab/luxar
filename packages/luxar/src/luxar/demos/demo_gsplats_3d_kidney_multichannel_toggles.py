@@ -145,8 +145,8 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 # Progressive fitting parameters
-MAX_SPLATS = 8000
-MAX_SPLATS_PER_PASS = 1500
+MAX_SPLATS = 140000
+MAX_SPLATS_PER_PASS = 28000
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
 

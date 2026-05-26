@@ -87,7 +87,7 @@ class TestLoadFitConfig:
 
     def test_preset_overrides_defaults(self) -> None:
         config = load_fit_config(preset="draft")
-        assert config["n_iters"] == 500
+        assert config["n_iters"] == 2000
 
     def test_yaml_overrides_preset(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -151,7 +151,7 @@ class TestDumpDefaultConfig:
     def test_preset_reflected(self) -> None:
         text = dump_default_config("draft")
         parsed = yaml.safe_load(text)
-        assert parsed["n_iters"] == 500
+        assert parsed["n_iters"] == 2000
 
     def test_all_presets_produce_valid_yaml(self) -> None:
         for preset_name in PRESETS:
@@ -327,7 +327,7 @@ class TestFitCommand:
         )
         assert result.exit_code == 0
         parsed = yaml.safe_load(result.stdout)
-        assert parsed["n_iters"] == 6000
+        assert parsed["n_iters"] == 10000
 
     def test_fit_small_volume(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path

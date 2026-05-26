@@ -1,0 +1,55 @@
+{
+  "name": "celegans_tracking",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "median",
+  "recommended_k_star": 21773,
+  "per_sample": [
+    {
+      "label": "celegans_tracking__t0050",
+      "k_star": 6350,
+      "type": "plateau",
+      "confidence_db": 0.22233966416744977,
+      "volume_shape": [
+        41,
+        512,
+        512
+      ],
+      "elapsed_seconds": 403.90213327799574,
+      "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0050.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "celegans_tracking__t0200",
+      "k_star": 21773,
+      "type": "peak",
+      "confidence_db": 0.034013041645064135,
+      "volume_shape": [
+        41,
+        512,
+        512
+      ],
+      "elapsed_seconds": 214.54695386599633,
+      "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0200.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "celegans_tracking__t0350",
+      "k_star": 40317,
+      "type": "peak",
+      "confidence_db": 0.009081205874686304,
+      "volume_shape": [
+        41,
+        512,
+        512
+      ],
+      "elapsed_seconds": 440.530144963006,
+      "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0350.json",
+      "noise_floor_psnr_db": null
+    }
+  ],
+  "comment": "41x512x512 per timepoint; 3 distributed tp; median K*"
+}

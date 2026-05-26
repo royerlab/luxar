@@ -100,8 +100,8 @@ ZENODO_URL = (
 VOXEL_SIZE_UM = 0.381  # Isotropic voxel size in micrometres
 
 # Fitting parameters (progressive)
-MAX_SPLATS = 64_000
-MAX_SPLATS_PER_PASS = 16_000
+MAX_SPLATS = 510000
+MAX_SPLATS_PER_PASS = 102000
 ITERS_PER_PASS = 5_000
 PSNR_PATIENCE = 0.1
 

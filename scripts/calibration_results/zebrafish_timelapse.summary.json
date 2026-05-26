@@ -1,0 +1,55 @@
+{
+  "name": "zebrafish_timelapse",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "median",
+  "recommended_k_star": 1852,
+  "per_sample": [
+    {
+      "label": "zebrafish_timelapse__t0000",
+      "k_star": 3429,
+      "type": "peak",
+      "confidence_db": 0.09281186367280725,
+      "volume_shape": [
+        44,
+        256,
+        256
+      ],
+      "elapsed_seconds": 693.6322134479997,
+      "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0000.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "zebrafish_timelapse__t0032",
+      "k_star": 1852,
+      "type": "peak",
+      "confidence_db": 0.12927358965051639,
+      "volume_shape": [
+        44,
+        256,
+        256
+      ],
+      "elapsed_seconds": 763.5674558710016,
+      "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0032.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "zebrafish_timelapse__t0063",
+      "k_star": 1852,
+      "type": "peak",
+      "confidence_db": 0.3562592916952525,
+      "volume_shape": [
+        44,
+        256,
+        256
+      ],
+      "elapsed_seconds": 765.934995210002,
+      "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0063.json",
+      "noise_floor_psnr_db": null
+    }
+  ],
+  "comment": "Timelapse, 3 distributed tp; median K*"
+}

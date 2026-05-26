@@ -1,0 +1,27 @@
+{
+  "name": "organoid_dapi",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 11758,
+  "per_sample": [
+    {
+      "label": "organoid_dapi__dapi",
+      "k_star": 11758,
+      "type": "peak",
+      "confidence_db": 0.15847196383392514,
+      "volume_shape": [
+        128,
+        128,
+        128
+      ],
+      "elapsed_seconds": 230.8223822209984,
+      "json_path": "scripts/calibration_results/organoid_dapi/organoid_dapi__dapi.json",
+      "noise_floor_psnr_db": 54.02933820627279
+    }
+  ],
+  "comment": "128^3 single-channel DAPI from IDR"
+}
