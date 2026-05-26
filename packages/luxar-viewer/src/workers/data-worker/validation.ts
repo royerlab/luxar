@@ -202,6 +202,7 @@ export function validateLineSegmentReferences(
     widths?: ArrayLike<number>;
     colors?: ArrayLike<number>;
     sharpness?: ArrayLike<number>;
+    scalars?: ArrayLike<number>;
   } = {}
 ): void {
   if (!Number.isInteger(numSegments) || numSegments < 0) {
@@ -244,6 +245,17 @@ export function validateLineSegmentReferences(
     throw new Error(
       `${fnName}: sharpness too short for max segment vertex ${maxVertex} ` +
         `(got ${opts.sharpness.length}, expected ≥ ${minVertices})`
+    );
+  }
+  // Per-vertex scalar (1 entry per referenced vertex). Pre-fix, the WASM
+  // `interpolate_scalars_batch` would read past the end on a short input,
+  // panicking inside WASM (or returning garbage in the TS fallback).
+  // [workers OOS] — three-geometry symmetry: Points + GSplats validate
+  // their own scalars; Lines must too.
+  if (opts.scalars && opts.scalars.length < minVertices) {
+    throw new Error(
+      `${fnName}: scalars too short for max segment vertex ${maxVertex} ` +
+        `(got ${opts.scalars.length}, expected ≥ ${minVertices})`
     );
   }
 }

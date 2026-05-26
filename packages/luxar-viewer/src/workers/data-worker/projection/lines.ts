@@ -93,6 +93,7 @@ export async function projectLinesTo3D(
     widths,
     colors: colors ?? undefined,
     sharpness: sharpness ?? undefined,
+    scalars: scalars ?? undefined,
   });
 
   // Convert input arrays to WASM-compatible formats
