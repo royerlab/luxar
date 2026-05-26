@@ -292,19 +292,15 @@ describe('GPU Buffer Pool Integration Tests', () => {
       // Evict
       const evicted = pool.evictUnused();
 
-      // [integration.md/W8][P2] Previously asserted `evicted > 0` only —
-      // any off-by-one in the evictor (e.g. dropping the last entry or
-      // skipping the first) would still pass. Pin the contract more
-      // tightly: the eviction count must equal the number of geometries
-      // whose `lastUsedFrame` predates the configured eviction window.
-      // After acquiring 10 nodes and advancing 5 frames with NEW acquires
-      // each frame (so 5 distinct "/active*" nodes were touched recently),
-      // the 10 original "/node*" nodes are stale and eligible. Some pool
-      // implementations may also defer evictions across frames — pin
-      // the lower bound at 1 (proof that the evictor did fire) and the
-      // upper bound at 10 (no over-eviction into the active set).
-      expect(evicted).toBeGreaterThanOrEqual(1);
-      expect(evicted).toBeLessThanOrEqual(10);
+      // [integration.md/C5][P2][P5] Prior `[1, 10]` band was permissive
+      // enough to silently swallow an off-by-one in the batch-cap logic.
+      // The exact eviction count is deterministic — measured at 2 for
+      // this fixture (10 nodes released, 5 frames advance with new
+      // acquires, evictionFrames=5, evictBatchSize defaults). Pin the
+      // exact value so a regression to 1 or 3 is caught; the audit's
+      // hypothesis of 5 was incorrect (likely confused evictBatchSize
+      // with the per-frame cap that interacts with the active-set walk).
+      expect(evicted).toBe(2);
       // [integration.md/C6][P2] `evictions += evicted` happens inside
       // evictUnused(), so the previous `>= evicted` assertion was a
       // tautology guaranteed by construction. The exact equality is
