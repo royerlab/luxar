@@ -1,12 +1,13 @@
 /**
- * Edge-case tests for WASM TypeScript-fallback decode and processing routines.
+ * Edge-case tests for the WASM TypeScript-fallback paths.
  *
- * Round 8 follow-up to wasm.md gap analysis. Closes:
- *   - [wasm.md/G6][P5] decode_quantized minVal == maxVal (degenerate range)
- *   - [wasm.md/G6][P5] decode_log_scalar maxLog=0 and negative
- *   - [wasm.md/G12][P5] mahalanobis_distance ndim=1 (forward-sub identity)
- *   - [wasm.md/G4][P5] compute_gsplats_attenuation numHidden=ndim (all hidden)
- *   - [wasm.md/G9][P5] clip_segment_single parallel-segment (dv < 1e-10)
+ * Despite the historical "decode-and-fallback-edges" file name, this file
+ * covers four distinct TS-fallback areas (wasm.md O12 → renamed to
+ * `tsfallback-edges.test.ts` to match):
+ *   - decode_quantized/decode_log_scalar boundaries (degenerate ranges)
+ *   - mahalanobis_distance ndim=1 (forward-sub identity)
+ *   - compute_gsplats_attenuation numHidden=ndim
+ *   - clip_segment_single parallel-segment + lines-clipping edges
  *
  * Pure math on typed arrays — no mocks. All cases exercise the TS fallback
  * code path; the WASM binary, when present, must match these results
