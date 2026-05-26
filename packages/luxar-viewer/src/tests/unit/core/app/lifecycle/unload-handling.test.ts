@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installUnloadHandler } from '../../../../../core/app/lifecycle/unload-handling';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
+import { log } from '../../../../../utils/log';
 
 describe('installUnloadHandler', () => {
   let events: EventGroup;
@@ -91,21 +92,29 @@ describe('installUnloadHandler', () => {
     }
   });
 
-  it.skip('SHOULD swallow errors when the supplied dispose itself throws (currently does not)', () => {
-    // Pinned-as-skipped: the production helper does NOT wrap the dispose
-    // callback in try/catch. Browser unload is a terminal event so an
-    // unhandled throw bubbles to window.onerror and (in some browsers)
-    // shows a console error to the user. The orchestrator's dispose
-    // path already uses `safeDispose` internally, so in practice the
-    // callback supplied here doesn't throw — but the helper would be
-    // safer if it caught + logged. Recorded in core.md OOS so the
-    // contract is documented; un-skip + add try/catch in source to fix.
+  // [core OOS] Un-skipped: the production helper now wraps the dispose
+  // callback in try/catch + log.warning. The unload-handler can no
+  // longer crash if dispose throws, so subsequent beforeunload listeners
+  // (or browser-internal cleanup) still run.
+  it('swallows errors when the supplied dispose throws AND log.warning is called', () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const throwingDispose = vi.fn(() => {
       throw new Error('mid-unload crash');
     });
     installUnloadHandler({ events, dispose: throwingDispose });
 
+    // The event dispatch must NOT throw — try/catch in the handler
+    // swallows the failure.
     expect(() => window.dispatchEvent(new Event('beforeunload'))).not.toThrow();
     expect(throwingDispose).toHaveBeenCalledOnce();
+
+    // log.warning fires with the expected shape (module, message, error).
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Luxar',
+      expect.stringMatching(/dispose\(\) threw during beforeunload.*mid-unload crash/),
+      expect.any(Error)
+    );
+
+    warnSpy.mockRestore();
   });
 });
