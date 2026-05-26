@@ -150,6 +150,50 @@ describe('InputContextManager', () => {
       expect(navBindings).toContain('ctrl+l');
     });
 
+    it('[input.md C5] registered binding actually fires when matching event is dispatched (end-to-end)', () => {
+      // input.md C5[P2]: prior tests only assert via getDebugInfo() that a
+      // bindingKey appears in the registered list — a single-channel
+      // probe. They don't end-to-end the lookup: a regression that wrote
+      // bindings into a different Map but kept the debugInfo accessor
+      // honest would survive. Pin the lookup-plus-dispatch contract.
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h',
+        handler,
+        preventDefault: true,
+      });
+      // Use 'h' (not in flyModeKeys → not in NAVIGATION blockedKeys).
+      const event = new KeyboardEvent('keydown', { key: 'h' });
+      const handled = manager.handleKeyEvent(event, 'down');
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(event);
+    });
+
+    it('[input.md C5] modifier-binding fires only when the modifier matches (Ctrl+l)', () => {
+      // Symmetric end-to-end for the modifier-registration path: a
+      // ctrl+l binding must NOT fire on plain 'l' (different bindingKey),
+      // AND must fire on Ctrl+l. Catches a regression that ignored
+      // modifiers when composing the lookup key.
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'l',
+        modifiers: { ctrl: true },
+        handler,
+        preventDefault: true,
+      });
+
+      // Plain 'l' — wrong bindingKey, no dispatch.
+      const plain = new KeyboardEvent('keydown', { key: 'l' });
+      expect(manager.handleKeyEvent(plain, 'down')).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+
+      // Ctrl+l — matches.
+      const ctrlL = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true });
+      expect(manager.handleKeyEvent(ctrlL, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
     it('should warn about conflicts', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const handler1 = vi.fn();
