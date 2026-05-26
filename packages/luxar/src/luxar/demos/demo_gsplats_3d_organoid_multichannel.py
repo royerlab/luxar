@@ -129,8 +129,8 @@ CHANNELS = [
 ]
 
 # Progressive fitting parameters
-MAX_SPLATS = 6000
-MAX_SPLATS_PER_PASS = 1000
+MAX_SPLATS = 40000
+MAX_SPLATS_PER_PASS = 8000
 ITERS_PER_PASS = 3000
 PSNR_PATIENCE = 0.2
 DEVICE = None  # Auto-detect (cuda/mps/cpu)
@@ -159,6 +159,14 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 def load_multichannel_data():
     """Load and preprocess multi-channel microscopy data from IDR.
 
+    Returns the IDR volumes at native resolution (no zoom resample) — this
+    matches the manuscript's supp_doc dataset for organoid_ch0.  An earlier
+    version of this loader force-resampled to TARGET_SIZE^3 via bilinear
+    ``scipy.ndimage.zoom``; that smoothed away high-frequency noise and
+    pushed the held-out PSNR ceiling ~5 dB above the paper's reference,
+    biasing K* upward.  Native resolution at this image (≤20M voxels) is
+    plenty tractable.
+
     Data Source: Image Data Resource (IDR) study idr0062, Image 6001240
     Original Authors: Prisca Liberali lab, FMI
     Citation: Blin et al. (2019) + Williams et al. (2017) Nature Methods 14(8):775-781
@@ -166,11 +174,10 @@ def load_multichannel_data():
     with asection("Loading multi-channel microscopy data"):
         aprint(f"Source: {ZARR_URL}")
         aprint("Dataset: IDR idr0062, Image 6001240 (Liberali lab, FMI)")
-        aprint(f"Target size: {TARGET_SIZE}³ voxels per channel")
+        aprint("Resolution: native (no zoom resample)")
 
         try:
             import fsspec
-            from scipy.ndimage import zoom
 
             # Open remote zarr
             mapper = fsspec.get_mapper(ZARR_URL)
@@ -191,7 +198,7 @@ def load_multichannel_data():
             aprint(f"  Channels: {n_channels}")
             aprint(f"  Spatial: {z_size}×{y_size}×{x_size}")
 
-            # Load each channel
+            # Load each channel at native resolution.
             volumes = []
             for ch_config in CHANNELS:
                 ch_idx = ch_config["index"]
@@ -205,10 +212,6 @@ def load_multichannel_data():
 
                 aprint(f"Loading T={TIME_POINT}, C={ch_idx} ({ch_name})...")
                 V = np.array(data[TIME_POINT, ch_idx, :, :, :], dtype=np.float32)
-
-                # Downscale
-                zoom_factors = [TARGET_SIZE / s for s in V.shape]
-                V = zoom(V, zoom_factors, order=1)
 
                 # Normalize to [0, 1]
                 V = (V - V.min()) / (V.max() - V.min() + 1e-8)

@@ -1,0 +1,27 @@
+{
+  "name": "tribolium_embryo",
+  "status": "ok",
+  "k_min": 2000,
+  "k_max": 512000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 512000,
+  "per_sample": [
+    {
+      "label": "tribolium_embryo__tribolium",
+      "k_star": 512000,
+      "type": "signal_limited",
+      "confidence_db": 15.959153922194197,
+      "volume_shape": [
+        991,
+        1871,
+        965
+      ],
+      "elapsed_seconds": 9315.151229213981,
+      "json_path": "scripts/calibration_results/tribolium_embryo/tribolium_embryo__tribolium.json",
+      "noise_floor_psnr_db": 69.23696643687117
+    }
+  ],
+  "comment": "Light-sheet Tribolium embryo (large)"
+}
