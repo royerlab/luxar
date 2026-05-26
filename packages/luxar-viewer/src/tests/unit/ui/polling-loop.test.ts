@@ -170,7 +170,11 @@ describe('PollingLoop', () => {
       expect(tickCount).toBe(2); // Regular tick still happens
     });
 
-    it('should work when loop is not running', () => {
+    // ui.md O7 / Phase E15: previously `'should work when loop is not running'`
+    // — vague (P9). Rename to surface the actual contract: tickNow()
+    // invokes the callback exactly once even when start() was never
+    // called, and the loop's running flag stays false.
+    it('tickNow() invokes the callback exactly once when the loop is stopped, without starting it', () => {
       loop.tickNow();
       expect(tickCount).toBe(1);
       expect(loop.isRunning()).toBe(false);
