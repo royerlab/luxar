@@ -154,19 +154,39 @@ describe('WorkerPool.dispose — mid-init race', () => {
     expect(workers.every((w) => w.terminate.mock.calls.length >= 1)).toBe(true);
   });
 
-  it('dispose() bumps generation so subsequent initialize() runs fresh', async () => {
-    const { WorkerPool } = await loadWorkerPool(1);
+  it('[workers.md C3] dispose+initialize sequence runs a fresh init (public contract, no private field probe)', async () => {
+    // workers.md C3[P10] fix: prior version probed the private
+    // `initGeneration` field via `as unknown as Internals` cast. The
+    // behaviour under test is "dispose lets subsequent initialize()
+    // run fresh" — that's observable on the PUBLIC surface
+    // (getWorkerCount before/after dispose + re-init). Rewritten to
+    // exercise the public contract without naming any private field.
+    const { WorkerPool, workers } = await loadWorkerPool(2);
     const pool = new WorkerPool();
 
-    // Access the private field via cast — only safe inside this test.
-    type Internals = { initGeneration: number };
-    const before = (pool as unknown as Internals).initGeneration;
+    await pool.initialize();
+    expect(pool.getWorkerCount()).toBe(2);
 
+    // First dispose: count drops to 0, all workers terminated.
     pool.dispose();
-    pool.dispose();
+    expect(pool.getWorkerCount()).toBe(0);
 
-    const after = (pool as unknown as Internals).initGeneration;
-    expect(after).toBe(before + 2);
+    // Re-initialise: a SECOND batch of workers is spawned. The fact
+    // that re-init succeeds (and getWorkerCount returns 2 again) is
+    // what `dispose bumps initGeneration` enables; we observe it
+    // without ever reading the private counter.
+    await pool.initialize();
+    expect(pool.getWorkerCount()).toBe(2);
+
+    // Second dispose: terminates the SECOND batch.
+    pool.dispose();
+    expect(pool.getWorkerCount()).toBe(0);
+
+    // `workers` is a module-level register of every Worker instance
+    // ever spawned by the test factory. After two init+dispose cycles
+    // we should have terminated at least 2 distinct worker instances.
+    const terminatedCount = workers.filter((w) => w.terminate.mock.calls.length > 0).length;
+    expect(terminatedCount).toBeGreaterThanOrEqual(2);
   });
 
   it('dispose AFTER successful init terminates the live workers (regression for existing path)', async () => {
