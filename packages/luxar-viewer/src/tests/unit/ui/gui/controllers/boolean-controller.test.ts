@@ -16,7 +16,9 @@ describe('BooleanController', () => {
   });
 
   describe('constructor', () => {
-    it('should create checkbox element', () => {
+    // ui.md O6 / Phase E33: P9 rename — describes input class (BooleanController
+    // construction) + expected behavior (a checkbox input element is mounted).
+    it('mounts an <input type=checkbox> under .luxar-gui__checkbox when constructed', () => {
       object = { enabled: true };
       controller = new BooleanController(object, 'enabled');
 
@@ -24,7 +26,9 @@ describe('BooleanController', () => {
       expect(checkbox).toBeInstanceOf(HTMLInputElement);
     });
 
-    it('should set initial checked state', () => {
+    // ui.md O6 / Phase E33: P9 rename — pins that the checkbox.checked
+    // mirror reflects the initial value passed to the constructor.
+    it('checkbox.checked mirrors the initial property value (object.enabled=true → checkbox.checked=true)', () => {
       object = { enabled: true };
       controller = new BooleanController(object, 'enabled');
 
@@ -34,7 +38,10 @@ describe('BooleanController', () => {
       expect(checkbox.checked).toBe(true);
     });
 
-    it('should wrap checkbox in label', () => {
+    // ui.md O6 / Phase E33: P9 rename — the input must be nested inside
+    // the .luxar-gui__controller-name <label> so clicking the label
+    // toggles the checkbox (HTML label association without `for=`).
+    it('wraps the checkbox in a <label class="luxar-gui__controller-name"> for click-to-toggle association', () => {
       object = { enabled: false };
       controller = new BooleanController(object, 'enabled');
 
