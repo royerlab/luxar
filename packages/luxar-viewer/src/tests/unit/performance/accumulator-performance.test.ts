@@ -62,10 +62,20 @@ describe('Accumulator Performance Regression Tests', () => {
       expect(data2.positions[0]).toBe(999); // Change visible in next getData!
     });
 
-    it('should only allocate on growth, not on every getData', () => {
+    // performance.md O3 / Phase E19: previously one `it` bundled two
+    // independent contracts of the no-alloc-on-read invariant:
+    //   (a) within-capacity getData() calls do NOT increment
+    //       allocations (3 reads after a single fill)
+    //   (b) growing beyond capacity via ensureCapacity() increments
+    //       allocations by EXACTLY 1 and growthEvents by 1
+    // A regression that grew on every getData() but stayed quiet on
+    // ensureCapacity (or vice-versa) would surface as a generic
+    // "should only allocate on growth..." failure that doesn't name
+    // the broken contract. Split into two focused tests.
+
+    it('repeated getData() calls within capacity do NOT increment the allocation counter', () => {
       const initialAllocs = accumulator.getStats().allocations;
 
-      // Fill within capacity (no growth)
       accumulator.fill(0, {
         positions: new Float32Array(Array(2400).fill(1)), // 800 points * 3
         colors: new Float32Array(Array(2400).fill(0.5)),
@@ -77,15 +87,17 @@ describe('Accumulator Performance Regression Tests', () => {
       accumulator.getData(800);
       accumulator.getData(800);
 
-      // No allocations (within capacity)
       expect(accumulator.getStats().allocations).toBe(initialAllocs);
+    });
 
-      // Now exceed capacity (force growth)
+    it('ensureCapacity() growth increments allocations by exactly 1 and growthEvents by 1', () => {
+      const initialAllocs = accumulator.getStats().allocations;
+      const initialGrowth = accumulator.getStats().growthEvents;
+
       accumulator.ensureCapacity(2000);
 
-      // Exactly one growth allocation
       expect(accumulator.getStats().allocations).toBe(initialAllocs + 1);
-      expect(accumulator.getStats().growthEvents).toBe(1);
+      expect(accumulator.getStats().growthEvents).toBe(initialGrowth + 1);
     });
   });
 
