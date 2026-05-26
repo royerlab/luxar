@@ -255,3 +255,93 @@ describe('integrateRotation — Q+E simultaneous (boundary)', () => {
     expect(ctx.angularVelocity.length()).toBe(0);
   });
 });
+
+describe('integrateTranslation — input cancellation (controls.md G9)', () => {
+  it('[controls.md/G9] forward=1 AND back=1 simultaneously produces zero net acceleration', () => {
+    // controls.md G9: the formula is `(forward - back) * speed`. With both
+    // keys held, the net translation impulse is zero. A mutation that
+    // replaced `-` with `+` would survive the existing single-key tests.
+    const ctx = makeCtx({ movementSpeed: 5, damping: 1.0 });
+    ctx.moveState.forward = 1;
+    ctx.moveState.back = 1;
+    integrateTranslation(ctx, 0.1);
+    // velocity must remain at (0, 0, 0) — the acceleration cancelled and
+    // damping=1 leaves any pre-existing velocity untouched (there was none).
+    expect(ctx.velocity.length()).toBe(0);
+  });
+
+  it('[controls.md/G9] left=1 AND right=1 simultaneously produces zero net acceleration', () => {
+    // Symmetric to forward/back; same formula `(right - left) * speed`.
+    const ctx = makeCtx({ movementSpeed: 5, damping: 1.0 });
+    ctx.moveState.left = 1;
+    ctx.moveState.right = 1;
+    integrateTranslation(ctx, 0.1);
+    expect(ctx.velocity.length()).toBe(0);
+  });
+
+  it('[controls.md/G9] up=1 AND down=1 simultaneously produces zero net acceleration', () => {
+    const ctx = makeCtx({ movementSpeed: 5, damping: 1.0 });
+    ctx.moveState.up = 1;
+    ctx.moveState.down = 1;
+    integrateTranslation(ctx, 0.1);
+    expect(ctx.velocity.length()).toBe(0);
+  });
+});
+
+describe('integrateRotation — three-axis cross coupling (controls.md G10, G11)', () => {
+  it('[controls.md/G10] horizontal=1 + vertical=1 + roll=1 simultaneously accumulates on all three axes', () => {
+    // controls.md G10: cross-axis coupling for full 3-axis input is not
+    // covered by single-axis tests. With identity orientation, the three
+    // local axes map to canonical (1,0,0), (0,1,0), (0,0,-1) — so each
+    // angular-velocity component is non-zero with a sign matching the
+    // signed-input formula (`-vertical * speed * v0` etc.).
+    const ctx = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    ctx.lookState.horizontal = 1;
+    ctx.lookState.vertical = 1;
+    ctx.lookState.roll = 1;
+    integrateRotation(ctx, 0.05);
+
+    // Each component of angularVelocity must be non-zero (cross-coupling
+    // would not zero any of them with identity orientation).
+    expect(Math.abs(ctx.angularVelocity.x)).toBeGreaterThan(0);
+    expect(Math.abs(ctx.angularVelocity.y)).toBeGreaterThan(0);
+    expect(Math.abs(ctx.angularVelocity.z)).toBeGreaterThan(0);
+  });
+
+  it('[controls.md/G11] doubling rotationSpeed doubles the resulting angular velocity magnitude', () => {
+    // controls.md G11: integrateRotation linearity in rotationSpeed is the
+    // symmetric counterpart to the translation-linearity test at line 92-101.
+    // In non-inertial mode (deterministic), angularVelocity is set directly
+    // to `-look * rotationSpeed * localAxis` — strictly linear in rotationSpeed.
+    const ctxA = makeCtx({ inertialMode: false, rotationSpeed: 1 });
+    const ctxB = makeCtx({ inertialMode: false, rotationSpeed: 2 });
+    ctxA.lookState.horizontal = 1;
+    ctxB.lookState.horizontal = 1;
+    integrateRotation(ctxA, 0.05);
+    integrateRotation(ctxB, 0.05);
+
+    // Without damping interfering (one-step accumulation), the magnitudes
+    // differ by exactly the speed ratio. A small tolerance covers any
+    // damping that ran after the assignment.
+    const magA = ctxA.angularVelocity.length();
+    const magB = ctxB.angularVelocity.length();
+    expect(magB / magA).toBeCloseTo(2, 4);
+  });
+});
+
+describe('integrateTranslation — exact-threshold boundary (controls.md G12)', () => {
+  it('[controls.md/G12] velocity EXACTLY at velocityThreshold is NOT zeroed (strict-less-than gate)', () => {
+    // controls.md G12: the zeroing test uses `velocity.length() < threshold`.
+    // The boundary value itself must pass through unchanged — pinning the
+    // strict `<` vs `<=` contract. We set the velocity precisely at the
+    // threshold, then run integrate with delta=0 (no acceleration, no
+    // damping decay below threshold) and assert the velocity survives.
+    const t = config.controls.fly.physics.velocityThreshold;
+    const ctx = makeCtx({ damping: 1.0 });
+    ctx.velocity.set(t, 0, 0); // length === t exactly
+    const moved = integrateTranslation(ctx, 0);
+    // At the boundary value, the strict `<` gate does NOT trigger zeroing.
+    expect(ctx.velocity.length()).toBeCloseTo(t, 12);
+    expect(moved).toBe(true);
+  });
+});

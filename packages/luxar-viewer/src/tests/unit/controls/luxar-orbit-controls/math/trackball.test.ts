@@ -149,6 +149,45 @@ describe('computeArcballRotation — H2 invariants', () => {
     expect(angleFast).toBeCloseTo(2 * angleSlow, 4);
   });
 
+  it('[controls.md/G7] trackballRadius = 0 produces a finite unit-length quaternion (no NaN/Infinity)', () => {
+    // controls.md G7: with radius=0, both endpoint projections fall into
+    // the hyperboloid branch where z = (0.5 * r²)/sqrt(d²) collapses to 0.
+    // The endpoints become in-plane unit vectors; their cross product
+    // (along z) is non-zero for non-collinear drags and a real rotation
+    // results. We pin the well-formed-output contract: the function
+    // doesn't throw, doesn't NaN, and returns a unit quaternion.
+    const start = new THREE.Vector2(0.2, 0.1);
+    const end = new THREE.Vector2(0.5, 0.3);
+    const q = computeArcballRotation(start, end, 0, 1.0);
+    const norm = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    expect(Number.isFinite(norm)).toBe(true);
+    expect(norm).toBeCloseTo(1, 5);
+  });
+
+  it('[controls.md/G7] trackballRadius = 0 with collinear drag returns identity (guard branch)', () => {
+    // controls.md G7: when start and end project to (anti-)parallel vectors,
+    // the `axis.lengthSq() < 1e-10` guard bails out → identity quaternion.
+    // Pure-X drag from origin produces start=(0,0) (degenerate) and a real
+    // x-only end; with radius=0, both project to xy-plane vectors along x,
+    // hence cross product collapses → identity returned.
+    const start = new THREE.Vector2(0.4, 0);
+    const end = new THREE.Vector2(0.8, 0);
+    const q = computeArcballRotation(start, end, 0, 1.0);
+    // Both project to (1, 0, 0) after normalization → cross product ~ 0 → identity.
+    expect(q.w).toBeCloseTo(1, 10);
+    expect(Math.hypot(q.x, q.y, q.z)).toBeLessThan(1e-8);
+  });
+
+  it('[controls.md/G8] rotateSpeed = 0 returns identity quaternion regardless of drag', () => {
+    // controls.md G8: angle = acos(p1·p2) * rotateSpeed. With rotateSpeed=0,
+    // the angle is 0 → setFromAxisAngle(any, 0) returns identity.
+    const start = new THREE.Vector2(0.2, 0.1);
+    const end = new THREE.Vector2(-0.4, 0.5);
+    const q = computeArcballRotation(start, end, 1.0, 0);
+    expect(q.w).toBeCloseTo(1, 10);
+    expect(Math.hypot(q.x, q.y, q.z)).toBeLessThan(1e-10);
+  });
+
   it('drag from origin to +X NDC rotates around Y axis (negated for camera convention)', () => {
     // Horizontal drag: start = origin (projects to (0,0,1)), end = (0.3, 0).
     // Cross product p1 × p2 points along -Y (camera orbits left when
