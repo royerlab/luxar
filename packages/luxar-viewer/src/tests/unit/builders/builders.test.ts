@@ -186,6 +186,38 @@ describe('GSplatsBuilder smoke', () => {
     expect(data.choleskyFactors.length).toBe(3 * 15);
   });
 
+  it('[builders.md C4] withIsotropicCovariance(0) packs all-zero Cholesky (degenerate point-particle boundary)', () => {
+    // builders.md C4[P5][P8]: sigma=0 is the documented "point-particle"
+    // boundary — a downstream load-bearing edge. Pin the packed layout
+    // so a mutation that special-cases sigma=0 (e.g. setting a sentinel)
+    // would be caught. The expected layout is the same as σ on the
+    // diagonal: [0, 0, 0, 0, 0, 0] per splat.
+    const data = new GSplatsBuilder()
+      .withSplats(2)
+      .withDimensions(3)
+      .withIsotropicCovariance(0)
+      .build();
+
+    expect(Array.from(data.choleskyFactors)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('[builders.md C4] withIsotropicCovariance(-0.5) packs negative diagonal (undefined-but-allowed-by-signature)', () => {
+    // Documents the actual contract: negative sigma is NOT clamped at
+    // the builder layer. Downstream WASM helpers SQUARE the diagonal so
+    // negative input behaves identically to its absolute value (see
+    // wasm.md G3 tests). Pinning the builder's no-clamp behaviour means
+    // a future hardening that rejected sigma<0 surfaces as an intentional
+    // contract change.
+    const data = new GSplatsBuilder()
+      .withSplats(1)
+      .withDimensions(3)
+      .withIsotropicCovariance(-0.5)
+      .build();
+
+    const expected = [-0.5, 0, -0.5, 0, 0, -0.5];
+    expect(Array.from(data.choleskyFactors)).toEqual(expected);
+  });
+
   // [builders.md/O2][P4] Split a single it() that bundled four independent
   // contracts (default amplitudes, explicit-centers identity, varying-amplitude
   // bounds, explicit-cholesky identity, explicit-colors identity) into focused
