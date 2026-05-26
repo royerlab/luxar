@@ -64,6 +64,28 @@ describe('computeZoomScale', () => {
     expect(s).toBeLessThan(0.001);
     expect(Number.isFinite(s)).toBe(true);
   });
+
+  it('[controls.md/G6] zero zoomSpeed produces scale = 1 regardless of delta', () => {
+    // controls.md G6: zoomSpeed=0 → exponent = 0 → 0.95^0 = 1. A mutation
+    // that swapped `*` for `+` in the exponent would survive the existing
+    // monotonicity tests since they all use zoomSpeed > 0.
+    for (const d of [-1000, -1, 0, 1, 1000]) {
+      expect(computeZoomScale(d, 0)).toBe(1);
+    }
+  });
+
+  it('[controls.md/G6] NaN delta propagates to NaN scale (current unguarded behaviour)', () => {
+    // controls.md G6: pinning the CURRENT behaviour — Math.abs(NaN*0.01) is
+    // NaN, Math.pow(0.95, NaN) is NaN. A future guard that returns 1.0 for
+    // non-finite input would surface here and force an intentional contract
+    // update.
+    expect(Number.isNaN(computeZoomScale(Number.NaN, 1.0))).toBe(true);
+  });
+
+  it('[controls.md/G6] both delta and zoomSpeed zero produces scale = 1', () => {
+    // Belt-and-braces for the degenerate-input pair.
+    expect(computeZoomScale(0, 0)).toBe(1);
+  });
 });
 
 describe('applyZoomScale — perspective camera (H3 round-trip)', () => {
@@ -136,6 +158,17 @@ describe('applyZoomScale — orthographic camera', () => {
     cam.zoom = 2.0;
     applyZoomScale(cam, 10, 0.5, 1.0, 1.0);
     expect(cam.zoom).toBeCloseTo(1.0, 10);
+  });
+
+  it('[controls.md/G5] minZoom === maxZoom === 0 collapses zoom to 0 (degenerate)', () => {
+    // controls.md G5: a caller that passes `0` defaults would collapse the
+    // clamp window to {0}. The pure-math helper has no production guard;
+    // pin the current behaviour so a future guard (e.g. "clamp negatives
+    // up to a minimum positive epsilon") surfaces as an intentional change.
+    const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    cam.zoom = 2.0;
+    applyZoomScale(cam, 10, 0.5, 0, 0);
+    expect(cam.zoom).toBe(0);
   });
 
   it('updateProjectionMatrix is called (ortho needs refresh after zoom change)', () => {
