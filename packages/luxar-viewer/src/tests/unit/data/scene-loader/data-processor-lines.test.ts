@@ -272,13 +272,16 @@ describe('projectLinesTo3DUsingWorker', () => {
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
   });
 
-  it('emits a one-shot warning when scalars force main-thread fallback', async () => {
-    // The module-scoped warned-flag means the warning may have already
-    // fired in an earlier test run. Reset by re-mocking and counting
-    // emissions on `log.warning` for the current run only.
-    const { log } = await import('../../../../utils/log');
-    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
-
+  it('takes the main-thread fallback path when scalars are present (no throw)', async () => {
+    // data.md C1[P2] fix: prior test name "emits a one-shot warning when
+    // scalars force main-thread fallback" was misleading — the body
+    // explicitly admits the module-scoped warned-flag cannot be reliably
+    // reset, so the warning emission is NOT asserted. The behavioural
+    // contract the test actually verifies is "scalars → main-thread
+    // fallback (buildInstanceBuffers runs) — no throw, no crash."
+    // Renamed accordingly; the warning-emission assertion is left as
+    // future work (would require a public reset hook on the
+    // module-private flag).
     const dataWithScalars: LoadedLinesData = {
       ...makeData(2000),
       scalars: new Float32Array(2 * 2000), // 2 vertices per segment
@@ -297,12 +300,7 @@ describe('projectLinesTo3DUsingWorker', () => {
       [1, 1, 1],
       2
     );
-    // The warning is module-scoped and one-shot. Across multiple test
-    // files it may have already fired; assert the matching text
-    // appeared at least zero times this run (we can't reliably reset
-    // the module-private flag) — but the fallback path was taken
-    // (projectLinesTo3D ran twice).
+    // Main-thread fallback runs once per call → 2 invocations total.
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(2);
-    void warnSpy;
   });
 });
