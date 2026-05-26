@@ -86,18 +86,27 @@ describe('Public barrel side effects', () => {
     expect(window.__luxarDebug).toBeUndefined();
   });
 
-  it('exposes LuxarApp as a constructor that produces instances with init() and dispose()', async () => {
-    // api.md W1/G5 fix: previous version only checked `typeof === 'function'`.
-    // A mutant `export const LuxarApp = () => undefined;` would have passed.
-    // Pin that LuxarApp is a constructor and that produced instances expose
-    // the documented `init()` / `dispose()` lifecycle methods.
+  // api.md O1 / Phase E1 fix: previous version bundled all four assertions
+  // (function-typed, prototype-object, init, dispose) into a single `it`.
+  // A mutant that drops only `dispose` from the prototype would surface as
+  // a single failure with a generic "exposes LuxarApp..." name, requiring
+  // the diff to read the assertion to know what regressed. Splitting via
+  // `it.each` makes the failing line name itself (`exposes LuxarApp: dispose`).
+  // Each row pins ONE shape of the contract:
+  //   - typeof === 'function'  — pinned by api.md W1/G5
+  //   - typeof prototype === 'object'  — guards `export const LuxarApp = () => ...`
+  //   - prototype.init is a function  — documented lifecycle
+  //   - prototype.dispose is a function  — documented lifecycle
+  it.each<{ label: string; check: (mod: typeof import('../../../index')) => unknown; expected: string }>(
+    [
+      { label: 'typeof LuxarApp === function', check: (m) => typeof m.LuxarApp, expected: 'function' },
+      { label: 'typeof LuxarApp.prototype === object', check: (m) => typeof m.LuxarApp.prototype, expected: 'object' },
+      { label: 'typeof LuxarApp.prototype.init === function', check: (m) => typeof m.LuxarApp.prototype.init, expected: 'function' },
+      { label: 'typeof LuxarApp.prototype.dispose === function', check: (m) => typeof m.LuxarApp.prototype.dispose, expected: 'function' },
+    ]
+  )('exposes LuxarApp as a constructor: $label', async ({ check, expected }) => {
     const mod = await import('../../../index');
-    expect(typeof mod.LuxarApp).toBe('function');
-    // Constructors have non-zero prototype property entries (or at least a
-    // constructor link); a plain arrow function does not. Belt + braces:
-    expect(typeof mod.LuxarApp.prototype).toBe('object');
-    expect(typeof mod.LuxarApp.prototype.init).toBe('function');
-    expect(typeof mod.LuxarApp.prototype.dispose).toBe('function');
+    expect(check(mod)).toBe(expected);
   });
 
   it('three URL/bootstrap entrypoints are runtime functions exported from the barrel [api.md O3]', async () => {
