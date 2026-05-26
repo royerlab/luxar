@@ -133,27 +133,41 @@ describe('Public barrel side effects', () => {
     expect(typeof mod.applyScalarRangeToMaterial).toBe('function');
   });
 
-  it('exposes StorageKeys as a namespacing object with luxar.* prefixed string keys', async () => {
-    // api.md W2 fix: previous version only checked `typeof === 'object'`.
-    // Pin the namespacing contract: StorageKeys holds the `luxar.*`
-    // prefix strings used for localStorage namespacing. Some entries are
-    // functions (e.g. `rendering(sceneId)` builds a per-scene key), so
-    // we check that each non-function value is a `luxar.`-prefixed
-    // string, and that the function-valued entries actually return
-    // `luxar.`-prefixed strings when called.
+  // api.md O2 / Phase E2 fix: previous version bundled the StorageKeys
+  // container shape (typeof === 'object', not null, non-empty) with a
+  // per-entry contract check (each value is a `luxar.`-prefixed string,
+  // or a function returning one) inside a single `it`. A broken entry
+  // and a wholly-replaced container both surfaced as one generic
+  // "exposes StorageKeys..." failure. Split into:
+  //   (a) one `it` that pins the container shape (3 assertions);
+  //   (b) one `it.each` that iterates over the entries and names the
+  //       offending entry-key on failure.
+  it('exposes StorageKeys as a non-null, non-empty object', async () => {
     const mod = await import('../../../index');
     expect(typeof mod.StorageKeys).toBe('object');
     expect(mod.StorageKeys).not.toBeNull();
     expect(Object.keys(mod.StorageKeys).length).toBeGreaterThan(0);
+  });
 
-    for (const value of Object.values(mod.StorageKeys)) {
+  // Per-entry contract: every value must be either a `luxar.`-prefixed
+  // string, or a (sceneId) => string that returns a `luxar.`-prefixed
+  // string. Failures now name the specific entry (e.g.
+  // "StorageKeys.rendering is a luxar.* string or factory").
+  it('every StorageKeys entry is a luxar.* string or a (sceneId) => luxar.* factory', async () => {
+    const mod = await import('../../../index');
+    const entries = Object.entries(mod.StorageKeys);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [key, value] of entries) {
       if (typeof value === 'function') {
         const built = (value as (s: string) => string)('test-scene');
-        expect(typeof built).toBe('string');
-        expect(built.startsWith('luxar.')).toBe(true);
+        expect(typeof built, `StorageKeys.${key}('test-scene') type`).toBe('string');
+        expect(built.startsWith('luxar.'), `StorageKeys.${key}('test-scene') prefix`).toBe(true);
       } else {
-        expect(typeof value).toBe('string');
-        expect((value as string).startsWith('luxar.')).toBe(true);
+        expect(typeof value, `StorageKeys.${key} type`).toBe('string');
+        expect(
+          (value as string).startsWith('luxar.'),
+          `StorageKeys.${key} prefix`
+        ).toBe(true);
       }
     }
   });
