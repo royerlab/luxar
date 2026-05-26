@@ -54,9 +54,29 @@ describe('shader-error regex coverage', () => {
     expect(SHADER_ERROR_RX.test(msg)).toBe(true);
   });
 
-  it('matches a generic GLSL syntax error', () => {
+  it('[tests-meta.md C2] "GLSL syntax error" matches LOCAL regex — but documents that REAL regex would NOT', () => {
+    // tests-meta.md C2[P2]: the previous test name "matches a generic GLSL
+    // syntax error" implied the real `assertNoShaderErrors` regex catches
+    // this string. It does NOT — the real regex at e2e/helpers.ts:1228 is
+    // `GLSL\s*(error|failure|failed)` (requires error/failure/failed), so
+    // `'GLSL syntax error at line 42'` (has `GLSL` then `syntax`, NOT one
+    // of the keyword group) does not match. Pin BOTH facts:
+    //   1. LOCAL regex matches (bare `GLSL` alternative).
+    //   2. The REAL regex shape from helpers.ts would NOT match this string.
+    //
+    // A reader auditing "does our production helper catch this Chrome
+    // message?" must NOT conclude "yes" from the local-copy test alone.
     const msg = 'GLSL syntax error at line 42';
     expect(SHADER_ERROR_RX.test(msg)).toBe(true);
+
+    // Mirror the real production regex (kept in sync manually per the
+    // file header). If this constant drifts, search e2e/helpers.ts for
+    // the real value — drift here ≡ drift there.
+    const REAL_SHADER_ERROR_RX = /GLSL\s*(error|failure|failed)/i;
+    expect(
+      REAL_SHADER_ERROR_RX.test(msg),
+      'real regex requires GLSL+error/failure/failed; "GLSL syntax error" does NOT match'
+    ).toBe(false);
   });
 
   it('does NOT match unrelated browser warnings', () => {
