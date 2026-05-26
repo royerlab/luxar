@@ -126,6 +126,19 @@ describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
     // Orientation slightly different from identity.
     expect(ctx.orientation.equals(new THREE.Quaternion())).toBe(false);
   });
+
+  it('[controls.md/G3] rollDelta = 1e-6 EXACTLY is BELOW the strict-greater-than gate', () => {
+    // controls.md G3: the gate is `Math.abs(rollDelta) > 1e-6` (strict
+    // greater-than). The audit flagged that the boundary value itself —
+    // exactly 1e-6 — is the most likely mutation site (`>` → `>=`). Pin
+    // the contract: at the boundary value the roll is NOT applied and
+    // rollDelta is preserved.
+    const { ctx, state } = makeCtx();
+    state.rollDelta = 1e-6;
+    runUpdateStep(ctx);
+    expect(ctx.orientation.equals(new THREE.Quaternion())).toBe(true);
+    expect(state.rollDelta).toBe(1e-6);
+  });
 });
 
 describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
@@ -145,6 +158,31 @@ describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
     runUpdateStep(ctx);
     expect(state.distance).toBeCloseTo(distBefore * (1 + -0.1), 5);
     expect(state.zoomDelta).toBe(0);
+  });
+
+  it('[controls.md/G4] zoomDelta = 1e-8 EXACTLY is BELOW the strict-greater-than gate', () => {
+    // controls.md G4: gate is `Math.abs(zoomDelta) > 1e-8` (strict). The
+    // boundary value itself must NOT trigger the zoom branch — pinning
+    // the `>` vs `>=` contract.
+    const { ctx, state } = makeCtx();
+    state.zoomDelta = 1e-8;
+    const distBefore = state.distance;
+    runUpdateStep(ctx);
+    expect(state.distance).toBe(distBefore);
+    expect(state.zoomDelta).toBe(1e-8);
+  });
+
+  it('[controls.md/G2] zoom step occurs BEFORE distance clamp (clamp catches over-zoom)', () => {
+    // controls.md G2: step order must be (5) zoom → (6) clamp. A positive
+    // zoomDelta sufficient to push distance past maxDistance must end up
+    // clamped at maxDistance — proving the clamp runs AFTER the zoom step,
+    // not before. With enableDamping=false and zoomDelta=10, the formula
+    // is distance * (1 + 10) = 11 × initial; clamped to maxDistance.
+    const { ctx, state } = makeCtx({ maxDistance: 7 });
+    state.distance = 5;
+    state.zoomDelta = 10; // 5 * 11 = 55 unclamped → clamp to 7
+    runUpdateStep(ctx);
+    expect(state.distance).toBeCloseTo(7, 10);
   });
 });
 
