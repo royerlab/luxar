@@ -932,4 +932,122 @@ describe('InputContextManager', () => {
       expect(navKeydownOnly).not.toHaveBeenCalled();
     });
   });
+
+  describe('dispatchEscapeFromTypingContext fallback [input.md G19]', () => {
+    // input.md G19[P5]: when called from a typing context with NO matching
+    // Escape binding in any context, the dispatch must return false (no
+    // handler ran, swallowing skipped). Prior tests always registered at
+    // least one Escape binding — the all-misses path was uncovered.
+    it('[G19] Escape from TYPING context with NO Escape binding registered: handleKeyEvent returns false', () => {
+      manager.setContext(InputContext.TYPING);
+      // No bindings at all — TYPING allowedKeys is [] so nothing fires
+      // from current context; dispatchEscapeFromTypingContext walks the
+      // priority-ordered list and finds nothing.
+      const event = new KeyboardEvent('keydown', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'down');
+      expect(handled).toBe(false);
+    });
+
+    it('[G19] Escape from TYPING with bindings on OTHER keys: returns false (no Escape match)', () => {
+      manager.setContext(InputContext.TYPING);
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'h', // not Escape
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'down');
+      expect(handled).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('[G19] Escape keyup with a binding that has handler but NO keyupHandler: continues searching, returns false', () => {
+      // Pins the inner `continue` at context-manager.ts L560: a binding
+      // without a keyupHandler does NOT consume the keyup; the search
+      // continues to lower-priority contexts.
+      manager.setContext(InputContext.TYPING);
+      const downOnly = vi.fn();
+      manager.registerBinding(InputContext.UI_INTERACTION, {
+        key: 'Escape',
+        handler: downOnly, // keydown handler only — no keyupHandler
+      });
+      const event = new KeyboardEvent('keyup', { key: 'Escape' });
+      const handled = manager.handleKeyEvent(event, 'up');
+      expect(handled).toBe(false);
+      expect(downOnly).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('NAVIGATION context allows Shift [input.md G20]', () => {
+    // input.md G20[P5]: flyModeKeysWithoutShift filters Shift OUT of
+    // NAVIGATION's blockedKeys. No test directly asserts that Shift is
+    // allowed in NAVIGATION. A regression that re-added Shift to the
+    // blocklist would survive (Shift+wheel uses WindowEventHandler, not
+    // this manager).
+    it('[G20] Shift is NOT in NAVIGATION blockedKeys (probed via private field cast)', () => {
+      // The binding-system uses modifier-prefixed bindingKeys ("Shift+Shift"
+      // for a Shift event with shiftKey=true), which makes a direct
+      // dispatch test brittle. Instead, pin the contract by reading the
+      // private contextConfigs map directly via cast. A regression that
+      // re-added 'Shift' to NAVIGATION's blockedKeys list would surface.
+      const configs = (manager as unknown as {
+        contextConfigs: Map<InputContext, { blockedKeys?: string[] }>;
+      }).contextConfigs;
+      const navConfig = configs.get(InputContext.NAVIGATION);
+      const blocked = navConfig?.blockedKeys ?? [];
+      expect(blocked).not.toContain('Shift');
+    });
+
+    it('[G20] WASD keys ARE blocked in NAVIGATION (sanity that the filter is correct)', () => {
+      // Symmetric to G20: pin that the OTHER fly-mode keys (WASD) ARE
+      // blocked in NAVIGATION. This guards the test from a mutation that
+      // empties the blockedKeys array entirely (which would let G20 pass
+      // for the wrong reason).
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'w',
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'w' });
+      const handled = manager.handleKeyEvent(event, 'down');
+      expect(handled).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('DIMENSION_NAV context [input.md G21]', () => {
+    // input.md G21[P5]: DIMENSION_NAV has allowedKeys = config.input.keyboard.dimensionKeys.
+    // No test set the context to DIMENSION_NAV and exercised a key from
+    // dimensionKeys to confirm the allowlist works.
+    it('[G21] DIMENSION_NAV context: a registered binding on a dimensionKey fires', () => {
+      manager.setContext(InputContext.DIMENSION_NAV);
+      const handler = vi.fn();
+      // '1' is in dimensionKeys per config.
+      manager.registerBinding(InputContext.DIMENSION_NAV, {
+        key: '1',
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: '1' });
+      const handled = manager.handleKeyEvent(event, 'down');
+      expect(handled).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('[G21] DIMENSION_NAV context: a NON-dimensionKey ("z") is NOT allowed even if registered', () => {
+      // 'z' is not in dimensionKeys → allowlist rejects it.
+      manager.setContext(InputContext.DIMENSION_NAV);
+      const handler = vi.fn();
+      manager.registerBinding(InputContext.DIMENSION_NAV, {
+        key: 'z',
+        handler,
+      });
+      const event = new KeyboardEvent('keydown', { key: 'z' });
+      manager.handleKeyEvent(event, 'down');
+      // The binding registers but the allowlist gates dispatch; current
+      // context's allowedKeys filters BEFORE the binding lookup.
+      // (If 'z' has a binding elsewhere with passthrough, it could fire
+      // from a lower context — but no such binding here, so we expect 0.)
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
 });
