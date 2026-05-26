@@ -14,6 +14,7 @@ import {
   type CameraStateCtx,
 } from '../../../../controls/controls-manager/camera-state';
 import { LuxarOrbitControls } from '../../../../controls/luxar-orbit-controls';
+import { LuxarFlyControls } from '../../../../controls/luxar-fly-controls';
 
 function makeCtx(overrides: Partial<CameraStateCtx>): CameraStateCtx {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
@@ -134,5 +135,50 @@ describe('restoreCameraState', () => {
     // Camera is untouched (the fallback path bails before mutating).
     expect(ctx.camera.position.equals(cameraPosBefore)).toBe(true);
     expect(ctx.camera.quaternion.equals(cameraQuatBefore)).toBe(true);
+  });
+});
+
+describe('saveCameraState — fly counterpart [controls.md G25]', () => {
+  // controls.md G25[P5][P8]: prior coverage tested `currentControls=null`
+  // (which exercises the fallback derivation branch). The `LuxarFlyControls`
+  // branch traverses the same code path — `instanceof LuxarOrbitControls`
+  // is false — but the test wiring (with a real fly instance) was missing
+  // for symmetry. Pin it explicitly so a future refactor that introduced
+  // a dedicated fly branch (or broke the fallback assumption) would surface.
+  it('[G25] with LuxarFlyControls instance, target is derived from camera direction (same as null)', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 0); // forward = -Z
+    camera.updateMatrixWorld();
+    const domElement = document.createElement('div');
+    const fly = new LuxarFlyControls(camera, domElement);
+
+    const ctx = makeCtx({ camera, currentControls: fly, sceneScale: 25 });
+    saveCameraState(ctx);
+
+    // Expected: position + forward * sceneScale = (0,0,5) + (0,0,-1)*25 = (0,0,-20).
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(-20, 5);
+
+    fly.dispose();
+  });
+
+  it('[G25] with LuxarFlyControls, sceneScale === 0 falls back to default scale of 10 (||-fallback)', () => {
+    // The source uses `ctx.sceneScale || 10` for the fly fallback.
+    // Pin this so a `??` mutation (which would let 0 through) would fail.
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    const domElement = document.createElement('div');
+    const fly = new LuxarFlyControls(camera, domElement);
+
+    const ctx = makeCtx({ camera, currentControls: fly, sceneScale: 0 });
+    saveCameraState(ctx);
+
+    // Expected: position + forward * 10 = (0,0,5) + (0,0,-1)*10 = (0,0,-5).
+    expect(ctx.savedTarget.z).toBeCloseTo(-5, 5);
+    fly.dispose();
   });
 });

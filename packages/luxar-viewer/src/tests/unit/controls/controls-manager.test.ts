@@ -134,6 +134,37 @@ describe('ControlsManager', () => {
       expect(controls.enableZoom).toBe(true);
     });
 
+    it('[controls.md G32] setEnableZoom(false) on orbit blocks wheel events from accumulating zoomDelta', () => {
+      // controls.md G32[P5]: the prior test only checks the `enableZoom`
+      // field. This test exercises the actual wiring: dispatch a wheel
+      // event to the canvas while zoom is disabled and verify the camera
+      // distance (proxy for zoomDelta accumulation through update()) does
+      // NOT change.
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      controlsManager.setEnableZoom(false);
+
+      // Distance is camera-to-target — proxy for accumulated zoomDelta.
+      const beforeDist = camera.position.distanceTo(controls.target);
+
+      // Dispatch a wheel event at the canvas.
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
+      );
+      controls.update();
+
+      const afterBlockedDist = camera.position.distanceTo(controls.target);
+      expect(afterBlockedDist).toBeCloseTo(beforeDist, 5);
+
+      // Sanity: re-enabling and dispatching another event DOES change distance.
+      controlsManager.setEnableZoom(true);
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
+      );
+      controls.update();
+      const afterEnabledDist = camera.position.distanceTo(controls.target);
+      expect(afterEnabledDist).not.toBeCloseTo(beforeDist, 5);
+    });
+
     describe('natural drag (LEFT ↔ RIGHT swap)', () => {
       it('swaps mouseButtons live when toggled on for an active orbit controls', () => {
         const controls = controlsManager.getControls() as LuxarOrbitControls;
