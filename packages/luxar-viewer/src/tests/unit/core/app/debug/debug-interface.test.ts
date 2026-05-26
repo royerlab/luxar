@@ -280,4 +280,51 @@ describe('installDebugInterface', () => {
       expect(typeof dbg.cache).toBe('object');
     });
   });
+
+  // [core OOS] injectSyntheticScene wraps its dynamic-import chain in
+  // try/catch. Pre-fix, a rejected dynamic import (e.g. missing code-
+  // split chunk, transient network failure) became an unhandled promise
+  // rejection — debug consumers typically don't await with their own
+  // try/catch, and a URL like `?debug=1&inject=lines` could leave the
+  // page broken with no visible signal. Now the rejection is surfaced
+  // via showError + log.error AND re-thrown so awaiting callers see it.
+  describe('injectSyntheticScene error handling', () => {
+    it('rejects with the underlying error AND surfaces it via showError + log.error', async () => {
+      const { showError } = await import('../../../../../ui/error-overlay');
+      const { log } = await import('../../../../../utils/log');
+      // Force the synthetic-scene module to throw at use-time (when
+      // `generateSyntheticLines(spec)` is called). The helper's try/catch
+      // around the dynamic-import chain + invocation should convert the
+      // throw into a structured user-facing error AND re-throw.
+      vi.doMock('../../../../../scene/synthetic-scene', () => ({
+        generateSyntheticLines: () => {
+          throw new Error('simulated bundle-load failure');
+        },
+      }));
+
+      installDebugInterface(makePorts());
+      const dbg = window.__luxarDebug!;
+      expect(typeof dbg.injectSyntheticScene).toBe('function');
+
+      // Awaiting callers must see the rejection re-thrown.
+      await expect(
+        dbg.injectSyntheticScene!({ type: 'lines', count: 5 })
+      ).rejects.toThrow(/simulated bundle-load failure/);
+
+      // AND the rejection must have been surfaced via the user-facing
+      // error overlay so silent-await callers (typical debug-URL flow)
+      // still see something.
+      expect(showError).toHaveBeenCalledWith(
+        expect.stringMatching(/Synthetic-scene injection failed.*simulated bundle-load failure/)
+      );
+      // AND log.error must record the failure with module + payload.
+      expect(log.error).toHaveBeenCalledWith(
+        'LUXAR',
+        expect.stringMatching(/injectSyntheticScene failed.*simulated bundle-load failure/),
+        expect.any(Error)
+      );
+
+      vi.doUnmock('../../../../../scene/synthetic-scene');
+    });
+  });
 });
