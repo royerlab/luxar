@@ -823,20 +823,24 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmResult, tsResult)).toBe(true);
     });
 
-    it.skipIf(!wasmFilesExist)('distance_3d should match', () => {
-      const testCases = [
-        { a: [0, 0, 0], b: [3, 4, 0] }, // 5
-        { a: [1, 1, 1], b: [2, 2, 2] }, // sqrt(3)
-        { a: [-1, -1, -1], b: [1, 1, 1] }, // sqrt(12)
-      ];
-
-      for (const { a, b } of testCases) {
-        const aArr = new Float32Array(a);
-        const bArr = new Float32Array(b);
-        const tsResult = tsModule.distance_3d(aArr, bArr);
-        const wasmResult = wasmModule!.distance_3d(aArr, bArr);
-        expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-5);
-      }
+    // wasm.md O10 / Phase E5: previous version wrapped 3 `distance_3d`
+    // wasm-vs-ts comparisons in a single `it` with a `for` loop. A
+    // regression in just the negative-coordinate case would surface as
+    // a generic "distance_3d should match" failure without naming the
+    // offending input pair. Split via `it.each` so each row names its
+    // {a, b} pair on failure. Preserves the original `skipIf(!wasmFilesExist)`
+    // gate by chaining `skipIf().each()` — the test still reports as
+    // skipped (not "passed") when the wasm artefact is unavailable.
+    it.skipIf(!wasmFilesExist).each<{ a: number[]; b: number[]; label: string }>([
+      { a: [0, 0, 0], b: [3, 4, 0], label: '3-4-5 (5)' },
+      { a: [1, 1, 1], b: [2, 2, 2], label: 'unit diagonal (sqrt 3)' },
+      { a: [-1, -1, -1], b: [1, 1, 1], label: 'symmetric across origin (sqrt 12)' },
+    ])('distance_3d wasm-vs-ts: $label', ({ a, b }) => {
+      const aArr = new Float32Array(a);
+      const bArr = new Float32Array(b);
+      const tsResult = tsModule.distance_3d(aArr, bArr);
+      const wasmResult = wasmModule!.distance_3d(aArr, bArr);
+      expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-5);
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_scalars_batch should match', () => {
