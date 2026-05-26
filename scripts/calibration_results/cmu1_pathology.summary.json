@@ -1,0 +1,52 @@
+{
+  "name": "cmu1_pathology",
+  "status": "ok",
+  "k_min": 1000,
+  "k_max": 256000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 256000,
+  "per_sample": [
+    {
+      "label": "cmu1_pathology__ch0_tile",
+      "k_star": 256000,
+      "type": "signal_limited",
+      "confidence_db": 8.430985143476022,
+      "volume_shape": [
+        4096,
+        4096
+      ],
+      "elapsed_seconds": 343.95095327700255,
+      "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch0_tile.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "cmu1_pathology__ch1_tile",
+      "k_star": 256000,
+      "type": "signal_limited",
+      "confidence_db": 11.418361791990442,
+      "volume_shape": [
+        4096,
+        4096
+      ],
+      "elapsed_seconds": 387.0826090390037,
+      "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch1_tile.json",
+      "noise_floor_psnr_db": null
+    },
+    {
+      "label": "cmu1_pathology__ch2_tile",
+      "k_star": 256000,
+      "type": "signal_limited",
+      "confidence_db": 9.692237876101842,
+      "volume_shape": [
+        4096,
+        4096
+      ],
+      "elapsed_seconds": 319.61442046100274,
+      "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch2_tile.json",
+      "noise_floor_psnr_db": null
+    }
+  ],
+  "comment": "RGB H&E, per-tile (TILE_SIZE^2) crop per channel"
+}

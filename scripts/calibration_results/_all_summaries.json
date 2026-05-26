@@ -1,0 +1,635 @@
+[
+  {
+    "name": "acto3d_heart",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 512000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 512000,
+    "per_sample": [
+      {
+        "label": "acto3d_heart__ch0",
+        "k_star": 512000,
+        "type": "signal_limited",
+        "confidence_db": 6.766173985199131,
+        "volume_shape": [
+          256,
+          256,
+          256
+        ],
+        "elapsed_seconds": 847.5795442009985,
+        "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch0.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "acto3d_heart__ch1",
+        "k_star": 256000,
+        "type": "plateau",
+        "confidence_db": 0.014889352524882327,
+        "volume_shape": [
+          256,
+          256,
+          256
+        ],
+        "elapsed_seconds": 892.13717979801,
+        "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch1.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "acto3d_heart__ch2",
+        "k_star": 512000,
+        "type": "signal_limited",
+        "confidence_db": 4.827993701617498,
+        "volume_shape": [
+          256,
+          256,
+          256
+        ],
+        "elapsed_seconds": 854.256194415997,
+        "json_path": "scripts/calibration_results/acto3d_heart/acto3d_heart__ch2.json",
+        "noise_floor_psnr_db": null
+      }
+    ],
+    "comment": "256^3 3-channel light-sheet mouse heart"
+  },
+  {
+    "name": "celegans_tracking",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "median",
+    "recommended_k_star": 21773,
+    "per_sample": [
+      {
+        "label": "celegans_tracking__t0050",
+        "k_star": 6350,
+        "type": "plateau",
+        "confidence_db": 0.22233966416744977,
+        "volume_shape": [
+          41,
+          512,
+          512
+        ],
+        "elapsed_seconds": 403.90213327799574,
+        "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0050.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "celegans_tracking__t0200",
+        "k_star": 21773,
+        "type": "peak",
+        "confidence_db": 0.034013041645064135,
+        "volume_shape": [
+          41,
+          512,
+          512
+        ],
+        "elapsed_seconds": 214.54695386599633,
+        "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0200.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "celegans_tracking__t0350",
+        "k_star": 40317,
+        "type": "peak",
+        "confidence_db": 0.009081205874686304,
+        "volume_shape": [
+          41,
+          512,
+          512
+        ],
+        "elapsed_seconds": 440.530144963006,
+        "json_path": "scripts/calibration_results/celegans_tracking/celegans_tracking__t0350.json",
+        "noise_floor_psnr_db": null
+      }
+    ],
+    "comment": "41x512x512 per timepoint; 3 distributed tp; median K*"
+  },
+  {
+    "name": "cmu1_pathology",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 256000,
+    "per_sample": [
+      {
+        "label": "cmu1_pathology__ch0_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 8.430985143476022,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 343.95095327700255,
+        "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch0_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "cmu1_pathology__ch1_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 11.418361791990442,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 387.0826090390037,
+        "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch1_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "cmu1_pathology__ch2_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 9.692237876101842,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 319.61442046100274,
+        "json_path": "scripts/calibration_results/cmu1_pathology/cmu1_pathology__ch2_tile.json",
+        "noise_floor_psnr_db": null
+      }
+    ],
+    "comment": "RGB H&E, per-tile (TILE_SIZE^2) crop per channel"
+  },
+  {
+    "name": "codex_pancreas",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 256000,
+    "per_sample": [
+      {
+        "label": "codex_pancreas__ch0_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 19.104169349392578,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 395.23163567701704,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch0_tile.json",
+        "noise_floor_psnr_db": 60.250763385207044
+      },
+      {
+        "label": "codex_pancreas__ch1_tile",
+        "k_star": 74658,
+        "type": "peak",
+        "confidence_db": 0.1429036896785476,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 479.5799681649951,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch1_tile.json",
+        "noise_floor_psnr_db": 78.10185136760091
+      },
+      {
+        "label": "codex_pancreas__ch2_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 15.236924554012642,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 437.7812906919862,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch2_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "codex_pancreas__ch3_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 9.46921106527752,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 543.1575398280111,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch3_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "codex_pancreas__ch4_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 14.768561026342205,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 463.1035354709893,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch4_tile.json",
+        "noise_floor_psnr_db": 68.8267055043673
+      },
+      {
+        "label": "codex_pancreas__ch5_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 20.800511628445356,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 470.25871038797777,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch5_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "codex_pancreas__ch6_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 16.72015598673775,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 436.3456116169982,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch6_tile.json",
+        "noise_floor_psnr_db": 68.04834418375991
+      },
+      {
+        "label": "codex_pancreas__ch7_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 10.044429162880824,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 510.5387294650136,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch7_tile.json",
+        "noise_floor_psnr_db": 90.09687634361933
+      },
+      {
+        "label": "codex_pancreas__ch8_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 14.193762550078198,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 451.0442390019889,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch8_tile.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "codex_pancreas__ch9_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 12.529836428459163,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 492.6178633160016,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch9_tile.json",
+        "noise_floor_psnr_db": 78.92970507076542
+      },
+      {
+        "label": "codex_pancreas__ch10_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 17.427860577877983,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 470.4768851950066,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch10_tile.json",
+        "noise_floor_psnr_db": 66.06065154104166
+      },
+      {
+        "label": "codex_pancreas__ch11_tile",
+        "k_star": 256000,
+        "type": "signal_limited",
+        "confidence_db": 14.378537894556906,
+        "volume_shape": [
+          4096,
+          4096
+        ],
+        "elapsed_seconds": 444.8138328430068,
+        "json_path": "scripts/calibration_results/codex_pancreas/codex_pancreas__ch11_tile.json",
+        "noise_floor_psnr_db": null
+      }
+    ],
+    "comment": "CODEX, per-tile (TILE_SIZE^2) crop per channel"
+  },
+  {
+    "name": "kidney_multichannel_layers",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 138248,
+    "per_sample": [
+      {
+        "label": "kidney_multichannel_layers__ch0",
+        "k_star": 74658,
+        "type": "peak",
+        "confidence_db": 0.4101753690139205,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 497.0965211740113,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch0.json",
+        "noise_floor_psnr_db": 41.020151117836754
+      },
+      {
+        "label": "kidney_multichannel_layers__ch1",
+        "k_star": 74658,
+        "type": "peak",
+        "confidence_db": 0.4761678828767373,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 396.9210314489901,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch1.json",
+        "noise_floor_psnr_db": 44.32959767792898
+      },
+      {
+        "label": "kidney_multichannel_layers__ch2",
+        "k_star": 138248,
+        "type": "peak",
+        "confidence_db": 0.06102941068566636,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 236.94350844601286,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch2.json",
+        "noise_floor_psnr_db": 42.515087025907796
+      }
+    ],
+    "comment": "skimage kidney 3-channel ~16x512x512"
+  },
+  {
+    "name": "kidney_multichannel_toggles",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 138248,
+    "per_sample": [
+      {
+        "label": "kidney_multichannel_layers__ch0",
+        "k_star": 74658,
+        "type": "peak",
+        "confidence_db": 0.4101753690139205,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 497.0965211740113,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch0.json",
+        "noise_floor_psnr_db": 41.020151117836754
+      },
+      {
+        "label": "kidney_multichannel_layers__ch1",
+        "k_star": 74658,
+        "type": "peak",
+        "confidence_db": 0.4761678828767373,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 396.9210314489901,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch1.json",
+        "noise_floor_psnr_db": 44.32959767792898
+      },
+      {
+        "label": "kidney_multichannel_layers__ch2",
+        "k_star": 138248,
+        "type": "peak",
+        "confidence_db": 0.06102941068566636,
+        "volume_shape": [
+          16,
+          512,
+          512
+        ],
+        "elapsed_seconds": 236.94350844601286,
+        "json_path": "scripts/calibration_results/kidney_multichannel_layers/kidney_multichannel_layers__ch2.json",
+        "noise_floor_psnr_db": 42.515087025907796
+      }
+    ],
+    "comment": "skimage kidney 3-channel ~16x512x512",
+    "alias_of": "kidney_multichannel_layers"
+  },
+  {
+    "name": "opencell_map4",
+    "status": "ok",
+    "k_min": 2000,
+    "k_max": 512000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 80635,
+    "per_sample": [
+      {
+        "label": "opencell_map4__ch0",
+        "k_star": 23516,
+        "type": "peak",
+        "confidence_db": 0.06180818879440153,
+        "volume_shape": [
+          51,
+          600,
+          600
+        ],
+        "elapsed_seconds": 307.7823240830039,
+        "json_path": "scripts/calibration_results/opencell_map4/opencell_map4__ch0.json",
+        "noise_floor_psnr_db": 32.3304371461837
+      },
+      {
+        "label": "opencell_map4__ch1",
+        "k_star": 80635,
+        "type": "peak",
+        "confidence_db": 0.046331901191603464,
+        "volume_shape": [
+          51,
+          600,
+          600
+        ],
+        "elapsed_seconds": 336.2770890270185,
+        "json_path": "scripts/calibration_results/opencell_map4/opencell_map4__ch1.json",
+        "noise_floor_psnr_db": 30.052242056315677
+      }
+    ],
+    "comment": "Confocal stack, 2 channels"
+  },
+  {
+    "name": "organoid_dapi",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 11758,
+    "per_sample": [
+      {
+        "label": "organoid_dapi__dapi",
+        "k_star": 11758,
+        "type": "peak",
+        "confidence_db": 0.15847196383392514,
+        "volume_shape": [
+          128,
+          128,
+          128
+        ],
+        "elapsed_seconds": 230.8223822209984,
+        "json_path": "scripts/calibration_results/organoid_dapi/organoid_dapi__dapi.json",
+        "noise_floor_psnr_db": 54.02933820627279
+      }
+    ],
+    "comment": "128^3 single-channel DAPI from IDR"
+  },
+  {
+    "name": "organoid_multichannel",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 40317,
+    "per_sample": [
+      {
+        "label": "organoid_multichannel__ch0",
+        "k_star": 40317,
+        "type": "peak",
+        "confidence_db": 0.009826118932480199,
+        "volume_shape": [
+          236,
+          275,
+          271
+        ],
+        "elapsed_seconds": 439.8488735369756,
+        "json_path": "scripts/calibration_results/organoid_multichannel/organoid_multichannel__ch0.json",
+        "noise_floor_psnr_db": 53.45517234291886
+      },
+      {
+        "label": "organoid_multichannel__ch1",
+        "k_star": 11758,
+        "type": "plateau",
+        "confidence_db": 0.15668025603392977,
+        "volume_shape": [
+          236,
+          275,
+          271
+        ],
+        "elapsed_seconds": 261.00747481000144,
+        "json_path": "scripts/calibration_results/organoid_multichannel/organoid_multichannel__ch1.json",
+        "noise_floor_psnr_db": 50.15263796005225
+      }
+    ],
+    "comment": "256^3 2-channel organoid"
+  },
+  {
+    "name": "tribolium_embryo",
+    "status": "ok",
+    "k_min": 2000,
+    "k_max": 512000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "max",
+    "recommended_k_star": 512000,
+    "per_sample": [
+      {
+        "label": "tribolium_embryo__tribolium",
+        "k_star": 512000,
+        "type": "signal_limited",
+        "confidence_db": 15.959153922194197,
+        "volume_shape": [
+          991,
+          1871,
+          965
+        ],
+        "elapsed_seconds": 9315.151229213981,
+        "json_path": "scripts/calibration_results/tribolium_embryo/tribolium_embryo__tribolium.json",
+        "noise_floor_psnr_db": 69.23696643687117
+      }
+    ],
+    "comment": "Light-sheet Tribolium embryo (large)"
+  },
+  {
+    "name": "zebrafish_timelapse",
+    "status": "ok",
+    "k_min": 1000,
+    "k_max": 256000,
+    "n_grid": 10,
+    "preset": "n2s",
+    "aggregate": "median",
+    "recommended_k_star": 1852,
+    "per_sample": [
+      {
+        "label": "zebrafish_timelapse__t0000",
+        "k_star": 3429,
+        "type": "peak",
+        "confidence_db": 0.09281186367280725,
+        "volume_shape": [
+          44,
+          256,
+          256
+        ],
+        "elapsed_seconds": 693.6322134479997,
+        "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0000.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "zebrafish_timelapse__t0032",
+        "k_star": 1852,
+        "type": "peak",
+        "confidence_db": 0.12927358965051639,
+        "volume_shape": [
+          44,
+          256,
+          256
+        ],
+        "elapsed_seconds": 763.5674558710016,
+        "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0032.json",
+        "noise_floor_psnr_db": null
+      },
+      {
+        "label": "zebrafish_timelapse__t0063",
+        "k_star": 1852,
+        "type": "peak",
+        "confidence_db": 0.3562592916952525,
+        "volume_shape": [
+          44,
+          256,
+          256
+        ],
+        "elapsed_seconds": 765.934995210002,
+        "json_path": "scripts/calibration_results/zebrafish_timelapse/zebrafish_timelapse__t0063.json",
+        "noise_floor_psnr_db": null
+      }
+    ],
+    "comment": "Timelapse, 3 distributed tp; median K*"
+  }
+]

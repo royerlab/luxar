@@ -1,0 +1,41 @@
+{
+  "name": "opencell_map4",
+  "status": "ok",
+  "k_min": 2000,
+  "k_max": 512000,
+  "n_grid": 10,
+  "preset": "n2s",
+  "aggregate": "max",
+  "recommended_k_star": 80635,
+  "per_sample": [
+    {
+      "label": "opencell_map4__ch0",
+      "k_star": 23516,
+      "type": "peak",
+      "confidence_db": 0.06180818879440153,
+      "volume_shape": [
+        51,
+        600,
+        600
+      ],
+      "elapsed_seconds": 307.7823240830039,
+      "json_path": "scripts/calibration_results/opencell_map4/opencell_map4__ch0.json",
+      "noise_floor_psnr_db": 32.3304371461837
+    },
+    {
+      "label": "opencell_map4__ch1",
+      "k_star": 80635,
+      "type": "peak",
+      "confidence_db": 0.046331901191603464,
+      "volume_shape": [
+        51,
+        600,
+        600
+      ],
+      "elapsed_seconds": 336.2770890270185,
+      "json_path": "scripts/calibration_results/opencell_map4/opencell_map4__ch1.json",
+      "noise_floor_psnr_db": 30.052242056315677
+    }
+  ],
+  "comment": "Confocal stack, 2 channels"
+}

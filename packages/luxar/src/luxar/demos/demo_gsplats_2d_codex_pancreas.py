@@ -203,7 +203,7 @@ CHANNELS = [
 # Tiled fitting parameters
 TILE_SIZE = 4096
 OVERLAP = 512
-SEEDS_PER_TILE = 8_000
+SEEDS_PER_TILE = 255000
 N_ITERS = 6_000
 
 # Cache location
