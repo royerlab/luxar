@@ -289,7 +289,12 @@ describe('UIComponent', () => {
   });
 
   describe('Integration', () => {
-    it('should work with event handlers and maintain proper cleanup', () => {
+    // ui.md O8 / Phase E15: previously `'should work with event handlers
+    // and maintain proper cleanup'` — vague (P9). Rename to surface the
+    // actual contract: dispose() detaches addTestEventListener-registered
+    // handlers so subsequent clicks on the same element no longer fire
+    // them.
+    it('dispose() detaches event listeners so subsequent clicks no longer fire registered handlers', () => {
       const component = new TestComponent({ title: 'Integration Test' });
       const clickHandler = vi.fn();
 
