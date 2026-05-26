@@ -115,9 +115,20 @@ describe('initializeDims', () => {
   });
 
   it('defaults to last 3 dims when no metadata is provided', () => {
+    // types.md C2[P2] strengthening: prior assertions only covered ndim
+    // and displayed. Pin the missing observable contracts so a regression
+    // initialising metadata=[] (instead of preserving undefined) or
+    // sizing currentStep wrongly would surface.
     const dims = initializeDims(2, 8); // 4D
     expect(dims.ndim).toBe(4);
     expect(dims.displayed).toEqual([1, 2, 3]);
+    // currentStep has one slot per dim, all zero on init.
+    expect(dims.currentStep).toHaveLength(4);
+    expect(Array.from(dims.currentStep)).toEqual([0, 0, 0, 0]);
+    // metadata is preserved as-passed; no metadata arg → undefined,
+    // NOT an empty array. A mutation that returned `metadata: []` would
+    // pass the previous test but fail this one.
+    expect(dims.metadata).toBeUndefined();
   });
 
   // OOS-1 (round-2 audit): the inverse of HIGH-5 (b) — metadata LONGER than
