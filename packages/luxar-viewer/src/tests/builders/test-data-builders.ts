@@ -727,11 +727,23 @@ export class ChunkBuilder {
   }
 
   /**
-   * Generate random data
+   * Generate random data.
+   *
+   * [builders OOS3] Pre-fix dtype detection was
+   * `dtype.includes('u1') || dtype.includes('uint8')` — bare substring
+   * matching. This misclassified:
+   *   - `'<u16'` (uint16) → was routed to the Uint8 branch (contains 'u1')
+   *   - `'complex_uint8_v2'` (any future dtype with 'uint8' embedded)
+   *     → also routed to the Uint8 branch
+   *
+   * Now we match the exact set of supported uint8 dtype spellings.
+   * Zarr typed-dtype prefixes `<`, `>`, `|` denote byte order; `'uint8'`
+   * is the numpy long form. Anything else falls through to the Float32
+   * branch (the previous default).
    */
   withRandomData(): this {
     const size = this.chunkShape.reduce((a, b) => a * b, 1);
-    if (this.dtype.includes('u1') || this.dtype.includes('uint8')) {
+    if (ChunkBuilder.UINT8_DTYPES.has(this.dtype)) {
       this.data = new Uint8Array(size);
       for (let i = 0; i < size; i++) {
         this.data[i] = Math.floor(Math.random() * 256);
@@ -744,6 +756,19 @@ export class ChunkBuilder {
     }
     return this;
   }
+
+  /**
+   * Supported uint8 dtype spellings used by `withRandomData()` and any
+   * future dtype-branching builders. Kept as `static readonly` so tests
+   * can reference the exact contract.
+   */
+  static readonly UINT8_DTYPES: ReadonlySet<string> = new Set([
+    'u1', // bare numpy abbreviation
+    '|u1', // byte-order-agnostic
+    '<u1', // little-endian
+    '>u1', // big-endian
+    'uint8', // numpy long form
+  ]);
 
   /**
    * Build the chunk metadata
