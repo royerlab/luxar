@@ -176,14 +176,37 @@ describe('GSplatsBuilder smoke', () => {
     }
   });
 
-  it('packs the correct length for higher dimensions', () => {
-    // ndim=5 → 5*6/2 = 15 floats per splat.
+  it('packs the correct length AND the diagonal positions for ndim=5 [builders.md C3]', () => {
+    // builders.md C3[P5][P2]: prior test only verified the LENGTH of the
+    // packed array at ndim=5 (15 floats). A mutation that swapped the
+    // row/col packing order (e.g. column-major instead of row-major, or
+    // upper-triangular instead of lower-triangular) would survive at
+    // ndim=3 but slip through at ndim≥4 unless the diagonal positions
+    // are explicitly verified.
+    //
+    // Lower-triangular row-major packing for ndim=5:
+    //   indices  → 0  1  2  3  4  5  6  7  8  9  10 11 12 13 14
+    //   (r,c)    → 00 10 11 20 21 22 30 31 32 33 40 41 42 43 44
+    // Diagonals fall at indices 0, 2, 5, 9, 14 → these MUST equal σ
+    // (0.1 here); every off-diagonal slot MUST be 0.
     const data = new GSplatsBuilder()
       .withSplats(3)
       .withDimensions(5)
       .withIsotropicCovariance(0.1)
       .build();
     expect(data.choleskyFactors.length).toBe(3 * 15);
+
+    const DIAGONAL_INDICES = [0, 2, 5, 9, 14];
+    for (let s = 0; s < 3; s++) {
+      const splatSlice = data.choleskyFactors.slice(s * 15, (s + 1) * 15);
+      for (let i = 0; i < 15; i++) {
+        if (DIAGONAL_INDICES.includes(i)) {
+          expect(splatSlice[i]).toBeCloseTo(0.1, 6);
+        } else {
+          expect(splatSlice[i]).toBe(0);
+        }
+      }
+    }
   });
 
   it('[builders.md C4] withIsotropicCovariance(0) packs all-zero Cholesky (degenerate point-particle boundary)', () => {
