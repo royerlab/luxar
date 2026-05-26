@@ -54,7 +54,8 @@ export async function projectGSplatsTo3D(
 }> {
   const wasmModule = requireWasm(ctx);
 
-  const { positions, choleskyFactors, amplitudes, colors, viewState, ndim, splatCount } = params;
+  const { positions, choleskyFactors, amplitudes, colors, sharpness, viewState, ndim, splatCount } =
+    params;
   const { displayDims, slicePosition } = viewState;
 
   validateProjectionInputs(
@@ -83,6 +84,18 @@ export async function projectGSplatsTo3D(
   if (colors && colors.length < splatCount * 3) {
     throw new Error(
       `projectGSplatsTo3D: colors too short (got ${colors.length}, expected ≥ ${splatCount * 3})`
+    );
+  }
+  // [workers OOS] Three-geometry symmetry: Points and Lines both validate
+  // their per-element `sharpness` length. GSplats accepts `sharpness` for
+  // API parity but never reads it (the output is always an empty
+  // Float32Array). Even so, callers occasionally pass it; validate the
+  // length so a caller bug — building a wrong-sized sharpness array —
+  // surfaces with the same clear error the other geometries produce
+  // rather than silently flowing through into the discard.
+  if (sharpness && sharpness.length < splatCount) {
+    throw new Error(
+      `projectGSplatsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${splatCount})`
     );
   }
 
