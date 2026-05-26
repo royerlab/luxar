@@ -22,7 +22,6 @@ import { describe, it, expect } from 'vitest';
 import {
   query_chunks_for_view,
   compute_nd_visibility_points,
-  compute_nd_visibility_lines,
   compute_nd_visibility_gsplats,
   calculate_effective_radii,
   decode_quantized_u8,
@@ -203,59 +202,7 @@ describe('TypeScript Reference Implementation Tests', () => {
     });
   });
 
-  // ============================================================================
-  // LINES TESTS (segment endpoint visibility)
-  // ============================================================================
-  describe('lines: compute_nd_visibility_lines', () => {
-    it('should filter segments based on endpoint visibility', () => {
-      const ndim = 5;
-
-      const vertices = new Float32Array([
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0, // V0: visible
-        1.0,
-        1.0,
-        1.0,
-        0.5,
-        0.0, // V1: visible
-        2.0,
-        2.0,
-        2.0,
-        10.0,
-        0.0, // V2: hidden
-        3.0,
-        3.0,
-        3.0,
-        0.0,
-        10.0, // V3: hidden
-      ]);
-
-      const segments = new Uint32Array([0, 1, 1, 2, 2, 3]);
-      const widths = new Float32Array([1.0, 1.0, 1.0, 1.0]);
-      const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0, 0.0]);
-      const tolerance = new Float32Array([1.0, 1.0, 1.0, 1.0, 1.0]);
-
-      const output = new Uint8Array(3);
-      const count = compute_nd_visibility_lines(
-        vertices,
-        segments,
-        widths,
-        slicePos,
-        tolerance,
-        ndim,
-        3,
-        output
-      );
-
-      expect(output[0]).toBe(1); // 0-1: both visible
-      expect(output[1]).toBe(1); // 1-2: one visible
-      expect(output[2]).toBe(0); // 2-3: both hidden
-      expect(count).toBe(2);
-    });
-  });
+  // LINES tests moved to ./typescript-reference/lines.test.ts (wasm.md O1).
 
   // ============================================================================
   // GSPLATS TESTS (ellipsoid visibility)
