@@ -214,6 +214,29 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
     handleWheel(ctx, new WheelEvent('wheel', { deltaY: -100, cancelable: true }));
     expect(state.zoomDelta).toBe(0);
   });
+
+  it('[controls.md/G19] calls preventDefault on wheel (the page must not scroll under the viewer)', () => {
+    // controls.md G19: the existing tests verify state mutation + dispatch
+    // but never asserted preventDefault. A regression that removed
+    // preventDefault would cause the host page to scroll while the user
+    // tries to zoom — invisible to existing tests.
+    const { ctx } = makeBaseCtx();
+    const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true });
+    const spy = vi.spyOn(evt, 'preventDefault');
+    handleWheel(ctx, evt);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('[controls.md/G19] does NOT call preventDefault when disabled (the gate fires first)', () => {
+    // Symmetric: the early-return gates must short-circuit before
+    // preventDefault is called.
+    const { ctx } = makeBaseCtx();
+    ctx.enabled = false;
+    const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true });
+    const spy = vi.spyOn(evt, 'preventDefault');
+    handleWheel(ctx, evt);
+    expect(spy).not.toHaveBeenCalled();
+  });
 });
 
 describe('handlePointerDown — non-touch path', () => {

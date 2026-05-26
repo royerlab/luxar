@@ -166,6 +166,103 @@ describe('handleKeyDown — gating', () => {
   });
 });
 
+describe('handleKeyDown — preventDefault contract (controls.md G13, G14)', () => {
+  it('[G13] calls preventDefault on every ArrowKey', () => {
+    // controls.md G13: arrow keys are unconditionally consumed by the
+    // camera-look pipeline; the orbit-side has this covered, fly did not.
+    for (const k of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+      const { ctx } = makeCtx();
+      const evt = new KeyboardEvent('keydown', { key: k, cancelable: true });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleKeyDown(ctx, evt);
+      expect(spy).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('[G13] calls preventDefault on WASD/QE when NOT typing in an input', () => {
+    // controls.md G13: WASD/QE only consume when document.activeElement
+    // is not an input/textarea/contenteditable. jsdom default activeElement
+    // is body, so the gate falls through to preventDefault.
+    for (const k of ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E']) {
+      const { ctx } = makeCtx();
+      const evt = new KeyboardEvent('keydown', { key: k, cancelable: true });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleKeyDown(ctx, evt);
+      expect(spy).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('[G14] does NOT call preventDefault on WASD when an <input> has focus', () => {
+    // controls.md G14: keyboard.ts:47-59 isTyping gate. If the user is
+    // typing in a form field, WASD must pass through to the browser
+    // (otherwise the user can't type 'w', 'a', 's', 'd', etc.).
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+    try {
+      for (const k of ['w', 'a', 's', 'd']) {
+        const { ctx } = makeCtx();
+        const evt = new KeyboardEvent('keydown', { key: k, cancelable: true });
+        const spy = vi.spyOn(evt, 'preventDefault');
+        handleKeyDown(ctx, evt);
+        expect(spy).not.toHaveBeenCalled();
+      }
+    } finally {
+      input.remove();
+    }
+  });
+
+  it('[G14] does NOT call preventDefault on WASD when a <textarea> has focus', () => {
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    try {
+      const { ctx } = makeCtx();
+      const evt = new KeyboardEvent('keydown', { key: 'w', cancelable: true });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleKeyDown(ctx, evt);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      ta.remove();
+    }
+  });
+
+  it('[G14] does NOT call preventDefault on WASD when contenteditable element has focus', () => {
+    const el = document.createElement('div');
+    el.setAttribute('contenteditable', 'true');
+    el.tabIndex = 0;
+    document.body.appendChild(el);
+    el.focus();
+    try {
+      const { ctx } = makeCtx();
+      const evt = new KeyboardEvent('keydown', { key: 'd', cancelable: true });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleKeyDown(ctx, evt);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('[G14] ArrowKeys STILL call preventDefault even when an input has focus (arrow gate is unconditional)', () => {
+    // controls.md G14 (symmetric): the isTyping gate in keyboard.ts only
+    // applies to WASD/QE. Arrow keys are caught BEFORE the gate (lines
+    // 42-44) — they always preventDefault. Pin that distinction.
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+    try {
+      const { ctx } = makeCtx();
+      const evt = new KeyboardEvent('keydown', { key: 'ArrowLeft', cancelable: true });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleKeyDown(ctx, evt);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      input.remove();
+    }
+  });
+});
+
 describe('handleKeyUp — releases state', () => {
   it('keyup w clears BOTH forward and up (Alt may have been held during down)', () => {
     const { ctx, moveState } = makeCtx();
