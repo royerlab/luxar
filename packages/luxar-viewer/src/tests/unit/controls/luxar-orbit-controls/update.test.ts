@@ -92,16 +92,38 @@ describe('runUpdateStep — step 1: auto-rotation', () => {
     expect(angle).toBeCloseTo((2 * Math.PI) / 60, 4);
   });
 
-  it('respects enableRotate=false (no auto-rotation when rotation disabled)', () => {
-    const { ctx } = makeCtx({
-      autoRotate: true,
-      autoRotateSpeed: 60,
-      enableRotate: false,
-    });
-    runUpdateStep(ctx, 1 / 60);
-    expect(ctx.orientation.w).toBeCloseTo(1, 5);
-    expect(ctx.orientation.x).toBeCloseTo(0, 5);
-  });
+  // controls.md O5 / Phase E11: previously a single `enableRotate=false`
+  // gate test. The 2x2 grid of {enableRotate, autoRotate} ∈ {false, true}²
+  // has 4 combos but only 2 produce rotation (enableRotate=true ∧
+  // autoRotate=true). Parametrize so all 4 gate-product cells are
+  // exercised — a regression that swapped the conjunction for a disjunction
+  // (rotate when EITHER is true) surfaces as the `(false, true)` /
+  // `(true, false)` cases failing rather than nothing breaking.
+  it.each<{ enableRotate: boolean; autoRotate: boolean; rotates: boolean }>([
+    { enableRotate: false, autoRotate: false, rotates: false },
+    { enableRotate: false, autoRotate: true, rotates: false }, // gate blocks
+    { enableRotate: true, autoRotate: false, rotates: false }, // nothing to rotate
+    { enableRotate: true, autoRotate: true, rotates: true }, // only rotating cell
+  ])(
+    'auto-rotation gate: enableRotate=$enableRotate, autoRotate=$autoRotate → rotates=$rotates',
+    ({ enableRotate, autoRotate, rotates }) => {
+      const { ctx } = makeCtx({
+        autoRotate,
+        autoRotateSpeed: 60,
+        enableRotate,
+      });
+      runUpdateStep(ctx, 1 / 60);
+      if (rotates) {
+        // 2π/60 sweep per frame at autoRotateSpeed=60.
+        const angle = 2 * Math.acos(Math.min(1, Math.abs(ctx.orientation.w)));
+        expect(angle).toBeCloseTo((2 * Math.PI) / 60, 4);
+      } else {
+        // Orientation should remain at identity.
+        expect(ctx.orientation.w).toBeCloseTo(1, 5);
+        expect(ctx.orientation.x).toBeCloseTo(0, 5);
+      }
+    }
+  );
 });
 
 describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
