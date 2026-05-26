@@ -12,7 +12,14 @@ function sanitizeKeySegment(segment: string): string {
   return segment.replace(/[^a-zA-Z0-9-_]/g, '_');
 }
 
-export const StorageKeys = {
+// [api.md OOS] Frozen at runtime so embedders cannot mutate the
+// namespacing contract. `as const` gives TypeScript readonly tags but
+// the runtime object was still a plain mutable record — a host page
+// doing `StorageKeys.theme = 'pwned'` would have corrupted every
+// subsequent read/write. Object.freeze makes such mutations throw in
+// strict mode and no-op in sloppy mode, locking the contract at
+// module load.
+export const StorageKeys = Object.freeze({
   /** Active theme id (`'dark' | 'light' | 'frosted-glass' | 'liquid-glass'`). */
   theme: 'luxar.theme',
   /** Persisted debug-mode toggle (mirrors `?debug` URL parameter). */
@@ -21,4 +28,4 @@ export const StorageKeys = {
   rendering(sceneId: string): string {
     return `luxar.rendering.${sanitizeKeySegment(sceneId)}`;
   },
-} as const;
+} as const);
