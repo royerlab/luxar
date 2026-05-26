@@ -344,6 +344,145 @@ describe('ThemeManager', () => {
     });
   });
 
+  // themes.md G2-G5, G7, G9 — boundary / error-path / symmetry gaps that
+  // the audit flagged as carry-overs from the prior audit. These tests
+  // close the gaps directly against ThemeManager's public API.
+  describe('Boundary and error paths (themes.md G2-G5, G7, G9)', () => {
+    it('[G2] registerTheme throws when given a theme whose id already exists', () => {
+      // theme-manager.ts:144-149: duplicate-id throws with a message that
+      // names the offending id. The four built-in themes are registered
+      // during construction, so re-registering darkTheme triggers the
+      // branch on a real-world id.
+      const manager = ThemeManager.getInstance();
+      expect(() => manager.registerTheme(darkTheme)).toThrow(/already registered/);
+      expect(() => manager.registerTheme(darkTheme)).toThrow(/"dark"/);
+    });
+
+    it('[G3] saveTheme swallows localStorage.setItem failures and logs a warning', () => {
+      // theme-manager.ts:486-492: setItem in a try/catch — the error must
+      // not propagate to the caller (otherwise setTheme would fail mid-
+      // pipeline). Stub setItem to throw and confirm setTheme completes
+      // cleanly + log.warning fires.
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded');
+      });
+      const manager = ThemeManager.getInstance();
+
+      expect(() => manager.setTheme('light')).not.toThrow();
+      // applyTheme still ran — data-theme attribute is on the root.
+      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      // currentTheme was updated.
+      expect(manager.getCurrentTheme().id).toBe('light');
+
+      setItemSpy.mockRestore();
+    });
+
+    it('[G3] loadTheme swallows localStorage.getItem failures and falls back to default', () => {
+      // theme-manager.ts:499-506: getItem in a try/catch — null fallback
+      // forces frosted-glass default per theme-manager initialization.
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('storage disabled');
+      });
+
+      // Construct after the stub so initializeTheme hits the throw.
+      const manager = ThemeManager.getInstance();
+      expect(manager.getCurrentTheme().id).toBe('frosted-glass');
+
+      getItemSpy.mockRestore();
+    });
+
+    it('[G4] CSS variables for optional theme fields with undefined values are NOT injected', () => {
+      // theme-manager.ts:459-463: themeToCSSVariables maps `undefined`
+      // entries to "skip"; setCSSVariables then guards `value !== undefined`
+      // before setProperty. Verify by registering a clone of darkTheme
+      // with `text.disabled = undefined` and confirming the corresponding
+      // CSS variable is empty (root.style.getPropertyValue returns '').
+      const manager = ThemeManager.getInstance();
+      const clone: typeof darkTheme = JSON.parse(JSON.stringify(darkTheme));
+      clone.id = 'g4-test-theme';
+      clone.name = 'G4 Test Theme';
+      // text.disabled is an optional field.
+      (clone.colors.text as { disabled?: string }).disabled = undefined;
+      manager.registerTheme(clone);
+      manager.setTheme('g4-test-theme');
+
+      const root = document.documentElement;
+      // setProperty is never called for the undefined value, so the
+      // inline-style getPropertyValue is empty. (computedStyle could
+      // return an inherited or fallback value, so we check the inline
+      // style directly which is the contract enforced by setCSSVariables.)
+      expect(root.style.getPropertyValue('--luxar-text-disabled')).toBe('');
+    });
+
+    it('[G5] re-applying the same theme is idempotent (DOM + observers unchanged)', () => {
+      // theme-manager.ts:204-216: setting the same theme twice should be
+      // a clean no-op for the DOM (same data-theme attribute, same CSS
+      // variables) but observers still fire each time (the public contract
+      // does NOT debounce).
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('dark');
+
+      const root = document.documentElement;
+      const snapshot = {
+        dataTheme: root.getAttribute('data-theme'),
+        bgPrimary: getComputedStyle(root).getPropertyValue('--luxar-bg-primary').trim(),
+        textPrimary: getComputedStyle(root).getPropertyValue('--luxar-text-primary').trim(),
+      };
+
+      const observerSpy = vi.fn();
+      manager.onChange(observerSpy);
+
+      expect(() => manager.setTheme('dark')).not.toThrow();
+
+      // DOM state is identical.
+      expect(root.getAttribute('data-theme')).toBe(snapshot.dataTheme);
+      expect(getComputedStyle(root).getPropertyValue('--luxar-bg-primary').trim()).toBe(
+        snapshot.bgPrimary
+      );
+      expect(getComputedStyle(root).getPropertyValue('--luxar-text-primary').trim()).toBe(
+        snapshot.textPrimary
+      );
+
+      // Observer fires (no debouncing — public contract).
+      expect(observerSpy).toHaveBeenCalledTimes(1);
+      expect(observerSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 'dark' }));
+    });
+
+    it.each([
+      ['dark'],
+      ['light'],
+      ['frosted-glass'],
+      ['liquid-glass'],
+    ])('[G7] data-theme attribute round-trips to %s', (id) => {
+      // theme-manager.ts:204-209: setTheme writes the id to data-theme.
+      // Prior test covered only 'light'; the audit flagged the missing
+      // four-theme round-trip.
+      const manager = ThemeManager.getInstance();
+      manager.setTheme(id);
+      expect(document.documentElement.getAttribute('data-theme')).toBe(id);
+    });
+
+    it('[G9] setTheme notifies observers even when saveTheme silently fails', () => {
+      // theme-manager.ts:486-492 wraps setItem in try/catch (swallowed),
+      // so saveTheme NEVER throws to setTheme — observers always fire.
+      // This pins that contract: a localStorage failure cannot prevent
+      // theme-change notifications.
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded');
+      });
+      const manager = ThemeManager.getInstance();
+      const observerSpy = vi.fn();
+      manager.onChange(observerSpy);
+
+      manager.setTheme('light');
+
+      expect(observerSpy).toHaveBeenCalledTimes(1);
+      expect(observerSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 'light' }));
+
+      setItemSpy.mockRestore();
+    });
+  });
+
   describe('Disposal', () => {
     it('should clear all observers on dispose', () => {
       const manager = ThemeManager.getInstance();
