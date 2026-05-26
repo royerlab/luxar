@@ -74,12 +74,16 @@ describe('escapeHtml', () => {
     });
   });
 
-  describe('apostrophe behavior (utils.md OOS3 — current implementation pins)', () => {
-    it("passes apostrophe ' through unescaped", () => {
+  // utils.md O1 / Phase E23: previously the describe block was named
+  // `'apostrophe behavior (... current implementation pins)'` and the
+  // inner `it` was `'passes apostrophe ' through unescaped'` — both
+  // contradicted the test body (which asserts the apostrophe IS escaped
+  // to `&#39;`). The names lied; only the body told the truth. Rename
+  // both to match what the test actually pins.
+  describe('apostrophe escaping to &#39;', () => {
+    it('escapes apostrophe to &#39; (MED-32 — single-quoted-attribute injection defence)', () => {
       // MED-32 fix: source now escapes `'` to `&#39;` for
       // defense-in-depth against single-quoted-attribute injection.
-      // The CURRENT_BEHAVIOR_LEAVES_APOSTROPHE pin from the round-2
-      // audit is flipped: the apostrophe IS escaped.
       expect(escapeHtml("can't")).toBe('can&#39;t');
       expect(escapeHtml("it's a 'quoted' value")).toBe(
         'it&#39;s a &#39;quoted&#39; value'
