@@ -48,14 +48,19 @@ function makePointsData(
 
 describe('GPU Buffer Pool Integration Tests', () => {
   describe('Geometry Acquisition Verification', () => {
-    it('should call acquirePointsGeometry when updating points', () => {
-      const pool = new GPUBufferPool(20, 300);
-
-      // Spy on acquire method
-      const acquireSpy = vi.spyOn(pool, 'acquirePointsGeometry');
-
-      // Simulate what scene-loader does (line 1415-1420)
-      const mockData: LoadedPointsData = {
+    // integration.md O4 / Phase E17: previously one `it` bundled the
+    // spy-was-called check, the BufferGeometry instance check, and 3
+    // attribute pins (aQuadCorner/aCenter/aColor with their item sizes)
+    // into 8 assertions. A regression dropping ONLY aColor would
+    // surface as a generic "should call acquirePointsGeometry..."
+    // failure rather than naming the missing attribute. Split into:
+    //   (a) one `it` that pins the acquire call + BufferGeometry shape
+    //       (the orchestration contract)
+    //   (b) one `it.each` over the canonical attribute set that pins
+    //       each attribute's name + itemSize independently
+    // Failures now name the broken attribute or contract.
+    function makePointsMockData(): LoadedPointsData {
+      return {
         positions: new Float32Array([1, 2, 3, 4, 5, 6]),
         colors: new Uint8Array([255, 128, 0, 128, 255, 0]),
         radii: new Float32Array([0.5, 0.6]),
@@ -69,25 +74,38 @@ describe('GPU Buffer Pool Integration Tests', () => {
           usedSpatialIndex: true,
         },
       };
+    }
+
+    it('acquirePointsGeometry returns a BufferGeometry and forwards (path, data, count) to the pool', () => {
+      const pool = new GPUBufferPool(20, 300);
+      const acquireSpy = vi.spyOn(pool, 'acquirePointsGeometry');
+      const mockData = makePointsMockData();
 
       const geometry = pool.acquirePointsGeometry('/test_points', mockData, 2);
 
-      // Verify acquire was called with correct params
       expect(acquireSpy).toHaveBeenCalledWith('/test_points', mockData, 2);
       expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-      // [integration.md/W7][P3] Previously only `instanceof BufferGeometry`
-      // was asserted; mutating the geometry's attribute layout would not
-      // be detected. Pin the canonical attribute set the points pool emits:
-      // aQuadCorner (the per-vertex quad-corner shared across instances) is
-      // always present, and the per-instance interleaved attributes
-      // aCenter/aColor are set up at the documented item-sizes (3/3).
-      expect(geometry.getAttribute('aQuadCorner')).toBeDefined();
-      expect(geometry.getAttribute('aQuadCorner').itemSize).toBe(2);
-      expect(geometry.getAttribute('aCenter')).toBeDefined();
-      expect(geometry.getAttribute('aCenter').itemSize).toBe(3);
-      expect(geometry.getAttribute('aColor')).toBeDefined();
-      expect(geometry.getAttribute('aColor').itemSize).toBe(3);
     });
+
+    // [integration.md/W7][P3] Pin the canonical attribute set the points
+    // pool emits. aQuadCorner (per-vertex quad-corner shared across
+    // instances) is itemSize=2; per-instance aCenter and aColor are
+    // both itemSize=3. A regression that dropped any one attribute or
+    // shifted an itemSize surfaces a per-row named failure.
+    it.each<{ attribute: string; itemSize: number }>([
+      { attribute: 'aQuadCorner', itemSize: 2 },
+      { attribute: 'aCenter', itemSize: 3 },
+      { attribute: 'aColor', itemSize: 3 },
+    ])(
+      'acquirePointsGeometry emits attribute $attribute with itemSize=$itemSize',
+      ({ attribute, itemSize }) => {
+        const pool = new GPUBufferPool(20, 300);
+        const geometry = pool.acquirePointsGeometry('/test_points', makePointsMockData(), 2);
+        const attr = geometry.getAttribute(attribute);
+        expect(attr, `attribute "${attribute}" missing from geometry`).toBeDefined();
+        expect(attr.itemSize).toBe(itemSize);
+      }
+    );
 
     it('updatePointsGeometry writes the supplied positions into the geometry attribute', () => {
       const pool = new GPUBufferPool(20, 300);
