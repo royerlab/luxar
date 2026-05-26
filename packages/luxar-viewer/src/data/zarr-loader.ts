@@ -141,10 +141,12 @@ function logSceneStats(scene: THREE.Group): void {
   log.info(Modules.LUXAR, 'Scene statistics:');
   log.info(Modules.LUXAR, `  - Points objects: ${stats.pointsObjects}`);
   log.info(Modules.LUXAR, `  - Total points loaded: ${stats.totalPoints.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - Lines objects: ${stats.linesObjects}`);
+  log.info(Modules.LUXAR, `  - Total segments loaded: ${stats.totalSegments.toLocaleString()}`);
   log.info(Modules.LUXAR, `  - GSplats objects: ${stats.gsplatsObjects}`);
   log.info(Modules.LUXAR, `  - Total gsplats loaded: ${stats.totalGSplats.toLocaleString()}`);
   log.info(
     Modules.LUXAR,
-    `  - Using spatial index: ${stats.spatialIndexed}/${stats.pointsObjects + stats.gsplatsObjects}`
+    `  - Using spatial index: ${stats.spatialIndexed}/${stats.pointsObjects + stats.linesObjects + stats.gsplatsObjects}`
   );
 }

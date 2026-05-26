@@ -12,6 +12,12 @@
  *   `geometry.instanceCount` is the source of truth for visible points
  *   because pooled attributes may be over-allocated beyond the visible
  *   count.
+ * - `linesObjects` / `totalSegments`: `THREE.Mesh` nodes tagged with
+ *   `userData.nodeType === 'lines'`. Like Points, Lines are instanced
+ *   quad meshes; `geometry.instanceCount` (one instance per segment)
+ *   is the source of truth, with `userData.visibleSegmentCount` as a
+ *   fallback for tests that synthesize Lines meshes without setting
+ *   instanceCount.
  * - `gsplatsObjects` / `totalGSplats`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'gsplats'`. `userData.visibleSplatCount`
  *   contributes to the running total (default 0 if absent).
@@ -27,6 +33,8 @@ import * as THREE from 'three';
 export interface SceneStats {
   pointsObjects: number;
   totalPoints: number;
+  linesObjects: number;
+  totalSegments: number;
   gsplatsObjects: number;
   totalGSplats: number;
   spatialIndexed: number;
@@ -37,6 +45,8 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
 
   let pointsObjects = 0;
   let totalPoints = 0;
+  let linesObjects = 0;
+  let totalSegments = 0;
   let gsplatsObjects = 0;
   let totalGSplats = 0;
   let spatialIndexed = 0;
@@ -59,6 +69,17 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
       if (obj.userData.attrs?.has_spatial_index) {
         spatialIndexed++;
       }
+    } else if (nodeType === 'lines') {
+      linesObjects++;
+      const geometry = obj.geometry as THREE.InstancedBufferGeometry | undefined;
+      if (geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)) {
+        totalSegments += geometry.instanceCount;
+      } else if (obj.userData.visibleSegmentCount != null) {
+        totalSegments += obj.userData.visibleSegmentCount;
+      }
+      if (obj.userData.attrs?.has_spatial_index) {
+        spatialIndexed++;
+      }
     } else if (nodeType === 'gsplats') {
       gsplatsObjects++;
       totalGSplats += obj.userData.visibleSplatCount ?? 0;
@@ -68,5 +89,13 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
     }
   });
 
-  return { pointsObjects, totalPoints, gsplatsObjects, totalGSplats, spatialIndexed };
+  return {
+    pointsObjects,
+    totalPoints,
+    linesObjects,
+    totalSegments,
+    gsplatsObjects,
+    totalGSplats,
+    spatialIndexed,
+  };
 }
