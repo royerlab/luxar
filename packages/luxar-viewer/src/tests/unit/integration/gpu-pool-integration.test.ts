@@ -148,7 +148,11 @@ describe('GPU Buffer Pool Integration Tests', () => {
       expect(buf[2]).toBe(9);
     });
 
-    it('should reuse geometry on subsequent updates (NOT dispose)', () => {
+    // integration.md O3 / Phase E24: P9 rename — name describes input
+    // class + expected behavior ("acquire on the same node returns the
+    // same geometry instance"), not implementation framing ("should
+    // reuse... NOT dispose").
+    it('acquiring with the same nodeId returns the same geometry instance (geometry reuse, no dispose)', () => {
       const pool = new GPUBufferPool(20, 300);
 
       const mockData1: LoadedPointsData = {
@@ -189,7 +193,8 @@ describe('GPU Buffer Pool Integration Tests', () => {
   });
 
   describe('Type-Aware Reuse Verification', () => {
-    it('should reuse geometry when types match', () => {
+    // integration.md O3 / Phase E24: P9 rename.
+    it('reuses geometry when subsequent acquires share the same dtypes (e.g. Uint8 → Uint8)', () => {
       const pool = new GPUBufferPool(20, 300);
 
       // [integration.md/O3][P10] Factory-built fixtures replace duplicated literals.
@@ -204,7 +209,10 @@ describe('GPU Buffer Pool Integration Tests', () => {
       expect(pool.getStats().reuses).toBe(1);
     });
 
-    it('should NOT reuse geometry when types differ', () => {
+    // integration.md O3 / Phase E24: P9 rename — name pins the
+    // dtype-divergence contract (Uint8 colors followed by Float32 colors
+    // forces a fresh geometry).
+    it('allocates a fresh geometry when the second acquire has different color dtype (Uint8 → Float32)', () => {
       const pool = new GPUBufferPool(20, 300);
 
       // [integration.md/O3][P10] Factory-built fixtures.
