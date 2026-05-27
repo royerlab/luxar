@@ -175,7 +175,13 @@ describe('effective-radius-calculator', () => {
       }
     );
 
-    it('should handle complex mixed spatial and non-spatial dimensions', () => {
+    // ndim.md O3 / Phase E35: P9 rename. The "complex mixed" phrasing was
+    // vague; the test pins one concrete contract — for a 6D point where
+    // discrete dims (time=dim3, channel=dim5) match the slice exactly and
+    // depth (dim4) is offset by 0.3, the effective radius is
+    // sqrt(1² - 0.3²) = sqrt(0.91) (only depth contributes Pythagorean
+    // distance).
+    it('6D point: discrete dims match exactly + one offset spatial dim → R_eff=sqrt(1−d²)', () => {
       // Setup: 6D data with spatial xyz, non-spatial time, spatial depth, non-spatial channel
       // Discrete dimensions (time=dim3, channel=dim5) must match slice position exactly
       const positions = new Float32Array([
