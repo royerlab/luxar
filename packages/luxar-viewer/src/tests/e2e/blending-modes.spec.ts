@@ -20,6 +20,13 @@ const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example
 const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.zarr';
 
 test.describe('Blending Modes', () => {
+  // The blending-mode datasets contain multiple groups (5+ point clouds) and
+  // render with software-accelerated WebGL on most CI/test machines, where
+  // FPS sits at ~3–10. The default 60s budget is marginal once data loading
+  // plus several render passes are added; bump to 120s so we measure
+  // correctness, not the test runner's tolerance for slow blits.
+  test.slow();
+
   test('should load dataset with initial blending modes from zarr metadata', async ({ page }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);

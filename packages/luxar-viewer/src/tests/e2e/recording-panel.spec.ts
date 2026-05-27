@@ -198,14 +198,23 @@ test.describe('Recording Panel', () => {
   });
 
   test('should show recording indicator during video recording', async ({ page }) => {
-    // Start recording via debug interface (skip the dialog)
-    await page.evaluate(async () => {
+    // Start recording via debug interface (skip the dialog).
+    // The confirmation dialog is owned by `panel.session`, not the panel
+    // itself — both video-recording-strategy.ts and offline-capture-strategy.ts
+    // call `session.showConfirmationDialog(...)`. Overriding the method on
+    // the panel does nothing; the dialog opens and the test hangs.
+    //
+    // We also deliberately do NOT await `startVideoRecording()`. It returns
+    // a promise that resolves only when the entire recording session ends,
+    // so awaiting inside `page.evaluate` would block until the Escape press
+    // below — except the evaluate has to finish before Escape can fire,
+    // creating a deadlock. Fire-and-forget the call; the indicator-visibility
+    // check below is the synchronization signal that recording has started.
+    await page.evaluate(() => {
       const panel = (window as any).__luxarDebug.recordingPanel;
-      // Set mode to video
-      (panel as any).mode = 'video';
-      // Override confirmation dialog to auto-confirm
-      (panel as any).showConfirmationDialog = () => Promise.resolve(true);
-      await panel.startVideoRecording();
+      panel.mode = 'video';
+      panel.session.showConfirmationDialog = () => Promise.resolve(true);
+      void panel.startVideoRecording();
     });
 
     // Recording indicator should appear; expect.toBeVisible() polls

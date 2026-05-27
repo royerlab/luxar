@@ -602,11 +602,16 @@ test.describe('Dimension Animation - Animation Behavior', () => {
       return ranges?.[3]?.[1] ?? 10;
     });
 
-    // Set position to max - 2, leaving some distance to animate
+    // Set position to a small distance below max so animation reaches the
+    // boundary in just a few frames regardless of data-loading latency.
+    // W is a continuous dim (range 10, traverse 10s) so increment ≈ 0.0167/frame
+    // at 60 FPS — a 0.5 unit delta is ~30 frames (~500ms nominal, but each
+    // step also awaits data load). max-2 was too far to reliably finish
+    // within the polling budget on systems with non-trivial loader latency.
     await page.evaluate((max: number) => {
       const debug = (window as any).__luxarDebug;
       const sceneDimsManager = debug?.sceneDimsManager;
-      sceneDimsManager?.setDimensionValue(3, Math.max(0, max - 2));
+      sceneDimsManager?.setDimensionValue(3, Math.max(0, max - 0.5));
     }, maxValue);
     await waitForNextRender(page);
 

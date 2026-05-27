@@ -73,38 +73,34 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     });
     await waitForNextRender(page);
 
-    // Test 1: Normal W speed
-    const initial1 = await getLuxarState(page);
-    const startZ1 = initial1.camera.position.z;
+    // Run two measurements (normal W vs Shift+W) under identical starting
+    // conditions. We snapshot the initial camera pose ONCE via saveState(),
+    // then call reset() before each sample so the camera returns to that
+    // exact pose with velocity = 0. Pressing F to recenter does not zero
+    // velocity, so residual inertia from the prior sample leaks into the
+    // next one — that asymmetry was producing inverted results.
+    await page.evaluate(() => (window as any).__luxarDebug.controls.saveState());
 
-    await page.keyboard.down('w');
-    await page.waitForTimeout(200);
-    await page.keyboard.up('w');
-    await waitForNextRender(page, 1);
+    const sampleMovement = async (boost: boolean): Promise<number> => {
+      await page.evaluate(() => (window as any).__luxarDebug.controls.reset());
+      await waitForNextRender(page, 1);
 
-    const final1 = await getLuxarState(page);
-    const normalDistance = Math.abs(final1.camera.position.z - startZ1);
+      const initial = await getLuxarState(page);
+      const startZ = initial.camera.position.z;
 
-    // Reset position for fair comparison.
-    // Silent wait variant: F is a camera recenter, not a data nav, so
-    // `isLoading` never toggles and the throwing variant would time out.
-    // The Shift+W assertion below is the real check.
-    await page.keyboard.press('f'); // Recenter
-    await waitForNavigationComplete(page);
+      if (boost) await page.keyboard.down('Shift');
+      await page.keyboard.down('w');
+      await page.waitForTimeout(200);
+      await page.keyboard.up('w');
+      if (boost) await page.keyboard.up('Shift');
+      await waitForNextRender(page, 1);
 
-    // Test 2: Shift+W speed
-    const initial2 = await getLuxarState(page);
-    const startZ2 = initial2.camera.position.z;
+      const final = await getLuxarState(page);
+      return Math.abs(final.camera.position.z - startZ);
+    };
 
-    await page.keyboard.down('Shift');
-    await page.keyboard.down('w');
-    await page.waitForTimeout(200);
-    await page.keyboard.up('w');
-    await page.keyboard.up('Shift');
-    await waitForNextRender(page, 1);
-
-    const final2 = await getLuxarState(page);
-    const boostDistance = Math.abs(final2.camera.position.z - startZ2);
+    const normalDistance = await sampleMovement(false);
+    const boostDistance = await sampleMovement(true);
 
     // Shift+W should move faster than normal W
     expect(boostDistance).toBeGreaterThan(normalDistance);

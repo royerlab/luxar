@@ -115,16 +115,39 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
   });
 
   test('cursor in continuous motion never triggers a pick', async ({ page }) => {
-    // Sweep the cursor across the canvas without ever pausing.
+    // Sweep the cursor across the canvas without ever pausing. Drive the
+    // sweep from inside the browser so the gaps between dispatched
+    // mousemove events are bounded by `setTimeout(0)` (a few ms) rather
+    // than by Playwright IPC + Node-side `waitForTimeout` (~40 ms each,
+    // and >150 ms under CI load). The previous implementation used per-
+    // iteration `page.mouse.move` + `page.waitForTimeout(40)` and was
+    // flaky on slow machines because individual gaps could exceed
+    // HOVER_SETTLE_MS, allowing the settle loop to fire a pick.
     const start = await readDiagnostics(page);
     const target = await getCanvasCentre(page);
-    for (let i = 0; i < 20; i++) {
-      // Wiggle around the target, never resting > HOVER_SETTLE_MS at one spot
-      const dx = (i % 5) - 2;
-      const dy = (Math.floor(i / 5) % 5) - 2;
-      await page.mouse.move(target.x + dx * 4, target.y + dy * 4);
-      await page.waitForTimeout(40); // < 120 ms settle window
-    }
+
+    await page.evaluate(
+      async ([tx, ty]) => {
+        const canvas = document.querySelector('canvas');
+        if (!canvas) throw new Error('canvas missing');
+        for (let i = 0; i < 60; i++) {
+          const dx = (i % 7) - 3;
+          const dy = (Math.floor(i / 7) % 7) - 3;
+          const ev = new MouseEvent('mousemove', {
+            clientX: tx + dx * 4,
+            clientY: ty + dy * 4,
+            bubbles: true,
+            cancelable: true,
+          });
+          canvas.dispatchEvent(ev);
+          // ~16 ms between moves keeps the gap well below the 120 ms
+          // settle window even under heavy worker load.
+          await new Promise((r) => setTimeout(r, 16));
+        }
+      },
+      [target.x, target.y] as const
+    );
+
     const after = await readDiagnostics(page);
     expect(after.lastPickFiredTime).toBe(start.lastPickFiredTime);
   });
