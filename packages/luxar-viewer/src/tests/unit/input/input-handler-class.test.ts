@@ -153,31 +153,31 @@ describe('InputHandler — optional setters', () => {
     overlayManager?: unknown;
     layersPanel?: unknown;
   };
-  it('setScaleBar stores the reference on the private scaleBar slot [input.md/W1][P2]', () => {
+  it('setScaleBar stores the reference on the private scaleBar slot', () => {
     const scaleBar = { dispose: vi.fn() };
     handler.setScaleBar(scaleBar as never);
     expect((handler as unknown as HandlerSlots).scaleBar).toBe(scaleBar);
   });
 
-  it('setColormapLegend stores the reference on the private colormapLegend slot [input.md/W1][P2]', () => {
+  it('setColormapLegend stores the reference on the private colormapLegend slot', () => {
     const legend = { dispose: vi.fn() };
     handler.setColormapLegend(legend as never);
     expect((handler as unknown as HandlerSlots).colormapLegend).toBe(legend);
   });
 
-  it('setOverlayManager stores the reference on the private overlayManager slot [input.md/W1][P2]', () => {
+  it('setOverlayManager stores the reference on the private overlayManager slot', () => {
     const manager = { dispose: vi.fn() };
     handler.setOverlayManager(manager as never);
     expect((handler as unknown as HandlerSlots).overlayManager).toBe(manager);
   });
 
-  it('setLayersPanel stores the reference on the private layersPanel slot [input.md/W1][P2]', () => {
+  it('setLayersPanel stores the reference on the private layersPanel slot', () => {
     const panel = { dispose: vi.fn() };
     handler.setLayersPanel(panel as never);
     expect((handler as unknown as HandlerSlots).layersPanel).toBe(panel);
   });
 
-  it('setDatasetBrowser forwards (undefined → browser → undefined) to panelCoordinator [input.md/W1][P2]', () => {
+  it('setDatasetBrowser forwards (undefined → browser → undefined) to panelCoordinator', () => {
     // setDatasetBrowser doesn't keep a local field; it only forwards to
     // panelCoordinator. Spy on the coordinator (the trust boundary for
     // this setter) and verify the full sequence of forwarded calls.
@@ -199,7 +199,7 @@ describe('InputHandler — optional setters', () => {
 });
 
 describe('InputHandler.clearDimensionUI', () => {
-  it('is a no-op when no dimension sliders have been initialized [input.md/W1][P2]', () => {
+  it('is a no-op when no dimension sliders have been initialized', () => {
     // input.md [W1][P2] strengthening: previously .not.toThrow() only.
     // The no-listener contract: the sceneDimsListener slot is undefined
     // before, and clearDimensionUI must leave it undefined. A regression
@@ -259,7 +259,7 @@ describe('InputHandler.dispose', () => {
     expect(debugConsole.dispose).toHaveBeenCalled();
   });
 
-  it('init() then dispose() clears the eventListeners queue [input.md/W1][P2]', () => {
+  it('init() then dispose() clears the eventListeners queue', () => {
     // input.md [W1][P2] strengthening: previously .not.toThrow() only.
     // Pin the post-dispose invariants: eventListeners array is empty
     // (all registered cleanups have fired), so future dispose() calls
@@ -283,7 +283,7 @@ describe('InputHandler.dispose', () => {
   // (initDimensionSliders bails when initFromScene returns false
   // against the stubbed scene), so this test only verifies the
   // missing-listener case behaves correctly.
-  it('dispose() before init() still disposes debugConsole [input.md/W1][P2]', () => {
+  it('dispose() before init() still disposes debugConsole', () => {
     // input.md [W1][P2] strengthening: the dispose() contract calls
     // debugConsole.dispose() unconditionally. Verify that observable
     // side effect rather than mere non-throw.
@@ -301,7 +301,7 @@ describe('InputHandler.dispose', () => {
     expect(slot.eventListeners.length).toBe(0);
   });
 
-  it('dispose() is idempotent: second call leaves state empty and does not double-dispose [input.md/W1][P2]', () => {
+  it('dispose() is idempotent: second call leaves state empty and does not double-dispose', () => {
     // input.md [W1][P2] strengthening: the prior comment said "may or
     // may not double-call debugConsole.dispose()" — pin the actual
     // behaviour. dispose() calls debugConsole.dispose() each time it
