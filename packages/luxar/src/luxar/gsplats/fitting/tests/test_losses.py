@@ -348,6 +348,40 @@ def test_different_loss_types(basic_model) -> None:
     assert len(set(losses)) >= 2  # At least 2 different values
 
 
+@pytest.mark.parametrize(
+    "bad_loss_type",
+    ["poisson_deviance", "mes", "L2", "", "huber", "MSE_LOSS"],
+)
+def test_unknown_loss_type_raises(basic_model, bad_loss_type) -> None:
+    """Audit C1 fix: unknown loss_type must raise ValueError.
+
+    Previously the function silently fell through to MSE on any unknown
+    string — typos went undetected. The negative test pins the new
+    contract; the positive `test_different_loss_types` above covers the
+    happy path.
+    """
+    V = np.random.rand(8, 8).astype(np.float32)
+    V_tensor = torch.from_numpy(V).to("cpu")
+    preprocessed_data = PreprocessedData(
+        d=2,
+        N=3,
+        seed_centers=np.random.rand(3, 2).astype(np.float32) * 6,
+        V_normalized=V,
+        V_tensor=V_tensor,
+        image_min=0.0,
+        image_max=1.0,
+        intensity_range=1.0,
+        max_abs_error=0.01,
+    )
+
+    pred = basic_model()
+    config = create_test_config(V, n_iters=10, loss_type=bad_loss_type)
+    loss_fn = create_loss_function(config, preprocessed_data, basic_model)
+
+    with pytest.raises(ValueError, match="Unknown loss_type"):
+        loss_fn(pred)
+
+
 # =============================================================================
 # Boundary Penalty Tests
 # =============================================================================
