@@ -183,7 +183,12 @@ describe('Accumulator Public API', () => {
     });
   });
 
-  describe('Multi-Type Integration', () => {
+  // integration.md O7 / Phase E50: previously named "Multi-Type
+  // Integration" — the block's tests cover dtype-preservation through
+  // fill→getData() round-trips. "Multi-Type" is fine but "Integration"
+  // misframes them since these are direct-API unit tests (no loader
+  // involvement). Rename to surface the actual contract.
+  describe('dtype preservation through getData() public API', () => {
     it('should preserve types through full pipeline', () => {
       const accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
 
