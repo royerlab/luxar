@@ -93,7 +93,8 @@ describe('cached-zarr-array', () => {
       expect(wrapped.chunks).toEqual([50, 3]);
     });
 
-    it('passes through every direct-access property in the proxy short-list [cache.md/G13][P5]', () => {
+    // workers.md O3 / cache.md G13 [P5]: audit-id moved to comment per Phase E54.
+    it('passes through every direct-access property in the proxy short-list', () => {
       // [cache.md/G13][P5] The proxy lists 12 properties for direct access
       // (cached-zarr-array.ts:109-124): attrs, shape, dtype, chunks, order,
       // fill_value, fillValue, dimensionNames, compressor, filters, codec,
