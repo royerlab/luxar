@@ -29,7 +29,7 @@ import { mahalanobis_distance } from '../../../wasm/typescript/gsplats-processin
 import { compute_gsplats_attenuation } from '../../../wasm/typescript/gsplats-processing';
 import { clip_segment_single, lerp_vec3 } from '../../../wasm/typescript/lines-clipping';
 
-describe('decode_quantized — degenerate range (minVal === maxVal) [wasm.md/G6]', () => {
+describe('decode_quantized — degenerate range (minVal === maxVal)', () => {
   // When minVal === maxVal the scale becomes zero; every output entry must
   // collapse to the constant value, irrespective of the input byte.
   it('u8: emits the constant value for every input byte', () => {
@@ -57,7 +57,7 @@ describe('decode_quantized — degenerate range (minVal === maxVal) [wasm.md/G6]
   });
 });
 
-describe('decode_log_scalar — maxLog boundary [wasm.md/G6]', () => {
+describe('decode_log_scalar — maxLog boundary', () => {
   // maxLog=0 collapses every output to expm1(0) = 0.
   it('u8: maxLog=0 produces 0 for every input byte', () => {
     const data = new Uint8Array([0, 64, 128, 255]);
@@ -85,7 +85,7 @@ describe('decode_log_scalar — maxLog boundary [wasm.md/G6]', () => {
   });
 });
 
-describe('mahalanobis_distance — ndim=1 [wasm.md/G12]', () => {
+describe('mahalanobis_distance — ndim=1', () => {
   // For ndim=1 the packed Cholesky is a single diagonal entry L[0,0].
   // Forward substitution reduces to y[0] = diff[0] / L[0,0], and
   // ||y|| = |y[0]|. Pins the trivial 1D case so a refactor of the
@@ -117,7 +117,7 @@ describe('mahalanobis_distance — ndim=1 [wasm.md/G12]', () => {
   });
 });
 
-describe('compute_gsplats_attenuation — numHidden=ndim [wasm.md/G4]', () => {
+describe('compute_gsplats_attenuation — numHidden=ndim', () => {
   // Boundary: every dimension is hidden, no displayed dim. The marginal
   // Cholesky covers the full ndim and the attenuation depends on full-
   // dimensional Mahalanobis distance to the slice. Pins the "all hidden"
@@ -168,7 +168,7 @@ describe('compute_gsplats_attenuation — numHidden=ndim [wasm.md/G4]', () => {
   });
 });
 
-describe('clip_segment_single — parallel-to-slice edge case (dv < 1e-10) [wasm.md/G9]', () => {
+describe('clip_segment_single — parallel-to-slice edge case (dv < 1e-10)', () => {
   // When p1[dim] === p2[dim] in a hidden dimension, the segment is
   // parallel to the slice in that dimension. The source skips that
   // dim via `if (Math.abs(dv) < 1e-10) continue;`. A mutant that
@@ -210,7 +210,7 @@ describe('clip_segment_single — parallel-to-slice edge case (dv < 1e-10) [wasm
 // asserted it for `clip_segment_single`. A mutant that mis-classified
 // opposite-sides as same-side (Case E) would silently hide every line
 // crossing the slice.
-describe('clip_segment_single — Case D opposite-sides crossing [wasm.md/G9]', () => {
+describe('clip_segment_single — Case D opposite-sides crossing', () => {
   it('endpoints on opposite sides of a hidden dim emit clipped t1, t2 in (0,1)', () => {
     // 4D: dim 3 hidden, slice center at 0 with tol 0.5 → slice ∈ [-0.5, 0.5].
     // Endpoints at dim3 = -2 (below) and dim3 = +2 (above). Linearly,
@@ -256,7 +256,7 @@ describe('clip_segment_single — Case D opposite-sides crossing [wasm.md/G9]', 
 // the same side, it's invisible (Case E). The corner case where p1 == p2
 // is not directly enumerated in the 5-case docstring but exercises every
 // parallel branch.
-describe('clip_segment_single — zero-length segment [wasm.md/G9]', () => {
+describe('clip_segment_single — zero-length segment', () => {
   it('p1 === p2 inside the slice: visible with t1=0, t2=1', () => {
     const p1 = new Float32Array([1, 2, 3, 5]);
     const p2 = new Float32Array([1, 2, 3, 5]); // identical to p1

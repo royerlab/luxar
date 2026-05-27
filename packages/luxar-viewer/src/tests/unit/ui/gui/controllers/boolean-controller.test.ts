@@ -16,7 +16,9 @@ describe('BooleanController', () => {
   });
 
   describe('constructor', () => {
-    it('should create checkbox element', () => {
+    // ui.md O6 / Phase E33: P9 rename — describes input class (BooleanController
+    // construction) + expected behavior (a checkbox input element is mounted).
+    it('mounts an <input type=checkbox> under .luxar-gui__checkbox when constructed', () => {
       object = { enabled: true };
       controller = new BooleanController(object, 'enabled');
 
@@ -24,7 +26,9 @@ describe('BooleanController', () => {
       expect(checkbox).toBeInstanceOf(HTMLInputElement);
     });
 
-    it('should set initial checked state', () => {
+    // ui.md O6 / Phase E33: P9 rename — pins that the checkbox.checked
+    // mirror reflects the initial value passed to the constructor.
+    it('checkbox.checked mirrors the initial property value (object.enabled=true → checkbox.checked=true)', () => {
       object = { enabled: true };
       controller = new BooleanController(object, 'enabled');
 
@@ -34,7 +38,10 @@ describe('BooleanController', () => {
       expect(checkbox.checked).toBe(true);
     });
 
-    it('should wrap checkbox in label', () => {
+    // ui.md O6 / Phase E33: P9 rename — the input must be nested inside
+    // the .luxar-gui__controller-name <label> so clicking the label
+    // toggles the checkbox (HTML label association without `for=`).
+    it('wraps the checkbox in a <label class="luxar-gui__controller-name"> for click-to-toggle association', () => {
       object = { enabled: false };
       controller = new BooleanController(object, 'enabled');
 
@@ -50,14 +57,18 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should set value', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that setValue(v) writes
+    // through to the backing property AND surfaces via getValue().
+    it('setValue(true) writes to object.enabled AND mirrors via getValue()', () => {
       controller.setValue(true);
 
       expect(object.enabled).toBe(true);
       expect(controller.getValue()).toBe(true);
     });
 
-    it('should update checkbox display', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that setValue() also
+    // syncs the DOM checkbox's `.checked` mirror.
+    it('setValue(true) updates the DOM checkbox.checked mirror in lockstep', () => {
       controller.setValue(true);
 
       const checkbox = controller.domElement.querySelector(
@@ -73,7 +84,10 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should sync checkbox with object value', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that updateDisplay()
+    // re-reads object.enabled (mutated externally) and syncs the
+    // checkbox.checked mirror to match.
+    it('updateDisplay() re-reads object.enabled after external mutation and updates checkbox.checked', () => {
       object.enabled = true;
       controller.updateDisplay();
 
@@ -133,11 +147,12 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should set label text', () => {
+    // ui.md O6 / Phase E40: P9 rename — name(text) writes text into the
+    // `.luxar-gui__controller-name` <label>, AFTER the checkbox <input>.
+    it('name(text) appends text into .luxar-gui__controller-name after the checkbox', () => {
       controller.name('Auto Rotate');
 
       const label = controller.domElement.querySelector('.luxar-gui__controller-name');
-      // Text should be after checkbox
       expect(label?.textContent).toContain('Auto Rotate');
     });
   });
@@ -148,14 +163,19 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should show controller', () => {
+    // ui.md O6 / Phase E40: P9 rename — show() clears inline display
+    // style (reverts to CSS-default 'inline-block' or whatever the
+    // stylesheet sets).
+    it('show() clears the inline display style (style.display === "")', () => {
       controller.hide();
       controller.show();
 
       expect(controller.domElement.style.display).toBe('');
     });
 
-    it('should hide controller', () => {
+    // ui.md O6 / Phase E40: P9 rename — hide() sets inline display
+    // none, overriding any stylesheet default.
+    it('hide() sets inline style.display to "none"', () => {
       controller.show();
       controller.hide();
 
@@ -169,7 +189,9 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should remove event listeners', () => {
+    // ui.md O6 / Phase E40: P9 rename — dispose() delegates to
+    // EventManager.removeAll() so every attached listener is torn down.
+    it('dispose() delegates to eventManager.removeAll() to tear down listeners', () => {
       const eventManagerSpy = vi.spyOn(controller['eventManager'], 'removeAll');
 
       controller.dispose();
@@ -177,7 +199,9 @@ describe('BooleanController', () => {
       expect(eventManagerSpy).toHaveBeenCalled();
     });
 
-    it('should remove from DOM', () => {
+    // ui.md O6 / Phase E40: P9 rename — dispose() detaches the
+    // controller's DOM element from its parent.
+    it('dispose() detaches the controller domElement from its parent in the DOM', () => {
       const parent = document.createElement('div');
       parent.appendChild(controller.domElement);
 

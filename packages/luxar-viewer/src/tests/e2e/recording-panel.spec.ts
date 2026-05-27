@@ -199,21 +199,24 @@ test.describe('Recording Panel', () => {
 
   test('should show recording indicator during video recording', async ({ page }) => {
     // Start recording via debug interface (skip the dialog).
-    // The confirmation dialog is owned by `panel.session`, not the panel
-    // itself — both video-recording-strategy.ts and offline-capture-strategy.ts
-    // call `session.showConfirmationDialog(...)`. Overriding the method on
-    // the panel does nothing; the dialog opens and the test hangs.
     //
-    // We also deliberately do NOT await `startVideoRecording()`. It returns
-    // a promise that resolves only when the entire recording session ends,
-    // so awaiting inside `page.evaluate` would block until the Escape press
-    // below — except the evaluate has to finish before Escape can fire,
-    // creating a deadlock. Fire-and-forget the call; the indicator-visibility
-    // check below is the synchronization signal that recording has started.
+    // Two fixes layered here:
+    //
+    // 1. `showConfirmationDialog` lives on `panel.session` after the
+    //    recording-panel refactor (was on `panel` when this test was
+    //    written). Overriding the wrong object left the real dialog
+    //    blocking the recording, so the indicator never appeared.
+    //
+    // 2. `startVideoRecording()` resolves only when MediaRecorder.onstop
+    //    fires (i.e. when recording stops). We must NOT await it here —
+    //    doing so blocks page.evaluate() forever since the test stops
+    //    recording via an Escape key press below, which cannot fire
+    //    while evaluate is still pending. Fire-and-forget; the indicator
+    //    polling below observes the start.
     await page.evaluate(() => {
       const panel = (window as any).__luxarDebug.recordingPanel;
-      panel.mode = 'video';
-      panel.session.showConfirmationDialog = () => Promise.resolve(true);
+      (panel as any).mode = 'video';
+      (panel as any).session.showConfirmationDialog = () => Promise.resolve(true);
       void panel.startVideoRecording();
     });
 

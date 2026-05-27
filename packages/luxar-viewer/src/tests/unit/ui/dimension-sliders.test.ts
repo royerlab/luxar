@@ -34,7 +34,11 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('DimensionSliders - Memory Leak Prevention', () => {
+// ui.md O1 / Phase E39: previously named "Memory Leak Prevention" — a
+// concern, not a behavior. The inner tests now cover real
+// slider/dropdown lifecycle contracts (construction → re-init →
+// dispose). Rename to surface what the block actually pins.
+describe('DimensionSliders - slider/dropdown lifecycle (post-dispose)', () => {
   const createMockDims = (): SimpleDims => ({
     ndim: 5,
     displayed: [0, 1, 2], // X, Y, Z

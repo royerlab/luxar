@@ -22,13 +22,18 @@ describe('ConsoleInterceptor ring buffer', () => {
     consoleInterceptor.dispose();
   });
 
-  it('appends messages while under capacity', () => {
+  it('appends messages while under capacity (args + type both recorded)', () => {
+    // utils.md W4 / Phase E61 strengthening: pair the args[0] assertion
+    // with a type-tag check. A mutant that always sets type to a fixed
+    // value regardless of source (e.g. always 'log' even for warn/error)
+    // would have slipped through with the args-only check.
     console.log('a');
     console.log('b');
     console.log('c');
 
     const messages = consoleInterceptor.getBufferedMessages();
     expect(messages.map((m) => m.args[0])).toEqual(['a', 'b', 'c']);
+    expect(messages.map((m) => m.type)).toEqual(['log', 'log', 'log']);
   });
 
   it('caps buffer at maxBufferSize when more messages are pushed', () => {
@@ -80,16 +85,24 @@ describe('ConsoleInterceptor ring buffer', () => {
 });
 
 describe('ConsoleInterceptor opt-in patching (embedability)', () => {
-  it('does not patch console.* until patch() is called', () => {
-    // Start from a clean slate so this test does not rely on previous order.
+  it('does not patch console.* until patch() is called (verifies actual identity, not just isPatched flag)', () => {
+    // utils.md W3 / Phase E61 strengthening: previously the test only
+    // toggled the `isPatched` flag and asserted it. A mutant that
+    // flipped `this.isIntercepting = true` but never actually replaced
+    // `console.log` would pass. Capture the original method reference
+    // and assert that patch() replaces it AND dispose() restores it.
     consoleInterceptor.dispose();
+    const originalLog = console.log;
     expect(consoleInterceptor.isPatched).toBe(false);
+    expect(console.log).toBe(originalLog);
 
     consoleInterceptor.patch();
     expect(consoleInterceptor.isPatched).toBe(true);
+    expect(console.log).not.toBe(originalLog); // actually replaced
 
     consoleInterceptor.dispose();
     expect(consoleInterceptor.isPatched).toBe(false);
+    expect(console.log).toBe(originalLog); // restored
   });
 
   it('captures messages while patched and stops on dispose()', () => {

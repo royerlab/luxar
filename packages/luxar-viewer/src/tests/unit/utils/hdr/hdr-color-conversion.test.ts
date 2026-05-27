@@ -9,7 +9,9 @@ import { describe, it, expect } from 'vitest';
 import { rgbaFloatToI420P10 } from '../../../../utils/hdr/hdr-color-conversion';
 
 describe('rgbaFloatToI420P10', () => {
-  it('should produce correct buffer size for I420P10', () => {
+  // utils.md O3 / Phase E43: P9 rename — pins the I420P10 packed
+  // buffer size: Y plane (w·h) + U plane (w/2·h/2) + V plane (w/2·h/2).
+  it('emits a Uint16Array sized w·h + 2·(w/2·h/2) (Y + U + V planes packed)', () => {
     const width = 4;
     const height = 4;
     const rgba = new Float32Array(width * height * 4);
@@ -21,13 +23,18 @@ describe('rgbaFloatToI420P10', () => {
     expect(result.length).toBe(ySize + 2 * uvSize);
   });
 
-  it('should return Uint16Array', () => {
+  // utils.md O3 / Phase E43: P9 rename — pins the Uint16Array dtype
+  // (10-bit values packed into 16-bit lanes).
+  it('returns a Uint16Array (10-bit Y/U/V values in 16-bit lanes)', () => {
     const rgba = new Float32Array(4 * 4 * 4);
     const result = rgbaFloatToI420P10(rgba, 4, 4);
     expect(result).toBeInstanceOf(Uint16Array);
   });
 
-  it('should produce limited-range values for black', () => {
+  // utils.md O3 / Phase E43: P9 rename — pins the BT.709 limited-range
+  // mapping for pure-black input: Y=64 (limited-range min), Cb/Cr=512
+  // (achromatic center, 10-bit).
+  it('all-black RGBA emits limited-range Y=64 and achromatic Cb/Cr=512', () => {
     // All zeros = black
     const rgba = new Float32Array(4 * 4 * 4); // All zeros
     const result = rgbaFloatToI420P10(rgba, 4, 4);
@@ -41,7 +48,9 @@ describe('rgbaFloatToI420P10', () => {
     expect(result[ySize + 2 * 2]).toBe(512); // V
   });
 
-  it('should produce higher Y for brighter input', () => {
+  // utils.md O3 / Phase E46: P9 rename — Y luma scales monotonically
+  // with input intensity (brighter RGB → larger Y after PQ + matrix).
+  it('Y luma increases monotonically with input intensity (bright RGB > dark RGB)', () => {
     const width = 2;
     const height = 2;
 
@@ -70,7 +79,9 @@ describe('rgbaFloatToI420P10', () => {
     expect(brightResult[0]).toBeGreaterThan(darkResult[0]);
   });
 
-  it('should produce Y values in limited range (64-940)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pins BT.2020 10-bit
+  // limited-range Y bounds (64 = black, 940 = peak white).
+  it('extreme HDR brightness clamps Y into limited-range [64, 940]', () => {
     const width = 2;
     const height = 2;
 
@@ -92,7 +103,9 @@ describe('rgbaFloatToI420P10', () => {
     }
   });
 
-  it('should produce Cb/Cr values in limited range (64-960)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pins BT.2020 10-bit
+  // limited-range Cb/Cr bounds (64 = chroma min, 960 = chroma max).
+  it('pure-red RGBA clamps Cb/Cr into limited-range [64, 960]', () => {
     const width = 2;
     const height = 2;
 
@@ -117,7 +130,9 @@ describe('rgbaFloatToI420P10', () => {
     }
   });
 
-  it('should handle neutral gray (achromatic Cb/Cr = 512)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pure-gray RGBA (R=G=B) emits
+  // achromatic Cb=Cr=512 (10-bit chroma center).
+  it('neutral gray RGBA (R=G=B=0.5) emits achromatic Cb=Cr=512', () => {
     const width = 2;
     const height = 2;
     const rgba = new Float32Array(width * height * 4);

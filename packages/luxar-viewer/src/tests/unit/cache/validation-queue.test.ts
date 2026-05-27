@@ -231,7 +231,8 @@ describe('ValidationQueue.serialize', () => {
     expect(cancelled).toBe(true);
   });
 
-  it('cancel(unknownId) is a safe no-op [cache.md/G11][P5]', async () => {
+  // workers.md O3 / cache.md G11 [P5]: audit-id moved to comment per Phase E53.
+  it('cancel(unknownId) is a safe no-op', async () => {
     // [cache.md/G11][P5] cancel on an id with no entry must not throw and
     // must not perturb any unrelated queue. The comment in the source
     // implies safety but no test pinned it.

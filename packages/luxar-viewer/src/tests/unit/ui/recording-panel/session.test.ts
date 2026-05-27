@@ -249,28 +249,48 @@ describe('RecordingSession', () => {
       expect(document.querySelector('.luxar-recording-indicator')).toBeNull();
     });
 
-    it('clears the interval timer when hiding', () => {
-      // MED-50 (audit-ack, TEST-INFRA not production): the audit
-      // flagged this `spyOn(global, 'clearInterval')` assertion as
-      // fragile — if `session.ts` is later refactored to use
-      // `setTimeout` recursion (or another timer mechanism), the
-      // `expect(clearIntervalSpy).toHaveBeenCalled()` would silently
-      // pass for the wrong reason (clearInterval might be invoked by
-      // unrelated test infrastructure). Accepted that risk rather than
-      // refactoring: the session implementation currently uses
-      // `setInterval`+`clearInterval` (see session.ts:406, 424), and
-      // pinning the test to that API is consistent with the codebase
-      // convention of testing the cleanup mechanism for any timer
-      // hooked into the panel's lifetime. If the implementation
-      // switches to `setTimeout`-recursion, this test must be rewritten
-      // to assert on observable state (indicator stops updating after
-      // dispose) instead of the cleanup primitive.
-      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+    // [ui.md/C7 / Phase F] Verifies the OBSERVABLE timer-cleanup
+    // contract rather than spying on `clearInterval`. The previous
+    // assertion (`expect(clearIntervalSpy).toHaveBeenCalled()`) would
+    // silently pass under any future refactor that switched from
+    // `setInterval` → `setTimeout`-recursion / `requestAnimationFrame`,
+    // because vitest's own jsdom teardown also invokes `clearInterval`.
+    //
+    // The observable: the indicator's `__time` element receives a fresh
+    // textContent value on every interval tick. After hide, that timer
+    // must NOT fire again — captured by checking textContent remains
+    // unchanged after additional simulated time passes (the detached
+    // DOM node is still alive in memory; a leaked interval would still
+    // mutate its textContent).
+    it('stops the per-second time updates when hiding (observable contract)', () => {
+      vi.useFakeTimers();
+      try {
+        // Anchor recordingStartTime to "now" so the elapsed-time
+        // formatting produces a sensible MM:SS value.
+        (panel as any).session.recordingStartTime = Date.now();
+        (panel as any).session.showRecordingIndicator();
+        const timeEl = document.querySelector(
+          '.luxar-recording-indicator__time'
+        ) as HTMLElement;
+        expect(timeEl).toBeTruthy();
 
-      (panel as any).session.showRecordingIndicator();
-      (panel as any).session.hideRecordingIndicator();
+        // Tick once to confirm the interval is alive: the callback
+        // overwrites textContent every second.
+        vi.advanceTimersByTime(1100);
+        expect(timeEl.textContent).not.toBe('00:00'); // Updated from initial.
 
-      expect(clearIntervalSpy).toHaveBeenCalled();
+        (panel as any).session.hideRecordingIndicator();
+
+        // The indicator DOM node has been detached, but the timeEl
+        // reference is still live. If `hideRecordingIndicator()` failed
+        // to clear the interval, subsequent ticks would still mutate
+        // timeEl.textContent.
+        const textRightAfterHide = timeEl.textContent;
+        vi.advanceTimersByTime(5000);
+        expect(timeEl.textContent).toBe(textRightAfterHide);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('removes the click listener when hiding', () => {

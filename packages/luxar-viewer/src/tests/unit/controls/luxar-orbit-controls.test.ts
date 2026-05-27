@@ -268,52 +268,12 @@ describe('LuxarOrbitControls', () => {
     });
   });
 
-  describe('damping', () => {
-    // controls.md C8: these two tests inject through private `rotationDelta`
-    // because there is no public seam to enqueue a rotation that participates
-    // in the damping pipeline — `applyOrbitRotation` commits orientation
-    // directly and bypasses damping entirely. The proper test home is
-    // `luxar-orbit-controls/update.test.ts`, which accesses `rotationDelta`
-    // through the documented `OrbitUpdateCtx` seam. The orchestrator-level
-    // tests are kept here as integration coverage for the wiring between the
-    // private delta and update().
-    it('should decay rotation velocity over multiple frames', () => {
-      controls = new LuxarOrbitControls(camera, domElement, {
-        enableDamping: true,
-        dampingFactor: 0.1,
-      });
-      controls.update();
-
-      // Apply rotation
-      const rotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
-      (controls as any).rotationDelta.multiply(rotQuat);
-
-      // After several updates, rotation delta should approach identity
-      for (let i = 0; i < 50; i++) controls.update();
-
-      const delta = (controls as any).rotationDelta as THREE.Quaternion;
-      expect(delta.x).toBeCloseTo(0, 2);
-      expect(delta.y).toBeCloseTo(0, 2);
-      expect(delta.z).toBeCloseTo(0, 2);
-      expect(delta.w).toBeCloseTo(1, 2);
-    });
-
-    it('should apply rotation immediately when damping disabled', () => {
-      controls = new LuxarOrbitControls(camera, domElement, { enableDamping: false });
-      controls.update();
-
-      const rotQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
-      (controls as any).rotationDelta.multiply(rotQuat);
-      controls.update();
-
-      // Delta should be cleared (identity) after one update
-      const delta = (controls as any).rotationDelta as THREE.Quaternion;
-      expect(delta.x).toBeCloseTo(0, 5);
-      expect(delta.y).toBeCloseTo(0, 5);
-      expect(delta.z).toBeCloseTo(0, 5);
-      expect(delta.w).toBeCloseTo(1, 5);
-    });
-  });
+  // controls.md C8 resolved: damping-decay coverage moved to
+  // `luxar-orbit-controls/update.test.ts` step-2 describe block, which
+  // drives the same contract via the documented `OrbitUpdateCtx` seam
+  // and does not need to reach into private fields. The two tests that
+  // used to live here mutated `(controls as any).rotationDelta`
+  // directly, a P1 violation the audit flagged.
 
   describe('auto-rotation', () => {
     it('sweeps the camera by the deterministic per-frame angle (W11)', () => {
@@ -508,7 +468,7 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('dispose', () => {
-    it('dispose() detaches pointer/wheel/contextmenu listeners on dom element [controls.md/W10][P2]', () => {
+    it('dispose() detaches pointer/wheel/contextmenu listeners on dom element', () => {
       // controls.md [W10][P2] strengthening: was `.not.toThrow()` only.
       // The contract is that dispose() calls removeEventListener for each
       // of the 6 event types it registered (pointerdown/pointermove/
@@ -528,7 +488,7 @@ describe('LuxarOrbitControls', () => {
       removeSpy.mockRestore();
     });
 
-    it('dispose() removes the ortho view-axis wheel listener [controls.md/W10][P2][C12]', () => {
+    it('dispose() removes the ortho view-axis wheel listener', () => {
       // controls.md C12 fix: assert the BEHAVIORAL contract (no leak) rather
       // than the private `viewAxisRotationHandler` nulling. After dispose, a
       // shift+wheel event must NOT mutate orientation — the handler is

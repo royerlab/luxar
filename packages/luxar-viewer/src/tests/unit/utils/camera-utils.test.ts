@@ -14,54 +14,70 @@ import {
 
 describe('camera-utils', () => {
   describe('isPerspectiveCamera', () => {
-    it('should return true for PerspectiveCamera', () => {
+    // utils.md O2 / Phase E44: P9 rename — isPerspectiveCamera(cam) is
+    // true iff cam is a THREE.PerspectiveCamera (one half of the
+    // type-guard contract). Sibling test covers the false branch.
+    it('isPerspectiveCamera(PerspectiveCamera) === true', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       expect(isPerspectiveCamera(cam)).toBe(true);
     });
 
-    it('should return false for OrthographicCamera', () => {
+    it('isPerspectiveCamera(OrthographicCamera) === false', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(isPerspectiveCamera(cam)).toBe(false);
     });
   });
 
   describe('isOrthographicCamera', () => {
-    it('should return true for OrthographicCamera', () => {
+    // utils.md O2 / Phase E44: P9 rename — symmetric to the isPerspectiveCamera
+    // pair above.
+    it('isOrthographicCamera(OrthographicCamera) === true', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(isOrthographicCamera(cam)).toBe(true);
     });
 
-    it('should return false for PerspectiveCamera', () => {
+    it('isOrthographicCamera(PerspectiveCamera) === false', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       expect(isOrthographicCamera(cam)).toBe(false);
     });
   });
 
   describe('getCameraFovRadians', () => {
-    it('should convert perspective FOV from degrees to radians', () => {
+    // utils.md O2 / Phase E47: P9 rename — pins the deg→rad conversion
+    // (THREE stores fov in degrees; getCameraFovRadians returns radians).
+    it('PerspectiveCamera with 90° fov returns π/2 radians', () => {
       const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBeCloseTo(Math.PI / 2, 5);
     });
 
-    it('should return 0 for orthographic camera', () => {
+    // utils.md O2 / Phase E47: P9 rename — orthographic cameras have no
+    // fov in the perspective sense; the helper returns 0 to surface that.
+    it('OrthographicCamera returns 0 radians (no perspective fov)', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBe(0);
     });
 
-    it('should handle 47-degree FOV (default)', () => {
+    // utils.md O2 / Phase E47: P9 rename — sanity for the project's
+    // default 47° fov used in many test cameras.
+    it('PerspectiveCamera with default 47° fov returns 47·π/180 radians', () => {
       const cam = new THREE.PerspectiveCamera(47, 1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBeCloseTo((47 * Math.PI) / 180, 5);
     });
   });
 
   describe('updateCameraAspect', () => {
-    it('should update perspective camera aspect ratio', () => {
+    // utils.md O2 / Phase E47: P9 rename — pins the basic perspective
+    // aspect-ratio update (width/height ratio is stored on cam.aspect).
+    it('PerspectiveCamera: aspect updates to width/height', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       updateCameraAspect(cam, 1920, 1080);
       expect(cam.aspect).toBeCloseTo(1920 / 1080, 5);
     });
 
-    it('should scale orthographic frustum width while preserving height', () => {
+    // utils.md O2 / Phase E49: P9 renames — pin the orthographic
+    // resize contract: vertical extent (top - bottom) is preserved,
+    // horizontal half-width scales by `aspect = width / height`.
+    it('OrthographicCamera: vertical extent preserved, horizontal half-width = halfHeight·aspect (16:9)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       // Vertical extent = 10 (top - bottom = 5 - (-5))
       updateCameraAspect(cam, 1920, 1080);
@@ -74,7 +90,9 @@ describe('camera-utils', () => {
       expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
-    it('should handle square viewport for orthographic camera', () => {
+    // utils.md O2 / Phase E49: P9 rename — square viewport (aspect=1)
+    // leaves the orthographic frustum bounds unchanged.
+    it('OrthographicCamera: square viewport leaves frustum bounds unchanged', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 800, 800);
 
@@ -84,7 +102,10 @@ describe('camera-utils', () => {
       expect(cam.bottom).toBeCloseTo(-5, 5);
     });
 
-    it('should handle portrait viewport for orthographic camera', () => {
+    // utils.md O2 / Phase E49: P9 rename — portrait viewport (aspect<1)
+    // narrows the orthographic horizontal half-width below the vertical
+    // half-extent.
+    it('OrthographicCamera: portrait viewport (600x1200) narrows horizontal half-width to halfHeight·0.5', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 600, 1200);
 
@@ -94,7 +115,10 @@ describe('camera-utils', () => {
       expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
-    it('should call updateProjectionMatrix for both camera types', () => {
+    // utils.md O2 / Phase E49: P9 rename — pins that updateCameraAspect
+    // calls updateProjectionMatrix internally so the GPU receives the
+    // new projection on the next frame (observable as a changed matrix).
+    it('updateCameraAspect mutates projectionMatrix on both perspective and orthographic cameras', () => {
       const persp = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
 
@@ -112,26 +136,26 @@ describe('camera-utils', () => {
   });
 
   describe('getOrthoFrustumHeight', () => {
-    it('should return frustum height at default zoom (1.0)', () => {
+    // utils.md O2 / Phase E48: P9 renames — pin the height formula
+    // (top - bottom) / zoom across {default zoom, 2x zoom, asymmetric
+    // frustum, very high zoom}.
+    it('zoom=1, symmetric frustum: height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
-      // top - bottom = 5 - (-5) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
-    it('should account for zoom level', () => {
+    it('zoom=2 halves the effective frustum height (10 → 5)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 2;
-      // Effective height = (top - bottom) / zoom = 10 / 2 = 5
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(5, 5);
     });
 
-    it('should handle asymmetric frustum', () => {
+    it('asymmetric frustum (top=8, bottom=-2): height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-3, 7, 8, -2, 0.1, 100);
-      // top - bottom = 8 - (-2) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
-    it('should handle high zoom', () => {
+    it('zoom=100 shrinks height by 100x (10 → 0.1)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 100;
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(0.1, 5);

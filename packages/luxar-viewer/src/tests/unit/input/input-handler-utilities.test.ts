@@ -304,7 +304,7 @@ describe('InputHandler Utilities', () => {
     // the starting dim. The function operates on the non-displayed
     // dimension subset; forward(currentDim) then backward(result) must
     // be a round-trip identity, exercising the wrap-around at both ends.
-    it('[property] forward then backward returns to start for any non-displayed dim [input.md/H4][P12]', () => {
+    it('[property] forward then backward returns to start for any non-displayed dim', () => {
       fc.assert(
         fc.property(
           // ndim in [4, 12]; displayed = the first 3 dims (so non-displayed
@@ -326,7 +326,7 @@ describe('InputHandler Utilities', () => {
     // input.md [H4][P12] follow-up: backward then forward is also identity.
     // Together with the prior property this pins the full inverse-relation
     // contract — any sign-flip mutation in the wrap arithmetic would surface.
-    it('[property] backward then forward returns to start for any non-displayed dim [input.md/H4][P12]', () => {
+    it('[property] backward then forward returns to start for any non-displayed dim', () => {
       fc.assert(
         fc.property(
           fc.integer({ min: 4, max: 12 }).chain((ndim) =>

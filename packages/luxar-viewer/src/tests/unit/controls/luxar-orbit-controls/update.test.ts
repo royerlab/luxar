@@ -126,6 +126,40 @@ describe('runUpdateStep — step 1: auto-rotation', () => {
   );
 });
 
+describe('runUpdateStep — step 2: rotation damping', () => {
+  // [controls.md/C8 / Phase F] Damping decay was previously tested at the
+  // orchestrator level by mutating `(controls as any).rotationDelta`
+  // directly — a P1 private-state injection the audit flagged. The
+  // contract being tested (rotation delta slerps toward identity each
+  // frame when damping is enabled; commits in one frame when damping
+  // is disabled) lives entirely inside `runUpdateStep`'s step 2, so
+  // OrbitUpdateCtx is the correct seam. `rotationDelta` is a documented
+  // public field of `OrbitUpdateCtx` — no privacy violation.
+  it('decays rotationDelta toward identity over multiple frames when damping enabled', () => {
+    const { ctx } = makeCtx({ enableDamping: true, dampingFactor: 0.1 });
+    ctx.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
+
+    for (let i = 0; i < 50; i++) runUpdateStep(ctx);
+
+    expect(ctx.rotationDelta.x).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.y).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.z).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.w).toBeCloseTo(1, 2);
+  });
+
+  it('clears rotationDelta to identity in one frame when damping disabled', () => {
+    const { ctx } = makeCtx({ enableDamping: false });
+    ctx.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
+
+    runUpdateStep(ctx);
+
+    expect(ctx.rotationDelta.x).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.y).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.z).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.w).toBeCloseTo(1, 5);
+  });
+});
+
 describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
   it('rollDelta = 1e-7 is BELOW the 1e-6 gate (no roll applied)', () => {
     // M3 mutation suspect: gate threshold 1e-6. We assert that values
@@ -149,7 +183,7 @@ describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
     expect(ctx.orientation.equals(new THREE.Quaternion())).toBe(false);
   });
 
-  it('[controls.md/G3] rollDelta = 1e-6 EXACTLY is BELOW the strict-greater-than gate', () => {
+  it('rollDelta = 1e-6 EXACTLY is BELOW the strict-greater-than gate', () => {
     // controls.md G3: the gate is `Math.abs(rollDelta) > 1e-6` (strict
     // greater-than). The audit flagged that the boundary value itself —
     // exactly 1e-6 — is the most likely mutation site (`>` → `>=`). Pin
@@ -182,7 +216,7 @@ describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
     expect(state.zoomDelta).toBe(0);
   });
 
-  it('[controls.md/G4] zoomDelta = 1e-8 EXACTLY is BELOW the strict-greater-than gate', () => {
+  it('zoomDelta = 1e-8 EXACTLY is BELOW the strict-greater-than gate', () => {
     // controls.md G4: gate is `Math.abs(zoomDelta) > 1e-8` (strict). The
     // boundary value itself must NOT trigger the zoom branch — pinning
     // the `>` vs `>=` contract.
@@ -194,7 +228,7 @@ describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
     expect(state.zoomDelta).toBe(1e-8);
   });
 
-  it('[controls.md/G2] zoom step occurs BEFORE distance clamp (clamp catches over-zoom)', () => {
+  it('zoom step occurs BEFORE distance clamp (clamp catches over-zoom)', () => {
     // controls.md G2: step order must be (5) zoom → (6) clamp. A positive
     // zoomDelta sufficient to push distance past maxDistance must end up
     // clamped at maxDistance — proving the clamp runs AFTER the zoom step,

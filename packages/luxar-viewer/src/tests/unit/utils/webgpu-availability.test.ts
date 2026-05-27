@@ -104,8 +104,16 @@ describe('getRendererAPISync', () => {
   });
 
   it('reports "webgpu" when navigator.gpu is present (no adapter probe)', () => {
-    setGpu({ requestAdapter: vi.fn() });
+    // utils.md W6 / Phase E62 strengthening: pin the no-adapter-probe
+    // contract by asserting `requestAdapter` was never called. A
+    // regression turning the sync path into async-and-await would still
+    // return the correct string from the cached probe but would now be
+    // observable here. Without this assertion the sync vs async paths
+    // are indistinguishable from the caller's perspective.
+    const requestAdapter = vi.fn();
+    setGpu({ requestAdapter });
     expect(getRendererAPISync()).toBe('webgpu');
+    expect(requestAdapter).not.toHaveBeenCalled();
   });
 
   it('reports "webgl2" when navigator.gpu is absent but webgl2 context creates', () => {
