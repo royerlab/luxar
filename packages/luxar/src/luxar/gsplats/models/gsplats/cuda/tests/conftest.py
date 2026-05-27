@@ -77,14 +77,26 @@ def require_cuda_backend(cuda_backend_available):
 # =============================================================================
 
 
+def seed_all(seed: int) -> None:
+    """Seed numpy, torch CPU, and torch CUDA RNGs together.
+
+    Tests that need explicit per-test determinism should call this instead
+    of `np.random.seed(...)` alone — `torch.rand(...)` calls draw from
+    torch's RNG, which numpy seeding does not touch. The audit (C1 in
+    `delme/test-audit-luxar-codebase/findings-global-pattern-sweep.md`)
+    flagged the mixed-seed pattern as misleading even though the autouse
+    fixture below makes tests technically reproducible at seed=42.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 @pytest.fixture(autouse=True)
 def set_random_seed():
     """Set random seeds for reproducibility."""
-    seed = 42
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    seed_all(42)
     yield
 
 
