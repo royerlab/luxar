@@ -695,12 +695,17 @@ export class InputContextManager {
    * ```
    */
   private getBindingKeyFromEvent(event: KeyboardEvent): string {
-    const parts = [event.key.toLowerCase()];
+    const key = event.key.toLowerCase();
+    const parts = [key];
 
-    if (event.ctrlKey) parts.push('ctrl');
-    if (event.shiftKey) parts.push('shift');
-    if (event.altKey) parts.push('alt');
-    if (event.metaKey) parts.push('meta');
+    // When the pressed key IS a modifier (Shift/Control/Alt/Meta), the
+    // corresponding modifier flag is also `true` on the keydown event.
+    // Adding it again would produce "shift+shift", which never matches
+    // the registered "shift" binding and breaks modifier-only handlers.
+    if (event.ctrlKey && key !== 'control') parts.push('ctrl');
+    if (event.shiftKey && key !== 'shift') parts.push('shift');
+    if (event.altKey && key !== 'alt') parts.push('alt');
+    if (event.metaKey && key !== 'meta') parts.push('meta');
 
     return parts.sort().join('+');
   }

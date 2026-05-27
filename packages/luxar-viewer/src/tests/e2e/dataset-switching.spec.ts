@@ -29,6 +29,12 @@ const DATASET_B = `${EXAMPLES_BASE}/multiple_objects_example.zarr`;
 const DATASET_LINES = `${EXAMPLES_BASE}/lines_basic_example.zarr`;
 
 test.describe('Dataset Switching', () => {
+  // Each switching test performs 2–3 full `page.goto()` cycles. With even a
+  // healthy 10–20 s per dataset load, the 60 s per-test default leaves no
+  // margin once chromium's first-load JIT, asset compile, and worker spin-up
+  // are factored in. `test.slow()` triples the budget to 180 s.
+  test.slow();
+
   test('should replace old scene objects when loading new dataset', async ({ page }) => {
     // Load dataset A
     await page.goto(`/?src=${DATASET_A}&debug`);
