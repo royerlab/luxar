@@ -11,6 +11,8 @@ import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
+import { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
@@ -133,6 +135,34 @@ export async function runInitPipeline(
   // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
   animationController.addPerFrameCallback('dynamic-clipping', () => {
     sceneManager.updateDynamicClippingPlanes();
+  });
+
+  // Wire LOD-group selection. The factory closes over the live
+  // SceneManager so the registry's getters always read the current
+  // camera / viewport / displayDims — no stale snapshots even after
+  // resize or ortho-mode swaps. SceneLoaderManager forwards the
+  // factory to each new SceneLoader instance.
+  //
+  // The per-frame callback reads `getSceneLoader('default')` rather
+  // than closing over a specific registry: when the user loads a new
+  // dataset, the SceneLoaderManager swaps loaders under the hood and
+  // the callback keeps pointing at whichever is current.
+  SceneLoaderManager.getInstance().setLODGroupRegistryFactory(() => {
+    return new LODGroupRegistry({
+      getCamera: () => sceneManager.camera,
+      getViewportSize: () => {
+        const canvas = sceneManager.renderer.domElement;
+        return {
+          width: canvas.clientWidth || window.innerWidth,
+          height: canvas.clientHeight || window.innerHeight,
+        };
+      },
+      getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [0, 1, 2],
+    });
+  });
+  animationController.addPerFrameCallback('lod-group-selector', () => {
+    const loader = getSceneLoader('default');
+    loader?.lodGroupRegistry?.evaluatePerFrame();
   });
 
   // Initialize adaptive DPR manager for dynamic resolution scaling

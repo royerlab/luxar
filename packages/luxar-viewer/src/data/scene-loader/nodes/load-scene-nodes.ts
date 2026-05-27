@@ -18,6 +18,7 @@ import { loadLeafNode } from './load-leaf-error-dispatch';
 import { loadPointsNode } from './load-points-node';
 import { loadLinesNode } from './load-lines-node';
 import { loadGSplatsNode } from './load-gsplats-node';
+import { loadLodGroupNode } from './load-lod-group-node';
 import type { NodeBuildCtx } from './build-ctx';
 
 /**
@@ -42,6 +43,11 @@ export async function loadSceneNodes(
     await loadLeafNode(() => loadLinesNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.type === 'gsplats') {
     await loadLeafNode(() => loadGSplatsNode(node, parentThree, parentLoc, ctx), node.path);
+  } else if (node.type === 'lod_group') {
+    // lod_group is a container that recurses into children itself (it
+    // needs to capture each child's THREE node + min_pixel_size to
+    // register the LOD entry). No outer recursion afterwards.
+    await loadLodGroupNode(node, parentThree, parentLoc, ctx);
   } else if (node.children) {
     // Create group and recurse
     const group = new THREE.Group();
