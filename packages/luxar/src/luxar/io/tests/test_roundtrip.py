@@ -188,10 +188,16 @@ class TestBasicRoundTrip:
             atol=0.01,
             err_msg="Radii values differ after round-trip",
         )
+        # Audit C2 fix: previous atol=0.15 was 23% larger than the
+        # theoretical quantization step (31 / (2**8 - 1) ≈ 0.1216),
+        # masking ~off-by-one mistakes in either the encoder or decoder.
+        # Tighten to one full step + tiny float slop. If a real change
+        # in the encoder pushes us above this bound, we want to know.
+        sharpness_step = 31.0 / 255.0  # ≈ 0.1216 (see decoder.py docstring)
         np.testing.assert_allclose(
             data["sharpness"][sort_idx_load],
             sharpness[sort_idx_orig],
-            atol=0.15,  # uint8 quantized to [0,31]: step ≈ 0.12
+            atol=sharpness_step + 1e-6,
             err_msg="Sharpness values differ after round-trip",
         )
 

@@ -147,6 +147,17 @@ class ArrayDecoder:
     def _decode_bounded_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode bounded scalar: uint → original dtype using min/max.
 
+        Quantization formula (mirrored in the encoder):
+
+            normalized = uint_value / (2 ** bits - 1)
+            original   = normalized * (max - min) + min
+
+        The denominator is ``2**bits - 1`` (not ``2**bits``) so the
+        maximum representable code (e.g. 255 for bits=8) maps exactly to
+        ``max_val`` and the minimum (0) maps exactly to ``min_val``. The
+        quantization step is ``(max - min) / (2**bits - 1)`` — for the
+        sharpness encoding this is ``31 / 255 ≈ 0.1216``.
+
         Args:
             arr: Zarr array with encoded data
             enc: Encoding metadata

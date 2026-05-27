@@ -15,8 +15,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
+import { mulberry32 } from '../../../helpers/random';
 
-// Helper to create mock LoadedPointsData
+// Audit C3 fix: `Math.random()` replaced with a seedable PRNG so failures
+// can be reproduced. The seed is fixed per call site below; bump it if
+// you need to explore alternate data shapes.
 function createMockPointsData(
   options: {
     pointCount?: number;
@@ -25,6 +28,7 @@ function createMockPointsData(
     hasSharpness?: boolean;
     colorType?: 'float32' | 'uint8';
     radiiType?: 'float32' | 'uint8';
+    seed?: number;
   } = {}
 ): LoadedPointsData {
   const {
@@ -34,11 +38,14 @@ function createMockPointsData(
     hasSharpness = false,
     colorType = 'float32',
     radiiType = 'float32',
+    seed = 0xc0ffee,
   } = options;
+
+  const rng = mulberry32(seed);
 
   const positions = new Float32Array(pointCount * 3);
   for (let i = 0; i < pointCount * 3; i++) {
-    positions[i] = Math.random() * 10;
+    positions[i] = rng() * 10;
   }
 
   const data: LoadedPointsData = {
@@ -57,12 +64,12 @@ function createMockPointsData(
     if (colorType === 'uint8') {
       data.colors = new Uint8Array(pointCount * 3);
       for (let i = 0; i < pointCount * 3; i++) {
-        (data.colors as Uint8Array)[i] = Math.floor(Math.random() * 255);
+        (data.colors as Uint8Array)[i] = Math.floor(rng() * 255);
       }
     } else {
       data.colors = new Float32Array(pointCount * 3);
       for (let i = 0; i < pointCount * 3; i++) {
-        (data.colors as Float32Array)[i] = Math.random();
+        (data.colors as Float32Array)[i] = rng();
       }
     }
   }
@@ -71,12 +78,12 @@ function createMockPointsData(
     if (radiiType === 'uint8') {
       data.radii = new Uint8Array(pointCount);
       for (let i = 0; i < pointCount; i++) {
-        (data.radii as Uint8Array)[i] = Math.floor(Math.random() * 255);
+        (data.radii as Uint8Array)[i] = Math.floor(rng() * 255);
       }
     } else {
       data.radii = new Float32Array(pointCount);
       for (let i = 0; i < pointCount; i++) {
-        (data.radii as Float32Array)[i] = Math.random() * 0.5;
+        (data.radii as Float32Array)[i] = rng() * 0.5;
       }
     }
   }
@@ -84,7 +91,7 @@ function createMockPointsData(
   if (hasSharpness) {
     data.sharpness = new Float32Array(pointCount);
     for (let i = 0; i < pointCount; i++) {
-      (data.sharpness as Float32Array)[i] = Math.random() * 10;
+      (data.sharpness as Float32Array)[i] = rng() * 10;
     }
   }
 
