@@ -184,7 +184,7 @@ class TestMultiLODGSplats:
         return GSplatData.from_additive_sublods([lod0, lod1])
 
     def test_multi_lod_writes_subgroups(self, tmp_path) -> None:
-        """Multi-LOD GSplatData writes v2.0 ``substitutive_0/additive_<i>`` cells."""
+        """Multi-additive-LOD GSplatData writes ``additive_<i>`` cells flat under the node."""
         output_path = tmp_path / "test.zarr"
         data = self._make_multi_lod_gsplat_data()
 
@@ -197,25 +197,20 @@ class TestMultiLODGSplats:
         store = zarr.open(str(output_path), mode="r")
         grp = store["splats"]
         assert grp.attrs["type"] == "gsplats"
-        assert grp.attrs["format_version"] == "2.0"
-        assert grp.attrs["n_substitutive"] == 1
-        assert grp.attrs["default_substitutive"] == 0
-        assert grp.attrs["n_additive_sublods_default"] == 2
+        assert grp.attrs["n_additive_sublods"] == 2
         assert grp.attrs["n_splats"] == 8
 
-        # v2.0 layout: substitutive_0/additive_<i> cells
-        assert "substitutive_0" in grp
-        sub0 = grp["substitutive_0"]
-        assert sub0.attrs["n_additive_sublods"] == 2
-        assert sub0.attrs["compression_factor"] == 1
-        assert "additive_0" in sub0
-        assert "additive_1" in sub0
-        assert sub0["additive_0"].attrs["n_splats"] == 5
-        assert sub0["additive_1"].attrs["n_splats"] == 3
+        # Flat layout: additive_<i> directly under the gsplats node.
+        # No substitutive wrapper.
+        assert "additive_0" in grp
+        assert "additive_1" in grp
+        assert "substitutive_0" not in grp
+        assert grp["additive_0"].attrs["n_splats"] == 5
+        assert grp["additive_1"].attrs["n_splats"] == 3
         # Per-additive arrays
-        assert "centers" in sub0["additive_0"]
-        assert "amplitudes" in sub0["additive_0"]
-        assert "cholesky_factors" in sub0["additive_0"]
+        assert "centers" in grp["additive_0"]
+        assert "amplitudes" in grp["additive_0"]
+        assert "cholesky_factors" in grp["additive_0"]
 
     def test_multi_lod_preserves_per_lod_stats(self, tmp_path) -> None:
         """Per-additive-sub-LOD stats land on each ``additive_<i>`` group."""
@@ -227,14 +222,14 @@ class TestMultiLODGSplats:
             scene.add_gsplats_from_data("splats", data)
 
         store = zarr.open(str(output_path), mode="r")
-        sub0 = store["splats"]["substitutive_0"]
-        lod0_stats = sub0["additive_0"].attrs.get("lod_stats", {})
+        grp = store["splats"]
+        lod0_stats = grp["additive_0"].attrs.get("lod_stats", {})
         assert lod0_stats.get("pass_index") == 0
-        lod1_stats = sub0["additive_1"].attrs.get("lod_stats", {})
+        lod1_stats = grp["additive_1"].attrs.get("lod_stats", {})
         assert lod1_stats.get("pass_index") == 1
 
     def test_single_lod_uses_flat_layout(self, tmp_path) -> None:
-        """Single-LOD GSplatData still uses flat layout (no subgroups)."""
+        """Single-LOD GSplatData uses flat layout (no additive subgroups)."""
         from luxar.gsplats.gsplat_data import GSplatData
 
         output_path = tmp_path / "test.zarr"
@@ -252,14 +247,14 @@ class TestMultiLODGSplats:
         grp = store["splats"]
         assert grp.attrs["type"] == "gsplats"
         # No LOD subgroups — flat layout
-        assert "substitutive_0" not in grp
-        assert "n_substitutive" not in grp.attrs
+        assert "additive_0" not in grp
+        assert "n_additive_sublods" not in grp.attrs
         # Arrays at top level
         assert "centers" in grp
         assert "amplitudes" in grp
 
     def test_multi_lod_in_group(self, tmp_path) -> None:
-        """Multi-LOD gsplats can be added under a group node."""
+        """Multi-additive-LOD gsplats can be added under a group node."""
         output_path = tmp_path / "test.zarr"
         data = self._make_multi_lod_gsplat_data()
 
@@ -269,6 +264,135 @@ class TestMultiLODGSplats:
             group.add_gsplats_from_data("splats", data)
 
         store = zarr.open(str(output_path), mode="r")
-        sub0 = store["grp"]["splats"]["substitutive_0"]
-        assert "additive_0" in sub0
-        assert "additive_1" in sub0
+        grp = store["grp"]["splats"]
+        assert "additive_0" in grp
+        assert "additive_1" in grp
+
+    @pytest.mark.parametrize(
+        "removed_attr",
+        [
+            "n_substitutive",
+            "default_substitutive",
+            "n_additive_sublods_default",
+            "n_splats_total",
+            "format_version",
+        ],
+    )
+    def test_multi_lod_drops_legacy_substitutive_attrs(
+        self, tmp_path, removed_attr: str
+    ) -> None:
+        """No vestigial substitutive metadata leaks onto the multi-LOD scene gsplats node.
+
+        These attrs belong to the standalone ``.gsplats.zarr`` processing
+        format only. Scene zarrs (post-PR-1) must not carry them.
+        """
+        output_path = tmp_path / "test.zarr"
+        data = self._make_multi_lod_gsplat_data()
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        grp = store["splats"]
+        assert removed_attr not in grp.attrs, (
+            f"Unexpected {removed_attr!r} on multi-LOD scene gsplats node — "
+            f"this attribute belongs to the standalone .gsplats.zarr format only."
+        )
+
+    @pytest.mark.parametrize(
+        "removed_attr",
+        [
+            "n_substitutive",
+            "default_substitutive",
+            "n_additive_sublods_default",
+            "n_additive_sublods",
+            "n_splats_total",
+            "format_version",
+        ],
+    )
+    def test_single_lod_drops_legacy_substitutive_attrs(
+        self, tmp_path, removed_attr: str
+    ) -> None:
+        """Single-LOD gsplats nodes carry no LOD-machinery metadata at all."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        output_path = tmp_path / "test.zarr"
+        data = GSplatData(
+            centers=np.array([[1, 2, 3]], dtype=np.float32),
+            amplitudes=np.array([1.0], dtype=np.float32),
+            cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
+        )
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        grp = store["splats"]
+        assert removed_attr not in grp.attrs
+
+    def test_multi_lod_drops_substitutive_levels_silently(self, tmp_path) -> None:
+        """Substitutive levels in input are dropped; only the default level is written.
+
+        The convention (documented on ``add_gsplats_from_data``): if the
+        input GSplatData carries multiple substitutive levels, only the
+        default substitutive level's additive ladder is written into
+        the scene zarr. Other substitutive levels are silently dropped.
+        Substitutive alternatives belong to the standalone processing
+        format; expressing them in a scene is a separate concern.
+        """
+        from luxar.gsplats.gsplat_data import (
+            AdditiveSubLOD,
+            GSplatData,
+            SubstitutiveLevel,
+        )
+
+        # Two substitutive levels: finest (default, 5 splats), coarsest (1 splat).
+        finest = SubstitutiveLevel(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=np.array(
+                        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]],
+                        dtype=np.float32,
+                    ),
+                    amplitudes=np.full(5, 1.0, dtype=np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([0.5, 0, 0.5, 0, 0, 0.5], dtype=np.float32), (5, 1)
+                    ),
+                )
+            ],
+            compression_factor=1,
+            level_index=0,
+        )
+        coarsest = SubstitutiveLevel(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=np.array([[0.5, 0.5, 0.5]], dtype=np.float32),
+                    amplitudes=np.array([5.0], dtype=np.float32),
+                    cholesky_factors=np.array(
+                        [[1.0, 0, 1.0, 0, 0, 1.0]], dtype=np.float32
+                    ),
+                )
+            ],
+            compression_factor=5,
+            level_index=1,
+        )
+        data = GSplatData.from_substitutive_levels(
+            [finest, coarsest], default_substitutive=0
+        )
+        assert data.n_substitutive == 2  # sanity
+
+        output_path = tmp_path / "test.zarr"
+        with LuxarZarrCompiler(output_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)
+
+        store = zarr.open(str(output_path), mode="r")
+        grp = store["splats"]
+        # Only the finest (default) substitutive level survived; coarse splat is gone.
+        assert grp.attrs["n_splats"] == 5
+        # No substitutive wrapper or attrs.
+        assert "substitutive_0" not in grp
+        assert "substitutive_1" not in grp
+        assert "n_substitutive" not in grp.attrs

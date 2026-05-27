@@ -154,7 +154,7 @@ describe('createProgressiveGSplatsLoader', () => {
       blending_mode: 'add',
     } as SceneNode['attrs'];
 
-    await createProgressiveGSplatsLoader(node, 3, 0, parentEffectiveAttrs, makeDeps());
+    await createProgressiveGSplatsLoader(node, 3, parentEffectiveAttrs, makeDeps());
 
     expect(zarrOpenMock).toHaveBeenCalledTimes(3);
     expect(gsplatsCtorArgs).toHaveLength(3);
@@ -174,11 +174,11 @@ describe('createProgressiveGSplatsLoader', () => {
       blending_mode: 'normal',
     } as SceneNode['attrs'];
 
-    await createProgressiveGSplatsLoader(node, 1, 0, parentEffectiveAttrs, makeDeps());
+    await createProgressiveGSplatsLoader(node, 1, parentEffectiveAttrs, makeDeps());
 
     // Constructor signature: (loc, node, registry, store, profiler?, l0?, prefetcher?)
     const lodNode = gsplatsCtorArgs[0][1] as SceneNode;
-    expect(lodNode.path).toBe('/g/substitutive_0/additive_0');
+    expect(lodNode.path).toBe('/g/additive_0');
     expect(lodNode.type).toBe('gsplats');
     expect(lodNode.attrs.opacity).toBe(0.7);
     expect(lodNode.attrs.gamma).toBe(1.5);

@@ -1,18 +1,15 @@
 /**
  * Unit tests for `loadGSplatsNode` in scene-loader/nodes/load-gsplats-node.ts.
  *
- * The GSplats-specific invariant under test is the LOD branch
- * (gsplat-LOD v2.0 field names):
- *   - `n_additive_sublods_default` is 0 or 1 → standard
- *     `createGSplatsLoader` path.
- *   - `n_additive_sublods_default > 1` → `createProgressiveGSplatsLoader`
+ * The GSplats-specific invariant under test is the LOD branch:
+ *   - `n_additive_sublods` is 0 or 1 → standard `createGSplatsLoader`
+ *     path.
+ *   - `n_additive_sublods > 1` → `createProgressiveGSplatsLoader`
  *     path, AND the parent's effective rendering attrs are composed up
  *     the scene-graph ancestry HERE (not inside the helper) so the LOD
  *     synthetic nodes inherit opacity/intensity/etc. — verify by
  *     checking that `applyEffectiveAttrs(node)` is called before the
- *     progressive helper. `default_substitutive` selects the rendered
- *     substitutive level and is passed through to the helper as the
- *     3rd positional arg.
+ *     progressive helper.
  *
  * The extend_to_all skip fallback for GSplats uses an explicit 4-field
  * spread (rather than the identity that Points uses) — verify by
@@ -141,7 +138,7 @@ beforeEach(() => {
 // ============================================================================
 
 describe('loadGSplatsNode — LOD branch', () => {
-  it('uses single-LOD factory when n_additive_sublods_default is 0 / missing', async () => {
+  it('uses single-LOD factory when n_additive_sublods is 0 / missing', async () => {
     const loader = makeGSplatsLoader(
       vi.fn().mockResolvedValue({ splatCount: 1 } as LoadedGSplatsData)
     );
@@ -153,14 +150,14 @@ describe('loadGSplatsNode — LOD branch', () => {
     expect(createProgressiveGSplatsLoaderMock).not.toHaveBeenCalled();
   });
 
-  it('uses single-LOD factory when n_additive_sublods_default === 1', async () => {
+  it('uses single-LOD factory when n_additive_sublods === 1', async () => {
     const loader = makeGSplatsLoader(
       vi.fn().mockResolvedValue({ splatCount: 1 } as LoadedGSplatsData)
     );
     createGSplatsLoaderMock.mockReturnValue(loader);
 
     await loadGSplatsNode(
-      makeSceneNode({ n_additive_sublods_default: 1 }),
+      makeSceneNode({ n_additive_sublods: 1 }),
       new THREE.Group(),
       {} as never,
       makeCtx()
@@ -170,14 +167,14 @@ describe('loadGSplatsNode — LOD branch', () => {
     expect(createProgressiveGSplatsLoaderMock).not.toHaveBeenCalled();
   });
 
-  it('uses progressive factory when n_additive_sublods_default > 1', async () => {
+  it('uses progressive factory when n_additive_sublods > 1', async () => {
     const loader = makeGSplatsLoader(
       vi.fn().mockResolvedValue({ splatCount: 1 } as LoadedGSplatsData)
     );
     createProgressiveGSplatsLoaderMock.mockResolvedValue(loader);
 
     await loadGSplatsNode(
-      makeSceneNode({ n_additive_sublods_default: 3, n_splats_total: 1000 }),
+      makeSceneNode({ n_additive_sublods: 3 }),
       new THREE.Group(),
       {} as never,
       makeCtx()
@@ -187,7 +184,7 @@ describe('loadGSplatsNode — LOD branch', () => {
     expect(createProgressiveGSplatsLoaderMock).toHaveBeenCalledTimes(1);
   });
 
-  it('multi-additive path passes applyEffectiveAttrs(node) and defaultSub to the progressive helper', async () => {
+  it('multi-additive path passes applyEffectiveAttrs(node) to the progressive helper', async () => {
     const composedAttrs = { n_splats: 1000, opacity: 0.5, gamma: 1.2 };
     const loader = makeGSplatsLoader(
       vi.fn().mockResolvedValue({ splatCount: 1 } as LoadedGSplatsData)
@@ -197,21 +194,15 @@ describe('loadGSplatsNode — LOD branch', () => {
     const ctx = makeCtx();
     ctx.spies.applyEffectiveAttrs.mockImplementation(() => composedAttrs);
 
-    const node = makeSceneNode({
-      n_additive_sublods_default: 4,
-      default_substitutive: 2,
-      n_splats_total: 1000,
-    });
+    const node = makeSceneNode({ n_additive_sublods: 4 });
     await loadGSplatsNode(node, new THREE.Group(), {} as never, ctx);
 
-    // Per gsplat-LOD v2.0: helper signature is
-    // (node, nAdditive, defaultSub, parentEffectiveAttrs, deps).
-    // The composed attrs (4th arg) is THE invariant the LOD synthetic
+    // Helper signature: (node, nAdditive, parentEffectiveAttrs, deps).
+    // The composed attrs (3rd arg) is THE invariant the LOD synthetic
     // nodes rely on to inherit ancestor opacity/intensity.
     expect(createProgressiveGSplatsLoaderMock).toHaveBeenCalledWith(
       node,
       4,
-      2,
       composedAttrs,
       ctx.factoryDeps
     );
