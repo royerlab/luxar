@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from .conftest import Tolerances
+from .conftest import Tolerances, seed_all
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -48,7 +48,7 @@ class TestCUDAVsPyTorchReference:
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Create test data
-        np.random.seed(1234)
+        seed_all(1234)
         N, d = 30, 3
         shape = (24, 24, 24)
         truncate = 3.0
@@ -137,7 +137,7 @@ class TestCUDAVsPyTorchReference:
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
         # Create test data
-        np.random.seed(5678)
+        seed_all(5678)
         N, d = 25, 2
         shape = (48, 48)
         truncate = 3.0
@@ -300,7 +300,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(42 + dim)
+        seed_all(42 + dim)
         N = 20
 
         # Create appropriate shape and parameters for each dimension
@@ -363,7 +363,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(46)
+        seed_all(46)
         N = 20
         dim = 4
         shape = (12, 12, 12, 12)
@@ -414,7 +414,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(123 + dim)
+        seed_all(123 + dim)
         N = 15
 
         if dim == 2:
@@ -470,7 +470,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(127)
+        seed_all(127)
         N, dim = 15, 4
         shape = (12, 12, 12, 12)
 
@@ -517,7 +517,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(456 + dim)
+        seed_all(456 + dim)
         N = 10
 
         if dim == 2:
@@ -574,7 +574,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(460)
+        seed_all(460)
         N, dim = 10, 4
         shape = (16, 16, 16, 16)
 
@@ -628,7 +628,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(789 + dim + hash(size_category) % 100)
+        seed_all(789 + dim + hash(size_category) % 100)
         N = 15
 
         # Size-dependent scale factors
@@ -711,7 +711,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
-        np.random.seed(111 + dim)
+        seed_all(111 + dim)
         N = 15
 
         if dim == 2:
@@ -830,7 +830,7 @@ class TestCUDAVsPyTorchComprehensive:
             GaussianSplatModelCUDA,
         )
 
-        np.random.seed(222 + dim + int(scale * 10))
+        seed_all(222 + dim + int(scale * 10))
         N = 10
 
         if dim == 2:
@@ -889,7 +889,7 @@ class TestCUDAVsPyTorchComprehensive:
             GaussianSplatModelCUDA,
         )
 
-        np.random.seed(333 + dim)
+        seed_all(333 + dim)
 
         if dim == 2:
             shape = (24, 24)
@@ -1050,7 +1050,7 @@ class TestCUDAVsPyTorchComprehensive:
         )
         from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-        np.random.seed(444 + dim)
+        seed_all(444 + dim)
         N = 50  # Many splats
 
         if dim == 2:
@@ -1248,7 +1248,7 @@ class TestBackwardComparison:
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
-        np.random.seed(1234)
+        seed_all(1234)
         N, d = 10, 3
         shape = (16, 16, 16)
 

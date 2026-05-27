@@ -78,9 +78,17 @@ def create_loss_function(
             data = poisson_loss(pred, V_t, asymmetric_penalty)
         elif loss_type.lower() == "l1":
             data = l1_loss(pred, V_t, asymmetric_penalty)
-        else:
-            # MSE loss (fallback for loss_type == "mse")
+        elif loss_type.lower() == "mse":
             data = mse_loss(pred, V_t, asymmetric_penalty)
+        else:
+            # Audit C1 fix (delme/test-audit-luxar-codebase/findings-python-gsplats-fitting-seeds-preproc.md):
+            # previously, any unknown loss_type silently fell through to
+            # MSE. Now a typo ("poisson_deviance", "mes", etc.) raises
+            # ValueError so the caller knows immediately.
+            raise ValueError(
+                f"Unknown loss_type: {loss_type!r}. "
+                f"Expected one of: 'poisson', 'l1', 'mse'."
+            )
 
         # Add L1 regularization on amplitudes if specified
         if l1_amp is not None and l1_amp > 0:

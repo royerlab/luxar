@@ -566,6 +566,36 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(Math.abs(wasmDist - tsDist)).toBeLessThan(1e-5);
     });
 
+    // Audit C2/C3 fix: pin the high-ndim epsilon-scaling contract.
+    // `mahalanobis_distance` does ndim forward-substitution steps, so
+    // Float32 rounding accumulates per dimension. The tolerance must be
+    // scaled by sqrt(ndim) — verified by running both implementations
+    // against an identity covariance and a diff vector with magnitude 1.
+    // A regression that returns an unscaled result, or a WASM build with
+    // dimension-dependent precision loss, will surface here.
+    it.skipIf(!wasmFilesExist).each([3, 8, 16] as const)(
+      'mahalanobis_distance matches at ndim=%i within sqrt(ndim)*1e-5',
+      (ndim) => {
+        const diff = new Float32Array(ndim);
+        for (let i = 0; i < ndim; i++) diff[i] = (i + 1) * 0.1;
+        const packedSize = (ndim * (ndim + 1)) / 2;
+        const packedL = new Float32Array(packedSize);
+        // Build a lower-triangular identity in packed-row-major order.
+        let p = 0;
+        for (let row = 0; row < ndim; row++) {
+          for (let col = 0; col <= row; col++) {
+            packedL[p++] = col === row ? 1.0 : 0.0;
+          }
+        }
+
+        const tsDist = tsModule.mahalanobis_distance(diff, packedL, ndim);
+        const wasmDist = wasmModule!.mahalanobis_distance(diff, packedL, ndim);
+
+        const scaledEps = 1e-5 * Math.sqrt(ndim);
+        expect(Math.abs(wasmDist - tsDist)).toBeLessThan(scaledEps);
+      }
+    );
+
     it.skipIf(!wasmFilesExist)('extract_cholesky_submatrix should match', () => {
       const packed = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
       const keepDims = new Uint32Array([0, 2]);

@@ -25,6 +25,27 @@ from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
 FIXTURES_DIR = Path(__file__).parent
 FIXTURES_DIR.mkdir(exist_ok=True)
 
+# Audit C2 (viewer-integration-fixtures) guardrails — see
+# delme/test-audit-luxar-codebase/findings-viewer-integration-fixtures.md.
+#
+# These two flags MUST stay at the values below for ALL fixtures created
+# by this script. They are passed to every LuxarZarrCompiler invocation
+# in this file:
+#
+#   compressor=COMPRESSOR_DISABLED  (None) — blosc/numcodecs has known WASM
+#       binding issues under Node.js (jsdom + Vitest). Compressed fixtures
+#       would silently fail to load and the entire unit-test suite would
+#       skip every fixture-backed test.
+#   float16_allowed=FLOAT16_ALLOWED (False) — Node.js zarrita does not
+#       support float16 reads (no native Float16Array yet). float16 in a
+#       fixture would surface as decode failures across the unit suite.
+#
+# If a future change needs to flip these defaults, FIRST verify the
+# Node.js side can round-trip the new format (see
+# packages/luxar-viewer/src/tests/unit/data/array-decoder/decoder.test.ts).
+COMPRESSOR_DISABLED = None  # blosc is incompatible with Node.js test env
+FLOAT16_ALLOWED = False  # zarrita-js cannot read float16 in Node.js
+
 
 def generate_broadcasting_test():
     """Test dataset with broadcasted (uniform) values."""
