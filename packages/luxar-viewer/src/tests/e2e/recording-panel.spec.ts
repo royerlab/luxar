@@ -198,14 +198,26 @@ test.describe('Recording Panel', () => {
   });
 
   test('should show recording indicator during video recording', async ({ page }) => {
-    // Start recording via debug interface (skip the dialog)
-    await page.evaluate(async () => {
+    // Start recording via debug interface (skip the dialog).
+    //
+    // Two fixes layered here:
+    //
+    // 1. `showConfirmationDialog` lives on `panel.session` after the
+    //    recording-panel refactor (was on `panel` when this test was
+    //    written). Overriding the wrong object left the real dialog
+    //    blocking the recording, so the indicator never appeared.
+    //
+    // 2. `startVideoRecording()` resolves only when MediaRecorder.onstop
+    //    fires (i.e. when recording stops). We must NOT await it here —
+    //    doing so blocks page.evaluate() forever since the test stops
+    //    recording via an Escape key press below, which cannot fire
+    //    while evaluate is still pending. Fire-and-forget; the indicator
+    //    polling below observes the start.
+    await page.evaluate(() => {
       const panel = (window as any).__luxarDebug.recordingPanel;
-      // Set mode to video
       (panel as any).mode = 'video';
-      // Override confirmation dialog to auto-confirm
-      (panel as any).showConfirmationDialog = () => Promise.resolve(true);
-      await panel.startVideoRecording();
+      (panel as any).session.showConfirmationDialog = () => Promise.resolve(true);
+      void panel.startVideoRecording();
     });
 
     // Recording indicator should appear; expect.toBeVisible() polls
