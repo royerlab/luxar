@@ -11,6 +11,7 @@ from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
     from ..core.group import Group
+    from ..core.lod_group import LODGroup
     from ..io.writer import ZarrWriterProtocol
 
 
@@ -226,6 +227,74 @@ class Node:
         except Exception as e:
             aprint(f"Failed to add child group '{name}' to node '{self.name}': {e}")
             raise ValueError(f"Could not create child group '{name}': {e}") from e
+
+    def add_lod_group(
+        self,
+        name: str,
+        *,
+        selector: str = "pixel_size",
+        default_level: int = 0,
+        **attrs: Any,
+    ) -> "LODGroup":
+        """Create and add a child lod_group node.
+
+        ``LODGroup`` picks one of N alternative children at runtime based
+        on the projected bbox diagonal in pixels and each child's
+        ``min_pixel_size`` threshold. Children are added via the
+        inherited ``add_*`` methods on the returned ``LODGroup`` and each
+        must carry a ``min_pixel_size`` attribute (passed as a kwarg).
+        Children must be added in strictly increasing ``min_pixel_size``
+        order.
+
+        Example::
+
+            lod = scene.add_lod_group("multires")
+            lod.add_gsplats_from_data("c", coarse, min_pixel_size=0)
+            lod.add_gsplats_from_data("m", medium, min_pixel_size=100)
+            lod.add_gsplats_from_data("f", fine, min_pixel_size=500)
+
+        Args:
+            name: Name of the lod_group node.
+            selector: Selector mode. Currently only ``"pixel_size"`` is
+                supported.
+            default_level: Initial active level index for the
+                manual-override UI (0-based).
+            **attrs: Additional node attributes (transform, layer, etc.).
+
+        Returns:
+            The created LODGroup node.
+
+        Raises:
+            ValueError: If selector mode is unknown or group creation fails.
+        """
+        from .lod_group import LODGroup
+
+        try:
+            aprint(f"Adding child lod_group '{name}' to node '{self.name}'.")
+            if self._writer is not None:
+                child = LODGroup(
+                    name,
+                    parent=self,
+                    writer=self._writer,
+                    selector=selector,
+                    default_level=default_level,
+                    **attrs,
+                )
+            else:
+                child = LODGroup(
+                    name,
+                    parent=self,
+                    selector=selector,
+                    default_level=default_level,
+                    **attrs,
+                )
+            aprint(f"✓ Child lod_group '{name}' added successfully.")
+            return child
+        except Exception as e:
+            aprint(
+                f"Failed to add child lod_group '{name}' to node '{self.name}': {e}"
+            )
+            raise ValueError(f"Could not create child lod_group '{name}': {e}") from e
 
     # --------------------------------------------------------------- traversal
     def walk(self, depth: int = 0) -> SceneHierarchy:

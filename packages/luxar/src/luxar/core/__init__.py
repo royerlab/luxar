@@ -5,6 +5,7 @@ from .dimensions import Dimension, Dimensions
 from .group import Group
 from .gsplats import GSplats
 from .lines import Lines
+from .lod_group import LODGroup
 from .node import Node
 from .overlay import Overlay
 from .points import Points
@@ -44,6 +45,7 @@ __all__ = [
     "Points",
     "Lines",
     "GSplats",
+    "LODGroup",
     "Dimension",
     "Dimensions",
     "ViewerConfig",
