@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
+import type { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
 // Create comprehensive mocks
 const createMocks = () => {
@@ -335,24 +336,19 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.size).toBeLessThanOrEqual(0);
     });
 
-    // NOTE: the following three tests stub `(store as any).l2Store` with a
-    // hand-rolled fake instead of driving the real OPFSStore cascade. The
-    // audit (cache.md, C3/C4) calls this a P3 violation (mocking an internal
-    // helper). A proper rewrite would mock OPFS at the `navigator.storage`
-    // boundary and let the production OPFSStore run. For now we strengthen
-    // the assertions to pin call-count exactness so call-routing mutations
-    // are still detected.
+    // [cache.md/C3 / Phase F3] The four tests below previously stubbed
+    // `(store as any).l2Store` with a hand-rolled fake. The whole-object
+    // replacement was a P3 violation that pinned the OPFSStore interface
+    // shape in tests rather than its observable behavior. Now the real
+    // OPFSStore (built by init() against the navigator.storage mock at
+    // file-scope) is used, with narrow `vi.spyOn` calls for assertions
+    // and the public `setContentHash`/`setValidationMode` API used to
+    // arrange preconditions. The CRIT-5 test below already follows this
+    // pattern.
     it('external dataset without content_hash records validationMode=none by default (commit 6.3)', async () => {
       await store.init();
-      const setValidationModeSpy = vi.fn();
-      (store as any).l2Store = {
-        async clear() {},
-        getContentHash: () => null,
-        setContentHash: vi.fn(),
-        setValidationMode: setValidationModeSpy,
-        getValidationState: () => ({ mode: 'none', lastValidatedAt: null }),
-        async dispose() {},
-      };
+      const l2Store = (store as any).l2Store as OPFSStore;
+      const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
 
       // Stub fetch so getRemoteContentHash returns null (no content_hash attr).
       global.fetch = vi.fn(async () => ({
@@ -375,17 +371,14 @@ describe('MultiLevelCachingStore', () => {
       realConfig.cache.externalDatasetTtlMs = 60_000; // 1 minute
       try {
         await store.init();
-        const setValidationModeSpy = vi.fn();
-        const clearSpy = vi.fn();
-        (store as any).l2Store = {
-          clear: clearSpy,
-          getContentHash: () => null,
-          setContentHash: vi.fn(),
-          setValidationMode: setValidationModeSpy,
-          // Within TTL window: no clear should fire.
-          getValidationState: () => ({ mode: 'ttl', lastValidatedAt: Date.now() - 1000 }),
-          async dispose() {},
-        };
+        const l2Store = (store as any).l2Store as OPFSStore;
+        // Precondition: existing TTL mode with a recent lastValidatedAt so
+        // the TTL-expiry branch in doValidateCache is NOT triggered.
+        // setValidationMode also updates lastValidatedAt to Date.now(),
+        // well within the 60s TTL window below.
+        l2Store.setValidationMode('ttl');
+        const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
+        const clearSpy = vi.spyOn(l2Store, 'clear');
 
         global.fetch = vi.fn(async () => ({
           ok: true,
@@ -411,19 +404,17 @@ describe('MultiLevelCachingStore', () => {
       realConfig.cache.externalDatasetTtlMs = 1_000; // 1 second TTL
       try {
         await store.init();
-        const clearSpy = vi.fn();
-        (store as any).l2Store = {
-          clear: clearSpy,
-          getContentHash: () => null,
-          setContentHash: vi.fn(),
-          setValidationMode: vi.fn(),
-          // Validated 5 minutes ago — well past TTL.
-          getValidationState: () => ({
-            mode: 'ttl',
-            lastValidatedAt: Date.now() - 5 * 60 * 1000,
-          }),
-          async dispose() {},
-        };
+        const l2Store = (store as any).l2Store as OPFSStore;
+        // Precondition: lastValidatedAt is 5 minutes ago, well past the
+        // 1s TTL. The real OPFSStore sets lastValidatedAt to Date.now()
+        // when setValidationMode is called; spying on getValidationState
+        // is the narrowest way to force a stale timestamp without
+        // mocking the global clock.
+        vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
+          mode: 'ttl',
+          lastValidatedAt: Date.now() - 5 * 60 * 1000,
+        });
+        const clearSpy = vi.spyOn(l2Store, 'clear');
         const clearL1Spy = vi.spyOn(store, 'clearL1');
 
         global.fetch = vi.fn(async () => ({
@@ -445,19 +436,14 @@ describe('MultiLevelCachingStore', () => {
 
     it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
       // doValidateCache is private but unit-testable via reflection.
-      // Stubbing l2Store and bypassing the init()-creates-new-l2Store
-      // path lets us prove that the mismatch branch invokes clearL1.
+      // The real OPFSStore is reused; setContentHash sets the 'old-hash'
+      // precondition that the mismatch branch will detect.
       await store.init();
       const clearL1Spy = vi.spyOn(store, 'clearL1');
 
-      // Stub the l2Store the doValidateCache will read.
-      const setContentHashSpy = vi.fn();
-      (store as any).l2Store = {
-        async clear() {},
-        getContentHash: () => 'old-hash',
-        setContentHash: setContentHashSpy,
-        async dispose() {},
-      };
+      const l2Store = (store as any).l2Store as OPFSStore;
+      l2Store.setContentHash('old-hash');
+      const setContentHashSpy = vi.spyOn(l2Store, 'setContentHash');
 
       // Stub fetch so getRemoteContentHash returns 'new-hash' for the
       // .zattrs probe.
@@ -1055,24 +1041,15 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('marks external dataset as unvalidated when mode === none', async () => {
-      // Force the l2Store stub to advertise mode='none'.
-      (store as any).l2Store = {
-        getStats: () => ({
-          size: 0,
-          count: 0,
-          reads: 0,
-          writes: 0,
-          misses: 0,
-          oversizedWriteSkipped: 0,
-          quotaWriteSkipped: 0,
-          evictions: 0,
-          writeFailures: 0,
-          corruptedEntries: 0,
-          metadataParseFailures: 0,
-          orphanedFilesRemoved: 0,
-        }),
-        getValidationState: () => ({ mode: 'none', lastValidatedAt: null }),
-      };
+      // [cache.md/C3] Use a narrow spy on the real l2Store's
+      // getValidationState rather than swapping the whole l2Store with
+      // a fake. The store's health-roll-up reads only that one method
+      // here, so a single spy is sufficient to drive the assertion.
+      const l2Store = (store as any).l2Store as OPFSStore;
+      vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
+        mode: 'none',
+        lastValidatedAt: null,
+      });
       const stats = store.getStats();
       expect(stats.health.unvalidatedExternalDataset).toBe(true);
     });
