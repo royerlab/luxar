@@ -524,7 +524,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
   });
 
   describe('Statistics', () => {
-    it('should return accurate statistics [cache.md/W21][P2]', async () => {
+    // workers.md O3 / cache.md W21 [P2]: audit-id moved to comment per Phase E55.
+    it('should return accurate statistics', async () => {
       // [cache.md/W21][P2] Previous version conflated `queued + inFlight === 4`
       // into a single sum. That assertion is satisfied by *any* split of the 4
       // neighbors between the two counters — including a regression that puts
@@ -703,7 +704,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       local.dispose();
     });
 
-    it('enqueueWithPriority with an empty iterable does NOT trigger processQueue [cache.md/G15][P5]', () => {
+    // workers.md O3 / cache.md G15 [P5]: audit-id moved to comment per Phase E55.
+    it('enqueueWithPriority with an empty iterable does NOT trigger processQueue', () => {
       // [cache.md/G15][P5] Source guards `if (added > 0) processQueue()`
       // at line 158 — but the early-return for the empty-iterable case
       // and the `enabled || isDisposed` guard at line 153 had no test pin.
@@ -718,7 +720,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       local.dispose();
     });
 
-    it('enqueueWithPriority after dispose() is a no-op [cache.md/G15][P5]', () => {
+    // workers.md O3 / cache.md G15 [P5]: audit-id moved to comment per Phase E55.
+    it('enqueueWithPriority after dispose() is a no-op', () => {
       // [cache.md/G15][P5] The `if (!this.enabled || this.isDisposed) return`
       // guard had no test pin. Pin: post-dispose enqueue must not enqueue,
       // not dispatch, and not throw.
@@ -732,7 +735,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(local.getStats().queuedNormal).toBe(0);
     });
 
-    it('evicts half of `seen` when MAX_SEEN_SIZE is exceeded [cache.md/G4][P5]', async () => {
+    // workers.md O3 / cache.md G4 [P5]: audit-id moved to comment per Phase E55.
+    it('evicts half of `seen` when MAX_SEEN_SIZE is exceeded', async () => {
       // [cache.md/G4][P5] Source line 106-112 trims half the `seen` set when
       // `seen.size > MAX_SEEN_SIZE` (10 000). This significant code path had
       // no behavioral test — mutating the eviction count to a no-op would
