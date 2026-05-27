@@ -140,11 +140,12 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should set label text', () => {
+    // ui.md O6 / Phase E40: P9 rename — name(text) writes text into the
+    // `.luxar-gui__controller-name` <label>, AFTER the checkbox <input>.
+    it('name(text) appends text into .luxar-gui__controller-name after the checkbox', () => {
       controller.name('Auto Rotate');
 
       const label = controller.domElement.querySelector('.luxar-gui__controller-name');
-      // Text should be after checkbox
       expect(label?.textContent).toContain('Auto Rotate');
     });
   });
@@ -155,14 +156,19 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should show controller', () => {
+    // ui.md O6 / Phase E40: P9 rename — show() clears inline display
+    // style (reverts to CSS-default 'inline-block' or whatever the
+    // stylesheet sets).
+    it('show() clears the inline display style (style.display === "")', () => {
       controller.hide();
       controller.show();
 
       expect(controller.domElement.style.display).toBe('');
     });
 
-    it('should hide controller', () => {
+    // ui.md O6 / Phase E40: P9 rename — hide() sets inline display
+    // none, overriding any stylesheet default.
+    it('hide() sets inline style.display to "none"', () => {
       controller.show();
       controller.hide();
 
@@ -176,7 +182,9 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should remove event listeners', () => {
+    // ui.md O6 / Phase E40: P9 rename — dispose() delegates to
+    // EventManager.removeAll() so every attached listener is torn down.
+    it('dispose() delegates to eventManager.removeAll() to tear down listeners', () => {
       const eventManagerSpy = vi.spyOn(controller['eventManager'], 'removeAll');
 
       controller.dispose();
@@ -184,7 +192,9 @@ describe('BooleanController', () => {
       expect(eventManagerSpy).toHaveBeenCalled();
     });
 
-    it('should remove from DOM', () => {
+    // ui.md O6 / Phase E40: P9 rename — dispose() detaches the
+    // controller's DOM element from its parent.
+    it('dispose() detaches the controller domElement from its parent in the DOM', () => {
       const parent = document.createElement('div');
       parent.appendChild(controller.domElement);
 
