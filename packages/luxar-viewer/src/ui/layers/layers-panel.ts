@@ -23,6 +23,8 @@ import type { AnimationController } from '../../scene/animation/animation-contro
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
+import { SceneLoaderManager } from '../../data/scene-loader-manager';
+import type { LODGroupRegistry } from '../../scene/lod-group-registry';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -87,6 +89,18 @@ export class LayersPanel {
   private opacitySlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
+  /**
+   * "Active level" dropdown for ``lod_group`` layers. Shown only when
+   * the primary selected layer is an lod_group; hidden otherwise.
+   * Options: ``auto`` plus one ``lock to level <i>`` entry per child.
+   */
+  private lodLevelSelect: HTMLSelectElement | null = null;
+  /**
+   * Status span next to the dropdown showing the currently-rendering
+   * level (e.g. "rendering: 2"). Refreshed on each renderControls()
+   * call; not per-frame for v1.
+   */
+  private lodLevelStatus: HTMLSpanElement | null = null;
   private visible = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
@@ -236,6 +250,8 @@ export class LayersPanel {
     this.opacitySlider?.dispose();
     this.opacitySlider = null;
     this.blendSelect = null;
+    this.lodLevelSelect = null;
+    this.lodLevelStatus = null;
     this.rowElements.clear();
     this.panelEl?.remove();
     this.panelEl = null;
@@ -619,6 +635,75 @@ export class LayersPanel {
     cmGroup.appendChild(cmLabel);
     cmGroup.appendChild(this.colormapSelect);
     this.controlsEl.appendChild(cmGroup);
+
+    // Active-level selector — only meaningful for lod_group layers,
+    // hidden otherwise (see renderControls). The dropdown's option
+    // list is rebuilt per layer in renderControls() because child
+    // counts vary; here we just allocate the container + handler.
+    const lodGroup = document.createElement('div');
+    lodGroup.className = 'luxar-layers-panel__control-group';
+    const lodLabel = document.createElement('div');
+    lodLabel.className = 'luxar-layers-panel__control-label';
+    lodLabel.textContent = 'Active level';
+
+    this.lodLevelSelect = document.createElement('select');
+    this.lodLevelSelect.className = 'luxar-layers-panel__select';
+
+    this.lodLevelStatus = document.createElement('span');
+    this.lodLevelStatus.className = 'luxar-layers-panel__control-value';
+
+    this.events.on(this.lodLevelSelect, 'change', () => {
+      this.controlsInteracting = true;
+      const value = this.lodLevelSelect!.value;
+      const primary = this.state.getPrimarySelected();
+      if (primary && primary.type === 'lod_group') {
+        const registry = this.getLodGroupRegistry();
+        if (registry) {
+          const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
+          try {
+            registry.setSelectorMode(primary.path, mode);
+          } catch (err) {
+            log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
+          }
+        }
+      }
+      this.controlsInteracting = false;
+    });
+    lodGroup.appendChild(lodLabel);
+    lodGroup.appendChild(this.lodLevelSelect);
+    lodGroup.appendChild(this.lodLevelStatus);
+    this.controlsEl.appendChild(lodGroup);
+  }
+
+  /**
+   * Look up the LOD-group registry for the currently-loaded scene.
+   *
+   * Lazy lookup via the SceneLoaderManager (the layers panel can't
+   * import scene/ directly without violating the data → ui layer
+   * direction; the SceneLoaderManager hands us the loader's registry
+   * field). Returns ``null`` when no scene is loaded or the loader
+   * was created without a registry factory wired up.
+   */
+  private getLodGroupRegistry(): LODGroupRegistry | null {
+    const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+    return loader?.lodGroupRegistry ?? null;
+  }
+
+  /** Populate the lod-level dropdown's options for the given child count. */
+  private renderLodLevelOptions(childCount: number): void {
+    if (!this.lodLevelSelect) return;
+    // Clear and rebuild — option counts vary per lod_group.
+    this.lodLevelSelect.innerHTML = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = 'auto';
+    autoOpt.textContent = 'auto';
+    this.lodLevelSelect.appendChild(autoOpt);
+    for (let i = 0; i < childCount; i++) {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = `lock to level ${i}`;
+      this.lodLevelSelect.appendChild(opt);
+    }
   }
 
   /** Update controls to reflect the primary selected layer's values */
@@ -645,6 +730,35 @@ export class LayersPanel {
       } else {
         // Hide colormap control for layers that don't support it
         this.colormapSelect.parentElement!.style.display = 'none';
+      }
+    }
+
+    // Active-level dropdown — only shown for lod_group layers. Read the
+    // current selector mode + active index from the registry so the
+    // widget reflects runtime state (e.g., user locked level 1 in a
+    // previous session-level interaction).
+    if (this.lodLevelSelect && this.lodLevelStatus) {
+      const lodContainer = this.lodLevelSelect.parentElement!;
+      if (primary.type === 'lod_group' && (primary.lodGroupChildCount ?? 0) > 0) {
+        lodContainer.style.display = '';
+        this.renderLodLevelOptions(primary.lodGroupChildCount!);
+
+        const registry = this.getLodGroupRegistry();
+        const entry = registry?.get(primary.path);
+        if (entry) {
+          this.lodLevelSelect.value =
+            entry.selectorMode === 'auto'
+              ? 'auto'
+              : String(entry.selectorMode.lockLevel);
+          this.lodLevelStatus.textContent = `rendering: ${entry.activeChildIndex}`;
+        } else {
+          // Registry not yet populated (e.g., scene still loading) —
+          // default to "auto" and clear the status.
+          this.lodLevelSelect.value = 'auto';
+          this.lodLevelStatus.textContent = '';
+        }
+      } else {
+        lodContainer.style.display = 'none';
       }
     }
   }
