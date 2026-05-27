@@ -704,6 +704,16 @@ describe('LinesSpatialIndexLoader', () => {
         expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
         expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);
       });
+
+      // Audit G10 (viewer-data-cache-workers-wasm): pin dispose() idempotency
+      // — symmetric to the Points + GSplats variants.
+      it('dispose is idempotent — second call is a clean no-op', () => {
+        bodyLoader.dispose();
+        expect(() => bodyLoader.dispose()).not.toThrow();
+        expect((bodyLoader as unknown as { chunkIndex: unknown }).chunkIndex).toBeNull();
+        expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
+        expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);
+      });
     });
 
     describe('data type handling', () => {
