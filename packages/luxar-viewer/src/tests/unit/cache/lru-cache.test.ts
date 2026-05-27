@@ -371,6 +371,36 @@ describe('LRUCache', () => {
       expect(customCache.has('key1')).toBe(false);
       expect(customCache.size).toBe(70); // 30 + 40
     });
+
+    // Audit G3 (viewer-data-cache-workers-wasm): the LRU cache uses
+    // `value.byteLength` as its default size — and that field can be
+    // NaN if a caller assembles a malformed object. Pin the current
+    // (forgiving) behaviour so future refactors know what the contract is.
+    //
+    // Negative byteLength is structurally impossible for Uint8Array so
+    // we test the NaN-size case via a custom-size cache.
+    it('NaN-valued custom size leaves cache.size as NaN (documentary)', () => {
+      // Currently the cache does not validate the size return — passing
+      // a function that returns NaN poisons cache.size. If the
+      // production code starts rejecting NaN sizes, this test should
+      // be flipped to assert the rejection contract.
+      const customCache = new LRUCache<{ weight: number }>(100, (v) => v.weight);
+      customCache.set('bad', { weight: NaN });
+      expect(Number.isNaN(customCache.size)).toBe(true);
+      // The cache still records the entry — count reflects the entry.
+      expect(customCache.count).toBe(1);
+    });
+
+    it('zero-size item adds to count but not size', () => {
+      // Audit G3: zero-size boundary is already covered for byteLength=0
+      // above; pin the analogous custom-size case so the contract
+      // ("size 0 is valid; entry is tracked") is symmetric.
+      const customCache = new LRUCache<{ weight: number }>(100, (v) => v.weight);
+      customCache.set('zero', { weight: 0 });
+      expect(customCache.size).toBe(0);
+      expect(customCache.count).toBe(1);
+      expect(customCache.has('zero')).toBe(true);
+    });
   });
 
   describe('Stress Test', () => {
