@@ -88,6 +88,13 @@ describe('clearError', () => {
   });
 
   it('should be safe to call when no error exists', () => {
+    // Audit W30 (viewer-ui-config-themes-core-utils): this is
+    // appropriate defensive programming — clearError() is the public
+    // teardown API and must be idempotent. The bare .not.toThrow() is
+    // intentional; we additionally pin the observable post-state
+    // (no error element in the DOM) so a mutant that silently
+    // injects a placeholder would surface.
     expect(() => clearError()).not.toThrow();
+    expect(document.getElementById('luxar-error-message')).toBeNull();
   });
 });
