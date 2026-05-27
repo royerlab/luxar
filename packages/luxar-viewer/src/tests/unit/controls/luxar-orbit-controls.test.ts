@@ -508,7 +508,7 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('dispose', () => {
-    it('dispose() detaches pointer/wheel/contextmenu listeners on dom element [controls.md/W10][P2]', () => {
+    it('dispose() detaches pointer/wheel/contextmenu listeners on dom element', () => {
       // controls.md [W10][P2] strengthening: was `.not.toThrow()` only.
       // The contract is that dispose() calls removeEventListener for each
       // of the 6 event types it registered (pointerdown/pointermove/
@@ -528,7 +528,7 @@ describe('LuxarOrbitControls', () => {
       removeSpy.mockRestore();
     });
 
-    it('dispose() removes the ortho view-axis wheel listener [controls.md/W10][P2][C12]', () => {
+    it('dispose() removes the ortho view-axis wheel listener', () => {
       // controls.md C12 fix: assert the BEHAVIORAL contract (no leak) rather
       // than the private `viewAxisRotationHandler` nulling. After dispose, a
       // shift+wheel event must NOT mutate orientation — the handler is

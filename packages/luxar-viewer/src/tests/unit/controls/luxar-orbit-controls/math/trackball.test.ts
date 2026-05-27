@@ -77,7 +77,7 @@ describe('projectOnTrackball — H1 normalization invariant', () => {
   // deepest invariant of the function (it underpins arcball rotation
   // computing valid quaternion axes). 200 randomised samples cover both
   // the sphere-branch and hyperboloid-branch regions.
-  it('[property] ||project(x, y, r)|| = 1 for arbitrary inputs [controls.md/H1][P12]', () => {
+  it('[property] ||project(x, y, r)|| = 1 for arbitrary inputs', () => {
     fc.assert(
       fc.property(
         fc.double({ min: -5, max: 5, noNaN: true }),
@@ -149,7 +149,7 @@ describe('computeArcballRotation — H2 invariants', () => {
     expect(angleFast).toBeCloseTo(2 * angleSlow, 4);
   });
 
-  it('[controls.md/G7] trackballRadius = 0 produces a finite unit-length quaternion (no NaN/Infinity)', () => {
+  it('trackballRadius = 0 produces a finite unit-length quaternion (no NaN/Infinity)', () => {
     // controls.md G7: with radius=0, both endpoint projections fall into
     // the hyperboloid branch where z = (0.5 * r²)/sqrt(d²) collapses to 0.
     // The endpoints become in-plane unit vectors; their cross product
@@ -164,7 +164,7 @@ describe('computeArcballRotation — H2 invariants', () => {
     expect(norm).toBeCloseTo(1, 5);
   });
 
-  it('[controls.md/G7] trackballRadius = 0 with collinear drag returns identity (guard branch)', () => {
+  it('trackballRadius = 0 with collinear drag returns identity (guard branch)', () => {
     // controls.md G7: when start and end project to (anti-)parallel vectors,
     // the `axis.lengthSq() < 1e-10` guard bails out → identity quaternion.
     // Pure-X drag from origin produces start=(0,0) (degenerate) and a real
@@ -178,7 +178,7 @@ describe('computeArcballRotation — H2 invariants', () => {
     expect(Math.hypot(q.x, q.y, q.z)).toBeLessThan(1e-8);
   });
 
-  it('[controls.md/G8] rotateSpeed = 0 returns identity quaternion regardless of drag', () => {
+  it('rotateSpeed = 0 returns identity quaternion regardless of drag', () => {
     // controls.md G8: angle = acos(p1·p2) * rotateSpeed. With rotateSpeed=0,
     // the angle is 0 → setFromAxisAngle(any, 0) returns identity.
     const start = new THREE.Vector2(0.2, 0.1);

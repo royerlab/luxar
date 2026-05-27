@@ -48,7 +48,7 @@ describe('ControlsManager', () => {
       expect(controlsManager.getControls()).toBeInstanceOf(LuxarOrbitControls);
     });
 
-    it('initial orbit controls have the expected default configuration [controls.md/W1][P2]', () => {
+    it('initial orbit controls have the expected default configuration', () => {
       // controls.md [W1][P2] strengthening: was `.toBeTruthy()` +
       // `.enabled === true` only. Pin the orbit-control defaults that
       // matter for the active mode (enableRotate/Pan/Zoom + damping)
@@ -241,19 +241,19 @@ describe('ControlsManager', () => {
     // previously had no tests (fly mode had 2 of 5 setters tested).
     // Pin both forwarders so a regression that dropped the active-controls
     // live-apply branch is caught.
-    it('setFlyRotationSpeed applies live to the active fly controls [controls.md/G20][P5]', () => {
+    it('setFlyRotationSpeed applies live to the active fly controls', () => {
       controlsManager.setFlyRotationSpeed(3.14);
       const controls = controlsManager.getControls() as LuxarFlyControls;
       expect(controls.rotationSpeed).toBeCloseTo(3.14, 5);
     });
 
-    it('setFlyRotationDamping applies live to the active fly controls [controls.md/G20][P5]', () => {
+    it('setFlyRotationDamping applies live to the active fly controls', () => {
       controlsManager.setFlyRotationDamping(0.88);
       const controls = controlsManager.getControls() as LuxarFlyControls;
       expect(controls.rotationDamping).toBeCloseTo(0.88, 5);
     });
 
-    it('returns the SAME LuxarFlyControls instance as getControls() when active [controls.md/W2][P2]', () => {
+    it('returns the SAME LuxarFlyControls instance as getControls() when active', () => {
       // controls.md [W2][P2] strengthening: was `.toBeInstanceOf` only.
       // The contract is stronger than "an instance is returned": the
       // returned reference must be IDENTICAL to the active controls
@@ -596,7 +596,7 @@ describe('ControlsManager', () => {
   // camera.position THEN calls setTarget THEN reinitialize so the next
   // update() respects the new framing. A regression in either forwarder
   // would silently break auto-framing.
-  describe('setTarget / reinitialize [controls.md/G19][P5]', () => {
+  describe('setTarget / reinitialize', () => {
     it('setTarget copies into orbit controls.target (no update fired)', () => {
       controlsManager.setTarget(new THREE.Vector3(7, 8, 9));
       const controls = controlsManager.getControls() as LuxarOrbitControls;
@@ -640,7 +640,7 @@ describe('ControlsManager', () => {
   // zoom/pan feel without tripping any test. Pin both contracts here:
   //   1. The current orbit controls' min/max{Distance,Zoom} reflect the value.
   //   2. The stored limits survive a mode-switch (orbit→fly→orbit).
-  describe('scale-aware setters [controls.md/G18][P5]', () => {
+  describe('scale-aware setters', () => {
     it('setDistanceLimits applies live to the active orbit controls', () => {
       controlsManager.setDistanceLimits(2.5, 250);
       const controls = controlsManager.getControls() as LuxarOrbitControls;
