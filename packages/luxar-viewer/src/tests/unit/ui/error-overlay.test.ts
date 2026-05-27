@@ -17,6 +17,16 @@ afterEach(() => {
     errorMessage.remove();
   }
 
+  // Audit G17 (viewer-ui-config-themes-core-utils): pinning a
+  // strict `vi.getTimerCount() === 0` here surfaces a real timer
+  // leak in `ui/error-overlay` (showError schedules a setTimeout
+  // for the auto-clear flow that is never cancelled when the
+  // overlay is removed). That's a production issue, not a test
+  // issue. The leak is tracked in `delme/audit-tracking.md` as
+  // an OPEN G-tier item. Pinning the strict count here would
+  // fail every test in this file; defer to a follow-up that fixes
+  // the production teardown.
+
   // Clear all pending timers before teardown
   vi.clearAllTimers();
   vi.useRealTimers();
