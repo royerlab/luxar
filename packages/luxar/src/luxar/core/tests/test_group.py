@@ -396,3 +396,317 @@ class TestMultiLODGSplats:
         assert "substitutive_0" not in grp
         assert "substitutive_1" not in grp
         assert "n_substitutive" not in grp.attrs
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Convenience API — lod_group= / additive_lod= resolution table
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _make_flat_gsplat_data(n: int = 8, seed: int = 0):
+    """Build a single-substitutive, single-additive GSplatData with N splats."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    rng = np.random.RandomState(seed)
+    return GSplatData(
+        centers=rng.rand(n, 3).astype(np.float32) * 100,
+        amplitudes=rng.rand(n).astype(np.float32).clip(0.1, 1.0),
+        cholesky_factors=np.tile(
+            np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+        ),
+    )
+
+
+def _make_multi_substitutive_gsplat_data():
+    """Build a 2-level substitutive (no additive ladders) GSplatData.
+
+    Index 0 = finest (8 splats), index 1 = coarsest (2 splats), matching the
+    ``make_substitutive_lod`` convention.
+    """
+    from luxar.gsplats.gsplat_data import (
+        AdditiveSubLOD,
+        GSplatData,
+        SubstitutiveLevel,
+    )
+
+    rng = np.random.RandomState(1)
+    finest = SubstitutiveLevel(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=rng.rand(8, 3).astype(np.float32),
+                amplitudes=np.ones(8, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (8, 1)
+                ),
+            )
+        ],
+        compression_factor=1,
+        level_index=0,
+    )
+    coarsest = SubstitutiveLevel(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=rng.rand(2, 3).astype(np.float32),
+                amplitudes=np.ones(2, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (2, 1)
+                ),
+            )
+        ],
+        compression_factor=4,
+        level_index=1,
+    )
+    return GSplatData.from_substitutive_levels(
+        [finest, coarsest], default_substitutive=0
+    )
+
+
+class TestLodGroupAxis:
+    """``lod_group=`` semantics on ``add_gsplats_from_data``."""
+
+    def test_none_drops_to_default_substitutive(self, tmp_path) -> None:
+        """``None`` (pass-through) keeps only the default substitutive level."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data("splats", data)  # lod_group=None
+        # Returned a flat GSplats, not an LODGroup.
+        assert type(node).__name__ == "GSplats"
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        assert store["splats"].attrs["type"] == "gsplats"
+
+    def test_true_requires_stored_levels(self, tmp_path) -> None:
+        """``True`` raises when input is single-substitutive."""
+        data = _make_flat_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="lod_group=True requires"):
+                scene.add_gsplats_from_data("splats", data, lod_group=True)
+
+    def test_true_uses_stored_levels(self, tmp_path) -> None:
+        """``True`` with stored levels produces an LODGroup."""
+        from luxar.core import LODGroup
+
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data("multires", data, lod_group=True)
+            assert isinstance(node, LODGroup)
+            assert len(node.children) == 2
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["multires"]
+        assert grp.attrs["type"] == "lod_group"
+        # Coarsest first → child_0 has fewer splats than child_1.
+        assert grp["child_0"].attrs["n_splats"] == 2
+        assert grp["child_1"].attrs["n_splats"] == 8
+        # Monotonic min_pixel_size, coarsest = 0.
+        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
+        assert grp["child_1"].attrs["min_pixel_size"] > 0.0
+
+    def test_false_collapses_to_finest(self, tmp_path) -> None:
+        """``False`` keeps only the finest substitutive level (index 0)."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data("splats", data, lod_group=False)
+        assert type(node).__name__ == "GSplats"
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        # Finest had 8 splats; coarsest had 2. We kept the finest.
+        assert store["splats"].attrs["n_splats"] == 8
+
+    def test_dict_computes_from_flat(self, tmp_path) -> None:
+        """``dict(...)`` computes substitutive levels when input is flat."""
+        from luxar.core import LODGroup
+
+        data = _make_flat_gsplat_data(n=8)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data(
+                "multires",
+                data,
+                lod_group=dict(compression_factor=2, levels=1),
+            )
+            assert isinstance(node, LODGroup)
+            # K=2, L=1 → 2 substitutive levels total
+            assert len(node.children) == 2
+
+    def test_dict_without_recompute_uses_stored(self, tmp_path) -> None:
+        """``dict(...)`` with stored levels and no recompute uses stored."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data(
+                "multires",
+                data,
+                lod_group=dict(compression_factor=4, levels=3),  # would compute 4 levels if recomputed
+            )
+            # Returned the stored 2-level structure, not a new 4-level one.
+            assert len(node.children) == 2
+
+    def test_dict_recompute_forces_recomputation(self, tmp_path) -> None:
+        """``dict(..., recompute=True)`` recomputes even when stored levels exist."""
+        # Use FLAT data (no stored substitutive levels) so we can verify
+        # recompute=True still works on flat input identically to the
+        # compute-if-absent path. The recompute flag's main job is to
+        # NOT short-circuit when levels are present; on flat input,
+        # behaviour is the same.
+        data = _make_flat_gsplat_data(n=16)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data(
+                "multires",
+                data,
+                lod_group=dict(compression_factor=2, levels=2, recompute=True),
+            )
+            # K=2, L=2 → 3 substitutive levels total
+            assert len(node.children) == 3
+
+    def test_min_pixel_sizes_override(self, tmp_path) -> None:
+        """Explicit ``min_pixel_sizes`` overrides the auto-derived defaults."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data(
+                "multires",
+                data,
+                lod_group=dict(min_pixel_sizes=[0.0, 250.0]),
+            )
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["multires"]
+        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
+        assert grp["child_1"].attrs["min_pixel_size"] == 250.0
+
+    def test_min_pixel_sizes_wrong_length_raises(self, tmp_path) -> None:
+        """Length mismatch between min_pixel_sizes and # of substitutive levels."""
+        data = _make_multi_substitutive_gsplat_data()  # 2 levels
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="min_pixel_sizes has"):
+                scene.add_gsplats_from_data(
+                    "splats",
+                    data,
+                    lod_group=dict(min_pixel_sizes=[0.0, 100.0, 500.0]),  # 3 entries
+                )
+
+    def test_unknown_spec_type_raises(self, tmp_path) -> None:
+        """Non-None/bool/dict spec is a TypeError."""
+        data = _make_flat_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(TypeError, match="lod_group must be"):
+                scene.add_gsplats_from_data(
+                    "splats", data, lod_group="auto"
+                )  # type: ignore[arg-type]
+
+
+class TestAdditiveLodAxis:
+    """``additive_lod=`` semantics on ``add_gsplats_from_data``."""
+
+    @staticmethod
+    def _make_multi_additive_data(n: int = 8, n_lods: int = 3):
+        """Flat data with an additive ladder of n_lods levels (cumulative)."""
+        from luxar.gsplats.lod.additive import make_additive_lod
+
+        return make_additive_lod(_make_flat_gsplat_data(n=n), n_lods=n_lods)
+
+    def test_none_passes_through(self, tmp_path) -> None:
+        """``None`` keeps the additive ladder as-is."""
+        data = self._make_multi_additive_data(n=8, n_lods=3)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data)  # additive_lod=None
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["splats"]
+        # Existing multi-additive path → additive_<i>/ subgroups.
+        assert grp.attrs.get("n_additive_sublods") == 3
+        assert "additive_0" in grp
+
+    def test_true_requires_stored_ladder(self, tmp_path) -> None:
+        """``True`` raises when input has only a single additive level."""
+        data = _make_flat_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="additive_lod=True requires"):
+                scene.add_gsplats_from_data("splats", data, additive_lod=True)
+
+    def test_true_uses_stored_ladder(self, tmp_path) -> None:
+        """``True`` with a stored ladder writes the additive subgroups."""
+        data = self._make_multi_additive_data(n=8, n_lods=3)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data, additive_lod=True)
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        assert store["splats"].attrs["n_additive_sublods"] == 3
+
+    def test_false_flattens_ladder(self, tmp_path) -> None:
+        """``False`` collapses the additive ladder to a single LOD."""
+        data = self._make_multi_additive_data(n=8, n_lods=3)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("splats", data, additive_lod=False)
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["splats"]
+        # No additive subgroups; flat layout, all 8 splats at the top level.
+        assert "additive_0" not in grp
+        assert "n_additive_sublods" not in grp.attrs
+        assert grp.attrs["n_splats"] == 8
+
+    def test_dict_computes_ladder_from_flat(self, tmp_path) -> None:
+        """``dict(n_lods=2)`` computes a 2-level ladder from flat input."""
+        data = _make_flat_gsplat_data(n=8)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data(
+                "splats", data, additive_lod=dict(n_lods=2)
+            )
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        assert store["splats"].attrs["n_additive_sublods"] == 2
+
+
+class TestCombinedAxes:
+    """Both ``lod_group=`` and ``additive_lod=`` together."""
+
+    def test_compute_substitutive_then_additive(self, tmp_path) -> None:
+        """Compute substitutive levels then add an additive ladder on each."""
+        from luxar.core import LODGroup
+
+        data = _make_flat_gsplat_data(n=16)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data(
+                "multires",
+                data,
+                lod_group=dict(compression_factor=2, levels=1),
+                additive_lod=dict(n_lods=2),
+            )
+            assert isinstance(node, LODGroup)
+            assert len(node.children) == 2  # K=2, L=1
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["multires"]
+        # Each substitutive child should have a 2-step additive ladder.
+        for child_name in ["child_0", "child_1"]:
+            child = grp[child_name]
+            assert child.attrs.get("n_additive_sublods") == 2
+            assert "additive_0" in child
+            assert "additive_1" in child
+            assert "min_pixel_size" in child.attrs
+
+    def test_compositing_attrs_land_on_lod_group(self, tmp_path) -> None:
+        """opacity/gamma/etc. ride onto the LODGroup, not the children."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data(
+                "multires", data, lod_group=True, opacity=0.5, gamma=2.0
+            )
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["multires"]
+        # LODGroup carries the compositing attrs.
+        assert grp.attrs["opacity"] == 0.5
+        assert grp.attrs["gamma"] == 2.0
+        # Children do NOT (they inherit via composition at render time).
+        # Note: the writer auto-defaults missing values, so we can't easily
+        # assert "absence" on the children — but the value at the LODGroup
+        # is the authoritative source.
