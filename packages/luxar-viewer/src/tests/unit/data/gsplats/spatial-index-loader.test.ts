@@ -293,7 +293,9 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(result.positions).toBeInstanceOf(Float32Array);
         expect(result.amplitudes).toBeInstanceOf(Float32Array);
         expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
-        expect(result.colors).toBeFalsy();
+        // Audit W8 fix: toBeFalsy matches too broadly. Pin the
+        // documented sentinel (null or undefined).
+        expect(result.colors == null).toBe(true);
       });
 
       it('should only initialize once with concurrent calls', async () => {

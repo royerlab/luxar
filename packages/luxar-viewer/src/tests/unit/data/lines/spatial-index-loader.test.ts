@@ -328,8 +328,10 @@ describe('LinesSpatialIndexLoader', () => {
         const result = await bodyLoader.loadLines(viewState);
 
         expect(result.positions).toBeDefined();
-        expect(result.colors).toBeFalsy();
-        expect(result.sharpness).toBeFalsy();
+        // Audit W7 fix: toBeFalsy matches too broadly. Pin the
+        // documented sentinel (null or undefined).
+        expect(result.colors == null).toBe(true);
+        expect(result.sharpness == null).toBe(true);
         // Widths is required; the loader fills with default 1.0 when the
         // array open fails, so the field is always present.
         expect(result.widths).toBeInstanceOf(Float32Array);
