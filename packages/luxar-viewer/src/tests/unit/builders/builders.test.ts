@@ -1,7 +1,12 @@
 /**
- * Smoke tests for the test data builders.
+ * Tests for the test-data builders.
  *
- * Builders are themselves test infrastructure, so these tests verify only
+ * builders.md O1 / Phase E31: previously the file docstring + outer
+ * describes carried a "smoke" label, but the tests now exercise real
+ * contracts (return-shape pinning, throw assertions, build-isolation,
+ * deterministic Math.random verification). Drop the "smoke" framing.
+ *
+ * Builders are themselves test infrastructure, so these tests verify
  * the contract: `build()` returns typed arrays of the documented sizes,
  * default fallbacks kick in when optional setters are skipped, and the
  * Cholesky packing layout (lower-triangular, ndim*(ndim+1)/2 floats per
@@ -26,7 +31,7 @@ import {
   ChunkBuilder,
 } from '../../builders/test-data-builders';
 
-describe('PointsBuilder smoke', () => {
+describe('PointsBuilder', () => {
   it('produces positions of length numPoints * dimensions when randomized', () => {
     const data = new PointsBuilder().withPoints(50).withDimensions(3).withRandomPositions().build();
 
@@ -51,7 +56,7 @@ describe('PointsBuilder smoke', () => {
   });
 });
 
-describe('LinesBuilder smoke', () => {
+describe('LinesBuilder', () => {
   // builders.md O4 / Phase E30: previously the test name listed three
   // attribute names together (`vertices/widths/segments`), framing it
   // as a multi-behavior phrase. Per P9 (one input class, one expected
@@ -169,7 +174,7 @@ describe('LinesBuilder smoke', () => {
   });
 });
 
-describe('GSplatsBuilder smoke', () => {
+describe('GSplatsBuilder', () => {
   it('produces the documented array shapes by default', () => {
     const data = new GSplatsBuilder().withSplats(15).withDimensions(3).build();
 
@@ -388,7 +393,7 @@ describe('build() return-shape contract [builders.md/G13][P2]', () => {
 // despite being one of the seven exported builders. Even covering the
 // load-bearing branches (withDisplayed slice-to-3, default-vs-overridden
 // ndim, time/channel dimension auto-extension) closes the biggest gap.
-describe('DimensionsBuilder smoke [builders.md/G7][P11]', () => {
+describe('DimensionsBuilder [builders.md/G7][P11]', () => {
   it('produces 3D default config with displayed=[0,1,2] and 3 metadata entries', () => {
     const dims = new DimensionsBuilder().build();
     expect(dims.ndim).toBe(3);
