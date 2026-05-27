@@ -112,26 +112,26 @@ describe('camera-utils', () => {
   });
 
   describe('getOrthoFrustumHeight', () => {
-    it('should return frustum height at default zoom (1.0)', () => {
+    // utils.md O2 / Phase E48: P9 renames — pin the height formula
+    // (top - bottom) / zoom across {default zoom, 2x zoom, asymmetric
+    // frustum, very high zoom}.
+    it('zoom=1, symmetric frustum: height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
-      // top - bottom = 5 - (-5) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
-    it('should account for zoom level', () => {
+    it('zoom=2 halves the effective frustum height (10 → 5)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 2;
-      // Effective height = (top - bottom) / zoom = 10 / 2 = 5
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(5, 5);
     });
 
-    it('should handle asymmetric frustum', () => {
+    it('asymmetric frustum (top=8, bottom=-2): height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-3, 7, 8, -2, 0.1, 100);
-      // top - bottom = 8 - (-2) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
-    it('should handle high zoom', () => {
+    it('zoom=100 shrinks height by 100x (10 → 0.1)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 100;
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(0.1, 5);
