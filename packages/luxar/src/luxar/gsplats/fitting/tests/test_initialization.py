@@ -70,12 +70,21 @@ def basic_preprocessed_data(basic_config):
 
 
 def test_initialize_optimization_normal(basic_config, basic_preprocessed_data) -> None:
-    """Test normal initialization with valid config."""
+    """Test normal initialization with valid config.
+
+    Audit W1 fix: three consecutive `is not None` checks pass even
+    when objects are the wrong type or in broken state. Pin the
+    documented type of each component.
+    """
+    from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+
     components = initialize_optimization(basic_config, basic_preprocessed_data)
 
-    assert components.model is not None
-    assert components.optimizer is not None
-    assert components.scheduler is not None
+    assert isinstance(components.model, GaussianSplatModel)
+    assert isinstance(components.optimizer, torch.optim.Optimizer)
+    # scheduler can be None when scheduler_type is None — accept either
+    # the documented subclass or None.
+    assert components.scheduler is None or hasattr(components.scheduler, "step")
 
     # Check model has correct number of splats
     assert components.model.n_splats() == basic_preprocessed_data.N
