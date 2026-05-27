@@ -293,7 +293,9 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(result.positions).toBeInstanceOf(Float32Array);
         expect(result.amplitudes).toBeInstanceOf(Float32Array);
         expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
-        expect(result.colors).toBeFalsy();
+        // Audit W8 fix: toBeFalsy matches too broadly. Pin the
+        // documented sentinel (null or undefined).
+        expect(result.colors == null).toBe(true);
       });
 
       it('should only initialize once with concurrent calls', async () => {
@@ -633,6 +635,16 @@ describe('GSplatsSpatialIndexLoader', () => {
         await bodyLoader.loadGSplats(viewState);
         bodyLoader.dispose();
 
+        expect((bodyLoader as unknown as { chunkIndex: unknown }).chunkIndex).toBeNull();
+        expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
+        expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);
+      });
+
+      // Audit G10 (viewer-data-cache-workers-wasm): pin dispose() idempotency
+      // — symmetric to Points + Lines variants.
+      it('dispose is idempotent — second call is a clean no-op', () => {
+        bodyLoader.dispose();
+        expect(() => bodyLoader.dispose()).not.toThrow();
         expect((bodyLoader as unknown as { chunkIndex: unknown }).chunkIndex).toBeNull();
         expect((bodyLoader as unknown as { arrays: object }).arrays).toEqual({});
         expect((bodyLoader as unknown as { events: { size: number } }).events.size).toBe(0);

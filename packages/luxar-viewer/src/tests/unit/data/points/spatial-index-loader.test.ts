@@ -230,10 +230,14 @@ describe('PointsSpatialIndexLoader', () => {
 
       const result = await testLoader.loadPoints(viewState);
 
+      // Audit W6 fix: toBeFalsy() also matches 0, empty string, false —
+      // none of which are valid sentinels for "attribute absent". Pin
+      // the exact sentinels the loader produces (null OR undefined) by
+      // accepting both, but rejecting other falsy values.
       expect(result.positions).toBeDefined();
-      expect(result.colors).toBeFalsy(); // Can be null or undefined
-      expect(result.radii).toBeFalsy(); // Can be null or undefined
-      expect(result.sharpness).toBeFalsy(); // Can be null or undefined
+      expect(result.colors == null).toBe(true);
+      expect(result.radii == null).toBe(true);
+      expect(result.sharpness == null).toBe(true);
 
       testLoader.dispose();
     });
@@ -724,6 +728,19 @@ describe('PointsSpatialIndexLoader', () => {
       expect((loader as any).chunkIndex).toBeNull();
       expect((loader as any).arrays).toEqual({});
       // eventListeners Set replaced by LoaderEventEmitter — same observable contract.
+      expect((loader as any).events.size).toBe(0);
+    });
+
+    // Audit G10 (viewer-data-cache-workers-wasm): pin dispose() idempotency.
+    // A second dispose call must not throw and must leave the loader in
+    // the same cleaned state. A mutant that reads from a cleared field
+    // (e.g. `this.chunkIndex.dispose()` after the first dispose nulled
+    // it) would surface as a TypeError here.
+    it('dispose is idempotent — second call is a clean no-op', () => {
+      loader.dispose();
+      expect(() => loader.dispose()).not.toThrow();
+      expect((loader as any).chunkIndex).toBeNull();
+      expect((loader as any).arrays).toEqual({});
       expect((loader as any).events.size).toBe(0);
     });
   });

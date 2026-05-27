@@ -185,6 +185,19 @@ class TestFilter:
         filtered = gs.filter(np.ones(0, dtype=bool))
         assert filtered.n_splats == 0
 
+    # Audit G8 (python-gsplats-data-io-lod): non-boolean dtype mask
+    # behaviour was untested. The implementation accepts int8 [1, 0, 1]
+    # and applies bool-cast semantics (NOT numpy's fancy-indexing
+    # default which would treat them as positional indices). Pin this
+    # surprising-but-useful contract — a mutant that switched to
+    # `.astype(np.int)` would change the meaning.
+    def test_mask_dtype_int8_treated_as_boolean(self):
+        """int8 [1, 0, 1] mask filters as boolean — selects 2 of 3 splats."""
+        gs = _make_3d_gsplat(n=3)
+        filtered = gs.filter(np.array([1, 0, 1], dtype=np.int8))
+        # Boolean semantics: 1→True, 0→False → 2 splats survive.
+        assert filtered.n_splats == 2
+
 
 # ── FilterBy (multi-criteria) ──────────────────────────
 
