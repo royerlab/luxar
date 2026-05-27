@@ -55,11 +55,21 @@ export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
     });
   }
 
-  // Shift speed boost
+  // Shift speed boost (also disables wheel-zoom so Shift+Wheel rotates view).
+  // Must forward to the fly controls so its internal `speedBoost` flag is
+  // set — the WASD bindings above include Shift+key combos that already
+  // accelerate movement, but `setSpeedBoost` is what actually doubles the
+  // velocity multiplier in physics.ts.
   contextManager.registerBinding(InputContext.FLY_CONTROLS, {
     key: 'Shift',
-    handler: () => sceneManager.controls.setEnableZoom(false),
-    keyupHandler: () => sceneManager.controls.setEnableZoom(true),
+    handler: (event) => {
+      sceneManager.controls.setEnableZoom(false);
+      getFlyControls()?.handleKeyDown(event);
+    },
+    keyupHandler: (event) => {
+      sceneManager.controls.setEnableZoom(true);
+      getFlyControls()?.handleKeyUp(event);
+    },
     description: 'Speed boost + zoom control',
   });
 }
