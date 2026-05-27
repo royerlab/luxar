@@ -8,14 +8,14 @@
  * rotation registration, and Panel.dispose() routing through the
  * strategy.
  *
- * AUDIT NOTE (ui.md C2): the tests below mutate
+ * AUDIT NOTE (ui.md C2): some tests below mutate
  * `(panel as any).videoRecordingStrategy.X` (e.g. `mediaRecorder =
  * mockMediaRecorder`, `captureStream = fakeStream`). This pins the
  * internal field shape of VideoRecordingStrategy; a refactor of the
  * strategy's internal state will break these tests even with the public
- * contract preserved. Follow-up: drive the same scenarios through
- * `panel.startVideoRecording()` and verify observable effects
- * (download blob shape, toast string, dispose-time track cleanup).
+ * contract preserved. The `disposed-onstop branch` test below now drives
+ * the real onstop closure via `panel.startVideoRecording()`; the
+ * remaining internal-mutation tests are tracked for the same rewrite.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -164,30 +164,41 @@ describe('VideoRecordingStrategy', () => {
   });
 
   describe('disposed-onstop branch', () => {
+    // [ui.md/C2] Drives the REAL onstop closure installed by
+    // `videoRecordingStrategy.run()` instead of hand-rolling a parallel
+    // closure. The previous test re-implemented lines 158-164 of
+    // video-recording-strategy.ts inside the test body and so could not
+    // catch a regression that drifted the production branch.
     it('stops tracks, suppresses download + toast when onstop fires after dispose', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+
       const trackA = { stop: vi.fn() };
       const trackB = { stop: vi.fn() };
       const fakeStream = { getTracks: vi.fn().mockReturnValue([trackA, trackB]) };
-      (panel as any).videoRecordingStrategy.captureStream = fakeStream;
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => fakeStream);
 
       const downloadBlobSpy = vi.spyOn(panel as any, 'downloadBlob');
       vi.mocked(showToast).mockClear();
 
+      // Kick off the real recording flow — startVideoRecording() awaits
+      // an `onstopComplete` promise that resolves only when we invoke
+      // mockMediaRecorder.onstop() below. Do NOT await yet.
+      const recordingPromise = panel.startVideoRecording();
+
+      // Let the async chain reach `mediaRecorder.start(100)` so the
+      // production closure has been installed on mockMediaRecorder.onstop.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof mockMediaRecorder.onstop).toBe('function');
+
+      // Pre-conditions for the disposed branch: session.disposed=true +
+      // recordedChunks populated so we can verify they get cleared.
       (panel as any).session.disposed = true;
       (panel as any).videoRecordingStrategy.recordedChunks = [new Blob(['x'])];
-      (panel as any).session.isRecording = true;
 
-      // Mirrors the onstop closure VideoRecordingStrategy installs.
-      const onstop = () => {
-        if ((panel as any).session.disposed) {
-          (panel as any).videoRecordingStrategy.recordedChunks = [];
-          (panel as any).session.isRecording = false;
-          (panel as any).session.hideRecordingIndicator();
-          (panel as any).videoRecordingStrategy.cleanupCaptureStream();
-          return;
-        }
-      };
-      onstop();
+      // Fire the REAL onstop closure.
+      mockMediaRecorder.onstop();
+      await recordingPromise;
 
       expect(trackA.stop).toHaveBeenCalledTimes(1);
       expect(trackB.stop).toHaveBeenCalledTimes(1);
