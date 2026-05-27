@@ -145,16 +145,35 @@ describe('VideoRecordingStrategy', () => {
       expect(mockMediaRecorder.stop).not.toHaveBeenCalled();
     });
 
-    it('clears duration timer on stop', () => {
+    // [ui.md/C2 / Phase F2c] Drives the duration-timer-cleanup path via
+    // the real production code: setting `options.videoDurationLimit > 0`
+    // causes VideoRecordingStrategy.run() to install a real durationTimer
+    // (line ~198 of video-recording-strategy.ts), and stopVideoRecording
+    // routes through abort() which clears it. Previously the test
+    // hand-installed `durationTimer = setTimeout(...)` and
+    // `mediaRecorder = mockMediaRecorder` directly on the strategy's
+    // private fields.
+    it('clears duration timer on stop', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+      // Force the production path to install a real durationTimer.
+      (panel as any).options.videoDurationLimit = 60;
+
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
-      (panel as any).session.isRecording = true;
-      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
-      (panel as any).videoRecordingStrategy.durationTimer = setTimeout(() => {}, 10000);
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+      expect((panel as any).videoRecordingStrategy.durationTimer).not.toBeNull();
 
       panel.stopVideoRecording();
 
       expect(clearTimeoutSpy).toHaveBeenCalled();
+      expect((panel as any).videoRecordingStrategy.durationTimer).toBeNull();
+
+      // Fire the real onstop so startVideoRecording resolves.
+      mockMediaRecorder.onstop();
+      await recordingPromise;
     });
   });
 
