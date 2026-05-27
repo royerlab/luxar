@@ -209,6 +209,55 @@ describe('InputContextManager', () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
+    it('fires a modifier-only binding when the modifier is pressed alone', () => {
+      // When Shift (or any other modifier) is pressed alone, the keydown
+      // event reports BOTH `event.key === 'Shift'` AND `event.shiftKey === true`.
+      // A naive lookup that concatenates both produces "shift+shift", which
+      // never matches the registered "shift" binding key and silently breaks
+      // modifier-only handlers (e.g. fly-mode speed boost). The lookup must
+      // skip the modifier flag when it duplicates the pressed key.
+      const shiftHandler = vi.fn();
+      const ctrlHandler = vi.fn();
+      const altHandler = vi.fn();
+
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Shift',
+        handler: shiftHandler,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Control',
+        handler: ctrlHandler,
+      });
+      manager.registerBinding(InputContext.NAVIGATION, {
+        key: 'Alt',
+        handler: altHandler,
+      });
+
+      expect(
+        manager.handleKeyEvent(
+          new KeyboardEvent('keydown', { key: 'Shift', shiftKey: true }),
+          'down'
+        )
+      ).toBe(true);
+      expect(shiftHandler).toHaveBeenCalledTimes(1);
+
+      expect(
+        manager.handleKeyEvent(
+          new KeyboardEvent('keydown', { key: 'Control', ctrlKey: true }),
+          'down'
+        )
+      ).toBe(true);
+      expect(ctrlHandler).toHaveBeenCalledTimes(1);
+
+      expect(
+        manager.handleKeyEvent(
+          new KeyboardEvent('keydown', { key: 'Alt', altKey: true }),
+          'down'
+        )
+      ).toBe(true);
+      expect(altHandler).toHaveBeenCalledTimes(1);
+    });
+
     it('should warn about conflicts', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const handler1 = vi.fn();
@@ -1044,11 +1093,10 @@ describe('InputContextManager', () => {
     // blocklist would survive (Shift+wheel uses WindowEventHandler, not
     // this manager).
     it('[G20] Shift is NOT in NAVIGATION blockedKeys (probed via private field cast)', () => {
-      // The binding-system uses modifier-prefixed bindingKeys ("Shift+Shift"
-      // for a Shift event with shiftKey=true), which makes a direct
-      // dispatch test brittle. Instead, pin the contract by reading the
-      // private contextConfigs map directly via cast. A regression that
-      // re-added 'Shift' to NAVIGATION's blockedKeys list would surface.
+      // We pin the contract by reading the private contextConfigs map
+      // directly via cast rather than via a dispatch test: a regression
+      // that re-added 'Shift' to NAVIGATION's blockedKeys list would
+      // surface here even if dispatch behaviour shifted independently.
       const configs = (manager as unknown as {
         contextConfigs: Map<InputContext, { blockedKeys?: string[] }>;
       }).contextConfigs;
