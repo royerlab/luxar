@@ -152,7 +152,7 @@ describe('nextRoundRobin (G11, H3)', () => {
   // (cursor + 1) mod length and instance must be workers[cursor].
   // (The function assumes cursor is in [0, length); the wrap is in
   // nextIndex, which is the caller-stored value for the NEXT call.)
-  it('[property] nextIndex = (cursor + 1) mod length for valid in-range cursor [workers.md/H3][P12]', () => {
+  it('[property] nextIndex = (cursor + 1) mod length for valid in-range cursor', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 32 }).chain((poolSize) =>

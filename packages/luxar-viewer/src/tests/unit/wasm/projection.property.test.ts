@@ -90,7 +90,7 @@ describe('radii_to_visibility_mask — algebraic invariants', () => {
   });
 });
 
-describe('lerp — linearity invariants [wasm.md/H5]', () => {
+describe('lerp — linearity invariants', () => {
   // [wasm.md/H5][P12] lerp linearity: lerp(a, b, 0) === a; lerp(a, b, 1) === b;
   // affine in t and (a, b) jointly. We pin the two endpoint identities and
   // the additivity in t — lerp(a, b, t1) + lerp(a, b, t2) − a == lerp(a, b, t1+t2)
