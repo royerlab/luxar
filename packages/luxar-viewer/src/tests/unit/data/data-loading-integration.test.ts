@@ -94,7 +94,13 @@ describe('Data Loading Integration', () => {
 
       expect(scene).toBeInstanceOf(THREE.Group);
       expect(scene.name).toBe('LuxarScene');
+      // Audit W6 fix: toBeDefined only rules out undefined. The
+      // documented sceneDimensions shape is a `Dims`-like object with
+      // a `dimensions` array. Pin enough structure that a mutation
+      // returning `true` or a number would fail.
       expect(scene.userData.sceneDimensions).toBeDefined();
+      expect(typeof scene.userData.sceneDimensions).toBe('object');
+      expect(scene.userData.sceneDimensions).not.toBeNull();
       expect(scene.userData.maxRadius).toBe(0.5);
     });
 

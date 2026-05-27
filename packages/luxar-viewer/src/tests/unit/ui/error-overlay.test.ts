@@ -17,6 +17,16 @@ afterEach(() => {
     errorMessage.remove();
   }
 
+  // Audit G17 (viewer-ui-config-themes-core-utils): pinning a
+  // strict `vi.getTimerCount() === 0` here surfaces a real timer
+  // leak in `ui/error-overlay` (showError schedules a setTimeout
+  // for the auto-clear flow that is never cancelled when the
+  // overlay is removed). That's a production issue, not a test
+  // issue. The leak is tracked in `delme/audit-tracking.md` as
+  // an OPEN G-tier item. Pinning the strict count here would
+  // fail every test in this file; defer to a follow-up that fixes
+  // the production teardown.
+
   // Clear all pending timers before teardown
   vi.clearAllTimers();
   vi.useRealTimers();
@@ -78,6 +88,13 @@ describe('clearError', () => {
   });
 
   it('should be safe to call when no error exists', () => {
+    // Audit W30 (viewer-ui-config-themes-core-utils): this is
+    // appropriate defensive programming — clearError() is the public
+    // teardown API and must be idempotent. The bare .not.toThrow() is
+    // intentional; we additionally pin the observable post-state
+    // (no error element in the DOM) so a mutant that silently
+    // injects a placeholder would surface.
     expect(() => clearError()).not.toThrow();
+    expect(document.getElementById('luxar-error-message')).toBeNull();
   });
 });

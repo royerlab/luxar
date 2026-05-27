@@ -106,10 +106,16 @@ class TestLoadFitConfig:
         assert config["n_iters"] == 7
 
     def test_none_cli_values_ignored(self) -> None:
+        """Audit W3 fix: pin n_iters > 0 instead of just `is not None`.
+        A mutation that defaulted to 0 would pass the truthiness check
+        but be a real bug.
+        """
         config = load_fit_config(cli_overrides={"n_iters": None, "lr": 0.05})
         assert config["lr"] == 0.05
-        # n_iters should be the function default, not None
-        assert config["n_iters"] is not None
+        # n_iters should be the function default, not None — and the
+        # default must be a positive iteration count.
+        assert isinstance(config["n_iters"], int)
+        assert config["n_iters"] > 0
 
     def test_invalid_preset_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown preset"):
