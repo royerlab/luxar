@@ -151,7 +151,7 @@ describe('PanelCoordinator.closeAll', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT crash when no datasetBrowser is registered, but still runs the unconditional cleanup [input.md/W1][P2]', () => {
+  it('does NOT crash when no datasetBrowser is registered, but still runs the unconditional cleanup', () => {
     // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
     // closeAll()'s contract is that the unconditional cleanups
     // (hideHelpOverlay + clearError) still fire even when no optional
@@ -275,7 +275,7 @@ describe('PanelCoordinator.closeAll', () => {
     expect(psHide).toHaveBeenCalledTimes(1);
   });
 
-  it('survives missing optional panels: cleanup still fires for the ones that ARE present [input.md/W1][P2]', () => {
+  it('survives missing optional panels: cleanup still fires for the ones that ARE present', () => {
     // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
     // The "missing optional panels" contract still requires the
     // unconditional + present-panel paths to run. Verify the debug

@@ -104,7 +104,7 @@ describe('exportViewerState', () => {
     expect((debug.lastExportedState as { mocked: boolean }).mocked).toBe(true);
   });
 
-  it('does NOT touch window.__luxarDebug when it is undefined, but still runs the export pipeline [input.md/W1][P2]', () => {
+  it('does NOT touch window.__luxarDebug when it is undefined, but still runs the export pipeline', () => {
     // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
     // The contract is that the debug-hook is feature-detected — when
     // `__luxarDebug` is undefined, the export still captures state and
