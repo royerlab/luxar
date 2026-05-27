@@ -11,23 +11,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Clean up error messages
-  const errorMessage = document.getElementById('luxar-error-message');
-  if (errorMessage) {
-    errorMessage.remove();
-  }
+  // Clean up error messages. Call clearError() to also cancel the
+  // auto-dismiss timer — if we just `.remove()` the DOM node, the
+  // module-scoped setTimeout in showError() would still be pending
+  // and `vi.getTimerCount()` would surface a leak below.
+  clearError();
 
-  // Audit G17 (viewer-ui-config-themes-core-utils): pinning a
-  // strict `vi.getTimerCount() === 0` here surfaces a real timer
-  // leak in `ui/error-overlay` (showError schedules a setTimeout
-  // for the auto-clear flow that is never cancelled when the
-  // overlay is removed). That's a production issue, not a test
-  // issue. The leak is tracked in `delme/audit-tracking.md` as
-  // an OPEN G-tier item. Pinning the strict count here would
-  // fail every test in this file; defer to a follow-up that fixes
-  // the production teardown.
+  // Audit G17 (viewer-ui-config-themes-core-utils): no timers must
+  // be pending after teardown. Pre-fix, showError() leaked its
+  // auto-dismiss setTimeout — clearError() now cancels it. If a
+  // future change adds a new timer in error-overlay, this assertion
+  // will surface it before silently leaking into the next test.
+  expect(vi.getTimerCount()).toBe(0);
 
-  // Clear all pending timers before teardown
+  // Clear all pending timers before teardown (defensive — should be 0)
   vi.clearAllTimers();
   vi.useRealTimers();
 

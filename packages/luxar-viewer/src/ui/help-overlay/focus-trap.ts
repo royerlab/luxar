@@ -34,11 +34,23 @@ export function trapFocus(container: HTMLElement): () => void {
 
   container.addEventListener('keydown', handleKeyDown);
 
-  // Focus first focusable element
+  // Focus first focusable element. The timer id is captured so the
+  // cleanup function can cancel it — otherwise a trap that's released
+  // before the next tick leaks a pending timer (audit G17).
   const firstFocusable = container.querySelector<HTMLElement>(focusableSelectors);
-  if (firstFocusable) setTimeout(() => firstFocusable.focus(), 0);
+  let focusTimerId: ReturnType<typeof setTimeout> | null = null;
+  if (firstFocusable) {
+    focusTimerId = setTimeout(() => {
+      focusTimerId = null;
+      firstFocusable.focus();
+    }, 0);
+  }
 
   return () => {
+    if (focusTimerId !== null) {
+      clearTimeout(focusTimerId);
+      focusTimerId = null;
+    }
     container.removeEventListener('keydown', handleKeyDown);
     if (previouslyFocused) previouslyFocused.focus();
   };
