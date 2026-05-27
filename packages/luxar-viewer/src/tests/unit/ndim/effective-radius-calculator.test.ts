@@ -226,7 +226,10 @@ describe('effective-radius-calculator', () => {
   });
 
   describe('calculateSpatialQueryTolerance', () => {
-    it('should use maxRadius for non-displayed spatial dimensions', () => {
+    // ndim.md O4 / Phase E45: P9 rename — pins the per-dim tolerance
+    // selection: displayed → 1e10 (show all), non-displayed spatial →
+    // maxRadius, non-spatial (discrete) → 0.5 chunk-query slop.
+    it('non-displayed spatial dim uses maxRadius (0.5) for chunk-query tolerance', () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 0, 0],
@@ -247,7 +250,10 @@ describe('effective-radius-calculator', () => {
       expect(result[4]).toBe(0.5); // Non-spatial → 0.5 tolerance for chunk query (precise filtering done in calculateEffectiveRadii)
     });
 
-    it('should use 0.5 tolerance for non-spatial dimensions (for chunk queries)', () => {
+    // ndim.md O4 / Phase E45: P9 rename — pins the 0.5 chunk-query slop
+    // applied to non-spatial (discrete) dimensions. Precise filtering
+    // happens later in calculateEffectiveRadii.
+    it('non-spatial (discrete) dim uses 0.5 chunk-query tolerance (precise filter applied later)', () => {
       const viewState: ViewState = {
         displayDims: [0, 1],
         slicePosition: [0, 0, 0, 0],
@@ -271,7 +277,10 @@ describe('effective-radius-calculator', () => {
       expect(result[3]).toBe(0.5); // Non-spatial → 0.5 tolerance for chunk query
     });
 
-    it('should always use maxRadius for spatial dimensions, ignoring tolerance array', () => {
+    // ndim.md O4 / Phase E45: P9 rename — pins the precedence: spatial
+    // dims always use maxRadius, even when viewState.tolerance has an
+    // explicit per-dim entry. The tolerance[] entries do NOT override.
+    it('spatial dims always use maxRadius even when viewState.tolerance has explicit entries', () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 0],
