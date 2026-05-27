@@ -47,7 +47,7 @@ COMPRESSOR_DISABLED = None  # blosc is incompatible with Node.js test env
 FLOAT16_ALLOWED = False  # zarrita-js cannot read float16 in Node.js
 
 
-def generate_broadcasting_test():
+def generate_broadcasting_test() -> None:
     """Test dataset with broadcasted (uniform) values."""
     with asection("Generating Broadcasting Test"):
         output = FIXTURES_DIR / "test_broadcasting.zarr"
@@ -93,7 +93,7 @@ def generate_broadcasting_test():
         aprint(f"  Radii: {uniform_radius.shape} (broadcasted)")
 
 
-def generate_lut_test():
+def generate_lut_test() -> None:
     """Test dataset with LUT encoding (≤256 unique values)."""
     with asection("Generating LUT Encoding Test"):
         output = FIXTURES_DIR / "test_lut.zarr"
@@ -154,7 +154,7 @@ def generate_lut_test():
         aprint(f"  Radii: {radii.shape}")
 
 
-def generate_quantization_test():
+def generate_quantization_test() -> None:
     """Test dataset with quantized arrays (uint8/uint16)."""
     with asection("Generating Quantization Test"):
         output = FIXTURES_DIR / "test_quantization.zarr"
@@ -197,7 +197,7 @@ def generate_quantization_test():
         aprint(f"  Radii: {radii.shape} (quantized)")
 
 
-def generate_array_refs_test():
+def generate_array_refs_test() -> None:
     """Test dataset with array references (deduplication)."""
     with asection("Generating Array References Test"):
         output = FIXTURES_DIR / "test_array_refs.zarr"
@@ -238,7 +238,7 @@ def generate_array_refs_test():
         aprint(f"  Shared colors: {shared_colors.shape} (deduplicated)")
 
 
-def generate_array_ref_broadcasting_test():
+def generate_array_ref_broadcasting_test() -> None:
     """Test array_ref positions combined with scalar/broadcast attributes.
 
     This catches a subtle encoder/metadata bug: when a duplicate positions array is
@@ -312,7 +312,7 @@ def generate_array_ref_broadcasting_test():
         aprint("  Scalar color/radius/sharpness/scalars broadcast to 4 logical points")
 
 
-def generate_encoding_edge_cases_test():
+def generate_encoding_edge_cases_test() -> None:
     """Raw ArrayEncoder fixture covering edge cases outside scene validation."""
     with asection("Generating Raw Encoding Edge Cases Test"):
         output = FIXTURES_DIR / "test_encoding_edge_cases.zarr"
@@ -440,7 +440,7 @@ def _tag_contract_case(
     }
 
 
-def generate_encoding_contract_matrix_test():
+def generate_encoding_contract_matrix_test() -> None:
     """Generate a declarative raw ArrayEncoder contract matrix fixture.
 
     Scene fixtures are realistic, but they do not exhaustively pin the encoder
@@ -786,7 +786,7 @@ def generate_encoding_contract_matrix_test():
         )
 
 
-def generate_mixed_encoding_test():
+def generate_mixed_encoding_test() -> None:
     """Test dataset with mixed encoding modes in same scene."""
     with asection("Generating Mixed Encoding Test"):
         output = FIXTURES_DIR / "test_mixed.zarr"
@@ -837,7 +837,7 @@ def generate_mixed_encoding_test():
         aprint("  Points 'direct': No encoding")
 
 
-def generate_4d_test():
+def generate_4d_test() -> None:
     """Test dataset with 4D data (time dimension) for nD slicing tests."""
     with asection("Generating 4D nD Slicing Test"):
         output = FIXTURES_DIR / "test_4d.zarr"
@@ -902,7 +902,7 @@ def generate_4d_test():
         aprint(f"  Points per step: {num_points}")
 
 
-def generate_hierarchical_transforms_test():
+def generate_hierarchical_transforms_test() -> None:
     """Test dataset with hierarchical scene graph and nested transforms.
 
     CRITICAL: This test verifies transform composition and hierarchy:
@@ -971,7 +971,7 @@ def generate_hierarchical_transforms_test():
         aprint("  CRITICAL: Verifies transform composition and matrix format")
 
 
-def generate_integer_colors_test():
+def generate_integer_colors_test() -> None:
     """Test dataset with direct uint8 and uint16 SDR color arrays."""
     with asection("Generating Integer Colors Test"):
         output = FIXTURES_DIR / "test_integer_colors.zarr"
@@ -1009,7 +1009,7 @@ def generate_integer_colors_test():
         aprint("  uint16_points/colors: direct uint16")
 
 
-def generate_hdr_colors_test():
+def generate_hdr_colors_test() -> None:
     """Test dataset with HDR colors (values > 1.0) to verify float32 color handling.
 
     CRITICAL: This test verifies that HDR colors are preserved through the pipeline:
@@ -1066,7 +1066,7 @@ def generate_hdr_colors_test():
         aprint("  CRITICAL: Verifies float32 HDR color preservation")
 
 
-def generate_log_scalar_test():
+def generate_log_scalar_test() -> None:
     """Test scene dataset with wide dynamic range radii.
 
     The scene compiler currently uses linear positive-scalar encoding by default,
@@ -1122,7 +1122,7 @@ def generate_log_scalar_test():
         aprint("  CRITICAL: Verifies bounded_scalar_uint16 encoding/decoding")
 
 
-def generate_4d_scalar_lut_test():
+def generate_4d_scalar_lut_test() -> None:
     """Test dataset with 4D positions using scalar LUT encoding.
 
     CRITICAL: This test verifies scalar LUT mode on multi-dimensional positions,
@@ -1197,7 +1197,7 @@ def generate_4d_scalar_lut_test():
         aprint("  CRITICAL: Tests scalar LUT + 4D + partial range extraction")
 
 
-def generate_uint16_quantization_test():
+def generate_uint16_quantization_test() -> None:
     """Test dataset with uint16 quantization (wide dynamic range).
 
     CRITICAL: This test verifies that uint16 bounded_scalar encoding is correctly
@@ -1264,7 +1264,7 @@ def generate_uint16_quantization_test():
         aprint("  CRITICAL: Verifies uint16 bounded_scalar decoding uses max_int=65535")
 
 
-def generate_sharpness_range_test():
+def generate_sharpness_range_test() -> None:
     """Test dataset with full sharpness range [0, 31] to verify decoding.
 
     CRITICAL: This test verifies the bug fix where TypeScript was using
@@ -1322,7 +1322,7 @@ def generate_sharpness_range_test():
         aprint("  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
 
 
-def generate_nd_transforms_test():
+def generate_nd_transforms_test() -> None:
     """Test dataset with nd_transforms for verifying inverse-query in viewer.
 
     Creates a 4D scene (X, Y, Z, Time) with two groups:
@@ -1402,7 +1402,7 @@ def generate_nd_transforms_test():
         aprint("  Expected: time=0 → 50 red, time=5 → 50 blue")
 
 
-def generate_lines_test():
+def generate_lines_test() -> None:
     """Test dataset with Lines geometry type.
 
     Verifies that the TypeScript viewer can load and render Lines,
@@ -1454,7 +1454,7 @@ def generate_lines_test():
         aprint(f"  Vertices: {vertices.shape}, Widths: {widths.shape}")
 
 
-def generate_gsplats_test():
+def generate_gsplats_test() -> None:
     """Test dataset with GSplats (Gaussian Splats) geometry type.
 
     Verifies that the TypeScript viewer can load and render GSplats,
@@ -1520,7 +1520,7 @@ def generate_gsplats_test():
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
-def generate_labelled_points_test():
+def generate_labelled_points_test() -> None:
     """Small labelled-points dataset for the hover-tooltip E2E spec.
 
     Each point gets a string label "Point 0", "Point 1", ... The scene
@@ -1584,7 +1584,7 @@ def generate_labelled_points_test():
         aprint(f"  {n} labelled points; default hover overlay auto-injected")
 
 
-def main():
+def main() -> None:
     """Generate all test datasets."""
     aprint("=" * 70)
     aprint("GENERATING TYPESCRIPT-PYTHON COMPATIBILITY TEST DATASETS")

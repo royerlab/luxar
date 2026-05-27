@@ -77,9 +77,19 @@ const createMocks = () => {
   vi.stubGlobal('crypto', {
     subtle: {
       async digest(_alg: string, data: BufferSource): Promise<ArrayBuffer> {
-        const bytes = new Uint8Array(
-          data instanceof ArrayBuffer ? data : (data as ArrayBufferView).buffer
-        );
+        // Respect partial ArrayBufferViews (byteOffset/byteLength) so
+        // sliced inputs hash only their visible region. Required for
+        // future callers that pass `arr.subarray(start, end)`; today's
+        // sole caller (cache/multi-level-caching-store/fetch-retry.ts
+        // ::hashUrl) passes a full Uint8Array where these are 0/length.
+        const bytes =
+          data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : new Uint8Array(
+                (data as ArrayBufferView).buffer,
+                (data as ArrayBufferView).byteOffset,
+                (data as ArrayBufferView).byteLength
+              );
         let h = 0x811c9dc5;
         for (let i = 0; i < bytes.length; i++) {
           h ^= bytes[i];
