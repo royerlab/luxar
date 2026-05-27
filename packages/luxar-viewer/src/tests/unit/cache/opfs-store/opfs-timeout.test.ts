@@ -38,7 +38,8 @@ describe('withTimeout', () => {
     expect(vi.getTimerCount()).toBe(before);
   });
 
-  it('cleans up the timer when the promise rejects (errors do not leak timers) [cache.md/G12][P5]', async () => {
+  // workers.md O3 / cache.md G12 [P5]: audit-id moved to comment per Phase E54.
+  it('cleans up the timer when the promise rejects (errors do not leak timers)', async () => {
     // [cache.md/G12][P5] The `finally { if (timer) clearTimeout(timer) }`
     // in the source is the only thing protecting against timer leaks under
     // repeated calls. Pin the rejection path: a thrown promise must still
@@ -52,7 +53,8 @@ describe('withTimeout', () => {
     expect(vi.getTimerCount()).toBe(before);
   });
 
-  it('handles timeoutMs=0 as an immediate timeout boundary [cache.md/G12][P5]', async () => {
+  // workers.md O3 / cache.md G12 [P5]: audit-id moved to comment per Phase E54.
+  it('handles timeoutMs=0 as an immediate timeout boundary', async () => {
     // [cache.md/G12][P5] Pre-audit, no test exercised the timeoutMs=0
     // boundary. Source uses `setTimeout(fn, 0)` which always queues a
     // macrotask; a never-resolving promise must lose the race immediately
