@@ -163,7 +163,12 @@ describe('ClippingDisplay — refreshDisplays', () => {
       getNearPlane: () => undefined,
       getFarPlane: () => undefined,
     });
+    // Audit W22 fix: assert the observable contract — no updateDisplay
+    // calls because the controllers were undefined, no settings mutation.
+    const settingsBefore = { near: settings.near, far: settings.far };
     expect(() => cd.refreshDisplays()).not.toThrow();
+    expect(settings.near).toBe(settingsBefore.near);
+    expect(settings.far).toBe(settingsBefore.far);
     cd.dispose();
   });
 });
@@ -179,9 +184,20 @@ describe('ClippingDisplay — dispose', () => {
   });
 
   it('idempotent: dispose twice is a no-op', () => {
+    // Audit W22 fix: pin the observable contract — second dispose() must
+    // NOT call cancelAnimationFrame a SECOND time (RAF id should be
+    // cleared by the first dispose). A mutant that re-cancels a stale id
+    // would surface as the spy.callCount being > 1.
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
     const cd = makeClipping();
     cd.setDynamicEnabled(true);
     cd.dispose();
+    const cancelsAfterFirst = cancelSpy.mock.calls.length;
+
     expect(() => cd.dispose()).not.toThrow();
+
+    // Second dispose must not have triggered another cancelAnimationFrame.
+    expect(cancelSpy.mock.calls.length).toBe(cancelsAfterFirst);
+    cancelSpy.mockRestore();
   });
 });

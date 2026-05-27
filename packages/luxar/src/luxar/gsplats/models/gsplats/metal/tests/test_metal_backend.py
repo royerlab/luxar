@@ -74,10 +74,22 @@ class TestMetalForwardPass:
         return model, shape
 
     def test_forward_executes(self, simple_model):
-        """Test that forward pass executes without error."""
+        """Test that forward pass produces a usable tensor.
+
+        Audit W2 fix: previous `output is not None` would pass even if
+        the forward returned a degenerate 0-d sentinel. Pin shape +
+        dtype + device + finite-ness so a real regression surfaces.
+        (test_forward_output_shape / _device follow with their own
+        narrower assertions, this one is the smoke check.)
+        """
         model, shape = simple_model
         output = model()
-        assert output is not None
+        assert isinstance(output, torch.Tensor)
+        assert output.shape == shape
+        assert output.dtype in (torch.float32, torch.float16, torch.bfloat16)
+        assert torch.isfinite(output).all(), (
+            "forward() produced NaN/Inf in output tensor"
+        )
 
     def test_forward_output_shape(self, simple_model):
         """Test that output has correct shape."""
@@ -144,15 +156,25 @@ class TestMetalBackwardPass:
         return model, shape
 
     def test_backward_executes(self, centered_model):
-        """Test that backward pass executes without error."""
-        model, shape = centered_model
+        """Test that backward pass executes and at least one grad exists.
+
+        Audit W1 fix: previous `assert True` only verified no-crash. Now
+        assert at least one parameter actually received a (non-None)
+        gradient — the strongest assertion a smoke test can make
+        without duplicating test_backward_computes_gradients below.
+        """
+        model, _shape = centered_model
 
         output = model()
         loss = output.sum()
         loss.backward()
 
-        # Should complete without error
-        assert True
+        # At least one parameter must have a non-None grad attached
+        # after backward(). A mutant that silently swallows the
+        # backward (e.g. detaches the graph) would fail this check.
+        assert any(p.grad is not None for p in model.parameters()), (
+            "backward() left every parameter with grad=None"
+        )
 
     def test_backward_computes_gradients(self, centered_model):
         """Test that gradients are computed."""

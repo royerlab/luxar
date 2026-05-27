@@ -91,6 +91,30 @@ class TestTransformValidation:
         result = validate_transform(transform_int)
         assert result.dtype == np.float32
 
+    @pytest.mark.parametrize(
+        "bottom_row,test_id",
+        [
+            ([1, 0, 0, 2], "row_has_nonzero_xyz_with_nonunit_w"),
+            ([0, 0, 0, 0], "all_zero_bottom_row"),
+            ([0, 0, 0, 2], "scaled_w"),
+            ([0, 0, 1, 1], "z_translation_in_bottom_row"),
+            ([0.5, 0, 0, 1], "small_nonzero_x_in_bottom_row"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_transform_non_affine_bottom_row_rejected(
+        self, bottom_row, test_id
+    ) -> None:
+        """Audit G7: validate_transform checks `bottom == [0,0,0,1]` but
+        there was no test exercising the rejection path. Pin every
+        non-affine variant so a mutation that drops the check (or
+        loosens the atol) surfaces immediately.
+        """
+        transform = np.eye(4, dtype=np.float32)
+        transform[3, :] = bottom_row
+        with pytest.raises(ValueError, match="Invalid affine transform"):
+            validate_transform(transform)
+
 
 class TestNodeTypeValidation:
     """Test validate_node_type function."""

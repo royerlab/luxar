@@ -62,6 +62,56 @@ class TestTransformUtilities:
         t[np.diag_indices(4)] = 0
         assert np.allclose(t, 0)
 
+    # Audit G2 (python-core-validation, P5): degenerate-scale boundary tests.
+    @pytest.mark.parametrize(
+        "uniform,expected_diag,test_id",
+        [
+            # Zero scale: degenerate (non-invertible) but the function should
+            # still return a well-defined diag matrix with 0s in xyz.
+            (0.0, [0, 0, 0, 1], "uniform_zero"),
+            # Negative scale: reflection through origin.
+            (-1.0, [-1, -1, -1, 1], "uniform_neg_one"),
+            # Very small positive: near-zero edge.
+            (1e-10, [1e-10, 1e-10, 1e-10, 1], "uniform_tiny"),
+            # Very large positive.
+            (1e6, [1e6, 1e6, 1e6, 1], "uniform_huge"),
+        ],
+        ids=lambda x: x if isinstance(x, str) else None,
+    )
+    def test_scale_boundary_values(
+        self, uniform: float, expected_diag, test_id: str
+    ) -> None:
+        """Boundary uniform scale values (0, ±1, tiny, huge) must produce
+        a well-formed 4x4 diagonal matrix without raising.
+        Inversion of a zero-scale matrix is undefined — that contract is
+        covered by `test_inverse_non_invertible` below.
+        """
+        t = scale(uniform=uniform)
+        assert t.shape == (4, 4)
+        assert np.allclose(np.diag(t), expected_diag)
+        # Off-diagonal must remain zero.
+        t_no_diag = t.copy()
+        t_no_diag[np.diag_indices(4)] = 0
+        assert np.allclose(t_no_diag, 0)
+
+    def test_rotate_zero_degrees_is_identity(self) -> None:
+        """Audit G6: rotate(0°, any axis) must return the identity matrix.
+
+        Mutants that drop the `theta == 0` short-circuit or compute
+        `sin/cos` at 0 with float drift could surface as small but
+        non-zero off-diagonal entries.
+        """
+        for axis in ("x", "y", "z"):
+            t = rotate(0, axis)
+            assert np.allclose(t, identity(), atol=1e-15), (
+                f"rotate(0, {axis!r}) drifted from identity"
+            )
+
+        # And the arbitrary-axis variant — rotate(0, [1, 2, 3]) must also
+        # be identity regardless of axis magnitude.
+        t = rotate(0, np.array([1.0, 2.0, 3.0]))
+        assert np.allclose(t, identity(), atol=1e-15)
+
     @pytest.mark.parametrize(
         "rotation_func,angle,input_axis,expected_output,test_id",
         [

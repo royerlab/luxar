@@ -28,8 +28,15 @@ describe('TypedEventBus', () => {
   });
 
   it('drops events with no listeners (silent no-op)', () => {
+    // Audit W25 fix: pin the observable contract — subscribing AFTER
+    // the no-listener emit must not deliver the dropped payload (the
+    // bus did not retain it). A mutant that silently buffers dropped
+    // events would surface as the late listener being called.
     const bus = createEventBus<TestMap>();
     expect(() => bus.emit('ping', { value: 0 })).not.toThrow();
+    const lateListener = vi.fn();
+    bus.on('ping', lateListener);
+    expect(lateListener).not.toHaveBeenCalled();
   });
 
   it('delivers the same event to every subscriber', () => {

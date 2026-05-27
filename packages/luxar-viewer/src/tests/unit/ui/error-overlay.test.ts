@@ -41,8 +41,13 @@ describe('showError - ARIA Attributes', () => {
     const title = document.getElementById('luxar-error-title');
     const message = document.getElementById('luxar-error-message-text');
 
-    expect(title).toBeTruthy();
-    expect(message).toBeTruthy();
+    // Audit W2 fix: previous `toBeTruthy()` would pass for any
+    // non-null element including the WRONG element. Pin id + tag +
+    // text content so mutations that swap elements or return the
+    // wrong descendant surface immediately.
+    expect(title?.id).toBe('luxar-error-title');
+    expect(title?.tagName).toBe('DIV');
+    expect(message?.id).toBe('luxar-error-message-text');
     expect(message?.textContent).toBe('Custom error message');
   });
 
@@ -61,7 +66,12 @@ describe('showError - ARIA Attributes', () => {
 describe('clearError', () => {
   it('should remove error message', () => {
     showError('Test error');
-    expect(document.getElementById('luxar-error-message')).toBeTruthy();
+    // Audit W2 fix: prove the element is actually a useful element,
+    // not just truthy. After showError it must be in the DOM with
+    // its documented id and contain the error text.
+    const before = document.getElementById('luxar-error-message');
+    expect(before?.id).toBe('luxar-error-message');
+    expect(before?.textContent).toContain('Test error');
 
     clearError();
     expect(document.getElementById('luxar-error-message')).toBeNull();

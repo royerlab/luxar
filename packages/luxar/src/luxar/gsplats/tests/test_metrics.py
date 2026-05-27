@@ -157,15 +157,40 @@ class TestQualityMetrics:
         assert m["max_abs_error"] == pytest.approx(0.0, abs=1e-10)
 
     def test_noisy_metrics_range(self, device: torch.device) -> None:
+        """Audit W6 fix: previous `> 0` bounds were so loose a mutant
+        returning constant 999 for every metric would pass. Pin each
+        metric to a derivable bound for the controlled noise (σ=0.05
+        Gaussian additive on Uniform[0,1])."""
         torch.manual_seed(42)
         a = torch.rand(32, 32, 32, device=device)
         b = a + 0.05 * torch.randn_like(a)
         m = compute_quality_metrics(a, b)
-        assert m["mse"] > 0
-        assert m["psnr_db"] > 0
+
+        # MSE of N(0, σ²) noise on values in [0, 1] is ~σ² = 0.0025.
+        # Allow ±50% slop for the finite-sample variance over 32³ voxels.
+        assert 0.0015 < m["mse"] < 0.0045, f"MSE outside expected band: {m['mse']}"
+
+        # PSNR_dB = 10 log10(MAX² / MSE), MAX ≈ 1 → ~ 26 dB; allow [23, 29].
+        assert 23.0 < m["psnr_db"] < 29.0, (
+            f"PSNR outside expected band: {m['psnr_db']}"
+        )
+
+        # SSIM strictly between 0 and 1 (degenerate sentinels would fail).
         assert 0.0 < m["ssim"] < 1.0
-        assert m["rel_l2"] > 0
-        assert m["max_abs_error"] > 0
+
+        # rel_l2 = ||a - b|| / ||a||. For uniform a with mean 0.5 and σ=0.05
+        # noise on 32³ voxels: ~ sqrt(MSE) / sqrt(E[a²]) ≈ 0.05 / 0.58 ≈ 0.09.
+        # Allow [0.04, 0.20] to absorb sample variance and SSIM-coupled drift.
+        assert 0.04 < m["rel_l2"] < 0.20, (
+            f"rel_l2 outside expected band: {m['rel_l2']}"
+        )
+
+        # Max abs error: extreme tail of N(0, 0.05²) over 32³ ≈ 32768 draws.
+        # Expected magnitude ~ 0.05 * sqrt(2 ln 32768) ≈ 0.05 * 4.55 ≈ 0.23.
+        # Allow generous [0.10, 0.50].
+        assert 0.10 < m["max_abs_error"] < 0.50, (
+            f"max_abs_error outside expected band: {m['max_abs_error']}"
+        )
 
     def test_ssim_matches_skimage(self) -> None:
         """Validate SSIM matches scikit-image to high precision."""
