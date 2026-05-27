@@ -57,14 +57,18 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should set value', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that setValue(v) writes
+    // through to the backing property AND surfaces via getValue().
+    it('setValue(true) writes to object.enabled AND mirrors via getValue()', () => {
       controller.setValue(true);
 
       expect(object.enabled).toBe(true);
       expect(controller.getValue()).toBe(true);
     });
 
-    it('should update checkbox display', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that setValue() also
+    // syncs the DOM checkbox's `.checked` mirror.
+    it('setValue(true) updates the DOM checkbox.checked mirror in lockstep', () => {
       controller.setValue(true);
 
       const checkbox = controller.domElement.querySelector(
@@ -80,7 +84,10 @@ describe('BooleanController', () => {
       controller = new BooleanController(object, 'enabled');
     });
 
-    it('should sync checkbox with object value', () => {
+    // ui.md O6 / Phase E38: P9 rename — pins that updateDisplay()
+    // re-reads object.enabled (mutated externally) and syncs the
+    // checkbox.checked mirror to match.
+    it('updateDisplay() re-reads object.enabled after external mutation and updates checkbox.checked', () => {
       object.enabled = true;
       controller.updateDisplay();
 
