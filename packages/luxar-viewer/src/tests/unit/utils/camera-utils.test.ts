@@ -14,24 +14,29 @@ import {
 
 describe('camera-utils', () => {
   describe('isPerspectiveCamera', () => {
-    it('should return true for PerspectiveCamera', () => {
+    // utils.md O2 / Phase E44: P9 rename — isPerspectiveCamera(cam) is
+    // true iff cam is a THREE.PerspectiveCamera (one half of the
+    // type-guard contract). Sibling test covers the false branch.
+    it('isPerspectiveCamera(PerspectiveCamera) === true', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       expect(isPerspectiveCamera(cam)).toBe(true);
     });
 
-    it('should return false for OrthographicCamera', () => {
+    it('isPerspectiveCamera(OrthographicCamera) === false', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(isPerspectiveCamera(cam)).toBe(false);
     });
   });
 
   describe('isOrthographicCamera', () => {
-    it('should return true for OrthographicCamera', () => {
+    // utils.md O2 / Phase E44: P9 rename — symmetric to the isPerspectiveCamera
+    // pair above.
+    it('isOrthographicCamera(OrthographicCamera) === true', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(isOrthographicCamera(cam)).toBe(true);
     });
 
-    it('should return false for PerspectiveCamera', () => {
+    it('isOrthographicCamera(PerspectiveCamera) === false', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       expect(isOrthographicCamera(cam)).toBe(false);
     });
