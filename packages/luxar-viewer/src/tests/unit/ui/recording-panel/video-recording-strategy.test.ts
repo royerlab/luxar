@@ -112,13 +112,32 @@ describe('VideoRecordingStrategy', () => {
       freshPanel.dispose();
     });
 
-    it('stops the MediaRecorder when stopVideoRecording is called', () => {
-      (panel as any).session.isRecording = true;
-      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
+    // [ui.md/C2 / Phase F2b] Drives `panel.stopVideoRecording()` from a
+    // REAL recording started via `panel.startVideoRecording()` rather than
+    // hand-installing `mediaRecorder = mockMediaRecorder` on the strategy.
+    // Verifies the same contract — stopVideoRecording → mediaRecorder.stop
+    // — but the full call chain is now exercised.
+    it('stops the MediaRecorder when stopVideoRecording is called', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      // jsdom has no MediaStream constructor, and _helpers.ts's default
+      // captureStream returns `new MediaStream()` — override with a minimal
+      // fake stream that has the methods VideoRecordingStrategy reads.
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+
+      const recordingPromise = panel.startVideoRecording();
+      // Wait one microtask so VideoRecordingStrategy.run() installs the
+      // real onstop closure on mockMediaRecorder and sets isRecording=true.
+      await new Promise((r) => setTimeout(r, 0));
+      expect((panel as any).session.isRecording).toBe(true);
 
       panel.stopVideoRecording();
-
       expect(mockMediaRecorder.stop).toHaveBeenCalled();
+
+      // Fire the real onstop closure so startVideoRecording resolves and
+      // doesn't leak into the next test.
+      mockMediaRecorder.onstop();
+      await recordingPromise;
     });
 
     it('ignores stopVideoRecording when not recording', () => {
