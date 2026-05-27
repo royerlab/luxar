@@ -43,24 +43,32 @@ describe('camera-utils', () => {
   });
 
   describe('getCameraFovRadians', () => {
-    it('should convert perspective FOV from degrees to radians', () => {
+    // utils.md O2 / Phase E47: P9 rename — pins the deg→rad conversion
+    // (THREE stores fov in degrees; getCameraFovRadians returns radians).
+    it('PerspectiveCamera with 90° fov returns π/2 radians', () => {
       const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBeCloseTo(Math.PI / 2, 5);
     });
 
-    it('should return 0 for orthographic camera', () => {
+    // utils.md O2 / Phase E47: P9 rename — orthographic cameras have no
+    // fov in the perspective sense; the helper returns 0 to surface that.
+    it('OrthographicCamera returns 0 radians (no perspective fov)', () => {
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBe(0);
     });
 
-    it('should handle 47-degree FOV (default)', () => {
+    // utils.md O2 / Phase E47: P9 rename — sanity for the project's
+    // default 47° fov used in many test cameras.
+    it('PerspectiveCamera with default 47° fov returns 47·π/180 radians', () => {
       const cam = new THREE.PerspectiveCamera(47, 1, 0.1, 100);
       expect(getCameraFovRadians(cam)).toBeCloseTo((47 * Math.PI) / 180, 5);
     });
   });
 
   describe('updateCameraAspect', () => {
-    it('should update perspective camera aspect ratio', () => {
+    // utils.md O2 / Phase E47: P9 rename — pins the basic perspective
+    // aspect-ratio update (width/height ratio is stored on cam.aspect).
+    it('PerspectiveCamera: aspect updates to width/height', () => {
       const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       updateCameraAspect(cam, 1920, 1080);
       expect(cam.aspect).toBeCloseTo(1920 / 1080, 5);
