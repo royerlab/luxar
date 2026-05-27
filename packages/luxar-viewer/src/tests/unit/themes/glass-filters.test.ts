@@ -150,8 +150,11 @@ describe('glass-filters', () => {
 
   describe('[G1d] removeGlassFilters no-op when SVG missing', () => {
     it('does not throw when no #luxar-glass-filters element exists', () => {
+      // Audit W15 fix: pin the observable contract — the SVG remains
+      // absent after the no-op removeGlassFilters call.
       expect(document.getElementById('luxar-glass-filters')).toBeNull();
       expect(() => removeGlassFilters()).not.toThrow();
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
     });
 
     it('removes the SVG when present', () => {
@@ -248,8 +251,11 @@ describe('glass-filters', () => {
     });
 
     it('is a no-op when no refraction layers are present', () => {
+      // Audit W15 fix: pin the observable contract — layer count
+      // remains zero after the no-op call.
       expect(document.querySelectorAll('.luxar-glass-refraction').length).toBe(0);
       expect(() => removeGlassRefractionLayers()).not.toThrow();
+      expect(document.querySelectorAll('.luxar-glass-refraction').length).toBe(0);
     });
   });
 

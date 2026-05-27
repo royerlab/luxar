@@ -28,7 +28,10 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   it('should not create multiple overlays when called repeatedly', () => {
     showHelpOverlay();
     const firstOverlay = document.getElementById('luxar-help-overlay');
-    expect(firstOverlay).toBeTruthy();
+    // Audit W3 fix: pin id + role so a mutant that returns the wrong
+    // element from getElementById would surface here.
+    expect(firstOverlay?.id).toBe('luxar-help-overlay');
+    expect(firstOverlay?.getAttribute('role')).toBe('dialog');
 
     // Try to create another one
     showHelpOverlay();
@@ -53,7 +56,8 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   // previous removeEventListener('click', ...) spy allowed.
   it('hideHelpOverlay removes the outside-click listener (observable contract)', () => {
     showHelpOverlay();
-    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
+    // Audit W3 fix: pin id so a wrong-element bug surfaces here.
+    expect(document.getElementById('luxar-help-overlay')?.id).toBe('luxar-help-overlay');
     vi.advanceTimersByTime(150); // Listener for overlay-1 installed.
 
     hideHelpOverlay();
@@ -80,7 +84,9 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     const closeBtn = document.querySelector(
       'button[title="Close (Escape)"]'
     ) as HTMLButtonElement;
-    expect(closeBtn).toBeTruthy();
+    // Audit W3 fix: pin tag + title so a wrong-target query won't pass.
+    expect(closeBtn?.tagName).toBe('BUTTON');
+    expect(closeBtn?.getAttribute('title')).toBe('Close (Escape)');
     closeBtn.click(); // Close via close-button path.
 
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
@@ -101,7 +107,9 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(overlay?.getAttribute('aria-labelledby')).toBe('luxar-help-overlay-title');
 
     const title = document.getElementById('luxar-help-overlay-title');
-    expect(title).toBeTruthy();
+    // Audit W3 fix: pin id + non-empty text so a returned-wrong-id
+    // mutation would surface here.
+    expect(title?.id).toBe('luxar-help-overlay-title');
     expect(title?.textContent).toContain('Luxar Controls');
   });
 });
@@ -109,7 +117,10 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
 describe('hideHelpOverlay', () => {
   it('should remove help overlay', () => {
     showHelpOverlay();
-    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
+    // Audit W3 fix: assert the element is the expected element by id
+    // before tearing it down — a wrong-element bug would surface.
+    const opened = document.getElementById('luxar-help-overlay');
+    expect(opened?.id).toBe('luxar-help-overlay');
 
     hideHelpOverlay();
     expect(document.getElementById('luxar-help-overlay')).toBeNull();

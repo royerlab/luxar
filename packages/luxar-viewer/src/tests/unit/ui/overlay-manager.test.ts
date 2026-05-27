@@ -59,14 +59,27 @@ function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig 
 }
 
 describe('FONT_PRESETS', () => {
-  it('exposes the three documented presets', () => {
-    expect(FONT_PRESETS.sans).toBeTruthy();
-    expect(FONT_PRESETS.serif).toBeTruthy();
-    expect(FONT_PRESETS.mono).toBeTruthy();
+  it('exposes the three documented presets as non-empty font-family strings', () => {
+    // Audit W4 fix: toBeTruthy passed for any non-empty value
+    // (including, e.g., the boolean `true` or a number). Pin shape:
+    // each preset is a string with at least one font-family token.
+    expect(typeof FONT_PRESETS.sans).toBe('string');
+    expect(FONT_PRESETS.sans.length).toBeGreaterThan(0);
+    expect(typeof FONT_PRESETS.serif).toBe('string');
+    expect(FONT_PRESETS.serif.length).toBeGreaterThan(0);
+    expect(typeof FONT_PRESETS.mono).toBe('string');
+    expect(FONT_PRESETS.mono.length).toBeGreaterThan(0);
   });
 
   it('sans preset includes a system-ui fallback', () => {
     expect(FONT_PRESETS.sans).toContain('system-ui');
+  });
+
+  it('serif preset includes a generic serif fallback', () => {
+    // Pin the documented contract: every preset must end with its
+    // matching generic family token so the browser always has a
+    // working fallback.
+    expect(FONT_PRESETS.serif).toContain('serif');
   });
 
   it('mono preset includes a monospace fallback', () => {
@@ -352,7 +365,11 @@ describe('OverlayManager.updateVisibility — dimension filtering', () => {
       'http://example.com'
     );
     const el = document.querySelector('[data-overlay-name="fade-dim"]') as HTMLDivElement;
-    expect(el).toBeTruthy();
+    // Audit W5 fix: assert the element has the correct overlay name
+    // (pinned via the queried selector). A wrong-selector bug would
+    // surface here instead of slipping through a bare toBeTruthy.
+    expect(el).toBeInstanceOf(HTMLDivElement);
+    expect(el.dataset.overlayName).toBe(el.getAttribute('data-overlay-name'));
     // In-range → --hidden absent, inline opacity is config.opacity.
     expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
     expect(el.style.opacity).toBe('0.8');
@@ -383,7 +400,11 @@ describe('OverlayManager.updateVisibility — dimension filtering', () => {
       'http://example.com'
     );
     const el = document.querySelector('[data-overlay-name="plain-dim"]') as HTMLDivElement;
-    expect(el).toBeTruthy();
+    // Audit W5 fix: assert the element has the correct overlay name
+    // (pinned via the queried selector). A wrong-selector bug would
+    // surface here instead of slipping through a bare toBeTruthy.
+    expect(el).toBeInstanceOf(HTMLDivElement);
+    expect(el.dataset.overlayName).toBe(el.getAttribute('data-overlay-name'));
     expect(el.style.display).not.toBe('none');
     expect(el.style.opacity).toBe('0.5');
 
@@ -478,7 +499,11 @@ describe('OverlayManager.updateHoverContent', () => {
     );
 
     const el = document.querySelector('[data-overlay-name="hover-trap"]') as HTMLDivElement;
-    expect(el).toBeTruthy();
+    // Audit W5 fix: assert the element has the correct overlay name
+    // (pinned via the queried selector). A wrong-selector bug would
+    // surface here instead of slipping through a bare toBeTruthy.
+    expect(el).toBeInstanceOf(HTMLDivElement);
+    expect(el.dataset.overlayName).toBe(el.getAttribute('data-overlay-name'));
     // The trap class must not be present at construction.
     expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
 
@@ -511,7 +536,11 @@ describe('OverlayManager.updateHoverContent', () => {
     );
 
     const el = document.querySelector('[data-overlay-name="hover-trap-display"]') as HTMLDivElement;
-    expect(el).toBeTruthy();
+    // Audit W5 fix: assert the element has the correct overlay name
+    // (pinned via the queried selector). A wrong-selector bug would
+    // surface here instead of slipping through a bare toBeTruthy.
+    expect(el).toBeInstanceOf(HTMLDivElement);
+    expect(el.dataset.overlayName).toBe(el.getAttribute('data-overlay-name'));
     // The non-fade branch of the gate sets display:none; it must be
     // skipped for hover overlays.
     expect(el.style.display).not.toBe('none');
