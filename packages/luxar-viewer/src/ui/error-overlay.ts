@@ -12,8 +12,38 @@ import { trapFocus } from './help-overlay/focus-trap';
 
 const UI_CONFIG = config.ui;
 
+// Audit G17 (viewer-ui-config-themes-core-utils) — the auto-dismiss
+// `setTimeout` was never cancelled when the overlay was removed via
+// click/Escape/replacement/clearError(), leaking a pending timer until
+// it fired and ran a no-op branch. Also: the focus-trap returned a
+// release function that was only invoked by the click handler; if the
+// overlay was torn down via clearError() the trap stayed attached
+// (and its own internal focus setTimeout stayed pending). Track both
+// at module scope so all teardown paths can clear them.
+let autoDismissTimerId: ReturnType<typeof setTimeout> | null = null;
+let activeReleaseTrap: (() => void) | null = null;
+
+function clearAutoDismissTimer(): void {
+  if (autoDismissTimerId !== null) {
+    clearTimeout(autoDismissTimerId);
+    autoDismissTimerId = null;
+  }
+}
+
+function releaseActiveTrap(): void {
+  if (activeReleaseTrap !== null) {
+    activeReleaseTrap();
+    activeReleaseTrap = null;
+  }
+}
+
 export function showError(message: string) {
-  // Remove any existing error messages first
+  // Remove any existing error messages first — and cancel the timer
+  // + release the focus trap that the previous showError() scheduled
+  // (otherwise it would fire against an already-removed element and
+  // stay pending in test environments using fake timers).
+  clearAutoDismissTimer();
+  releaseActiveTrap();
   const existingError = document.getElementById('luxar-error-message');
   if (existingError) {
     existingError.remove();
@@ -103,14 +133,9 @@ export function showError(message: string) {
   errorDiv.appendChild(guidance);
   errorDiv.appendChild(dismissBtn);
 
-  // Track focus trap release function
-  let releaseTrap: (() => void) | null = null;
-
   const dismissError = () => {
-    if (releaseTrap) {
-      releaseTrap();
-      releaseTrap = null;
-    }
+    clearAutoDismissTimer();
+    releaseActiveTrap();
     errorDiv.remove();
   };
 
@@ -119,8 +144,11 @@ export function showError(message: string) {
     dismissError();
   });
 
-  // Auto-dismiss after configured timeout
-  setTimeout(() => {
+  // Auto-dismiss after configured timeout. Timer id is stored at module
+  // scope so dismissError()/clearError()/a replacement showError() can
+  // cancel it (audit G17 — was a real timer leak).
+  autoDismissTimerId = setTimeout(() => {
+    autoDismissTimerId = null;
     if (errorDiv.parentNode) {
       dismissError();
     }
@@ -128,11 +156,15 @@ export function showError(message: string) {
 
   document.body.appendChild(errorDiv);
 
-  // Trap focus within the error dialog
-  releaseTrap = trapFocus(errorDiv);
+  // Trap focus within the error dialog. Stored at module scope so the
+  // clearError() teardown path can release it without going through
+  // dismissError() (which is a closure scoped to this showError call).
+  activeReleaseTrap = trapFocus(errorDiv);
 }
 
 export function clearError() {
+  clearAutoDismissTimer();
+  releaseActiveTrap();
   const errorDiv = document.getElementById('luxar-error-message');
   if (errorDiv) {
     errorDiv.remove();
