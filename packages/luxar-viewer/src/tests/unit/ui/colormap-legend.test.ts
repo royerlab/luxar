@@ -4,14 +4,13 @@
  * Verifies the legend's reactive lifecycle: subscription to layer state,
  * hash-based skip on identical updates, and DOM structure of legend entries.
  *
- * AUDIT NOTE (ui.md C5): the tests below construct a hand-rolled
- * LayerStateManager mock instead of a real instance. LayerStateManager is
- * a sibling module in the same subpackage (with dedicated tests under
- * `layers/layer-state.test.ts`), not a trust boundary. A regression
- * where the legend reads `intensity/offset` instead of `displayMin/Max`
- * from a real LayerStateManager would be invisible to this file because
- * the mock returns whatever shape the test author wrote. Follow-up:
- * construct a real LayerStateManager with stub source data.
+ * [ui.md/C4 / Phase F] The hand-rolled `LayerStateManager` mock that
+ * previously lived here has been replaced with the REAL
+ * `LayerStateManager`, populated from a synthesised SceneNode tree. A
+ * regression where the legend reads `intensity/offset` instead of
+ * `displayMin/Max` from a real LayerStateManager would now fail here —
+ * the field values come from the production `initFromSceneGraph` walk,
+ * not from test-author fiction.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -25,7 +24,8 @@ vi.mock('../../../themes/theme-manager', () => ({
 }));
 
 import { ColormapLegend } from '../../../ui/colormap-legend';
-import type { LayerInfo, LayerStateManager } from '../../../ui/layers/layer-state';
+import { LayerStateManager, type LayerInfo } from '../../../ui/layers/layer-state';
+import type { SceneNode } from '../../../data/data-loader-types';
 
 function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
   return {
@@ -47,30 +47,62 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
   };
 }
 
+/**
+ * Build a synthesised root SceneNode whose `initFromSceneGraph` walk
+ * produces the requested `LayerInfo[]`. The real manager derives the
+ * layer `name` from the last path segment, so we route the test's
+ * declared name through `path: \`layer/\${l.name}\`` to keep the
+ * test-side name override intact under the real walk.
+ */
+function toSceneGraph(layers: LayerInfo[]): SceneNode {
+  return {
+    path: '',
+    type: 'scene',
+    attrs: {},
+    hasSpatialIndex: false,
+    children: layers.map((l) => ({
+      path: `layer/${l.name}`,
+      type: l.type,
+      attrs: {
+        layer: true,
+        visible: l.visible,
+        opacity: l.opacity,
+        gamma: l.gamma,
+        blending_mode: l.blendingMode,
+        // The real LayerStateManager derives displayMin/Max from
+        // color_data_range when intensity=1 and offset=0 (defaults).
+        // Tests override displayMin/Max directly, so feed the desired
+        // range in as color_data_range so the derived LayerInfo fields
+        // come out matching the test's expectation.
+        color_data_range: [l.displayMin, l.displayMax],
+        colormap: l.colormap,
+        has_scalars: l.supportsColormap,
+      },
+      hasSpatialIndex: true,
+    })),
+  };
+}
+
+/**
+ * Wrap a real `LayerStateManager` with the test-only `setLayers` /
+ * `callbackCount` accessors the existing tests use. `initFromSceneGraph`
+ * is a one-time setup call in production and does NOT notify listeners;
+ * the wrapper invokes the private `notify` after a re-init so the
+ * legend's `onChange` callback fires (production never needs this
+ * because it subscribes AFTER init).
+ */
 function makeLayerState(initialLayers: LayerInfo[] = []) {
-  let layers = initialLayers;
-  const callbacks: Array<() => void> = [];
+  const mgr = new LayerStateManager();
+  mgr.initFromSceneGraph(toSceneGraph(initialLayers));
 
-  const state = {
-    getLayers: vi.fn(() => layers),
-    onChange: vi.fn((cb: () => void) => {
-      callbacks.push(cb);
-      return () => {
-        const idx = callbacks.indexOf(cb);
-        if (idx >= 0) callbacks.splice(idx, 1);
-      };
-    }),
+  return Object.assign(mgr, {
     setLayers(next: LayerInfo[]) {
-      layers = next;
-      callbacks.forEach((cb) => cb());
+      mgr.initFromSceneGraph(toSceneGraph(next));
+      (mgr as unknown as { notify: () => void }).notify();
     },
-    callbackCount: () => callbacks.length,
-  };
-
-  return state as unknown as LayerStateManager & {
-    setLayers: (next: LayerInfo[]) => void;
-    callbackCount: () => number;
-  };
+    callbackCount: (): number =>
+      (mgr as unknown as { listeners: Set<unknown> }).listeners.size,
+  });
 }
 
 describe('ColormapLegend', () => {
