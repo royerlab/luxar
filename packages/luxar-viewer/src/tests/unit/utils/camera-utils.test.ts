@@ -74,7 +74,10 @@ describe('camera-utils', () => {
       expect(cam.aspect).toBeCloseTo(1920 / 1080, 5);
     });
 
-    it('should scale orthographic frustum width while preserving height', () => {
+    // utils.md O2 / Phase E49: P9 renames — pin the orthographic
+    // resize contract: vertical extent (top - bottom) is preserved,
+    // horizontal half-width scales by `aspect = width / height`.
+    it('OrthographicCamera: vertical extent preserved, horizontal half-width = halfHeight·aspect (16:9)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       // Vertical extent = 10 (top - bottom = 5 - (-5))
       updateCameraAspect(cam, 1920, 1080);
@@ -87,7 +90,9 @@ describe('camera-utils', () => {
       expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
-    it('should handle square viewport for orthographic camera', () => {
+    // utils.md O2 / Phase E49: P9 rename — square viewport (aspect=1)
+    // leaves the orthographic frustum bounds unchanged.
+    it('OrthographicCamera: square viewport leaves frustum bounds unchanged', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 800, 800);
 
@@ -97,7 +102,10 @@ describe('camera-utils', () => {
       expect(cam.bottom).toBeCloseTo(-5, 5);
     });
 
-    it('should handle portrait viewport for orthographic camera', () => {
+    // utils.md O2 / Phase E49: P9 rename — portrait viewport (aspect<1)
+    // narrows the orthographic horizontal half-width below the vertical
+    // half-extent.
+    it('OrthographicCamera: portrait viewport (600x1200) narrows horizontal half-width to halfHeight·0.5', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       updateCameraAspect(cam, 600, 1200);
 
@@ -107,7 +115,10 @@ describe('camera-utils', () => {
       expect(cam.right).toBeCloseTo(expectedHalfWidth, 5);
     });
 
-    it('should call updateProjectionMatrix for both camera types', () => {
+    // utils.md O2 / Phase E49: P9 rename — pins that updateCameraAspect
+    // calls updateProjectionMatrix internally so the GPU receives the
+    // new projection on the next frame (observable as a changed matrix).
+    it('updateCameraAspect mutates projectionMatrix on both perspective and orthographic cameras', () => {
       const persp = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
       const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
 
