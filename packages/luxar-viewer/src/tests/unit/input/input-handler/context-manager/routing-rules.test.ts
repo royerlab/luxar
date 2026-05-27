@@ -117,7 +117,7 @@ describe('sortContextsByPriority', () => {
   // order) and stable (ties preserve insertion order). Without these
   // pinned, a future refactor that swapped to an unstable sort would
   // silently re-order ties and surface only as a UX glitch.
-  it('[property] idempotent: sort(sort(x)) === sort(x) [input.md/H3][P12]', () => {
+  it('[property] idempotent: sort(sort(x)) === sort(x)', () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -147,7 +147,7 @@ describe('sortContextsByPriority', () => {
     );
   });
 
-  it('[property] stable: ties preserve insertion order [input.md/H3][P12]', () => {
+  it('[property] stable: ties preserve insertion order', () => {
     fc.assert(
       fc.property(
         // Generate a list of unique keys, all with priority=42 (all-tie).
@@ -171,7 +171,7 @@ describe('sortContextsByPriority', () => {
     );
   });
 
-  it('[property] descending priority: i-th result has priority >= (i+1)-th [input.md/H3][P12]', () => {
+  it('[property] descending priority: i-th result has priority >= (i+1)-th', () => {
     fc.assert(
       fc.property(
         fc.array(

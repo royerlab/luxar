@@ -173,7 +173,7 @@ describe('AnimationShortcuts handlers', () => {
     expect(togglePlay).not.toHaveBeenCalled();
   });
 
-  it('K: no-op when the animation manager is not yet constructed [input.md/W1][P2]', () => {
+  it('K: no-op when the animation manager is not yet constructed', () => {
     // input.md [W1][P2] strengthening: previously `.not.toThrow()` only.
     // The contract of the no-anim-manager branch is that NO sceneDims
     // call fires (the handler must early-return before touching
@@ -236,7 +236,7 @@ describe('AnimationShortcuts handlers', () => {
     expect(decreaseSpeed).toHaveBeenCalledWith(3);
   });
 
-  it('all handlers no-op cleanly when getDims returns null (no scene loaded) [input.md/W1][P2]', () => {
+  it('all handlers no-op cleanly when getDims returns null (no scene loaded)', () => {
     // input.md [W1][P2] strengthening: previously 5x `.not.toThrow()`.
     // The no-scene contract is that every animation/sceneDims side
     // effect is skipped when getDims() returns null — pin all four
