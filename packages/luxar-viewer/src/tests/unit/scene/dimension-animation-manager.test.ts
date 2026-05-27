@@ -1,7 +1,21 @@
 /**
  * Tests for DimensionAnimationManager - handles FPS-based dimension animation
  *
- * Tests animation logic without actual frame timing
+ * Tests animation logic without actual frame timing.
+ *
+ * AUDIT NOTE (scene.md C2): the AnimationController stub used in the
+ * beforeEach below is hand-rolled with just `addPerFrameCallback`,
+ * `removePerFrameCallback`, `startAnimation`. AnimationController is
+ * a sibling internal class, not a trust boundary. The
+ * capture-and-replay-of-`perFrameCallback` pattern means a future
+ * refactor of how addPerFrameCallback is invoked (e.g. registering
+ * two callbacks) silently breaks the test path without a contract
+ * failure. Cleaner approach: construct a real AnimationController
+ * with a stubbed RAF.
+ *
+ * scene.md O3 / Phase E42: moved this note from beforeEach (call
+ * site) to the file docstring so a reader skimming the file sees the
+ * caveat before reading any tests.
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
@@ -34,14 +48,8 @@ describe('DimensionAnimationManager', () => {
     sceneDimsManager = new SceneDimsManager();
     sceneDimsManager.initFromScene(mockScene);
 
-    // AUDIT NOTE (scene.md C2): the AnimationController stub below is
-    // hand-rolled with just `addPerFrameCallback`/`removePerFrameCallback`/
-    // `startAnimation`. AnimationController is a sibling internal class,
-    // not a trust boundary. The capture-and-replay-of-`perFrameCallback`
-    // pattern means a future refactor of how addPerFrameCallback is
-    // invoked (e.g. registering two callbacks) silently breaks the test
-    // path without a contract failure. Cleaner approach: construct a
-    // real AnimationController with a stubbed RAF.
+    // AUDIT NOTE (scene.md C2): see file docstring at top for the rationale
+    // behind this hand-rolled AnimationController stub.
     mockAnimationController = {
       addPerFrameCallback: vi.fn((_id: string, callback: () => void) => {
         perFrameCallback = callback;
