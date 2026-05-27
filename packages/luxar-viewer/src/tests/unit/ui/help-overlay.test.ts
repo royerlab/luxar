@@ -39,54 +39,57 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     expect(document.getElementById('luxar-help-overlay')).toBe(firstOverlay);
   });
 
-  it('should properly clean up global click listener when closed via hideHelpOverlay', () => {
-    const removeEventSpy = vi.spyOn(document, 'removeEventListener');
-
+  // [ui.md/C6 / W9] Verifies the OBSERVABLE outside-click-cleanup
+  // contract rather than spying on `removeEventListener` for the literal
+  // string 'click'. The two tests below force the strongest case: after
+  // hide-then-show, an outside click within the post-show delay must
+  // NOT remove the new overlay. If the old overlay's `handleDocumentClick`
+  // closure had leaked, it would fire on the body click and call
+  // `closeHelp` which removes the new overlay by id. The new overlay
+  // staying present therefore proves the prior listener was removed.
+  //
+  // A regression that switched outside-click dismissal from 'click' to
+  // 'mousedown' / 'pointerdown' would NOT slip through here the way the
+  // previous removeEventListener('click', ...) spy allowed.
+  it('hideHelpOverlay removes the outside-click listener (observable contract)', () => {
     showHelpOverlay();
-    const overlay = document.getElementById('luxar-help-overlay');
-    expect(overlay).toBeTruthy();
+    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
+    vi.advanceTimersByTime(150); // Listener for overlay-1 installed.
 
-    // Advance timers to trigger the click listener addition
-    vi.advanceTimersByTime(150);
-
-    // Close via hideHelpOverlay (how InputHandler closes it on Escape/H)
     hideHelpOverlay();
-
-    // Check overlay is removed
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
 
-    // Verify removeEventListener was called for 'click'
-    const clickRemovals = removeEventSpy.mock.calls.filter((call) => call[0] === 'click');
-    expect(clickRemovals.length).toBeGreaterThanOrEqual(1);
+    // Open a fresh overlay. If overlay-1's listener leaked, the next
+    // body click (before overlay-2's own delayed listener installs)
+    // will invoke overlay-1's `closeHelp` and remove overlay-2 by id.
+    showHelpOverlay();
+    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
 
-    removeEventSpy.mockRestore();
+    // Click BEFORE the 150ms delay so overlay-2's own listener is not
+    // yet installed — any close that happens MUST be from a leaked
+    // overlay-1 handler.
+    document.body.click();
+
+    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
   });
 
-  it('should properly clean up when close button is clicked', () => {
-    const removeEventSpy = vi.spyOn(document, 'removeEventListener');
-
+  it('close-button click removes the outside-click listener (observable contract)', () => {
     showHelpOverlay();
+    vi.advanceTimersByTime(150); // Listener installed for overlay-1.
 
-    // Find the close button
     const closeBtn = document.querySelector(
       'button[title="Close (Escape)"]'
     ) as HTMLButtonElement;
     expect(closeBtn).toBeTruthy();
+    closeBtn.click(); // Close via close-button path.
 
-    // Advance timers to trigger the click listener addition
-    vi.advanceTimersByTime(150);
-
-    // Click close button
-    closeBtn?.click();
-
-    // Overlay should be removed
     expect(document.getElementById('luxar-help-overlay')).toBeNull();
 
-    // Verify removeEventListener was called for 'click'
-    const clickRemovals = removeEventSpy.mock.calls.filter((call) => call[0] === 'click');
-    expect(clickRemovals.length).toBeGreaterThanOrEqual(1);
-
-    removeEventSpy.mockRestore();
+    // Fresh overlay; same leakage probe as above.
+    showHelpOverlay();
+    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
+    document.body.click();
+    expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
   });
 
   it('should have proper ARIA attributes', () => {
