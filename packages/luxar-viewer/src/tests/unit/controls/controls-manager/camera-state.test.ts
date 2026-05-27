@@ -118,7 +118,7 @@ describe('restoreCameraState', () => {
     orbitControls.dispose();
   });
 
-  it('is a no-op when currentControls is null (saved fields untouched) [controls.md/G3][P10]', () => {
+  it('is a no-op when currentControls is null (saved fields untouched)', () => {
     // controls.md [G3][P10] strengthening: was `.not.toThrow()` only.
     // Pin the no-op contract: the saved* slots on the ctx are untouched,
     // and the camera state (position/rotation) is not modified either.

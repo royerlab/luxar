@@ -561,7 +561,10 @@ describe('LRUCache', () => {
       expect(noCallbackCache.count).toBe(1);
     });
 
-    it('fires onEvict when an item is removed via delete() [cache.md/G2][P5]', () => {
+    // workers.md O3 / cache.md G2 [P5]: previous test name embedded the
+    // audit-id in the `it` string; moved to this comment per Phase
+    // E53 to decouple the suite from the audit-numbering lifecycle.
+    it('fires onEvict when an item is removed via delete()', () => {
       // [cache.md/G2][P5] Previous onEvict tests only exercised eviction via
       // size-overflow and clear(); never via delete(). Mutating the
       // `onEvict?.(key, value)` line inside delete() to a no-op would not
@@ -585,7 +588,9 @@ describe('LRUCache', () => {
       expect(evicted.length).toBe(evictedBefore);
     });
 
-    it('delete() decrements currentSize by exactly the deleted entry size [cache.md/G2][P5]', () => {
+    // workers.md O3 / cache.md G2 [P5]: audit-id moved from test name
+    // to this comment per Phase E53.
+    it('delete() decrements currentSize by exactly the deleted entry size', () => {
       // Complement to the onEvict-on-delete test: pin the size bookkeeping
       // so mutating the `this.currentSize -= ...` line in delete() to a no-op
       // (or a wrong sign) is detected.
@@ -623,7 +628,9 @@ describe('LRUCache', () => {
       expect(evicted).toEqual([]);
     });
 
-    it('rejects oversized values silently without disturbing existing entries [cache.md/G3][P5]', () => {
+    // workers.md O3 / cache.md G3 [P5]: audit-id moved from test name
+    // to this comment per Phase E53.
+    it('rejects oversized values silently without disturbing existing entries', () => {
       // Companion to the maxSize===0 test: a value larger than maxSize is
       // rejected, and the cache's existing contents are unchanged. Mutating
       // the `if (size > this.maxSize) return` early-return would erase the

@@ -1,13 +1,26 @@
 /**
  * Tests for DimensionAnimationManager - handles FPS-based dimension animation
  *
- * Tests animation logic without actual frame timing
+ * Tests animation logic without actual frame timing.
+ *
+ * scene.md C2 / Phase F5: this file now constructs a REAL
+ * `AnimationController` (with minimal `{} as ControlsManager` /
+ * `{} as PostProcessingManager` casts — those subsystems are never
+ * exercised because we never let the rAF loop run). The previous
+ * hand-rolled stub captured the registered `perFrameCallback` via a
+ * spy implementation; we now use `vi.spyOn(controller, 'addPerFrameCallback')`
+ * to capture it from the real method. `startAnimation` is replaced
+ * with a no-op spy so the real rAF loop never starts. This kills the
+ * test-implementation-shape coupling the audit noted: a refactor that
+ * registers two callbacks no longer needs a parallel mock edit.
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
+import type { ControlsManager } from '../../../controls/controls-manager';
+import type { PostProcessingManager } from '../../../rendering';
 import * as THREE from 'three';
 
 describe('DimensionAnimationManager', () => {
@@ -34,24 +47,28 @@ describe('DimensionAnimationManager', () => {
     sceneDimsManager = new SceneDimsManager();
     sceneDimsManager.initFromScene(mockScene);
 
-    // AUDIT NOTE (scene.md C2): the AnimationController stub below is
-    // hand-rolled with just `addPerFrameCallback`/`removePerFrameCallback`/
-    // `startAnimation`. AnimationController is a sibling internal class,
-    // not a trust boundary. The capture-and-replay-of-`perFrameCallback`
-    // pattern means a future refactor of how addPerFrameCallback is
-    // invoked (e.g. registering two callbacks) silently breaks the test
-    // path without a contract failure. Cleaner approach: construct a
-    // real AnimationController with a stubbed RAF.
-    mockAnimationController = {
-      addPerFrameCallback: vi.fn((_id: string, callback: () => void) => {
+    // Phase F5: construct a REAL AnimationController. ControlsManager
+    // and PostProcessingManager are passed as empty-object casts —
+    // they're never touched because we no-op startAnimation() to
+    // prevent the requestAnimationFrame loop from running. Spy on
+    // addPerFrameCallback to capture the registered callback (used by
+    // tests that exercise the per-frame dispatch path).
+    mockAnimationController = new AnimationController(
+      {} as ControlsManager,
+      {} as PostProcessingManager
+    );
+    vi.spyOn(mockAnimationController, 'startAnimation').mockImplementation(() => {});
+    vi.spyOn(mockAnimationController, 'addPerFrameCallback').mockImplementation(
+      (_id: string, callback: () => void) => {
         perFrameCallback = callback;
-      }),
-      removePerFrameCallback: vi.fn((_id: string) => {
+      }
+    );
+    vi.spyOn(mockAnimationController, 'removePerFrameCallback').mockImplementation(
+      (_id: string) => {
         perFrameCallback = null;
         return true;
-      }),
-      startAnimation: vi.fn(),
-    } as any;
+      }
+    );
 
     // Create animation manager
     manager = new DimensionAnimationManager(sceneDimsManager, mockAnimationController);

@@ -249,7 +249,8 @@ describe('SegmentedLRUCache', () => {
       expect(stats.chunksSize).toBe(2000);
     });
 
-    it('clamps chunksSize to 0 when totalSize < MIN_METADATA_SIZE (10MB) [cache.md/G6][P5]', () => {
+    // workers.md O3 / cache.md G6 [P5]: audit-id moved to comment per Phase E54.
+    it('clamps chunksSize to 0 when totalSize < MIN_METADATA_SIZE (10MB)', () => {
       // [cache.md/G6][P5] Pre-audit boundary: a regression that flipped the
       // `Math.max(0, ...)` in the source to allow negative chunksSize would
       // corrupt eviction but pass current tests. Pin: with totalSize=1MB

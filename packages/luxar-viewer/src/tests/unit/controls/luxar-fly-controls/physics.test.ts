@@ -257,7 +257,7 @@ describe('integrateRotation — Q+E simultaneous (boundary)', () => {
 });
 
 describe('integrateTranslation — input cancellation (controls.md G9)', () => {
-  it('[controls.md/G9] forward=1 AND back=1 simultaneously produces zero net acceleration', () => {
+  it('forward=1 AND back=1 simultaneously produces zero net acceleration', () => {
     // controls.md G9: the formula is `(forward - back) * speed`. With both
     // keys held, the net translation impulse is zero. A mutation that
     // replaced `-` with `+` would survive the existing single-key tests.
@@ -270,7 +270,7 @@ describe('integrateTranslation — input cancellation (controls.md G9)', () => {
     expect(ctx.velocity.length()).toBe(0);
   });
 
-  it('[controls.md/G9] left=1 AND right=1 simultaneously produces zero net acceleration', () => {
+  it('left=1 AND right=1 simultaneously produces zero net acceleration', () => {
     // Symmetric to forward/back; same formula `(right - left) * speed`.
     const ctx = makeCtx({ movementSpeed: 5, damping: 1.0 });
     ctx.moveState.left = 1;
@@ -279,7 +279,7 @@ describe('integrateTranslation — input cancellation (controls.md G9)', () => {
     expect(ctx.velocity.length()).toBe(0);
   });
 
-  it('[controls.md/G9] up=1 AND down=1 simultaneously produces zero net acceleration', () => {
+  it('up=1 AND down=1 simultaneously produces zero net acceleration', () => {
     const ctx = makeCtx({ movementSpeed: 5, damping: 1.0 });
     ctx.moveState.up = 1;
     ctx.moveState.down = 1;
@@ -289,7 +289,7 @@ describe('integrateTranslation — input cancellation (controls.md G9)', () => {
 });
 
 describe('integrateRotation — three-axis cross coupling (controls.md G10, G11)', () => {
-  it('[controls.md/G10] horizontal=1 + vertical=1 + roll=1 simultaneously accumulates on all three axes', () => {
+  it('horizontal=1 + vertical=1 + roll=1 simultaneously accumulates on all three axes', () => {
     // controls.md G10: cross-axis coupling for full 3-axis input is not
     // covered by single-axis tests. With identity orientation, the three
     // local axes map to canonical (1,0,0), (0,1,0), (0,0,-1) — so each
@@ -308,7 +308,7 @@ describe('integrateRotation — three-axis cross coupling (controls.md G10, G11)
     expect(Math.abs(ctx.angularVelocity.z)).toBeGreaterThan(0);
   });
 
-  it('[controls.md/G11] doubling rotationSpeed doubles the resulting angular velocity magnitude', () => {
+  it('doubling rotationSpeed doubles the resulting angular velocity magnitude', () => {
     // controls.md G11: integrateRotation linearity in rotationSpeed is the
     // symmetric counterpart to the translation-linearity test at line 92-101.
     // In non-inertial mode (deterministic), angularVelocity is set directly
@@ -330,7 +330,7 @@ describe('integrateRotation — three-axis cross coupling (controls.md G10, G11)
 });
 
 describe('integrateTranslation — exact-threshold boundary (controls.md G12)', () => {
-  it('[controls.md/G12] velocity EXACTLY at velocityThreshold is NOT zeroed (strict-less-than gate)', () => {
+  it('velocity EXACTLY at velocityThreshold is NOT zeroed (strict-less-than gate)', () => {
     // controls.md G12: the zeroing test uses `velocity.length() < threshold`.
     // The boundary value itself must pass through unchanged — pinning the
     // strict `<` vs `<=` contract. We set the velocity precisely at the

@@ -40,39 +40,36 @@ interface WasmStubs {
 async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
   vi.resetModules();
 
+  // [workers.md C2 / Phase F4] Route the REAL TypeScriptFallback through
+  // the projection pipeline rather than mocking every WASM function with
+  // a no-op `vi.fn()`. Each method is `vi.fn`-wrapped around the real
+  // implementation so call counts are still observable AND
+  // wasm-output→JS-state coupling is exercised end-to-end. A regression
+  // that decoupled positions3D / visibleCount from the real WASM-side
+  // result will now fail here instead of slipping through.
+  const { TypeScriptFallback } = await import('../../../../wasm/typescript');
+  const real = new TypeScriptFallback();
   const wasm: WasmStubs = {
-    extract_3d_positions: vi.fn(),
-    calculate_effective_radii: vi.fn(),
-    calculate_bounds_3d: vi.fn(),
-    radii_to_visibility_mask: vi.fn(() => 0),
-    compute_nd_visibility_points: vi.fn(() => 0),
-    compute_nd_visibility_lines: vi.fn(() => 0),
-    compute_nd_visibility_gsplats: vi.fn(() => 0),
-    clip_segments_batch: vi.fn(() => 0),
-    interpolate_clipped_positions: vi.fn(),
-    interpolate_colors_batch: vi.fn(),
-    interpolate_scalars_batch: vi.fn(),
-    calculate_segment_lengths: vi.fn(),
-    mark_clipped_endpoints: vi.fn(),
-    compact_by_mask: vi.fn(),
-    extract_visible_cholesky_3d: vi.fn(),
-    compute_gsplats_attenuation: vi.fn(),
-    compact_attenuated_amplitudes: vi.fn(),
-    decode_broadcasted: vi.fn(),
+    extract_3d_positions: vi.fn(real.extract_3d_positions.bind(real)),
+    calculate_effective_radii: vi.fn(real.calculate_effective_radii.bind(real)),
+    calculate_bounds_3d: vi.fn(real.calculate_bounds_3d.bind(real)),
+    radii_to_visibility_mask: vi.fn(real.radii_to_visibility_mask.bind(real)),
+    compute_nd_visibility_points: vi.fn(real.compute_nd_visibility_points.bind(real)),
+    compute_nd_visibility_lines: vi.fn(real.compute_nd_visibility_lines.bind(real)),
+    compute_nd_visibility_gsplats: vi.fn(real.compute_nd_visibility_gsplats.bind(real)),
+    clip_segments_batch: vi.fn(real.clip_segments_batch.bind(real)),
+    interpolate_clipped_positions: vi.fn(real.interpolate_clipped_positions.bind(real)),
+    interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),
+    interpolate_scalars_batch: vi.fn(real.interpolate_scalars_batch.bind(real)),
+    calculate_segment_lengths: vi.fn(real.calculate_segment_lengths.bind(real)),
+    mark_clipped_endpoints: vi.fn(real.mark_clipped_endpoints.bind(real)),
+    compact_by_mask: vi.fn(real.compact_by_mask.bind(real)),
+    extract_visible_cholesky_3d: vi.fn(real.extract_visible_cholesky_3d.bind(real)),
+    compute_gsplats_attenuation: vi.fn(real.compute_gsplats_attenuation.bind(real)),
+    compact_attenuated_amplitudes: vi.fn(real.compact_attenuated_amplitudes.bind(real)),
+    decode_broadcasted: vi.fn(real.decode_broadcasted.bind(real)),
   };
 
-  // AUDIT NOTE (workers.md C2): mocking the wasm module means every WASM
-  // call in the projection pipeline becomes a no-op. The JS-side branching
-  // in workers/data-worker/projection/{points,lines,gsplats}.ts (extend-to-
-  // all detection, discrete-dim half-step filter for gsplats, attenuation
-  // combination, segment-vertex compaction) is therefore exercised
-  // structurally but the WASM-output→JS-state coupling is not. Real-WASM
-  // coverage lives in wasm-vs-typescript.test.ts (run with
-  // LUXAR_REQUIRE_WASM_TESTS=1) and the Playwright suite. Follow-up:
-  // either route the real TypeScriptFallback through the projection
-  // pipeline in unit tests, or strengthen each happy-path assertion to
-  // pin the JS-side branching (extend-to-all path triggers / discrete-
-  // dim filter triggers / etc.) rather than `toHaveBeenCalledTimes(1)`.
   vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasm),
   }));

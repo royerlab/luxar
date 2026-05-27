@@ -76,15 +76,24 @@ class TestCheckPortAvailable:
         """Test check_port_available returns False for unavailable port."""
         import socket
 
-        # Bind to a port, then check it's unavailable
+        # Bind to an OS-assigned ephemeral port (port=0) rather than a
+        # hardcoded one. A hardcoded port races against any other process
+        # that happens to occupy that port on the CI runner (or against
+        # leftover TIME_WAIT sockets between repeated test runs), causing
+        # the test's own `sock.bind()` to raise
+        # `OSError: [Errno 98] Address already in use` — a flake we saw
+        # take down PR #285's python-tests-3.12. Port 0 lets the OS pick
+        # an unused port, then we read it back and ask
+        # check_port_available about that exact port.
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         except PermissionError:
             pytest.skip("Socket operations not permitted in this environment")
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(("127.0.0.1", 59998))
-            result = check_port_available(59998)
+            sock.bind(("127.0.0.1", 0))
+            bound_port = sock.getsockname()[1]
+            result = check_port_available(bound_port)
             assert result is False
         finally:
             sock.close()

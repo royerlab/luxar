@@ -566,21 +566,30 @@ describe('LuxarFlyControls', () => {
       // window.dispatchEvent + direct (controls as any).lookState mutation.
       // ArrowLeft/ArrowUp set lookState.horizontal=-1 and vertical=-1 via
       // the same code path the orchestrator wires for real keyboard input.
+      //
+      // controls.md O6 / Phase E34: wrap the post-assertion keyUp cleanup
+      // in a try/finally. Without it, an `expect` failure mid-test left
+      // the q/ArrowLeft/ArrowUp keys "held down" in the controls'
+      // moveState/lookState and the next test running on the same
+      // describe-scoped `controls` instance saw the leaked state. With
+      // try/finally, cleanup runs whether the assertion passes or throws.
       controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'q' }));
       controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
       controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
 
-      const initialOrientation = (controls as any).orientation.clone();
+      try {
+        const initialOrientation = (controls as any).orientation.clone();
 
-      controls.update(0.016);
+        controls.update(0.016);
 
-      // Should apply both roll and look rotation
-      const newOrientation = (controls as any).orientation;
-      expect(newOrientation.equals(initialOrientation)).toBe(false);
-
-      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'q' }));
-      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowLeft' }));
-      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowUp' }));
+        // Should apply both roll and look rotation
+        const newOrientation = (controls as any).orientation;
+        expect(newOrientation.equals(initialOrientation)).toBe(false);
+      } finally {
+        controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'q' }));
+        controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowLeft' }));
+        controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'ArrowUp' }));
+      }
     });
   });
 
