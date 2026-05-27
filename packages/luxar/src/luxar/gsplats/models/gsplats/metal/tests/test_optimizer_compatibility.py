@@ -73,7 +73,18 @@ class TestOptimizerCompatibility:
         assert simple_model.L_off.shape == (5, 3)
 
     def test_works_with_torch_adam(self, simple_model):
-        """Test that model works with standard torch.optim.Adam."""
+        """Test that model works with standard torch.optim.Adam.
+
+        Audit W4 fix: previous `assert True` only verified no-crash.
+        Now assert that the optimizer step actually advanced at least
+        one parameter (the strongest behavioural assertion a no-crash
+        smoke test can make).
+        """
+        # Snapshot the parameters BEFORE the optimizer step.
+        params_before = {
+            name: p.detach().clone() for name, p in simple_model.named_parameters()
+        }
+
         optimizer = torch.optim.Adam(simple_model.parameters(), lr=0.05)
 
         # Training iteration
@@ -83,11 +94,26 @@ class TestOptimizerCompatibility:
         optimizer.step()
         optimizer.zero_grad()
 
-        assert True  # If we get here, it worked
+        # At least one parameter must have changed — a no-op optimizer
+        # would leave every param identical to its pre-step value.
+        moved = [
+            name
+            for name, p in simple_model.named_parameters()
+            if not torch.equal(p.detach(), params_before[name])
+        ]
+        assert moved, "No parameter advanced after optimizer.step()"
 
     def test_works_with_luxar_optimizer(self, simple_model):
-        """Test that model works with Luxar's create_optimizer_and_scheduler."""
+        """Test that model works with Luxar's create_optimizer_and_scheduler.
+
+        Audit W4 fix: replace `assert True` with same parameter-moved
+        behavioural assertion as the torch.optim.Adam test above.
+        """
         from luxar.gsplats.optim import create_optimizer_and_scheduler
+
+        params_before = {
+            name: p.detach().clone() for name, p in simple_model.named_parameters()
+        }
 
         # Create optimizer using Luxar's factory function
         optimizer, scheduler = create_optimizer_and_scheduler(
@@ -101,7 +127,12 @@ class TestOptimizerCompatibility:
         optimizer.step()
         simple_model.zero_grad()
 
-        assert True  # If we get here, optimizer compatibility is confirmed
+        moved = [
+            name
+            for name, p in simple_model.named_parameters()
+            if not torch.equal(p.detach(), params_before[name])
+        ]
+        assert moved, "No parameter advanced via Luxar optimizer step"
 
     def test_multiple_training_steps(self, simple_model):
         """Test multiple training iterations (ensures state is maintained)."""
