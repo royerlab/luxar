@@ -302,7 +302,10 @@ describe('effective-radius-calculator', () => {
   });
 
   describe('shouldApplyEffectiveRadius', () => {
-    it('should return true when non-displayed spatial dimensions exist', () => {
+    // ndim.md O4 / Phase E51: P9 rename — shouldApplyEffectiveRadius
+    // returns true when there are hidden spatial dims (slicing through
+    // the hypersphere needs the Pythagorean clip).
+    it('returns true when at least one spatial dim is non-displayed (hidden hypersphere extent)', () => {
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, true, true, true, false],
         maxRadius: 1.0,
@@ -314,7 +317,10 @@ describe('effective-radius-calculator', () => {
       expect(result).toBe(true);
     });
 
-    it('should return true when there are non-displayed discrete dimensions', () => {
+    // ndim.md O4 / Phase E51: P9 rename — even when every spatial dim is
+    // displayed, non-displayed discrete (non-spatial) dims still need
+    // per-point filtering, so the effective-radius pass must run.
+    it('returns true when all spatial dims are displayed but discrete dims are non-displayed', () => {
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, true, true, false, false],
         maxRadius: 1.0,
@@ -327,7 +333,9 @@ describe('effective-radius-calculator', () => {
       expect(result).toBe(true);
     });
 
-    it('should return false when no radii data is available', () => {
+    // ndim.md O4 / Phase E51: P9 rename — without radii data, the
+    // effective-radius pass has nothing to clip; opt out.
+    it('returns false when hasRadii is false (no per-point radii to clip)', () => {
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, true, true, true],
         maxRadius: 1.0,
@@ -339,7 +347,9 @@ describe('effective-radius-calculator', () => {
       expect(result).toBe(false);
     });
 
-    it('should return false when config is null', () => {
+    // ndim.md O4 / Phase E51: P9 rename — null config = no
+    // effective-radius config = opt out.
+    it('returns false when config is null (no effective-radius configured)', () => {
       const result = shouldApplyEffectiveRadius(null, [0, 1, 2], true);
 
       expect(result).toBe(false);
