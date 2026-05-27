@@ -66,10 +66,31 @@ const createMocks = () => {
     },
   });
 
+  // Audit C4 fix: constant `0xab` hash defeated chunk-key uniqueness —
+  // every chunk hashed to the same value, so collision handling was
+  // never exercised. Replace with FNV-1a-32 over the input bytes,
+  // padded to 32 bytes (digest length the production code expects).
+  // This is NOT cryptographic — it is just enough to make distinct
+  // inputs produce distinct hashes without pulling in a real crypto
+  // polyfill.
   vi.stubGlobal('crypto', {
     subtle: {
-      async digest() {
-        return new Uint8Array(32).fill(0xab).buffer;
+      async digest(_alg: string, data: BufferSource): Promise<ArrayBuffer> {
+        const bytes = new Uint8Array(
+          data instanceof ArrayBuffer ? data : (data as ArrayBufferView).buffer
+        );
+        let h = 0x811c9dc5;
+        for (let i = 0; i < bytes.length; i++) {
+          h ^= bytes[i];
+          h = Math.imul(h, 0x01000193);
+        }
+        const out = new Uint8Array(32);
+        // Splatter the 32-bit FNV-1a hash across the 32-byte digest by
+        // mixing in the index so each byte differs across positions.
+        for (let i = 0; i < 32; i++) {
+          out[i] = ((h >>> ((i & 3) * 8)) ^ (i * 0x9e)) & 0xff;
+        }
+        return out.buffer;
       },
     },
   });
