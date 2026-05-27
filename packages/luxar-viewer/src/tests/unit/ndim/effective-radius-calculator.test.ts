@@ -355,7 +355,10 @@ describe('effective-radius-calculator', () => {
       expect(result).toBe(false);
     });
 
-    it('should handle edge case with all dimensions displayed', () => {
+    // ndim.md O4 / Phase E52: P9 rename — when every dim is displayed
+    // and all are spatial, the slice IS the full hypersphere; no clip
+    // needed.
+    it('returns false when every dimension is displayed and spatial (no hidden extent)', () => {
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, true, true],
         maxRadius: 1.0,
@@ -367,7 +370,10 @@ describe('effective-radius-calculator', () => {
       expect(result).toBe(false);
     });
 
-    it('should handle mixed spatial configuration correctly', () => {
+    // ndim.md O4 / Phase E52: P9 rename — pins behavior for the realistic
+    // mixed configuration: spatial xyz displayed + non-displayed discrete
+    // dim → should return true (discrete needs filtering).
+    it('returns true for spatial xyz displayed + non-displayed discrete dim (typical 4D viewer setup)', () => {
       const config: EffectiveRadiusConfig = {
         spatialExtendDims: [true, false, true, true, false, true],
         maxRadius: 1.0,
@@ -382,7 +388,9 @@ describe('effective-radius-calculator', () => {
   });
 
   describe('discrete dimension filtering', () => {
-    it('should set radius to zero for points not matching discrete dimension value', () => {
+    // ndim.md O4 / Phase E52: P9 rename — points whose discrete-dim
+    // value differs from the slice value are gated to R_eff=0.
+    it('points with mismatched discrete-dim value have R_eff = 0 (gated invisible)', () => {
       // Simulating quantum orbitals: dim 0 is orbital index (discrete), dims 1,2,3 are spatial xyz
       // spatialExtendDims = [false, true, true, true] - orbital index is NOT spatial
       // displayDims = [1, 2, 3] - showing x, y, z
@@ -426,7 +434,9 @@ describe('effective-radius-calculator', () => {
       expect(result[2]).toBe(0);
     });
 
-    it('should apply tolerance to discrete dimension matching', () => {
+    // ndim.md O4 / Phase E52: P9 rename — discrete-dim matching uses
+    // a 0.5 tolerance window (∼half a step) around the slice value.
+    it('discrete-dim matching uses a 0.5 tolerance window around the slice value', () => {
       // Test that discrete matching uses the 0.5 tolerance for floating point comparison
       const positions = new Float32Array([
         0.4,
@@ -463,7 +473,11 @@ describe('effective-radius-calculator', () => {
       expect(result[2]).toBe(0);
     });
 
-    it('should filter out points from wrong discrete value even when all spatial dims displayed', () => {
+    // ndim.md O4 / Phase E52: P9 rename — the discrete-filter applies
+    // even when every spatial dim is displayed (this is the only
+    // observable behavior of shouldApplyEffectiveRadius returning true
+    // for the "all spatial dims displayed + discrete dims hidden" case).
+    it('discrete-dim filter still applies when every spatial dim is displayed', () => {
       // Key bug case: all spatial dimensions displayed, but discrete dimension needs filtering
       // This is the quantum orbitals scenario where shouldApplyEffectiveRadius must return true
       const positions = new Float32Array([
@@ -494,7 +508,9 @@ describe('effective-radius-calculator', () => {
       expect(result[1]).toBe(0);
     });
 
-    it('should require ALL discrete dimensions to match (not just one)', () => {
+    // ndim.md O4 / Phase E52: P9 rename — discrete-dim filter is AND
+    // (all hidden discrete dims must match), not OR.
+    it('discrete-dim filter requires ALL discrete dims to match (AND, not OR)', () => {
       // 5D data: dim0=time(discrete), dim1,2,3=xyz(spatial), dim4=channel(discrete)
       // Point must match BOTH time AND channel to be visible
       const positions = new Float32Array([
