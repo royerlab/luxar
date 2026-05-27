@@ -114,7 +114,8 @@ describe('BandwidthWindow', () => {
       expect(internals(bw).window.length).toBe(4);
     });
 
-    it('accepts a zero-byte transfer without throwing or skewing the window [cache.md/G1][P5]', () => {
+    // workers.md O3 / cache.md G1 [P5]: audit-id moved to comment per Phase E53.
+    it('accepts a zero-byte transfer without throwing or skewing the window', () => {
       // [cache.md/G1][P5] The audit observed `record(0)` (legitimate
       // zero-byte transfer — e.g. a HEAD request or empty 200) was never
       // exercised. Pin: a zero-byte record is added to the window like
@@ -134,7 +135,8 @@ describe('BandwidthWindow', () => {
       expect(bw.rate()).toBeGreaterThan(0);
     });
 
-    it('rate() immediately after a single record is well-defined (no division-by-zero) [cache.md/G1][P5]', () => {
+    // workers.md O3 / cache.md G1 [P5]: audit-id moved to comment per Phase E53.
+    it('rate() immediately after a single record is well-defined (no division-by-zero)', () => {
       // [cache.md/G1][P5] Source uses `windowSpan = max(1, ...)` to guard
       // against the boundary `now - first.timestamp === 0` — the case where
       // rate() is queried in the same millisecond as record(). Pin that
