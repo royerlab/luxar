@@ -65,7 +65,7 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
       ]);
     });
 
-    it('background palette has primary/secondary/tertiary/overlay (all four distinct) [themes.md/G11]', () => {
+    it('background palette has primary/secondary/tertiary/overlay (all four distinct)', () => {
       const bg = theme.colors.background;
       expect(typeof bg.primary).toBe('string');
       expect(typeof bg.secondary).toBe('string');
