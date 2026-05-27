@@ -309,9 +309,19 @@ class TestCullByContribution:
 
         result = cull_by_contribution(centers, Ls, amps, target, shape, truncate=3.0)
 
+        # Audit W7 fix: `>= 0` is true for any non-negative number, so a
+        # mutant returning constant 0 for every diagnostic would pass.
+        # For the single non-trivial splat above we expect the budget to
+        # be populated with a finite (non-zero, non-NaN, finite-magnitude)
+        # value and the iteration counters to have run at least once.
+        assert np.isfinite(result.error_budget)
         assert result.error_budget >= 0
-        assert result.phase1_candidates >= 0
-        assert result.phase2_iterations >= 0
+        # phase1 evaluates ALL splats; for the 1-splat fixture this is 1
+        # (or 0 if the implementation prunes single-splat). Mutant that
+        # always returns 0 would pass `>= 0` but fails the upper bound.
+        assert 0 <= result.phase1_candidates <= 1
+        assert 0 <= result.phase2_iterations <= 5  # tiny fixture
+        assert np.isfinite(result.max_joint_error)
         assert result.max_joint_error >= 0
 
     def test_higher_tolerance_culls_more(self, device: torch.device) -> None:
