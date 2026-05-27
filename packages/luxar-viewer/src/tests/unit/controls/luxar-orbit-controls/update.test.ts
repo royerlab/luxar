@@ -126,6 +126,40 @@ describe('runUpdateStep — step 1: auto-rotation', () => {
   );
 });
 
+describe('runUpdateStep — step 2: rotation damping', () => {
+  // [controls.md/C8 / Phase F] Damping decay was previously tested at the
+  // orchestrator level by mutating `(controls as any).rotationDelta`
+  // directly — a P1 private-state injection the audit flagged. The
+  // contract being tested (rotation delta slerps toward identity each
+  // frame when damping is enabled; commits in one frame when damping
+  // is disabled) lives entirely inside `runUpdateStep`'s step 2, so
+  // OrbitUpdateCtx is the correct seam. `rotationDelta` is a documented
+  // public field of `OrbitUpdateCtx` — no privacy violation.
+  it('decays rotationDelta toward identity over multiple frames when damping enabled', () => {
+    const { ctx } = makeCtx({ enableDamping: true, dampingFactor: 0.1 });
+    ctx.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
+
+    for (let i = 0; i < 50; i++) runUpdateStep(ctx);
+
+    expect(ctx.rotationDelta.x).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.y).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.z).toBeCloseTo(0, 2);
+    expect(ctx.rotationDelta.w).toBeCloseTo(1, 2);
+  });
+
+  it('clears rotationDelta to identity in one frame when damping disabled', () => {
+    const { ctx } = makeCtx({ enableDamping: false });
+    ctx.rotationDelta.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
+
+    runUpdateStep(ctx);
+
+    expect(ctx.rotationDelta.x).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.y).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.z).toBeCloseTo(0, 5);
+    expect(ctx.rotationDelta.w).toBeCloseTo(1, 5);
+  });
+});
+
 describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
   it('rollDelta = 1e-7 is BELOW the 1e-6 gate (no roll applied)', () => {
     // M3 mutation suspect: gate threshold 1e-6. We assert that values
