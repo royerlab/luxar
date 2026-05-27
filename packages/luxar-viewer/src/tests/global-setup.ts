@@ -22,23 +22,41 @@ const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
 /**
  * Parse fixture names from generate_test_data.py — the single source of truth.
  *
- * Each fixture is written by an `output = FIXTURES_DIR / "<name>.zarr"` line.
- * Deriving the list at runtime instead of duplicating it here means the TS
- * side cannot silently drift when fixtures are added or renamed in Python.
+ * Reads the declarative `FIXTURE_NAMES: list[str] = [...]` constant at the
+ * top of the Python generator (audit C1 viewer-integration-fixtures fix).
+ * Previously this regex matched scattered `FIXTURES_DIR / "..."` usages,
+ * which silently broke if a generator function switched to single quotes,
+ * f-strings, or path concatenation. Targeting a single canonical
+ * declaration is robust to those variations.
+ *
+ * The Python script asserts at the end of main() that every name in
+ * FIXTURE_NAMES was actually produced — keeping the manifest and the
+ * generators in sync.
  */
 function parseGeneratedFixtureNames(): string[] {
   const source = readFileSync(GENERATOR_PATH, 'utf-8');
-  const re = /FIXTURES_DIR\s*\/\s*"([^"]+\.zarr)"/g;
+  // Match the FIXTURE_NAMES list declaration. The body captures
+  // everything between the [ and ] including newlines; we then pull out
+  // each "..." or '...' literal ending in .zarr.
+  const listMatch = /FIXTURE_NAMES\s*(?::[^=]*)?=\s*\[([^\]]+)\]/.exec(source);
+  if (!listMatch) {
+    throw new Error(
+      `[test-setup] FIXTURE_NAMES declaration not found in ${GENERATOR_PATH}. ` +
+        'Expected a top-level `FIXTURE_NAMES: list[str] = [...]` block. ' +
+        'Update generate_test_data.py to declare the manifest, or update this parser.'
+    );
+  }
+  const body = listMatch[1];
+  const re = /['"]([^'"]+\.zarr)['"]/g;
   const names = new Set<string>();
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) {
+  while ((m = re.exec(body)) !== null) {
     names.add(m[1]);
   }
   if (names.size === 0) {
     throw new Error(
-      `[test-setup] No fixtures parsed from ${GENERATOR_PATH} — ` +
-        'expected pattern `FIXTURES_DIR / "test_*.zarr"`. ' +
-        'The generator file moved or its structure changed; update this parser.'
+      `[test-setup] FIXTURE_NAMES list in ${GENERATOR_PATH} is empty or unparseable. ` +
+        'Expected `.zarr`-terminated string literals.'
     );
   }
   return [...names].sort();

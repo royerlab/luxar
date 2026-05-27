@@ -129,9 +129,14 @@ def calibrate_nlm_h(
         Target device for calibration computation.
     use_2d_slice : bool
         If *True* and volume is 3D, calibrate on a single 2D slice for
-        speed (matching the typical microscopy workflow).
+        speed (matching the typical microscopy workflow). For volumes
+        of other dimensionality (1D, 2D, or 4D+), this flag is silently
+        ignored and calibration runs on the full volume — graceful
+        fallback rather than an error, since the slice optimization is
+        only meaningful for the 3D microscopy case.
     slice_index : int, optional
-        Which z-slice to use when ``use_2d_slice=True``.  Default: middle.
+        Which z-slice to use when ``use_2d_slice=True`` and the volume
+        is 3D. Default: middle slice. Ignored for non-3D volumes.
 
     Returns
     -------
@@ -146,7 +151,9 @@ def calibrate_nlm_h(
     if device is not None:
         volume = volume.to(torch.device(device))
 
-    # For 3D volumes, calibrate on a 2D slice for speed
+    # For 3D volumes, calibrate on a 2D slice for speed. For 1D/2D/4D+
+    # volumes the slice-trick doesn't apply, so we silently calibrate on
+    # the full volume — see the docstring for `use_2d_slice` above.
     if use_2d_slice and volume.ndim == 3:
         z_idx = slice_index if slice_index is not None else volume.shape[0] // 2
         cal_data = volume[z_idx].clone()

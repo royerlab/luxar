@@ -46,6 +46,39 @@ FIXTURES_DIR.mkdir(exist_ok=True)
 COMPRESSOR_DISABLED = None  # blosc is incompatible with Node.js test env
 FLOAT16_ALLOWED = False  # zarrita-js cannot read float16 in Node.js
 
+# Audit C1 (viewer-integration-fixtures) — declarative manifest read by
+# the TypeScript global-setup (packages/luxar-viewer/src/tests/global-setup.ts).
+# Previously the TS side regex-scraped `FIXTURES_DIR / "..."` usages,
+# which broke if a generator function switched to single quotes, f-strings,
+# path concatenation, etc. A single canonical list here means the TS
+# parser only needs to match THIS one declaration.
+#
+# When you add a new generate_*() function below, add the output filename
+# here too. The Python self-check in main() asserts that every declared
+# name was actually written to disk.
+FIXTURE_NAMES: list[str] = [
+    "test_4d.zarr",
+    "test_4d_scalar_lut.zarr",
+    "test_array_ref_broadcasting.zarr",
+    "test_array_refs.zarr",
+    "test_broadcasting.zarr",
+    "test_encoding_contract_matrix.zarr",
+    "test_encoding_edge_cases.zarr",
+    "test_gsplats.zarr",
+    "test_hdr_colors.zarr",
+    "test_hierarchical_transforms.zarr",
+    "test_integer_colors.zarr",
+    "test_labelled_points.zarr",
+    "test_lines.zarr",
+    "test_log_scalar.zarr",
+    "test_lut.zarr",
+    "test_mixed.zarr",
+    "test_nd_transforms.zarr",
+    "test_quantization.zarr",
+    "test_sharpness_range.zarr",
+    "test_uint16_quantization.zarr",
+]
+
 
 def generate_broadcasting_test() -> None:
     """Test dataset with broadcasted (uniform) values."""
@@ -1680,6 +1713,20 @@ def main() -> None:
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")
+
+        # Audit C1 self-check — confirm every name declared in
+        # FIXTURE_NAMES at the top of the file was actually written.
+        # A mismatch means either a generate_*() function was renamed/
+        # removed without updating the manifest, OR the manifest grew
+        # ahead of the generators. Either way the TS side would skip
+        # tests silently — fail fast here instead.
+        missing = [n for n in FIXTURE_NAMES if not (FIXTURES_DIR / n).exists()]
+        if missing:
+            raise RuntimeError(
+                f"FIXTURE_NAMES declares {len(missing)} fixture(s) that "
+                f"no generate_*() function produced: {missing}. "
+                "Update FIXTURE_NAMES or add the missing generator."
+            )
 
     except Exception as e:
         aprint(f"❌ Error generating test data: {e}")
