@@ -41,7 +41,9 @@ describe('rgbaFloatToI420P10', () => {
     expect(result[ySize + 2 * 2]).toBe(512); // V
   });
 
-  it('should produce higher Y for brighter input', () => {
+  // utils.md O3 / Phase E46: P9 rename — Y luma scales monotonically
+  // with input intensity (brighter RGB → larger Y after PQ + matrix).
+  it('Y luma increases monotonically with input intensity (bright RGB > dark RGB)', () => {
     const width = 2;
     const height = 2;
 
@@ -70,7 +72,9 @@ describe('rgbaFloatToI420P10', () => {
     expect(brightResult[0]).toBeGreaterThan(darkResult[0]);
   });
 
-  it('should produce Y values in limited range (64-940)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pins BT.2020 10-bit
+  // limited-range Y bounds (64 = black, 940 = peak white).
+  it('extreme HDR brightness clamps Y into limited-range [64, 940]', () => {
     const width = 2;
     const height = 2;
 
@@ -92,7 +96,9 @@ describe('rgbaFloatToI420P10', () => {
     }
   });
 
-  it('should produce Cb/Cr values in limited range (64-960)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pins BT.2020 10-bit
+  // limited-range Cb/Cr bounds (64 = chroma min, 960 = chroma max).
+  it('pure-red RGBA clamps Cb/Cr into limited-range [64, 960]', () => {
     const width = 2;
     const height = 2;
 
@@ -117,7 +123,9 @@ describe('rgbaFloatToI420P10', () => {
     }
   });
 
-  it('should handle neutral gray (achromatic Cb/Cr = 512)', () => {
+  // utils.md O3 / Phase E46: P9 rename — pure-gray RGBA (R=G=B) emits
+  // achromatic Cb=Cr=512 (10-bit chroma center).
+  it('neutral gray RGBA (R=G=B=0.5) emits achromatic Cb=Cr=512', () => {
     const width = 2;
     const height = 2;
     const rgba = new Float32Array(width * height * 4);
