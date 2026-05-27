@@ -218,6 +218,56 @@ describe('PollingLoop', () => {
   });
 
   describe('error handling', () => {
+    // Audit G7 (viewer-ui-config-themes-core-utils): onStart/onStop
+    // throw paths were untested. Pin the CURRENT behavior (the
+    // production code does NOT wrap these in try/catch — exceptions
+    // propagate to the caller of start()/stop()).
+    //
+    // The tests below are documentary: they prove the propagation, and
+    // they prove the loop's `running` flag is left in the surprising
+    // state (true after a throwing onStart; false after stop()'s
+    // pre-onStop teardown). If you change the polling-loop to wrap
+    // onStart/onStop in try/catch, update these tests to assert the
+    // new no-throw + state-recovery contract.
+    it('onStart exception propagates and leaves running=true', () => {
+      const onStartThrowing = vi.fn(() => {
+        throw new Error('start failure');
+      });
+      const errorLoop = new PollingLoop({
+        interval: 100,
+        onTick: () => {},
+        onStart: onStartThrowing,
+      });
+
+      expect(() => errorLoop.start()).toThrow('start failure');
+      // running flag was set BEFORE onStart was called, and not reset.
+      expect(errorLoop.isRunning()).toBe(true);
+      expect(onStartThrowing).toHaveBeenCalledTimes(1);
+
+      // Cleanup: stop the loop so afterEach is clean.
+      errorLoop.stop();
+    });
+
+    it('onStop exception propagates AFTER running flag flips to false', () => {
+      const onStopThrowing = vi.fn(() => {
+        throw new Error('stop failure');
+      });
+      const errorLoop = new PollingLoop({
+        interval: 100,
+        onTick: () => {},
+        onStop: onStopThrowing,
+      });
+
+      errorLoop.start();
+      expect(errorLoop.isRunning()).toBe(true);
+
+      expect(() => errorLoop.stop()).toThrow('stop failure');
+      // Production code clears `running` BEFORE invoking onStop, so the
+      // exception leaves the loop in the post-stop state.
+      expect(errorLoop.isRunning()).toBe(false);
+      expect(onStopThrowing).toHaveBeenCalledTimes(1);
+    });
+
     it('should continue running if onTick throws', () => {
       const errorLoop = new PollingLoop({
         interval: 100,
