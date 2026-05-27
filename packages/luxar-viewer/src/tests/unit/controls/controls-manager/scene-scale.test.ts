@@ -70,7 +70,7 @@ describe('deriveScaleLimits', () => {
   // controls.md [H8][P12] fast-check property test: deriveScaleLimits is a
   // pure linear map of the diagonal. The two invariants below cover the
   // contract over the realistic-input domain (diagonals in [1e-3, 1e9]).
-  it('[property] minDist < maxDist for all positive diagonals [controls.md/H8][P12]', () => {
+  it('[property] minDist < maxDist for all positive diagonals', () => {
     fc.assert(
       fc.property(fc.double({ min: 1e-3, max: 1e9, noNaN: true }), (d) => {
         const r = deriveScaleLimits(d);
@@ -80,7 +80,7 @@ describe('deriveScaleLimits', () => {
     );
   });
 
-  it('[property] is linear: scale(k*d) = k * scale(d) for k > 0 [controls.md/H8][P12]', () => {
+  it('[property] is linear: scale(k*d) = k * scale(d) for k > 0', () => {
     // Linearity is the deepest property of the formula. For any
     // positive d and k, deriveScaleLimits(k*d) must equal k * deriveScaleLimits(d)
     // component-wise (within float tolerance).

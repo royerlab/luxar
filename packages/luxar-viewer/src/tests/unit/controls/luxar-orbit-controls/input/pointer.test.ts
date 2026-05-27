@@ -216,7 +216,7 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
     expect(state.zoomDelta).toBe(0);
   });
 
-  it('[controls.md/G19] calls preventDefault on wheel (the page must not scroll under the viewer)', () => {
+  it('calls preventDefault on wheel (the page must not scroll under the viewer)', () => {
     // controls.md G19: the existing tests verify state mutation + dispatch
     // but never asserted preventDefault. A regression that removed
     // preventDefault would cause the host page to scroll while the user
@@ -228,7 +228,7 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('[controls.md/G19] does NOT call preventDefault when disabled (the gate fires first)', () => {
+  it('does NOT call preventDefault when disabled (the gate fires first)', () => {
     // Symmetric: the early-return gates must short-circuit before
     // preventDefault is called.
     const { ctx } = makeBaseCtx();

@@ -149,7 +149,7 @@ describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
     expect(ctx.orientation.equals(new THREE.Quaternion())).toBe(false);
   });
 
-  it('[controls.md/G3] rollDelta = 1e-6 EXACTLY is BELOW the strict-greater-than gate', () => {
+  it('rollDelta = 1e-6 EXACTLY is BELOW the strict-greater-than gate', () => {
     // controls.md G3: the gate is `Math.abs(rollDelta) > 1e-6` (strict
     // greater-than). The audit flagged that the boundary value itself —
     // exactly 1e-6 — is the most likely mutation site (`>` → `>=`). Pin
@@ -182,7 +182,7 @@ describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
     expect(state.zoomDelta).toBe(0);
   });
 
-  it('[controls.md/G4] zoomDelta = 1e-8 EXACTLY is BELOW the strict-greater-than gate', () => {
+  it('zoomDelta = 1e-8 EXACTLY is BELOW the strict-greater-than gate', () => {
     // controls.md G4: gate is `Math.abs(zoomDelta) > 1e-8` (strict). The
     // boundary value itself must NOT trigger the zoom branch — pinning
     // the `>` vs `>=` contract.
@@ -194,7 +194,7 @@ describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
     expect(state.zoomDelta).toBe(1e-8);
   });
 
-  it('[controls.md/G2] zoom step occurs BEFORE distance clamp (clamp catches over-zoom)', () => {
+  it('zoom step occurs BEFORE distance clamp (clamp catches over-zoom)', () => {
     // controls.md G2: step order must be (5) zoom → (6) clamp. A positive
     // zoomDelta sufficient to push distance past maxDistance must end up
     // clamped at maxDistance — proving the clamp runs AFTER the zoom step,
