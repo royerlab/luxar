@@ -13,7 +13,9 @@ import { ViewState } from '../../../data/data-loader-types';
 
 describe('effective-radius-calculator', () => {
   describe('calculateEffectiveRadii', () => {
-    it('should return original radii when point is exactly on slice plane', () => {
+    // ndim.md O4 / Phase E41: P9 rename — point with zero hidden-dim
+    // offset keeps R unchanged (no Pythagorean clip applied).
+    it('point on the slice plane keeps its original radius (no clip)', () => {
       // Setup: 4D point at origin with radius 1.0
       const positions = new Float32Array([0, 0, 0, 0]);
       const radii = new Float32Array([1.0]);
@@ -33,7 +35,10 @@ describe('effective-radius-calculator', () => {
       expect(result[0]).toBeCloseTo(1.0, 5);
     });
 
-    it('should reduce radius based on distance in non-displayed spatial dimensions only', () => {
+    // ndim.md O4 / Phase E41: P9 rename — point offset 0.6 in a hidden
+    // spatial dim → R_eff = sqrt(1² − 0.6²) = 0.8 (non-spatial dim is
+    // ignored).
+    it('hidden spatial dim offset 0.6 → R_eff = 0.8 (non-spatial dim 4 ignored)', () => {
       // Setup: 5D point with mixed spatial/non-spatial dimensions
       const positions = new Float32Array([0, 0, 0, 0.6, 0]); // 0.6 units away in dim 3
       const radii = new Float32Array([1.0]);
@@ -53,7 +58,11 @@ describe('effective-radius-calculator', () => {
       expect(result[0]).toBeCloseTo(0.8, 5);
     });
 
-    it('should ignore non-spatial dimensions when calculating distance', () => {
+    // ndim.md O4 / Phase E41: P9 rename — even when a non-spatial
+    // (discrete) dim has a non-zero offset, it's ignored in the
+    // Pythagorean distance calculation (only spatial dim 3's offset
+    // contributes).
+    it('non-spatial dim 4 (discrete) does NOT contribute to Pythagorean distance', () => {
       // Setup: 5D point with distance in spatial dim 3 and matching discrete dim 4
       // Discrete dim 4 matches slice position, so point is visible
       const positions = new Float32Array([0, 0, 0, 0.6, 0]); // Matches slice in discrete dim 4
@@ -75,7 +84,9 @@ describe('effective-radius-calculator', () => {
       expect(result[0]).toBeCloseTo(0.8, 5);
     });
 
-    it('should return zero for points at hypersphere boundary', () => {
+    // ndim.md O4 / Phase E41: P9 rename — point at exact hidden-dim
+    // distance = R has R_eff = sqrt(1²−1²) = exactly 0.
+    it('point at exact boundary (D = R) returns R_eff = 0 (no negative-side drift)', () => {
       // Setup: Point at exact radius distance
       const positions = new Float32Array([0, 0, 0, 1.0]); // Exactly 1.0 away
       const radii = new Float32Array([1.0]);
