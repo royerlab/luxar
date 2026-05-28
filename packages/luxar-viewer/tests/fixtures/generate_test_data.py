@@ -1553,6 +1553,62 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_lod_group_test() -> None:
+    """Three-level ``lod_group`` fixture for the lod-group E2E spec.
+
+    Builds an LODGroup with three gsplats children at exponentially
+    increasing splat counts (8 / 32 / 128 — small enough to render
+    instantly, large enough that the auto-derivation produces a real
+    threshold spread). The lod_group carries ``layer=True`` so the
+    Layers panel exposes the Active-level dropdown.
+
+    Each child writes its own ``min_pixel_size`` attr, so the runtime
+    selector has the data it needs even though this fixture's
+    explicit thresholds (auto-derived from splat counts) are not the
+    same as what a real-world authoring path would supply.
+    """
+    with asection("Generating LODGroup Test"):
+        output = FIXTURES_DIR / "test_lod_group.zarr"
+
+        def _make_level_splats(n: int, rng: np.random.RandomState) -> dict:
+            centers = rng.rand(n, 3).astype(np.float32) * 5.0
+            amplitudes = np.full(n, 1.0, dtype=np.float32)
+            cholesky = np.tile(
+                np.array([0.3, 0, 0.3, 0, 0, 0.3], dtype=np.float32), (n, 1)
+            )
+            return dict(
+                centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+            )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        rng = np.random.RandomState(42)
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            lod = scene.add_lod_group("multires", layer=True)
+            lod.add_gsplats("child_0", **_make_level_splats(8, rng), min_pixel_size=0)
+            lod.add_gsplats(
+                "child_1", **_make_level_splats(32, rng), min_pixel_size=50.0
+            )
+            lod.add_gsplats(
+                "child_2", **_make_level_splats(128, rng), min_pixel_size=200.0
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  3 levels: 8 / 32 / 128 splats, thresholds 0 / 50 / 200 px")
+
+
 def generate_labelled_points_test() -> None:
     """Small labelled-points dataset for the hover-tooltip E2E spec.
 
@@ -1680,6 +1736,9 @@ def main() -> None:
         aprint("")
 
         generate_gsplats_test()
+        aprint("")
+
+        generate_lod_group_test()
         aprint("")
 
         generate_labelled_points_test()
