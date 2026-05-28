@@ -699,6 +699,7 @@ class Group(Node):
             ... )
         """
         from luxar.gsplats.gsplat_data import GSplatData
+
         from .lod_group import (
             resolve_additive_axis,
             resolve_substitutive_axis,
