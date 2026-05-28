@@ -8,8 +8,15 @@
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering/material-manager';
 
-/** Geometry type of a layer (groups expose a "group" type — controls apply to descendants) */
-export type LayerType = 'points' | 'lines' | 'gsplats' | 'group';
+/**
+ * Geometry type of a layer.
+ *
+ * - ``group`` — composite container; controls fan out to descendants.
+ * - ``lod_group`` — view-driven LOD container with an active-level
+ *   selector dropdown (auto / lock to level N).
+ * - ``points`` / ``lines`` / ``gsplats`` — leaf data layers.
+ */
+export type LayerType = 'points' | 'lines' | 'gsplats' | 'group' | 'lod_group';
 
 /** Information about a single layer in the Layers panel */
 export interface LayerInfo {
@@ -43,6 +50,11 @@ export interface LayerInfo {
   supportsColormap: boolean;
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
+  /**
+   * For ``type === 'lod_group'`` layers: number of child levels. Drives
+   * the "Active level" dropdown's option count. Absent for other types.
+   */
+  lodGroupChildCount?: number;
 }
 
 /** Computed shader uniforms from display range */
@@ -132,7 +144,8 @@ export class LayerStateManager {
         node.type === 'points' ||
         node.type === 'lines' ||
         node.type === 'gsplats' ||
-        node.type === 'group';
+        node.type === 'group' ||
+        node.type === 'lod_group';
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
@@ -149,9 +162,14 @@ export class LayerStateManager {
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
         // the UI offers a no-op colormap dropdown.
+        // lod_group is a composite container (like group); colormap
+        // applies to descendants via composition.
         const colormap = node.attrs.colormap as string | undefined;
         const supportsColormap =
-          node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
+          node.type === 'group' ||
+          node.type === 'lod_group' ||
+          !!node.attrs.has_scalars ||
+          !!colormap;
         const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,
@@ -186,6 +204,11 @@ export class LayerStateManager {
         // Python authors to start a layer hidden via add_points(..., visible=False).
         const initialVisible = node.attrs.visible !== false;
 
+        // lod_group child count — drives the "Active level" dropdown's
+        // option list. Other node types leave this undefined.
+        const lodGroupChildCount =
+          node.type === 'lod_group' ? (node.children?.length ?? 0) : undefined;
+
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
@@ -203,6 +226,7 @@ export class LayerStateManager {
           colormap,
           supportsColormap,
           scalarDataRange: colormapScalarRange,
+          lodGroupChildCount,
         });
       }
     }
