@@ -19,7 +19,7 @@
  *
  * Sibling of `load-lod-group-node.ts` (which has a per-frame selector).
  *
- * @module data/scene-loader/nodes/load-split-kind-group
+ * @module data/scene-loader/nodes/load-split-group-node
  */
 
 import * as THREE from 'three';
@@ -42,7 +42,7 @@ import { loadSceneNodes } from './load-scene-nodes';
  * per-mesh frustum culling handles per-part culling automatically once
  * the children attach.
  */
-export async function loadSplitKindGroup(
+export async function loadSplitGroupNode(
   node: SceneNode,
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
