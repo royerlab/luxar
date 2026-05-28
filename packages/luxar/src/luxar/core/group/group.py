@@ -28,10 +28,7 @@ from ..gsplats import GSplats
 from ..lines import Lines
 from ..node import Node
 from ..points import Points
-from .auto_split import resolve_auto_split as _resolve_auto_split
 from .compositing import COMPOSITING_ATTRS as _COMPOSITING_ATTRS
-from .compositing import position_bounds_from_array as _position_bounds_from_array
-from .compositing import slice_optional_array as _slice_optional_array
 from .dim_order import apply_dim_order_cholesky as _apply_dim_order_cholesky
 from .dim_order import apply_dim_order_positions as _apply_dim_order_positions
 
@@ -358,226 +355,26 @@ class Group(Node):
             The created ``GSplats`` node, or a kind=split ``Group``
             wrapper when ``split=`` produced more than one part.
         """
-        try:
-            scene = self._find_scene()
+        from .adders.gsplats import add_gsplats_impl
 
-            ctr_arr: np.ndarray = (
-                centers if isinstance(centers, np.ndarray) else np.asarray(centers)
-            )
-            if ctr_arr.ndim != 2:
-                raise ValueError(
-                    f"Centers must have shape (N, D), got shape {ctr_arr.shape}"
-                )
-
-            d_data = ctr_arr.shape[1]
-
-            chol_arr: np.ndarray = (
-                cholesky_factors
-                if isinstance(cholesky_factors, np.ndarray)
-                else np.asarray(cholesky_factors)
-            )
-
-            # Apply dim_order: transform both centers and cholesky_factors
-            if dim_order is not None:
-                ctr_arr, extend_to_all = _apply_dim_order_positions(
-                    ctr_arr, scene, dim_order, fill, extend_to_all
-                )
-                chol_arr = _apply_dim_order_cholesky(
-                    chol_arr, d_data, scene, dim_order, fill_sigma
-                )
-
-            n_splats = ctr_arr.shape[0]
-            ndim = ctr_arr.shape[1]
-
-            # Apply compiler-level auto-split heuristic (opt-in; default
-            # off). User-explicit ``split=`` always wins.
-            split = _resolve_auto_split(scene, n_splats, split)
-
-            # Split branch — decompose into N children if the user opted in
-            # AND the BSP produces more than one part.
-            if split is not None and ctr_arr.shape[1] >= 3:
-                from .split import (
-                    DEFAULT_MAX_ELEMENTS,
-                    midpoint_bsp_partition,
-                    sah_bsp_partition,
-                )
-
-                if split is True:
-                    max_elements = DEFAULT_MAX_ELEMENTS
-                    split_rule = "midpoint"
-                elif isinstance(split, dict):
-                    max_elements = int(
-                        split.get("max_elements", DEFAULT_MAX_ELEMENTS)
-                    )
-                    if max_elements < 1:
-                        raise ValueError(
-                            f"split max_elements must be >= 1, got {max_elements}"
-                        )
-                    split_rule = str(split.get("rule", "midpoint"))
-                    if split_rule not in ("midpoint", "sah"):
-                        raise ValueError(
-                            f"split rule must be 'midpoint' or 'sah'; "
-                            f"got {split_rule!r}"
-                        )
-                else:
-                    raise TypeError(
-                        f"split must be None, True, or dict; got "
-                        f"{type(split).__name__}"
-                    )
-
-                if image_labels is not None:
-                    raise ValueError(
-                        "image_labels is not supported alongside split=. "
-                        "Decompose the data manually or omit image_labels."
-                    )
-
-                if split_rule == "sah":
-                    parts = sah_bsp_partition(ctr_arr, max_elements)
-                else:
-                    parts = midpoint_bsp_partition(ctr_arr, max_elements)
-                if len(parts) > 1:
-                    return self._add_gsplats_split_wrapper(
-                        name=name,
-                        ctr_arr=ctr_arr,
-                        chol_arr=chol_arr,
-                        amplitudes=amplitudes,
-                        parts=parts,
-                        n_splats=n_splats,
-                        colors=colors,
-                        labels=labels,
-                        parent=parent,
-                        extend_to_all=extend_to_all,
-                        max_elements=max_elements,
-                        **attrs,
-                    )
-                # 1 part → fall through to single-leaf write.
-
-            aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
-
-            scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
-
-            final_extend_dims = scene._resolve_extend_to_all(
-                extend_to_all, ctr_arr, "splats"
-            )
-            if final_extend_dims:
-                attrs["extend_to_all"] = final_extend_dims
-                aprint(f"  📡 Extending visibility across: {final_extend_dims}")
-
-            # Colormap / colors mutual exclusivity
-            colormap = attrs.get("colormap")
-            if colors is not None and colormap is not None:
-                raise ValueError(
-                    "Cannot specify both 'colors' and 'colormap'. Use one or the other."
-                )
-
-            parent_node = parent or self
-
-            writer = self._require_scene_writer(scene)
-            path = f"{parent_node.path}/{name}" if parent_node.path else name
-            metadata = writer.write_gsplats(
-                path,
-                ctr_arr.astype(np.float32),
-                amplitudes=amplitudes,
-                cholesky_factors=chol_arr,
-                colors=cast(Any, colors),
-                labels=labels,
-                image_labels=image_labels,
-                **attrs,
-            )
-
-            # Sync colormap attr with what the compiler wrote to zarr
-            if "colormap" in attrs:
-                from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
-
-                cm = attrs["colormap"]
-                if not isinstance(cm, str) or (
-                    isinstance(cm, str) and cm not in BUILTIN_COLORMAP_NAMES
-                ):
-                    attrs["colormap"] = "custom"
-
-            # The compiler sets default "gray" colormap for gsplats without
-            # colors/colormap. Propagate that to the Node attrs so the
-            # in-memory node matches the zarr state.
-            if not metadata.get("has_colors") and "colormap" not in attrs:
-                attrs["colormap"] = "gray"
-
-            if labels is not None:
-                scene._notify_labels_added()
-            if image_labels is not None:
-                scene._notify_image_labels_added()
-
-            return GSplats(
-                name,
-                metadata=metadata,
-                parent=cast(Any, parent_node),
-                writer=writer,
-                **attrs,
-            )
-        except (ValueError, TypeError) as e:
-            aprint(f"Failed to add gsplats node '{name}': {e}")
-            raise ValueError(f"Could not add gsplats '{name}': {e}") from e
-
-    def _add_gsplats_split_wrapper(
-        self,
-        name: str,
-        ctr_arr: np.ndarray,
-        chol_arr: np.ndarray,
-        amplitudes: Any,
-        parts: List[np.ndarray],
-        n_splats: int,
-        colors: Any,
-        labels: Any,
-        parent: Optional[Node],
-        extend_to_all: Optional[Union[List[str], str]],
-        max_elements: int,
-        **attrs: Any,
-    ) -> "Group":
-        """Build a kind=split wrapper Group with one GSplats child per BSP part."""
-        wrapper_attrs = {k: v for k, v in attrs.items() if k in _COMPOSITING_ATTRS}
-        leaf_attrs = {k: v for k, v in attrs.items() if k not in _COMPOSITING_ATTRS}
-
-        parent_node = parent or self
-        wrapper = parent_node.add_split_group(
+        return add_gsplats_impl(
+            self,
             name=name,
-            display_type="gsplats",
-            max_elements=max_elements,
-            **wrapper_attrs,
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky_factors,
+            colors=colors,
+            labels=labels,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            split=split,
+            **attrs,
         )
 
-        aprint(
-            f"  ✂️  Split '{name}' into {len(parts)} parts via BSP "
-            f"(max_elements={max_elements:,}, "
-            f"sizes={[int(p.size) for p in parts]})"
-        )
-
-        for i, indices in enumerate(parts):
-            wrapper.add_gsplats(
-                name=f"part_{i}",
-                centers=ctr_arr[indices],
-                amplitudes=_slice_optional_array(amplitudes, indices, n_splats),
-                cholesky_factors=_slice_optional_array(
-                    chol_arr, indices, n_splats
-                ),
-                colors=_slice_optional_array(colors, indices, n_splats),
-                labels=_slice_optional_array(labels, indices, n_splats),
-                image_labels=None,
-                extend_to_all=extend_to_all,
-                # dim_order / fill / fill_sigma already applied to ctr_arr +
-                # chol_arr upstream — do not re-apply in the per-part call.
-                dim_order=None,
-                fill=None,
-                fill_sigma=None,
-                # ``split=False`` bypasses compiler auto-split (see
-                # _add_points_split_wrapper for rationale).
-                split=False,
-                **leaf_attrs,
-            )
-
-        wrapper._persist_attr(
-            "position_bounds", _position_bounds_from_array(ctr_arr)
-        )
-
-        return wrapper
 
     def add_gsplats_from_data(
         self,
