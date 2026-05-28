@@ -19,6 +19,7 @@ import { loadPointsNode } from './load-points-node';
 import { loadLinesNode } from './load-lines-node';
 import { loadGSplatsNode } from './load-gsplats-node';
 import { loadLodGroupNode } from './load-lod-group-node';
+import { loadSplitGroupNode } from './load-split-group-node';
 import type { NodeBuildCtx } from './build-ctx';
 
 /**
@@ -54,6 +55,12 @@ export async function loadSceneNodes(
       () => loadLodGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
       node.path
     );
+  } else if (node.type === 'group' && node.attrs.kind === 'split') {
+    // A kind=split Group is a specialized container that recurses into
+    // children itself. No per-frame selector — all children render
+    // simultaneously and THREE's per-mesh frustum culling does the
+    // per-part culling. Same error-capture wrapping as above.
+    await loadLeafNode(() => loadSplitGroupNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.children) {
     // Create group and recurse
     const group = new THREE.Group();
