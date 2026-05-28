@@ -64,6 +64,10 @@ export async function loadSplitGroupNode(
 
   const splitGroup = new THREE.Group();
   splitGroup.name = node.path;
+  // Mark the THREE node with its specialized-group kind so the picking
+  // system can resolve a hit on an inner ``part_<i>`` child back to the
+  // wrapper's path. Mirrors the convention in load-lod-group-node.ts.
+  splitGroup.userData.kind = 'split';
   if (attrs.transform) {
     ctx.nodeFactory.applyTransform(splitGroup, attrs.transform);
   }

@@ -172,6 +172,41 @@ class Group(Node):
             )
         return writer
 
+    def _resolve_auto_split(
+        self, scene: Scene, n_elements: int, user_split: Any
+    ) -> Any:
+        """Resolve the effective ``split=`` for a leaf-adder call.
+
+        Opt-in compiler-level auto-split: when
+        ``LuxarZarrCompiler(auto_split_max_elements=N)`` is set and the
+        user did NOT pass ``split=`` at the call site, return a synthetic
+        ``dict(max_elements=N)`` once ``n_elements > N``. Below the
+        threshold or with a user-explicit ``split=``, pass the original
+        value through unchanged.
+
+        - ``user_split is None`` → opt into auto-split (apply if threshold is set)
+        - ``user_split is False`` → explicit no-split bypass (returns ``None``)
+        - anything else → user-explicit, pass through
+
+        The ``False`` sentinel is used internally by the split-wrapper
+        recursion (``_add_points_split_wrapper`` / ``_add_gsplats_split_wrapper``)
+        so per-part recursive ``add_points`` / ``add_gsplats`` calls do
+        not re-trigger auto-split (which would explode the leaf count
+        when the compiler threshold is smaller than the user's explicit
+        cap).
+        """
+        if user_split is False:
+            return None
+        if user_split is not None:
+            return user_split
+        writer = scene._writer
+        threshold = getattr(writer, "auto_split_max_elements", None) if writer else None
+        if threshold is None:
+            return user_split
+        if n_elements <= int(threshold):
+            return user_split
+        return {"max_elements": int(threshold)}
+
     def _apply_dim_order_positions(
         self,
         positions: np.ndarray,
@@ -350,6 +385,12 @@ class Group(Node):
 
             n_points = pos_arr.shape[0]
             ndim = pos_arr.shape[1]
+
+            # Apply compiler-level auto-split heuristic (opt-in; default
+            # off) before evaluating the split branch. User-explicit
+            # split= always wins — _resolve_auto_split passes it through
+            # unchanged.
+            split = self._resolve_auto_split(scene, n_points, split)
 
             # Split branch — decompose into N children if the user opted in
             # AND the BSP produces more than one part. Single-part outcomes
@@ -575,7 +616,12 @@ class Group(Node):
                 # not re-apply in the per-part recursion.
                 dim_order=None,
                 fill=None,
-                split=None,
+                # ``split=False`` (not ``None``) → explicit no-split that
+                # ALSO bypasses the compiler-level auto-split heuristic.
+                # ``None`` would re-trigger auto-split on each part when
+                # the compiler's threshold is smaller than the user's
+                # cap, blowing up the leaf count.
+                split=False,
                 # Inner LOD ladder per spatial part — each part decides
                 # its own ladder independently. Allows the Split-of-
                 # AdditiveLOD composition from the plan.
@@ -1062,6 +1108,10 @@ class Group(Node):
             n_splats = ctr_arr.shape[0]
             ndim = ctr_arr.shape[1]
 
+            # Apply compiler-level auto-split heuristic (opt-in; default
+            # off). User-explicit ``split=`` always wins.
+            split = self._resolve_auto_split(scene, n_splats, split)
+
             # Split branch — decompose into N children if the user opted in
             # AND the BSP produces more than one part.
             if split is not None and ctr_arr.shape[1] >= 3:
@@ -1225,7 +1275,9 @@ class Group(Node):
                 dim_order=None,
                 fill=None,
                 fill_sigma=None,
-                split=None,
+                # ``split=False`` bypasses compiler auto-split (see
+                # _add_points_split_wrapper for rationale).
+                split=False,
                 **leaf_attrs,
             )
 

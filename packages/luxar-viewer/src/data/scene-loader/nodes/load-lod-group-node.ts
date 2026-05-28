@@ -101,6 +101,10 @@ export async function loadLodGroupNode(
 
   const lodThreeGroup = new THREE.Group();
   lodThreeGroup.name = node.path;
+  // Mark the THREE node with its specialized-group kind so picking +
+  // any future wrapper-aware machinery can identify it without
+  // re-reading the on-disk attrs.
+  lodThreeGroup.userData.kind = 'lod';
   if (attrs.transform) {
     ctx.nodeFactory.applyTransform(lodThreeGroup, attrs.transform);
   }
