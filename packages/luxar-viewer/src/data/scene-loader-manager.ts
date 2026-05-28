@@ -8,7 +8,7 @@
  * Also owns the UpdateProfiler singleton for timing scene updates.
  */
 
-import { SceneLoader } from './scene-loader';
+import { SceneLoader, type SceneLoaderLODGroupRegistryFactory } from './scene-loader';
 import { LoaderConfig } from './data-loader-types';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import type { SceneLoaderMonitorFactory } from './scene-loader-monitor-port';
@@ -38,6 +38,14 @@ export class SceneLoaderManager {
   private monitorFactory: SceneLoaderMonitorFactory | null = null;
 
   /**
+   * Optional LOD-group registry factory. Same dependency-inversion
+   * pattern as ``monitorFactory`` — the app pipeline owns the live
+   * SceneManager (camera, viewport) and closes over it to build a
+   * registry per loader without the data/ layer importing scene/.
+   */
+  private lodGroupRegistryFactory: SceneLoaderLODGroupRegistryFactory | null = null;
+
+  /**
    * Private constructor to enforce singleton pattern
    */
   private constructor() {
@@ -52,6 +60,18 @@ export class SceneLoaderManager {
    */
   setMonitorFactory(factory: SceneLoaderMonitorFactory | null): void {
     this.monitorFactory = factory;
+  }
+
+  /**
+   * Provide the LOD-group registry factory. Called once at app boot
+   * from the init pipeline (which holds SceneManager + the live
+   * camera). Subsequent ``createLoader`` calls forward the factory
+   * to each ``SceneLoader`` instance.
+   */
+  setLODGroupRegistryFactory(
+    factory: SceneLoaderLODGroupRegistryFactory | null
+  ): void {
+    this.lodGroupRegistryFactory = factory;
   }
 
   /**
@@ -90,10 +110,17 @@ export class SceneLoaderManager {
       this.destroyLoader(id);
     }
 
-    // Pass the profiler + monitor factory to the loader. The factory
-    // is the dependency-inversion handle that lets `SceneLoader` reach
-    // the UI monitor without importing `ui/` directly.
-    const loader = new SceneLoader(config, id, this.profiler, this.monitorFactory);
+    // Pass the profiler + monitor + LOD-group-registry factories to
+    // the loader. Both factories are dependency-inversion handles
+    // that let `SceneLoader` reach the UI monitor / live SceneManager
+    // without importing `ui/` or `scene/` directly.
+    const loader = new SceneLoader(
+      config,
+      id,
+      this.profiler,
+      this.monitorFactory,
+      this.lodGroupRegistryFactory
+    );
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {

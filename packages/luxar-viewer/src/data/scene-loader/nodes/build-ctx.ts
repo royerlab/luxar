@@ -15,6 +15,7 @@
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import type { NodeFactory } from '../../../rendering/node-factory';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import type { SceneNode, ViewState, LoadedPointsData, DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../../types/lines';
 import type {
@@ -30,6 +31,13 @@ import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
   registry: LoaderRegistry;
+  /**
+   * Per-scene LOD-group registry. Optional — when absent, lod_group
+   * nodes still load (default level renders) but the per-frame
+   * selector is a no-op. Set by SceneLoader when the scene supports
+   * LOD-group selection.
+   */
+  lodGroupRegistry?: LODGroupRegistry;
   /** THREE.js node factory for placeholder construction. */
   nodeFactory: NodeFactory;
   /**
