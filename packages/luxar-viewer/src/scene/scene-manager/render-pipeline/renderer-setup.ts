@@ -23,6 +23,7 @@
  */
 
 import * as THREE from 'three';
+import { WebGPURenderer } from 'three/webgpu';
 import { config } from '../../../config';
 import {
   createRendererCapabilities,
@@ -178,7 +179,6 @@ export async function createWebGPURenderer(
   const { webgpuForceWebGL = false, perfTimestamp = false, rendererOverride } = options;
 
   log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
-  const { WebGPURenderer } = await import('three/webgpu');
   if (webgpuForceWebGL) {
     log.info(
       Modules.RENDERER,
