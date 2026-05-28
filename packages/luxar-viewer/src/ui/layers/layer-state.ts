@@ -12,11 +12,18 @@ import type { BlendingMode } from '../../rendering/material-manager';
  * Geometry type of a layer.
  *
  * - ``group`` — composite container; controls fan out to descendants.
- * - ``lod_group`` — view-driven LOD container with an active-level
- *   selector dropdown (auto / lock to level N).
  * - ``points`` / ``lines`` / ``gsplats`` — leaf data layers.
+ *
+ * Specialized groups (``kind === 'lod'``, future ``'split'``) appear in
+ * the layers panel as their underlying ``display_type`` (one of the
+ * three leaf types) — never as ``'group'``. The specialized-group
+ * nature is surfaced via the ``kind`` field on ``LayerInfo``, which
+ * drives the per-layer badge / LOD dropdown.
  */
-export type LayerType = 'points' | 'lines' | 'gsplats' | 'group' | 'lod_group';
+export type LayerType = 'points' | 'lines' | 'gsplats' | 'group';
+
+/** Specialized-group discriminant on a layer. */
+export type LayerKind = 'lod' | 'split';
 
 /** Information about a single layer in the Layers panel */
 export interface LayerInfo {
@@ -24,8 +31,18 @@ export interface LayerInfo {
   path: string;
   /** Display name (last segment of path) */
   name: string;
-  /** Geometry type */
+  /**
+   * Geometry type the user sees this layer as. For specialized groups
+   * (kind=lod / kind=split), this is the resolved ``display_type`` attr
+   * from disk — not ``'group'``.
+   */
   type: LayerType;
+  /**
+   * Specialized-group kind, if the underlying scene-graph node is a
+   * kind=lod or kind=split ``Group``. Drives the layer-header badge and
+   * the inline LOD-level dropdown.
+   */
+  kind?: LayerKind;
   /** Whether the layer is visible in the scene */
   visible: boolean;
   /** Opacity (0–1) */
@@ -51,8 +68,9 @@ export interface LayerInfo {
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
   /**
-   * For ``type === 'lod_group'`` layers: number of child levels. Drives
-   * the "Active level" dropdown's option count. Absent for other types.
+   * For ``kind === 'lod'`` layers: number of child levels. Drives the
+   * "Active level" dropdown's option count and the "N LODs" badge.
+   * Absent for non-LOD layers.
    */
   lodGroupChildCount?: number;
 }
@@ -144,8 +162,7 @@ export class LayerStateManager {
         node.type === 'points' ||
         node.type === 'lines' ||
         node.type === 'gsplats' ||
-        node.type === 'group' ||
-        node.type === 'lod_group';
+        node.type === 'group';
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
@@ -162,14 +179,12 @@ export class LayerStateManager {
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
         // the UI offers a no-op colormap dropdown.
-        // lod_group is a composite container (like group); colormap
-        // applies to descendants via composition.
+        // kind=lod / kind=split groups are composite containers; the
+        // colormap applies to descendants via composition just like a
+        // plain group.
         const colormap = node.attrs.colormap as string | undefined;
         const supportsColormap =
-          node.type === 'group' ||
-          node.type === 'lod_group' ||
-          !!node.attrs.has_scalars ||
-          !!colormap;
+          node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,
@@ -204,16 +219,37 @@ export class LayerStateManager {
         // Python authors to start a layer hidden via add_points(..., visible=False).
         const initialVisible = node.attrs.visible !== false;
 
-        // lod_group child count — drives the "Active level" dropdown's
-        // option list. Other node types leave this undefined.
+        // Specialized-group discriminant: read ``kind`` from the on-disk
+        // attrs of a ``type === 'group'`` node. ``undefined`` for plain
+        // groups and leaf nodes.
+        const rawKind = node.attrs.kind as LayerKind | undefined;
+        const kind: LayerKind | undefined =
+          node.type === 'group' && (rawKind === 'lod' || rawKind === 'split')
+            ? rawKind
+            : undefined;
+
+        // The layer's user-facing geometry type. For a specialized
+        // group, use its ``display_type`` (resolved at write time on the
+        // Python side) so the layer reads as e.g. "gsplats" not "group".
+        // Fall back to the node's raw type for plain groups / leaves.
+        const displayType = node.attrs.display_type as LayerType | undefined;
+        const layerType: LayerType =
+          kind !== undefined && displayType
+            ? displayType
+            : (node.type as LayerType);
+
+        // kind=lod child count — drives the "Active level" dropdown's
+        // option list AND the "N LODs" header badge. Other layers leave
+        // this undefined.
         const lodGroupChildCount =
-          node.type === 'lod_group' ? (node.children?.length ?? 0) : undefined;
+          kind === 'lod' ? (node.children?.length ?? 0) : undefined;
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
           name,
-          type: node.type as LayerType,
+          type: layerType,
+          kind,
           visible: initialVisible,
           opacity: (node.attrs.opacity as number) ?? 1.0,
           displayMin,

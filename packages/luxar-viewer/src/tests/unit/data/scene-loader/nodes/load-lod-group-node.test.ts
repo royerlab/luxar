@@ -50,9 +50,11 @@ function makeChildNode(
 function makeLodGroupNode(children: SceneNode[], extraAttrs: Record<string, unknown> = {}): SceneNode {
   return {
     path: '/lod',
-    type: 'lod_group',
+    type: 'group',
     attrs: {
-      type: 'lod_group',
+      type: 'group',
+      kind: 'lod',
+      display_type: 'gsplats',
       selector: 'pixel_size',
       ...extraAttrs,
     } as SceneNode['attrs'],

@@ -218,39 +218,50 @@ Group nodes organize the scene hierarchy and can contain child nodes.
 }
 ```
 
-### 2. LOD Group Nodes
+### 2. Group Kinds — Specialized `group` Nodes
 
-`lod_group` nodes are containers that pick **one of N alternative children**
-at runtime based on the current view. Each child carries a
-`min_pixel_size` threshold; the viewer projects the lod_group's bbox to
-screen, takes the diagonal in pixels, and renders the **finest** child
-whose threshold is satisfied (with 10% asymmetric hysteresis on the
-downgrade direction to suppress flicker).
+A `Group` may carry an optional `kind` attribute that turns it into a
+specialized container with viewer-aware semantics. Specialized groups
+also carry a `display_type` attribute (one of `"points"`, `"lines"`,
+`"gsplats"`) — the layers panel uses this for the user-facing type
+label, so a layer reads as one logical entity of `display_type` rather
+than as a "group".
 
-`lod_group` is **geometry-agnostic**: children can be points, lines,
-gsplats, or even nested groups / lod_groups. This is the
-scene-graph–level expression of "substitutive" LOD; it replaces the
-`substitutive_<s>/additive_<a>/` layout that earlier versions baked
-into gsplats nodes inline.
+#### `kind: "lod"` — Level-of-Detail group
+
+Picks **one of N alternative children** at runtime based on the current
+view. Each child carries a `min_pixel_size` threshold; the viewer
+projects the LOD group's bbox to screen, takes the diagonal in pixels,
+and renders the **finest** child whose threshold is satisfied (with 10%
+asymmetric hysteresis on the downgrade direction to suppress flicker).
+
+`kind="lod"` is **geometry-agnostic**: children can be points, lines,
+gsplats, or themselves specialized groups (e.g. a Split group inside an
+LOD group). The finest child's resolved `display_type` becomes the LOD
+group's `display_type`.
 
 **Attributes (.zattrs):**
 ```json
 {
-  "type": "lod_group",
+  "type": "group",
+  "kind": "lod",
+  "display_type": "gsplats",  // Resolved at write time from the finest
+                              //   child; the layers panel uses this as
+                              //   the user-facing layer type.
   "selector": "pixel_size",   // Reserved; only "pixel_size" supported today.
   "default_level": 0,         // 0-based initial active level (coarsest→finest).
                               //   Seeds the "Active level" dropdown in the
                               //   Layers panel; does not lock the runtime
                               //   selector by itself.
   "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
-  "nd_transform": { ... },    // Optional, same shape as on Group nodes
+  "nd_transform": { ... },    // Optional, same shape as on plain Group nodes
   "opacity": 1.0,             // Compositing — inherited by children
   "gamma": 1.0,
   "intensity": 1.0,
   "offset": 0.0,
   "blending_mode": "additive",
   "layer": false,             // Optional: expose in the Layers panel with
-                              //   an "Active level" dropdown
+                              //   an "Active level" dropdown + "N LODs" badge
   "visible": true
 }
 ```
@@ -263,9 +274,9 @@ into gsplats nodes inline.
   must be strictly monotonic increasing in coarsest→finest order;
   the coarsest conventionally has `min_pixel_size: 0` (always
   applicable).
-- Children themselves are standard nodes — they retain their own type
-  (`gsplats` / `points` / `lines` / `group` / `lod_group`) and full
-  attr set.
+- Children themselves are standard nodes — they retain their own
+  `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
+  own `kind` attr) and full attr set.
 
 **Builder API (Python):**
 ```python

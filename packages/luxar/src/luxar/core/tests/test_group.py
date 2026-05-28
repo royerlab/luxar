@@ -487,19 +487,20 @@ class TestLodGroupAxis:
                 scene.add_gsplats_from_data("splats", data, lod_group=True)
 
     def test_true_uses_stored_levels(self, tmp_path) -> None:
-        """``True`` with stored levels produces an LODGroup."""
-        from luxar.core import LODGroup
-
+        """``True`` with stored levels produces a kind=lod Group."""
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats_from_data("multires", data, lod_group=True)
-            assert isinstance(node, LODGroup)
+            assert isinstance(node, Group)
+            assert node.attrs.get("kind") == "lod"
             assert len(node.children) == 2
 
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["multires"]
-        assert grp.attrs["type"] == "lod_group"
+        assert grp.attrs["type"] == "group"
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "gsplats"
         # Coarsest first → child_0 has fewer splats than child_1.
         assert grp["child_0"].attrs["n_splats"] == 2
         assert grp["child_1"].attrs["n_splats"] == 8
@@ -520,8 +521,6 @@ class TestLodGroupAxis:
 
     def test_dict_computes_from_flat(self, tmp_path) -> None:
         """``dict(...)`` computes substitutive levels when input is flat."""
-        from luxar.core import LODGroup
-
         data = _make_flat_gsplat_data(n=8)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -530,7 +529,8 @@ class TestLodGroupAxis:
                 data,
                 lod_group=dict(compression_factor=2, levels=1),
             )
-            assert isinstance(node, LODGroup)
+            assert isinstance(node, Group)
+            assert node.attrs.get("kind") == "lod"
             # K=2, L=1 → 2 substitutive levels total
             assert len(node.children) == 2
 
@@ -559,8 +559,6 @@ class TestLodGroupAxis:
         a bare ``dict()`` (or one carrying only ``min_pixel_sizes``) is
         unambiguous — reuse the stored pyramid.
         """
-        from luxar.core import LODGroup
-
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -569,7 +567,8 @@ class TestLodGroupAxis:
                 data,
                 lod_group=dict(),
             )
-            assert isinstance(node, LODGroup)
+            assert isinstance(node, Group)
+            assert node.attrs.get("kind") == "lod"
             assert len(node.children) == 2
 
     def test_dict_recompute_forces_recomputation(self, tmp_path) -> None:
@@ -735,8 +734,6 @@ class TestCombinedAxes:
 
     def test_compute_substitutive_then_additive(self, tmp_path) -> None:
         """Compute substitutive levels then add an additive ladder on each."""
-        from luxar.core import LODGroup
-
         data = _make_flat_gsplat_data(n=16)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -746,7 +743,8 @@ class TestCombinedAxes:
                 lod_group=dict(compression_factor=2, levels=1),
                 additive_lod=dict(n_lods=2),
             )
-            assert isinstance(node, LODGroup)
+            assert isinstance(node, Group)
+            assert node.attrs.get("kind") == "lod"
             assert len(node.children) == 2  # K=2, L=1
 
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
@@ -760,7 +758,7 @@ class TestCombinedAxes:
             assert "min_pixel_size" in child.attrs
 
     def test_compositing_attrs_land_on_lod_group(self, tmp_path) -> None:
-        """opacity/gamma/etc. ride onto the LODGroup, not the children."""
+        """opacity/gamma/etc. ride onto the kind=lod Group, not the children."""
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -769,10 +767,10 @@ class TestCombinedAxes:
             )
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["multires"]
-        # LODGroup carries the compositing attrs.
+        # The kind=lod Group carries the compositing attrs.
         assert grp.attrs["opacity"] == 0.5
         assert grp.attrs["gamma"] == 2.0
         # Children do NOT (they inherit via composition at render time).
         # Note: the writer auto-defaults missing values, so we can't easily
-        # assert "absence" on the children — but the value at the LODGroup
+        # assert "absence" on the children — but the value on the parent
         # is the authoritative source.
