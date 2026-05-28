@@ -2048,6 +2048,89 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     stacklevel=3,
                 )
 
+    def _finalize_lod_position_bounds(self, store: zarr.Group) -> None:
+        """Back-fill missing ``position_bounds`` on kind=lod groups.
+
+        Walks the zarr tree post-order and, for every group whose attrs
+        declare ``kind == 'lod'`` without a ``position_bounds``, computes
+        the union of its children's ``position_bounds`` (recursing into
+        nested ``kind="lod"`` / ``kind="split"`` wrappers and plain
+        groups). The convenience-builder path
+        (``_add_gsplats_as_lod_group``) leaves the parent without bounds
+        because each leaf carries its own; ``kind="split"`` wrappers
+        already persist their union at write time
+        (``Group._add_*_split_wrapper``); only ``kind="lod"`` wrappers
+        were left without aggregate bounds, so the viewer's
+        ``loadLodGroupNode`` saw empty bounds for a nested LOD-of-LOD
+        construction and skipped that level in projection.
+
+        **Never overwrites** an authored ``position_bounds`` — only
+        fills missing values. Children with empty / mismatched bounds
+        are skipped in the union (same convention as the viewer's
+        registry projection).
+        """
+
+        def union(
+            a: Optional[Dict[str, List[float]]], b: Optional[Dict[str, List[float]]]
+        ) -> Optional[Dict[str, List[float]]]:
+            if a is None:
+                return b
+            if b is None:
+                return a
+            a_min, a_max = a["min"], a["max"]
+            b_min, b_max = b["min"], b["max"]
+            if len(a_min) != len(b_min) or len(a_min) != len(a_max):
+                # Mismatched dimensionality — skip b. Same defensive
+                # fallback as the viewer's registry.
+                return a
+            return {
+                "min": [min(a_min[i], b_min[i]) for i in range(len(a_min))],
+                "max": [max(a_max[i], b_max[i]) for i in range(len(a_max))],
+            }
+
+        def resolve(group: "zarr.Group") -> Optional[Dict[str, List[float]]]:
+            """Return the position_bounds of a group (leaf or wrapper).
+
+            Returns None when the group has no leaves with bounds (e.g.
+            empty group or all-mismatched children) so callers can skip.
+            """
+            attrs = dict(group.attrs)
+            authored = attrs.get("position_bounds")
+            if isinstance(authored, dict) and "min" in authored and "max" in authored:
+                return {
+                    "min": list(authored["min"]),
+                    "max": list(authored["max"]),
+                }
+            # No authored bounds → recurse into children (groups only;
+            # zarr arrays don't have descendants).
+            acc: Optional[Dict[str, List[float]]] = None
+            for child_name in group.keys():
+                child = group[child_name]
+                if not hasattr(child, "keys"):
+                    continue
+                acc = union(acc, resolve(child))
+            return acc
+
+        def walk(group: "zarr.Group") -> None:
+            attrs = dict(group.attrs)
+            if (
+                attrs.get("kind") == "lod"
+                and "position_bounds" not in attrs
+            ):
+                aggregated = resolve(group)
+                if aggregated is not None:
+                    group.attrs["position_bounds"] = aggregated
+                    aprint(
+                        f"  📐 Back-filled position_bounds on "
+                        f"kind=lod group {group.path or '/'}"
+                    )
+            for child_name in group.keys():
+                child = group[child_name]
+                if hasattr(child, "keys"):
+                    walk(child)
+
+        walk(store)
+
     def _finalize_lod_display_types(self, store: zarr.Group) -> None:
         """Back-fill missing ``display_type`` on kind=lod groups.
 
@@ -3159,6 +3242,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # ``_finalize_lod_display_types`` for the rule). Never
             # overwrites a value the user already authored.
             self._finalize_lod_display_types(store)
+
+            # Back-fill missing ``position_bounds`` on kind=lod groups
+            # by unioning descendant bounds. Without this, the viewer's
+            # registry projection skips nested kind=lod children
+            # (which never carried their own bounds) and the LOD
+            # selector can't see them.
+            self._finalize_lod_position_bounds(store)
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)

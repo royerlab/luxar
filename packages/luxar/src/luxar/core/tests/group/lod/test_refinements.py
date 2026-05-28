@@ -67,6 +67,97 @@ class TestDisplayTypeBackfill:
         ), "user-authored display_type must not be overwritten"
 
 
+class TestPositionBoundsBackfill:
+    """Compiler back-fills aggregate ``position_bounds`` on kind=lod groups.
+
+    Without this, the viewer's LOD-group registry reads empty bounds on
+    nested wrapper children and skips them in projection.
+    """
+
+    def test_lod_group_gets_position_bounds_filled(self, tmp_path):
+        """Standard lod_group with leaf children: union spans every leaf."""
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("ladder")
+            # Coarse child: small bbox at origin.
+            pos_coarse = np.array(
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32
+            )
+            # Fine child: larger bbox extending the union.
+            pos_fine = np.array(
+                [[-2.0, 0.0, 0.0], [5.0, 4.0, 3.0]], dtype=np.float32
+            )
+            lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
+            lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        pb = store["ladder"].attrs["position_bounds"]
+        # Union of [(0,0,0)-(1,1,1)] and [(-2,0,0)-(5,4,3)].
+        assert pb["min"] == [-2.0, 0.0, 0.0]
+        assert pb["max"] == [5.0, 4.0, 3.0]
+
+    def test_nested_lod_group_inner_bounds_propagate_outward(self, tmp_path):
+        """Outer kind=lod with a nested kind=lod child gets the inner union.
+
+        This is the exact construction the audit flagged: without
+        back-fill, the outer group's child reads ``position_bounds = {}``
+        and the registry skips that whole branch in projection.
+        """
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            outer = scene.add_lod_group("outer")
+            # Outer level 0: a single leaf bounded at (0..1)^3.
+            outer.add_points(
+                "leaf_coarse",
+                np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32),
+                min_pixel_size=0.0,
+            )
+            # Outer level 1: a NESTED kind=lod group whose leaves span
+            # (-3..3, -3..3, -3..3).
+            inner = outer.add_lod_group("nested_fine", min_pixel_size=50.0)
+            inner.add_points(
+                "deep_coarse",
+                np.array([[-3.0, -3.0, -3.0], [0.0, 0.0, 0.0]], dtype=np.float32),
+                min_pixel_size=0.0,
+            )
+            inner.add_points(
+                "deep_fine",
+                np.array([[0.0, 0.0, 0.0], [3.0, 3.0, 3.0]], dtype=np.float32),
+                min_pixel_size=100.0,
+            )
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        # Inner kind=lod gets its own union from its two leaves.
+        inner_pb = store["outer/nested_fine"].attrs["position_bounds"]
+        assert inner_pb["min"] == [-3.0, -3.0, -3.0]
+        assert inner_pb["max"] == [3.0, 3.0, 3.0]
+        # Outer kind=lod unions leaf_coarse with the just-aggregated inner.
+        outer_pb = store["outer"].attrs["position_bounds"]
+        assert outer_pb["min"] == [-3.0, -3.0, -3.0]
+        assert outer_pb["max"] == [3.0, 3.0, 3.0]
+
+    def test_authored_position_bounds_not_overwritten(self, tmp_path):
+        """User-authored position_bounds on the lod_group survives."""
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group(
+                "with_explicit_pb",
+                position_bounds={
+                    "min": [-100.0, -100.0, -100.0],
+                    "max": [100.0, 100.0, 100.0],
+                },
+            )
+            pos = np.array(
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32
+            )
+            lod.add_points("level_0", pos, min_pixel_size=0.0)
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        pb = store["with_explicit_pb"].attrs["position_bounds"]
+        assert pb["min"] == [-100.0, -100.0, -100.0]
+        assert pb["max"] == [100.0, 100.0, 100.0]
+
+
 # ────────────────────────────────────────────────────────────────────────
 # 2. base_pixel_size knob
 # ────────────────────────────────────────────────────────────────────────
