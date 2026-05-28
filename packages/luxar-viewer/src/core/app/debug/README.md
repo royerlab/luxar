@@ -129,10 +129,11 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `injectSyntheticScene({type, count, bounds?, seed?})`                                          | dynamic import                         | Lines perf-bench injector — builds an `InstancedLinesMeshConfig` and adds it through `materialManager` + `createInstancedLinesMesh` |
 | `runtimeReady`                                                                                 | `true`                                 | Sentinel flag for E2E waits                                                                                                         |
 
-The `injectSyntheticScene` modules (`scene/synthetic-scene`,
-`rendering/line-geometry`, `rendering/material-manager`) are pulled via
-dynamic `import()` so they stay out of the production main chunk and
-tree-shake when `__luxarDebug` isn't referenced.
+`injectSyntheticScene` dynamically imports `scene/synthetic-scene` so the
+synthetic-line builder stays out of the main chunk;
+`rendering/line-geometry` and `rendering/material-manager` are statically
+imported because they're already part of the main bundle (production
+modules), so dynamic-importing them would save no chunk bytes.
 
 ## Activation
 
