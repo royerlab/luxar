@@ -21,6 +21,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    cast,
 )
 
 import numpy as np
@@ -528,8 +529,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["position_bounds"] = position_bounds
         metadata["position_bounds"] = position_bounds
 
-        # Update scene-level bounds (union of all node bounds)
-        self._update_scene_bounds(position_bounds)
+        # Update scene-level bounds (union of all node bounds). Skipped
+        # when ``write_points_multi_lod`` is the caller — the parent
+        # multi-LOD writer aggregates the global bounds once instead of
+        # accumulating each subgroup's contribution separately.
+        if not attrs.pop("_skip_scene_bounds", False):
+            self._update_scene_bounds(position_bounds)
 
         # 10. Write spatial ordering metadata if built
         if ordering_data is not None:
@@ -880,8 +885,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["position_bounds"] = position_bounds
         metadata["position_bounds"] = position_bounds
 
-        # Update scene-level bounds (union of all node bounds)
-        self._update_scene_bounds(position_bounds)
+        # Update scene-level bounds (union of all node bounds). Skipped
+        # when ``write_lines_multi_lod`` is the caller — the parent
+        # writer aggregates global bounds once.
+        if not attrs.pop("_skip_scene_bounds", False):
+            self._update_scene_bounds(position_bounds)
 
         # Write labels if provided (CSR-style: label_offsets + label_bytes)
         # For lines, labels are per-vertex (n_vertices)
@@ -1267,6 +1275,202 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         position_bounds = {"min": center_bounds["min"], "max": center_bounds["max"]}
         group.attrs["position_bounds"] = position_bounds
         metadata["position_bounds"] = position_bounds
+
+    # ── Multi-additive-LOD write helpers for Points and Lines ──
+
+    def write_points_multi_lod(
+        self,
+        path: NodePath,
+        levels: List[Dict[str, Any]],
+        *,
+        method: str = "random",
+        grid_shape: Optional[Tuple[int, ...]] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        **attrs: Any,
+    ) -> Dict[str, Any]:
+        """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
+
+        Each ``additive_<i>/`` subgroup is a fully-formed Points node
+        (written via :meth:`write_points`) carrying that level's data
+        arrays + its own spatial index. The parent group carries the
+        global ``position_bounds``, ``n_additive_sublods``, the
+        compositing attrs (``opacity`` / ``gamma`` / ``colormap`` /
+        ``blending_mode`` / ``transform`` / ``nd_transform`` / ``layer``
+        / ``visible``) — these inherit down to subgroups via the
+        viewer's scene-graph composition at render time.
+
+        Args:
+            path: Path for the points node within the store.
+            levels: List of per-level dicts with keys ``positions`` /
+                ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
+                ``labels``. ``positions`` is required; others may be
+                ``None``.
+            method: Ordering method used (``random`` / ``salience`` /
+                ``spatial-uniform``). Recorded as an attr on the parent
+                node.
+            grid_shape: Forwarded to each per-level ``write_points``.
+            extend_to_all: Forwarded to each per-level write.
+            **attrs: Additional parent-node attrs (compositing,
+                colormap, etc.).
+
+        Returns:
+            Aggregate metadata dict with ``type`` / ``n_points`` /
+            ``n_additive_sublods`` / ``position_bounds`` / ``levels``.
+        """
+        self._check_not_finalized("write_points_multi_lod")
+
+        if not levels:
+            raise ValueError("levels must contain at least one LOD level")
+
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+        n_levels = len(levels)
+
+        # Compute global bounds + total count from all levels' positions.
+        all_positions = np.concatenate(
+            [L["positions"] for L in levels], axis=0
+        )
+        n_points_total = int(all_positions.shape[0])
+        global_bounds = self._compute_position_bounds(all_positions)
+
+        # Per-level writes. Skip scene-bounds update so we aggregate
+        # once at the parent. Each subgroup gets its own attrs from
+        # the writer's defaults (opacity=1.0, etc.) — the parent's
+        # compositing wins via scene-graph composition.
+        level_metas: List[Dict[str, Any]] = []
+        for i, lvl in enumerate(levels):
+            level_path = f"{path}/additive_{i}"
+            level_meta = self.write_points(
+                level_path,
+                lvl["positions"],
+                colors=lvl.get("colors"),
+                radii=lvl.get("radii"),
+                sharpness=lvl.get("sharpness"),
+                scalars=lvl.get("scalars"),
+                labels=lvl.get("labels"),
+                grid_shape=grid_shape,
+                **({"extend_to_all": extend_to_all} if extend_to_all else {}),
+                _skip_scene_bounds=True,
+            )
+            level_metas.append(level_meta)
+
+        # Parent-node attrs. Persist after subgroup writes so they
+        # don't get clobbered by side effects.
+        group.attrs.update(attrs)
+        group.attrs["type"] = "points"
+        group.attrs["n_points"] = n_points_total
+        group.attrs["n_additive_sublods"] = n_levels
+        group.attrs["position_bounds"] = global_bounds
+        group.attrs["additive_lod_method"] = method
+        if extend_to_all:
+            group.attrs["extend_to_all"] = extend_to_all
+
+        # Aggregate the parent's bbox into scene-bounds once.
+        self._update_scene_bounds(global_bounds)
+
+        metadata: Dict[str, Any] = {
+            "type": "points",
+            "n_points": n_points_total,
+            "n_additive_sublods": n_levels,
+            "position_bounds": global_bounds,
+            "levels": level_metas,
+        }
+        self._metadata_cache[path] = metadata
+        aprint(
+            f"✅ Multi-LOD Points written to {path} ({n_levels} levels, "
+            f"{n_points_total:,} points total)"
+        )
+        return metadata
+
+    def write_lines_multi_lod(
+        self,
+        path: NodePath,
+        levels: List[Dict[str, Any]],
+        *,
+        method: str = "random",
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        **attrs: Any,
+    ) -> Dict[str, Any]:
+        """Write multi-additive-LOD Lines.
+
+        Mirrors :meth:`write_points_multi_lod`. Each level dict carries
+        ``vertices`` + ``widths`` + ``colors`` / ``sharpness`` /
+        ``scalars`` / ``labels`` + ``segments`` (local index pairs into
+        that level's vertices) + ``n_polylines``. Each subgroup is
+        written via :meth:`write_lines` with ``line_type='indexed'``
+        and the local segment indices.
+        """
+        self._check_not_finalized("write_lines_multi_lod")
+
+        if not levels:
+            raise ValueError("levels must contain at least one LOD level")
+
+        path = path.lstrip("/")
+        group = self.store.require_group(path)
+        n_levels = len(levels)
+
+        all_vertices = np.concatenate(
+            [L["vertices"] for L in levels], axis=0
+        )
+        n_vertices_total = int(all_vertices.shape[0])
+        n_polylines_total = sum(int(L.get("n_polylines", 0)) for L in levels)
+        global_bounds = self._compute_position_bounds(all_vertices)
+
+        level_metas: List[Dict[str, Any]] = []
+        for i, lvl in enumerate(levels):
+            level_path = f"{path}/additive_{i}"
+            # write_lines expects a flat ``indices`` array (length 2M)
+            # for ``line_type='indexed'``; our local segments are (M, 2).
+            segments_arr = lvl.get("segments")
+            flat_indices = (
+                np.asarray(segments_arr, dtype=np.uint32).reshape(-1)
+                if segments_arr is not None
+                and len(np.asarray(segments_arr)) > 0
+                else None
+            )
+            level_meta = self.write_lines(
+                level_path,
+                lvl["vertices"],
+                widths=cast(Any, lvl.get("widths")),
+                colors=lvl.get("colors"),
+                sharpness=lvl.get("sharpness"),
+                scalars=lvl.get("scalars"),
+                labels=lvl.get("labels"),
+                image_labels=None,
+                indices=flat_indices,
+                line_type="indexed" if flat_indices is not None else "polyline",
+                **({"extend_to_all": extend_to_all} if extend_to_all else {}),
+                _skip_scene_bounds=True,
+            )
+            level_metas.append(level_meta)
+
+        group.attrs.update(attrs)
+        group.attrs["type"] = "lines"
+        group.attrs["n_vertices"] = n_vertices_total
+        group.attrs["n_polylines"] = n_polylines_total
+        group.attrs["n_additive_sublods"] = n_levels
+        group.attrs["position_bounds"] = global_bounds
+        group.attrs["additive_lod_method"] = method
+        if extend_to_all:
+            group.attrs["extend_to_all"] = extend_to_all
+
+        self._update_scene_bounds(global_bounds)
+
+        metadata: Dict[str, Any] = {
+            "type": "lines",
+            "n_vertices": n_vertices_total,
+            "n_polylines": n_polylines_total,
+            "n_additive_sublods": n_levels,
+            "position_bounds": global_bounds,
+            "levels": level_metas,
+        }
+        self._metadata_cache[path] = metadata
+        aprint(
+            f"✅ Multi-LOD Lines written to {path} ({n_levels} levels, "
+            f"{n_vertices_total:,} vertices in {n_polylines_total:,} "
+            f"polylines)"
+        )
+        return metadata
 
     # ── GSplats public write methods ───────────────────────────
 

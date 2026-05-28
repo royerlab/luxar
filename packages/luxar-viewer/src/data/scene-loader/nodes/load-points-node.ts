@@ -15,9 +15,12 @@ import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
-import { createPointsLoader as createPointsLoaderHelper } from '../loaders/loader-factory';
+import {
+  createPointsLoader as createPointsLoaderHelper,
+  createProgressivePointsLoader as createProgressivePointsLoaderHelper,
+} from '../loaders/loader-factory';
 import type { SceneNode, DataLoader, ViewState } from '../../data-loader-types';
-import type { PointsMetadata } from '../../../types/points';
+import type { PointsDataLoader, PointsMetadata } from '../../../types/points';
 import type { NodeBuildCtx } from './build-ctx';
 
 /**
@@ -29,6 +32,27 @@ function createPointsLoader(
   ctx: NodeBuildCtx
 ): DataLoader {
   const loader = createPointsLoaderHelper(node, loc, ctx.factoryDeps);
+  ctx.connectLoaderToMonitor(node.path, loader);
+  return loader;
+}
+
+/**
+ * Construct the progressive (multi-LOD) Points loader. Composes the
+ * parent's effective rendering attrs up the scene-graph ancestry so
+ * each sub-LOD synthetic node inherits opacity/intensity/etc. Mirrors
+ * the gsplats equivalent.
+ */
+async function createProgressivePointsLoader(
+  node: SceneNode,
+  nAdditive: number,
+  ctx: NodeBuildCtx
+): Promise<PointsDataLoader> {
+  const loader = await createProgressivePointsLoaderHelper(
+    node,
+    nAdditive,
+    ctx.applyEffectiveAttrs(node),
+    ctx.factoryDeps
+  );
   ctx.connectLoaderToMonitor(node.path, loader);
   return loader;
 }
@@ -50,7 +74,22 @@ export async function loadPointsNode(
   log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
   log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
 
-  const loader = createPointsLoader(node, loc, ctx);
+  // Progressive multi-additive-LOD Points: walks `additive_<i>/` subgroups
+  // and wraps them in a `PointsProgressiveLoader`. Single-LOD nodes
+  // (no `n_additive_sublods` attr) take the standard path below.
+  const nAdditive =
+    (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
+  if (nAdditive > 1) {
+    log.info(
+      Modules.SCENE_LOADER,
+      `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
+    );
+  }
+
+  const loader =
+    nAdditive > 1
+      ? ((await createProgressivePointsLoader(node, nAdditive, ctx)) as DataLoader)
+      : createPointsLoader(node, loc, ctx);
 
   // Store loader for updates (route through the registry's
   // register* methods rather than mutating its internal map).

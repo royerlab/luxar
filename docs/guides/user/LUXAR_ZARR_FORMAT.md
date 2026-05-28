@@ -356,6 +356,60 @@ split.add_points("part_0", subset0)
 split.add_points("part_1", subset1)
 ```
 
+#### Multi-additive LOD (progressive loading) — Points / Lines / GSplats
+
+All three leaf types (Points, Lines, GSplats) support a uniform
+**multi-additive-LOD** layout for progressive loading. A leaf node
+with `n_additive_sublods > 1` carries `additive_<i>/` subgroups under
+its path; each subgroup is a fully-formed leaf node of the same type,
+carrying a subset of the parent's data plus its own spatial index.
+The viewer's progressive loader concatenates loaded levels for render
+and refines toward the full data over `requestAnimationFrame()`
+frames once initial paint commits.
+
+**Parent attributes (.zattrs):**
+```json
+{
+  "type": "points",                 // or "lines" / "gsplats"
+  "n_points": 10000,                // (or n_segments / n_splats — total across levels)
+  "n_additive_sublods": 4,
+  "position_bounds": { "min": [...], "max": [...] },
+  "additive_lod_method": "random",  // "random" / "salience" / "spatial-uniform"
+  /* compositing attrs ride here */
+}
+```
+
+**Subgroup naming:** `additive_<i>/` for `i = 0..n-1`, in **coarsest →
+finest** order. The convenience writer (`additive_lod=` kwarg on
+`add_points` / `add_lines` / `add_gsplats_from_data`) emits the
+subgroups in this convention.
+
+**Per-type unit:**
+
+- **Points** — per-element. Each subgroup contains a subset of
+  `positions` + per-element attrs (`colors` / `radii` / `sharpness` /
+  `scalars`).
+- **GSplats** — per-element. Each subgroup contains a subset of
+  `centers` / `amplitudes` / `cholesky_factors` / `colors`.
+- **Lines** — per-polyline. Each subgroup contains WHOLE polylines
+  (vertices + their segments). Segment indices are local to the
+  subgroup so topology stays valid during partial loads; the viewer
+  offset-adjusts on concatenation. Supports all four `line_type`
+  variants (`segments` / `polyline` / `loop` / `indexed`).
+
+**Builder API (Python):**
+```python
+# Same kwarg surface across all three leaf types.
+scene.add_points("pts", positions, additive_lod=True)               # 4-level default
+scene.add_lines("ln", verts, widths, line_type="segments",          # explicit dict
+                additive_lod=dict(n_lods=3, method="salience"))
+scene.add_gsplats_from_data("splats", data,                         # gsplats kwarg
+                            additive_lod=dict(n_lods=4))
+```
+
+Composition with `split=` is "split-outer, additive-LOD-inner": each
+spatial part gets its own LOD ladder.
+
 ### 3. Points Nodes
 
 Points nodes contain the actual point data.

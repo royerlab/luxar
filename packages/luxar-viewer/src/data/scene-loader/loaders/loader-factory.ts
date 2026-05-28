@@ -22,6 +22,9 @@
 
 import * as zarr from '../../zarr';
 import { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
+import { PointsProgressiveLoader } from '../../points/points-progressive-loader';
+import type { PointsDataLoader } from '../../../types/points';
+import { LinesProgressiveLoader } from '../../lines/lines-progressive-loader';
 export type { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../../gsplats/gsplats-spatial-index-loader';
@@ -184,4 +187,124 @@ export async function createProgressiveGSplatsLoader(
   }
 
   return new GSplatsProgressiveLoader(lodLoaders, nAdditive);
+}
+
+/**
+ * Create a progressive points loader for a multi-additive-LOD scene
+ * node. Mirrors :func:`createProgressiveGSplatsLoader` for Points.
+ *
+ * Walks ``additive_<i>/`` zarr subgroups directly under the node path
+ * and builds one `PointsSpatialIndexLoader` per subgroup. Wraps all
+ * of them in a `PointsProgressiveLoader`.
+ */
+export async function createProgressivePointsLoader(
+  node: SceneNode,
+  nAdditive: number,
+  parentEffectiveAttrs: SceneNode['attrs'],
+  deps: LoaderFactoryDeps
+): Promise<PointsDataLoader> {
+  const parentLoc = zarr.root(deps.zarrStore).resolve(
+    node.path === '/' ? '' : node.path.slice(1)
+  );
+
+  log.query(
+    Modules.SCENE_LOADER,
+    `Creating progressive Points loader for ${node.path} (${nAdditive} additive sub-LODs)`
+  );
+
+  const lodLoaders: PointsSpatialIndexLoader[] = [];
+
+  for (let i = 0; i < nAdditive; i++) {
+    const lodLoc = parentLoc.resolve(`additive_${i}`);
+    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
+    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+
+    const lodNode: SceneNode = {
+      path: `${node.path}/additive_${i}`,
+      type: 'points',
+      attrs: {
+        ...lodAttrs,
+        opacity: parentEffectiveAttrs.opacity,
+        gamma: parentEffectiveAttrs.gamma,
+        intensity: parentEffectiveAttrs.intensity,
+        offset: parentEffectiveAttrs.offset,
+        blending_mode: parentEffectiveAttrs.blending_mode,
+        extend_to_all: node.attrs.extend_to_all,
+      },
+      hasSpatialIndex: false,
+      children: [],
+    };
+
+    lodLoaders.push(
+      new PointsSpatialIndexLoader(
+        lodLoc,
+        lodNode,
+        deps.arrayRefRegistry,
+        deps.zarrStore,
+        deps.profiler ?? undefined,
+        deps.l0Cache ?? undefined,
+        deps.cachingStore?.getPrefetcher() ?? undefined
+      )
+    );
+  }
+
+  return new PointsProgressiveLoader(lodLoaders, nAdditive);
+}
+
+/**
+ * Create a progressive lines loader for a multi-additive-LOD scene
+ * node. Mirrors :func:`createProgressivePointsLoader` for Lines.
+ */
+export async function createProgressiveLinesLoader(
+  node: SceneNode,
+  nAdditive: number,
+  parentEffectiveAttrs: SceneNode['attrs'],
+  deps: LoaderFactoryDeps
+): Promise<LinesDataLoader> {
+  const parentLoc = zarr.root(deps.zarrStore).resolve(
+    node.path === '/' ? '' : node.path.slice(1)
+  );
+
+  log.query(
+    Modules.SCENE_LOADER,
+    `Creating progressive Lines loader for ${node.path} (${nAdditive} additive sub-LODs)`
+  );
+
+  const lodLoaders: LinesSpatialIndexLoader[] = [];
+
+  for (let i = 0; i < nAdditive; i++) {
+    const lodLoc = parentLoc.resolve(`additive_${i}`);
+    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
+    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+
+    const lodNode: SceneNode = {
+      path: `${node.path}/additive_${i}`,
+      type: 'lines',
+      attrs: {
+        ...lodAttrs,
+        opacity: parentEffectiveAttrs.opacity,
+        gamma: parentEffectiveAttrs.gamma,
+        intensity: parentEffectiveAttrs.intensity,
+        offset: parentEffectiveAttrs.offset,
+        blending_mode: parentEffectiveAttrs.blending_mode,
+        extend_to_all: node.attrs.extend_to_all,
+      },
+      hasSpatialIndex: false,
+      children: [],
+    };
+
+    lodLoaders.push(
+      new LinesSpatialIndexLoader(
+        lodLoc,
+        lodNode,
+        deps.arrayRefRegistry,
+        deps.zarrStore,
+        deps.profiler ?? undefined,
+        deps.l0Cache ?? undefined,
+        deps.cachingStore?.getPrefetcher() ?? undefined
+      )
+    );
+  }
+
+  return new LinesProgressiveLoader(lodLoaders, nAdditive);
 }

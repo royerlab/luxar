@@ -60,7 +60,11 @@ export async function loadSceneNodes(
     // children itself. No per-frame selector — all children render
     // simultaneously and THREE's per-mesh frustum culling does the
     // per-part culling. Same error-capture wrapping as above.
-    await loadLeafNode(() => loadSplitGroupNode(node, parentThree, parentLoc, ctx), node.path);
+    await loadLeafNode(
+      () =>
+        loadSplitGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
+      node.path
+    );
   } else if (node.children) {
     // Create group and recurse
     const group = new THREE.Group();
