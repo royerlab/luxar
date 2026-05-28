@@ -656,7 +656,7 @@ export class LayersPanel {
       this.controlsInteracting = true;
       const value = this.lodLevelSelect!.value;
       const primary = this.state.getPrimarySelected();
-      if (primary && primary.type === 'lod_group') {
+      if (primary && primary.kind === 'lod') {
         const registry = this.getLodGroupRegistry();
         if (registry) {
           const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
@@ -739,7 +739,7 @@ export class LayersPanel {
     // previous session-level interaction).
     if (this.lodLevelSelect && this.lodLevelStatus) {
       const lodContainer = this.lodLevelSelect.parentElement!;
-      if (primary.type === 'lod_group' && (primary.lodGroupChildCount ?? 0) > 0) {
+      if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.lodGroupChildCount!);
 
