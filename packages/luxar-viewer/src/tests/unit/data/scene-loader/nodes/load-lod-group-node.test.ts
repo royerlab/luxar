@@ -16,9 +16,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
 const loadSceneNodesMock = vi.fn();
-vi.mock('../../../../../data/scene-loader/nodes/load-scene-nodes', () => ({
-  loadSceneNodes: (...args: unknown[]) => loadSceneNodesMock(...args),
-}));
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
@@ -132,7 +129,7 @@ describe('loadLodGroupNode — registry registration', () => {
       { default_level: 0 }
     );
 
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(reg.size()).toBe(1);
     const entry = reg.get('/lod')!;
@@ -159,11 +156,16 @@ describe('loadLodGroupNode — registry registration', () => {
       [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
       { default_level: 99 }
     );
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     expect(reg.get('/lod')!.activeChildIndex).toBe(1);
   });
 
-  it('children load with ready=true so the selector can swap immediately', async () => {
+  it('registers every loaded child with its threshold and bounds', async () => {
+    // Atomic-swap on initial load is enforced by the loader's
+    // sequential-await + visible=false-after-attach pattern + atomic
+    // ``register()`` at the end (see the no-stacked-LOD-flash test
+    // below). The selector itself no longer carries a per-child
+    // readiness flag.
     attachStubChildren();
     const reg = new LODGroupRegistry({
       getCamera: () => new THREE.Camera(),
@@ -176,11 +178,10 @@ describe('loadLodGroupNode — registry registration', () => {
       makeChildNode('/lod/child_0', 0),
       makeChildNode('/lod/child_1', 100),
     ]);
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     const entry = reg.get('/lod')!;
-    for (const child of entry.children) {
-      expect(child.ready).toBe(true);
-    }
+    expect(entry.children).toHaveLength(2);
+    expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100]);
   });
 
   it('falls back to center_bounds when position_bounds is absent', async () => {
@@ -205,7 +206,7 @@ describe('loadLodGroupNode — registry registration', () => {
         children: [],
       },
     ]);
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     expect(reg.get('/lod')!.children[0].positionBounds).toEqual({
       min: [1, 1, 1],
       max: [3, 3, 3],
@@ -232,7 +233,7 @@ describe('loadLodGroupNode — without a registry', () => {
     );
 
     const parent = new THREE.Group();
-    const lodGroup = await loadLodGroupNode(node, parent, makeStubLoc(), ctx);
+    const lodGroup = await loadLodGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
 
     // Without a registry we fall back to visibility set inline.
     expect(lodGroup.children[0].visible).toBe(false);
@@ -276,7 +277,7 @@ describe('loadLodGroupNode — transient visibility', () => {
       makeChildNode('/lod/child_1', 100),
       makeChildNode('/lod/child_2', 500),
     ]);
-    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     // For every load-iteration AFTER the first, every already-attached
     // sibling must be hidden. The first iteration has no siblings to
