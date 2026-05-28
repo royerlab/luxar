@@ -31,6 +31,7 @@ import { log, Modules } from '../../utils/log';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
+import { runProgressiveRefinement } from '../scene-loader/progressive/refinement';
 
 /**
  * Bundle of host references the refinement loop needs. Kept narrow so
@@ -69,75 +70,41 @@ export interface GSplatsRefinementCtx {
 }
 
 /**
- * Run the GSplats LOD refinement loop. Returns when no progressive
- * loader has additional LODs (normal completion) or when a pending
- * view-state was observed and the loop handed off to retriggerUpdate
- * (cancellation).
+ * Run the GSplats LOD refinement loop. Thin wrapper over the generic
+ * :func:`runProgressiveRefinement` helper with gsplats-specific
+ * derive / process / commit closures.
  */
 export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<void> {
-  let lockHandedOff = false;
-  try {
-    while (true) {
-      // Yield to let browser paint the current LOD level.
-      await new Promise<void>((resolve) => {
-        if (typeof requestAnimationFrame !== 'undefined') {
-          requestAnimationFrame(() => resolve());
-        } else {
-          resolve(); // Test environment: proceed immediately.
+  await runProgressiveRefinement({
+    loaders: ctx.gsplatLoaders,
+    viewStateQueue: ctx.viewStateQueue,
+    processLoader: async (path, loader) => {
+      if (loader.hasMoreLODs !== true) return;
+      try {
+        const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+        const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+        const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
+          applyPartialExtendTolerance: true,
+        });
+        if (refined.skip) return;
+        const gsplatsViewState: GSplatsViewState = refined.viewState;
+
+        const data = await loader.updateView(gsplatsViewState);
+        if (data) {
+          const staged = await ctx.processGSplats(path, data, gsplatsViewState);
+          if (staged) ctx.commitGSplats(staged);
         }
-      });
-
-      // Check cancellation: did the user navigate?
-      const pendingState = ctx.viewStateQueue.takePending();
-      if (pendingState !== null) {
-        // The retriggerUpdate callback owns the lock from here.
-        lockHandedOff = true;
-        ctx.retriggerUpdate(pendingState);
-        return;
+      } catch (error) {
+        log.error(
+          Modules.SCENE_LOADER,
+          `GSplats refinement failed for ${path}: ${(error as Error).message}`
+        );
       }
-
-      // Load next LOD level for each progressive loader.
-      for (const [path, loader] of ctx.gsplatLoaders) {
-        if (loader.hasMoreLODs !== true) continue;
-
-        try {
-          // GSplats refinement runs the same query-state derivation
-          // as main update / retry / initial-load.
-          const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-          const refinedDerived = ctx.deriveNodeViewState(path, nodeAttrs, {
-            applyPartialExtendTolerance: true,
-          });
-          if (refinedDerived.skip) {
-            // Full extend_to_all coverage: nothing to refine for this
-            // loader. Skip ahead to the next.
-            continue;
-          }
-          const gsplatsViewState: GSplatsViewState = refinedDerived.viewState;
-
-          const data = await loader.updateView(gsplatsViewState);
-          if (data) {
-            const staged = await ctx.processGSplats(path, data, gsplatsViewState);
-            if (staged) ctx.commitGSplats(staged);
-          }
-        } catch (error) {
-          log.error(
-            Modules.SCENE_LOADER,
-            `GSplats refinement failed for ${path}: ${(error as Error).message}`
-          );
-        }
-      }
-
-      // Update monitor after refinement commit.
-      ctx.updateVisibleCountsInMonitor();
-
-      // Check if any progressive loaders still have more LODs after this pass.
-      const anyMore = [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true);
-      if (!anyMore) break; // All LODs loaded.
-    }
-  } finally {
-    if (!lockHandedOff) {
-      ctx.releaseLock();
-    }
-  }
+    },
+    anyHasMoreLODs: () =>
+      [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true),
+    updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
+    releaseLock: () => ctx.releaseLock(),
+    retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
+  });
 }

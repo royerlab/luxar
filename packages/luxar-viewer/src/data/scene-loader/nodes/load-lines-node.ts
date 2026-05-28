@@ -18,7 +18,10 @@ import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
-import { createLinesLoader as createLinesLoaderHelper } from '../loaders/loader-factory';
+import {
+  createLinesLoader as createLinesLoaderHelper,
+  createProgressiveLinesLoader as createProgressiveLinesLoaderHelper,
+} from '../loaders/loader-factory';
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesMetadata, LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { NodeBuildCtx } from './build-ctx';
@@ -30,6 +33,22 @@ function createLinesLoader(
   ctx: NodeBuildCtx
 ): LinesDataLoader {
   const loader = createLinesLoaderHelper(node, loc, ctx.factoryDeps);
+  ctx.connectLoaderToMonitor(node.path, loader);
+  return loader;
+}
+
+/** Progressive multi-LOD Lines loader; mirrors the points equivalent. */
+async function createProgressiveLinesLoader(
+  node: SceneNode,
+  nAdditive: number,
+  ctx: NodeBuildCtx
+): Promise<LinesDataLoader> {
+  const loader = await createProgressiveLinesLoaderHelper(
+    node,
+    nAdditive,
+    ctx.applyEffectiveAttrs(node),
+    ctx.factoryDeps
+  );
   ctx.connectLoaderToMonitor(node.path, loader);
   return loader;
 }
@@ -50,7 +69,19 @@ export async function loadLinesNode(
   log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
   log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
 
-  const loader = createLinesLoader(node, loc, ctx);
+  const nAdditive =
+    (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
+  if (nAdditive > 1) {
+    log.info(
+      Modules.SCENE_LOADER,
+      `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
+    );
+  }
+
+  const loader =
+    nAdditive > 1
+      ? await createProgressiveLinesLoader(node, nAdditive, ctx)
+      : createLinesLoader(node, loc, ctx);
 
   // Store loader for updates (route through registry).
   ctx.registry.registerLinesLoader(node.path, loader);

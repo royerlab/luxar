@@ -262,20 +262,28 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
 
   log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
 
-  // Schedule progressive GSplats LOD refinement after initial load.
-  // load-gsplats-node loads LOD 0 for each progressive loader, but LODs 1-N
-  // are only loaded by the refinement loop. Without this trigger, higher
-  // LODs would not load until the first updateView() call (user interaction).
-  const needsPostLoadRefinement = [...ctx.gsplatLoaders.values()].some(
-    (l) => l.hasMoreLODs === true
-  );
-  if (needsPostLoadRefinement) {
+  // Schedule progressive LOD refinement after initial load.
+  // Each per-type loader maps may include progressive loaders that
+  // only emit LOD 0 on the initial load — the refinement loop drains
+  // their remaining LODs frame-by-frame. Symmetric across Points /
+  // Lines / GSplats.
+  const hasMore = (loader: unknown) =>
+    (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
+  const gsplatsNeed = [...ctx.gsplatLoaders.values()].some(hasMore);
+  const pointsNeed = [...ctx.loaders.values()].some(hasMore);
+  const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
+
+  if (gsplatsNeed || pointsNeed || linesNeed) {
     log.info(
       Modules.SCENE_LOADER,
-      'Scheduling post-load GSplats LOD refinement (higher LODs pending)'
+      'Scheduling post-load progressive LOD refinement ' +
+        `(points=${pointsNeed} lines=${linesNeed} gsplats=${gsplatsNeed})`
     );
-    // Hold the serialization lock during refinement so any updateView() calls
-    // queue as _pendingViewState (which naturally cancels the refinement loop)
+    // Hold the serialization lock during refinement so any updateView()
+    // calls queue as _pendingViewState (which naturally cancels the
+    // refinement loops). Each scheduler is responsible for releasing
+    // the lock when its loop completes; the SceneLoader's
+    // `scheduleProgressiveRefinement` orchestrates the three.
     ctx.setUpdateInProgress(true);
     ctx.scheduleGSplatsRefinement();
   }

@@ -138,12 +138,17 @@ export async function buildSceneGraph(
 
     nodeMap.set(entry.path, node);
 
-    // GSplats nodes are leaves from a scene-graph perspective. Their
-    // `additive_<i>/` LOD subgroups carry `type: "gsplats"` themselves
-    // and would otherwise show up as spurious child nodes in the
-    // monitor UI; mark the subtree internal so subsequent iterations
-    // skip it.
-    if (node.type === 'gsplats') {
+    // Points / Lines / GSplats nodes are leaves from a scene-graph
+    // perspective. Their `additive_<i>/` multi-LOD subgroups carry
+    // the same `type` themselves and would otherwise show up as
+    // spurious child nodes in the monitor UI; mark the subtree
+    // internal so subsequent iterations skip it. Symmetric across
+    // all three leaf types.
+    if (
+      node.type === 'gsplats' ||
+      node.type === 'points' ||
+      node.type === 'lines'
+    ) {
       internalSubtreePrefixes.push(`${entry.path}/`);
     }
   }
