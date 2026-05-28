@@ -11,7 +11,6 @@ from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
     from ..core.group import Group
-    from ..core.lod_group import LODGroup
     from ..io.writer import ZarrWriterProtocol
 
 
@@ -235,16 +234,16 @@ class Node:
         selector: str = "pixel_size",
         default_level: int = 0,
         **attrs: Any,
-    ) -> "LODGroup":
-        """Create and add a child lod_group node.
+    ) -> "Group":
+        """Create and add a child kind=lod ``Group`` node.
 
-        ``LODGroup`` picks one of N alternative children at runtime based
-        on the projected bbox diagonal in pixels and each child's
-        ``min_pixel_size`` threshold. Children are added via the
-        inherited ``add_*`` methods on the returned ``LODGroup`` and each
-        must carry a ``min_pixel_size`` attribute (passed as a kwarg).
-        Children must be added in strictly increasing ``min_pixel_size``
-        order.
+        A kind=lod ``Group`` picks one of N alternative children at runtime
+        based on the projected bbox diagonal in pixels and each child's
+        ``min_pixel_size`` threshold. Children are added via the inherited
+        ``add_*`` methods on the returned ``Group`` and each must carry a
+        ``min_pixel_size`` attribute. Children must be added in strictly
+        increasing ``min_pixel_size`` order; the resolved ``display_type``
+        of the finest child becomes the group's user-facing geometry type.
 
         Example::
 
@@ -254,7 +253,7 @@ class Node:
             lod.add_gsplats_from_data("f", fine, min_pixel_size=500)
 
         Args:
-            name: Name of the lod_group node.
+            name: Name of the lod-kind group.
             selector: Selector mode. Currently only ``"pixel_size"`` is
                 supported.
             default_level: Initial active level index for the
@@ -262,39 +261,102 @@ class Node:
             **attrs: Additional node attributes (transform, layer, etc.).
 
         Returns:
-            The created LODGroup node.
+            The created ``Group`` (with ``kind="lod"`` in its attrs).
 
         Raises:
             ValueError: If selector mode is unknown or group creation fails.
         """
-        from .lod_group import LODGroup
-
+        if selector != "pixel_size":
+            raise ValueError(
+                f"selector must be 'pixel_size' (other modes reserved for "
+                f"future use), got {selector!r}"
+            )
+        if default_level < 0:
+            raise ValueError(f"default_level must be >= 0, got {default_level}")
         try:
-            aprint(f"Adding child lod_group '{name}' to node '{self.name}'.")
-            if self._writer is not None:
-                child = LODGroup(
-                    name,
-                    parent=self,
-                    writer=self._writer,
-                    selector=selector,
-                    default_level=default_level,
-                    **attrs,
-                )
-            else:
-                child = LODGroup(
-                    name,
-                    parent=self,
-                    selector=selector,
-                    default_level=default_level,
-                    **attrs,
-                )
-            aprint(f"✓ Child lod_group '{name}' added successfully.")
+            aprint(f"Adding child kind=lod group '{name}' to node '{self.name}'.")
+            child = self.add_group(
+                name,
+                kind="lod",
+                selector=selector,
+                default_level=int(default_level),
+                **attrs,
+            )
+            aprint(f"✓ Child kind=lod group '{name}' added successfully.")
             return child
         except Exception as e:
             aprint(
-                f"Failed to add child lod_group '{name}' to node '{self.name}': {e}"
+                f"Failed to add child kind=lod group '{name}' to node "
+                f"'{self.name}': {e}"
             )
-            raise ValueError(f"Could not create child lod_group '{name}': {e}") from e
+            raise ValueError(
+                f"Could not create child kind=lod group '{name}': {e}"
+            ) from e
+
+    def add_split_group(
+        self,
+        name: str,
+        *,
+        display_type: str,
+        max_elements: int,
+        **attrs: Any,
+    ) -> "Group":
+        """Create and add a child kind=split ``Group`` node.
+
+        A kind=split ``Group`` is a compile-time decomposition of a single
+        large geometry node into multiple smaller children for per-child
+        frustum culling and per-child LOD. The user does not see the
+        decomposition — the layers panel presents one logical layer of
+        ``display_type``.
+
+        For the common case where you want the splitting to happen
+        automatically, use the ``split=`` convenience kwarg on
+        ``add_points`` / ``add_lines`` / ``add_gsplats`` instead of
+        constructing the wrapper yourself.
+
+        Args:
+            name: Name of the split-kind group.
+            display_type: Geometry type the user sees this layer as
+                (``"points"``, ``"lines"``, or ``"gsplats"``). All children
+                must resolve to this same display type — homogeneity is
+                mandatory for Split.
+            max_elements: Cap that drove the BSP recursion (recorded on the
+                group for diagnostics and for future split-aware tools).
+            **attrs: Additional node attributes.
+
+        Returns:
+            The created ``Group`` (with ``kind="split"`` in its attrs).
+        """
+        if display_type not in ("points", "lines", "gsplats"):
+            raise ValueError(
+                "display_type for a split group must be one of "
+                f"'points' / 'lines' / 'gsplats', got {display_type!r}"
+            )
+        if not isinstance(max_elements, int) or max_elements < 1:
+            raise ValueError(
+                f"max_elements must be an int >= 1, got {max_elements!r}"
+            )
+        try:
+            aprint(
+                f"Adding child kind=split group '{name}' to node '{self.name}'."
+            )
+            child = self.add_group(
+                name,
+                kind="split",
+                display_type=display_type,
+                max_elements=max_elements,
+                **attrs,
+            )
+            aprint(f"✓ Child kind=split group '{name}' added successfully.")
+            return child
+        except Exception as e:
+            aprint(
+                f"Failed to add child kind=split group '{name}' to node "
+                f"'{self.name}': {e}"
+            )
+            raise ValueError(
+                f"Could not create child kind=split group '{name}': {e}"
+            ) from e
 
     # --------------------------------------------------------------- traversal
     def walk(self, depth: int = 0) -> SceneHierarchy:

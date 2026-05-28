@@ -43,12 +43,12 @@ export async function loadSceneNodes(
     await loadLeafNode(() => loadLinesNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.type === 'gsplats') {
     await loadLeafNode(() => loadGSplatsNode(node, parentThree, parentLoc, ctx), node.path);
-  } else if (node.type === 'lod_group') {
-    // lod_group is a container that recurses into children itself (it
-    // needs to capture each child's THREE node + min_pixel_size to
-    // register the LOD entry). No outer recursion afterwards. Wrap with
-    // ``loadLeafNode`` for the same error-capture semantics as the
-    // points / lines / gsplats branches above — a failing lod_group
+  } else if (node.type === 'group' && node.attrs.kind === 'lod') {
+    // A kind=lod Group is a specialized container that recurses into
+    // children itself (it needs to capture each child's THREE node +
+    // min_pixel_size to register the LOD entry). No outer recursion
+    // afterwards. Wrap with ``loadLeafNode`` for the same error-capture
+    // semantics as the leaf branches above — a failing LOD group
     // shouldn't sink the rest of the scene.
     await loadLeafNode(() => loadLodGroupNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.children) {
