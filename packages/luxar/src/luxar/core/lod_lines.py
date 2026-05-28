@@ -33,10 +33,13 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from ._poisson_disk import poisson_disk_order
 from ._spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
-LinesMethodName = Literal["random", "salience", "spatial-uniform"]
+LinesMethodName = Literal[
+    "random", "salience", "spatial-uniform", "poisson-disk"
+]
 
 DEFAULT_N_LODS: int = 4
 DEFAULT_METHOD: LinesMethodName = "random"
@@ -200,10 +203,10 @@ def compute_additive_order_lines(
         perm = np.argsort(-score, kind="stable").astype(np.intp)
         return perm, []
 
-    if method == "spatial-uniform":
+    if method in ("spatial-uniform", "poisson-disk"):
         if vertices.shape[1] < 3:
             raise ValueError(
-                "spatial-uniform ordering needs vertices with d >= 3; "
+                f"{method} ordering needs vertices with d >= 3; "
                 f"got shape {vertices.shape}"
             )
         # Representative spatial point per polyline = bbox center.
@@ -211,11 +214,13 @@ def compute_additive_order_lines(
         for i, members in enumerate(polylines):
             pts = vertices[members, :3].astype(np.float64)
             reps[i] = 0.5 * (pts.min(axis=0) + pts.max(axis=0))
+        if method == "poisson-disk":
+            return poisson_disk_order(reps, n_lods, seed=seed or 0)
         return stratified_grid_order(reps, n_lods)
 
     raise ValueError(
-        f"method must be one of 'random' / 'salience' / 'spatial-uniform'; "
-        f"got {method!r}"
+        "method must be one of 'random' / 'salience' / 'spatial-uniform' "
+        f"/ 'poisson-disk'; got {method!r}"
     )
 
 
@@ -290,7 +295,8 @@ def make_additive_lod_lines(
         seed=seed,
     )
 
-    if method == "spatial-uniform":
+    if method in ("spatial-uniform", "poisson-disk"):
+        # Both samplers return a natural per-level partition; respect it.
         out: List[List[NDArray[np.intp]]] = []
         cursor = 0
         for count in natural_counts:
@@ -373,10 +379,15 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
     kwargs.pop("recompute", None)
 
     method = kwargs.pop("method", DEFAULT_METHOD)
-    if method not in ("random", "salience", "spatial-uniform"):
+    if method not in (
+        "random",
+        "salience",
+        "spatial-uniform",
+        "poisson-disk",
+    ):
         raise ValueError(
-            f"method must be one of 'random' / 'salience' / 'spatial-uniform'; "
-            f"got {method!r}"
+            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
+            f"/ 'poisson-disk'; got {method!r}"
         )
 
     n_lods = int(kwargs.pop("n_lods", DEFAULT_N_LODS))
