@@ -61,24 +61,49 @@ _COMPOSITING_ATTRS = frozenset(
 
 
 def _slice_optional_array(
-    value: Any, indices: np.ndarray
+    value: Any, indices: np.ndarray, n_elements: int
 ) -> Any:
-    """Slice an array-valued leaf parameter by index; pass scalars through.
+    """Slice an array-valued leaf parameter by index; pass non-per-element values through.
 
-    Used by the ``split=`` wrapping path on ``add_points`` / ``add_lines`` /
-    ``add_gsplats``. ``None`` and scalars (single floats, ints, strings)
-    return unchanged so they apply uniformly to every part. Arrays of the
-    same length as ``indices`` (or longer) get indexed.
+    Used by the ``split=`` wrapping path on the leaf adders. Returns
+    unchanged when:
+      * ``value`` is ``None`` or a scalar (``int`` / ``float`` / ``bool``
+        / ``str``) — applies uniformly to every part.
+      * ``value`` is a 0-D array.
+      * ``value``'s first-axis length doesn't match ``n_elements`` (e.g.
+        a 3-vector RGB broadcast, or a length-1 sentinel).
+    Slices the first axis when the input is a list of length
+    ``n_elements`` (string labels) or an array whose first axis matches.
     """
-    if value is None:
-        return None
-    if isinstance(value, (int, float, str, bool)):
+    if value is None or isinstance(value, (int, float, bool, str)):
+        return value
+    if isinstance(value, list):
+        if len(value) == n_elements:
+            return [value[i] for i in indices]
         return value
     arr = value if isinstance(value, np.ndarray) else np.asarray(value)
-    # 0-D / scalar arrays — pass through. Broadcasting via length match.
     if arr.ndim == 0:
         return value
-    return arr[indices]
+    if arr.shape[0] == n_elements:
+        return arr[indices]
+    return value
+
+
+def _position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:
+    """Per-axis min/max of an ``(N, D)`` position array, in the writer's shape.
+
+    Matches what the compiler's ``_compute_position_bounds`` writes onto
+    each leaf node, so the split-kind wrapper's ``position_bounds`` is
+    the same shape as its children's. Used by the ``split=`` wrapping
+    path to compute the parent bbox directly from the source array
+    instead of round-tripping through the per-leaf zarr writes.
+    """
+    if positions.size == 0:
+        raise ValueError("Cannot compute position_bounds from empty array")
+    return {
+        "min": positions.min(axis=0).astype(float).tolist(),
+        "max": positions.max(axis=0).astype(float).tolist(),
+    }
 
 
 class Group(Node):
@@ -249,8 +274,9 @@ class Group(Node):
         grid_shape: Optional[Tuple[int, ...]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
+        split: Any = None,
         **attrs: Any,
-    ) -> Points:
+    ) -> Union[Points, "Group"]:
         """Add a points node.
 
         Args:
@@ -276,10 +302,23 @@ class Group(Node):
                 Unmapped dims are filled with ``fill`` values and auto-extended.
             fill: Fixed coordinate values for unmapped scene dimensions
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
+            split: Spatial-decomposition control. ``None`` (default) writes
+                a single Points node. ``True`` decomposes via midpoint BSP
+                with ``max_elements = DEFAULT_MAX_ELEMENTS``.
+                ``dict(max_elements=N)`` uses an explicit cap. When the
+                decomposition yields more than one part, returns a
+                kind=split ``Group`` wrapper carrying ``display_type=
+                "points"``; the wrapper's children are ``part_<i>`` Points
+                nodes. The wrapper's ``position_bounds`` is the union of
+                the children's so picking treats the layer as one entity.
+                ``image_labels`` is not supported alongside ``split=``
+                (the sparse-dict semantics complicate slicing).
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control.
+                  panel for per-node control. When ``split=`` produces a
+                  wrapper, ``layer=True`` lands on the wrapper, not on
+                  each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``). Used by the Layers panel to start a
                   layer hidden.
@@ -287,7 +326,8 @@ class Group(Node):
                   ``colormap``: standard rendering attributes.
 
         Returns:
-            The created Points node
+            The created ``Points`` node, or a kind=split ``Group``
+            wrapper when ``split=`` produced more than one part.
         """
         try:
             scene = self._find_scene()
@@ -309,6 +349,58 @@ class Group(Node):
 
             n_points = pos_arr.shape[0]
             ndim = pos_arr.shape[1]
+
+            # Split branch — decompose into N children if the user opted in
+            # AND the BSP produces more than one part. Single-part outcomes
+            # fall through to the regular single-leaf write below.
+            if split is not None and pos_arr.shape[1] >= 3:
+                from .split import (
+                    DEFAULT_MAX_ELEMENTS,
+                    midpoint_bsp_partition,
+                )
+
+                if split is True:
+                    max_elements = DEFAULT_MAX_ELEMENTS
+                elif isinstance(split, dict):
+                    max_elements = int(
+                        split.get("max_elements", DEFAULT_MAX_ELEMENTS)
+                    )
+                    if max_elements < 1:
+                        raise ValueError(
+                            f"split max_elements must be >= 1, got {max_elements}"
+                        )
+                else:
+                    raise TypeError(
+                        f"split must be None, True, or dict; got "
+                        f"{type(split).__name__}"
+                    )
+
+                if image_labels is not None:
+                    raise ValueError(
+                        "image_labels is not supported alongside split=. "
+                        "Decompose the data manually or omit image_labels."
+                    )
+
+                parts = midpoint_bsp_partition(pos_arr, max_elements)
+                if len(parts) > 1:
+                    return self._add_points_split_wrapper(
+                        name=name,
+                        pos_arr=pos_arr,
+                        parts=parts,
+                        n_points=n_points,
+                        colors=colors,
+                        radii=radii,
+                        sharpness=sharpness,
+                        scalars=scalars,
+                        labels=labels,
+                        parent=parent,
+                        extend_to_all=extend_to_all,
+                        grid_shape=grid_shape,
+                        max_elements=max_elements,
+                        **attrs,
+                    )
+                # 1 part → fall through to single-leaf write.
+
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
             scene._validate_data_dimensions(pos_arr, name, data_type="positions")
@@ -381,6 +473,73 @@ class Group(Node):
         except (ValueError, TypeError) as e:
             aprint(f"Failed to add points node '{name}': {e}")
             raise ValueError(f"Could not add points '{name}': {e}") from e
+
+    def _add_points_split_wrapper(
+        self,
+        name: str,
+        pos_arr: np.ndarray,
+        parts: List[np.ndarray],
+        n_points: int,
+        colors: Any,
+        radii: Any,
+        sharpness: Any,
+        scalars: Any,
+        labels: Any,
+        parent: Optional[Node],
+        extend_to_all: Optional[Union[List[str], str]],
+        grid_shape: Optional[Tuple[int, ...]],
+        max_elements: int,
+        **attrs: Any,
+    ) -> "Group":
+        """Build a kind=split wrapper Group with one Points child per BSP part."""
+        wrapper_attrs = {k: v for k, v in attrs.items() if k in _COMPOSITING_ATTRS}
+        leaf_attrs = {k: v for k, v in attrs.items() if k not in _COMPOSITING_ATTRS}
+
+        parent_node = parent or self
+        wrapper = parent_node.add_split_group(
+            name=name,
+            display_type="points",
+            max_elements=max_elements,
+            **wrapper_attrs,
+        )
+
+        aprint(
+            f"  ✂️  Split '{name}' into {len(parts)} parts via BSP "
+            f"(max_elements={max_elements:,}, "
+            f"sizes={[int(p.size) for p in parts]})"
+        )
+
+        for i, indices in enumerate(parts):
+            wrapper.add_points(
+                name=f"part_{i}",
+                positions=pos_arr[indices],
+                colors=_slice_optional_array(colors, indices, n_points),
+                radii=_slice_optional_array(radii, indices, n_points),
+                sharpness=_slice_optional_array(sharpness, indices, n_points),
+                scalars=_slice_optional_array(scalars, indices, n_points),
+                labels=_slice_optional_array(labels, indices, n_points),
+                # image_labels banned alongside split= (see add_points entry)
+                image_labels=None,
+                extend_to_all=extend_to_all,
+                grid_shape=grid_shape,
+                # dim_order / fill already applied to pos_arr upstream — do
+                # not re-apply in the per-part recursion.
+                dim_order=None,
+                fill=None,
+                split=None,
+                **leaf_attrs,
+            )
+
+        # Persist the wrapper's position_bounds (per-axis min/max of the
+        # full input) so picking / scene-bounds-cache treat the layer as
+        # one logical entity. Computed directly from ``pos_arr`` — same
+        # result as unioning per-child bboxes, simpler than round-tripping
+        # through the children's on-disk attrs.
+        wrapper._persist_attr(
+            "position_bounds", _position_bounds_from_array(pos_arr)
+        )
+
+        return wrapper
 
     def add_lines(
         self,
@@ -544,8 +703,9 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
+        split: Any = None,
         **attrs: Any,
-    ) -> GSplats:
+    ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
 
         Args:
@@ -564,17 +724,29 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dimensions in the
                 Cholesky embedding (default 1.0). Controls splat extent in
                 unmapped dims.
+            split: Spatial-decomposition control. ``None`` (default) writes
+                a single GSplats node. ``True`` decomposes via midpoint BSP
+                with ``max_elements = DEFAULT_MAX_ELEMENTS``.
+                ``dict(max_elements=N)`` uses an explicit cap. When the
+                decomposition yields more than one part, returns a
+                kind=split ``Group`` wrapper carrying ``display_type=
+                "gsplats"``; the wrapper's children are ``part_<i>``
+                GSplats nodes. ``image_labels`` is not supported alongside
+                ``split=``.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control.
+                  panel for per-node control. When ``split=`` produces a
+                  wrapper, ``layer=True`` lands on the wrapper, not on
+                  each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
                   (default ``True``).
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
                   ``colormap``: standard rendering attributes.
 
         Returns:
-            The created GSplats node
+            The created ``GSplats`` node, or a kind=split ``Group``
+            wrapper when ``split=`` produced more than one part.
         """
         try:
             scene = self._find_scene()
@@ -606,6 +778,55 @@ class Group(Node):
 
             n_splats = ctr_arr.shape[0]
             ndim = ctr_arr.shape[1]
+
+            # Split branch — decompose into N children if the user opted in
+            # AND the BSP produces more than one part.
+            if split is not None and ctr_arr.shape[1] >= 3:
+                from .split import (
+                    DEFAULT_MAX_ELEMENTS,
+                    midpoint_bsp_partition,
+                )
+
+                if split is True:
+                    max_elements = DEFAULT_MAX_ELEMENTS
+                elif isinstance(split, dict):
+                    max_elements = int(
+                        split.get("max_elements", DEFAULT_MAX_ELEMENTS)
+                    )
+                    if max_elements < 1:
+                        raise ValueError(
+                            f"split max_elements must be >= 1, got {max_elements}"
+                        )
+                else:
+                    raise TypeError(
+                        f"split must be None, True, or dict; got "
+                        f"{type(split).__name__}"
+                    )
+
+                if image_labels is not None:
+                    raise ValueError(
+                        "image_labels is not supported alongside split=. "
+                        "Decompose the data manually or omit image_labels."
+                    )
+
+                parts = midpoint_bsp_partition(ctr_arr, max_elements)
+                if len(parts) > 1:
+                    return self._add_gsplats_split_wrapper(
+                        name=name,
+                        ctr_arr=ctr_arr,
+                        chol_arr=chol_arr,
+                        amplitudes=amplitudes,
+                        parts=parts,
+                        n_splats=n_splats,
+                        colors=colors,
+                        labels=labels,
+                        parent=parent,
+                        extend_to_all=extend_to_all,
+                        max_elements=max_elements,
+                        **attrs,
+                    )
+                # 1 part → fall through to single-leaf write.
+
             aprint(f"Adding gsplats node '{name}' with {n_splats:,} splats in {ndim}D.")
 
             scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
@@ -670,6 +891,66 @@ class Group(Node):
         except (ValueError, TypeError) as e:
             aprint(f"Failed to add gsplats node '{name}': {e}")
             raise ValueError(f"Could not add gsplats '{name}': {e}") from e
+
+    def _add_gsplats_split_wrapper(
+        self,
+        name: str,
+        ctr_arr: np.ndarray,
+        chol_arr: np.ndarray,
+        amplitudes: Any,
+        parts: List[np.ndarray],
+        n_splats: int,
+        colors: Any,
+        labels: Any,
+        parent: Optional[Node],
+        extend_to_all: Optional[Union[List[str], str]],
+        max_elements: int,
+        **attrs: Any,
+    ) -> "Group":
+        """Build a kind=split wrapper Group with one GSplats child per BSP part."""
+        wrapper_attrs = {k: v for k, v in attrs.items() if k in _COMPOSITING_ATTRS}
+        leaf_attrs = {k: v for k, v in attrs.items() if k not in _COMPOSITING_ATTRS}
+
+        parent_node = parent or self
+        wrapper = parent_node.add_split_group(
+            name=name,
+            display_type="gsplats",
+            max_elements=max_elements,
+            **wrapper_attrs,
+        )
+
+        aprint(
+            f"  ✂️  Split '{name}' into {len(parts)} parts via BSP "
+            f"(max_elements={max_elements:,}, "
+            f"sizes={[int(p.size) for p in parts]})"
+        )
+
+        for i, indices in enumerate(parts):
+            wrapper.add_gsplats(
+                name=f"part_{i}",
+                centers=ctr_arr[indices],
+                amplitudes=_slice_optional_array(amplitudes, indices, n_splats),
+                cholesky_factors=_slice_optional_array(
+                    chol_arr, indices, n_splats
+                ),
+                colors=_slice_optional_array(colors, indices, n_splats),
+                labels=_slice_optional_array(labels, indices, n_splats),
+                image_labels=None,
+                extend_to_all=extend_to_all,
+                # dim_order / fill / fill_sigma already applied to ctr_arr +
+                # chol_arr upstream — do not re-apply in the per-part call.
+                dim_order=None,
+                fill=None,
+                fill_sigma=None,
+                split=None,
+                **leaf_attrs,
+            )
+
+        wrapper._persist_attr(
+            "position_bounds", _position_bounds_from_array(ctr_arr)
+        )
+
+        return wrapper
 
     def add_gsplats_from_data(
         self,
