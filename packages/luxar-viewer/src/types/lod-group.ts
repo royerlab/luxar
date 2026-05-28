@@ -1,22 +1,35 @@
 /**
- * LODGroup type definitions for luxar-viewer.
+ * LOD-kind Group type definitions for luxar-viewer.
  *
- * An `lod_group` scene-graph node selects one of N alternative children
- * at runtime based on the projected bbox diagonal in pixels and each
- * child's `min_pixel_size` threshold. Children are arbitrary geometry
- * subtrees (points / lines / gsplats / nested lod_group).
+ * A kind=`lod` `Group` scene-graph node selects one of N alternative
+ * children at runtime based on the projected bbox diagonal in pixels and
+ * each child's `min_pixel_size` threshold. Children are arbitrary
+ * geometry subtrees (points / lines / gsplats / nested specialized groups).
  *
- * Mirrors `luxar.core.LODGroup` on the Python side.
+ * On disk, the node has `type: "group"` (no longer a distinct `lod_group`
+ * type) and an additional `kind: "lod"` discriminant attribute. The
+ * collapse from `LODGroup` subclass to flagged `Group` lets future
+ * specialized-group kinds slot in without a new node type per kind.
  *
  * @module types/lod-group
  */
 
 /**
- * Metadata stored on an `lod_group` node's `.zattrs`.
+ * Metadata stored on a kind=`lod` `Group` node's `.zattrs`.
  */
 export interface LODGroupMetadata {
-  /** Node type identifier. */
-  type: 'lod_group';
+  /** Node type identifier. Always `"group"` after the kind-flag refactor. */
+  type: 'group';
+
+  /** Specialized-group discriminant. */
+  kind: 'lod';
+
+  /**
+   * Geometry type the user sees this layer as. Resolved at write time
+   * (typically the finest child's type, walking through nested
+   * specialized groups). The viewer uses this for the layers-panel label.
+   */
+  display_type?: 'points' | 'lines' | 'gsplats';
 
   /**
    * Selector mode. Currently only `"pixel_size"` is supported; the field
@@ -73,12 +86,11 @@ export type ChildMinPixelSize = number;
 export type LODGroupSelectorMode = 'auto' | { lockLevel: number };
 
 /**
- * Type guard for `LODGroupMetadata`.
+ * Type guard for `LODGroupMetadata`. Matches the new `{ type: "group",
+ * kind: "lod" }` shape on disk.
  */
 export function isLODGroupMetadata(attrs: unknown): attrs is LODGroupMetadata {
-  return (
-    typeof attrs === 'object' &&
-    attrs !== null &&
-    (attrs as Record<string, unknown>).type === 'lod_group'
-  );
+  if (typeof attrs !== 'object' || attrs === null) return false;
+  const record = attrs as Record<string, unknown>;
+  return record.type === 'group' && record.kind === 'lod';
 }
