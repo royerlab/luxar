@@ -5,6 +5,7 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
+from luxar.core.gsplats import GSplats
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 from luxar.io.compiler import LuxarZarrCompiler
 
@@ -248,6 +249,8 @@ class TestDimOrderGSplats:
                 dim_order=["Z", "Y", "X"],
                 fill={"Time": 3.0},
             )
+            # Single-substitutive path returns GSplats, not LODGroup.
+            assert isinstance(gsplats, GSplats)
             assert gsplats.n_splats == 1
 
         store = zarr.open(str(output), mode="r")

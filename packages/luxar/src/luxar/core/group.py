@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..gsplats.gsplat_data import GSplatData
     from ..io.writer import ZarrWriterProtocol
+    from .lod_group import LODGroup
 
 # Default radius used when radii are not provided
 DEFAULT_POINT_RADIUS = 0.5
@@ -640,7 +641,7 @@ class Group(Node):
         lod_group: Any = None,
         additive_lod: Any = None,
         **attrs: Any,
-    ) -> Node:
+    ) -> Union[GSplats, "LODGroup"]:
         """Add Gaussian splats from a GSplatData object.
 
         Multi-additive-LOD data (from progressive fitting or
@@ -656,6 +657,13 @@ class Group(Node):
         builds an :class:`LODGroup` containing one gsplats child per
         level (in coarsest→finest order, named ``child_<i>``) and
         returns it; otherwise it returns a single :class:`GSplats` node.
+
+        ``min_pixel_size`` may only be passed in ``**attrs`` when the
+        result is single-substitutive AND the parent is an
+        :class:`LODGroup` (the child is itself a leaf of an enclosing
+        LODGroup). Passing it on a multi-substitutive path raises
+        ``ValueError`` — use ``lod_group=dict(min_pixel_sizes=[...])`` to
+        override the auto-derived thresholds.
 
         Args:
             name: Name of the gsplats (or lod_group) node.
@@ -691,6 +699,7 @@ class Group(Node):
             ... )
         """
         from luxar.gsplats.gsplat_data import GSplatData
+
         from .lod_group import (
             resolve_additive_axis,
             resolve_substitutive_axis,
@@ -712,6 +721,13 @@ class Group(Node):
 
         # Multi-substitutive → LODGroup with one gsplats child per level
         if result.n_substitutive > 1:
+            if "min_pixel_size" in attrs:
+                raise ValueError(
+                    "min_pixel_size must not be passed when the resolved "
+                    "result is multi-substitutive: thresholds are derived "
+                    "per-child (or set via lod_group=dict(min_pixel_sizes="
+                    "[...]))."
+                )
             return self._add_gsplats_as_lod_group(
                 name=name,
                 result=result,
@@ -771,7 +787,7 @@ class Group(Node):
         on the LODGroup itself; per-leaf gsplats attrs (truncation_radius,
         extend_to_all) ride into each child.
         """
-        from .lod_group import LODGroup, derive_min_pixel_sizes
+        from .lod_group import derive_min_pixel_sizes
 
         # Substitutive convention: index 0 = finest, n-1 = coarsest. The
         # LODGroup needs coarsest first.
@@ -817,6 +833,12 @@ class Group(Node):
         }
         lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
         child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+        # Defense in depth: ``add_gsplats_from_data`` rejects min_pixel_size
+        # at entry, but if this method is invoked through a different path
+        # (e.g. internal recursion) we still need to strip it — the loop
+        # below passes a derived value as an explicit kwarg, and a duplicate
+        # in ``**child_attrs`` would raise TypeError.
+        child_attrs.pop("min_pixel_size", None)
 
         parent_node = parent or self
         # Note: cast to LODGroup is needed because add_lod_group is defined
@@ -960,7 +982,7 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
         **attrs: Any,
-    ) -> GSplats:
+    ) -> Union[GSplats, "LODGroup"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
 
         If the source file carries multiple substitutive levels, only the
@@ -1018,7 +1040,7 @@ class Group(Node):
         opacity: Optional[float] = None,
         blending_mode: Optional[str] = None,
         **fit_kwargs: Any,
-    ) -> GSplats:
+    ) -> Union[GSplats, "LODGroup"]:
         """Fit Gaussian splats to a volume and add them in one step.
 
         Args:

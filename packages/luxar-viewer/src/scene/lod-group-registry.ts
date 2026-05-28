@@ -4,34 +4,36 @@
  * Tracks every `lod_group` scene-graph node currently loaded. For each
  * one, every frame:
  *
- *   1. Project each child's nD ``positionBounds`` to a 3D
- *      :type:`BoundingBox` via :func:`projectBoundsToDisplayDims` (using
- *      the current ``displayDims`` from the view state).
- *   2. Union them via :func:`mergeBoundingBoxes`, then transform into
- *      world space via :func:`transformBoundingBox` (using the
- *      lod_group's ``matrixWorld``).
+ *   1. Fold each child's nD ``positionBounds`` directly into a cached
+ *      per-entry **local-space** :type:`BoundingBox`, using the current
+ *      ``displayDims`` to map nD axes onto X/Y/Z. (No intermediate
+ *      per-child boxes — the union is computed in place.)
+ *   2. Transform the local box into world space via
+ *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   3. Project the 8 corners through the camera to NDC and back to
  *      pixel coordinates; the diagonal of the screen-space AABB is
  *      the selector metric.
  *   4. Pick the **finest** child whose ``min_pixel_size`` threshold is
  *      satisfied by that diagonal, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
- *   5. If the desired child differs from the current active one and
- *      the desired child has been marked ``ready``, swap visibility;
- *      otherwise keep the current active child visible until the new
- *      one's geometry has been committed by the loader.
+ *   5. If the desired child differs from the current active one, swap
+ *      visibility atomically.
+ *
+ * The atomic-swap invariant on initial load is realized by
+ * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after
+ * attach + a single ``register()`` call at the end) — no per-child
+ * ``ready`` gate is needed in the registry.
  *
  * The bbox infrastructure is shared with the scene-bounds cache and
  * camera framing — ``projectBoundsToDisplayDims`` /
- * ``mergeBoundingBoxes`` / ``transformBoundingBox`` all live in
- * ``scene-manager/clipping/bounds-math.ts`` and are reused here rather
- * than duplicated.
+ * ``transformBoundingBox`` live in
+ * ``scene-manager/clipping/bounds-math.ts`` and are reused here.
  *
  * Wiring: the SceneLoader instantiates one registry per scene; the
  * pipeline hooks ``evaluatePerFrame`` into ``AnimationController``
  * alongside the dynamic-clipping callback. Manual override
  * (``setSelectorMode(path, { lockLevel: i })``) bypasses the auto
- * selector — driven by the layers-panel dropdown landing in PR 2c.
+ * selector — driven by the layers-panel dropdown.
  *
  * @module scene/lod-group-registry
  */
@@ -40,10 +42,9 @@ import * as THREE from 'three';
 
 import {
   type BoundingBox,
-  mergeBoundingBoxes,
-  projectBoundsToDisplayDims,
   transformBoundingBox,
 } from './scene-manager/clipping/bounds-math';
+import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 
 /** Asymmetric hysteresis on the "downgrade to coarser" direction. */
@@ -62,13 +63,6 @@ export interface LODGroupChild {
    * selector re-projects each frame.
    */
   positionBounds: { min: readonly number[]; max: readonly number[] };
-  /**
-   * Per-child readiness flag. The scene loader flips this to ``true``
-   * once the child's first geometry has been committed; until then the
-   * selector keeps the previous active child visible so the user never
-   * stares at a blank lod_group during a level swap.
-   */
-  ready: boolean;
 }
 
 /** One LOD-group entry tracked by the registry. */
@@ -89,6 +83,24 @@ export interface LODGroupEntry {
   /** Index into ``children`` of the currently-visible child. */
   activeChildIndex: number;
 }
+
+/**
+ * Internal per-entry cache populated by ``register()``. Lets
+ * ``evaluateEntry`` run without allocating on the hot path: the
+ * threshold list is rebuilt once at registration and the scratch
+ * boxes are reused every frame.
+ *
+ * Kept separate from the public ``LODGroupEntry`` interface so test
+ * code (which constructs entries directly) doesn't have to populate
+ * caches — ``register()`` does it for them.
+ */
+interface LODGroupEntryCache {
+  thresholds: number[];
+  localBoxScratch: BoundingBox;
+}
+
+/** Module-scope scratch for ``projectBoxDiagonalPx``. Single-threaded. */
+const CORNER_SCRATCH = new THREE.Vector3();
 
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
@@ -119,7 +131,10 @@ export function projectBoxDiagonalPx(
   camera: THREE.Camera,
   viewport: { width: number; height: number }
 ): number {
-  const corner = new THREE.Vector3();
+  // Reuse a module-scope Vector3. ``evaluatePerFrame`` is invoked from
+  // a single per-frame callback, so this is safe — no concurrent
+  // entries into this function.
+  const corner = CORNER_SCRATCH;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -190,12 +205,28 @@ export function pickChildWithHysteresis(
  */
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
+  /**
+   * Per-entry register-time cache (parallel to ``entries`` by path).
+   * Populated by :meth:`register`. Stored on the side so the public
+   * ``LODGroupEntry`` interface stays test-friendly (callers don't
+   * have to compute thresholds or allocate scratch boxes).
+   */
+  private caches: Map<string, LODGroupEntryCache> = new Map();
+  /** Reused per frame to feed ``transformBoundingBox``'s matrix arg. */
+  private readonly matrixScratch: number[] = new Array(16).fill(0);
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
     this.entries.set(entry.path, entry);
+    this.caches.set(entry.path, {
+      thresholds: entry.children.map((c) => c.minPixelSize),
+      localBoxScratch: {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: 0, y: 0, z: 0 },
+      },
+    });
     // Apply initial visibility: only the active child is visible.
     for (let i = 0; i < entry.children.length; i++) {
       entry.children[i].object.visible = i === entry.activeChildIndex;
@@ -205,11 +236,13 @@ export class LODGroupRegistry {
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
     this.entries.delete(path);
+    this.caches.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
     this.entries.clear();
+    this.caches.clear();
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -230,7 +263,10 @@ export class LODGroupRegistry {
   /**
    * Update an lod_group's selector mode. ``'auto'`` re-enables
    * view-driven selection; ``{ lockLevel: i }`` pins the lod_group to
-   * child index ``i`` (0-based in coarsest→finest order).
+   * child index ``i`` (0-based in coarsest→finest order). An
+   * out-of-range ``lockLevel`` is **clamped** into ``[0, n-1]`` with a
+   * warning — throwing here would force every UI caller to guard
+   * against stale registry state.
    *
    * Visibility is *not* swapped synchronously — the next
    * ``evaluatePerFrame()`` call will pick the new desired child. (This
@@ -240,27 +276,24 @@ export class LODGroupRegistry {
   setSelectorMode(path: string, mode: LODGroupSelectorMode): void {
     const entry = this.entries.get(path);
     if (!entry) return;
-    if (mode !== 'auto') {
-      const idx = mode.lockLevel;
-      if (idx < 0 || idx >= entry.children.length) {
-        throw new RangeError(
-          `lockLevel ${idx} out of range for lod_group ${path} ` +
-            `(${entry.children.length} children)`
-        );
-      }
+    if (mode === 'auto') {
+      entry.selectorMode = mode;
+      return;
     }
-    entry.selectorMode = mode;
-  }
-
-  /**
-   * Mark a child as ready. The scene loader calls this once the
-   * child's geometry has data committed; the registry only swaps to
-   * a child once it's been marked ready.
-   */
-  markChildReady(path: string, childIndex: number): void {
-    const entry = this.entries.get(path);
-    if (!entry || childIndex < 0 || childIndex >= entry.children.length) return;
-    entry.children[childIndex].ready = true;
+    const n = entry.children.length;
+    if (n === 0) {
+      entry.selectorMode = mode;
+      return;
+    }
+    const clamped = Math.max(0, Math.min(mode.lockLevel, n - 1));
+    if (clamped !== mode.lockLevel) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `lod_group ${path}: lockLevel ${mode.lockLevel} out of range ` +
+          `[0, ${n - 1}], clamped to ${clamped}`
+      );
+    }
+    entry.selectorMode = { lockLevel: clamped };
   }
 
   /**
@@ -291,11 +324,17 @@ export class LODGroupRegistry {
     if (entry.selectorMode !== 'auto') {
       desired = entry.selectorMode.lockLevel;
     } else {
-      // Project each child's nD bounds to a 3D box, then union; this
-      // is the lod_group's effective bbox in **local** space.
-      const perChildBoxes: BoundingBox[] = [];
-      for (const child of entry.children) {
-        const pb = child.positionBounds;
+      const cache = this.caches.get(entry.path);
+      if (!cache) return; // shouldn't happen — register() populates this.
+
+      // Fold each child's nD bounds directly into the cached
+      // local-space box. No intermediate per-child boxes; we walk
+      // children once and unify in place. Children with bogus bounds
+      // (mismatched min/max lengths, empty) are skipped.
+      const local = cache.localBoxScratch;
+      let any = false;
+      for (let ci = 0; ci < entry.children.length; ci++) {
+        const pb = entry.children[ci].positionBounds;
         if (
           pb.min.length === 0 ||
           pb.max.length === 0 ||
@@ -303,36 +342,78 @@ export class LODGroupRegistry {
         ) {
           continue;
         }
-        perChildBoxes.push(
-          projectBoundsToDisplayDims(pb.min, pb.max, displayDims)
-        );
+        // Project to X/Y/Z. Unmapped axes default to 0 (matches
+        // ``projectBoundsToDisplayDims``'s defensive fallback).
+        let x0 = 0;
+        let x1 = 0;
+        let y0 = 0;
+        let y1 = 0;
+        let z0 = 0;
+        let z1 = 0;
+        if (displayDims.length > 0) {
+          const d0 = displayDims[0];
+          if (d0 < pb.min.length) {
+            x0 = pb.min[d0];
+            x1 = pb.max[d0];
+          }
+        }
+        if (displayDims.length > 1) {
+          const d1 = displayDims[1];
+          if (d1 < pb.min.length) {
+            y0 = pb.min[d1];
+            y1 = pb.max[d1];
+          }
+        }
+        if (displayDims.length > 2) {
+          const d2 = displayDims[2];
+          if (d2 < pb.min.length) {
+            z0 = pb.min[d2];
+            z1 = pb.max[d2];
+          }
+        }
+        if (!any) {
+          local.min.x = x0;
+          local.max.x = x1;
+          local.min.y = y0;
+          local.max.y = y1;
+          local.min.z = z0;
+          local.max.z = z1;
+          any = true;
+        } else {
+          if (x0 < local.min.x) local.min.x = x0;
+          if (x1 > local.max.x) local.max.x = x1;
+          if (y0 < local.min.y) local.min.y = y0;
+          if (y1 > local.max.y) local.max.y = y1;
+          if (z0 < local.min.z) local.min.z = z0;
+          if (z1 > local.max.z) local.max.z = z1;
+        }
       }
-      if (perChildBoxes.length === 0) return;
-      const localBox = mergeBoundingBoxes(perChildBoxes);
+      if (!any) return;
 
       // Lift to world space. THREE updates matrix lazily; force a
       // refresh before reading — cheap and idempotent.
       entry.groupObject.updateWorldMatrix(true, false);
-      const worldBox = transformBoundingBox(
-        localBox,
-        entry.groupObject.matrixWorld.toArray()
-      );
+      // Copy matrixWorld.elements into a reusable array instead of
+      // allocating one via ``.toArray()`` every frame.
+      const elements = entry.groupObject.matrixWorld.elements;
+      const m = this.matrixScratch;
+      for (let i = 0; i < 16; i++) m[i] = elements[i];
+      const worldBox = transformBoundingBox(local, m);
 
       const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport);
-      const thresholds = entry.children.map((c) => c.minPixelSize);
       desired = pickChildWithHysteresis(
-        thresholds,
+        cache.thresholds,
         entry.activeChildIndex,
         diagonalPx
       );
     }
 
     if (desired === entry.activeChildIndex) return;
-    // Keep the current active child visible until the desired one is
-    // ready. This avoids a blank flash when the camera leaps to a
-    // detail level whose geometry hasn't streamed in yet.
-    if (!entry.children[desired].ready) return;
-
+    // Atomic swap: hide outgoing, show incoming. The atomic-swap
+    // invariant on initial load is enforced by ``loadLodGroupNode``
+    // (sequential awaits + ``visible=false`` after attach + a single
+    // ``register()`` call at the end), so no per-child readiness gate
+    // is needed here.
     entry.children[entry.activeChildIndex].object.visible = false;
     entry.children[desired].object.visible = true;
     entry.activeChildIndex = desired;

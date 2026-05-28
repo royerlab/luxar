@@ -24,14 +24,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
-from arbol import aprint
-
 from .group import Group
 
 if TYPE_CHECKING:
     from ..gsplats.gsplat_data import GSplatData
-    from .node import Node
     from ..io.writer import ZarrWriterProtocol
+    from .node import Node
 
 
 #: Sentinel-typed alias for the value vocabulary of ``lod_group=`` and
@@ -47,6 +45,26 @@ LODAxisSpec = Union[None, bool, dict]
 #: so the threshold scales linearly with that. 10 px is a reasonable
 #: detail-floor below which a finer level isn't worth the cost.
 BASE_PIXEL_SIZE: float = 10.0
+
+
+def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
+    """Validate ``thresholds`` is strictly monotonic increasing (coarsest→finest).
+
+    Shared between :func:`resolve_substitutive_axis` (explicit
+    ``min_pixel_sizes=`` path) and :func:`derive_min_pixel_sizes` so both
+    paths apply the same invariant — and so explicit lists fail at the
+    resolver instead of deferring to a later :meth:`LODGroup.validate` call
+    that the user may never make.
+    """
+    prev = float("-inf")
+    for i, v in enumerate(thresholds):
+        if v <= prev:
+            raise ValueError(
+                f"{source}: min_pixel_sizes must be strictly increasing in "
+                f"coarsest→finest order; entry {i}={v} is not greater than "
+                f"previous {prev}"
+            )
+        prev = v
 
 
 class LODGroup(Group):
@@ -122,6 +140,8 @@ class LODGroup(Group):
         Raises ``ValueError`` if:
 
         - the group has zero children;
+        - ``default_level`` is out of range
+          (``not 0 <= default_level < len(children)``);
         - any child is missing ``min_pixel_size`` in its attrs;
         - the per-child ``min_pixel_size`` values are not strictly monotonic
           increasing in insertion order.
@@ -132,6 +152,13 @@ class LODGroup(Group):
         """
         if not self.children:
             raise ValueError(f"LODGroup '{self.path or self.name}' has no children")
+        n_children = len(self.children)
+        default_level = self.default_level
+        if not 0 <= default_level < n_children:
+            raise ValueError(
+                f"LODGroup '{self.path or self.name}' has "
+                f"default_level={default_level}, must be in [0, {n_children})"
+            )
         prev = float("-inf")
         for i, child in enumerate(self.children):
             if "min_pixel_size" not in child.attrs:
@@ -212,13 +239,32 @@ def resolve_substitutive_axis(
         explicit_min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
         if explicit_min_pixel_sizes is not None:
             explicit_min_pixel_sizes = [float(v) for v in explicit_min_pixel_sizes]
+            # Fail fast on bad explicit lists at the resolver instead of
+            # deferring to a later LODGroup.validate() the user may never
+            # call. Same invariant the auto-derivation enforces.
+            _assert_strict_ascending(
+                explicit_min_pixel_sizes, "lod_group=dict(min_pixel_sizes=...)"
+            )
 
         if data.n_substitutive > 1 and not recompute:
+            # Stored pyramid takes precedence — but silently accepting
+            # compute-affecting kwargs would mask user intent. Reject any
+            # leftover keys (only ``min_pixel_sizes`` / ``recompute`` are
+            # honored on the stored path).
+            if kwargs:
+                raise ValueError(
+                    "lod_group=dict(...) carries compute kwargs "
+                    f"({sorted(kwargs)}) but data already has "
+                    f"n_substitutive={data.n_substitutive}. Pass "
+                    "recompute=True to override the stored pyramid, or "
+                    "drop the compute kwargs to reuse it."
+                )
             return data, explicit_min_pixel_sizes
 
-        # Compute. Default to 2-level pyramid (one coarser + the original)
-        # so a bare ``dict()`` produces a usable result.
-        kwargs.setdefault("levels", 1)
+        # Compute. Align with ``make_substitutive_lod``'s canonical default
+        # (3 levels) so ``lod_group=dict()`` yields the same pyramid as a
+        # bare ``make_substitutive_lod(data)`` call.
+        kwargs.setdefault("levels", 3)
         from ..gsplats.lod.substitutive import make_substitutive_lod
 
         new_data = make_substitutive_lod(data, **kwargs)
@@ -350,4 +396,8 @@ def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
     for i in range(1, len(thresholds)):
         if thresholds[i] <= thresholds[i - 1]:
             thresholds[i] = thresholds[i - 1] + 1.0
+    # Belt-and-braces: same invariant the explicit-list path is checked
+    # against in ``resolve_substitutive_axis``. Free now that the loop
+    # above runs.
+    _assert_strict_ascending(thresholds, "derive_min_pixel_sizes")
     return thresholds
