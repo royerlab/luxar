@@ -1,34 +1,37 @@
-"""luxar.lod_group – LODGroup scene-graph node + convenience-API helpers.
+"""luxar.lod – Helpers for the LOD-kind specialized Group.
 
-An ``LODGroup`` selects one of N alternative children at runtime based on a
-view-driven metric (currently: the projected bbox diagonal in pixels). It is
-geometry-agnostic — children can be points, lines, gsplats, or nested groups.
+The LOD-kind ``Group`` selects one of N alternative children at runtime based
+on a view-driven metric (currently: the projected bbox diagonal in pixels). It
+is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``, or
+themselves a specialized group (``kind=lod`` / ``kind=split``).
 
-Each child carries a ``min_pixel_size`` attribute on its own ``.zattrs``: the
-viewer picks the finest child whose threshold is satisfied by the current
-view. Coarsest level conventionally has ``min_pixel_size = 0`` (always
-applicable). Per-child thresholds must form a strictly monotonic increasing
-sequence.
+Each child carries its own ``min_pixel_size`` attribute (strictly monotonic
+increasing in coarsest→finest order; coarsest = 0.0). The viewer picks the
+finest child whose threshold is satisfied by the current view. The standalone
+builder ``add_lod_group()`` lets users assemble these by hand; the convenience
+path (``Scene.add_gsplats_from_data(..., lod_group=...)``) auto-derives
+thresholds using a √(N_finer / N_coarsest) heuristic anchored at
+``BASE_PIXEL_SIZE``.
 
-The standalone builder requires the user to supply ``min_pixel_size`` on
-each child. The convenience-API path (``Scene.add_gsplats_from_data(
-... lod_group=...)``) auto-derives thresholds using a √(N_finer / N_coarsest)
-heuristic anchored at ``BASE_PIXEL_SIZE``.
+This module hosts:
 
-This module also hosts the resolution helpers used by the convenience API
-to interpret ``lod_group=`` / ``additive_lod=`` kwargs against a
-``GSplatData`` input.
+* The two resolvers that interpret the ``lod_group=`` / ``additive_lod=``
+  convenience kwargs against a ``GSplatData`` input.
+* The ``derive_min_pixel_sizes`` heuristic and its monotonicity guard.
+* The free-function validator ``validate_lod_group`` (replaces the class
+  ``LODGroup.validate()`` method since the class has collapsed into a flagged
+  ``Group``).
+* The shared ``resolve_display_type`` helper used by both LOD and Split kinds,
+  which walks down through nested specialized groups to determine what
+  geometry type the user sees this layer as.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
-
-from .group import Group
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
     from ..gsplats.gsplat_data import GSplatData
-    from ..io.writer import ZarrWriterProtocol
     from .node import Node
 
 
@@ -47,13 +50,63 @@ LODAxisSpec = Union[None, bool, dict]
 BASE_PIXEL_SIZE: float = 10.0
 
 
+# ────────────────────────────────────────────────────────────────────────
+# Display-type resolution (shared with the Split kind)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def resolve_display_type(node: "Node") -> str:
+    """Return the geometry type this node would appear as to the user.
+
+    For plain leaves and plain groups, this is the node's own ``type`` attr
+    (``"points"`` / ``"lines"`` / ``"gsplats"`` / ``"group"``). For specialized
+    groups (``kind == "lod"`` or ``kind == "split"``), this is the
+    ``display_type`` attr the writer recorded on them — which is itself
+    derived transitively when one specialized group wraps another.
+
+    Used by:
+        * ``validate_split_group`` — to compare homogeneity across children
+          even when some children are themselves specialized groups.
+        * ``compute_lod_display_type`` — to walk a finest-child chain
+          through nested LOD/Split groups down to a real geometry leaf.
+        * The compiler at finalize, to compute ``display_type`` for a
+          freshly-assembled specialized group.
+    """
+    kind = node.attrs.get("kind")
+    if kind in ("lod", "split"):
+        display = node.attrs.get("display_type")
+        if isinstance(display, str):
+            return display
+    return str(node.attrs.get("type", "group"))
+
+
+def compute_lod_display_type(children: List["Node"]) -> str:
+    """Derive an LOD group's ``display_type`` from its finest child.
+
+    Convention: children are stored in coarsest→finest order, so the
+    finest is the last entry. If that child is itself a kind=lod / kind=split
+    group, recurse through its own ``display_type``.
+    """
+    if not children:
+        raise ValueError(
+            "compute_lod_display_type: cannot derive display_type from an "
+            "empty children list"
+        )
+    return resolve_display_type(children[-1])
+
+
+# ────────────────────────────────────────────────────────────────────────
+# min_pixel_size monotonicity invariant
+# ────────────────────────────────────────────────────────────────────────
+
+
 def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
     """Validate ``thresholds`` is strictly monotonic increasing (coarsest→finest).
 
     Shared between :func:`resolve_substitutive_axis` (explicit
     ``min_pixel_sizes=`` path) and :func:`derive_min_pixel_sizes` so both
     paths apply the same invariant — and so explicit lists fail at the
-    resolver instead of deferring to a later :meth:`LODGroup.validate` call
+    resolver instead of deferring to a later :func:`validate_lod_group` call
     that the user may never make.
     """
     prev = float("-inf")
@@ -67,113 +120,96 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
         prev = v
 
 
-class LODGroup(Group):
-    """A scene-graph node that picks one of N children at runtime.
+def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
+    """Auto-derive monotonic ``min_pixel_size`` thresholds from splat counts.
 
-    Children are alternative representations of the same content, typically
-    at different fidelities. Inherits all data-adding methods from
-    :class:`Group` (``add_points``, ``add_lines``, ``add_gsplats``,
-    ``add_gsplats_from_data``, ``add_group``); each child must additionally
-    carry a ``min_pixel_size`` attribute on its ``.zattrs``.
-
-    Example::
-
-        lod = scene.add_lod_group("multires")
-        lod.add_gsplats_from_data("coarse", coarse_data, min_pixel_size=0)
-        lod.add_gsplats_from_data("medium", medium_data, min_pixel_size=100)
-        lod.add_gsplats_from_data("fine", fine_data, min_pixel_size=500)
+    Coarsest child (index 0) gets ``0.0``; each subsequent child *i* gets
+    ``BASE_PIXEL_SIZE * sqrt(n_splats[i] / n_splats[0])``. Splats can
+    resolve ~√N effective screen pixels of detail, so the threshold scales
+    linearly with that. ``BASE_PIXEL_SIZE`` (~10 px) is the detail floor
+    below which a finer level isn't worth the cost.
 
     Args:
-        name: Name of the lod_group node.
-        parent: Parent node in the scene hierarchy.
-        writer: Writer interface for progressive writing.
-        selector: Selector mode. Currently only ``"pixel_size"`` is supported
-            (reserved for future modes like distance- or coverage-based).
-        default_level: Initial active level index for the manual-override UI.
-        **attrs: Additional node attributes.
+        splat_counts: One entry per child, in coarsest→finest order. Must
+            be non-empty and the first entry must be > 0.
+
+    Returns:
+        List of thresholds, same length as ``splat_counts``. Strictly
+        monotonic increasing for monotonic non-decreasing input.
     """
+    if not splat_counts:
+        raise ValueError("splat_counts must be non-empty")
+    n0 = splat_counts[0]
+    if n0 <= 0:
+        raise ValueError(f"coarsest child must have at least 1 splat, got {n0}")
+    thresholds: list[float] = [0.0]
+    for n in splat_counts[1:]:
+        thresholds.append(BASE_PIXEL_SIZE * (n / n0) ** 0.5)
+    # Defensive: guarantee strict monotonicity even when later children have
+    # the same n_splats as the coarsest (degenerate, but the auto-derivation
+    # should not produce non-monotonic thresholds).
+    for i in range(1, len(thresholds)):
+        if thresholds[i] <= thresholds[i - 1]:
+            thresholds[i] = thresholds[i - 1] + 1.0
+    # Belt-and-braces: same invariant the explicit-list path is checked
+    # against in ``resolve_substitutive_axis``. Free now that the loop
+    # above runs.
+    _assert_strict_ascending(thresholds, "derive_min_pixel_sizes")
+    return thresholds
 
-    def __init__(
-        self,
-        name: str,
-        parent: Optional[Node] = None,
-        writer: Optional[ZarrWriterProtocol] = None,
-        *,
-        selector: str = "pixel_size",
-        default_level: int = 0,
-        **attrs: Any,
-    ) -> None:
-        if selector != "pixel_size":
+
+# ────────────────────────────────────────────────────────────────────────
+# Validator (replaces the old ``LODGroup.validate`` method)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def validate_lod_group(group: "Node") -> None:
+    """Check that a kind=lod ``Group`` is well-formed.
+
+    Raises ``ValueError`` if:
+
+    - the group has zero children;
+    - ``default_level`` is out of range (``not 0 <= default_level <
+      len(children)``);
+    - any child is missing ``min_pixel_size`` in its attrs;
+    - the per-child ``min_pixel_size`` values are not strictly monotonic
+      increasing in insertion order.
+
+    Call this manually before finalizing if you want eager validation;
+    otherwise the viewer falls back to silently ignoring malformed
+    children at load time.
+    """
+    if not group.children:
+        raise ValueError(
+            f"LOD group '{group.path or group.name}' has no children"
+        )
+    n_children = len(group.children)
+    default_level = int(group.attrs.get("default_level", 0))
+    if not 0 <= default_level < n_children:
+        raise ValueError(
+            f"LOD group '{group.path or group.name}' has "
+            f"default_level={default_level}, must be in [0, {n_children})"
+        )
+    prev = float("-inf")
+    for i, child in enumerate(group.children):
+        if "min_pixel_size" not in child.attrs:
             raise ValueError(
-                f"selector must be 'pixel_size' (other modes reserved for "
-                f"future use), got {selector!r}"
+                f"LOD-group child {i} ({child.name!r}) is missing "
+                "'min_pixel_size' in its attrs"
             )
-        if default_level < 0:
-            raise ValueError(f"default_level must be >= 0, got {default_level}")
-
-        attrs["type"] = "lod_group"
-        attrs["selector"] = selector
-        attrs["default_level"] = int(default_level)
-        super().__init__(name, parent=parent, writer=writer, **attrs)
-
-    @property
-    def selector(self) -> str:
-        """Selector mode (currently always ``"pixel_size"``)."""
-        return str(self.attrs.get("selector", "pixel_size"))
-
-    @property
-    def default_level(self) -> int:
-        """Initial active level index for the manual-override UI."""
-        return int(self.attrs.get("default_level", 0))
-
-    def child_min_pixel_sizes(self) -> list[float]:
-        """Return the ``min_pixel_size`` of each child, in insertion order.
-
-        Used by validation and by the convenience API to derive thresholds
-        for newly-appended children.
-        """
-        return [float(c.attrs.get("min_pixel_size", 0.0)) for c in self.children]
-
-    def validate(self) -> None:
-        """Check that children form a valid lod_group.
-
-        Raises ``ValueError`` if:
-
-        - the group has zero children;
-        - ``default_level`` is out of range
-          (``not 0 <= default_level < len(children)``);
-        - any child is missing ``min_pixel_size`` in its attrs;
-        - the per-child ``min_pixel_size`` values are not strictly monotonic
-          increasing in insertion order.
-
-        Call this manually before finalizing if you want eager validation;
-        otherwise the viewer falls back to silently ignoring malformed
-        children at load time.
-        """
-        if not self.children:
-            raise ValueError(f"LODGroup '{self.path or self.name}' has no children")
-        n_children = len(self.children)
-        default_level = self.default_level
-        if not 0 <= default_level < n_children:
+        value = float(child.attrs["min_pixel_size"])
+        if value <= prev:
             raise ValueError(
-                f"LODGroup '{self.path or self.name}' has "
-                f"default_level={default_level}, must be in [0, {n_children})"
+                f"LOD-group child {i} ({child.name!r}) has "
+                f"min_pixel_size={value}, must be strictly greater than "
+                f"previous child's {prev}"
             )
-        prev = float("-inf")
-        for i, child in enumerate(self.children):
-            if "min_pixel_size" not in child.attrs:
-                raise ValueError(
-                    f"LODGroup child {i} ({child.name!r}) is missing "
-                    "'min_pixel_size' in its attrs"
-                )
-            value = float(child.attrs["min_pixel_size"])
-            if value <= prev:
-                raise ValueError(
-                    f"LODGroup child {i} ({child.name!r}) has "
-                    f"min_pixel_size={value}, must be strictly greater than "
-                    f"previous child's {prev}"
-                )
-            prev = value
+        prev = value
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Resolvers for the ``lod_group=`` / ``additive_lod=`` convenience kwargs
+# ────────────────────────────────────────────────────────────────────────
 
 
 def resolve_substitutive_axis(
@@ -240,7 +276,7 @@ def resolve_substitutive_axis(
         if explicit_min_pixel_sizes is not None:
             explicit_min_pixel_sizes = [float(v) for v in explicit_min_pixel_sizes]
             # Fail fast on bad explicit lists at the resolver instead of
-            # deferring to a later LODGroup.validate() the user may never
+            # deferring to a later validate_lod_group() the user may never
             # call. Same invariant the auto-derivation enforces.
             _assert_strict_ascending(
                 explicit_min_pixel_sizes, "lod_group=dict(min_pixel_sizes=...)"
@@ -325,9 +361,11 @@ def resolve_additive_axis(
         # Flatten each substitutive level into a single AdditiveSubLOD.
         new_levels: list[SubstitutiveLevel] = []
         for lvl in data.substitutive_levels:
-            single = GSplatData(
-                additive_sublods=list(lvl.additive_sublods)
-            ).flattened().additive_sublods[0]
+            single = (
+                GSplatData(additive_sublods=list(lvl.additive_sublods))
+                .flattened()
+                .additive_sublods[0]
+            )
             new_levels.append(
                 SubstitutiveLevel(
                     additive_sublods=[single],
@@ -363,41 +401,3 @@ def resolve_additive_axis(
     raise TypeError(
         f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
     )
-
-
-def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
-    """Auto-derive monotonic ``min_pixel_size`` thresholds from splat counts.
-
-    Coarsest child (index 0) gets ``0.0``; each subsequent child *i* gets
-    ``BASE_PIXEL_SIZE * sqrt(n_splats[i] / n_splats[0])``. Splats can
-    resolve ~√N effective screen pixels of detail, so the threshold scales
-    linearly with that. ``BASE_PIXEL_SIZE`` (~10 px) is the detail floor
-    below which a finer level isn't worth the cost.
-
-    Args:
-        splat_counts: One entry per child, in coarsest→finest order. Must
-            be non-empty and the first entry must be > 0.
-
-    Returns:
-        List of thresholds, same length as ``splat_counts``. Strictly
-        monotonic increasing for monotonic non-decreasing input.
-    """
-    if not splat_counts:
-        raise ValueError("splat_counts must be non-empty")
-    n0 = splat_counts[0]
-    if n0 <= 0:
-        raise ValueError(f"coarsest child must have at least 1 splat, got {n0}")
-    thresholds: list[float] = [0.0]
-    for n in splat_counts[1:]:
-        thresholds.append(BASE_PIXEL_SIZE * (n / n0) ** 0.5)
-    # Defensive: guarantee strict monotonicity even when later children have
-    # the same n_splats as the coarsest (degenerate, but the auto-derivation
-    # should not produce non-monotonic thresholds).
-    for i in range(1, len(thresholds)):
-        if thresholds[i] <= thresholds[i - 1]:
-            thresholds[i] = thresholds[i - 1] + 1.0
-    # Belt-and-braces: same invariant the explicit-list path is checked
-    # against in ``resolve_substitutive_axis``. Free now that the loop
-    # above runs.
-    _assert_strict_ascending(thresholds, "derive_min_pixel_sizes")
-    return thresholds
