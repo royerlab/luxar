@@ -31,10 +31,13 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from ._poisson_disk import poisson_disk_order
 from ._spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
-PointsMethodName = Literal["random", "salience", "spatial-uniform"]
+PointsMethodName = Literal[
+    "random", "salience", "spatial-uniform", "poisson-disk"
+]
 
 
 # Default for ``additive_lod=True`` and ``additive_lod=dict()``.
@@ -106,9 +109,17 @@ def compute_additive_order_points(
             )
         return stratified_grid_order(positions, n_lods)
 
+    if method == "poisson-disk":
+        if positions.shape[1] < 3:
+            raise ValueError(
+                "poisson-disk ordering needs positions with d >= 3; "
+                f"got shape {positions.shape}"
+            )
+        return poisson_disk_order(positions, n_lods, seed=seed or 0)
+
     raise ValueError(
-        f"method must be one of 'random' / 'salience' / 'spatial-uniform'; "
-        f"got {method!r}"
+        "method must be one of 'random' / 'salience' / 'spatial-uniform' / "
+        f"'poisson-disk'; got {method!r}"
     )
 
 
@@ -158,11 +169,11 @@ def make_additive_lod_points(
         positions, radii=radii, method=method, n_lods=n_lods, seed=seed
     )
 
-    if method == "spatial-uniform":
-        # The stratified-grid sampler already partitions the
-        # permutation into per-level groups. Respect that partition
-        # rather than re-slicing — it's what makes the cumulative
-        # density approximately uniform.
+    if method in ("spatial-uniform", "poisson-disk"):
+        # Both samplers already partition the permutation into per-
+        # level groups (coarse-to-fine). Respect that partition rather
+        # than re-slicing — it's what makes the cumulative density
+        # approximately uniform.
         out: List[NDArray[np.intp]] = []
         cursor = 0
         for count in natural_counts:
@@ -265,10 +276,15 @@ def resolve_additive_axis_points(
     kwargs.pop("recompute", None)
 
     method = kwargs.pop("method", DEFAULT_METHOD)
-    if method not in ("random", "salience", "spatial-uniform"):
+    if method not in (
+        "random",
+        "salience",
+        "spatial-uniform",
+        "poisson-disk",
+    ):
         raise ValueError(
-            f"method must be one of 'random' / 'salience' / 'spatial-uniform'; "
-            f"got {method!r}"
+            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
+            f"/ 'poisson-disk'; got {method!r}"
         )
 
     n_lods = int(kwargs.pop("n_lods", DEFAULT_N_LODS))

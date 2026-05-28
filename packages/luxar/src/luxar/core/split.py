@@ -144,6 +144,249 @@ def midpoint_bsp_partition(
 
 
 # ────────────────────────────────────────────────────────────────────────
+# Polyline-aware BSP (for add_lines split=)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def midpoint_bsp_polylines(
+    vertices: NDArray,
+    polyline_indices: List[NDArray[np.intp]],
+    max_elements: int,
+) -> List[List[int]]:
+    """Recursive midpoint BSP over per-polyline centroids.
+
+    Polylines are atomic — every vertex of a polyline lands in exactly
+    one part. The BSP is run over the per-polyline **centroids** (mean
+    of constituent vertex positions, computed once); the resulting
+    partition assigns whole polylines to parts.
+
+    Args:
+        vertices: ``(N, d)`` array of vertex positions. At least 3
+            spatial dimensions required (only first 3 drive the split).
+        polyline_indices: List of per-polyline vertex-index arrays — the
+            output of :func:`luxar.core.lod_lines.identify_polylines`.
+        max_elements: Cap on a single part's vertex count. The BSP
+            recurses until each part fits, with the degenerate guarantee
+            that a single polyline larger than ``max_elements`` becomes
+            its own (oversized) part rather than being broken up.
+
+    Returns:
+        List of ``parts``; each ``parts[k]`` is a list of polyline
+        indices (into ``polyline_indices``) assigned to part ``k``.
+        Concatenating all parts produces a permutation of
+        ``range(len(polyline_indices))``.
+
+    Notes:
+        Re-uses the axis-selection + midpoint-bisection idea from
+        :func:`midpoint_bsp_partition`. The two functions are
+        intentionally separate: the points/gsplats version partitions
+        individual elements; this one partitions polylines, with the
+        accounting done in vertex counts.
+    """
+    if vertices.ndim != 2:
+        raise ValueError(
+            f"vertices must be 2-D (N, d); got shape {vertices.shape}"
+        )
+    if vertices.shape[1] < 3:
+        raise ValueError(
+            "midpoint_bsp_polylines needs at least 3 spatial dimensions; "
+            f"got vertices with shape {vertices.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
+    n_polylines = len(polyline_indices)
+    if n_polylines == 0:
+        return []
+
+    # Per-polyline centroid (first 3 spatial dims) and vertex count.
+    spatial = vertices[:, :3]
+    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    sizes = np.zeros(n_polylines, dtype=np.intp)
+    for p, members in enumerate(polyline_indices):
+        if members.size == 0:
+            continue
+        centroids[p] = spatial[members].mean(axis=0)
+        sizes[p] = members.size
+
+    result: List[List[int]] = []
+
+    def recurse(poly_idx: NDArray[np.intp]) -> None:
+        total_verts = int(sizes[poly_idx].sum())
+        if total_verts <= max_elements or poly_idx.size <= 1:
+            result.append(poly_idx.tolist())
+            return
+        sub = centroids[poly_idx]
+        mins = sub.min(axis=0)
+        maxs = sub.max(axis=0)
+        extents = maxs - mins
+        axis = int(np.argmax(extents))
+        if extents[axis] == 0:
+            # All centroids coincide; cannot make spatial progress.
+            result.append(poly_idx.tolist())
+            return
+        mid = (mins[axis] + maxs[axis]) * 0.5
+        left_mask = sub[:, axis] < mid
+        left = poly_idx[left_mask]
+        right = poly_idx[~left_mask]
+        if left.size == 0 or right.size == 0:
+            # All on one side of the midpoint — sort by axis and bisect
+            # at the median polyline. Stable on ties.
+            order = np.argsort(sub[:, axis], kind="stable")
+            half = poly_idx.size // 2
+            left = poly_idx[order[:half]]
+            right = poly_idx[order[half:]]
+        recurse(left)
+        recurse(right)
+
+    recurse(np.arange(n_polylines, dtype=np.intp))
+    return result
+
+
+# ────────────────────────────────────────────────────────────────────────
+# SAH (Surface-Area Heuristic) BSP — opt-in alternative to midpoint
+# ────────────────────────────────────────────────────────────────────────
+
+
+def sah_bsp_partition(
+    positions: NDArray,
+    max_elements: int,
+    n_candidates: int = 32,
+) -> List[NDArray[np.intp]]:
+    """Recursive BSP using the surface-area heuristic for split-plane selection.
+
+    Standard SAH formulation (Wald 2007 et al.): for each candidate
+    split position along each spatial axis, evaluate
+
+        SAH(split) = N_left * SA(box_left) + N_right * SA(box_right)
+
+    and pick the (axis, position) minimizing the heuristic. The
+    intuition: an SAH split balances the **work** of further traversal
+    (∝ count × surface area) on each side, so non-uniform datasets get a
+    better tree than midpoint-only.
+
+    Args:
+        positions: ``(N, d)`` array. At least 3 spatial dims.
+        max_elements: Cap on a single part's size. Recursion stops once
+            ``len(part) <= max_elements``.
+        n_candidates: Number of uniformly-spaced split positions
+            evaluated per axis per recursion (default 32 — the standard
+            "binned SAH" budget). Higher = closer to a continuous
+            optimum at higher cost.
+
+    Returns:
+        Same return shape as :func:`midpoint_bsp_partition` — a list of
+        index arrays whose concatenation permutes ``range(N)``.
+
+    Notes:
+        Pure NumPy. Cost per recursion is ``O(N * n_candidates * 3)``.
+        For the same dataset SAH typically produces fewer but more
+        view-frustum-aligned parts than midpoint; the practical
+        difference shows up on heavily skewed real-world data (one dense
+        cluster + a long thin streamer).
+    """
+    if positions.ndim != 2:
+        raise ValueError(
+            f"positions must be 2-D (N, d); got shape {positions.shape}"
+        )
+    if positions.shape[1] < 3:
+        raise ValueError(
+            "sah_bsp_partition needs at least 3 spatial dimensions; "
+            f"got positions with shape {positions.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+    if n_candidates < 2:
+        raise ValueError(
+            f"n_candidates must be >= 2 (need at least one interior split); "
+            f"got {n_candidates}"
+        )
+
+    n = positions.shape[0]
+    if n == 0:
+        return []
+
+    spatial = positions[:, :3]
+
+    def surface_area(mins: NDArray, maxs: NDArray) -> float:
+        ext = np.maximum(0.0, maxs - mins)
+        # 2*(xy + xz + yz) — half-surface-area also works (constant
+        # factor washes through the argmin), but full SA matches the
+        # textbook form.
+        return float(
+            2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2])
+        )
+
+    result: List[NDArray[np.intp]] = []
+
+    def recurse(indices: NDArray[np.intp]) -> None:
+        if indices.size <= max_elements:
+            result.append(indices)
+            return
+        sub = spatial[indices]
+        mins = sub.min(axis=0)
+        maxs = sub.max(axis=0)
+        extents = maxs - mins
+        if not np.any(extents > 0):
+            result.append(indices)
+            return
+
+        best_score = np.inf
+        best_axis = -1
+        best_pos = 0.0
+        for axis in range(3):
+            if extents[axis] == 0:
+                continue
+            # Uniform candidate positions strictly interior to the box.
+            cand = np.linspace(
+                mins[axis], maxs[axis], n_candidates + 2
+            )[1:-1]
+            for pos in cand:
+                left_mask = sub[:, axis] < pos
+                n_left = int(left_mask.sum())
+                n_right = int(indices.size - n_left)
+                if n_left == 0 or n_right == 0:
+                    continue
+                # Left/right boxes have the same extent on the
+                # non-split axes; on the split axis they shrink to
+                # [mins[axis], pos] and [pos, maxs[axis]] respectively.
+                left_mins = mins.copy()
+                left_maxs = maxs.copy()
+                left_maxs[axis] = pos
+                right_mins = mins.copy()
+                right_maxs = maxs.copy()
+                right_mins[axis] = pos
+                score = (
+                    n_left * surface_area(left_mins, left_maxs)
+                    + n_right * surface_area(right_mins, right_maxs)
+                )
+                if score < best_score:
+                    best_score = score
+                    best_axis = axis
+                    best_pos = float(pos)
+
+        if best_axis < 0:
+            # No interior split made progress — emit as one part.
+            result.append(indices)
+            return
+
+        left_mask = sub[:, best_axis] < best_pos
+        left = indices[left_mask]
+        right = indices[~left_mask]
+        if left.size == 0 or right.size == 0:
+            # Shouldn't happen given the SAH selection, but guard.
+            order = np.argsort(sub[:, best_axis], kind="stable")
+            half = indices.size // 2
+            left = indices[order[:half]]
+            right = indices[order[half:]]
+        recurse(left)
+        recurse(right)
+
+    recurse(np.arange(n, dtype=np.intp))
+    return result
+
+
+# ────────────────────────────────────────────────────────────────────────
 # Validator
 # ────────────────────────────────────────────────────────────────────────
 
