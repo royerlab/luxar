@@ -4,6 +4,8 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { showError } from '../../../ui/error-overlay';
+import { createInstancedLinesMesh, isAllSharpnessTwo } from '../../../rendering/line-geometry';
+import { materialManager } from '../../../rendering/material-manager';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
 import type { SceneManager } from '../../../scene/scene-manager';
@@ -128,33 +130,30 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // through the existing material-manager + node-factory pipeline,
     // and adds the resulting mesh to the scene. Returns `{type,
     // segmentCount, mesh}` so the bench can capture the actual
-    // instance count it ran against. Importing `synthetic-scene.ts`
-    // dynamically keeps it out of the production bundle's main
-    // chunk; tree-shaking trims the entry when `__luxarDebug` isn't
-    // referenced.
+    // instance count it ran against. `synthetic-scene.ts` is imported
+    // dynamically so the synthetic-line builder stays out of the main
+    // chunk; `line-geometry` and `material-manager` are already in
+    // the main bundle (they're production modules), so importing them
+    // statically here costs nothing extra.
     injectSyntheticScene: async (spec: {
       type: 'lines';
       count: number;
       bounds?: number;
       seed?: number;
     }) => {
-      // [core OOS] Wrap dynamic imports + synthetic-scene body in
-      // try/catch. Pre-fix, a rejection in any of the three dynamic
-      // imports (bundle issue, transient network failure, code-split
-      // chunk missing) or in `generateSyntheticLines` / material
-      // creation became an unhandled promise rejection. Debug
-      // consumers (`__luxarDebug.injectSyntheticScene({...})`) typically
-      // don't `await` with their own try/catch, so a URL like
-      // `?debug=1&inject=lines` could leave the page in a broken state
-      // with no visible signal. Now we surface the failure to the
-      // user-facing error overlay + log.error AND re-throw so callers
-      // that DO `await` still see the rejection.
+      // [core OOS] Wrap the dynamic synthetic-scene import +
+      // injection body in try/catch. Pre-fix, a rejection in the
+      // dynamic import (bundle issue, transient network failure,
+      // code-split chunk missing) or in `generateSyntheticLines` /
+      // material creation became an unhandled promise rejection.
+      // Debug consumers (`__luxarDebug.injectSyntheticScene({...})`)
+      // typically don't `await` with their own try/catch, so a URL
+      // like `?debug=1&inject=lines` could leave the page in a broken
+      // state with no visible signal. Now we surface the failure to
+      // the user-facing error overlay + log.error AND re-throw so
+      // callers that DO `await` still see the rejection.
       try {
         const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
-        const { createInstancedLinesMesh, isAllSharpnessTwo } = await import(
-          '../../../rendering/line-geometry'
-        );
-        const { materialManager } = await import('../../../rendering/material-manager');
         const cfg = generateSyntheticLines(spec);
         // Build the visual material directly through the
         // material-manager so the same blending / dispatch logic

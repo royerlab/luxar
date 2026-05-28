@@ -424,7 +424,7 @@ make check-deps
 # ✅ Hatch: Hatch, version 1.16.2
 # ✅ Node.js: v22.21.1 (via nvm)
 # ✅ npm: 10.9.4
-# ✅ pnpm: 10.27.0
+# ✅ pnpm: 11.4.0
 # ⚪ Rust not installed (optional)
 # ⚪ wasm-pack not installed (optional)
 ```
