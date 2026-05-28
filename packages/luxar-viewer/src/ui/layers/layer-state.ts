@@ -79,6 +79,26 @@ export interface LayerInfo {
    * layers.
    */
   splitPartCount?: number;
+  /**
+   * For ``kind === 'split'`` layers that wrap kind=lod descendants:
+   * absolute paths of every nested lod_group in the subtree. The
+   * "Active level" dropdown on the wrapper broadcasts to every path
+   * (clamped per-group by ``LODGroupRegistry.setSelectorMode`` on
+   * ragged ladders). Absent for non-Split layers and for Split layers
+   * with no nested LODs.
+   *
+   * Also used to compute the ``[N parts × M LODs]`` combined badge:
+   * when this list is non-empty, M is the maximum child count across
+   * nested groups (matches the dropdown's "highest level offered"
+   * affordance).
+   */
+  nestedLodGroupPaths?: string[];
+  /**
+   * Maximum LOD child count across the layer's nested lod_groups.
+   * Used by the dropdown to size its option list and by the combined
+   * badge. Absent unless ``nestedLodGroupPaths`` is non-empty.
+   */
+  nestedLodMaxChildCount?: number;
 }
 
 /** Computed shader uniforms from display range */
@@ -251,6 +271,36 @@ export class LayerStateManager {
         const splitPartCount =
           kind === 'split' ? (node.children?.length ?? 0) : undefined;
 
+        // Split-of-LOD discovery. A kind=split layer that wraps
+        // kind=lod descendants gets a broadcast dropdown over every
+        // nested lod_group. The walk stops at the first lod_group it
+        // hits per branch — an lod_group's own children are leaves of
+        // the LOD ladder, not further LOD wrappers.
+        let nestedLodGroupPaths: string[] | undefined;
+        let nestedLodMaxChildCount: number | undefined;
+        if (kind === 'split') {
+          const collected: string[] = [];
+          let maxCount = 0;
+          const visit = (n: SceneNode): void => {
+            const childKind = n.attrs.kind as LayerKind | undefined;
+            if (
+              n.type === 'group' &&
+              childKind === 'lod' &&
+              n !== node // skip self
+            ) {
+              collected.push(n.path);
+              maxCount = Math.max(maxCount, n.children?.length ?? 0);
+              return; // do not descend into this lod_group's children
+            }
+            for (const c of n.children ?? []) visit(c);
+          };
+          for (const c of node.children ?? []) visit(c);
+          if (collected.length > 0) {
+            nestedLodGroupPaths = collected;
+            nestedLodMaxChildCount = maxCount;
+          }
+        }
+
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
@@ -271,6 +321,8 @@ export class LayerStateManager {
           scalarDataRange: colormapScalarRange,
           lodGroupChildCount,
           splitPartCount,
+          nestedLodGroupPaths,
+          nestedLodMaxChildCount,
         });
       }
     }
