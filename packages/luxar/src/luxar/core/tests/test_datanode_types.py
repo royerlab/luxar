@@ -389,6 +389,8 @@ class TestGSplatsNode:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             gsplats = scene.add_gsplats_from_data("from_result", result)
 
+            # Single-substitutive path returns GSplats, not LODGroup.
+            assert isinstance(gsplats, GSplats)
             assert gsplats.n_splats == 2
             assert gsplats.ndim == 2
             assert gsplats.has_colors is True

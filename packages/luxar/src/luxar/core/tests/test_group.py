@@ -6,6 +6,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
+from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
 from luxar.io.compiler import LuxarZarrCompiler
 
@@ -192,6 +193,8 @@ class TestMultiLODGSplats:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats_from_data("splats", data)
 
+            # Single-substitutive path returns GSplats, not LODGroup.
+            assert isinstance(node, GSplats)
             assert node.n_splats == 8  # 5 + 3
 
         store = zarr.open(str(output_path), mode="r")
@@ -531,17 +534,42 @@ class TestLodGroupAxis:
             # K=2, L=1 → 2 substitutive levels total
             assert len(node.children) == 2
 
-    def test_dict_without_recompute_uses_stored(self, tmp_path) -> None:
-        """``dict(...)`` with stored levels and no recompute uses stored."""
+    def test_dict_with_stored_and_compute_kwargs_raises(self, tmp_path) -> None:
+        """``dict(...)`` carrying compute kwargs against stored levels raises.
+
+        Silently dropping ``compression_factor`` / ``levels`` when stored
+        substitutive levels are present is a footgun — the user's intent is
+        ambiguous. Require an explicit ``recompute=True`` to discard the
+        stored pyramid, or drop the compute kwargs to reuse it.
+        """
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="compute kwargs"):
+                scene.add_gsplats_from_data(
+                    "multires",
+                    data,
+                    lod_group=dict(compression_factor=4, levels=3),
+                )
+
+    def test_dict_empty_with_stored_reuses_stored(self, tmp_path) -> None:
+        """``dict()`` with no compute kwargs and stored levels reuses stored.
+
+        Companion to ``test_dict_with_stored_and_compute_kwargs_raises``:
+        a bare ``dict()`` (or one carrying only ``min_pixel_sizes``) is
+        unambiguous — reuse the stored pyramid.
+        """
+        from luxar.core import LODGroup
+
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats_from_data(
                 "multires",
                 data,
-                lod_group=dict(compression_factor=4, levels=3),  # would compute 4 levels if recomputed
+                lod_group=dict(),
             )
-            # Returned the stored 2-level structure, not a new 4-level one.
+            assert isinstance(node, LODGroup)
             assert len(node.children) == 2
 
     def test_dict_recompute_forces_recomputation(self, tmp_path) -> None:
@@ -587,6 +615,44 @@ class TestLodGroupAxis:
                     "splats",
                     data,
                     lod_group=dict(min_pixel_sizes=[0.0, 100.0, 500.0]),  # 3 entries
+                )
+
+    def test_min_pixel_sizes_not_strictly_ascending_raises(self, tmp_path) -> None:
+        """Explicit ``min_pixel_sizes`` must be strictly increasing coarsest→finest.
+
+        The resolver checks this directly so callers fail at the
+        ``add_gsplats_from_data`` call site, not at a later
+        ``LODGroup.validate()`` invocation the user may never make.
+        """
+        data = _make_multi_substitutive_gsplat_data()  # 2 levels
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="strictly increasing"):
+                scene.add_gsplats_from_data(
+                    "splats",
+                    data,
+                    lod_group=dict(min_pixel_sizes=[100.0, 50.0]),  # decreasing
+                )
+
+    def test_min_pixel_size_attr_rejected_on_multi_substitutive(
+        self, tmp_path
+    ) -> None:
+        """Passing ``min_pixel_size=`` to multi-substitutive path raises.
+
+        Multi-substitutive paths derive ``min_pixel_size`` per child. An
+        explicit value here is ambiguous — and worse, used to provoke
+        ``TypeError: multiple values for keyword argument 'min_pixel_size'``
+        inside the LODGroup expansion.
+        """
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="min_pixel_size"):
+                scene.add_gsplats_from_data(
+                    "multires",
+                    data,
+                    lod_group=True,
+                    min_pixel_size=42.0,
                 )
 
     def test_unknown_spec_type_raises(self, tmp_path) -> None:

@@ -163,7 +163,12 @@ describe('loadLodGroupNode — registry registration', () => {
     expect(reg.get('/lod')!.activeChildIndex).toBe(1);
   });
 
-  it('children load with ready=true so the selector can swap immediately', async () => {
+  it('registers every loaded child with its threshold and bounds', async () => {
+    // Atomic-swap on initial load is enforced by the loader's
+    // sequential-await + visible=false-after-attach pattern + atomic
+    // ``register()`` at the end (see the no-stacked-LOD-flash test
+    // below). The selector itself no longer carries a per-child
+    // readiness flag.
     attachStubChildren();
     const reg = new LODGroupRegistry({
       getCamera: () => new THREE.Camera(),
@@ -178,9 +183,8 @@ describe('loadLodGroupNode — registry registration', () => {
     ]);
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
     const entry = reg.get('/lod')!;
-    for (const child of entry.children) {
-      expect(child.ready).toBe(true);
-    }
+    expect(entry.children).toHaveLength(2);
+    expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100]);
   });
 
   it('falls back to center_bounds when position_bounds is absent', async () => {
