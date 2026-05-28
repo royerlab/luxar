@@ -120,6 +120,16 @@ export async function loadLodGroupNode(
       continue;
     }
 
+    // Hide the child immediately. Each leaf loader attaches its
+    // placeholder with the THREE default ``visible = true`` and the
+    // loop below `await`s the next child's commit, so without this
+    // line every already-loaded sibling renders simultaneously during
+    // the load — a brief "stacked LOD levels" flash on initial load
+    // (and on the no-registry fallback path too). ``register()``
+    // re-enables the chosen active child synchronously at the end of
+    // this function, so the swap is atomic from the user's POV.
+    childObject.visible = false;
+
     const minPixelSizeRaw = (child.attrs as Record<string, unknown>).min_pixel_size;
     const minPixelSize =
       typeof minPixelSizeRaw === 'number' ? minPixelSizeRaw : 0;

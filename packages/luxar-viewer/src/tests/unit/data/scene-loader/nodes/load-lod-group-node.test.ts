@@ -240,3 +240,55 @@ describe('loadLodGroupNode — without a registry', () => {
     expect(lodGroup.children[2].visible).toBe(false);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Regression: no transient "stacked LOD levels" flash during load
+// ────────────────────────────────────────────────────────────────────────
+
+describe('loadLodGroupNode — transient visibility', () => {
+  it('hides each child immediately upon attach (no stacked-LOD flash)', async () => {
+    // Instrument the loadSceneNodes mock to snapshot every sibling's
+    // visibility at the moment each new child is attached. Without the
+    // loader-side ``childObject.visible = false`` line, previously-loaded
+    // children would still be visible=true here — the user briefly sees
+    // every loaded LOD level rendered simultaneously.
+    const visibilitySnapshots: { childPath: string; siblings: Record<string, boolean> }[] =
+      [];
+    loadSceneNodesMock.mockImplementation(
+      async (node: SceneNode, parent: THREE.Object3D) => {
+        // Snapshot sibling state BEFORE attaching this new child, so we
+        // see what the user would have momentarily rendered.
+        const siblings: Record<string, boolean> = {};
+        for (const c of parent.children) {
+          if (c.name) siblings[c.name] = c.visible;
+        }
+        visibilitySnapshots.push({ childPath: node.path, siblings });
+        // Now attach the new child (default visible=true per THREE).
+        const mesh = new THREE.Mesh();
+        mesh.name = node.path;
+        parent.add(mesh);
+      }
+    );
+
+    const ctx = makeCtx(/* no registry — exercises the fallback path */);
+    const node = makeLodGroupNode([
+      makeChildNode('/lod/child_0', 0),
+      makeChildNode('/lod/child_1', 100),
+      makeChildNode('/lod/child_2', 500),
+    ]);
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+
+    // For every load-iteration AFTER the first, every already-attached
+    // sibling must be hidden. The first iteration has no siblings to
+    // check.
+    for (let i = 1; i < visibilitySnapshots.length; i++) {
+      const snap = visibilitySnapshots[i];
+      for (const [siblingPath, visible] of Object.entries(snap.siblings)) {
+        expect(
+          visible,
+          `at the moment ${snap.childPath} was attached, sibling ${siblingPath} was visible — stacked-LOD flash`
+        ).toBe(false);
+      }
+    }
+  });
+});
