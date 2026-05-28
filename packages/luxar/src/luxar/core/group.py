@@ -873,13 +873,9 @@ class Group(Node):
 
         parent_node = parent or self
         # All children in this branch are gsplats leaves, so the user-facing
-        # ``display_type`` is unambiguously "gsplats". Set it here rather
-        # than deferring to a viewer-side resolution from children: keeps
-        # the on-disk attrs self-describing.
+        # ``display_type`` is unambiguously "gsplats". Set it here so the
+        # on-disk attrs are self-describing.
         lod_attrs.setdefault("display_type", "gsplats")
-        # ``add_lod_group`` returns a regular ``Group`` with ``kind="lod"``
-        # in its attrs (since the ``LODGroup`` subclass was collapsed into
-        # the flagged-Group design).
         lod_group_node: Group = parent_node.add_lod_group(name, **lod_attrs)
 
         aprint(

@@ -221,16 +221,11 @@ Group nodes organize the scene hierarchy and can contain child nodes.
 ### 2. Group Kinds — Specialized `group` Nodes
 
 A `Group` may carry an optional `kind` attribute that turns it into a
-specialized container with viewer-aware semantics. The class hierarchy
-that earlier versions used for this (an `LODGroup(Group)` Python
-subclass + a distinct `type: "lod_group"` node) has been collapsed into
-a flagged `Group` so additional kinds can slot in without a new node
-type per kind.
-
-Specialized groups also carry a `display_type` attribute (one of
-`"points"`, `"lines"`, `"gsplats"`) that tells the layers panel which
-geometry-type label to show: the user sees one logical layer of
-`display_type` and never knows which internal structure renders it.
+specialized container with viewer-aware semantics. Specialized groups
+also carry a `display_type` attribute (one of `"points"`, `"lines"`,
+`"gsplats"`) — the layers panel uses this for the user-facing type
+label, so a layer reads as one logical entity of `display_type` rather
+than as a "group".
 
 #### `kind: "lod"` — Level-of-Detail group
 
