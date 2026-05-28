@@ -73,6 +73,12 @@ export interface LayerInfo {
    * Absent for non-LOD layers.
    */
   lodGroupChildCount?: number;
+  /**
+   * For ``kind === 'split'`` layers: number of BSP child parts. Drives
+   * the "N parts" badge on the layer header. Absent for non-Split
+   * layers.
+   */
+  splitPartCount?: number;
 }
 
 /** Computed shader uniforms from display range */
@@ -238,11 +244,12 @@ export class LayerStateManager {
             ? displayType
             : (node.type as LayerType);
 
-        // kind=lod child count — drives the "Active level" dropdown's
-        // option list AND the "N LODs" header badge. Other layers leave
-        // this undefined.
+        // Kind-specific badge counts. lod → "N LODs" + dropdown; split →
+        // "N parts" status chip. Other layers leave both undefined.
         const lodGroupChildCount =
           kind === 'lod' ? (node.children?.length ?? 0) : undefined;
+        const splitPartCount =
+          kind === 'split' ? (node.children?.length ?? 0) : undefined;
 
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
@@ -263,6 +270,7 @@ export class LayerStateManager {
           supportsColormap,
           scalarDataRange: colormapScalarRange,
           lodGroupChildCount,
+          splitPartCount,
         });
       }
     }

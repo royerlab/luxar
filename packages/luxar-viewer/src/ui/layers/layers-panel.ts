@@ -443,6 +443,22 @@ export class LayersPanel {
     badge.className = 'luxar-layer-row__badge';
     badge.textContent = typeMap[layer.type] || layer.type;
 
+    // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``
+    // for kind=split. Appears alongside the type badge; visible-only when
+    // the count is > 0.
+    let kindBadge: HTMLSpanElement | null = null;
+    if (layer.kind === 'lod' && (layer.lodGroupChildCount ?? 0) > 0) {
+      kindBadge = document.createElement('span');
+      kindBadge.className =
+        'luxar-layer-row__badge luxar-layer-row__badge--kind';
+      kindBadge.textContent = `${layer.lodGroupChildCount} LODs`;
+    } else if (layer.kind === 'split' && (layer.splitPartCount ?? 0) > 0) {
+      kindBadge = document.createElement('span');
+      kindBadge.className =
+        'luxar-layer-row__badge luxar-layer-row__badge--kind';
+      kindBadge.textContent = `${layer.splitPartCount} parts`;
+    }
+
     // Row click — selection
     this.events.on(row, 'click', (e) => {
       let mode: SelectionMode = 'single';
@@ -481,6 +497,9 @@ export class LayersPanel {
     row.appendChild(eyeBtn);
     row.appendChild(nameEl);
     row.appendChild(badge);
+    if (kindBadge !== null) {
+      row.appendChild(kindBadge);
+    }
     return row;
   }
 

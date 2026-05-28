@@ -294,6 +294,68 @@ scene.add_gsplats_from_data(
 )
 ```
 
+#### `kind: "split"` — Spatial-decomposition group
+
+Decomposes a single large leaf node (10M+ elements) into N smaller
+children for per-child frustum culling and per-child LOD. The user
+adds one node; the writer splits it via recursive midpoint BSP at
+compile time. The viewer renders all children simultaneously (no
+per-frame selector — THREE's per-mesh frustum culling does the
+per-part culling).
+
+Children are **homogeneous**: every child's resolved `display_type`
+must match the wrapper's (you cannot decompose a single logical
+layer into mixed-type parts).
+
+**Attributes (.zattrs):**
+```json
+{
+  "type": "group",
+  "kind": "split",
+  "display_type": "points",     // All children resolve to this type.
+  "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
+  "position_bounds": {           // Union of children's bboxes — lets
+    "min": [-10, -10, -10],     //   picking / framing / scene-bounds-cache
+    "max": [10, 10, 10]          //   treat the layer as one logical entity.
+  },
+  "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+  "nd_transform": { ... },      // Optional, same shape as on plain Group nodes
+  "opacity": 1.0,
+  "gamma": 1.0,
+  "intensity": 1.0,
+  "offset": 0.0,
+  "blending_mode": "additive",
+  "layer": false,               // Optional: expose in the Layers panel with
+                                //   a "N parts" badge
+  "visible": true
+}
+```
+
+**Children**:
+- Subgroup naming is **not** enforced; the convenience kwarg writes
+  `part_0`, `part_1`, … in BSP recursion order.
+- Each child is a standard `points` / `lines` / `gsplats` node (or
+  itself a kind=lod / kind=split group). All must resolve to the
+  same `display_type`.
+
+**Builder API (Python):**
+```python
+# Convenience kwarg on the leaf adders — split applies at compile time
+# and the user never sees the wrapper unless they inspect the zarr:
+scene.add_points("pts", positions, split=True)                 # default cap
+scene.add_points("pts", positions, split=dict(max_elements=500_000))
+scene.add_gsplats("splats", centers, amplitudes, cholesky,
+                  split=dict(max_elements=2_000_000))
+
+# Manual (explicit tree construction):
+split = scene.add_split_group("manual",
+                              display_type="points",
+                              max_elements=500_000,
+                              layer=True)
+split.add_points("part_0", subset0)
+split.add_points("part_1", subset1)
+```
+
 ### 3. Points Nodes
 
 Points nodes contain the actual point data.
