@@ -3,7 +3,10 @@
 Initial-load helpers that walk a zarr scene graph and attach the
 matching THREE.js objects to the scene. One file per first-class
 geometry kind (Points, Lines, GSplats) wraps the `loader-factory.ts`
-construction + placeholder + initial-fetch + commit dance; shared
+construction + placeholder + initial-fetch + commit dance. Two more
+files cover the specialized-`Group` kinds (`load-lod-group-node.ts`
+for `kind="lod"` view-driven LOD selection, `load-split-group-node.ts`
+for `kind="split"` compile-time BSP decomposition). Shared
 infrastructure handles store enumeration, scene-graph building,
 dimension initialization, monitor wiring, error dispatch, and the
 recursive walk.
@@ -26,6 +29,8 @@ and retry-after-failure.
 | `load-points-node.ts`            | `loadPointsNode` — initial-load wrapper for a single Points leaf. Builds the loader, registers it, attaches an empty placeholder, derives the per-node view state (with `applyPartialExtendTolerance: true`), fetches points, and commits through `updatePointsGeometry`. Throws `LoaderError` on failure.                                       |
 | `load-lines-node.ts`             | `loadLinesNode` — mirror of `loadPointsNode` for Lines. Differs in one place: the data fetch uses `applyPartialExtendTolerance: false` because segment bounds already encode non-displayed spatial extent (the override would double-apply during clipping). Commits via `processLinesData` + `commitLinesGeometry`.                             |
 | `load-gsplats-node.ts`           | `loadGSplatsNode` — mirror of `loadPointsNode` for GSplats. Branches on `n_lods`: multi-LOD nodes (`n_lods > 1`) use the progressive loader (with parent's composed effective attrs so LOD synthetic nodes inherit opacity/intensity); single-LOD nodes use the standard loader. Commits via `processGSplatsData` + `commitGSplatsGeometry`.     |
+| `load-lod-group-node.ts`         | `loadLodGroupNode` — initial-load for a kind=`lod` `Group`. Creates a `THREE.Group`, applies its transform, recurses each child via `loadSceneNodes` to attach a placeholder mesh, then registers a `LODGroupEntry` (children + their `min_pixel_size` / `position_bounds` + `default_level`) with the `LODGroupRegistry` so the per-frame selector picks which child renders. Children are hidden immediately on attach so the sequential-load loop can't flash all levels at once; `register()` re-enables exactly one synchronously at the end. |
+| `load-split-group-node.ts`       | `loadSplitGroupNode` — initial-load for a kind=`split` `Group`. Creates a `THREE.Group`, applies its transform, recurses children via `loadSceneNodes`. All children stay visible — no per-frame selector — and THREE's per-mesh frustum culling handles per-part culling. The wrapper's `position_bounds` (union over children) sits on its on-disk attrs already, so picking / scene-bounds-cache treat the layer as one logical entity.   |
 | `connect-loader-to-monitor.ts`   | `connectLoaderToMonitor(path, loader, monitor)` — duck-type-guarded wiring. Points loaders always implement the full `LoaderMonitor` surface; Lines/GSplats expose it optionally. Checks for the four-method shape (`addEventListener`/`removeEventListener`/`getMetrics`/`getActiveQueries`) before wiring. Null monitor short-circuits.        |
 | `load-leaf-error-dispatch.ts`    | `LoaderError` class + `classifyLoaderError(error)` heuristic + `loadLeafNode(load, path)` wrapper. Catches `LoaderError` thrown by a leaf, logs+toasts by kind (Network warns, Decode/Validation/Unexpected error-logs and toasts), returns `null` so the failing leaf doesn't sink the rest of the scene. Re-throws non-LoaderError exceptions. |
 
