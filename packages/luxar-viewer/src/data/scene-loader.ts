@@ -1052,6 +1052,14 @@ export class SceneLoader {
       monitor: this.monitor,
     });
 
+    // Defensive: drop every entry in the LOD-group registry so the
+    // per-frame callback (which lives on the SceneLoaderManager and
+    // outlives individual SceneLoader instances) cannot observe stale
+    // THREE objects from this scene. Currently the manager swaps to a
+    // new registry instance per loader, but clearing here protects
+    // against future refactors that share registries across scenes.
+    this.lodGroupRegistry?.clear();
+
     // Clear the orchestrator's nullable fields. The helper handled the
     // actual resource-release work; the references stay live across the
     // await so the helper can address them.

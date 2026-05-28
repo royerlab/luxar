@@ -157,7 +157,12 @@ export async function runInitPipeline(
           height: canvas.clientHeight || window.innerHeight,
         };
       },
-      getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [0, 1, 2],
+      // Return an empty list when scene dimensions aren't initialized
+      // yet rather than the misleading ``[0, 1, 2]`` default — for
+      // 2D scenes the latter projected onto a phantom Z axis. The
+      // registry's existing ``displayDims.length < 2`` early-return
+      // skips evaluation in this state.
+      getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
     });
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {

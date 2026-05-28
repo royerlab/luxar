@@ -138,14 +138,6 @@ export async function loadLodGroupNode(
       object: childObject,
       minPixelSize,
       positionBounds: readPositionBounds(child.attrs),
-      // loadSceneNodes above is fully async and only resolves once
-      // each leaf's initial commitX*Geometry has run — so by the
-      // time we get here the child has data on the GPU. Mark ready
-      // so the selector can swap to it without further signals.
-      // (A failed leaf load still attaches a placeholder; the
-      // selector might briefly show an empty level in that case,
-      // matching the existing fallback behaviour for leaf failures.)
-      ready: true,
     });
   }
 

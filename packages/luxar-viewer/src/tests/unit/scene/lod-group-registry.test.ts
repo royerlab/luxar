@@ -9,8 +9,8 @@
  *     downgrade flicker but doesn't impede upgrades.
  *
  *   - The full registry: register/unregister, lock override, visibility
- *     swap on auto-mode evaluation, and the "keep old until new is
- *     ready" contract.
+ *     swap on auto-mode evaluation, and the clamp-on-out-of-range lock
+ *     behaviour.
  *
  * The bbox-projection helper (``projectBoxDiagonalPx``) is exercised
  * indirectly through end-to-end registry evaluation against a
@@ -131,12 +131,11 @@ describe('projectBoxDiagonalPx', () => {
 // Registry — registration, lock override, swap behaviour
 // ────────────────────────────────────────────────────────────────────────
 
-function makeChild(minPixelSize: number, ready: boolean = true): LODGroupChild {
+function makeChild(minPixelSize: number): LODGroupChild {
   return {
     object: new THREE.Group(),
     minPixelSize,
     positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
-    ready,
   };
 }
 
@@ -194,10 +193,27 @@ describe('LODGroupRegistry — registration', () => {
 });
 
 describe('LODGroupRegistry — selector mode', () => {
-  it('setSelectorMode rejects out-of-range lockLevel', () => {
+  it('setSelectorMode clamps out-of-range lockLevel and warns', () => {
     const reg = makeRegistry();
-    reg.register(makeEntry([makeChild(0), makeChild(100)], 0, '/g'));
-    expect(() => reg.setSelectorMode('/g', { lockLevel: 5 })).toThrow(/lockLevel/);
+    const children = [makeChild(0), makeChild(100)];
+    reg.register(makeEntry(children, 0, '/g'));
+    // Out-of-range lockLevel must not throw — UI state can drift from
+    // registry state if it does. The registry clamps into [0, n-1]
+    // and re-emits a warning so the bug surfaces in the log.
+    reg.setSelectorMode('/g', { lockLevel: 5 });
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(false);
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it('setSelectorMode clamps negative lockLevel to 0', () => {
+    const reg = makeRegistry();
+    const children = [makeChild(0), makeChild(100)];
+    reg.register(makeEntry(children, 1, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: -3 });
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true);
+    expect(children[1].object.visible).toBe(false);
   });
 
   it('lock override swaps to the locked child on the next evaluation', () => {
@@ -215,28 +231,16 @@ describe('LODGroupRegistry — selector mode', () => {
     // Should not throw.
     reg.setSelectorMode('/missing', { lockLevel: 0 });
   });
-});
 
-describe('LODGroupRegistry — readiness gate', () => {
-  it('does not swap to a child whose ready flag is false', () => {
+  it('swaps atomically when the locked level changes', () => {
+    // Atomic swap supersedes the old per-child readiness gate: each
+    // child is already visible-false until the registry picks it
+    // (loadLodGroupNode ensures that on initial load via the
+    // sequential-await + visible=false-after-attach pattern).
     const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100, false /* unready */)];
+    const children = [makeChild(0), makeChild(100)];
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
-    reg.evaluatePerFrame();
-    // child 1 is unready → active stays on 0.
-    expect(children[0].object.visible).toBe(true);
-    expect(children[1].object.visible).toBe(false);
-  });
-
-  it('swaps once markChildReady flips the flag', () => {
-    const reg = makeRegistry();
-    const children = [makeChild(0), makeChild(100, false)];
-    reg.register(makeEntry(children, 0, '/g'));
-    reg.setSelectorMode('/g', { lockLevel: 1 });
-    reg.evaluatePerFrame();
-    expect(children[1].object.visible).toBe(false);
-    reg.markChildReady('/g', 1);
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true);
     expect(children[0].object.visible).toBe(false);

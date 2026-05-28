@@ -190,6 +190,29 @@ class TestLODGroupValidation:
             lod.validate()
             assert lod.child_min_pixel_sizes() == [0.0, 10.0, 50.0]
 
+    def test_validate_rejects_default_level_out_of_range(self, tmp_path) -> None:
+        """``default_level`` past the number of children must fail validation.
+
+        ``__init__`` cannot check this (children are added later); the
+        check fires in ``validate()``. Without it, a bad value sails into
+        the on-disk zarr and only surfaces at viewer load time.
+        """
+        centers = np.array([[0, 0, 0]], dtype=np.float32)
+        chol = np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires", default_level=99)
+            for i, mps in enumerate([0.0, 10.0]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=centers,
+                    amplitudes=1.0,
+                    cholesky_factors=chol,
+                    min_pixel_size=mps,
+                )
+            with pytest.raises(ValueError, match="default_level=99"):
+                lod.validate()
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Auto-derivation heuristic
