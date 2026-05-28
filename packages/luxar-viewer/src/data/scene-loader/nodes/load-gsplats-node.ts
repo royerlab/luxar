@@ -3,12 +3,10 @@
  *
  * Mirrors `load-points-node.ts` and `load-lines-node.ts`. The wrinkle
  * specific to GSplats is the LOD branch: multi-additive nodes
- * (`n_additive_sublods_default > 1`) get a progressive loader that
- * composes effective rendering attrs up the scene-graph ancestry so
- * LOD synthetic nodes inherit opacity/intensity from ancestors.
- * Single-LOD nodes get the standard loader. The default substitutive
- * level (`default_substitutive`) selects which substitutive pyramid
- * row to render at initial load.
+ * (`n_additive_sublods > 1`) get a progressive loader that composes
+ * effective rendering attrs up the scene-graph ancestry so LOD
+ * synthetic nodes inherit opacity/intensity from ancestors. Single-LOD
+ * nodes get the standard loader.
  *
  * Sibling of `data/gsplats/handler.ts` (update path).
  */
@@ -45,13 +43,11 @@ function createGSplatsLoader(
 async function createProgressiveGSplatsLoader(
   node: SceneNode,
   nAdditive: number,
-  defaultSub: number,
   ctx: NodeBuildCtx
 ): Promise<GSplatsDataLoader> {
   const loader = await createProgressiveGSplatsLoaderHelper(
     node,
     nAdditive,
-    defaultSub,
     ctx.applyEffectiveAttrs(node),
     ctx.factoryDeps
   );
@@ -61,10 +57,9 @@ async function createProgressiveGSplatsLoader(
 
 /**
  * Load a single GSplats node on initial scene construction. Branches
- * on `n_additive_sublods_default` to pick the progressive vs
- * single-LOD loader; `default_substitutive` selects the rendered
- * substitutive level. See `load-points-node.ts` for the shared
- * placeholder + commit rationale.
+ * on `n_additive_sublods` to pick the progressive vs single-LOD
+ * loader. See `load-points-node.ts` for the shared placeholder +
+ * commit rationale.
  */
 export async function loadGSplatsNode(
   node: SceneNode,
@@ -73,23 +68,13 @@ export async function loadGSplatsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const attrs = node.attrs as unknown as GSplatsMetadata;
-  // v2.0 surfaces the default substitutive level's additive sub-LOD count
-  // as `n_additive_sublods_default` on the splats group attrs. Progressive
-  // loading kicks in when that count > 1.
-  const nAdditive = attrs.n_additive_sublods_default ?? 0;
-  const defaultSub = attrs.default_substitutive ?? 0;
+  const nAdditive = attrs.n_additive_sublods ?? 0;
   log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
   log.info(
     Modules.SCENE_LOADER,
-    `  Splats: ${(nAdditive > 1 ? (attrs.n_splats_total ?? attrs.n_splats) : attrs.n_splats)?.toLocaleString() || 'unknown'}`
+    `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`
   );
   log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
-  if ((attrs.n_substitutive ?? 1) > 1) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `  Substitutive levels: ${attrs.n_substitutive} (rendering default level ${defaultSub})`
-    );
-  }
   if (nAdditive > 1) {
     log.info(
       Modules.SCENE_LOADER,
@@ -100,7 +85,7 @@ export async function loadGSplatsNode(
   // Create gsplats loader — progressive for multi-additive, standard otherwise
   const loader =
     nAdditive > 1
-      ? await createProgressiveGSplatsLoader(node, nAdditive, defaultSub, ctx)
+      ? await createProgressiveGSplatsLoader(node, nAdditive, ctx)
       : createGSplatsLoader(node, loc, ctx);
 
   // Store loader for updates (route through registry).

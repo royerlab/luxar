@@ -641,11 +641,15 @@ class Group(Node):
     ) -> GSplats:
         """Add Gaussian splats from a GSplatData object.
 
-        Multi-LOD data (from progressive fitting or `make_additive_lod`)
-        is written with per-additive-sub-LOD subgroups under a single
-        substitutive level (``substitutive_0/additive_<i>/...``),
-        matching the standalone ``.gsplats.zarr`` v2.0 layout for a
-        ``[1, M]`` pyramid. Single-LOD data uses the flat layout.
+        Multi-additive-LOD data (from progressive fitting or
+        ``make_additive_lod``) is written with per-sub-LOD subgroups
+        directly under the gsplats node (``<node>/additive_<i>/...``)
+        for progressive (prefix-sum) loading. Single-LOD data uses the
+        flat layout (arrays at the node path).
+
+        If ``result`` carries substitutive levels (``n_substitutive > 1``),
+        only the default substitutive level is written; other
+        substitutive levels are dropped.
 
         Args:
             name: Name of the gsplats node
@@ -813,6 +817,11 @@ class Group(Node):
         **attrs: Any,
     ) -> GSplats:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
+
+        If the source file carries multiple substitutive levels, only the
+        default substitutive level's additive ladder is written into the
+        scene; other substitutive levels are dropped (see
+        ``add_gsplats_from_data`` for the convention).
 
         Args:
             name: Name of the gsplats node

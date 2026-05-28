@@ -12,6 +12,15 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 - [GSplats Dimension Mapping](GSPLATS_DIMENSION_MAPPING.md) — Dimension mapping for nD scenes
 - [nD Transforms](../guides/specs/ND_TRANSFORMS_SPEC.md) — nD navigation and transforms
 
+> **Scope note.** This format is a Python-side **processing artifact** —
+> the output of `luxar gsplat fit`, `lod additive`, `lod substitutive`,
+> `lod pyramid`, etc. The viewer never consumes a `.gsplats.zarr`
+> directly. When gsplats land in a **scene** (loadable by the viewer),
+> the substitutive axis is not carried inline; only the additive ladder
+> is. Substitutive levels are dropped at scene-write time (only the
+> default substitutive level survives) — see
+> ``Group.add_gsplats_from_data``.
+
 ---
 
 ## Use Cases
@@ -686,9 +695,12 @@ with LuxarZarrCompiler("scene.zarr") as compiler:
     scene.add_gsplats_from_volume("nuclei", image, progressive=True)
 ```
 
-Multi-LOD scene nodes use per-LOD subgroups (lod_0/, lod_1/, ...)
-matching the standalone v1.1 format.  The viewer can load LODs
-incrementally for progressive rendering.
+Multi-additive-LOD scene nodes use per-sub-LOD subgroups
+(``additive_0/``, ``additive_1/``, …) flat under the gsplats node —
+no substitutive wrapper. The viewer streams these progressively
+(prefix-sum LODs). Substitutive levels carried by a ``GSplatData``
+input are dropped at scene-write time; only the default substitutive
+level's additive ladder is written into the scene.
 
 ---
 

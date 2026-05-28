@@ -1405,17 +1405,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         lod_stats: Optional[list[dict[str, Any]]] = None,
         **attrs: Any,
     ) -> dict[str, Any]:
-        """Write multi-LOD Gaussian splats to Zarr (v2.0 layout).
+        """Write multi-additive-LOD Gaussian splats to Zarr.
 
-        Writes a single-substitutive, multi-additive cell of the v2.0
-        layout:
+        Writes additive sub-LOD subgroups directly under the gsplats
+        node path:
 
-            <path>/substitutive_0/additive_<i>/{centers, amplitudes, ...}
+            <path>/additive_<i>/{centers, amplitudes, ...}
 
-        with ``n_substitutive=1`` on the splats group attrs and
-        ``n_additive_sublods=<n>`` on the substitutive group attrs. This
-        matches the standalone ``.gsplats.zarr`` v2.0 format for a
-        ``[1, M]`` shaped pyramid.
+        with ``n_additive_sublods=<n>`` on the splats group attrs. The
+        viewer streams these progressively (prefix-sum LODs).
+
+        Substitutive LODs (alternatives between which the viewer picks
+        one) are not represented in the scene format; assemble those at
+        scene-build time via the ``lod_group`` node type.
 
         Args:
             path: Path for the gsplats node within the store
@@ -1438,9 +1440,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Extract truncation_radius for spatial ordering (default 3.0)
         truncation_radius = float(attrs.get("truncation_radius", 3.0))
-
-        # All additive sub-LODs live under the single default substitutive level.
-        sub_group = group.require_group("substitutive_0")
 
         # Validate all LODs and collect metadata
         total_splats = 0
@@ -1467,8 +1466,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             elif nd != n_dims:
                 raise ValueError(f"LOD {i} has {nd}D data but LOD 0 has {n_dims}D")
 
-            # Write per-additive subgroup under substitutive_0
-            lod_group = sub_group.require_group(f"additive_{i}")
+            lod_group = group.require_group(f"additive_{i}")
             aprint(f"📝 Writing additive sub-LOD {i}: {ns:,} gsplats ({nd}D)")
 
             (
@@ -1551,25 +1549,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "amplitude_range": {"min": min(all_amp_mins), "max": max(all_amp_maxs)},
             "center_bounds": {"min": agg_min, "max": agg_max},
             "ordering": "none",  # aggregate has no single ordering
-            "n_substitutive": 1,
-            "default_substitutive": 0,
-            "n_additive_sublods_default": n_lods,
+            "n_additive_sublods": n_lods,
         }
 
         # Apply group attrs (rendering defaults, transforms, etc.)
         self._apply_gsplat_group_attrs(group, metadata, attrs)
 
-        # Write v2.0 layout attrs on the splats group and the substitutive
-        # group. The default substitutive's additive sub-LOD count lives on
-        # the substitutive group; the splats group surfaces the count of
-        # the default level for the viewer's progressive-loader decision.
-        group.attrs["format_version"] = "2.0"
-        group.attrs["n_substitutive"] = 1
-        group.attrs["default_substitutive"] = 0
-        group.attrs["n_additive_sublods_default"] = n_lods
-        sub_group.attrs["n_additive_sublods"] = n_lods
-        sub_group.attrs["compression_factor"] = 1
-        sub_group.attrs["level_index"] = 0
+        group.attrs["n_additive_sublods"] = n_lods
 
         # Update scene-level bounds
         self._update_scene_bounds(metadata["position_bounds"])
