@@ -275,6 +275,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         split: Any = None,
+        additive_lod: Any = None,
         **attrs: Any,
     ) -> Union[Points, "Group"]:
         """Add a points node.
@@ -397,9 +398,56 @@ class Group(Node):
                         extend_to_all=extend_to_all,
                         grid_shape=grid_shape,
                         max_elements=max_elements,
+                        additive_lod=additive_lod,
                         **attrs,
                     )
-                # 1 part → fall through to single-leaf write.
+                # 1 part → fall through to additive-LOD / single-leaf write.
+
+            # Additive-LOD branch — multi-level progressive writes via
+            # ``_add_points_multi_lod_wrapper``. Fires after the
+            # 1-part-split fall-through so a user can pass both
+            # ``split=`` and ``additive_lod=`` and get the inner LOD
+            # ladder when split doesn't fire.
+            if additive_lod is not None:
+                from .lod_points import (
+                    make_additive_lod_points,
+                    resolve_additive_axis_points,
+                )
+
+                additive_spec = resolve_additive_axis_points(additive_lod)
+                if additive_spec is not None:
+                    # Per-element radii needed for salience; broadcast
+                    # scalars to per-element array if applicable.
+                    if isinstance(radii, np.ndarray) and radii.shape == (n_points,):
+                        radii_arr = radii
+                    else:
+                        radii_arr = None
+                    levels = make_additive_lod_points(
+                        pos_arr,
+                        radii=radii_arr,
+                        method=additive_spec["method"],
+                        n_lods=additive_spec["n_lods"],
+                        counts=additive_spec["counts"],
+                        seed=additive_spec["seed"],
+                    )
+                    if len(levels) > 1:
+                        return self._add_points_multi_lod_wrapper(
+                            name=name,
+                            pos_arr=pos_arr,
+                            levels=levels,
+                            n_points=n_points,
+                            colors=colors,
+                            radii=radii,
+                            sharpness=sharpness,
+                            scalars=scalars,
+                            labels=labels,
+                            parent=parent,
+                            extend_to_all=extend_to_all,
+                            grid_shape=grid_shape,
+                            method=additive_spec["method"],
+                            **attrs,
+                        )
+                    # 1 level (degenerate) → fall through to single-leaf.
 
             aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
@@ -489,6 +537,7 @@ class Group(Node):
         extend_to_all: Optional[Union[List[str], str]],
         grid_shape: Optional[Tuple[int, ...]],
         max_elements: int,
+        additive_lod: Any = None,
         **attrs: Any,
     ) -> "Group":
         """Build a kind=split wrapper Group with one Points child per BSP part."""
@@ -527,6 +576,10 @@ class Group(Node):
                 dim_order=None,
                 fill=None,
                 split=None,
+                # Inner LOD ladder per spatial part — each part decides
+                # its own ladder independently. Allows the Split-of-
+                # AdditiveLOD composition from the plan.
+                additive_lod=additive_lod,
                 **leaf_attrs,
             )
 
@@ -540,6 +593,87 @@ class Group(Node):
         )
 
         return wrapper
+
+    def _add_points_multi_lod_wrapper(
+        self,
+        name: str,
+        pos_arr: np.ndarray,
+        levels: List[np.ndarray],
+        n_points: int,
+        colors: Any,
+        radii: Any,
+        sharpness: Any,
+        scalars: Any,
+        labels: Any,
+        parent: Optional[Node],
+        extend_to_all: Optional[Union[List[str], str]],
+        grid_shape: Optional[Tuple[int, ...]],
+        method: str,
+        **attrs: Any,
+    ) -> Points:
+        """Write a Points node with multi-additive-LOD subgroups.
+
+        Produces ``<path>/additive_<i>/`` subgroups (one per LOD level),
+        each carrying the points assigned to that level. The parent
+        points node carries ``n_additive_sublods=N``, a global
+        ``position_bounds``, and the standard compositing attrs.
+
+        The returned :class:`Points` node is the parent (the user's
+        logical "one node"). The viewer's progressive loader walks the
+        subgroups; the user never sees the decomposition.
+        """
+        from .points import Points
+
+        scene = self._find_scene()
+        writer = self._require_scene_writer(scene)
+        parent_node = parent or self
+        path = f"{parent_node.path}/{name}" if parent_node.path else name
+
+        # Build per-level slice tuples for the writer.
+        level_slices: List[Dict[str, Any]] = []
+        for level_indices in levels:
+            level_slices.append(
+                {
+                    "positions": pos_arr[level_indices].astype(np.float32),
+                    "colors": _slice_optional_array(
+                        colors, level_indices, n_points
+                    ),
+                    "radii": _slice_optional_array(
+                        radii, level_indices, n_points
+                    ),
+                    "sharpness": _slice_optional_array(
+                        sharpness, level_indices, n_points
+                    ),
+                    "scalars": _slice_optional_array(
+                        scalars, level_indices, n_points
+                    ),
+                    "labels": _slice_optional_array(
+                        labels, level_indices, n_points
+                    ),
+                }
+            )
+
+        aprint(
+            f"  📐 Additive-LOD '{name}': {len(levels)} levels "
+            f"(method={method!r}, sizes={[int(L.size) for L in levels]})"
+        )
+
+        metadata = writer.write_points_multi_lod(
+            path,
+            level_slices,
+            method=method,
+            grid_shape=grid_shape,
+            extend_to_all=extend_to_all,
+            **attrs,
+        )
+
+        return Points(
+            name,
+            metadata=metadata,
+            parent=cast(Any, parent_node),
+            writer=writer,
+            **attrs,
+        )
 
     def add_lines(
         self,
@@ -565,8 +699,9 @@ class Group(Node):
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
+        additive_lod: Any = None,
         **attrs: Any,
-    ) -> Lines:
+    ) -> Union[Lines, "Group"]:
         """Add a lines node.
 
         Args:
@@ -615,6 +750,52 @@ class Group(Node):
 
             n_vertices = vert_arr.shape[0]
             ndim = vert_arr.shape[1]
+
+            # Additive-LOD branch — polyline-level multi-LOD write.
+            # Fires before the single-shot write so we don't double-
+            # validate. Mirrors the points add path.
+            if additive_lod is not None:
+                from .lod_lines import (
+                    make_additive_lod_lines,
+                    resolve_additive_axis_lines,
+                )
+
+                additive_spec = resolve_additive_axis_lines(additive_lod)
+                if additive_spec is not None:
+                    widths_arr = (
+                        widths
+                        if isinstance(widths, np.ndarray)
+                        and widths.shape == (n_vertices,)
+                        else None
+                    )
+                    polyline_levels = make_additive_lod_lines(
+                        vert_arr,
+                        line_type=line_type,
+                        indices=indices,
+                        widths=widths_arr,
+                        method=additive_spec["method"],
+                        n_lods=additive_spec["n_lods"],
+                        counts=additive_spec["counts"],
+                        seed=additive_spec["seed"],
+                    )
+                    if len(polyline_levels) > 1:
+                        return self._add_lines_multi_lod_wrapper(
+                            name=name,
+                            vert_arr=vert_arr,
+                            polyline_levels=polyline_levels,
+                            n_vertices=n_vertices,
+                            widths=widths,
+                            colors=colors,
+                            sharpness=sharpness,
+                            scalars=scalars,
+                            labels=labels,
+                            parent=parent,
+                            extend_to_all=extend_to_all,
+                            method=additive_spec["method"],
+                            **attrs,
+                        )
+                    # 1 level (degenerate single polyline) → fall through.
+
             aprint(
                 f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
             )
@@ -682,6 +863,108 @@ class Group(Node):
         except (ValueError, TypeError) as e:
             aprint(f"Failed to add lines node '{name}': {e}")
             raise ValueError(f"Could not add lines '{name}': {e}") from e
+
+    def _add_lines_multi_lod_wrapper(
+        self,
+        name: str,
+        vert_arr: np.ndarray,
+        polyline_levels: List[List[np.ndarray]],
+        n_vertices: int,
+        widths: Any,
+        colors: Any,
+        sharpness: Any,
+        scalars: Any,
+        labels: Any,
+        parent: Optional[Node],
+        extend_to_all: Optional[Union[List[str], str]],
+        method: str,
+        **attrs: Any,
+    ) -> Lines:
+        """Write a Lines node with multi-additive-LOD subgroups.
+
+        Each ``additive_<i>/`` subgroup carries a subset of polylines
+        (whole polylines, never bisected). Segment indices are local to
+        each subgroup. The parent lines node carries
+        ``n_additive_sublods``, the global ``position_bounds``, and the
+        standard compositing attrs.
+        """
+        from .lines import Lines
+
+        scene = self._find_scene()
+        writer = self._require_scene_writer(scene)
+        parent_node = parent or self
+        path = f"{parent_node.path}/{name}" if parent_node.path else name
+
+        level_slices: List[Dict[str, Any]] = []
+        for level_polylines in polyline_levels:
+            # Concatenate vertex indices across all polylines in this
+            # level; build local segment indices per polyline.
+            level_vertex_indices: List[int] = []
+            level_local_segments: List[np.ndarray] = []
+            local_offset = 0
+            for poly in level_polylines:
+                k = poly.size
+                level_vertex_indices.extend(int(idx) for idx in poly)
+                if k >= 2:
+                    # Polyline connectivity: (0,1), (1,2), ..., (k-2, k-1)
+                    seg = np.column_stack(
+                        [
+                            np.arange(k - 1, dtype=np.uint32) + local_offset,
+                            np.arange(1, k, dtype=np.uint32) + local_offset,
+                        ]
+                    )
+                    level_local_segments.append(seg)
+                local_offset += k
+            vertex_index_arr = np.asarray(level_vertex_indices, dtype=np.intp)
+            if level_local_segments:
+                level_segments = np.concatenate(level_local_segments, axis=0)
+            else:
+                level_segments = np.empty((0, 2), dtype=np.uint32)
+
+            level_slices.append(
+                {
+                    "vertices": vert_arr[vertex_index_arr].astype(np.float32),
+                    "widths": _slice_optional_array(
+                        widths, vertex_index_arr, n_vertices
+                    ),
+                    "colors": _slice_optional_array(
+                        colors, vertex_index_arr, n_vertices
+                    ),
+                    "sharpness": _slice_optional_array(
+                        sharpness, vertex_index_arr, n_vertices
+                    ),
+                    "scalars": _slice_optional_array(
+                        scalars, vertex_index_arr, n_vertices
+                    ),
+                    "labels": _slice_optional_array(
+                        labels, vertex_index_arr, n_vertices
+                    ),
+                    "segments": level_segments,
+                    "n_polylines": len(level_polylines),
+                }
+            )
+
+        aprint(
+            f"  📐 Additive-LOD '{name}': {len(polyline_levels)} levels "
+            f"(method={method!r}, polylines_per_level="
+            f"{[len(L) for L in polyline_levels]})"
+        )
+
+        metadata = writer.write_lines_multi_lod(
+            path,
+            level_slices,
+            method=method,
+            extend_to_all=extend_to_all,
+            **attrs,
+        )
+
+        return Lines(
+            name,
+            metadata=metadata,
+            parent=cast(Any, parent_node),
+            writer=writer,
+            **attrs,
+        )
 
     def add_gsplats(
         self,

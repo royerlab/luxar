@@ -171,6 +171,44 @@ class ZarrWriterProtocol(Protocol):
         """
         ...
 
+    def write_points_multi_lod(
+        self,
+        path: NodePath,
+        levels: list,
+        *,
+        method: str = "random",
+        grid_shape: Optional[tuple] = None,
+        extend_to_all: Optional[Union[list, str]] = None,
+        **attrs: Any,
+    ) -> dict:
+        """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
+
+        Each level is a dict with ``positions`` plus optional
+        ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels``.
+        See :func:`luxar.core.lod_points.make_additive_lod_points` for
+        the level-construction helper that produces the input.
+        """
+        ...
+
+    def write_lines_multi_lod(
+        self,
+        path: NodePath,
+        levels: list,
+        *,
+        method: str = "random",
+        extend_to_all: Optional[Union[list, str]] = None,
+        **attrs: Any,
+    ) -> dict:
+        """Write multi-additive-LOD Lines (polyline-level granularity).
+
+        Each level is a dict with ``vertices`` + ``widths`` + ``segments``
+        plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels``
+        and ``n_polylines``. See
+        :func:`luxar.core.lod_lines.make_additive_lod_lines` for the
+        helper that produces the input.
+        """
+        ...
+
     def create_resizable_dataset(
         self,
         path: NodePath,
