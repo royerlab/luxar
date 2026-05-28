@@ -32,10 +32,10 @@ from typing import TYPE_CHECKING, List, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from .lod import resolve_display_type
+from .lod.gsplats import resolve_display_type
 
 if TYPE_CHECKING:
-    from .node import Node
+    from ..node import Node
 
 
 #: Sentinel-typed alias for the value vocabulary of the ``split=`` kwarg.

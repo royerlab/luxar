@@ -31,8 +31,8 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._poisson_disk import poisson_disk_order
-from ._spatial_uniform import stratified_grid_order
+from .poisson_disk import poisson_disk_order
+from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
 PointsMethodName = Literal[

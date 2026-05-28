@@ -2,7 +2,7 @@
 
 Verifies:
 
-- :func:`luxar.core.split.sah_bsp_partition` invariants: complete cover,
+- :func:`luxar.core.group.split.sah_bsp_partition` invariants: complete cover,
   parts honor ``max_elements``, non-trivial split on uniform data.
 - ``split=dict(rule='sah')`` end-to-end through ``add_points``,
   ``add_gsplats``, and ``add_lines``.
@@ -16,7 +16,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.split import midpoint_bsp_partition, sah_bsp_partition
+from luxar.core.group.split import midpoint_bsp_partition, sah_bsp_partition
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────

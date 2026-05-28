@@ -21,7 +21,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.lod import (
+from luxar.core.group.lod.gsplats import (
     BASE_PIXEL_SIZE,
     derive_min_pixel_sizes,
     validate_lod_group,

@@ -23,16 +23,16 @@ from typing import (
 import numpy as np
 from arbol import aprint
 
-from ..core.gsplats import GSplats
-from ..core.lines import Lines
-from ..core.node import Node
-from ..core.points import Points
-from ..typing_utils.aliases import ColorArray, PositionArray
+from ...typing_utils.aliases import ColorArray, PositionArray
+from ..gsplats import GSplats
+from ..lines import Lines
+from ..node import Node
+from ..points import Points
 
 if TYPE_CHECKING:
-    from ..core.scene import Scene
-    from ..gsplats.gsplat_data import GSplatData
-    from ..io.writer import ZarrWriterProtocol
+    from ...gsplats.gsplat_data import GSplatData
+    from ...io.writer import ZarrWriterProtocol
+    from ..scene import Scene
 
 # Default radius used when radii are not provided
 DEFAULT_POINT_RADIUS = 0.5
@@ -145,7 +145,7 @@ class Group(Node):
         Raises:
             ValueError: If this group is not attached to a Scene hierarchy
         """
-        from ..core.scene import Scene
+        from ..scene import Scene
 
         node: Optional[Node] = self
         while node is not None:
@@ -243,7 +243,7 @@ class Group(Node):
         fill_sigma: Optional[Dict[str, float]],
     ) -> np.ndarray:
         """Apply dim_order to Cholesky factors: permute and/or embed."""
-        from ..gsplats.utils.trils import embed_cholesky_packed
+        from ...gsplats.utils.trils import embed_cholesky_packed
 
         scene_names = scene._dimensions.names
         scene_ndim = scene._dimensions.ndim
@@ -461,7 +461,7 @@ class Group(Node):
             # ``split=`` and ``additive_lod=`` and get the inner LOD
             # ladder when split doesn't fire.
             if additive_lod is not None:
-                from .lod_points import (
+                from .lod.points import (
                     make_additive_lod_points,
                     resolve_additive_axis_points,
                 )
@@ -569,7 +569,7 @@ class Group(Node):
             # - Non-built-in string names (matplotlib/colorcet) are also
             #   resolved to LUT and stored as "custom"
             if "colormap" in attrs:
-                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+                from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
 
                 cm = attrs["colormap"]
                 if not isinstance(cm, str) or (
@@ -699,7 +699,7 @@ class Group(Node):
         logical "one node"). The viewer's progressive loader walks the
         subgroups; the user never sees the decomposition.
         """
-        from .points import Points
+        from ..points import Points
 
         scene = self._find_scene()
         writer = self._require_scene_writer(scene)
@@ -839,7 +839,7 @@ class Group(Node):
             # each polyline atomically to a part. Mirrors add_points but
             # at the polyline granularity.
             if split is not None and vert_arr.shape[1] >= 3:
-                from .lod_lines import identify_polylines
+                from .lod.lines import identify_polylines
                 from .split import (
                     DEFAULT_MAX_ELEMENTS,
                     midpoint_bsp_polylines,
@@ -939,7 +939,7 @@ class Group(Node):
             # Fires before the single-shot write so we don't double-
             # validate. Mirrors the points add path.
             if additive_lod is not None:
-                from .lod_lines import (
+                from .lod.lines import (
                     make_additive_lod_lines,
                     resolve_additive_axis_lines,
                 )
@@ -1040,7 +1040,7 @@ class Group(Node):
 
             # Sync colormap attr with what the compiler wrote to zarr
             if "colormap" in attrs:
-                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+                from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
 
                 cm = attrs["colormap"]
                 if not isinstance(cm, str) or (
@@ -1248,7 +1248,7 @@ class Group(Node):
         ``n_additive_sublods``, the global ``position_bounds``, and the
         standard compositing attrs.
         """
-        from .lines import Lines
+        from ..lines import Lines
 
         scene = self._find_scene()
         writer = self._require_scene_writer(scene)
@@ -1520,7 +1520,7 @@ class Group(Node):
 
             # Sync colormap attr with what the compiler wrote to zarr
             if "colormap" in attrs:
-                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+                from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
 
                 cm = attrs["colormap"]
                 if not isinstance(cm, str) or (
@@ -1683,7 +1683,7 @@ class Group(Node):
         """
         from luxar.gsplats.gsplat_data import GSplatData
 
-        from .lod import (
+        from .lod.gsplats import (
             resolve_additive_axis,
             resolve_substitutive_axis,
         )
@@ -1772,7 +1772,7 @@ class Group(Node):
         land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
         (truncation_radius, extend_to_all, colormap) ride into each child.
         """
-        from .lod import derive_min_pixel_sizes
+        from .lod.gsplats import derive_min_pixel_sizes
 
         # Substitutive convention: index 0 = finest, n-1 = coarsest. The
         # LOD group needs coarsest first.
@@ -1935,7 +1935,7 @@ class Group(Node):
             )
 
             if "colormap" in attrs:
-                from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
+                from ...colormaps.builtins import BUILTIN_COLORMAP_NAMES
 
                 cm = attrs["colormap"]
                 if not isinstance(cm, str) or (

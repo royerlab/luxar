@@ -33,8 +33,8 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._poisson_disk import poisson_disk_order
-from ._spatial_uniform import stratified_grid_order
+from .poisson_disk import poisson_disk_order
+from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
 LinesMethodName = Literal[
@@ -398,7 +398,7 @@ def make_additive_lod_lines(
 
     if isinstance(counts, str):
         # Energy: fractions → cumulative counts (over polylines).
-        from .lod_points import _energy_breakpoints_to_counts  # shared helper
+        from .points import _energy_breakpoints_to_counts  # shared helper
 
         if not counts.startswith("energy:"):
             raise ValueError(
