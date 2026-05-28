@@ -4,7 +4,7 @@ Lines splits are polyline-atomic: every vertex of a polyline stays in
 exactly one output part, and the BSP runs over per-polyline centroids
 (mean of constituent vertex positions). Covers:
 
-- :func:`luxar.core.split.midpoint_bsp_polylines` directly.
+- :func:`luxar.core.group.split.midpoint_bsp_polylines` directly.
 - The ``split=`` kwarg on ``add_lines`` for line_type='segments' and
   'indexed'.
 - The new ``rule='sah'`` opt-in.
@@ -18,8 +18,8 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.lod_lines import identify_polylines
-from luxar.core.split import midpoint_bsp_polylines
+from luxar.core.group.lod.lines import identify_polylines
+from luxar.core.group.split import midpoint_bsp_polylines
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────

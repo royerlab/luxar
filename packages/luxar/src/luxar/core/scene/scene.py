@@ -7,7 +7,6 @@ are inherited from Group.
 
 from __future__ import annotations
 
-import warnings
 from os import PathLike
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -15,12 +14,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 from arbol import aprint
 
-from ..core.dimensions import Dimensions
-from ..core.group import Group
-from ..core.overlay import Overlay
-from ..core.viewer_config import ViewerConfig
-from ..io.writer import ZarrWriterProtocol
-from ..utils.atomic_copy import atomic_copytree
+from ...io.writer import ZarrWriterProtocol
+from ...utils.atomic_copy import atomic_copytree
+from ..dimensions import Dimensions
+from ..group import Group
+from ..overlay import Overlay
+from ..viewer_config import ViewerConfig
 
 
 class Scene(Group):
@@ -155,105 +154,17 @@ class Scene(Group):
         data_type: str,
         _stacklevel: int = 3,
     ) -> List[str]:
-        """Resolve extend_to_all parameter into a final list of dimension names.
-
-        Handles all extend_to_all modes:
-        - None: No extension, but warn if candidates detected
-        - "all": Extend to all non-displayed dimensions
-        - List of names: Validate and use explicit list
-        - []: Explicitly no extension (silences warning)
-
-        Args:
-            extend_to_all: User-specified extend_to_all value
-            positions: Position/vertex/center array for candidate analysis
-            data_type: Human-readable data type for warning messages
-                ("points", "lines", "splats")
-
-        Returns:
-            List of dimension names to extend visibility across
-
-        Raises:
-            ValueError: If extend_to_all contains unknown dimensions or invalid value
-        """
-        if extend_to_all is None:
-            # Default: No extension, but warn if candidates detected
-            candidates = self._analyze_extend_candidates(positions)
-            if candidates:
-                warnings.warn(
-                    f"Dimension(s) {candidates} have single values but defined ranges.\n"
-                    f"If these {data_type} should be visible at ALL values of these dimensions, use:\n"
-                    f"    extend_to_all={candidates}\n"
-                    f"If intentional ({data_type} only at these specific values), use:\n"
-                    f"    extend_to_all=[]  # Explicit: no extension\n"
-                    f"Set extend_to_all explicitly to silence this warning.",
-                    UserWarning,
-                    stacklevel=_stacklevel,
-                )
-            return []
-        elif extend_to_all == "all":
-            # Extend to all non-displayed dimensions
-            return [
-                dim.name
-                for dim in self._dimensions.dimensions
-                if not dim.display and dim.name
-            ]
-        elif isinstance(extend_to_all, list):
-            # Use explicit list (including empty list to silence warning)
-            unknown_dims = [
-                dim_name
-                for dim_name in extend_to_all
-                if dim_name not in self._dimensions.names
-            ]
-            if unknown_dims:
-                raise ValueError(
-                    f"Unknown dimension(s) in extend_to_all: {unknown_dims}. "
-                    f"Valid dimensions: {self._dimensions.names}"
-                )
-            return extend_to_all
-        else:
-            raise ValueError(
-                f"Invalid extend_to_all value: {extend_to_all}. "
-                f"Expected None, list of dimension names, 'all', or []."
-            )
+        # +2 frames vs the original method body: one for this Scene-method
+        # delegate, one for the per-leaf adder impl (e.g.
+        # `add_points_impl`) that now sits between Group.add_<type> and us.
+        from .validation import resolve_extend_to_all
+        return resolve_extend_to_all(
+            self, extend_to_all, positions, data_type, _stacklevel=_stacklevel + 2
+        )
 
     def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
-        """Analyze which dimensions might be candidates for extend_to_all.
-
-        A dimension is a candidate if:
-        1. It is not displayed (non-spatial dimension)
-        2. It has only ONE unique value in the data
-        3. It has a defined range that is larger than just that single value
-
-        Args:
-            positions: Position array to analyze
-
-        Returns:
-            List of dimension names that are candidates for extension
-        """
-        candidates: List[str] = []
-        data_ndim = positions.shape[1]
-
-        for i, dim in enumerate(self._dimensions.dimensions):
-            if dim.display:
-                continue
-            if i >= data_ndim:
-                continue
-
-            unique_values = np.unique(positions[:, i])
-            if len(unique_values) != 1:
-                continue
-
-            if dim.range is not None:
-                value = unique_values[0]
-                range_min, range_max = dim.range
-
-                if range_max > range_min and (
-                    value >= range_min and value <= range_max
-                ):
-                    if dim.name:
-                        candidates.append(dim.name)
-
-        return candidates
+        from .validation import analyze_extend_candidates
+        return analyze_extend_candidates(self, positions)
 
     def _validate_data_dimensions(
         self,
@@ -262,51 +173,10 @@ class Scene(Group):
         data_type: str = "positions",
         _stacklevel: int = 3,
     ) -> None:
-        """Validate that data dimensions match scene dimensions.
-
-        Performs two levels of validation:
-        1. HARD ERROR: Dimensionality mismatch (data columns != scene dimensions)
-        2. WARNING: Values outside declared dimension ranges
-
-        Args:
-            positions: Position/vertex/center array to validate (shape N x D)
-            node_name: Name of the node being added (for error messages)
-            data_type: Type of data ("positions", "vertices", "centers")
-
-        Raises:
-            ValueError: If dimensionality doesn't match scene dimensions
-        """
-        data_ndim = positions.shape[1]
-        scene_ndim = self._dimensions.ndim
-
-        if data_ndim != scene_ndim:
-            dim_names = self._dimensions.names
-            raise ValueError(
-                f"Dimension mismatch for '{node_name}': {data_type} array has "
-                f"{data_ndim} columns, but scene has {scene_ndim} dimensions "
-                f"({dim_names}).\n"
-                f"Expected {data_type} shape: (N, {scene_ndim})\n"
-                f"Got {data_type} shape: {positions.shape}"
-            )
-
-        if positions.shape[0] == 0:
-            return
-
-        for i, dim in enumerate(self._dimensions.dimensions):
-            if dim.range is not None:
-                col = positions[:, i]
-                min_val, max_val = float(col.min()), float(col.max())
-                range_min, range_max = dim.range
-
-                if min_val < range_min or max_val > range_max:
-                    warnings.warn(
-                        f"'{node_name}' {data_type}: dimension '{dim.name}' has values "
-                        f"[{min_val:.4g}, {max_val:.4g}] outside declared range "
-                        f"[{range_min}, {range_max}]. "
-                        f"Consider adjusting the dimension range or data values.",
-                        UserWarning,
-                        stacklevel=_stacklevel,
-                    )
+        from .validation import validate_data_dimensions
+        validate_data_dimensions(
+            self, positions, node_name, data_type, _stacklevel=_stacklevel + 2
+        )
 
     # ---------------------------------------------------------- dim_order
 
@@ -316,79 +186,8 @@ class Scene(Group):
         dim_order: List[str],
         fill: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, List[str]]:
-        """Reorder and pad position data to match scene dimensions.
-
-        Maps data columns to scene dimensions by name, reordering and
-        padding as needed. Returns the transformed array and a list of
-        unmapped dimension names (candidates for extend_to_all).
-
-        Args:
-            positions: Data array of shape (N, d_data)
-            dim_order: Scene dimension names for each data column.
-                len(dim_order) must equal positions.shape[1].
-            fill: Fixed values for unmapped dimensions (default 0.0)
-
-        Returns:
-            Tuple of (transformed_positions, unmapped_dim_names):
-            - transformed_positions: shape (N, scene_ndim)
-            - unmapped_dim_names: names of dims not covered by dim_order
-
-        Raises:
-            ValueError: If dim_order names are invalid or have wrong length
-        """
-        if fill is None:
-            fill = {}
-
-        scene_names = self._dimensions.names
-        scene_ndim = self._dimensions.ndim
-        data_ndim = positions.shape[1]
-
-        # Validate dim_order length matches data columns
-        if len(dim_order) != data_ndim:
-            raise ValueError(
-                f"dim_order has {len(dim_order)} names but data has "
-                f"{data_ndim} columns. They must match."
-            )
-
-        # Validate names exist in scene dimensions and are unique
-        if len(set(dim_order)) != len(dim_order):
-            raise ValueError(f"dim_order has duplicate names: {dim_order}")
-        for name in dim_order:
-            if name not in scene_names:
-                raise ValueError(
-                    f"dim_order name '{name}' not found in scene dimensions "
-                    f"{scene_names}"
-                )
-
-        # Validate fill keys are valid dim names and not in dim_order
-        for name in fill:
-            if name not in scene_names:
-                raise ValueError(
-                    f"fill key '{name}' not found in scene dimensions {scene_names}"
-                )
-            if name in dim_order:
-                raise ValueError(
-                    f"fill key '{name}' is already in dim_order — cannot "
-                    f"both map a data column and fill a fixed value"
-                )
-
-        # Build the mapping: for each scene dim, which data column (or fill)
-        N = positions.shape[0]
-        result = np.zeros((N, scene_ndim), dtype=np.float32)
-        unmapped: List[str] = []
-
-        dim_order_set = set(dim_order)
-        for scene_idx, scene_name in enumerate(scene_names):
-            if scene_name in dim_order_set:
-                # Find which data column maps to this scene dim
-                data_col = dim_order.index(scene_name)
-                result[:, scene_idx] = positions[:, data_col]
-            else:
-                # Unmapped — fill with fixed value
-                result[:, scene_idx] = fill.get(scene_name, 0.0)
-                unmapped.append(scene_name)
-
-        return result, unmapped
+        from .dim_order import apply_dim_order
+        return apply_dim_order(self, positions, dim_order, fill)
 
     # ---------------------------------------------------------- properties
 
@@ -541,63 +340,32 @@ class Scene(Group):
             ...     background='rgba(0,0,0,0.6)',
             ... )
         """
-        from ..validation.overlays import (
-            validate_anchor,
-            validate_font,
-            validate_position,
-            validate_text_align,
-            validate_transition,
-            validate_visible_range,
-        )
-        from ..validation.overlays import (
-            validate_blend_mode as validate_overlay_blend_mode,
-        )
+        from .overlays.adders import add_text_impl
 
-        name = self._next_overlay_name(name)
-        position = validate_position(position)
-        validate_anchor(anchor)
-        validate_font(font)
-        validate_text_align(text_align)
-        validate_transition(transition)
-        validate_overlay_blend_mode(blend_mode)
-        validated_range = validate_visible_range(visible_range, self._dimensions.names)
-
-        attrs: Dict[str, Any] = {
-            "type": "overlay_text",
-            "text": str(text),
-            "position": list(position),
-            "font_size": float(font_size),
-            "font": font,
-            "color": color,
-            "opacity": float(opacity),
-            "anchor": anchor,
-            "text_align": text_align,
-            "line_height": float(line_height),
-            "padding": float(padding),
-            "stroke_width": float(stroke_width),
-            "transition": transition,
-            "transition_duration": float(transition_duration),
-            "interactive": bool(interactive),
-            "z_index": len(self._overlays),
-        }
-        if width is not None:
-            attrs["width"] = float(width)
-        if background is not None:
-            attrs["background"] = background
-        if stroke_color is not None:
-            attrs["stroke_color"] = stroke_color
-        if blend_mode != "normal":
-            attrs["blend_mode"] = blend_mode
-        if hover:
-            attrs["hover"] = True
-        if validated_range is not None:
-            attrs["visible_range"] = validated_range
-
-        overlay = self._write_overlay(name, "overlay_text", position, attrs)
-        aprint(
-            f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
+        return add_text_impl(
+            self,
+            text=text,
+            position=position,
+            name=name,
+            font_size=font_size,
+            font=font,
+            color=color,
+            opacity=opacity,
+            anchor=anchor,
+            width=width,
+            text_align=text_align,
+            line_height=line_height,
+            background=background,
+            padding=padding,
+            stroke_color=stroke_color,
+            stroke_width=stroke_width,
+            visible_range=visible_range,
+            transition=transition,
+            transition_duration=transition_duration,
+            interactive=interactive,
+            blend_mode=blend_mode,
+            hover=hover,
         )
-        return overlay
 
     def add_image(
         self,
@@ -649,56 +417,23 @@ class Scene(Group):
             ...     blend_mode='multiply',
             ... )
         """
-        from ..validation.overlays import (
-            validate_anchor,
-            validate_image_input,
-            validate_position,
-            validate_transition,
-            validate_visible_range,
-        )
-        from ..validation.overlays import (
-            validate_blend_mode as validate_overlay_blend_mode,
-        )
+        from .overlays.adders import add_image_impl
 
-        name = self._next_overlay_name(name)
-        position = validate_position(position)
-        validate_anchor(anchor)
-        validate_overlay_blend_mode(blend_mode)
-        validate_transition(transition)
-        validated_range = validate_visible_range(visible_range, self._dimensions.names)
-
-        image_bytes, fmt = validate_image_input(image, fmt=format)
-        image_filename = f"image.{fmt}"
-
-        attrs: Dict[str, Any] = {
-            "type": "overlay_image",
-            "position": list(position),
-            "image_file": image_filename,
-            "opacity": float(opacity),
-            "anchor": anchor,
-            "blend_mode": blend_mode,
-            "transition": transition,
-            "transition_duration": float(transition_duration),
-            "interactive": bool(interactive),
-            "z_index": len(self._overlays),
-        }
-        if size is not None:
-            attrs["size"] = list(size)
-        if validated_range is not None:
-            attrs["visible_range"] = validated_range
-
-        overlay = self._write_overlay(
-            name,
-            "overlay_image",
-            position,
-            attrs,
-            image_data=image_bytes,
-            image_filename=image_filename,
+        return add_image_impl(
+            self,
+            image=image,
+            position=position,
+            name=name,
+            size=size,
+            opacity=opacity,
+            anchor=anchor,
+            blend_mode=blend_mode,
+            format=format,
+            visible_range=visible_range,
+            transition=transition,
+            transition_duration=transition_duration,
+            interactive=interactive,
         )
-        aprint(
-            f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
-        )
-        return overlay
 
     def add_html(
         self,
@@ -757,71 +492,30 @@ class Scene(Group):
             ...     interactive=True,
             ... )
         """
-        from ..validation.overlays import (
-            sanitize_html,
-            validate_anchor,
-            validate_position,
-            validate_transition,
-            validate_visible_range,
+        from .overlays.adders import add_html_impl
+
+        return add_html_impl(
+            self,
+            html=html,
+            position=position,
+            name=name,
+            width=width,
+            opacity=opacity,
+            anchor=anchor,
+            visible_range=visible_range,
+            transition=transition,
+            transition_duration=transition_duration,
+            interactive=interactive,
+            blend_mode=blend_mode,
+            hover=hover,
+            hover_image_size=hover_image_size,
         )
-        from ..validation.overlays import (
-            validate_blend_mode as validate_overlay_blend_mode,
-        )
-
-        name = self._next_overlay_name(name)
-        position = validate_position(position)
-        validate_anchor(anchor)
-        validate_transition(transition)
-        validate_overlay_blend_mode(blend_mode)
-        validated_range = validate_visible_range(visible_range, self._dimensions.names)
-
-        sanitized = sanitize_html(html)
-
-        attrs: Dict[str, Any] = {
-            "type": "overlay_html",
-            "position": list(position),
-            "html": sanitized,
-            "opacity": float(opacity),
-            "anchor": anchor,
-            "transition": transition,
-            "transition_duration": float(transition_duration),
-            "interactive": bool(interactive),
-            "z_index": len(self._overlays),
-        }
-        if width is not None:
-            attrs["width"] = float(width)
-        if blend_mode != "normal":
-            attrs["blend_mode"] = blend_mode
-        if hover:
-            attrs["hover"] = True
-        if hover_image_size is not None:
-            attrs["hover_image_size"] = list(hover_image_size)
-        if validated_range is not None:
-            attrs["visible_range"] = validated_range
-
-        overlay = self._write_overlay(name, "overlay_html", position, attrs)
-        aprint(
-            f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
-        )
-        return overlay
 
     # ---------------------------------------------------------- overlay internals
 
     def _next_overlay_name(self, name: Optional[str]) -> str:
-        """Generate or validate an overlay name."""
-        if name is None:
-            name = f"overlay_{self._overlay_counter}"
-            self._overlay_counter += 1
-        else:
-            if "/" in name:
-                raise ValueError(f"Overlay name cannot contain '/': got '{name}'")
-        # Check for duplicate names
-        existing_names = {o.name for o in self._overlays}
-        if name in existing_names:
-            raise ValueError(
-                f"Overlay name '{name}' already exists. Use a unique name."
-            )
-        return name
+        from .overlays.internals import next_overlay_name
+        return next_overlay_name(self, name)
 
     def _write_overlay(
         self,
@@ -832,33 +526,10 @@ class Scene(Group):
         image_data: Optional[bytes] = None,
         image_filename: Optional[str] = None,
     ) -> Overlay:
-        """Write overlay metadata (and optional image) to the zarr store.
-
-        Creates an ``overlays/{name}`` group with metadata in ``.zattrs``.
-        For image overlays, writes the image file directly to the zarr directory.
-        """
-        overlay_path = f"overlays/{name}"
-
-        # Write group with all overlay attributes
-        if self._writer is not None:
-            self._writer.write_group(overlay_path, **attrs)
-
-            # Write raw image file if provided
-            if image_data is not None and image_filename is not None:
-                store_path = Path(self._writer.store_path)
-                image_dir = store_path / "overlays" / name
-                image_dir.mkdir(parents=True, exist_ok=True)
-                image_path = image_dir / image_filename
-                image_path.write_bytes(image_data)
-
-        overlay = Overlay(
-            name=name,
-            overlay_type=overlay_type,
-            position=position,
-            attrs=attrs,
+        from .overlays.internals import write_overlay
+        return write_overlay(
+            self, name, overlay_type, position, attrs, image_data, image_filename
         )
-        self._overlays.append(overlay)
-        return overlay
 
     # ---------------------------------------------------------- picking/labels
 
@@ -871,81 +542,8 @@ class Scene(Group):
         self._has_image_labels = True
 
     def _auto_inject_hover_overlay(self) -> None:
-        """Auto-inject a default hover overlay if labels/image_labels exist.
-
-        Called by the compiler during finalize(). Checks:
-        1. At least one node has labels or image_labels
-        2. No existing overlay has hover=True
-        3. suppress_hover_overlay is False
-
-        When image_labels are present, uses an HTML overlay (for ``<img>`` tag).
-        When only text labels exist, uses a text overlay (current behavior).
-        """
-        if not self._has_labels and not self._has_image_labels:
-            return
-        if self._suppress_hover_overlay:
-            return
-        # Check if user already defined a hover overlay
-        if any(o.attrs.get("hover") for o in self._overlays):
-            return
-
-        has_text = self._has_labels
-        has_img = self._has_image_labels
-
-        # Inject separate overlays for image and text so they don't
-        # interfere (image loading would cause layout shift in a
-        # combined overlay). Both anchor top-right; demos can suppress
-        # auto-injection and define custom hover overlays for
-        # different layouts.
-        z = len(self._overlays)
-
-        if has_img:
-            aprint("  Auto-injecting hover image overlay")
-            self._write_overlay(
-                name="__hover_image",
-                overlay_type="overlay_html",
-                position=(0.98, 0.02),
-                attrs={
-                    "type": "overlay_html",
-                    "hover": True,
-                    "html": "{hover_image_label}",
-                    "position": [0.98, 0.02],
-                    "anchor": "top-right",
-                    "background": "rgba(0,0,0,0.7)",
-                    "padding": 0.008,
-                    "opacity": 1.0,
-                    "transition": "fade",
-                    "transition_duration": 0.15,
-                    "interactive": False,
-                    "z_index": z,
-                },
-            )
-            z += 1
-
-        if has_text:
-            aprint("  Auto-injecting hover text overlay")
-            self._write_overlay(
-                name="__hover_text",
-                overlay_type="overlay_text",
-                position=(0.98, 0.02),
-                attrs={
-                    "type": "overlay_text",
-                    "hover": True,
-                    "text": "{hover_label}",
-                    "position": [0.98, 0.02],
-                    "anchor": "top-right",
-                    "font_size": 0.018,
-                    "font": "sans",
-                    "color": "white",
-                    "background": "rgba(0,0,0,0.7)",
-                    "padding": 0.008,
-                    "opacity": 1.0,
-                    "transition": "fade",
-                    "transition_duration": 0.15,
-                    "interactive": False,
-                    "z_index": z,
-                },
-            )
+        from .overlays.hover_inject import auto_inject_hover_overlay
+        auto_inject_hover_overlay(self)
 
     # ---------------------------------------------------------- export
 

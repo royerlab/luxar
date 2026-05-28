@@ -12,17 +12,17 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.lod import (
+from luxar.core.group.lod.gsplats import (
     BASE_PIXEL_SIZE,
     derive_min_pixel_sizes,
     resolve_substitutive_axis,
 )
-from luxar.core.lod_lines import (
+from luxar.core.group.lod.lines import (
     _compute_lines_energy,
     make_additive_lod_lines,
     resolve_additive_axis_lines,
 )
-from luxar.core.lod_points import (
+from luxar.core.group.lod.points import (
     _compute_points_energy,
     _energy_breakpoints_to_counts,
     _perceptual_luminance,

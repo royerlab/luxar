@@ -1,0 +1,89 @@
+"""Compositing primitives used by Group's split-wrapping path.
+
+These helpers are shared by the kind=split and kind=lod wrapper builders
+(see ``adders/`` and ``gsplats_pipeline/``). They are pure data
+operations — no Group/Node references — and have no side effects.
+
+Exposed:
+
+* :data:`COMPOSITING_ATTRS` — frozenset of attribute names that ride on
+  a wrapper Group (where the user thinks of the wrapper as "their
+  layer") rather than getting copied onto each internal child.
+* :func:`slice_optional_array` — slice an array-valued leaf parameter by
+  index, leaving scalars / None / mis-sized inputs untouched.
+* :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
+  position array, in the writer's shape.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+import numpy as np
+
+#: Attrs that ride on a kind=lod / kind=split wrapper Group (where the user
+#: thinks of the wrapper as "their layer") rather than getting copied onto
+#: each internal child. Compositing semantics (opacity, gamma, ...) flow
+#: down to the children through Group inheritance at render time, so writing
+#: them once on the parent is correct. ``colormap`` and ``truncation_radius``
+#: are deliberately NOT compositing: the writer auto-defaults them per leaf,
+#: which under nearest-ancestor-wins would shadow a parent's setting.
+COMPOSITING_ATTRS = frozenset(
+    {
+        "transform",
+        "opacity",
+        "gamma",
+        "intensity",
+        "offset",
+        "blending_mode",
+        "layer",
+        "visible",
+        "nd_transform",
+    }
+)
+
+
+def slice_optional_array(
+    value: Any, indices: np.ndarray, n_elements: int
+) -> Any:
+    """Slice an array-valued leaf parameter by index; pass non-per-element values through.
+
+    Used by the ``split=`` wrapping path on the leaf adders. Returns
+    unchanged when:
+      * ``value`` is ``None`` or a scalar (``int`` / ``float`` / ``bool``
+        / ``str``) — applies uniformly to every part.
+      * ``value`` is a 0-D array.
+      * ``value``'s first-axis length doesn't match ``n_elements`` (e.g.
+        a 3-vector RGB broadcast, or a length-1 sentinel).
+    Slices the first axis when the input is a list of length
+    ``n_elements`` (string labels) or an array whose first axis matches.
+    """
+    if value is None or isinstance(value, (int, float, bool, str)):
+        return value
+    if isinstance(value, list):
+        if len(value) == n_elements:
+            return [value[i] for i in indices]
+        return value
+    arr = value if isinstance(value, np.ndarray) else np.asarray(value)
+    if arr.ndim == 0:
+        return value
+    if arr.shape[0] == n_elements:
+        return arr[indices]
+    return value
+
+
+def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:
+    """Per-axis min/max of an ``(N, D)`` position array, in the writer's shape.
+
+    Matches what the compiler's ``_compute_position_bounds`` writes onto
+    each leaf node, so the split-kind wrapper's ``position_bounds`` is
+    the same shape as its children's. Used by the ``split=`` wrapping
+    path to compute the parent bbox directly from the source array
+    instead of round-tripping through the per-leaf zarr writes.
+    """
+    if positions.size == 0:
+        raise ValueError("Cannot compute position_bounds from empty array")
+    return {
+        "min": positions.min(axis=0).astype(float).tolist(),
+        "max": positions.max(axis=0).astype(float).tolist(),
+    }

@@ -2,11 +2,11 @@
 
 Covers:
 
-- :func:`luxar.core._poisson_disk.poisson_disk_order` invariants:
+- :func:`luxar.core.group.lod.poisson_disk.poisson_disk_order` invariants:
   full permutation coverage, per-level counts sum to N, blue-noise
   minimum-distance respected within a single level.
 - ``method='poisson-disk'`` branch in
-  :func:`luxar.core.lod_points.compute_additive_order_points` and the
+  :func:`luxar.core.group.lod.points.compute_additive_order_points` and the
   Lines counterpart.
 """
 
@@ -15,17 +15,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from luxar.core._poisson_disk import poisson_disk_order
-from luxar.core.lod_lines import (
+from luxar.core.group.lod.lines import (
     compute_additive_order_lines,
     identify_polylines,
     make_additive_lod_lines,
 )
-from luxar.core.lod_points import (
+from luxar.core.group.lod.points import (
     compute_additive_order_points,
     make_additive_lod_points,
     resolve_additive_axis_points,
 )
+from luxar.core.group.lod.poisson_disk import poisson_disk_order
 
 # ────────────────────────────────────────────────────────────────────────
 # Pure-algorithm invariants

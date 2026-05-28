@@ -1,6 +1,6 @@
-"""luxar.core._spatial_uniform – Stratified-grid sampler for LOD ordering.
+"""luxar.core.group.lod.spatial_uniform – Stratified-grid sampler for LOD ordering.
 
-Used by ``core/lod_points.py`` and ``core/lod_lines.py`` to compute a
+Used by ``core/group/lod/points.py`` and ``core/group/lod/lines.py`` to compute a
 spatial-uniform additive-LOD permutation: elements are assigned to LOD
 levels by which grid resolution first "covers" their position, so any
 cumulative prefix of the permutation yields approximately-uniform

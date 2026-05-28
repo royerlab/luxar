@@ -20,7 +20,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.split import (
+from luxar.core.group.split import (
     DEFAULT_MAX_ELEMENTS,
     midpoint_bsp_partition,
     validate_split_group,
