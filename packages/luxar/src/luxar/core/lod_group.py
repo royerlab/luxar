@@ -24,14 +24,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
-from arbol import aprint
-
 from .group import Group
 
 if TYPE_CHECKING:
     from ..gsplats.gsplat_data import GSplatData
-    from .node import Node
     from ..io.writer import ZarrWriterProtocol
+    from .node import Node
 
 
 #: Sentinel-typed alias for the value vocabulary of ``lod_group=`` and

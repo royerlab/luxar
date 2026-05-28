@@ -25,7 +25,6 @@ from luxar.core.dimensions import Dimensions
 from luxar.core.lod_group import BASE_PIXEL_SIZE, derive_min_pixel_sizes
 from luxar.io.compiler import LuxarZarrCompiler
 
-
 # ────────────────────────────────────────────────────────────────────────
 # Standalone builder — add_lod_group + child enumeration
 # ────────────────────────────────────────────────────────────────────────
