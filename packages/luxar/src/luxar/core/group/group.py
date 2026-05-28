@@ -28,9 +28,12 @@ from ..gsplats import GSplats
 from ..lines import Lines
 from ..node import Node
 from ..points import Points
+from .auto_split import resolve_auto_split as _resolve_auto_split
 from .compositing import COMPOSITING_ATTRS as _COMPOSITING_ATTRS
 from .compositing import position_bounds_from_array as _position_bounds_from_array
 from .compositing import slice_optional_array as _slice_optional_array
+from .dim_order import apply_dim_order_cholesky as _apply_dim_order_cholesky
+from .dim_order import apply_dim_order_positions as _apply_dim_order_positions
 
 if TYPE_CHECKING:
     from ...gsplats.gsplat_data import GSplatData
@@ -106,116 +109,6 @@ class Group(Node):
                 "Scene writer is not initialized. Use LuxarZarrCompiler to create scenes."
             )
         return writer
-
-    def _resolve_auto_split(
-        self, scene: Scene, n_elements: int, user_split: Any
-    ) -> Any:
-        """Resolve the effective ``split=`` for a leaf-adder call.
-
-        Opt-in compiler-level auto-split: when
-        ``LuxarZarrCompiler(auto_split_max_elements=N)`` is set and the
-        user did NOT pass ``split=`` at the call site, return a synthetic
-        ``dict(max_elements=N)`` once ``n_elements > N``. Below the
-        threshold or with a user-explicit ``split=``, pass the original
-        value through unchanged.
-
-        - ``user_split is None`` → opt into auto-split (apply if threshold is set)
-        - ``user_split is False`` → explicit no-split bypass (returns ``None``)
-        - anything else → user-explicit, pass through
-
-        The ``False`` sentinel is used internally by the split-wrapper
-        recursion (``_add_points_split_wrapper`` / ``_add_gsplats_split_wrapper``)
-        so per-part recursive ``add_points`` / ``add_gsplats`` calls do
-        not re-trigger auto-split (which would explode the leaf count
-        when the compiler threshold is smaller than the user's explicit
-        cap).
-        """
-        if user_split is False:
-            return None
-        if user_split is not None:
-            return user_split
-        writer = scene._writer
-        threshold = getattr(writer, "auto_split_max_elements", None) if writer else None
-        if threshold is None:
-            return user_split
-        if n_elements <= int(threshold):
-            return user_split
-        return {"max_elements": int(threshold)}
-
-    def _apply_dim_order_positions(
-        self,
-        positions: np.ndarray,
-        scene: Scene,
-        dim_order: Optional[List[str]],
-        fill: Optional[Dict[str, float]],
-        extend_to_all: Optional[Union[List[str], str]],
-    ) -> Tuple[np.ndarray, Optional[Union[List[str], str]]]:
-        """Apply dim_order to position data if provided.
-
-        Returns (transformed_positions, possibly_updated_extend_to_all).
-        """
-        if dim_order is None:
-            return positions, extend_to_all
-
-        transformed, unmapped = scene._apply_dim_order(positions, dim_order, fill)
-        aprint(f"  🔀 dim_order: mapped {dim_order} → scene dimensions")
-
-        # Auto-extend unmapped dims if user didn't explicitly set extend_to_all
-        if extend_to_all is None and unmapped:
-            extend_to_all = unmapped
-            aprint(f"  📡 Unmapped dims (auto extend_to_all): {unmapped}")
-        elif unmapped:
-            aprint(f"  📡 Unmapped dims: {unmapped} (extend_to_all set explicitly)")
-
-        return transformed, extend_to_all
-
-    def _apply_dim_order_cholesky(
-        self,
-        cholesky_factors: np.ndarray,
-        d_data: int,
-        scene: Scene,
-        dim_order: List[str],
-        fill_sigma: Optional[Dict[str, float]],
-    ) -> np.ndarray:
-        """Apply dim_order to Cholesky factors: permute and/or embed."""
-        from ...gsplats.utils.trils import embed_cholesky_packed
-
-        scene_names = scene._dimensions.names
-        scene_ndim = scene._dimensions.ndim
-
-        # Build dim_mapping: src_dim_i → dst_dim_index
-        dim_mapping = [scene_names.index(name) for name in dim_order]
-
-        # Validate fill_sigma keys
-        fill_sigma_indexed: Optional[Dict[int, float]] = None
-        if fill_sigma:
-            dim_order_set = set(dim_order)
-            for name in fill_sigma:
-                if name not in scene_names:
-                    raise ValueError(
-                        f"fill_sigma key '{name}' not found in scene "
-                        f"dimensions {scene_names}"
-                    )
-                if name in dim_order_set:
-                    raise ValueError(
-                        f"fill_sigma key '{name}' is already in dim_order — "
-                        f"fill_sigma is only for unmapped dimensions"
-                    )
-            fill_sigma_indexed = {
-                scene_names.index(name): sigma for name, sigma in fill_sigma.items()
-            }
-
-        if cholesky_factors.ndim == 1:
-            # Uniform Cholesky: reshape to (1, k), transform, reshape back
-            packed = cholesky_factors.reshape(1, -1)
-            result = embed_cholesky_packed(
-                packed, d_data, scene_ndim, dim_mapping, fill_sigma_indexed
-            )
-            return result.reshape(-1)
-        else:
-            return embed_cholesky_packed(
-                cholesky_factors, d_data, scene_ndim, dim_mapping, fill_sigma_indexed
-            )
 
     # ---------------------------------------------------------- data methods
 
@@ -314,7 +207,7 @@ class Group(Node):
                 )
 
             # Apply dim_order before validation
-            pos_arr, extend_to_all = self._apply_dim_order_positions(
+            pos_arr, extend_to_all = _apply_dim_order_positions(
                 pos_arr, scene, dim_order, fill, extend_to_all
             )
 
@@ -325,7 +218,7 @@ class Group(Node):
             # off) before evaluating the split branch. User-explicit
             # split= always wins — _resolve_auto_split passes it through
             # unchanged.
-            split = self._resolve_auto_split(scene, n_points, split)
+            split = _resolve_auto_split(scene, n_points, split)
 
             # Split branch — decompose into N children if the user opted in
             # AND the BSP produces more than one part. Single-part outcomes
@@ -757,7 +650,7 @@ class Group(Node):
                 )
 
             # Apply dim_order before validation
-            vert_arr, extend_to_all = self._apply_dim_order_positions(
+            vert_arr, extend_to_all = _apply_dim_order_positions(
                 vert_arr, scene, dim_order, fill, extend_to_all
             )
 
@@ -1347,10 +1240,10 @@ class Group(Node):
 
             # Apply dim_order: transform both centers and cholesky_factors
             if dim_order is not None:
-                ctr_arr, extend_to_all = self._apply_dim_order_positions(
+                ctr_arr, extend_to_all = _apply_dim_order_positions(
                     ctr_arr, scene, dim_order, fill, extend_to_all
                 )
-                chol_arr = self._apply_dim_order_cholesky(
+                chol_arr = _apply_dim_order_cholesky(
                     chol_arr, d_data, scene, dim_order, fill_sigma
                 )
 
@@ -1359,7 +1252,7 @@ class Group(Node):
 
             # Apply compiler-level auto-split heuristic (opt-in; default
             # off). User-explicit ``split=`` always wins.
-            split = self._resolve_auto_split(scene, n_splats, split)
+            split = _resolve_auto_split(scene, n_splats, split)
 
             # Split branch — decompose into N children if the user opted in
             # AND the BSP produces more than one part.
@@ -1819,10 +1712,10 @@ class Group(Node):
                 chol_arr = lod.cholesky_factors.copy()
 
                 if dim_order is not None:
-                    ctr_arr, extend_to_all = self._apply_dim_order_positions(
+                    ctr_arr, extend_to_all = _apply_dim_order_positions(
                         ctr_arr, scene, dim_order, fill, extend_to_all
                     )
-                    chol_arr = self._apply_dim_order_cholesky(
+                    chol_arr = _apply_dim_order_cholesky(
                         chol_arr, d_data, scene, dim_order, fill_sigma
                     )
 
