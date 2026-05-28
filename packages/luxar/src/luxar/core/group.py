@@ -637,8 +637,10 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
+        lod_group: Any = None,
+        additive_lod: Any = None,
         **attrs: Any,
-    ) -> GSplats:
+    ) -> Node:
         """Add Gaussian splats from a GSplatData object.
 
         Multi-additive-LOD data (from progressive fitting or
@@ -647,28 +649,52 @@ class Group(Node):
         for progressive (prefix-sum) loading. Single-LOD data uses the
         flat layout (arrays at the node path).
 
-        If ``result`` carries substitutive levels (``n_substitutive > 1``),
-        only the default substitutive level is written; other
-        substitutive levels are dropped.
+        ``lod_group`` and ``additive_lod`` control the two LOD axes (see
+        ``luxar.core.lod_group.resolve_substitutive_axis`` /
+        ``resolve_additive_axis`` for the full value vocabulary). When
+        the resolved data has multiple substitutive levels, this method
+        builds an :class:`LODGroup` containing one gsplats child per
+        level (in coarsest→finest order, named ``child_<i>``) and
+        returns it; otherwise it returns a single :class:`GSplats` node.
 
         Args:
-            name: Name of the gsplats node
-            result: GSplatData from fit_gaussian_splats() or
-                fit_progressive_gaussian_splats()
-            parent: Parent node (default: this group)
-            extend_to_all: Visibility extension across non-displayed dimensions
-            dim_order: Map data columns to scene dimensions by name
-            fill: Fixed coordinate values for unmapped dimensions
-            fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
-            **attrs: Additional node attributes
+            name: Name of the gsplats (or lod_group) node.
+            result: GSplatData from ``fit_gaussian_splats`` or similar.
+            parent: Parent node (default: this group).
+            extend_to_all: Visibility extension across non-displayed dimensions.
+            dim_order: Map data columns to scene dimensions by name.
+            fill: Fixed coordinate values for unmapped dimensions.
+            fill_sigma: Standard deviations for unmapped dims in Cholesky embedding.
+            lod_group: Substitutive-axis control. ``None`` (pass-through; drop
+                non-default substitutive levels), ``True`` (require stored
+                levels), ``False`` (collapse to finest), ``dict(...)`` (compute
+                via :func:`make_substitutive_lod`), or ``dict(..., recompute=
+                True)``. Optional ``min_pixel_sizes=[...]`` inside the dict
+                overrides the auto-derived thresholds.
+            additive_lod: Additive-axis control, uniform across substitutive
+                levels. Same value vocabulary as ``lod_group``; ``dict(...)``
+                routes to :func:`make_additive_lod`.
+            **attrs: Additional node attributes.
 
         Example:
             >>> result = fit_gaussian_splats(volume_3d)
-            >>> # Add 3D splats to a 4D scene with Time dimension
+            >>> # Plain flat gsplats node
             >>> scene.add_gsplats_from_data("splats", result,
             ...     dim_order=["Z", "Y", "X"], fill={"Time": 0})
+            >>>
+            >>> # Auto-build a 3-level LODGroup with a 4-step additive ladder
+            >>> # per level, computed from a flat input.
+            >>> scene.add_gsplats_from_data(
+            ...     "multires", flat_result,
+            ...     lod_group=dict(compression_factor=4, levels=2),
+            ...     additive_lod=dict(n_lods=4),
+            ... )
         """
         from luxar.gsplats.gsplat_data import GSplatData
+        from .lod_group import (
+            resolve_additive_axis,
+            resolve_substitutive_axis,
+        )
 
         if not isinstance(result, GSplatData):
             raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
@@ -677,7 +703,28 @@ class Group(Node):
         if "truncation_radius" not in attrs:
             attrs["truncation_radius"] = result.truncation_radius
 
-        # Single-LOD: delegate to flat writer
+        # Resolve the two LOD axes. Substitutive first (it can produce a
+        # multi-level result), then additive (uniform across levels).
+        result, explicit_min_pixel_sizes = resolve_substitutive_axis(
+            result, lod_group
+        )
+        result = resolve_additive_axis(result, additive_lod)
+
+        # Multi-substitutive → LODGroup with one gsplats child per level
+        if result.n_substitutive > 1:
+            return self._add_gsplats_as_lod_group(
+                name=name,
+                result=result,
+                explicit_min_pixel_sizes=explicit_min_pixel_sizes,
+                parent=parent,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                **attrs,
+            )
+
+        # Single-substitutive: flat or multi-additive path
         if result.n_additive_sublods <= 1:
             return self.add_gsplats(
                 name=name,
@@ -693,7 +740,6 @@ class Group(Node):
                 **attrs,
             )
 
-        # Multi-LOD: write per-LOD subgroups
         return self._add_gsplats_multi_lod(
             name=name,
             result=result,
@@ -704,6 +750,105 @@ class Group(Node):
             fill_sigma=fill_sigma,
             **attrs,
         )
+
+    def _add_gsplats_as_lod_group(
+        self,
+        name: str,
+        result: GSplatData,
+        explicit_min_pixel_sizes: Optional[List[float]],
+        parent: Optional[Node] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        dim_order: Optional[List[str]] = None,
+        fill: Optional[Dict[str, float]] = None,
+        fill_sigma: Optional[Dict[str, float]] = None,
+        **attrs: Any,
+    ) -> "LODGroup":
+        """Build an LODGroup with one gsplats child per substitutive level.
+
+        Children are written in coarsest→finest order and named
+        ``child_<i>``. Compositing attrs (opacity, gamma, intensity,
+        offset, blending_mode, transform, layer, visible, colormap) land
+        on the LODGroup itself; per-leaf gsplats attrs (truncation_radius,
+        extend_to_all) ride into each child.
+        """
+        from .lod_group import LODGroup, derive_min_pixel_sizes
+
+        # Substitutive convention: index 0 = finest, n-1 = coarsest. The
+        # LODGroup needs coarsest first.
+        n_sub = result.n_substitutive
+        order = list(range(n_sub - 1, -1, -1))
+
+        # Per-level total splat count (sum across each level's additive
+        # ladder) — used both for logging and for auto-deriving
+        # min_pixel_sizes when the user didn't supply them.
+        splat_counts: list[int] = [
+            sum(sub.n_splats for sub in result.substitutive_levels[s].additive_sublods)
+            for s in order
+        ]
+
+        if explicit_min_pixel_sizes is not None:
+            if len(explicit_min_pixel_sizes) != n_sub:
+                raise ValueError(
+                    f"min_pixel_sizes has {len(explicit_min_pixel_sizes)} "
+                    f"entries but the lod_group has {n_sub} substitutive levels"
+                )
+            min_pixel_sizes = list(explicit_min_pixel_sizes)
+        else:
+            min_pixel_sizes = derive_min_pixel_sizes(splat_counts)
+
+        # Separate compositing attrs (go on the LODGroup) from per-leaf
+        # gsplats attrs (go on each child). Anything not in the
+        # compositing set falls through to the child level.
+        #
+        # `colormap` is intentionally NOT compositing here: the writer
+        # auto-defaults a missing colormap to "gray" per leaf, which
+        # under nearest-ancestor-wins would shadow a parent's setting.
+        # Keep it on each child so the user's intent survives.
+        COMPOSITING_ATTRS = {
+            "transform",
+            "opacity",
+            "gamma",
+            "intensity",
+            "offset",
+            "blending_mode",
+            "layer",
+            "visible",
+            "nd_transform",
+        }
+        lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+        child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+
+        parent_node = parent or self
+        # Note: cast to LODGroup is needed because add_lod_group is defined
+        # on Node, which is fine for any parent.
+        lod_group_node: LODGroup = parent_node.add_lod_group(name, **lod_attrs)
+
+        aprint(
+            f"Adding multi-resolution gsplats node '{name}' as LODGroup "
+            f"with {n_sub} substitutive levels: "
+            f"{[f'{n:,}' for n in splat_counts]} splats"
+        )
+
+        # Add one gsplats child per substitutive level, coarsest first.
+        for child_idx, s in enumerate(order):
+            child_name = f"child_{child_idx}"
+            level_view = result.at_substitutive(s)
+            # Recursive dispatch — but explicitly None on both LOD axes so
+            # the resolvers no-op and we never re-enter the LODGroup branch.
+            lod_group_node.add_gsplats_from_data(
+                name=child_name,
+                result=level_view,
+                extend_to_all=extend_to_all,
+                dim_order=dim_order,
+                fill=fill,
+                fill_sigma=fill_sigma,
+                lod_group=None,
+                additive_lod=None,
+                min_pixel_size=min_pixel_sizes[child_idx],
+                **child_attrs,
+            )
+
+        return lod_group_node
 
     def _add_gsplats_multi_lod(
         self,
