@@ -16,9 +16,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// Mock `three/webgpu` so the dynamic import inside createWebGPURenderer
-// returns a constructible-but-inert WebGPURenderer. The stub captures
-// its constructor args so we can assert on them per branch.
+// Mock `three/webgpu` so `WebGPURenderer` resolves to a
+// constructible-but-inert stub. The stub captures its constructor
+// args so we can assert on them per branch.
 const webgpuConstructorArgs = vi.hoisted<Array<unknown>>(() => []);
 vi.mock('three/webgpu', () => {
   class FakeWebGPURenderer {

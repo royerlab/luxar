@@ -7,11 +7,30 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'esnext', // Required for Workers and WASM support
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules/three/')) return 'three';
-          return undefined;
+        // Split the `three` package into core / tsl / webgpu so each
+        // subsystem gets its own cacheable chunk. Without this, the
+        // tree-shaken three modules collapse into a single ~1.2 MB
+        // chunk that re-downloads on any three-internal change.
+        codeSplitting: {
+          groups: [
+            {
+              name: 'three-webgpu',
+              test: /[\\/]three[\\/]build[\\/]three\.webgpu/,
+              priority: 20,
+            },
+            {
+              name: 'three-tsl',
+              test: /[\\/]three[\\/]build[\\/]three\.tsl/,
+              priority: 20,
+            },
+            {
+              name: 'three',
+              test: /[\\/]three[\\/]/,
+              priority: 10,
+            },
+          ],
         },
       },
     },
