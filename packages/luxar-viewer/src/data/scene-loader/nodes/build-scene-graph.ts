@@ -3,11 +3,13 @@
  *
  * Enumerates the store, sorts by path depth (parents before children),
  * and for each group opens it to read its attrs, skips overlay groups
- * (those live in a parallel screen-space tree), and — for nodes that
- * declare `colormap === 'custom'` — eagerly loads the sibling
- * `colormap_lut` zarr array and attaches the raw bytes to the node's
- * attrs so the NodeFactory can build a `getColormapTexture('custom', lut)`
- * later without a second async hop.
+ * (those live in a parallel screen-space tree), skips internal
+ * subgroups of gsplats nodes (e.g. ``additive_<i>/`` LOD subgroups —
+ * those belong to the gsplats loader, not the scene graph), and — for
+ * nodes that declare `colormap === 'custom'` — eagerly loads the
+ * sibling `colormap_lut` zarr array and attaches the raw bytes to the
+ * node's attrs so the NodeFactory can build a
+ * `getColormapTexture('custom', lut)` later without a second async hop.
  *
  * Extracted from SceneLoader.buildSceneGraph so the orchestrator can
  * stay focused on lifecycle and the graph construction can be tested
@@ -51,9 +53,20 @@ export async function buildSceneGraph(
     .filter((e) => e.kind === 'group' && e.path !== '/')
     .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
 
+  // Prefix-path roots whose subtrees are *internal* to a leaf loader and
+  // must not appear as scene-graph children. Currently only gsplats LOD
+  // subgroups (`additive_<i>/`) — the gsplats loader walks them itself.
+  const internalSubtreePrefixes: string[] = [];
+
   for (const entry of sortedPaths) {
     // Skip overlays group — screen-space overlays are not part of the 3D scene graph
     if (entry.path === '/overlays' || entry.path.startsWith('/overlays/')) {
+      continue;
+    }
+
+    // Skip anything sitting inside a leaf-loader's internal subtree
+    // (e.g. `additive_<i>/` LOD subgroups under a gsplats node).
+    if (internalSubtreePrefixes.some((prefix) => entry.path.startsWith(prefix))) {
       continue;
     }
 
@@ -124,6 +137,15 @@ export async function buildSceneGraph(
     }
 
     nodeMap.set(entry.path, node);
+
+    // GSplats nodes are leaves from a scene-graph perspective. Their
+    // `additive_<i>/` LOD subgroups carry `type: "gsplats"` themselves
+    // and would otherwise show up as spurious child nodes in the
+    // monitor UI; mark the subtree internal so subsequent iterations
+    // skip it.
+    if (node.type === 'gsplats') {
+      internalSubtreePrefixes.push(`${entry.path}/`);
+    }
   }
 
   return root;
