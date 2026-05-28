@@ -29,10 +29,20 @@ import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';
 import type { NodeBuildCtx } from './build-ctx';
-// Circular-import safe: load-scene-nodes pulls us in too, but only
-// through dynamic dispatch at runtime — the recursive call below
-// reads the symbol after the module graph settles.
-import { loadSceneNodes } from './load-scene-nodes';
+
+/**
+ * Signature of the recursive scene-graph walker. Injected at the
+ * call site to break the otherwise-cyclic import with
+ * `load-scene-nodes.ts` — the recursion is genuine (lod_group
+ * children may themselves be groups or further lod_groups) but a
+ * static back-reference would fail the dep-cruiser cycle check.
+ */
+export type LoadSceneChildren = (
+  node: SceneNode,
+  parentThree: THREE.Object3D,
+  parentLoc: zarr.Location<zarr.Readable>,
+  ctx: NodeBuildCtx
+) => Promise<void>;
 
 /**
  * Default raw bounds for a malformed / missing ``position_bounds``
@@ -83,7 +93,8 @@ export async function loadLodGroupNode(
   node: SceneNode,
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
-  ctx: NodeBuildCtx
+  ctx: NodeBuildCtx,
+  loadChildren: LoadSceneChildren
 ): Promise<THREE.Group> {
   const attrs = node.attrs as unknown as LODGroupMetadata;
   log.custom('🎚️', Modules.SCENE_LOADER, `Loading lod_group: ${node.path}`);
@@ -109,7 +120,7 @@ export async function loadLodGroupNode(
   const registryChildren: LODGroupChild[] = [];
   for (const child of sceneChildren) {
     const childLoc = parentLoc.resolve(child.path.slice(1));
-    await loadSceneNodes(child, lodThreeGroup, childLoc, ctx);
+    await loadChildren(child, lodThreeGroup, childLoc, ctx);
 
     const childObject = lodThreeGroup.getObjectByName(child.path);
     if (!childObject) {

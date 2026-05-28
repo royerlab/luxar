@@ -50,7 +50,10 @@ export async function loadSceneNodes(
     // ``loadLeafNode`` for the same error-capture semantics as the
     // points / lines / gsplats branches above — a failing lod_group
     // shouldn't sink the rest of the scene.
-    await loadLeafNode(() => loadLodGroupNode(node, parentThree, parentLoc, ctx), node.path);
+    await loadLeafNode(
+      () => loadLodGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
+      node.path
+    );
   } else if (node.children) {
     // Create group and recurse
     const group = new THREE.Group();
