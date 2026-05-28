@@ -10,10 +10,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
+// Caller-injected recursion handle: the split loader now takes
+// loadSceneNodes as an explicit ``loadChildren`` parameter (mirrors
+// load-lod-group-node) so tests can pass the mock directly.
 const loadSceneNodesMock = vi.fn();
-vi.mock('../../../../../data/scene-loader/nodes/load-scene-nodes', () => ({
-  loadSceneNodes: (...args: unknown[]) => loadSceneNodesMock(...args),
-}));
 
 import { loadSplitGroupNode } from '../../../../../data/scene-loader/nodes/load-split-group-node';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
@@ -90,7 +90,7 @@ describe('loadSplitGroupNode', () => {
     ]);
 
     const parent = new THREE.Group();
-    const wrapper = await loadSplitGroupNode(node, parent, makeStubLoc(), ctx);
+    const wrapper = await loadSplitGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(wrapper).toBeInstanceOf(THREE.Group);
     expect(wrapper.name).toBe('/split');
@@ -107,7 +107,7 @@ describe('loadSplitGroupNode', () => {
       makePartNode('/split/part_2'),
     ]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
     // Each child mesh attached to the wrapper.
@@ -127,7 +127,7 @@ describe('loadSplitGroupNode', () => {
       makePartNode('/split/part_1'),
     ]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     for (const child of wrapper.children) {
       expect(child.visible).toBe(true);
@@ -143,7 +143,7 @@ describe('loadSplitGroupNode', () => {
       { transform }
     );
 
-    await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(ctx.nodeFactory.applyTransform).toHaveBeenCalledWith(
       expect.any(THREE.Group),
@@ -155,7 +155,7 @@ describe('loadSplitGroupNode', () => {
     const ctx = makeCtx();
     const node = makeSplitGroupNode([]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx);
+    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(wrapper.children).toHaveLength(0);
     expect(loadSceneNodesMock).not.toHaveBeenCalled();

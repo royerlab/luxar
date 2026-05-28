@@ -32,6 +32,8 @@ import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
+import { runPointsRefinement } from './points/lod-refinement';
+import { runLinesRefinement } from './lines/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
@@ -669,7 +671,37 @@ export class SceneLoader {
    * lock release on normal completion — live in that module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
-    return runGSplatsRefinement({
+    // Orchestrate progressive refinement across all three leaf types in
+    // sequence: gsplats first (its progressive-loader was the original
+    // template), then points, then lines. Each phase holds the
+    // serialization lock; on cancellation (user navigated during the
+    // refinement) the cancelling phase hands the lock to
+    // retriggerUpdate's rAF and the orchestrator exits early so the
+    // later phases don't fire on stale state. On normal completion of
+    // the FINAL phase, the lock is released.
+    let cancelled = false;
+    const onCancel = (pendingState: Partial<ViewState>) => {
+      cancelled = true;
+      if (typeof requestAnimationFrame !== 'undefined') {
+        requestAnimationFrame(() => {
+          this._updateInProgress = false;
+          this.updateView(pendingState);
+        });
+      } else {
+        this._updateInProgress = false;
+        this.updateView(pendingState);
+      }
+    };
+    // Intermediate phases shouldn't release the lock — only the last
+    // phase running to completion does.
+    const noopReleaseLock = () => {
+      /* lock stays held; next phase owns it */
+    };
+    const finalReleaseLock = () => {
+      this._updateInProgress = false;
+    };
+
+    await runGSplatsRefinement({
       rootGroup: this.rootGroup,
       viewStateQueue: this.viewStateQueue,
       gsplatLoaders: this.gsplatLoaders,
@@ -677,20 +709,35 @@ export class SceneLoader {
       processGSplats: (path, data, viewState) => this.processGSplatsData(path, data, viewState),
       commitGSplats: (staged) => this.commitGSplatsGeometry(staged),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
-      releaseLock: () => {
-        this._updateInProgress = false;
-      },
-      retriggerUpdate: (pendingState) => {
-        if (typeof requestAnimationFrame !== 'undefined') {
-          requestAnimationFrame(() => {
-            this._updateInProgress = false;
-            this.updateView(pendingState);
-          });
-        } else {
-          this._updateInProgress = false;
-          this.updateView(pendingState);
-        }
-      },
+      releaseLock: noopReleaseLock,
+      retriggerUpdate: onCancel,
+    });
+    if (cancelled) return;
+
+    await runPointsRefinement({
+      rootGroup: this.rootGroup,
+      viewStateQueue: this.viewStateQueue,
+      pointsLoaders: this.loaders,
+      deriveNodeViewState: (path, attrs, opts) =>
+        this.deriveNodeViewState(path, attrs as never, opts) as never,
+      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      releaseLock: noopReleaseLock,
+      retriggerUpdate: onCancel,
+    });
+    if (cancelled) return;
+
+    await runLinesRefinement({
+      rootGroup: this.rootGroup,
+      viewStateQueue: this.viewStateQueue,
+      linesLoaders: this.linesLoaders,
+      deriveNodeViewState: (path, attrs, opts) =>
+        this.deriveNodeViewState(path, attrs as never, opts) as never,
+      processLines: (path, data, viewState) => this.processLinesData(path, data, viewState),
+      commitLines: (staged) => this.commitLinesGeometry(staged),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      releaseLock: finalReleaseLock,
+      retriggerUpdate: onCancel,
     });
   }
 
