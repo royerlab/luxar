@@ -49,6 +49,16 @@ import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
 } from './scene-loader-monitor-port';
+import { LODGroupRegistry } from '../scene/lod-group-registry';
+
+/**
+ * Factory hook that supplies a per-loader ``LODGroupRegistry``. Mirrors
+ * ``SceneLoaderMonitorFactory`` — the data/ layer never reaches into
+ * scene/ for camera / viewport state, so the host (typically the app
+ * pipeline) injects a closure that knows how to construct the
+ * registry with proper getters.
+ */
+export type SceneLoaderLODGroupRegistryFactory = () => LODGroupRegistry;
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
 import { config as appConfig } from '../config';
@@ -254,11 +264,23 @@ export class SceneLoader {
     return applyEffectiveAttrsHelper(this._sceneGraph, node);
   }
 
+  /**
+   * Per-loader LOD-group registry. Constructed via the factory passed
+   * by ``SceneLoaderManager`` so the registry's camera / viewport /
+   * displayDims getters can close over the live SceneManager — which
+   * the data/ layer must not import directly. ``null`` when the host
+   * (e.g. headless tests) doesn't supply a factory; in that case the
+   * scene loader still loads ``lod_group`` nodes but the per-frame
+   * selector is a no-op (default level renders).
+   */
+  readonly lodGroupRegistry: LODGroupRegistry | null;
+
   constructor(
     config: LoaderConfig = {},
     id?: string,
     profiler?: UpdateProfiler,
-    monitorFactory?: SceneLoaderMonitorFactory | null
+    monitorFactory?: SceneLoaderMonitorFactory | null,
+    lodGroupRegistryFactory?: SceneLoaderLODGroupRegistryFactory | null
   ) {
     this.profiler = profiler ?? null;
     this.config = config;
@@ -268,6 +290,7 @@ export class SceneLoader {
       tolerance: [],
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
+    this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory() : null;
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
@@ -755,6 +778,7 @@ export class SceneLoader {
   private makeNodeBuildCtx(): NodeBuildCtx {
     return {
       registry: this.registry,
+      lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
       factoryDeps: this.factoryDeps(),
