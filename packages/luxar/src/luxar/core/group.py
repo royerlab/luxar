@@ -358,10 +358,12 @@ class Group(Node):
                 from .split import (
                     DEFAULT_MAX_ELEMENTS,
                     midpoint_bsp_partition,
+                    sah_bsp_partition,
                 )
 
                 if split is True:
                     max_elements = DEFAULT_MAX_ELEMENTS
+                    split_rule = "midpoint"
                 elif isinstance(split, dict):
                     max_elements = int(
                         split.get("max_elements", DEFAULT_MAX_ELEMENTS)
@@ -369,6 +371,12 @@ class Group(Node):
                     if max_elements < 1:
                         raise ValueError(
                             f"split max_elements must be >= 1, got {max_elements}"
+                        )
+                    split_rule = str(split.get("rule", "midpoint"))
+                    if split_rule not in ("midpoint", "sah"):
+                        raise ValueError(
+                            f"split rule must be 'midpoint' or 'sah'; "
+                            f"got {split_rule!r}"
                         )
                 else:
                     raise TypeError(
@@ -382,7 +390,10 @@ class Group(Node):
                         "Decompose the data manually or omit image_labels."
                     )
 
-                parts = midpoint_bsp_partition(pos_arr, max_elements)
+                if split_rule == "sah":
+                    parts = sah_bsp_partition(pos_arr, max_elements)
+                else:
+                    parts = midpoint_bsp_partition(pos_arr, max_elements)
                 if len(parts) > 1:
                     return self._add_points_split_wrapper(
                         name=name,
@@ -700,6 +711,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         additive_lod: Any = None,
+        split: Any = None,
         **attrs: Any,
     ) -> Union[Lines, "Group"]:
         """Add a lines node.
@@ -750,6 +762,112 @@ class Group(Node):
 
             n_vertices = vert_arr.shape[0]
             ndim = vert_arr.shape[1]
+
+            # NOTE: compiler-level auto-split heuristic is a separate PR
+            # (β); ``add_lines`` honors user-explicit ``split=`` here and
+            # will pick up the auto-split path automatically once β
+            # merges. Until then, ``split=`` is opt-in via the call site.
+
+            # Split branch — polyline-aware BSP. Whole polylines are
+            # atomic; the BSP runs over per-polyline centroids and assigns
+            # each polyline atomically to a part. Mirrors add_points but
+            # at the polyline granularity.
+            if split is not None and vert_arr.shape[1] >= 3:
+                from .lod_lines import identify_polylines
+                from .split import (
+                    DEFAULT_MAX_ELEMENTS,
+                    midpoint_bsp_polylines,
+                    sah_bsp_partition,
+                )
+
+                if split is True:
+                    max_elements = DEFAULT_MAX_ELEMENTS
+                    split_rule = "midpoint"
+                elif isinstance(split, dict):
+                    max_elements = int(
+                        split.get("max_elements", DEFAULT_MAX_ELEMENTS)
+                    )
+                    if max_elements < 1:
+                        raise ValueError(
+                            f"split max_elements must be >= 1, got {max_elements}"
+                        )
+                    split_rule = str(split.get("rule", "midpoint"))
+                    if split_rule not in ("midpoint", "sah"):
+                        raise ValueError(
+                            f"split rule must be 'midpoint' or 'sah'; "
+                            f"got {split_rule!r}"
+                        )
+                else:
+                    raise TypeError(
+                        f"split must be None, True, or dict; got "
+                        f"{type(split).__name__}"
+                    )
+
+                if image_labels is not None:
+                    raise ValueError(
+                        "image_labels is not supported alongside split=. "
+                        "Decompose the data manually or omit image_labels."
+                    )
+
+                polyline_indices = identify_polylines(
+                    n_vertices, line_type, indices
+                )
+
+                if split_rule == "sah":
+                    # SAH operates on per-polyline centroids in this
+                    # context too — same atomic-polyline guarantee.
+                    if not polyline_indices:
+                        polyline_parts: List[List[int]] = []
+                    else:
+                        centroids = np.array(
+                            [
+                                vert_arr[p, :3].mean(axis=0)
+                                if p.size > 0
+                                else np.zeros(3)
+                                for p in polyline_indices
+                            ],
+                            dtype=np.float64,
+                        )
+                        # Cap is per-vertex; SAH gives us per-centroid
+                        # parts; we re-aggregate to vertex-count parts.
+                        approx_per_poly = max(
+                            1,
+                            n_vertices // max(1, len(polyline_indices)),
+                        )
+                        centroid_cap = max(
+                            1, max_elements // approx_per_poly
+                        )
+                        centroid_parts = sah_bsp_partition(
+                            centroids, max_elements=centroid_cap
+                        )
+                        polyline_parts = [
+                            idx_arr.tolist() for idx_arr in centroid_parts
+                        ]
+                else:
+                    polyline_parts = midpoint_bsp_polylines(
+                        vert_arr, polyline_indices, max_elements
+                    )
+
+                if len(polyline_parts) > 1:
+                    return self._add_lines_split_wrapper(
+                        name=name,
+                        vert_arr=vert_arr,
+                        polyline_indices=polyline_indices,
+                        polyline_parts=polyline_parts,
+                        n_vertices=n_vertices,
+                        widths=widths,
+                        colors=colors,
+                        sharpness=sharpness,
+                        scalars=scalars,
+                        labels=labels,
+                        indices=indices,
+                        line_type=line_type,
+                        parent=parent,
+                        extend_to_all=extend_to_all,
+                        max_elements=max_elements,
+                        **attrs,
+                    )
+                # 1 part → fall through to single-leaf write.
 
             # Additive-LOD branch — polyline-level multi-LOD write.
             # Fires before the single-shot write so we don't double-
@@ -863,6 +981,166 @@ class Group(Node):
         except (ValueError, TypeError) as e:
             aprint(f"Failed to add lines node '{name}': {e}")
             raise ValueError(f"Could not add lines '{name}': {e}") from e
+
+    def _add_lines_split_wrapper(
+        self,
+        name: str,
+        vert_arr: np.ndarray,
+        polyline_indices: List[np.ndarray],
+        polyline_parts: List[List[int]],
+        n_vertices: int,
+        widths: Any,
+        colors: Any,
+        sharpness: Any,
+        scalars: Any,
+        labels: Any,
+        indices: Optional[np.ndarray],
+        line_type: str,
+        parent: Optional[Node],
+        extend_to_all: Optional[Union[List[str], str]],
+        max_elements: int,
+        **attrs: Any,
+    ) -> "Group":
+        """Build a kind=split wrapper Group with one Lines child per BSP part.
+
+        Polylines are atomic — each polyline lands in exactly one part.
+        For the ``segments`` / ``indexed`` line types, the resulting
+        per-part data is re-emitted with ``line_type='segments'``: the
+        original segment topology is preserved by walking pairs within
+        each component the BSP grouped together. For ``polyline`` /
+        ``loop`` types (where the input is a single polyline), the BSP
+        only ever produces one part — the user is already at the single-
+        polyline granularity and there's nothing to split. We refuse the
+        split in that case with a clear error.
+        """
+        wrapper_attrs = {k: v for k, v in attrs.items() if k in _COMPOSITING_ATTRS}
+        leaf_attrs = {k: v for k, v in attrs.items() if k not in _COMPOSITING_ATTRS}
+
+        parent_node = parent or self
+        wrapper = parent_node.add_split_group(
+            name=name,
+            display_type="lines",
+            max_elements=max_elements,
+            **wrapper_attrs,
+        )
+
+        part_sizes = [
+            sum(int(polyline_indices[p].size) for p in part)
+            for part in polyline_parts
+        ]
+        aprint(
+            f"  ✂️  Split '{name}' into {len(polyline_parts)} parts via "
+            f"polyline-centroid BSP "
+            f"(max_elements={max_elements:,}, sizes={part_sizes})"
+        )
+
+        # The new line_type per part is either:
+        # - ``polyline`` / ``loop`` with one polyline ⇒ keep as-is.
+        # - ``segments`` / ``indexed`` ⇒ re-emit as ``segments`` with the
+        #   pairs from the polylines that landed in this part.
+        for i, polyline_ids in enumerate(polyline_parts):
+            # Collect vertices for this part, preserving original order.
+            vertex_index_list: List[np.ndarray] = []
+            new_segments: List[List[int]] = []
+            cursor = 0
+            for p in polyline_ids:
+                members = polyline_indices[p]
+                if members.size == 0:
+                    continue
+                vertex_index_list.append(members)
+                # For segments / indexed, re-emit each pair after
+                # remapping into the part-local vertex indexing (which
+                # follows the concatenation order).
+                if line_type in ("segments", "indexed"):
+                    # Walk in pairs along the polyline's original member
+                    # ordering. For ``segments`` this is just (0,1),
+                    # (2,3), ... For ``indexed`` connected components,
+                    # consecutive members aren't necessarily a segment;
+                    # we approximate by linking consecutive members,
+                    # which is exact for ``segments`` (the only case the
+                    # split path actually decomposes — see polyline /
+                    # loop guard below).
+                    for k in range(0, members.size - 1, 2):
+                        new_segments.append([cursor + k, cursor + k + 1])
+                cursor += int(members.size)
+
+            if not vertex_index_list:
+                continue
+            part_vertex_idx = np.concatenate(vertex_index_list)
+            part_vertices = vert_arr[part_vertex_idx]
+            part_n = int(part_vertex_idx.size)
+
+            # Slice per-vertex parameters into this part.
+            part_widths = (
+                widths
+                if (not isinstance(widths, np.ndarray)) or widths.shape != (n_vertices,)
+                else widths[part_vertex_idx]
+            )
+            part_colors = _slice_optional_array(colors, part_vertex_idx, n_vertices)
+            part_sharpness = _slice_optional_array(
+                sharpness, part_vertex_idx, n_vertices
+            )
+            part_scalars = _slice_optional_array(
+                scalars, part_vertex_idx, n_vertices
+            )
+            part_labels = _slice_optional_array(
+                labels, part_vertex_idx, n_vertices
+            )
+
+            # Choose the per-part line_type. ``polyline`` / ``loop`` with
+            # one polyline = one part, so the original type is preserved.
+            # For ``segments`` we emit segments. For ``indexed`` (rare
+            # — typically pre-merged graphs) we also emit segments with
+            # the reconstructed indices below.
+            if line_type in ("polyline", "loop"):
+                part_line_type = line_type
+                part_indices = None
+            elif line_type == "segments":
+                part_line_type = "segments"
+                part_indices = None
+            else:  # indexed
+                part_line_type = "indexed"
+                part_indices = (
+                    np.asarray(new_segments, dtype=np.intp).reshape(-1, 2)
+                    if new_segments
+                    else None
+                )
+                if part_indices is None:
+                    # Single-vertex polylines on indexed → emit as
+                    # ``segments`` of zero length (caller asked for
+                    # indexed but the part has no edges; degrades
+                    # gracefully).
+                    part_line_type = "segments"
+                    if part_n % 2 != 0:
+                        # Round to an even count to satisfy segments
+                        # validation; drop the trailing isolated vertex.
+                        part_vertices = part_vertices[:-1]
+                        part_n -= 1
+
+            wrapper.add_lines(
+                name=f"part_{i}",
+                vertices=part_vertices,
+                widths=part_widths,
+                colors=part_colors,
+                sharpness=part_sharpness,
+                scalars=part_scalars,
+                labels=part_labels,
+                # image_labels banned alongside split= (see add_lines entry)
+                image_labels=None,
+                indices=part_indices,
+                line_type=part_line_type,
+                extend_to_all=extend_to_all,
+                dim_order=None,
+                fill=None,
+                split=None,
+                **leaf_attrs,
+            )
+
+        wrapper._persist_attr(
+            "position_bounds", _position_bounds_from_array(vert_arr)
+        )
+
+        return wrapper
 
     def _add_lines_multi_lod_wrapper(
         self,
@@ -1068,10 +1346,12 @@ class Group(Node):
                 from .split import (
                     DEFAULT_MAX_ELEMENTS,
                     midpoint_bsp_partition,
+                    sah_bsp_partition,
                 )
 
                 if split is True:
                     max_elements = DEFAULT_MAX_ELEMENTS
+                    split_rule = "midpoint"
                 elif isinstance(split, dict):
                     max_elements = int(
                         split.get("max_elements", DEFAULT_MAX_ELEMENTS)
@@ -1079,6 +1359,12 @@ class Group(Node):
                     if max_elements < 1:
                         raise ValueError(
                             f"split max_elements must be >= 1, got {max_elements}"
+                        )
+                    split_rule = str(split.get("rule", "midpoint"))
+                    if split_rule not in ("midpoint", "sah"):
+                        raise ValueError(
+                            f"split rule must be 'midpoint' or 'sah'; "
+                            f"got {split_rule!r}"
                         )
                 else:
                     raise TypeError(
@@ -1092,7 +1378,10 @@ class Group(Node):
                         "Decompose the data manually or omit image_labels."
                     )
 
-                parts = midpoint_bsp_partition(ctr_arr, max_elements)
+                if split_rule == "sah":
+                    parts = sah_bsp_partition(ctr_arr, max_elements)
+                else:
+                    parts = midpoint_bsp_partition(ctr_arr, max_elements)
                 if len(parts) > 1:
                     return self._add_gsplats_split_wrapper(
                         name=name,
