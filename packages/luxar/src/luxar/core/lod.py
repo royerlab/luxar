@@ -119,11 +119,14 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
         prev = v
 
 
-def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
+def derive_min_pixel_sizes(
+    splat_counts: list[int],
+    base_pixel_size: Optional[float] = None,
+) -> list[float]:
     """Auto-derive monotonic ``min_pixel_size`` thresholds from splat counts.
 
     Coarsest child (index 0) gets ``0.0``; each subsequent child *i* gets
-    ``BASE_PIXEL_SIZE * sqrt(n_splats[i] / n_splats[0])``. Splats can
+    ``base_pixel_size * sqrt(n_splats[i] / n_splats[0])``. Splats can
     resolve ~√N effective screen pixels of detail, so the threshold scales
     linearly with that. ``BASE_PIXEL_SIZE`` (~10 px) is the detail floor
     below which a finer level isn't worth the cost.
@@ -131,6 +134,11 @@ def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
     Args:
         splat_counts: One entry per child, in coarsest→finest order. Must
             be non-empty and the first entry must be > 0.
+        base_pixel_size: Override for the global ``BASE_PIXEL_SIZE``
+            constant. ``None`` (default) → use the module-level constant.
+            Useful when a particular LOD ladder benefits from a higher
+            switching threshold (e.g., very small splats where the
+            default 10-px floor crosses too early).
 
     Returns:
         List of thresholds, same length as ``splat_counts``. Strictly
@@ -141,9 +149,14 @@ def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
     n0 = splat_counts[0]
     if n0 <= 0:
         raise ValueError(f"coarsest child must have at least 1 splat, got {n0}")
+    bps = BASE_PIXEL_SIZE if base_pixel_size is None else float(base_pixel_size)
+    if bps <= 0:
+        raise ValueError(
+            f"base_pixel_size must be positive, got {bps}"
+        )
     thresholds: list[float] = [0.0]
     for n in splat_counts[1:]:
-        thresholds.append(BASE_PIXEL_SIZE * (n / n0) ** 0.5)
+        thresholds.append(bps * (n / n0) ** 0.5)
     # Defensive: guarantee strict monotonicity even when later children have
     # the same n_splats as the coarsest (degenerate, but the auto-derivation
     # should not produce non-monotonic thresholds).
@@ -214,14 +227,19 @@ def validate_lod_group(group: "Node") -> None:
 def resolve_substitutive_axis(
     data: "GSplatData",
     spec: LODAxisSpec,
-) -> Tuple["GSplatData", Optional[List[float]]]:
+) -> Tuple["GSplatData", Optional[List[float]], Optional[float]]:
     """Apply ``lod_group=`` semantics to ``data``.
 
-    Returns ``(resolved_data, explicit_min_pixel_sizes_or_None)``. The
-    second element is non-None only when the user passed
-    ``dict(min_pixel_sizes=[...])`` — otherwise downstream code
-    auto-derives from per-level splat counts via
-    :func:`derive_min_pixel_sizes`.
+    Returns ``(resolved_data, explicit_min_pixel_sizes_or_None,
+    base_pixel_size_or_None)``.
+
+    - ``explicit_min_pixel_sizes`` is non-None only when the user passed
+      ``dict(min_pixel_sizes=[...])`` — otherwise downstream code
+      auto-derives from per-level splat counts via
+      :func:`derive_min_pixel_sizes`.
+    - ``base_pixel_size`` is non-None only when the user passed
+      ``dict(base_pixel_size=...)``. It overrides the global
+      :data:`BASE_PIXEL_SIZE` default for the auto-derivation path.
 
     Semantics:
 
@@ -246,11 +264,12 @@ def resolve_substitutive_axis(
     +---------------------------+-----------------------------------------+
     """
     explicit_min_pixel_sizes: Optional[List[float]] = None
+    base_pixel_size: Optional[float] = None
 
     if spec is None:
         if data.n_substitutive > 1:
-            return data.at_substitutive(data.default_substitutive), None
-        return data, None
+            return data.at_substitutive(data.default_substitutive), None, None
+        return data, None, None
 
     if spec is True:
         if data.n_substitutive <= 1:
@@ -260,13 +279,13 @@ def resolve_substitutive_axis(
                 f"n_substitutive={data.n_substitutive}. Use "
                 "lod_group=dict(...) to compute them on the fly."
             )
-        return data, None
+        return data, None, None
 
     if spec is False:
         if data.n_substitutive > 1:
             # Convention: finest substitutive level is index 0.
-            return data.at_substitutive(0), None
-        return data, None
+            return data.at_substitutive(0), None, None
+        return data, None, None
 
     if isinstance(spec, dict):
         kwargs = dict(spec)  # copy — don't mutate caller's dict
@@ -280,12 +299,20 @@ def resolve_substitutive_axis(
             _assert_strict_ascending(
                 explicit_min_pixel_sizes, "lod_group=dict(min_pixel_sizes=...)"
             )
+        bps_raw = kwargs.pop("base_pixel_size", None)
+        if bps_raw is not None:
+            base_pixel_size = float(bps_raw)
+            if base_pixel_size <= 0:
+                raise ValueError(
+                    "lod_group=dict(base_pixel_size=...) must be positive; "
+                    f"got {base_pixel_size}"
+                )
 
         if data.n_substitutive > 1 and not recompute:
             # Stored pyramid takes precedence — but silently accepting
             # compute-affecting kwargs would mask user intent. Reject any
-            # leftover keys (only ``min_pixel_sizes`` / ``recompute`` are
-            # honored on the stored path).
+            # leftover keys (only ``min_pixel_sizes`` / ``base_pixel_size``
+            # / ``recompute`` are honored on the stored path).
             if kwargs:
                 raise ValueError(
                     "lod_group=dict(...) carries compute kwargs "
@@ -294,7 +321,7 @@ def resolve_substitutive_axis(
                     "recompute=True to override the stored pyramid, or "
                     "drop the compute kwargs to reuse it."
                 )
-            return data, explicit_min_pixel_sizes
+            return data, explicit_min_pixel_sizes, base_pixel_size
 
         # Compute. Align with ``make_substitutive_lod``'s canonical default
         # (3 levels) so ``lod_group=dict()`` yields the same pyramid as a
@@ -303,7 +330,7 @@ def resolve_substitutive_axis(
         from ..gsplats.lod.substitutive import make_substitutive_lod
 
         new_data = make_substitutive_lod(data, **kwargs)
-        return new_data, explicit_min_pixel_sizes
+        return new_data, explicit_min_pixel_sizes, base_pixel_size
 
     raise TypeError(
         f"lod_group must be None, bool, or dict; got {type(spec).__name__}"

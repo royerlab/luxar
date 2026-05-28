@@ -233,6 +233,7 @@ class Node:
         *,
         selector: str = "pixel_size",
         default_level: int = 0,
+        base_pixel_size: Optional[float] = None,
         **attrs: Any,
     ) -> "Group":
         """Create and add a child kind=lod ``Group`` node.
@@ -258,6 +259,14 @@ class Node:
                 supported.
             default_level: Initial active level index for the
                 manual-override UI (0-based).
+            base_pixel_size: Override for the default 10-px LOD-switching
+                threshold (see :data:`luxar.core.lod.BASE_PIXEL_SIZE`).
+                When set, both the explicit-builder children that auto-
+                derive ``min_pixel_size`` AND the ``lod_group=`` convenience
+                path on ``add_gsplats_from_data`` honor this override.
+                ``None`` (default) → use the module-level constant. Stored
+                as an attr on the lod_group so downstream consumers
+                (compiler, viewer) can read it.
             **attrs: Additional node attributes (transform, layer, etc.).
 
         Returns:
@@ -273,13 +282,21 @@ class Node:
             )
         if default_level < 0:
             raise ValueError(f"default_level must be >= 0, got {default_level}")
+        if base_pixel_size is not None and base_pixel_size <= 0:
+            raise ValueError(
+                f"base_pixel_size must be positive, got {base_pixel_size}"
+            )
         try:
             aprint(f"Adding child kind=lod group '{name}' to node '{self.name}'.")
+            extra: Dict[str, Any] = {}
+            if base_pixel_size is not None:
+                extra["base_pixel_size"] = float(base_pixel_size)
             child = self.add_group(
                 name,
                 kind="lod",
                 selector=selector,
                 default_level=int(default_level),
+                **extra,
                 **attrs,
             )
             aprint(f"✓ Child kind=lod group '{name}' added successfully.")
