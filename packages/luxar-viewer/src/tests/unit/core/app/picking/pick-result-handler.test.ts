@@ -211,6 +211,77 @@ describe('buildPickResultHandler', () => {
     warnSpy.mockRestore();
   });
 
+  it('reports the kind=split wrapper path when the hit sits under one', async () => {
+    // Split-aware picking: a hit on an inner ``part_<i>`` leaf must
+    // surface the wrapper's path as ``nodeName`` (and as the path used
+    // to look up labels). Matches the layers-panel's outermost-as-layer
+    // convention.
+    const s = makeStubs();
+    s.getLabel.mockResolvedValue('Cell 42');
+    const wrapper = new THREE.Group();
+    wrapper.name = '/Splat';
+    wrapper.userData.kind = 'split';
+    const part = new THREE.Object3D();
+    part.name = '/Splat/part_3';
+    wrapper.add(part);
+
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+    expect(s.getLabel).toHaveBeenCalledWith('/Splat', 42);
+    expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
+      label: 'Cell 42',
+      imageUrl: null,
+      nodeName: '/Splat',
+      elementIndex: 42,
+    });
+  });
+
+  it('picks the OUTERMOST kind=split when nested', async () => {
+    const s = makeStubs();
+    s.getLabel.mockResolvedValue('Cell 42');
+    const outer = new THREE.Group();
+    outer.name = '/Outer';
+    outer.userData.kind = 'split';
+    const inner = new THREE.Group();
+    inner.name = '/Outer/part_1';
+    inner.userData.kind = 'split';
+    outer.add(inner);
+    const leaf = new THREE.Object3D();
+    leaf.name = '/Outer/part_1/part_0';
+    inner.add(leaf);
+
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: leaf });
+    expect(s.getLabel).toHaveBeenCalledWith('/Outer', 42);
+  });
+
+  it('falls back to the leaf name when no kind=split ancestor exists', async () => {
+    // Plain group ancestors (kind=undefined) must not affect picking.
+    const s = makeStubs();
+    s.getLabel.mockResolvedValue('hi');
+    const plainGroup = new THREE.Group();
+    plainGroup.name = '/Plain';
+    const leaf = new THREE.Object3D();
+    leaf.name = '/Plain/leaf';
+    plainGroup.add(leaf);
+
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    await handle({ nodeId: 1, elementId: 7, brightness: 1.0, mainNode: leaf });
+    expect(s.getLabel).toHaveBeenCalledWith('/Plain/leaf', 7);
+  });
+
   it('is a no-op when overlayManager port is undefined', async () => {
     const s = makeStubs();
     s.getLabel.mockResolvedValue('hello');

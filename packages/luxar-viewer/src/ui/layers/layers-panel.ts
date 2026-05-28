@@ -444,8 +444,11 @@ export class LayersPanel {
     badge.textContent = typeMap[layer.type] || layer.type;
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``
-    // for kind=split. Appears alongside the type badge; visible-only when
-    // the count is > 0.
+    // for kind=split. When a kind=split layer wraps kind=lod
+    // descendants, the badge combines both counts as
+    // ``N parts × M LODs`` (M = max child count across nested groups).
+    // Appears alongside the type badge; visible-only when the count is
+    // > 0.
     let kindBadge: HTMLSpanElement | null = null;
     if (layer.kind === 'lod' && (layer.lodGroupChildCount ?? 0) > 0) {
       kindBadge = document.createElement('span');
@@ -456,7 +459,15 @@ export class LayersPanel {
       kindBadge = document.createElement('span');
       kindBadge.className =
         'luxar-layer-row__badge luxar-layer-row__badge--kind';
-      kindBadge.textContent = `${layer.splitPartCount} parts`;
+      if (
+        layer.nestedLodGroupPaths &&
+        layer.nestedLodGroupPaths.length > 0 &&
+        (layer.nestedLodMaxChildCount ?? 0) > 0
+      ) {
+        kindBadge.textContent = `${layer.splitPartCount} parts × ${layer.nestedLodMaxChildCount} LODs`;
+      } else {
+        kindBadge.textContent = `${layer.splitPartCount} parts`;
+      }
     }
 
     // Row click — selection
@@ -675,14 +686,28 @@ export class LayersPanel {
       this.controlsInteracting = true;
       const value = this.lodLevelSelect!.value;
       const primary = this.state.getPrimarySelected();
-      if (primary && primary.kind === 'lod') {
+      if (primary) {
         const registry = this.getLodGroupRegistry();
         if (registry) {
           const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
-          try {
-            registry.setSelectorMode(primary.path, mode);
-          } catch (err) {
-            log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
+          // Resolve the set of paths to update. A kind=lod layer updates
+          // itself; a kind=split layer that wraps lod_groups broadcasts
+          // to every nested path (clamped per-group by setSelectorMode
+          // on ragged ladders — see lod-group-registry).
+          const paths: string[] =
+            primary.kind === 'lod'
+              ? [primary.path]
+              : primary.kind === 'split' &&
+                  primary.nestedLodGroupPaths &&
+                  primary.nestedLodGroupPaths.length > 0
+                ? primary.nestedLodGroupPaths
+                : [];
+          for (const p of paths) {
+            try {
+              registry.setSelectorMode(p, mode);
+            } catch (err) {
+              log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
+            }
           }
         }
       }
@@ -752,12 +777,17 @@ export class LayersPanel {
       }
     }
 
-    // Active-level dropdown — only shown for lod_group layers. Read the
-    // current selector mode + active index from the registry so the
-    // widget reflects runtime state (e.g., user locked level 1 in a
-    // previous session-level interaction).
+    // Active-level dropdown — shown for kind=lod layers AND for kind=split
+    // layers that wrap nested lod_groups (broadcast). The dropdown
+    // option list reflects either the layer's own child count
+    // (kind=lod) or the largest nested ladder (kind=split).
     if (this.lodLevelSelect && this.lodLevelStatus) {
       const lodContainer = this.lodLevelSelect.parentElement!;
+      const broadcastSplit =
+        primary.kind === 'split' &&
+        primary.nestedLodGroupPaths &&
+        primary.nestedLodGroupPaths.length > 0 &&
+        (primary.nestedLodMaxChildCount ?? 0) > 0;
       if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.lodGroupChildCount!);
@@ -773,6 +803,27 @@ export class LayersPanel {
         } else {
           // Registry not yet populated (e.g., scene still loading) —
           // default to "auto" and clear the status.
+          this.lodLevelSelect.value = 'auto';
+          this.lodLevelStatus.textContent = '';
+        }
+      } else if (broadcastSplit) {
+        lodContainer.style.display = '';
+        this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
+
+        // Sync widget state from the FIRST nested entry — they should
+        // be lock-stepped after a broadcast change, and pre-broadcast
+        // divergence (rare: legacy authored values) is acceptable
+        // ambiguity here.
+        const registry = this.getLodGroupRegistry();
+        const firstPath = primary.nestedLodGroupPaths![0];
+        const entry = registry?.get(firstPath);
+        if (entry) {
+          this.lodLevelSelect.value =
+            entry.selectorMode === 'auto'
+              ? 'auto'
+              : String(entry.selectorMode.lockLevel);
+          this.lodLevelStatus.textContent = `${primary.nestedLodGroupPaths!.length} nested LOD groups`;
+        } else {
           this.lodLevelSelect.value = 'auto';
           this.lodLevelStatus.textContent = '';
         }

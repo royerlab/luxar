@@ -158,6 +158,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "hilbert",
         float16_allowed: bool = False,
+        auto_split_max_elements: Optional[int] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -169,6 +170,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
             ordering_method: Spatial ordering method ("morton" or "hilbert", default: "hilbert")
             float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
+            auto_split_max_elements: If set, ``add_points`` and ``add_gsplats``
+                automatically apply ``split=dict(max_elements=N)`` when the
+                input element count exceeds N. User-explicit ``split=`` at
+                the call site always wins. Default ``None`` (opt-in, no
+                auto-split). Useful for large datasets where you want a
+                per-part frustum-cull benefit without explicit per-call
+                boilerplate.
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -188,6 +196,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Store spatial ordering configuration
         self.enable_spatial_index = enable_spatial_index
         self.ordering_method = ordering_method
+
+        # Opt-in auto-split threshold. Read at add_points / add_gsplats
+        # time via Group._auto_split_threshold(). None disables.
+        if auto_split_max_elements is not None and auto_split_max_elements <= 0:
+            raise ValueError(
+                "auto_split_max_elements must be positive; "
+                f"got {auto_split_max_elements}"
+            )
+        self.auto_split_max_elements: Optional[int] = auto_split_max_elements
 
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)

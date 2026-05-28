@@ -396,3 +396,121 @@ class TestAddSplitGroup:
             grp.add_points("part_1", pos)
             with pytest.raises(ValueError, match="non-homogeneous"):
                 validate_split_group(grp)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Compiler-level auto-split heuristic (opt-in)
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestCompilerAutoSplit:
+    """``LuxarZarrCompiler(auto_split_max_elements=N)`` opt-in heuristic.
+
+    The compiler-level threshold synthesizes a ``split=dict(max_elements=N)``
+    on ``add_points`` / ``add_gsplats`` when the input exceeds N and the
+    user did NOT pass ``split=`` at the call site. Below the threshold or
+    with a user-explicit ``split=``, behavior is unchanged.
+    """
+
+    def test_below_threshold_writes_single_leaf(self, tmp_path) -> None:
+        pos = np.random.RandomState(0).uniform(-10, 10, (50, 3)).astype(
+            np.float32
+        )
+        with LuxarZarrCompiler(
+            tmp_path / "t.zarr", auto_split_max_elements=100
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_points("pts", pos)
+        # Single leaf (no wrapper)
+        assert node.attrs.get("kind") != "split"
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        assert store["pts"].attrs["type"] == "points"
+
+    def test_above_threshold_wraps_in_split(self, tmp_path) -> None:
+        pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(
+            np.float32
+        )
+        with LuxarZarrCompiler(
+            tmp_path / "t.zarr", auto_split_max_elements=100
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_points("pts", pos)
+        assert isinstance(node, Group)
+        assert node.attrs["kind"] == "split"
+        assert node.attrs["display_type"] == "points"
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["pts"]
+        total = sum(int(grp[c].attrs["n_points"]) for c in grp.keys())
+        assert total == 300
+
+    def test_user_explicit_split_wins(self, tmp_path) -> None:
+        """User-explicit ``split=`` always wins, even with smaller threshold."""
+        pos = np.random.RandomState(2).uniform(-10, 10, (300, 3)).astype(
+            np.float32
+        )
+        with LuxarZarrCompiler(
+            tmp_path / "t.zarr", auto_split_max_elements=50
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            # User says 200 → cap of 200. Compiler threshold (50) is
+            # ignored — auto-split would otherwise produce many more
+            # leaves.
+            scene.add_points("pts", pos, split=dict(max_elements=200))
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        grp = store["pts"]
+        # Walk to leaf points nodes (the BSP recurses, so leaves can be
+        # nested several levels deep) and check the user-explicit cap.
+        def collect_leaves(g, out):
+            for child_name in g.keys():
+                child = g[child_name]
+                t = child.attrs.get("type")
+                if t == "points":
+                    out.append(int(child.attrs["n_points"]))
+                else:
+                    collect_leaves(child, out)
+            return out
+
+        counts = collect_leaves(grp, [])
+        assert len(counts) >= 2
+        for n in counts:
+            assert n <= 200, (
+                f"leaf with {n} points exceeds user cap (200); "
+                "auto-split must not override an explicit user split="
+            )
+        # Total reconstructs the input.
+        assert sum(counts) == 300
+        # And the leaf count is small — well below what cap=50 would
+        # have produced (≈6+).
+        assert len(counts) <= 4
+
+    def test_auto_split_applies_to_gsplats(self, tmp_path) -> None:
+        c, a, ch = TestAddGSplatsSplit._make_gsplats(n=300)
+        with LuxarZarrCompiler(
+            tmp_path / "t.zarr", auto_split_max_elements=120
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats(
+                "splats", centers=c, amplitudes=a, cholesky_factors=ch
+            )
+        assert isinstance(node, Group)
+        assert node.attrs["kind"] == "split"
+
+    def test_default_none_disables_auto_split(self, tmp_path) -> None:
+        """No threshold = no split, regardless of size."""
+        pos = np.random.RandomState(3).uniform(-10, 10, (5000, 3)).astype(
+            np.float32
+        )
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_points("pts", pos)
+        assert node.attrs.get("kind") != "split"
+
+    def test_invalid_threshold_raises(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="must be positive"):
+            LuxarZarrCompiler(
+                tmp_path / "bad.zarr", auto_split_max_elements=0
+            )
+        with pytest.raises(ValueError, match="must be positive"):
+            LuxarZarrCompiler(
+                tmp_path / "bad2.zarr", auto_split_max_elements=-1
+            )

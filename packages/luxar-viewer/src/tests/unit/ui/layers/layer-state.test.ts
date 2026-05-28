@@ -261,4 +261,153 @@ describe('LayerStateManager', () => {
     expect(mgr.count).toBe(0);
     expect(mgr.getLayers()).toEqual([]);
   });
+
+  // ─── Specialized groups (kind=split, kind=lod) ─────────
+
+  it('discovers nested lod_groups under a kind=split layer', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/split_root',
+          type: 'group',
+          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/split_root/part_0',
+              type: 'group',
+              attrs: { kind: 'lod', display_type: 'gsplats' },
+              hasSpatialIndex: false,
+              children: [
+                {
+                  path: '/split_root/part_0/level_0',
+                  type: 'gsplats',
+                  attrs: {},
+                  hasSpatialIndex: true,
+                },
+                {
+                  path: '/split_root/part_0/level_1',
+                  type: 'gsplats',
+                  attrs: {},
+                  hasSpatialIndex: true,
+                },
+                {
+                  path: '/split_root/part_0/level_2',
+                  type: 'gsplats',
+                  attrs: {},
+                  hasSpatialIndex: true,
+                },
+              ],
+            },
+            {
+              path: '/split_root/part_1',
+              type: 'group',
+              attrs: { kind: 'lod', display_type: 'gsplats' },
+              hasSpatialIndex: false,
+              // Ragged ladder: 2 children vs 3 in part_0.
+              children: [
+                {
+                  path: '/split_root/part_1/level_0',
+                  type: 'gsplats',
+                  attrs: {},
+                  hasSpatialIndex: true,
+                },
+                {
+                  path: '/split_root/part_1/level_1',
+                  type: 'gsplats',
+                  attrs: {},
+                  hasSpatialIndex: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    mgr.initFromSceneGraph(graph);
+    const wrapper = mgr.getLayer('/split_root')!;
+    expect(wrapper.kind).toBe('split');
+    expect(wrapper.splitPartCount).toBe(2);
+    expect(wrapper.nestedLodGroupPaths).toEqual([
+      '/split_root/part_0',
+      '/split_root/part_1',
+    ]);
+    // Combined-badge sizing: largest ladder wins.
+    expect(wrapper.nestedLodMaxChildCount).toBe(3);
+  });
+
+  it('leaves nestedLodGroupPaths undefined for kind=split with no nested lod', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/split_root',
+          type: 'group',
+          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/split_root/part_0',
+              type: 'gsplats',
+              attrs: {},
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+    mgr.initFromSceneGraph(graph);
+    const wrapper = mgr.getLayer('/split_root')!;
+    expect(wrapper.nestedLodGroupPaths).toBeUndefined();
+    expect(wrapper.nestedLodMaxChildCount).toBeUndefined();
+  });
+
+  it('does not descend into an lod_group looking for nested LODs', () => {
+    // A kind=lod's own children are LOD levels, not further wrappers.
+    // The walker must stop at the first lod_group per branch.
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/split_root',
+          type: 'group',
+          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/split_root/inner_lod',
+              type: 'group',
+              attrs: { kind: 'lod', display_type: 'gsplats' },
+              hasSpatialIndex: false,
+              children: [
+                // Suppose someone constructed a synthetic graph with an
+                // lod_group nested inside another lod_group's children:
+                // we must NOT collect it.
+                {
+                  path: '/split_root/inner_lod/inner_lod',
+                  type: 'group',
+                  attrs: { kind: 'lod' },
+                  hasSpatialIndex: false,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    mgr.initFromSceneGraph(graph);
+    const wrapper = mgr.getLayer('/split_root')!;
+    expect(wrapper.nestedLodGroupPaths).toEqual(['/split_root/inner_lod']);
+  });
 });
