@@ -30,8 +30,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
-    from ..gsplats.gsplat_data import GSplatData
-    from .node import Node
+    from ....gsplats.gsplat_data import GSplatData
+    from ...node import Node
 
 
 #: Sentinel-typed alias for the value vocabulary of ``lod_group=`` and
@@ -327,7 +327,7 @@ def resolve_substitutive_axis(
         # (3 levels) so ``lod_group=dict()`` yields the same pyramid as a
         # bare ``make_substitutive_lod(data)`` call.
         kwargs.setdefault("levels", 3)
-        from ..gsplats.lod.substitutive import make_substitutive_lod
+        from ....gsplats.lod.substitutive import make_substitutive_lod
 
         new_data = make_substitutive_lod(data, **kwargs)
         return new_data, explicit_min_pixel_sizes, base_pixel_size
@@ -366,7 +366,7 @@ def resolve_additive_axis(
     | True)``                   |                                         |
     +---------------------------+-----------------------------------------+
     """
-    from ..gsplats.gsplat_data import GSplatData, SubstitutiveLevel
+    from ....gsplats.gsplat_data import GSplatData, SubstitutiveLevel
 
     if spec is None:
         return data
@@ -413,7 +413,7 @@ def resolve_additive_axis(
         # Default to 4-level ladder for a bare ``dict()`` so the convenience
         # API yields a useful result without parameters.
         kwargs.setdefault("n_lods", 4)
-        from ..gsplats.lod.additive import make_additive_lod
+        from ....gsplats.lod.additive import make_additive_lod
 
         result = data
         for s in range(result.n_substitutive):

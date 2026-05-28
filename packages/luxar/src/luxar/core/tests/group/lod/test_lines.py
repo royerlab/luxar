@@ -17,13 +17,13 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.lines import Lines
-from luxar.core.lod_lines import (
+from luxar.core.group.lod.lines import (
     compute_additive_order_lines,
     identify_polylines,
     make_additive_lod_lines,
     resolve_additive_axis_lines,
 )
+from luxar.core.lines import Lines
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────

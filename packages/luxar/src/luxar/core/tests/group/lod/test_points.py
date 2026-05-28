@@ -17,7 +17,7 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.lod_points import (
+from luxar.core.group.lod.points import (
     DEFAULT_METHOD,
     DEFAULT_N_LODS,
     compute_additive_order_points,

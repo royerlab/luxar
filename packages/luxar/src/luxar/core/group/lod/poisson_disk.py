@@ -1,7 +1,7 @@
-"""luxar.core._poisson_disk – Bridson Poisson-disk sampler with cell-grid acceleration.
+"""luxar.core.group.lod.poisson_disk – Bridson Poisson-disk sampler with cell-grid acceleration.
 
 An opt-in alternative to the default stratified-grid spatial-uniform
-ordering in ``core/lod_points.py`` / ``core/lod_lines.py``. Bridson's
+ordering in ``core/group/lod/points.py`` / ``core/group/lod/lines.py``. Bridson's
 algorithm produces a blue-noise distribution (no two retained samples
 closer than ``r`` apart), which gives a more perceptually uniform LOD
 subset than the deterministic grid binning — at the cost of running an
@@ -13,7 +13,7 @@ This module exposes:
   running Bridson at progressively finer radii. Each LOD level
   contributes the points its radius selects that haven't already been
   selected at a coarser level. The output shape mirrors
-  :func:`luxar.core._spatial_uniform.stratified_grid_order` so the
+  :func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order` so the
   caller code in ``make_additive_lod_*`` is symmetric across methods.
 
 Pure NumPy. O(N) expected per level thanks to the cell-grid neighbor
@@ -174,7 +174,7 @@ def poisson_disk_order(
 
     Returns:
         ``(permutation, per_level_counts)`` matching the contract of
-        :func:`luxar.core._spatial_uniform.stratified_grid_order`. The
+        :func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`. The
         last level absorbs any leftovers — points that the finest
         Bridson pass rejected (because every neighborhood was already
         occupied) so the permutation still covers every input.

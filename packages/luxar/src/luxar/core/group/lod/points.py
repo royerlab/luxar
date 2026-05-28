@@ -1,4 +1,4 @@
-"""luxar.core.lod_points – Additive-LOD helpers for the Points leaf type.
+"""luxar.core.group.lod.points – Additive-LOD helpers for the Points leaf type.
 
 Mirrors the role that ``gsplats/lod/additive.py`` plays for GSplats:
 provides the ordering + ladder-construction primitives that the
@@ -9,7 +9,7 @@ Three ordering methods, all geometry-agnostic-ish:
 * ``random``     — uniform-random permutation (with optional seed).
 * ``salience``   — sort by radii descending (largest points first).
 * ``spatial-uniform`` — stratified-grid sampling
-  (:func:`luxar.core._spatial_uniform.stratified_grid_order`).
+  (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
 
 The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
@@ -31,8 +31,8 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._poisson_disk import poisson_disk_order
-from ._spatial_uniform import stratified_grid_order
+from .poisson_disk import poisson_disk_order
+from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
 PointsMethodName = Literal[
@@ -406,7 +406,7 @@ def resolve_additive_axis_points(
 ) -> Optional[dict]:
     """Translate the ``additive_lod=`` kwarg value into a normalized dict.
 
-    Vocabulary (mirrors gsplats's :func:`luxar.core.lod.resolve_additive_axis`
+    Vocabulary (mirrors gsplats's :func:`luxar.core.group.lod.gsplats.resolve_additive_axis`
     but with Points semantics):
 
     * ``None``    → no multi-LOD ladder; caller writes a flat node.
