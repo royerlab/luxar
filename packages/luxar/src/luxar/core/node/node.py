@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 from arbol import aprint
 
-from ..typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
+from ...typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
-    from ..core.group import Group
-    from ..io.writer import ZarrWriterProtocol
+    from ...io.writer import ZarrWriterProtocol
+    from ..group import Group
 
 
 class Node:
@@ -73,7 +73,7 @@ class Node:
             # Validate transform if present
             if "transform" in attrs:
                 try:
-                    from ..core.transforms import prepare_transform_for_zarr
+                    from ..transforms import prepare_transform_for_zarr
 
                     # Use centralized function for consistent handling
                     attrs["transform"] = prepare_transform_for_zarr(attrs["transform"])
@@ -83,7 +83,7 @@ class Node:
             # Validate nd_transform if present
             if "nd_transform" in attrs:
                 try:
-                    from ..validation.nd_transforms import validate_nd_transform
+                    from ...validation.nd_transforms import validate_nd_transform
 
                     attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
                 except Exception as e:
@@ -93,42 +93,42 @@ class Node:
 
             # Validate rendering attributes if present
             if "opacity" in attrs:
-                from ..validation.types import validate_opacity
+                from ...validation.types import validate_opacity
 
                 attrs["opacity"] = validate_opacity(attrs["opacity"])
 
             if "gamma" in attrs:
-                from ..validation.types import validate_gamma
+                from ...validation.types import validate_gamma
 
                 attrs["gamma"] = validate_gamma(attrs["gamma"])
 
             if "intensity" in attrs:
-                from ..validation.types import validate_intensity
+                from ...validation.types import validate_intensity
 
                 attrs["intensity"] = validate_intensity(attrs["intensity"])
 
             if "offset" in attrs:
-                from ..validation.types import validate_offset
+                from ...validation.types import validate_offset
 
                 attrs["offset"] = validate_offset(attrs["offset"])
 
             if "blending_mode" in attrs:
-                from ..validation.types import validate_blending_mode
+                from ...validation.types import validate_blending_mode
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
             if "layer" in attrs:
-                from ..validation.types import validate_layer
+                from ...validation.types import validate_layer
 
                 attrs["layer"] = validate_layer(attrs["layer"])
 
             if "visible" in attrs:
-                from ..validation.types import validate_visible
+                from ...validation.types import validate_visible
 
                 attrs["visible"] = validate_visible(attrs["visible"])
 
             if "colormap" in attrs:
-                from ..validation.types import validate_colormap
+                from ...validation.types import validate_colormap
 
                 attrs["colormap"] = validate_colormap(attrs["colormap"])
 
@@ -207,7 +207,7 @@ class Node:
         Raises:
             ValueError: If group creation fails
         """
-        from .group import Group
+        from ..group import Group
 
         try:
             aprint(f"Adding child group '{name}' to node '{self.name}'.")
@@ -275,40 +275,16 @@ class Node:
         Raises:
             ValueError: If selector mode is unknown or group creation fails.
         """
-        if selector != "pixel_size":
-            raise ValueError(
-                f"selector must be 'pixel_size' (other modes reserved for "
-                f"future use), got {selector!r}"
-            )
-        if default_level < 0:
-            raise ValueError(f"default_level must be >= 0, got {default_level}")
-        if base_pixel_size is not None and base_pixel_size <= 0:
-            raise ValueError(
-                f"base_pixel_size must be positive, got {base_pixel_size}"
-            )
-        try:
-            aprint(f"Adding child kind=lod group '{name}' to node '{self.name}'.")
-            extra: Dict[str, Any] = {}
-            if base_pixel_size is not None:
-                extra["base_pixel_size"] = float(base_pixel_size)
-            child = self.add_group(
-                name,
-                kind="lod",
-                selector=selector,
-                default_level=int(default_level),
-                **extra,
-                **attrs,
-            )
-            aprint(f"✓ Child kind=lod group '{name}' added successfully.")
-            return child
-        except Exception as e:
-            aprint(
-                f"Failed to add child kind=lod group '{name}' to node "
-                f"'{self.name}': {e}"
-            )
-            raise ValueError(
-                f"Could not create child kind=lod group '{name}': {e}"
-            ) from e
+        from .specialized_groups import add_lod_group_impl
+
+        return add_lod_group_impl(
+            self,
+            name,
+            selector=selector,
+            default_level=default_level,
+            base_pixel_size=base_pixel_size,
+            **attrs,
+        )
 
     def add_split_group(
         self,
@@ -344,36 +320,15 @@ class Node:
         Returns:
             The created ``Group`` (with ``kind="split"`` in its attrs).
         """
-        if display_type not in ("points", "lines", "gsplats"):
-            raise ValueError(
-                "display_type for a split group must be one of "
-                f"'points' / 'lines' / 'gsplats', got {display_type!r}"
-            )
-        if not isinstance(max_elements, int) or max_elements < 1:
-            raise ValueError(
-                f"max_elements must be an int >= 1, got {max_elements!r}"
-            )
-        try:
-            aprint(
-                f"Adding child kind=split group '{name}' to node '{self.name}'."
-            )
-            child = self.add_group(
-                name,
-                kind="split",
-                display_type=display_type,
-                max_elements=max_elements,
-                **attrs,
-            )
-            aprint(f"✓ Child kind=split group '{name}' added successfully.")
-            return child
-        except Exception as e:
-            aprint(
-                f"Failed to add child kind=split group '{name}' to node "
-                f"'{self.name}': {e}"
-            )
-            raise ValueError(
-                f"Could not create child kind=split group '{name}': {e}"
-            ) from e
+        from .specialized_groups import add_split_group_impl
+
+        return add_split_group_impl(
+            self,
+            name,
+            display_type=display_type,
+            max_elements=max_elements,
+            **attrs,
+        )
 
     # --------------------------------------------------------------- traversal
     def walk(self, depth: int = 0) -> SceneHierarchy:
@@ -393,7 +348,7 @@ class Node:
             # Cast self to NodeProtocol to satisfy type checker
             from typing import cast
 
-            from ..typing_utils.protocols import NodeProtocol
+            from ...typing_utils.protocols import NodeProtocol
 
             yield depth, cast(NodeProtocol, self)
             for child in self.children:
@@ -413,7 +368,7 @@ class Node:
             4x4 transformation matrix if set, None otherwise
         """
         if "transform" in self.attrs:
-            from ..core.transforms import read_transform_from_zarr
+            from ..transforms import read_transform_from_zarr
 
             transform_list = self.attrs["transform"]
             return read_transform_from_zarr(transform_list)
@@ -440,7 +395,7 @@ class Node:
                 if self._writer is not None:
                     self._writer.delete_group_attr(self.path, "transform")
         else:
-            from ..core.transforms import prepare_transform_for_zarr
+            from ..transforms import prepare_transform_for_zarr
 
             self._persist_attr("transform", prepare_transform_for_zarr(matrix))
 
@@ -454,7 +409,7 @@ class Node:
         Returns:
             4x4 world transformation matrix. Identity if no transforms are set.
         """
-        from ..core.transforms import compose, identity
+        from ..transforms import compose, identity
 
         transforms = []
         node: Optional[Node] = self
@@ -495,7 +450,7 @@ class Node:
                 if self._writer is not None:
                     self._writer.delete_group_attr(self.path, "nd_transform")
         else:
-            from ..validation.nd_transforms import validate_nd_transform
+            from ...validation.nd_transforms import validate_nd_transform
 
             self._persist_attr("nd_transform", validate_nd_transform(value))
 
@@ -506,7 +461,7 @@ class Node:
         Returns:
             Composed nD transform dict. Empty dict means identity.
         """
-        from ..validation.nd_transforms import compose_nd_transforms
+        from ...validation.nd_transforms import compose_nd_transforms
 
         nd_transforms = []
         node: Optional[Node] = self
@@ -557,7 +512,7 @@ class Node:
         Raises:
             TypeError: If value is not a boolean-compatible value.
         """
-        from ..validation.types import validate_layer
+        from ...validation.types import validate_layer
 
         self._persist_attr("layer", validate_layer(value))
 
@@ -587,7 +542,7 @@ class Node:
         Raises:
             TypeError: If value is not a boolean-compatible value.
         """
-        from ..validation.types import validate_visible
+        from ...validation.types import validate_visible
 
         self._persist_attr("visible", validate_visible(value))
 
@@ -614,7 +569,7 @@ class Node:
             ValueError: If opacity is not in valid range
             TypeError: If opacity cannot be converted to float
         """
-        from ..validation.types import validate_opacity
+        from ...validation.types import validate_opacity
 
         self._persist_attr("opacity", validate_opacity(value))
 
@@ -640,7 +595,7 @@ class Node:
             ValueError: If gamma is not in valid range
             TypeError: If gamma cannot be converted to float
         """
-        from ..validation.types import validate_gamma
+        from ...validation.types import validate_gamma
 
         self._persist_attr("gamma", validate_gamma(value))
 
@@ -666,7 +621,7 @@ class Node:
             ValueError: If intensity is not in valid range
             TypeError: If intensity cannot be converted to float
         """
-        from ..validation.types import validate_intensity
+        from ...validation.types import validate_intensity
 
         self._persist_attr("intensity", validate_intensity(value))
 
@@ -692,7 +647,7 @@ class Node:
             ValueError: If offset is not in valid range
             TypeError: If offset cannot be converted to float
         """
-        from ..validation.types import validate_offset
+        from ...validation.types import validate_offset
 
         self._persist_attr("offset", validate_offset(value))
 
@@ -724,7 +679,7 @@ class Node:
             ValueError: If blending mode is not valid
             TypeError: If blending mode is not a string
         """
-        from ..validation.types import validate_blending_mode
+        from ...validation.types import validate_blending_mode
 
         self._persist_attr("blending_mode", validate_blending_mode(value))
 
@@ -823,7 +778,7 @@ class Node:
                 "Custom array colormaps must be set at node creation time "
                 "via add_points(..., colormap=array)."
             )
-        from ..validation.types import validate_colormap
+        from ...validation.types import validate_colormap
 
         self._persist_attr("colormap", validate_colormap(value))
 
