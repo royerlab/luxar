@@ -28,15 +28,21 @@ import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
 import type { SplitGroupMetadata } from '../../../types/split-group';
 import type { NodeBuildCtx } from './build-ctx';
-import { loadSceneNodes } from './load-scene-nodes';
+import type { LoadSceneChildren } from './load-lod-group-node';
 
 /**
  * Load a kind=`split` `Group` on initial scene construction.
  *
  * Pattern:
  *   1. Create a `THREE.Group` for the wrapper; apply transform.
- *   2. Recurse each child through `loadSceneNodes` so its
+ *   2. Recurse each child through the caller-supplied
+ *      ``loadChildren`` (a thin handle to ``loadSceneNodes``) so its
  *      geometry-specific loader runs and a placeholder mesh attaches.
+ *
+ * The recursion handle is passed in (not imported) to break what would
+ * otherwise be a cyclic dependency with ``load-scene-nodes.ts`` — the
+ * dep-cruiser check rejects static back-references. Same pattern as
+ * ``load-lod-group-node.ts``.
  *
  * No registry needed — Split has no per-frame decision to make. THREE's
  * per-mesh frustum culling handles per-part culling automatically once
@@ -46,7 +52,8 @@ export async function loadSplitGroupNode(
   node: SceneNode,
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
-  ctx: NodeBuildCtx
+  ctx: NodeBuildCtx,
+  loadChildren: LoadSceneChildren
 ): Promise<THREE.Group> {
   const attrs = node.attrs as unknown as SplitGroupMetadata;
   log.custom(
@@ -73,7 +80,7 @@ export async function loadSplitGroupNode(
 
   for (const child of sceneChildren) {
     const childLoc = parentLoc.resolve(child.path.slice(1));
-    await loadSceneNodes(child, splitGroup, childLoc, ctx);
+    await loadChildren(child, splitGroup, childLoc, ctx);
   }
 
   log.info(
