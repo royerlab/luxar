@@ -2048,6 +2048,58 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     stacklevel=3,
                 )
 
+    def _finalize_lod_display_types(self, store: zarr.Group) -> None:
+        """Back-fill missing ``display_type`` on kind=lod groups.
+
+        Walks the zarr tree and, for every group whose attrs declare
+        ``kind == 'lod'`` without a ``display_type``, resolves one from
+        the **finest** child's own type (recursing through nested
+        kind=lod / kind=split groups). The convenience-builder path
+        (``_add_gsplats_as_lod_group``) already sets ``display_type``
+        explicitly; this hook serves explicit-builder constructions
+        where the user wrote ``add_lod_group(...)`` + a mix of leaf
+        types and never set the parent's ``display_type`` themselves.
+
+        **Never overwrites** an authored ``display_type`` — only fills
+        missing values.
+        """
+        def resolve(group: "zarr.Group") -> str:
+            """Return the display_type of a group (leaf or wrapper)."""
+            attrs = dict(group.attrs)
+            t = attrs.get("type")
+            if t in ("points", "lines", "gsplats"):
+                return str(t)  # leaf
+            kind = attrs.get("kind")
+            if kind in ("lod", "split") and "display_type" in attrs:
+                return str(attrs["display_type"])
+            # Plain group or kind=lod / kind=split without display_type
+            # → recurse into children. Children of an lod_group are
+            # stored in coarsest→finest order, so the finest is the
+            # last one — that's the one to read.
+            child_names = sorted(group.keys())
+            if not child_names:
+                return ""  # nothing to resolve
+            finest_child = group[child_names[-1]]
+            return resolve(finest_child)
+
+        def walk(group: "zarr.Group") -> None:
+            attrs = dict(group.attrs)
+            if attrs.get("kind") == "lod" and "display_type" not in attrs:
+                resolved = resolve(group)
+                if resolved:
+                    group.attrs["display_type"] = resolved
+                    aprint(
+                        f"  📐 Back-filled display_type={resolved!r} on "
+                        f"kind=lod group {group.path or '/'}"
+                    )
+            for child_name in group.keys():
+                child = group[child_name]
+                # Only recurse into groups (not arrays).
+                if hasattr(child, "keys"):
+                    walk(child)
+
+        walk(store)
+
     def _expand_bounds_with_nd_transforms(self, store: zarr.Group) -> None:
         """Expand scene-level position bounds using nD transforms.
 
@@ -3101,6 +3153,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             # Validate discrete dimension ranges against actual data
             self._validate_discrete_dimension_ranges(store)
+
+            # Back-fill missing ``display_type`` on kind=lod groups by
+            # recursing through their finest child (see
+            # ``_finalize_lod_display_types`` for the rule). Never
+            # overwrites a value the user already authored.
+            self._finalize_lod_display_types(store)
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)
