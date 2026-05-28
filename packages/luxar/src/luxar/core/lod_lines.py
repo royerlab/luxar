@@ -224,6 +224,77 @@ def compute_additive_order_lines(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _compute_lines_energy(
+    vertices: NDArray,
+    polylines: List[NDArray[np.intp]],
+    widths: Optional[NDArray],
+    colors: Optional[NDArray],
+    scalars: Optional[NDArray],
+) -> NDArray[np.float64]:
+    """Per-polyline energy score: ``mean_luminance × Σ (seg_length × width²)``.
+
+    The tube-volume analog of points-energy: ``width**2`` sweeps along
+    each segment's length so we get a perceptual mass per polyline.
+    Returns ``(P,)`` float64 non-negative.
+
+    - **Mean luminance**: Rec.709 over the polyline's per-vertex colors;
+      mean of ``scalars`` if colors absent; 1.0 if neither.
+    - **Width**: per-vertex widths, defaulting to 1.0 when absent.
+    - **Length**: sum of consecutive vertex distances (single segment
+      for ``segments`` line_type pairs).
+    """
+    p = len(polylines)
+    if p == 0:
+        return np.empty(0, dtype=np.float64)
+
+    pts3 = vertices[:, :3].astype(np.float64, copy=False)
+    has_colors = colors is not None and (
+        isinstance(colors, np.ndarray)
+        and colors.ndim == 2
+        and colors.shape[1] >= 3
+    )
+    has_scalars = scalars is not None and (
+        isinstance(scalars, np.ndarray)
+        and scalars.shape == (vertices.shape[0],)
+    )
+    if has_colors:
+        c = np.asarray(colors)[:, :3].astype(np.float64, copy=False)
+        vertex_lum = 0.2126 * c[:, 0] + 0.7152 * c[:, 1] + 0.0722 * c[:, 2]
+    elif has_scalars:
+        vertex_lum = np.asarray(scalars, dtype=np.float64).reshape(-1)
+    else:
+        vertex_lum = None
+
+    if widths is not None and isinstance(widths, np.ndarray) and widths.shape == (vertices.shape[0],):
+        vertex_w = widths.astype(np.float64, copy=False)
+    else:
+        vertex_w = None
+
+    out = np.empty(p, dtype=np.float64)
+    for i, members in enumerate(polylines):
+        if members.size == 0:
+            out[i] = 0.0
+            continue
+        pts = pts3[members]
+        if members.size < 2:
+            seg_lens = np.zeros(0)
+            w_seg = np.zeros(0)
+        else:
+            seg_lens = np.linalg.norm(pts[1:] - pts[:-1], axis=1)
+            if vertex_w is not None:
+                # Per-segment width = mean of endpoint widths.
+                w_seg = 0.5 * (vertex_w[members[1:]] + vertex_w[members[:-1]])
+            else:
+                w_seg = np.ones_like(seg_lens)
+        tube_volume = float((seg_lens * (w_seg * w_seg)).sum())
+        if vertex_lum is not None:
+            mean_lum = float(np.clip(vertex_lum[members], 0.0, None).mean())
+        else:
+            mean_lum = 1.0
+        out[i] = max(0.0, mean_lum) * max(0.0, tube_volume)
+    return out
+
+
 def make_additive_lod_lines(
     vertices: NDArray,
     *,
@@ -232,8 +303,11 @@ def make_additive_lod_lines(
     widths: Optional[NDArray] = None,
     method: LinesMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
-    counts: Optional[List[int]] = None,
+    counts: Optional[Any] = None,
     seed: Optional[int] = None,
+    colors: Optional[NDArray] = None,
+    scalars: Optional[NDArray] = None,
+    salience_kind: Literal["size", "energy"] = "size",
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
 
@@ -281,14 +355,24 @@ def make_additive_lod_lines(
         )
         return [[polylines[0]]]
 
-    perm, natural_counts = compute_additive_order_lines(
-        vertices,
-        polylines,
-        widths=widths,
-        method=method,
-        n_lods=n_lods,
-        seed=seed,
-    )
+    # salience_kind='energy' overrides the default radii-based salience
+    # with a per-polyline luminance × tube-volume score.
+    energy: Optional[NDArray[np.float64]] = None
+    if method == "salience" and salience_kind == "energy":
+        energy = _compute_lines_energy(
+            vertices, polylines, widths, colors, scalars
+        )
+        perm = np.argsort(-energy, kind="stable").astype(np.intp)
+        natural_counts: List[int] = []
+    else:
+        perm, natural_counts = compute_additive_order_lines(
+            vertices,
+            polylines,
+            widths=widths,
+            method=method,
+            n_lods=n_lods,
+            seed=seed,
+        )
 
     if method == "spatial-uniform":
         out: List[List[NDArray[np.intp]]] = []
@@ -301,7 +385,27 @@ def make_additive_lod_lines(
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
-    if counts is not None:
+    if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
+        energy = _compute_lines_energy(
+            vertices, polylines, widths, colors, scalars
+        )
+
+    if isinstance(counts, str):
+        # Energy: fractions → cumulative counts (over polylines).
+        from .lod_points import _energy_breakpoints_to_counts  # shared helper
+
+        if not counts.startswith("energy:"):
+            raise ValueError(
+                f"unrecognized breakpoints string {counts!r}; expected "
+                "'energy:<fractions>'"
+            )
+        if energy is None:
+            energy = _compute_lines_energy(
+                vertices, polylines, widths, colors, scalars
+            )
+        fracs = [float(s) for s in counts[len("energy:"):].split(",") if s.strip()]
+        breakpoints = _energy_breakpoints_to_counts(energy, perm, fracs)
+    elif counts is not None:
         breakpoints = _validate_counts(counts, p)
     else:
         per_level = max(1, (p + n_lods - 1) // n_lods)
@@ -363,6 +467,7 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
             "n_lods": DEFAULT_N_LODS,
             "counts": None,
             "seed": None,
+            "salience_kind": "size",
         }
     if not isinstance(spec, dict):
         raise TypeError(
@@ -384,18 +489,31 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
         raise ValueError(f"n_lods must be >= 1, got {n_lods}")
 
     counts = kwargs.pop("counts", None)
-    if counts is not None:
+    breakpoints = kwargs.pop("breakpoints", None)
+    if counts is not None and breakpoints is not None:
+        raise ValueError(
+            "additive_lod: pass either 'counts' OR 'breakpoints', not both"
+        )
+    if breakpoints is not None:
+        counts = breakpoints
+    if counts is not None and not isinstance(counts, str):
         counts = [int(c) for c in counts]
 
     seed = kwargs.pop("seed", None)
     if seed is not None:
         seed = int(seed)
 
+    salience_kind = kwargs.pop("salience_kind", "size")
+    if salience_kind not in ("size", "energy"):
+        raise ValueError(
+            f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
+        )
+
     if kwargs:
         raise ValueError(
             f"additive_lod for Lines: unrecognized keys "
             f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"seed, recompute."
+            f"breakpoints, seed, salience_kind, recompute."
         )
 
     return {
@@ -403,6 +521,7 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
         "n_lods": n_lods,
         "counts": counts,
         "seed": seed,
+        "salience_kind": salience_kind,
     }
 
 

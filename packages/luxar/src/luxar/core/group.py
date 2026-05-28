@@ -422,6 +422,23 @@ class Group(Node):
                         radii_arr = radii
                     else:
                         radii_arr = None
+                    # Per-element colors / scalars used by the energy:
+                    # breakpoints and salience_kind='energy' branches —
+                    # both need a luminance-and-size scoring of the
+                    # input.
+                    colors_for_energy = (
+                        colors
+                        if isinstance(colors, np.ndarray)
+                        and colors.ndim == 2
+                        and colors.shape[0] == n_points
+                        else None
+                    )
+                    scalars_for_energy = (
+                        scalars
+                        if isinstance(scalars, np.ndarray)
+                        and scalars.shape == (n_points,)
+                        else None
+                    )
                     levels = make_additive_lod_points(
                         pos_arr,
                         radii=radii_arr,
@@ -429,6 +446,9 @@ class Group(Node):
                         n_lods=additive_spec["n_lods"],
                         counts=additive_spec["counts"],
                         seed=additive_spec["seed"],
+                        colors=colors_for_energy,
+                        scalars=scalars_for_energy,
+                        salience_kind=additive_spec.get("salience_kind", "size"),
                     )
                     if len(levels) > 1:
                         return self._add_points_multi_lod_wrapper(
@@ -768,6 +788,19 @@ class Group(Node):
                         and widths.shape == (n_vertices,)
                         else None
                     )
+                    colors_for_energy = (
+                        colors
+                        if isinstance(colors, np.ndarray)
+                        and colors.ndim == 2
+                        and colors.shape[0] == n_vertices
+                        else None
+                    )
+                    scalars_for_energy = (
+                        scalars
+                        if isinstance(scalars, np.ndarray)
+                        and scalars.shape == (n_vertices,)
+                        else None
+                    )
                     polyline_levels = make_additive_lod_lines(
                         vert_arr,
                         line_type=line_type,
@@ -777,6 +810,9 @@ class Group(Node):
                         n_lods=additive_spec["n_lods"],
                         counts=additive_spec["counts"],
                         seed=additive_spec["seed"],
+                        colors=colors_for_energy,
+                        scalars=scalars_for_energy,
+                        salience_kind=additive_spec.get("salience_kind", "size"),
                     )
                     if len(polyline_levels) > 1:
                         return self._add_lines_multi_lod_wrapper(
@@ -1320,7 +1356,7 @@ class Group(Node):
 
         # Resolve the two LOD axes. Substitutive first (it can produce a
         # multi-level result), then additive (uniform across levels).
-        result, explicit_min_pixel_sizes = resolve_substitutive_axis(
+        result, explicit_min_pixel_sizes, base_pixel_size = resolve_substitutive_axis(
             result, lod_group
         )
         result = resolve_additive_axis(result, additive_lod)
@@ -1338,6 +1374,7 @@ class Group(Node):
                 name=name,
                 result=result,
                 explicit_min_pixel_sizes=explicit_min_pixel_sizes,
+                base_pixel_size=base_pixel_size,
                 parent=parent,
                 extend_to_all=extend_to_all,
                 dim_order=dim_order,
@@ -1378,6 +1415,7 @@ class Group(Node):
         name: str,
         result: GSplatData,
         explicit_min_pixel_sizes: Optional[List[float]],
+        base_pixel_size: Optional[float] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
@@ -1416,7 +1454,9 @@ class Group(Node):
                 )
             min_pixel_sizes = list(explicit_min_pixel_sizes)
         else:
-            min_pixel_sizes = derive_min_pixel_sizes(splat_counts)
+            min_pixel_sizes = derive_min_pixel_sizes(
+                splat_counts, base_pixel_size=base_pixel_size
+            )
 
         # Separate compositing attrs (go on the kind=lod Group) from
         # per-leaf gsplats attrs (go on each child). Anything not in the
@@ -1440,7 +1480,14 @@ class Group(Node):
         # ``display_type`` is unambiguously "gsplats". Set it here so the
         # on-disk attrs are self-describing.
         lod_attrs.setdefault("display_type", "gsplats")
-        lod_group_node: Group = parent_node.add_lod_group(name, **lod_attrs)
+        # Persist the base_pixel_size override on the wrapper (when set)
+        # so downstream consumers can identify a non-default ladder
+        # without re-deriving from min_pixel_sizes.
+        lod_group_node: Group = parent_node.add_lod_group(
+            name,
+            base_pixel_size=base_pixel_size,
+            **lod_attrs,
+        )
 
         aprint(
             f"Adding multi-resolution gsplats node '{name}' as kind=lod "
