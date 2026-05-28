@@ -786,7 +786,7 @@ class Group(Node):
         on the LODGroup itself; per-leaf gsplats attrs (truncation_radius,
         extend_to_all) ride into each child.
         """
-        from .lod_group import LODGroup, derive_min_pixel_sizes
+        from .lod_group import derive_min_pixel_sizes
 
         # Substitutive convention: index 0 = finest, n-1 = coarsest. The
         # LODGroup needs coarsest first.
