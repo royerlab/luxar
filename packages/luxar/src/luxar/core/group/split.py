@@ -18,7 +18,7 @@ This module hosts:
 * :func:`midpoint_bsp_partition` — the pure-NumPy splitter. Returns a list of
   index arrays into the original positions.
 * :func:`validate_split_group` — the well-formedness check (free function,
-  matches the validator pattern in ``core/lod.py``).
+  matches the validator pattern in ``core/group/lod/gsplats.py``).
 * :data:`SplitSpec` — the value-vocabulary type alias for the ``split=``
   convenience kwarg on ``add_points`` / ``add_lines`` / ``add_gsplats``.
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
@@ -164,7 +164,7 @@ def midpoint_bsp_polylines(
         vertices: ``(N, d)`` array of vertex positions. At least 3
             spatial dimensions required (only first 3 drive the split).
         polyline_indices: List of per-polyline vertex-index arrays — the
-            output of :func:`luxar.core.lod_lines.identify_polylines`.
+            output of :func:`luxar.core.group.lod.lines.identify_polylines`.
         max_elements: Cap on a single part's vertex count. The BSP
             recurses until each part fits, with the degenerate guarantee
             that a single polyline larger than ``max_elements`` becomes
@@ -400,7 +400,7 @@ def validate_split_group(group: "Node") -> None:
     - ``display_type`` is missing or empty;
     - ``max_elements`` is missing or < 1;
     - any child's resolved ``display_type`` (per
-      :func:`luxar.core.lod.resolve_display_type`) differs from the parent's
+      :func:`luxar.core.group.lod.gsplats.resolve_display_type`) differs from the parent's
       — homogeneity is mandatory for Split (you can't decompose a single
       logical layer into mixed-type parts).
 

@@ -154,9 +154,12 @@ class Scene(Group):
         data_type: str,
         _stacklevel: int = 3,
     ) -> List[str]:
+        # +2 frames vs the original method body: one for this Scene-method
+        # delegate, one for the per-leaf adder impl (e.g.
+        # `add_points_impl`) that now sits between Group.add_<type> and us.
         from .validation import resolve_extend_to_all
         return resolve_extend_to_all(
-            self, extend_to_all, positions, data_type, _stacklevel=_stacklevel + 1
+            self, extend_to_all, positions, data_type, _stacklevel=_stacklevel + 2
         )
 
     def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
@@ -172,7 +175,7 @@ class Scene(Group):
     ) -> None:
         from .validation import validate_data_dimensions
         validate_data_dimensions(
-            self, positions, node_name, data_type, _stacklevel=_stacklevel + 1
+            self, positions, node_name, data_type, _stacklevel=_stacklevel + 2
         )
 
     # ---------------------------------------------------------- dim_order

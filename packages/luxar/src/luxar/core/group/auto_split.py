@@ -35,8 +35,9 @@ def resolve_auto_split(
     - anything else → user-explicit, pass through
 
     The ``False`` sentinel is used internally by the split-wrapper
-    recursion (``_add_points_split_wrapper`` / ``_add_gsplats_split_wrapper``)
-    so per-part recursive ``add_points`` / ``add_gsplats`` calls do
+    recursion (``add_points_split_wrapper_impl`` /
+    ``add_gsplats_split_wrapper_impl`` in ``core/group/adders/``) so
+    per-part recursive ``add_points`` / ``add_gsplats`` calls do
     not re-trigger auto-split (which would explode the leaf count
     when the compiler threshold is smaller than the user's explicit
     cap).

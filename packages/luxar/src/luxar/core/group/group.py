@@ -393,7 +393,7 @@ class Group(Node):
         flat layout (arrays at the node path).
 
         ``lod_group`` and ``additive_lod`` control the two LOD axes (see
-        ``luxar.core.lod.resolve_substitutive_axis`` /
+        ``luxar.core.group.lod.gsplats.resolve_substitutive_axis`` /
         ``resolve_additive_axis`` for the full value vocabulary). When
         the resolved data has multiple substitutive levels, this method
         builds a ``kind="lod"`` ``Group`` containing one gsplats child
@@ -456,7 +456,6 @@ class Group(Node):
             **attrs,
         )
 
-    # --- BEGIN OLD GSPLATS BODY ---
     def add_gsplats_from_file(
         self,
         name: str,

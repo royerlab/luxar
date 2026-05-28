@@ -1,6 +1,6 @@
-"""luxar.core.lod_lines – Additive-LOD helpers for the Lines leaf type.
+"""luxar.core.group.lod.lines – Additive-LOD helpers for the Lines leaf type.
 
-Mirrors ``core/lod_points.py`` in shape but operates **per-polyline**:
+Mirrors ``core/group/lod/points.py`` in shape but operates **per-polyline**:
 each ``additive_<i>/`` subgroup carries whole polylines (vertices +
 their segments) so that segment topology stays valid during partial
 loads.
@@ -22,7 +22,7 @@ Three ordering methods mirror the Points helper:
 * ``random``           — uniform-random per-polyline permutation.
 * ``salience``         — sort polylines by ``length × max_width`` desc.
 * ``spatial-uniform``  — stratified-grid sampling on per-polyline bbox
-  centers (:func:`luxar.core._spatial_uniform.stratified_grid_order`).
+  centers (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
 """
 
 from __future__ import annotations
@@ -434,7 +434,7 @@ def make_additive_lod_lines(
 
 def _validate_counts(counts: List[int], total: int) -> List[int]:
     """Normalize cumulative element-count breakpoints; same shape as
-    :func:`luxar.core.lod_points._validate_counts`."""
+    :func:`luxar.core.group.lod.points._validate_counts`."""
     if not counts:
         raise ValueError("counts must be a non-empty list of integers")
     breakpoints: List[int] = []
@@ -463,7 +463,7 @@ def _validate_counts(counts: List[int], total: int) -> List[int]:
 def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
     """Translate the ``additive_lod=`` kwarg into a normalized dict.
 
-    Same vocabulary as :func:`luxar.core.lod_points.resolve_additive_axis_points`.
+    Same vocabulary as :func:`luxar.core.group.lod.points.resolve_additive_axis_points`.
     """
     if spec is None or spec is False:
         return None
