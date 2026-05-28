@@ -1,4 +1,4 @@
-"""Tests for the kind=lod ``Group`` (formerly the ``LODGroup`` subclass).
+"""Tests for the kind=lod ``Group``.
 
 Covers:
 
@@ -6,8 +6,7 @@ Covers:
   child enumeration, ``validate_lod_group()`` failure modes.
 - The auto-derivation heuristic (``derive_min_pixel_sizes``): monotonicity
   and the √-of-ratio scaling.
-- Constructor / writer-level validation: unsupported selector, negative
-  default_level.
+- Construction-time validation: unsupported selector, negative default_level.
 
 Convenience-API resolution (``lod_group=``/``additive_lod=``) is exercised
 separately in ``test_group.py`` alongside the rest of the

@@ -18,9 +18,8 @@ This module hosts:
 * The two resolvers that interpret the ``lod_group=`` / ``additive_lod=``
   convenience kwargs against a ``GSplatData`` input.
 * The ``derive_min_pixel_sizes`` heuristic and its monotonicity guard.
-* The free-function validator ``validate_lod_group`` (replaces the class
-  ``LODGroup.validate()`` method since the class has collapsed into a flagged
-  ``Group``).
+* The free-function validator ``validate_lod_group``, callable on any
+  ``Group`` whose ``attrs["kind"] == "lod"``.
 * The shared ``resolve_display_type`` helper used by both LOD and Split kinds,
   which walks down through nested specialized groups to determine what
   geometry type the user sees this layer as.
@@ -159,7 +158,7 @@ def derive_min_pixel_sizes(splat_counts: list[int]) -> list[float]:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Validator (replaces the old ``LODGroup.validate`` method)
+# Validator
 # ────────────────────────────────────────────────────────────────────────
 
 

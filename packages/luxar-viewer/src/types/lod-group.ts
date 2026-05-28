@@ -1,15 +1,10 @@
 /**
  * LOD-kind Group type definitions for luxar-viewer.
  *
- * A kind=`lod` `Group` scene-graph node selects one of N alternative
+ * A `Group` whose `kind === 'lod'` selects one of N alternative
  * children at runtime based on the projected bbox diagonal in pixels and
  * each child's `min_pixel_size` threshold. Children are arbitrary
  * geometry subtrees (points / lines / gsplats / nested specialized groups).
- *
- * On disk, the node has `type: "group"` (no longer a distinct `lod_group`
- * type) and an additional `kind: "lod"` discriminant attribute. The
- * collapse from `LODGroup` subclass to flagged `Group` lets future
- * specialized-group kinds slot in without a new node type per kind.
  *
  * @module types/lod-group
  */
@@ -18,7 +13,7 @@
  * Metadata stored on a kind=`lod` `Group` node's `.zattrs`.
  */
 export interface LODGroupMetadata {
-  /** Node type identifier. Always `"group"` after the kind-flag refactor. */
+  /** Node type identifier. */
   type: 'group';
 
   /** Specialized-group discriminant. */
