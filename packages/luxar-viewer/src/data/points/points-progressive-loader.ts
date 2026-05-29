@@ -33,6 +33,12 @@ import type {
 } from '../../types/points';
 import type { PointsSpatialIndexLoader } from './points-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
+import type {
+  LoaderMetrics,
+  MonitorEventListener,
+  QueryInfo,
+} from '../../types/data-monitor-types';
+import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /** Shared cache-hit threshold; matches `gsplats-progressive-loader`. */
@@ -175,11 +181,13 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private loadedLODs: LoadedPointsData[] = [];
   private lastViewState: PointsViewState | null = null;
   private nLods: number;
+  private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
 
-  constructor(lodLoaders: PointsSpatialIndexLoader[], nLods: number) {
+  constructor(lodLoaders: PointsSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
+    this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
   }
 
   /** Whether more LOD levels remain to load for the current view state. */
@@ -278,6 +286,27 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     void this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
       /* ignore */
     });
+  }
+
+  // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
+  // Lets `connectLoaderToMonitor` wire the progressive node to the data
+  // monitor so its query/throughput/memory telemetry is reported (aggregated
+  // across LODs, re-pathed to this node) instead of silently dropped.
+
+  addEventListener(listener: MonitorEventListener): void {
+    this.monitor.addEventListener(listener);
+  }
+
+  removeEventListener(listener: MonitorEventListener): void {
+    this.monitor.removeEventListener(listener);
+  }
+
+  getActiveQueries(): QueryInfo[] {
+    return this.monitor.getActiveQueries();
+  }
+
+  getMetrics(): LoaderMetrics {
+    return this.monitor.getMetrics();
   }
 
   dispose(): void {

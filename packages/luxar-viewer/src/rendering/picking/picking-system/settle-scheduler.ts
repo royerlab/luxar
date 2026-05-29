@@ -38,14 +38,17 @@ export class SettleScheduler {
   constructor(private ctx: SettleSchedulerCtx) {}
 
   /**
-   * Record a cursor position from a mousemove. No-op while suppressed
-   * so the orchestrator can pause picking without losing the
-   * rAF wake-up loop.
+   * Record a cursor position from a mousemove. The position + timestamp
+   * are tracked even while suppressed so the re-pick on resume
+   * (orbit/pan/zoom release) uses where the cursor actually is — not a
+   * stale pre-interaction position. While suppressed we still skip
+   * scheduling, so no pick fires mid-interaction; `setSuppressed(false)`
+   * re-arms the loop using the latest tracked position.
    */
   recordMouseMove(x: number, y: number): void {
-    if (this._suppressed) return;
     this._pendingMouse = { x, y };
     this._lastMouseMoveTime = this.ctx.now();
+    if (this._suppressed) return;
     this.scheduleRaf();
   }
 

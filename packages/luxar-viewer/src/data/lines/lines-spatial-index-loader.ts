@@ -129,7 +129,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       errors: 0,
       pointsLoaded: 0, // Shared loader metric; counts vertices for lines.
       bytesLoaded: 0,
-      datasetSize: 0,
       visiblePoints: 0, // counts visible vertices for lines
       avgQueryTime: 0,
       avgLoadTime: 0,
@@ -909,10 +908,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    const attrs = this.node.attrs as unknown as LinesMetadata;
-    if (typeof attrs.n_vertices === 'number') {
-      this.metrics.datasetSize = attrs.n_vertices;
-    }
     return { ...this.metrics };
   }
 

@@ -40,6 +40,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     setCacheTelemetryState: vi.fn(() => callOrder.push('setCacheTelemetryState')),
     setSceneGraph: vi.fn(() => callOrder.push('setSceneGraph')),
     forceUpdate: vi.fn(() => callOrder.push('forceUpdate')),
+    updateVisiblePoints: vi.fn(),
     updateVisibleSegments: vi.fn(),
     updateVisibleSplats: vi.fn(),
     show: vi.fn(),

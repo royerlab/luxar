@@ -188,12 +188,12 @@ def main():
 
             aprint("\nRendering Properties:")
             aprint("- Opacity: Controls transparency (0.0 = transparent, 1.0 = opaque)")
-            aprint("- Gamma: Brightness correction (0.2 to 5.0, 1.0 = neutral)")
+            aprint("- Gamma: Brightness correction (0.1 to 10.0, 1.0 = neutral)")
             aprint("- Blending: How colors combine (normal, additive)")
 
             aprint("\nValidation Rules:")
             aprint("- Opacity: Must be between 0.0 and 1.0")
-            aprint("- Gamma: Must be between 0.2 and 5.0")
+            aprint("- Gamma: Must be between 0.1 and 10.0")
             aprint("- Blending: Must be valid mode (normal, additive)")
 
             aprint(f"\nTo view: luxar serve {output_path}")

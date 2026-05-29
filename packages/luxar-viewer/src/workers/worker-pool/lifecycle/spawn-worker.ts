@@ -18,7 +18,7 @@
 
 import { log, Modules } from '../../../utils/log';
 import { wrap, type Remote } from 'comlink';
-import type { DataWorkerAPI } from '../../data-worker';
+import type { DataWorkerAPI, WorkerInitResult } from '../../data-worker';
 import type { WorkerInstance } from '../types';
 
 export interface SpawnWorkerOptions {
@@ -28,7 +28,11 @@ export interface SpawnWorkerOptions {
   urlOverride: string | undefined;
   pendingWorkers: Set<Worker>;
   attachPermanentHandlers: (worker: Worker, workerNumber: number) => void;
-  runInitGuard: (worker: Worker, api: Remote<DataWorkerAPI>, workerNumber: number) => Promise<void>;
+  runInitGuard: (
+    worker: Worker,
+    api: Remote<DataWorkerAPI>,
+    workerNumber: number
+  ) => Promise<WorkerInitResult>;
   isCurrentGeneration: () => boolean;
 }
 
@@ -69,7 +73,7 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<WorkerInsta
     //      because the worker never sent a message),
     //   2. an onerror short-circuit (worker fails *during* its boot
     //      before any pool entry exists for it).
-    await runInitGuard(worker, api, workerNumber);
+    const initResult = await runInitGuard(worker, api, workerNumber);
     // If dispose() ran while we were awaiting init, the generation has moved
     // on. Self-terminate and reject so the parent doesn't push us into the
     // post-dispose pool.
@@ -78,7 +82,9 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<WorkerInsta
     }
     pendingWorkers.delete(worker);
     log.info(Modules.WORKER_POOL, `Worker ${workerNumber}/${total} ready`);
-    return { worker, api, activeQueries: 0 };
+    // `?? false`: a mocked/legacy worker whose initialize() resolves void
+    // counts as "WASM active" for the backend summary rather than crashing.
+    return { worker, api, activeQueries: 0, wasmFallback: initResult?.wasmFallback ?? false };
   } catch (error) {
     log.error(Modules.WORKER_POOL, `Worker ${workerNumber} initialization failed`, error);
     pendingWorkers.delete(worker);

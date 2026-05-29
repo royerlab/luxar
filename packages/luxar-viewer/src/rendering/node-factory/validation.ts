@@ -10,9 +10,27 @@
 import { log, Modules } from '../../utils/log';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 
-/** Validate a LoadedPointsData payload. Logs warnings; throws only on malformed positions. */
-export function validateLoadedPointsData(data: LoadedPointsData): void {
+/**
+ * Validate a LoadedPointsData payload. Logs warnings; throws only on
+ * malformed positions.
+ *
+ * @param isPlaceholder - When true, the payload is the empty placeholder
+ *   built before the first fetch (see `NodeFactory.createEmptyPointsNode`).
+ *   An empty count is expected in that case, so the verbose diagnostic
+ *   and the "empty dataset" warning are suppressed — they would otherwise
+ *   fire once per points node on every scene load and look like errors.
+ *   A genuinely-empty *committed* dataset (default `false`) still warns.
+ */
+export function validateLoadedPointsData(
+  data: LoadedPointsData,
+  isPlaceholder = false
+): void {
   const pointCount = data.positions.length / 3;
+
+  // Expected pre-fetch placeholder — stay silent.
+  if (isPlaceholder && pointCount === 0) {
+    return;
+  }
 
   log.info(Modules.SCENE_LOADER, 'Points Data Validation:', {
     pointCount,

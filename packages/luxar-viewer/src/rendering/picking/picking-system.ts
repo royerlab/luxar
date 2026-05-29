@@ -104,6 +104,16 @@ export class PickingSystem {
   private _dirty = true;
   private _drawBufSize = new THREE.Vector2();
 
+  // Monotonic pick sequence. `performPick` is async (the GPU readback
+  // resolves a frame or more later), so without a guard a slow readback
+  // from an older pick can resolve AFTER a newer pick/move and clobber it
+  // with a stale tooltip. Every supersede — a fresh pick, a mousemove, a
+  // dirty, or a mouseleave — bumps this counter; `performPick` captures it
+  // at fire time and drops its post-readback emit if it's no longer the
+  // latest. The pre-readback (cull-miss / fade) emits are synchronous and
+  // already in fire order, so only the post-`await` emit needs the guard.
+  private _pickSeq = 0;
+
   // Last pick-buffer dimensions actually pushed to `pickTarget.setSize`.
   // Used as an explicit guard against rapid-resize churn: on every pick
   // we recompute (pickW, pickH) from the current drawing-buffer size and
@@ -332,10 +342,27 @@ export class PickingSystem {
   markDirty(): void {
     this._dirty = true;
     this._canvasRect = null;
+    // Supersede any in-flight readback so its late result can't override
+    // this fade.
+    this._pickSeq++;
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
     this.onPickResult(null);
     this.scheduler.markDirty();
+  }
+
+  /**
+   * Invalidate ONLY the cached canvas rect. Call on page scroll / layout
+   * shifts that move the canvas without changing the 3D view: the rect
+   * (from `getBoundingClientRect()`) maps `event.clientX/Y` into
+   * canvas-local pick coordinates, so a stale rect after a scroll would
+   * offset every pick. Unlike {@link markDirty} this does NOT re-render
+   * the pick buffer or fade the tooltip — the view is unchanged, only the
+   * canvas's screen position moved. The next mousemove lazily recomputes
+   * the rect.
+   */
+  invalidateCanvasRect(): void {
+    this._canvasRect = null;
   }
 
   /**
@@ -356,15 +383,21 @@ export class PickingSystem {
    * tooltip, and arms the settle scheduler. Performs zero picking
    * work directly — the actual pick fires from the rAF loop once both
    * the mouse and the pick buffer have been still for HOVER_SETTLE_MS.
+   *
+   * Note: we do NOT early-return while suppressed (orbit/pan/zoom). The
+   * scheduler still tracks the latest cursor position during suppression
+   * (without scheduling a pick) so the re-pick on release uses where the
+   * cursor actually is, not a stale pre-orbit position.
    */
   onMouseMove(event: MouseEvent): void {
-    if (this.scheduler.isSuppressed) return;
-
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
     }
     const x = event.clientX - this._canvasRect.left;
     const y = event.clientY - this._canvasRect.top;
+    // Supersede any in-flight readback — the cursor moved, so an older
+    // pick's late result is now stale.
+    this._pickSeq++;
     // Fade existing overlay while moving (dedupe-safe).
     this.onPickResult(null);
     this.scheduler.recordMouseMove(x, y);
@@ -376,6 +409,9 @@ export class PickingSystem {
    * cursor isn't even over the viewer, and cancel any pending rAF.
    */
   onMouseLeave(): void {
+    // Supersede any in-flight readback so it can't re-show a tooltip after
+    // the cursor has already left the canvas.
+    this._pickSeq++;
     this.scheduler.recordMouseLeave();
     this.onPickResult(null);
   }
@@ -414,6 +450,10 @@ export class PickingSystem {
    * from the cached buffer — zero GPU cost on hover.
    */
   private async performPick(screenX: number, screenY: number): Promise<void> {
+    // Claim this pick's slot. Any later pick/move/dirty/leave bumps
+    // `_pickSeq`, marking this readback stale (see the post-`await` guard).
+    const pickSeq = ++this._pickSeq;
+
     const canvas = this.renderer.domElement;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -496,6 +536,10 @@ export class PickingSystem {
     // a uniform API that works on both backends. See
     // PICKING_DESIGN.md for the 1-frame-latency rationale.
     const result = await this.readbackAndVote();
+    // Drop the result if a newer pick/move/dirty/leave superseded us while
+    // the readback was in flight — emitting it would clobber fresher state
+    // with a stale tooltip.
+    if (pickSeq !== this._pickSeq) return;
     this.onPickResult(result);
   }
 

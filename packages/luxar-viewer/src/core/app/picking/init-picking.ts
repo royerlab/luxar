@@ -149,6 +149,15 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   );
   ports.pickingEvents.on(window, 'resize', dirtyHandler);
 
+  // Page scroll / layout shift moves the canvas on screen without changing
+  // the 3D view. That invalidates the cached canvas rect used to map cursor
+  // coordinates, so bust just the rect (cheap) rather than markDirty (which
+  // would needlessly re-render the pick buffer and fade the tooltip).
+  // Capture-phase catches scrolls on any ancestor scroll container; passive
+  // since we never preventDefault.
+  const rectInvalidate = (): void => pickingSystem.invalidateCanvasRect();
+  ports.pickingEvents.on(window, 'scroll', rectInvalidate, { capture: true, passive: true });
+
   // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
   // while the user is navigating, and fade out stale hover labels.
   const controls = ports.sceneManager.controls;

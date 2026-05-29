@@ -25,11 +25,12 @@ import { validateLoadedPointsData, validateColorMode } from './validation';
 export function createPointsGeometry(
   data: LoadedPointsData,
   maxRadius: number = 1.0,
-  maxSharpness: number = 31.0
+  maxSharpness: number = 31.0,
+  isPlaceholder: boolean = false
 ): THREE.BufferGeometry {
   const geometry = createPointQuadGeometry();
 
-  validateLoadedPointsData(data);
+  validateLoadedPointsData(data, isPlaceholder);
 
   const pointCount = data.positions.length / 3;
 

@@ -44,6 +44,7 @@ export function getColorClass(color: SemanticColor): string {
  * Template for metric card component
  * @param colorClass - CSS class for color (e.g., 'luxar-color--success')
  * @param dataField - Optional data-field attribute for targeted DOM patching
+ * @param tooltip - Optional hover tooltip describing the metric
  */
 export function renderMetricCard(
   title: string,
@@ -51,12 +52,14 @@ export function renderMetricCard(
   subtitle?: string,
   colorClass: string = '',
   size: 'small' | 'medium' | 'large' = 'medium',
-  dataField?: string
+  dataField?: string,
+  tooltip?: string
 ): string {
   const fieldAttr = dataField ? ` data-field="${dataField}"` : '';
   const subFieldAttr = dataField ? ` data-field="${dataField}-sub"` : '';
+  const tooltipAttr = tooltip ? ` title="${tooltip}"` : '';
   return `
-    <div class="luxar-metric-card luxar-metric-card--${size}">
+    <div class="luxar-metric-card luxar-metric-card--${size}"${tooltipAttr}>
       ${title ? `<div class="luxar-metric-card__title">${title}</div>` : ''}
       <div class="luxar-metric-card__value luxar-metric-card__value--${size} ${colorClass}"${fieldAttr}>
         ${value}
@@ -144,14 +147,14 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
   const { label, unit } = loaderDisplay(metrics.type);
 
   return `
-    <div class="luxar-loader-item">
+    <div class="luxar-loader-item" title="${escapeHtml(label)} loader — ${escapeHtml(path)}">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path ${statusColorClass}">${escapeHtml(path)}</span>
-        <span class="luxar-loader-item__status">${escapeHtml(label)}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}" title="Loader source path">${escapeHtml(path)}</span>
+        <span class="luxar-loader-item__status" title="Geometry type served by this loader">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span>${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
-        <span>${formatBytes(metrics.memoryUsed)}</span>
+        <span title="Visible elements served by this loader">${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
+        <span title="Memory used by this loader">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
   `;
@@ -170,7 +173,7 @@ export function renderSecondaryMetrics(
   return `
     <div class="luxar-secondary-metrics">
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label">MEMORY</span>
+        <span class="luxar-secondary-metrics__label" title="Estimated memory used by cached data, relative to the configured limit">MEMORY</span>
         <div class="luxar-secondary-metrics__value" data-field="memory-used">
           ${formatBytes(memory.used)}
         </div>
@@ -178,7 +181,7 @@ export function renderSecondaryMetrics(
       </div>
 
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label">QUERY SPEED</span>
+        <span class="luxar-secondary-metrics__label" title="Average query latency in milliseconds, with the query rate (queries per second)">QUERY SPEED</span>
         <div class="luxar-secondary-metrics__value" data-field="query-speed">
           ${querySpeed.avgTime.toFixed(0)}ms
         </div>
@@ -188,7 +191,7 @@ export function renderSecondaryMetrics(
       </div>
 
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label">NETWORK I/O</span>
+        <span class="luxar-secondary-metrics__label" title="Bytes transferred over the network, with request count and current bandwidth">NETWORK I/O</span>
         <div class="luxar-secondary-metrics__value" data-field="network-bytes">
           ${network ? formatBytes(network.bytesTransferred) : '0B'}
         </div>
@@ -240,7 +243,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
           getColorClass('success'),
           'small',
-          'visible-points'
+          'visible-points',
+          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
         ${renderMetricCard(
           'VISIBLE LINES',
@@ -248,7 +252,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
           getColorClass('warning'),
           'small',
-          'visible-lines'
+          'visible-lines',
+          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
         ${renderMetricCard(
           'VISIBLE SPLATS',
@@ -256,7 +261,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
           getColorClass('info'),
           'small',
-          'visible-splats'
+          'visible-splats',
+          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
       </div>
     `;
@@ -271,7 +277,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
           getColorClass('success'),
           'medium',
-          'visible-points'
+          'visible-points',
+          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
         )
       );
     }
@@ -283,7 +290,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
           getColorClass('warning'),
           'medium',
-          'visible-lines'
+          'visible-lines',
+          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
         )
       );
     }
@@ -295,7 +303,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
           getColorClass('info'),
           'medium',
-          'visible-splats'
+          'visible-splats',
+          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
         )
       );
     }
@@ -314,7 +323,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
           getColorClass('success'),
           'large',
-          'visible-points'
+          'visible-points',
+          'Points currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
       </div>
     `;
@@ -328,7 +338,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
           getColorClass('warning'),
           'large',
-          'visible-lines'
+          'visible-lines',
+          'Line segments currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
       </div>
     `;
@@ -342,7 +353,8 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
           `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
           getColorClass('info'),
           'large',
-          'visible-splats'
+          'visible-splats',
+          'Gaussian splats currently rendered after nD slicing and LOD selection, out of the dataset total'
         )}
       </div>
     `;
@@ -581,14 +593,18 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
             formatBytes(cacheMetrics.totalCacheMemory),
             `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)}`,
             getColorClass('success'),
-            'medium'
+            'medium',
+            undefined,
+            'Total memory used across all cache tiers, relative to the configured limit'
           )}
           ${renderMetricCard(
             'CACHED ENTRIES',
             cacheMetrics.totalEntries.toString(),
             '',
             getColorClass('primary'),
-            'medium'
+            'medium',
+            undefined,
+            'Number of entries currently held across all cache tiers'
           )}
         </div>
         <div class="luxar-cache-loading">
@@ -611,9 +627,11 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
 
   const l1HitRateColorClass = getCacheHitRateColorClassWithGuard(l1HitRate, l1Total);
 
-  // R3: status pill row at the top of the cache tab. Always rendered
-  // (with `data-field="cache-status-row"`) so the incremental
-  // patcher can refresh badge sets without a full re-render.
+  // R3: status pill row. In the full view it lives inline on the right
+  // of the CACHE HEALTH header (rather than its own full-width row at the
+  // top) to save vertical space. Always rendered (with
+  // `data-field="cache-status-row"`) so the incremental patcher can
+  // refresh badge sets without a full re-render.
   const statusRowHtml = renderCacheStatusRow(cacheMetrics.status, true);
 
   // R3: L2 error-counter card. Sums the four OPFS health counters
@@ -625,7 +643,6 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
 
   return `
     <div class="luxar-tab-content--cache">
-      ${statusRowHtml}
       <!-- L0 Decompressed Chunk Cache Section (fastest layer - avoids Blosc decompression) -->
       ${
         cacheMetrics.l0
@@ -670,34 +687,40 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       }
 
       <!-- L1 Memory Cache Section -->
-      ${renderCacheSection('L1 MEMORY CACHE', undefined, 'clearL1', 'Clear L1 cache', [
-        {
-          label: 'SIZE',
-          value: formatBytes(cacheMetrics.l1!.size),
-          subtitle: `${cacheMetrics.l1!.count} entries`,
-          tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
-          colorClass: getColorClass('success'),
-          dataField: 'l1-size',
-        },
-        {
-          label: 'HIT RATE',
-          value: `${l1HitRate.toFixed(1)}%`,
-          subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
-          tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
-          colorClass: l1HitRateColorClass,
-          dataField: 'l1-hitrate',
-        },
-        {
-          label: 'EVICTIONS',
-          value: formatNumber(cacheMetrics.l1!.evictions),
-          subtitle: 'LRU removed',
-          tooltip:
-            'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
-          colorClass:
-            cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
-          dataField: 'l1-evictions',
-        },
-      ])}
+      ${renderCacheSection(
+        'L1 MEMORY CACHE',
+        'In-memory LRU cache of recently used chunks — fast RAM lookup, no decompression or network round-trip',
+        'clearL1',
+        'Clear L1 cache',
+        [
+          {
+            label: 'SIZE',
+            value: formatBytes(cacheMetrics.l1!.size),
+            subtitle: `${cacheMetrics.l1!.count} entries`,
+            tooltip: 'L1 memory cache: fast in-memory storage for recently accessed chunks',
+            colorClass: getColorClass('success'),
+            dataField: 'l1-size',
+          },
+          {
+            label: 'HIT RATE',
+            value: `${l1HitRate.toFixed(1)}%`,
+            subtitle: `${formatNumber(cacheMetrics.l1!.hits)} hits · ${formatNumber(cacheMetrics.l1!.misses)} miss`,
+            tooltip: `Cache hit rate: ${cacheMetrics.l1!.hits.toLocaleString()} hits out of ${l1Total.toLocaleString()} total accesses`,
+            colorClass: l1HitRateColorClass,
+            dataField: 'l1-hitrate',
+          },
+          {
+            label: 'EVICTIONS',
+            value: formatNumber(cacheMetrics.l1!.evictions),
+            subtitle: 'LRU removed',
+            tooltip:
+              'Entries removed from cache when memory limit reached (LRU = Least Recently Used)',
+            colorClass:
+              cacheMetrics.l1!.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed'),
+            dataField: 'l1-evictions',
+          },
+        ]
+      )}
 
       <!-- L2 OPFS Cache Section -->
       ${(() => {
@@ -752,10 +775,14 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         );
       })()}
 
-      <!-- R3: Cache Health — validation mode + last-validated timestamp.
+      <!-- R3: Cache Health — validation mode + last-validated timestamp +
+           operational status badges (inline, right of the header).
            Always rendered so the incremental patcher can refresh values. -->
       <div class="luxar-cache-health">
-        <div class="luxar-cache-health__header">CACHE HEALTH</div>
+        <div class="luxar-cache-health__header">
+          <span class="luxar-cache-health__title" title="Cache validation strategy, last revalidation time, and operational status">CACHE HEALTH</span>
+          ${statusRowHtml}
+        </div>
         <div class="luxar-cache-health__row">
           <span class="luxar-cache-health__label">Validation</span>
           <span class="luxar-cache-health__value" data-field="cache-health-mode" title="How the cache decides whether to trust stored entries: content-hash (Luxar datasets), ttl (configured time window), none (external dataset, manual clear only)">
@@ -916,7 +943,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⬡</span>
-        <span class="luxar-memory-section__title">GPU BUFFER POOL</span>
+        <span class="luxar-memory-section__title" title="Reusable GPU buffer allocations — pooling avoids costly reallocation as geometry streams in">GPU BUFFER POOL</span>
       </div>
       <div class="luxar-memory-section__empty">Not initialized</div>
     </div>
@@ -934,7 +961,7 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
     <div class="luxar-tab-content--memory">
       ${gpuPoolSection}
       ${accumulatorsSection}
-      <div class="luxar-memory-total">
+      <div class="luxar-memory-total" title="Combined totals across GPU pool and accumulators: allocations, buffer reuse rate, and accumulator memory">
         <span class="luxar-memory-total__label">Total:</span>
         <span class="luxar-memory-total__value" data-field="memory-total">
           ${totalAllocations} allocs · ${overallReuseRate.toFixed(0)}% reuse · ${totalAccumulatorMemory.toFixed(1)}MB
@@ -982,16 +1009,16 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⬡</span>
-        <span class="luxar-memory-section__title">GPU BUFFER POOL</span>
+        <span class="luxar-memory-section__title" title="Reusable GPU buffer allocations — pooling avoids costly reallocation as geometry streams in">GPU BUFFER POOL</span>
       </div>
       <table class="luxar-memory-table">
         <thead>
           <tr class="luxar-memory-table__header-row">
-            <th class="luxar-memory-table__header">TYPE</th>
-            <th class="luxar-memory-table__header">REUSE %</th>
-            <th class="luxar-memory-table__header">ACTIVE</th>
-            <th class="luxar-memory-table__header">POOLED</th>
-            <th class="luxar-memory-table__header">ALLOCS</th>
+            <th class="luxar-memory-table__header" title="GPU buffer category (e.g. position, color, index)">TYPE</th>
+            <th class="luxar-memory-table__header" title="Share of buffer requests served from the pool instead of a fresh allocation">REUSE %</th>
+            <th class="luxar-memory-table__header" title="Buffers currently checked out and in use">ACTIVE</th>
+            <th class="luxar-memory-table__header" title="Free buffers retained in the pool for reuse">POOLED</th>
+            <th class="luxar-memory-table__header" title="Total buffer allocations made since load">ALLOCS</th>
           </tr>
         </thead>
         <tbody>
@@ -1047,15 +1074,15 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
     <div class="luxar-memory-section">
       <div class="luxar-memory-section__header">
         <span class="luxar-memory-section__icon">⚡</span>
-        <span class="luxar-memory-section__title">DATA ACCUMULATORS</span>
+        <span class="luxar-memory-section__title" title="Per-attribute CPU-side buffers that grow as point/line/splat data streams in">DATA ACCUMULATORS</span>
       </div>
       <table class="luxar-memory-table">
         <thead>
           <tr class="luxar-memory-table__header-row">
-            <th class="luxar-memory-table__header">TYPE</th>
-            <th class="luxar-memory-table__header">CAPACITY</th>
-            <th class="luxar-memory-table__header">MEMORY</th>
-            <th class="luxar-memory-table__header">GROWS</th>
+            <th class="luxar-memory-table__header" title="Accumulator category (e.g. positions, colors, widths)">TYPE</th>
+            <th class="luxar-memory-table__header" title="Number of elements the buffer can currently hold">CAPACITY</th>
+            <th class="luxar-memory-table__header" title="Memory currently allocated for this accumulator">MEMORY</th>
+            <th class="luxar-memory-table__header" title="Times the buffer was grown/reallocated to fit more data">GROWS</th>
           </tr>
         </thead>
         <tbody>
@@ -1262,7 +1289,7 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
   return `
     <div class="luxar-scene-graph">
       <div class="luxar-scene-graph__header">
-        <h4 class="luxar-scene-graph__title">SCENE GRAPH</h4>
+        <h4 class="luxar-scene-graph__title" title="Hierarchy of scene nodes (groups, points, lines, gsplats) with per-node element counts">SCENE GRAPH</h4>
         ${headerStats ? `<span class="luxar-scene-graph__stats">${headerStats}</span>` : ''}
       </div>
       <div class="luxar-scene-graph__container">

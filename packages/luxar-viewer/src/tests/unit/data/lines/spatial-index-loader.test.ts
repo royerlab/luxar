@@ -114,11 +114,6 @@ describe('LinesSpatialIndexLoader', () => {
       expect(metrics.bytesLoaded).toBe(0);
     });
 
-    it('reports n_vertices as the dataset size on getMetrics', () => {
-      const metrics = loader.getMetrics();
-      expect(metrics.datasetSize).toBe(1000);
-    });
-
     it('returns an empty active-queries list initially', () => {
       expect(loader.getActiveQueries()).toEqual([]);
     });

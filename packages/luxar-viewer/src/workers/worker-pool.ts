@@ -6,7 +6,7 @@
  */
 
 import type { Remote } from 'comlink';
-import type { DataWorkerAPI } from './data-worker';
+import type { DataWorkerAPI, WorkerInitResult } from './data-worker';
 // Vite's `?worker` import emits a bundled, transpiled, hashed worker chunk and
 // returns a default-exported Worker constructor. This sidesteps the broken
 // `new Worker(new URL('./data-worker.ts', import.meta.url))` pattern under
@@ -201,6 +201,30 @@ export class WorkerPool {
 
         this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
+
+        // One-time backend summary (replaces the per-worker WASM/TS lines).
+        // Workers each load WASM independently but share one build, so the
+        // pool is either all-WASM or all-fallback in practice; report a mixed
+        // result honestly if that invariant ever breaks.
+        const fallbackCount = this.workers.filter((w) => w.wasmFallback).length;
+        if (fallbackCount === 0) {
+          log.success(
+            Modules.WORKER_POOL,
+            `Acceleration: compiled WASM active on all ${this.workers.length} data worker(s)`
+          );
+        } else if (fallbackCount === this.workers.length) {
+          log.warning(
+            Modules.WORKER_POOL,
+            `Acceleration: TypeScript fallback on all ${this.workers.length} data worker(s) — ` +
+              'compiled WASM not loaded (run "make build-wasm"; functional but slower)'
+          );
+        } else {
+          log.warning(
+            Modules.WORKER_POOL,
+            `Acceleration: mixed backend — ${this.workers.length - fallbackCount} on WASM, ` +
+              `${fallbackCount} on TypeScript fallback`
+          );
+        }
       } catch (e) {
         // Same stale-generation guard for the error path. If a newer
         // generation has taken over, only clean up this attempt's workers.
@@ -254,7 +278,7 @@ export class WorkerPool {
     worker: Worker,
     api: Remote<DataWorkerAPI>,
     workerNumber: number
-  ): Promise<void> {
+  ): Promise<WorkerInitResult> {
     return initializeWithGuard(
       worker,
       api,

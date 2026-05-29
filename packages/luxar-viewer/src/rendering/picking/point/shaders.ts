@@ -5,7 +5,8 @@
  * with three picking-specific additions:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
  *     into the RGBA32F pick buffer as `(nodeId, elementId, brightness, 1)`.
- *   - 50%-radius truncation so the pick footprint is the bright core only.
+ *   - 80%-radius truncation so the pick footprint tracks the visible disc
+ *     while staying slightly biased toward the bright core.
  *   - Brightness-as-depth so the brightest overlapping fragment wins
  *     the depth test (matters for hover-through-translucent point stacks).
  *
@@ -66,13 +67,16 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
-      // Tighter truncation for picking: 50% of visual radius
-      // Use sharpness compensation * 0.5 so we only pick the bright core.
+      // Picking footprint: 80% of the visual radius (the 0.8 factor below).
+      // Slightly tighter than the visible disc so dense/overlapping point
+      // clouds still resolve to the point whose core you're over, but
+      // forgiving enough that hovering a sparse point doesn't require
+      // pixel-perfect aim. Keep in sync with pick.tsl.ts.
       // Mirror visual point shader's invalid-result guard so a degenerate
       // vSharpness (e.g. ≪0.01 after clamp) can't poison pointSize.
       float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
       float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
-      float pointSize = basePointSize * sharpnessCompensation * 0.5;
+      float pointSize = basePointSize * sharpnessCompensation * 0.8;
       pointSize = max(1.0, min(pointSize, maxPointSize));
 
       // Instanced quad expansion (matches point-shaders.ts approach).

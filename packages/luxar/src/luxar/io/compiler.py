@@ -1461,9 +1461,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
             level_metas.append(level_meta)
 
+        # Sum per-level segment counts so the parent advertises a segment
+        # total — parity with flat `write_lines` (which writes `n_segments`),
+        # progressive points (`n_points`), and progressive gsplats
+        # (`n_splats`). Without this the viewer's scene-graph converter reads
+        # `n_segments` as undefined → "0% of 0 total" in the data monitor.
+        n_segments_total = sum(int(m.get("n_segments", 0)) for m in level_metas)
+
         group.attrs.update(attrs)
         group.attrs["type"] = "lines"
         group.attrs["n_vertices"] = n_vertices_total
+        group.attrs["n_segments"] = n_segments_total
         group.attrs["n_polylines"] = n_polylines_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
@@ -1476,6 +1484,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         metadata: Dict[str, Any] = {
             "type": "lines",
             "n_vertices": n_vertices_total,
+            "n_segments": n_segments_total,
             "n_polylines": n_polylines_total,
             "n_additive_sublods": n_levels,
             "position_bounds": global_bounds,

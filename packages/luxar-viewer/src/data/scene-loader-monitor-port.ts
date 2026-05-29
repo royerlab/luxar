@@ -84,6 +84,7 @@ export interface SceneLoaderMonitorPort {
   // Scene metadata + per-frame counters
   setSceneGraph(root: SceneGraphNode): void;
   forceUpdate(): void;
+  updateVisiblePoints(count: number): void;
   updateVisibleSegments(count: number): void;
   updateVisibleSplats(count: number): void;
 

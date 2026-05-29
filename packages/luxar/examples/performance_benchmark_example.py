@@ -67,8 +67,14 @@ def generate_test_colors(points_per_node: int, color_seed: int) -> np.ndarray:
 
     Returns:
         Array of RGB colors
+
+    NOTE: This uses np.random.seed (legacy global RNG) intentionally — the
+    resulting zarr output is consumed by viewer E2E tests
+    (worker-wasm-integration.spec.ts uses it as DATASET_LARGE). Changing
+    the RNG mechanism would alter every color value and require updating
+    the E2E baselines. See packages/luxar/examples/README.md for the
+    "examples are also test fixtures" convention.
     """
-    # Use seed for reproducible colors
     np.random.seed(color_seed)
     colors = np.random.uniform(0.2, 1.0, (points_per_node, 3)).astype(np.float32)
     return colors
@@ -150,7 +156,8 @@ def main():
                 )
                 material_combinations.add(material_key)
 
-                # Generate deterministic colors using node index as seed
+                # Generate deterministic colors using node index as seed.
+                # Uses the legacy global RNG by design — see helper docstring.
                 colors = generate_test_colors(points_per_node, i)
 
                 # Create the node
@@ -166,50 +173,44 @@ def main():
 
             creation_time = time.time() - start_time
 
-        with asection("Scene Finalization"):
-            aprint("Finalizing scene...")
-            finalize_start = time.time()
-            finalize_time = time.time() - finalize_start
-            total_time = creation_time + finalize_time
+    # The context manager finalizes on exit; measure the full block above
+    # rather than a no-op interval inside it.
 
-        with asection("Performance Analysis and Results"):
-            # Performance analysis
-            aprint("=" * 60)
-            aprint("PERFORMANCE BENCHMARK RESULTS")
-            aprint("=" * 60)
-            aprint("Scene Creation Performance:")
-            aprint(f"- Node creation time: {creation_time:.2f} seconds")
-            aprint(f"- Scene finalization time: {finalize_time:.2f} seconds")
-            aprint(f"- Total time: {total_time:.2f} seconds")
-            aprint(f"- Points per second: {total_points / creation_time:,.0f}")
-            aprint(f"- Nodes per second: {num_nodes / creation_time:.1f}")
+    with asection("Performance Analysis and Results"):
+        aprint("=" * 60)
+        aprint("PERFORMANCE BENCHMARK RESULTS")
+        aprint("=" * 60)
+        aprint("Scene Creation Performance:")
+        aprint(f"- Node creation time (inside compiler): {creation_time:.2f} seconds")
+        aprint(f"- Points per second: {total_points / creation_time:,.0f}")
+        aprint(f"- Nodes per second: {num_nodes / creation_time:.1f}")
 
-            aprint("\nMaterial Combination Analysis:")
-            aprint(f"- Unique material combinations: {len(material_combinations)}")
-            aprint(
-                f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}"
-            )
-            aprint(
-                f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used"
-            )
+        aprint("\nMaterial Combination Analysis:")
+        aprint(f"- Unique material combinations: {len(material_combinations)}")
+        aprint(
+            f"- Theoretical maximum: {len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)}"
+        )
+        aprint(
+            f"- Cache efficiency: {len(material_combinations)}/{len(blending_modes) * len(opacities) * len(gammas) * len(radii_values)} combinations used"
+        )
 
-            aprint("\nScene Statistics:")
-            aprint(f"- Total nodes: {num_nodes}")
-            aprint(f"- Total points: {total_points:,}")
-            aprint(f"- Average points per node: {points_per_node}")
-            aprint("- Spatial distribution: 10×10×10 grid layout")
+        aprint("\nScene Statistics:")
+        aprint(f"- Total nodes: {num_nodes}")
+        aprint(f"- Total points: {total_points:,}")
+        aprint(f"- Average points per node: {points_per_node}")
+        aprint("- Spatial distribution: 10×10×10 grid layout")
 
-            aprint("\nRendering Performance Test:")
-            aprint("This scene is designed to stress-test the renderer with:")
-            aprint("- High point density")
-            aprint("- Many different material combinations")
-            aprint("- Spatial clustering for occlusion testing")
-            aprint("- Mixed transparency and blending modes")
+        aprint("\nRendering Performance Test:")
+        aprint("This scene is designed to stress-test the renderer with:")
+        aprint("- High point density")
+        aprint("- Many different material combinations")
+        aprint("- Spatial clustering for occlusion testing")
+        aprint("- Mixed transparency and blending modes")
 
-            aprint("\nTo test rendering performance:")
-            aprint(f"  luxar serve {output_path}")
-            aprint("Monitor frame rates and memory usage while navigating!")
-            aprint("=" * 60)
+        aprint("\nTo test rendering performance:")
+        aprint(f"  luxar serve {output_path}")
+        aprint("Monitor frame rates and memory usage while navigating!")
+        aprint("=" * 60)
 
 
 if __name__ == "__main__":

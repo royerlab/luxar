@@ -72,6 +72,7 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
 
   vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasm),
+    isWasmFallback: vi.fn(() => false),
   }));
   vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
