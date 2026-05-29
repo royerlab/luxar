@@ -44,6 +44,8 @@ async function loadWorker(): Promise<WorkerModule> {
   };
   vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasmStub),
+    // wasmStub stands in for the compiled backend, not the fallback.
+    isWasmFallback: vi.fn(() => false),
   }));
   vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },

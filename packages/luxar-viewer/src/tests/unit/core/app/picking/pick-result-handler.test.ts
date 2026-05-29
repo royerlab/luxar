@@ -32,6 +32,15 @@ function makeStubs(): Stubs {
   };
 }
 
+/** A promise plus its external `resolve` — lets a test gate when a fetch completes. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 /**
  * Build a fake PickResult. The handler reads only `mainNode.name` and
  * `elementId`, so a bare Object3D suffices. The other fields are
@@ -280,6 +289,55 @@ describe('buildPickResultHandler', () => {
 
     await handle({ nodeId: 1, elementId: 7, brightness: 1.0, mainNode: leaf });
     expect(s.getLabel).toHaveBeenCalledWith('/Plain/leaf', 7);
+  });
+
+  it('drops a superseded content result when a newer null arrives mid-fetch', async () => {
+    // Ordering guard: a slow label/image fetch from an older hover must
+    // not re-show a tooltip after a newer mousemove already faded it.
+    const s = makeStubs();
+    const labelGate = deferred<string | null>();
+    s.getLabel.mockReturnValue(labelGate.promise);
+    s.getImageUrl.mockResolvedValue(null);
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      imageLabelLoader: { getImageUrl: s.getImageUrl },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    const stale = handle(makeResult('/Cells', 1)); // parks on the label fetch
+    await handle(null); // newer fade — emits null, bumps the token
+    labelGate.resolve('Cell 1'); // older fetch finally resolves
+    await stale; // …and must be dropped, not emitted
+
+    expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it('emits only the latest result when two fetches resolve out of order', async () => {
+    // Even if the OLDER fetch resolves first, only the newest invocation's
+    // result reaches the overlay.
+    const s = makeStubs();
+    const gateA = deferred<string | null>();
+    const gateB = deferred<string | null>();
+    s.getLabel.mockReturnValueOnce(gateA.promise).mockReturnValueOnce(gateB.promise);
+    s.getImageUrl.mockResolvedValue(null);
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      imageLabelLoader: { getImageUrl: s.getImageUrl },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    const first = handle(makeResult('/Cells', 1));
+    const second = handle(makeResult('/Cells', 2));
+    gateA.resolve('Cell 1'); // older resolves first → must be dropped
+    gateB.resolve('Cell 2'); // newer wins
+    await Promise.all([first, second]);
+
+    expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
+      label: 'Cell 2',
+      imageUrl: null,
+      nodeName: '/Cells',
+      elementIndex: 2,
+    });
   });
 
   it('is a no-op when overlayManager port is undefined', async () => {

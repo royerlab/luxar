@@ -283,7 +283,12 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     sliders.dispose();
   });
 
-  it('should render discrete non-categorical binary dim as toggle', () => {
+  it('should render discrete non-categorical numeric dim as a slider (not toggle/dropdown)', () => {
+    // Discrete-but-numeric dimensions (time, frame index, an unlabeled flag)
+    // are ordinal, not categorical. They must get a scrubbing slider regardless
+    // of how few values they have — toggles/dropdowns are reserved for dims with
+    // explicit `categories`. This prevents e.g. a small-count `time` dimension
+    // from being misrendered as a categorical pick-one control.
     const container = document.getElementById('test-container')!;
     const dims: SimpleDims = {
       ndim: 4,
@@ -309,15 +314,49 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
       dimensionNames: ['X', 'Y', 'Z', 'Flag'],
     });
 
+    // A discrete-numeric dim is a slider, not a toggle or dropdown.
     const toggle = document.querySelector('.luxar-dimension-toggle');
-    expect(toggle).toBeTruthy();
-
-    // Non-categorical: shows current numeric label (value=0 → "0")
-    expect(toggle!.textContent).toBe('0');
-
-    // No dropdowns should exist
+    expect(toggle).toBeNull();
     const dropdowns = document.querySelectorAll('select');
     expect(dropdowns.length).toBe(0);
+
+    const sliderInputs = document.querySelectorAll('input[type="range"]');
+    expect(sliderInputs.length).toBe(1);
+
+    sliders.dispose();
+  });
+
+  it('should render a small-count discrete time dimension as a slider', () => {
+    // Regression: a `time` dimension with only 6 frames used to become a
+    // categorical-style dropdown. It must be a scrubbing slider.
+    const container = document.getElementById('test-container')!;
+    const dims: SimpleDims = {
+      ndim: 4,
+      displayed: [0, 1, 2],
+      currentStep: [0, 0, 0, 0],
+      metadata: [
+        { name: 'x', unit: '', scale: 1.0 },
+        { name: 'y', unit: '', scale: 1.0 },
+        { name: 'z', unit: '', scale: 1.0 },
+        { name: 'time', unit: '', scale: 1.0, discrete: true, step: 1 },
+      ],
+    };
+
+    const sliders = new DimensionSliders({
+      container,
+      dims,
+      dimensionRanges: [
+        [-6, 6],
+        [-6, 6],
+        [-6, 6],
+        [0, 5],
+      ],
+      dimensionNames: ['x', 'y', 'z', 'time'],
+    });
+
+    expect(document.querySelectorAll('select').length).toBe(0);
+    expect(document.querySelector('.luxar-dimension-toggle')).toBeNull();
+    expect(document.querySelectorAll('input[type="range"]').length).toBe(1);
 
     sliders.dispose();
   });

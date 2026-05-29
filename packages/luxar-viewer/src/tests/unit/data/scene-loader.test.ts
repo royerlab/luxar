@@ -1258,6 +1258,30 @@ describe('SceneLoader', () => {
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Empty dataset detected'));
     });
 
+    it('should stay silent for empty placeholder datasets (pre-fetch)', () => {
+      const emptyData = {
+        positions: new Float32Array([]),
+        metadata: {
+          totalPoints: 0,
+          loadedPoints: 0,
+          bounds: new THREE.Box3(),
+          ndim: 3,
+          usedSpatialIndex: false,
+        },
+      };
+
+      const warnSpy = vi.spyOn(console, 'warn');
+
+      // isPlaceholder=true: the empty placeholder built before the first
+      // fetch is expected, so it must NOT emit the "empty dataset" warning
+      // (otherwise it fires once per points node on every scene load).
+      expect(() => {
+        (sceneLoader as any).nodeFactory.validateLoadedPointsData(emptyData, true);
+      }).not.toThrow();
+
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Empty dataset detected'));
+    });
+
     it('should detect malformed positions (not multiple of 3)', () => {
       const malformedData = {
         positions: new Float32Array([1, 2, 3, 4]), // Length 4, not divisible by 3

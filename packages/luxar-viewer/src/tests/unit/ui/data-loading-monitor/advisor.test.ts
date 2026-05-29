@@ -21,7 +21,6 @@ const baseMetrics: LoaderMetrics = {
   errors: 0,
   pointsLoaded: 0,
   bytesLoaded: 0,
-  datasetSize: 0,
   visiblePoints: 0,
   avgQueryTime: 0,
   avgLoadTime: 0,

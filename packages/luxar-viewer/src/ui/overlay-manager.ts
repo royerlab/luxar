@@ -88,6 +88,19 @@ interface HoverOverlayEntry {
   el: HTMLDivElement;
   template: string;
   config: OverlayConfig;
+  /**
+   * The exact string last written to the element's DOM (innerHTML for
+   * HTML overlays, textContent otherwise). Used to skip redundant DOM
+   * rewrites: the hover UX fades the tooltip out on every mousemove and
+   * re-shows it after the settle, which resets the manager-level
+   * `_lastHover*` dedup to null. Without this per-entry guard, every
+   * re-show rebuilds innerHTML and recreates the `<img>` element — a
+   * fresh `<img>` re-decodes its (cached) blob URL asynchronously, so
+   * under cursor jitter the image is perpetually recreated and often
+   * never paints. Preserving the rendered DOM across the
+   * fade-out/fade-in churn keeps the decoded image stable.
+   */
+  lastRendered?: string;
 }
 
 export class OverlayManager {
@@ -282,10 +295,21 @@ export class OverlayManager {
         }
         text = text.replace(/\{hover_image_label\}/g, imgHtml);
 
-        if (isHtml) {
-          hover.el.innerHTML = this.sanitizeHtml(text);
-        } else {
-          hover.el.textContent = text;
+        // Only touch the DOM when the rendered content actually changed.
+        // The hover loop fades out (opacity 0) on every mousemove and
+        // re-shows after the settle; rewriting innerHTML here recreates
+        // the `<img>` element, forcing an async blob re-decode that
+        // flickers the thumbnail. Reusing the existing DOM across an
+        // identical re-show keeps the decoded image visible. See
+        // HoverOverlayEntry.lastRendered.
+        const rendered = isHtml ? this.sanitizeHtml(text) : text;
+        if (rendered !== hover.lastRendered) {
+          if (isHtml) {
+            hover.el.innerHTML = rendered;
+          } else {
+            hover.el.textContent = rendered;
+          }
+          hover.lastRendered = rendered;
         }
         hover.el.style.opacity = String(hover.config.opacity);
       }

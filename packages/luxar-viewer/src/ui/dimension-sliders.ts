@@ -295,7 +295,8 @@ export class DimensionSliders {
     titleContainer.appendChild(this.statusText);
     this.slidersContainer.appendChild(titleContainer);
 
-    // Separate dimensions by type: sliders vs toggles (binary) vs dropdowns (few categorical/discrete)
+    // Separate dimensions by type: toggles (binary categorical) vs dropdowns
+    // (3-9 categories) vs sliders (everything else, incl. all discrete-numeric)
     const sliderDims: number[] = [];
     const toggleDims: number[] = [];
     const dropdownDims: number[] = [];
@@ -304,31 +305,25 @@ export class DimensionSliders {
       if (!this.dims.displayed.includes(i)) {
         const dimMeta = this.dims.metadata?.[i];
         const categories = dimMeta?.categories;
-        const isDiscrete = dimMeta?.discrete || false;
-        const range = this.dimensionRanges[i];
-        const step = dimMeta?.step ?? 1;
 
-        // Calculate number of discrete values in range
-        const numDiscreteValues =
-          range && step > 0 ? Math.floor((range[1] - range[0]) / step) + 1 : 0;
+        // Toggle/dropdown pickers are reserved for TRUE categorical dimensions
+        // (those with explicit `categories` labels). Discrete-but-numeric
+        // dimensions such as `time`, frame index, or an unlabeled channel index
+        // are ordinal — they get a scrubbing slider (which supports discrete
+        // stepping) regardless of how few values they have. Treating a
+        // small-count discrete-numeric dim as a categorical pick-one control was
+        // wrong: e.g. a 6-frame `time` dimension would render as a dropdown.
 
         // Binary categorical (exactly 2 categories) → toggle button
         if (categories && categories.length === 2) {
-          toggleDims.push(i);
-        }
-        // Binary discrete non-categorical (exactly 2 values) → toggle button
-        else if (!categories && isDiscrete && numDiscreteValues === 2) {
           toggleDims.push(i);
         }
         // Categorical with 3-9 categories → dropdown
         else if (categories && categories.length < 10) {
           dropdownDims.push(i);
         }
-        // Discrete dimension with small range (3-9 values) → dropdown with numeric labels
-        else if (isDiscrete && numDiscreteValues > 0 && numDiscreteValues < 10) {
-          dropdownDims.push(i);
-        }
-        // Otherwise → slider (at top)
+        // Everything else (discrete-numeric, continuous, or categorical with
+        // many categories) → slider (at top)
         else {
           sliderDims.push(i);
         }

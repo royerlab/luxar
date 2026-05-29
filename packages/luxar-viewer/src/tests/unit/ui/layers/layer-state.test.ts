@@ -3,6 +3,7 @@ import {
   LayerStateManager,
   computeUniforms,
   computeDisplayRange,
+  isLayerEnabled,
 } from '../../../../ui/layers/layer-state';
 import type { SceneNode } from '../../../../data/data-loader-types';
 
@@ -87,11 +88,47 @@ function makeSceneGraph(layers: Partial<SceneNode['attrs']>[]): SceneNode {
   };
 }
 
+describe('isLayerEnabled', () => {
+  it('treats strict boolean true as enabled', () => {
+    expect(isLayerEnabled(true)).toBe(true);
+    expect(isLayerEnabled(false)).toBe(false);
+  });
+
+  it('coerces truthy finite numbers (hand-edited zarr) to enabled', () => {
+    expect(isLayerEnabled(1)).toBe(true);
+    expect(isLayerEnabled(0)).toBe(false);
+    expect(isLayerEnabled(NaN)).toBe(false);
+  });
+
+  it('treats undefined / strings / objects as not-a-layer', () => {
+    expect(isLayerEnabled(undefined)).toBe(false);
+    expect(isLayerEnabled('true')).toBe(false);
+    expect(isLayerEnabled({})).toBe(false);
+  });
+});
+
 describe('LayerStateManager', () => {
   let mgr: LayerStateManager;
 
   beforeEach(() => {
     mgr = new LayerStateManager();
+  });
+
+  it('coerces a numeric `layer` attr instead of silently dropping the node', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        // `layer: 1` (e.g. hand-edited zarr) must still surface as a layer.
+        { path: 'a', type: 'points', attrs: { layer: 1 } as never, hasSpatialIndex: true },
+        { path: 'b', type: 'points', attrs: { layer: 0 } as never, hasSpatialIndex: true },
+      ],
+    };
+    mgr.initFromSceneGraph(graph);
+    expect(mgr.count).toBe(1);
+    expect(mgr.getLayers().map((l) => l.name)).toEqual(['a']);
   });
 
   it('collects nodes with layer=true (including groups as composite layers)', () => {

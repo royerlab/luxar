@@ -229,6 +229,7 @@ class TestAddLinesAdditiveLod:
         grp = store["ln"]
         assert grp.attrs["type"] == "lines"
         assert grp.attrs["n_vertices"] == 40
+        assert grp.attrs["n_segments"] == 20  # 40 vertices / 2 per segment
         assert grp.attrs["n_polylines"] == 20  # 40 / 2
         assert grp.attrs["n_additive_sublods"] == 4
         subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
