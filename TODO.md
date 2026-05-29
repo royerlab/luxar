@@ -12,21 +12,27 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 9 - **UI ergonomics**: The current UI relies heavily on hidden keyboard shortcuts to reveal panels, which is poor discoverability. Improve with visible affordances (buttons, menus, or indicators).
 
+## Bugs
+
+23 - **Fix bugs surfaced by examples**: Several example datasets surface viewer/loader bugs that need fixing:
+    - `scalars_and_colormap_example.zarr`
+    - `scene_dimensions_example.zarr`
+    - `transform_example.zarr`
+
 ## Rendering & Performance (MEDIUM Priority)
 
-22 - **Level-of-Detail (LOD) with SplitNode**: Two new composable scene graph node types for scalable rendering of large datasets:
-    - **LODNode**: Contains children at different detail levels (e.g., full-res and merged/coarse gsplats). Selects active LOD based on **screen-space projected size** of the node's bounding box. Uses **per-splat opacity crossfade** during transitions — each splat's opacity is modulated by the LOD transition factor, avoiding brightness doubling from overlapping semi-transparent layers.
-    - **SplitNode**: Spatially partitions a single logical node into sub-nodes (appears as one node to the user). Enables **frustum culling** per region — off-screen regions are not rendered at all. The writer decides the spatial split strategy (octree, axis-aligned tiles, irregular regions).
-    - **Composition**: `SplitNode > LODNode > GSplats` gives per-region LOD selection through composition. Nearby regions render at full resolution, distant regions at coarse resolution, off-screen regions are culled entirely.
-    - **Decimation**: Merge nearby splats — cluster and re-fit fewer, larger Gaussians. Done offline via CLI tooling (e.g., `luxar gsplat decimate`).
-    - **Open questions**: nD LOD metric for non-displayed dimensions, split seam handling at LOD boundaries, optimal split granularity (8-64 regions), zarr format for LODNode/SplitNode metadata, LOD for lines (connectivity-preserving simplification), hysteresis thresholds.
-    - **Advanced — Recursive composition**: SplitNode and LODNode can be alternated recursively (`SplitNode > LODNode > SplitNode > LODNode > ... > GSplats`) to form a hierarchical LOD tree (similar to 3D Tiles / Nanite). The viewer traverses the tree top-down: at each LODNode, if the coarse child is sufficient (screen-space error below threshold), it renders the coarse summary and **stops traversal** — never loading or rendering the finer splits below. This gives: (1) view-adaptive memory usage — only fine-grained data for nearby regions is loaded, (2) adaptive draw call count — zoomed-out views render few coarse nodes, close-ups render many fine nodes, (3) natural progressive streaming — coarse LODs load first, fine LODs on demand. Key requirement: each LODNode's coarse child must be a faithful summary of the entire subtree below it, not just one level down.
-    - **Advanced — Lessons from Nanite (UE5)**:
-        - **Monotonic error guarantee**: Each LODNode must store its simplification error (e.g., max amplitude difference, spatial displacement vs. fine level). The hierarchy must guarantee `parent_error >= child_error` at every level so traversal always converges. Without this, a coarse LOD might look "sufficient" while hiding a region where it's actually terrible.
-        - **Pixel-error metric, not just size**: LOD selection should be based on "how many pixels of screen-space error would this simplification introduce" — not just projected bounding box size. A flat region with 1M splats may have near-zero simplification error (coarse is fine), while a detailed region at the same screen size may need fine LOD. Store the error, project it to pixels at runtime.
-        - **Density-adaptive splitting**: SplitNode should partition based on splat density / detail, not a uniform grid. Dense regions get more splits, empty regions fewer (k-d tree at median, or cluster by density). Avoids wasting splits on empty space.
-        - **Virtual residency via zarr chunks**: Zarr's chunked storage maps naturally to Nanite's virtual memory model — coarse LOD chunks (small) stay resident, fine LOD chunks are fetched on demand and evicted when the camera moves away.
-        - **Blending may be minimal**: Nanite avoids blending entirely via seamless DAG cuts (mesh-specific, not transferable). However, overlapping Gaussians at region boundaries provide natural continuity — test whether per-splat crossfade can use a very narrow transition or be skipped entirely for well-constructed LODs.
+22 - **Level-of-Detail (LOD) with SplitNode** — core landed, advanced refinements remain.
+
+    **Implemented (see Completed archive, item 22-core):** LODNode (`kind:'lod'`, pixel-size selector + hysteresis), SplitNode (`kind:'split'`, midpoint + SAH BSP, auto-split heuristic), recursive scene-graph composition, `luxar gsplat lod` (additive / substitutive / pyramid), Poisson-disk + spatial-uniform LOD ordering, LOD for lines (connectivity-preserving), progressive multi-additive-LOD loading for Points & Lines, zarr v2.0 (substitutive × additive matrix) format.
+
+    **Still TODO:**
+    - **Per-splat opacity crossfade** during LOD transitions — each splat's opacity modulated by the transition factor to avoid brightness doubling from overlapping semi-transparent layers. (Currently transitions are hard switches with hysteresis; no crossfade.)
+    - **Pixel-error metric, not just projected size**: LOD selection should be based on "how many pixels of screen-space error would this simplification introduce" — not just projected bounding box size. A flat region with 1M splats may have near-zero simplification error (coarse is fine), while a detailed region at the same screen size may need fine LOD. Store per-level error, project it to pixels at runtime. (Currently selector is pure `pixel_size`.)
+    - **Monotonic error guarantee**: Each LODNode should store its simplification error (max amplitude difference, spatial displacement vs. fine level) with `parent_error >= child_error` guaranteed at every level so top-down traversal always converges. (Greedy additive ordering has a `(1-1/e)` submodular guarantee but no stored monotonic error bound.)
+    - **Density-adaptive splitting**: SplitNode should partition based on splat density / detail, not a uniform/midpoint grid. Dense regions get more splits, empty regions fewer (k-d tree at median, or cluster by density). SAH BSP is a step toward this but is cost-driven, not density-driven.
+    - **Nanite-style stop-traversal**: top-down traversal that renders a coarse summary and **stops** (never loading finer splits below) when screen-space error is below threshold, for view-adaptive memory + draw-call counts and progressive streaming. (Currently progressive loaders stream additive LODs but there is no error-driven subtree pruning.)
+    - **nD LOD metric for non-displayed dimensions**, split seam handling at LOD boundaries, optimal split granularity tuning.
+    - **Virtual residency via zarr chunks**: coarse LOD chunks stay resident, fine LOD chunks fetched on demand and evicted when the camera moves away (Nanite-style virtual memory model).
 
 ## Future / Exploratory (LOW Priority)
 
@@ -58,6 +64,18 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 16 - ~~**PSNR/SSIM quality metrics in CLI**~~: **DONE.** `luxar gsplat compare` command.
 
 18 - ~~**Tiled fitting for large volumes**~~: **DONE.** `luxar gsplat fit --tiled`.
+
+### Rendering & Performance (completed)
+
+22-core - ~~**LOD + SplitNode core**~~: **DONE.** Composable scene graph LOD landed across Python and viewer:
+    - **LODNode** (`kind:'lod'`): screen-space pixel-size selector with asymmetric hysteresis — `lod-group-registry.ts`, `types/lod-group.ts`.
+    - **SplitNode** (`kind:'split'`): spatial BSP partitioning (recursive midpoint + opt-in SAH BSP) with per-mesh frustum culling and an auto-split heuristic — `core/group/split.py`, `core/group/auto_split.py`, `data/scene-loader/nodes/load-split-group-node.ts`.
+    - **Recursive composition**: arbitrary nesting of `lod`/`split` groups via standard scene-graph loading.
+    - **Decimation CLI**: `luxar gsplat lod additive | substitutive | pyramid` (greedy / self_energy / mass / kmeans_lloyd, energy/count breakpoints) — `cli/gsplat_commands.py`.
+    - **LOD ordering**: Poisson-disk (Bridson) + spatial-uniform — `core/group/lod/poisson_disk.py`.
+    - **LOD for lines**: polyline-aware, connectivity-preserving simplification — `core/group/lod/lines.py`.
+    - **Progressive multi-additive-LOD loading** for Points & Lines — `data/points/points-progressive-loader.ts`, `data/lines/lines-progressive-loader.ts`.
+    - **Zarr v2.0 format**: substitutive × additive LOD matrix — see `docs/specs/GSPLATS_ZARR_FORMAT.md`.
 
 ### Feature Requests (completed)
 

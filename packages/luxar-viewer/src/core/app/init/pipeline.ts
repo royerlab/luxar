@@ -83,14 +83,24 @@ export async function runInitPipeline(
   ports: InitPipelinePorts,
   partial: Partial<InitPipelineResult>
 ): Promise<InitPipelineResult> {
-  // Inform users about expected console messages
+  // Inform users about expected console messages. The browser logs a
+  // `GET … 404` line (with a JS stack trace) for every failed network
+  // request; these cannot be suppressed from JS — only avoided by not
+  // making the request. The loader intentionally probes for OPTIONAL
+  // arrays/groups that many datasets omit, so 404s here are normal:
+  //   • sharpnesses/  — optional per-point sharpness (falls back to default)
+  //   • overlays/     — optional scene overlays group
+  //   • */.zattrs     — optional zarr attributes on an existing array
+  // Any of these returning 404 is expected and does NOT indicate a problem.
   log.info(
     Modules.LUXAR,
-    'Note: You may see 404 errors for optional features like spatial indexes and array attributes.'
+    'Note: the browser may log "GET … 404" lines for optional dataset features ' +
+      '(sharpnesses, overlays, optional .zattrs/.zarray probes).'
   );
   log.info(
     Modules.LUXAR,
-    'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
+    'These 404s are expected and harmless — the loader probes for optional features ' +
+      'that many datasets omit, and falls back cleanly when they are absent.'
   );
 
   const sceneSrc = ports.options.src ?? config.defaultZarrPath;

@@ -97,6 +97,9 @@ export interface GSplatsMetadata {
   /** Blending mode */
   blending_mode?: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous';
 
+  /** Whether this node is exposed as a layer in the Layers panel */
+  layer?: boolean;
+
   /**
    * List of dimension names to extend visibility across.
    * GSplats with extend_to_all will be visible regardless of slice position

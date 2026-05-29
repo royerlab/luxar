@@ -160,11 +160,12 @@ export class NodeFactory {
     path: string,
     attrs: PointsMetadata,
     data: LoadedPointsData,
-    loader: DataLoader
+    loader: DataLoader,
+    isPlaceholder: boolean = false
   ): THREE.Mesh {
     const maxRadius = attrs.max_radius ?? 1.0;
     const maxSharpness = attrs.max_sharpness ?? 31.0;
-    const geometry = this.createPointsGeometry(data, maxRadius, maxSharpness);
+    const geometry = this.createPointsGeometry(data, maxRadius, maxSharpness, isPlaceholder);
 
     const radiusScale = geometry.userData.radiusScale ?? 1.0;
     const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
@@ -272,7 +273,7 @@ export class NodeFactory {
         dtypes: {},
       },
     };
-    return this.createPointsNode(path, attrs, emptyData, loader);
+    return this.createPointsNode(path, attrs, emptyData, loader, /* isPlaceholder */ true);
   }
 
   /**
@@ -309,8 +310,8 @@ export class NodeFactory {
    * Validate points data for edge cases and malformed data.
    * Logs detailed diagnostics to browser console for debugging.
    */
-  validateLoadedPointsData(data: LoadedPointsData): void {
-    validateLoadedPointsDataImpl(data);
+  validateLoadedPointsData(data: LoadedPointsData, isPlaceholder = false): void {
+    validateLoadedPointsDataImpl(data, isPlaceholder);
   }
 
   validateColorMode(
@@ -335,9 +336,10 @@ export class NodeFactory {
   createPointsGeometry(
     data: LoadedPointsData,
     maxRadius: number = 1.0,
-    maxSharpness: number = 31.0
+    maxSharpness: number = 31.0,
+    isPlaceholder: boolean = false
   ): THREE.BufferGeometry {
-    return createPointsGeometryImpl(data, maxRadius, maxSharpness);
+    return createPointsGeometryImpl(data, maxRadius, maxSharpness, isPlaceholder);
   }
 
   createPointsMaterial(

@@ -165,6 +165,7 @@ export class DataLoadingMonitor {
     linesNodes: 0,
     gsplatsNodes: 0,
     totalPoints: 0,
+    visiblePoints: 0,
     totalSegments: 0,
     visibleSegments: 0,
     totalSplats: 0,
@@ -407,6 +408,7 @@ export class DataLoadingMonitor {
       linesNodes: 0,
       gsplatsNodes: 0,
       totalPoints: 0,
+      visiblePoints: 0,
       totalSegments: 0,
       visibleSegments: 0,
       totalSplats: 0,
@@ -576,11 +578,21 @@ export class DataLoadingMonitor {
       linesNodes,
       gsplatsNodes,
       totalPoints,
+      visiblePoints: totalPoints,
       totalSegments,
       visibleSegments: totalSegments,
       totalSplats,
       visibleSplats: totalSplats,
     };
+  }
+
+  /**
+   * Update the count of currently visible points.
+   * Called by SceneLoader after processing points with nD clipping /
+   * progressive LOD refinement.
+   */
+  public updateVisiblePoints(count: number): void {
+    this.sceneGraphState.visiblePoints = count;
   }
 
   /**
@@ -743,7 +755,6 @@ export class DataLoadingMonitor {
       errors: 0,
       pointsLoaded: 0,
       bytesLoaded: 0,
-      datasetSize: 0,
       visiblePoints: 0,
       avgQueryTime: 0,
       avgLoadTime: 0,
@@ -879,13 +890,50 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Build the compact-view element summary. Shows one count per geometry
+   * type actually present in the scene (points / lines / gsplats), using the
+   * same presence test as the overview tab (`updateOverviewTabValues`) so a
+   * lines- or gsplats-only dataset no longer mislabels its elements as
+   * "points". Falls back to a points entry when nothing has loaded yet.
+   */
+  private buildCompactGeomSummary(stats: GlobalStats): string {
+    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
+    const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
+    const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
+
+    const entries: string[] = [];
+    if (hasPoints) {
+      entries.push(
+        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+      );
+    }
+    if (hasLines) {
+      entries.push(
+        `<span data-geom="lines" title="Visible line segments">${templateFormatNumber(stats.visibleSegments)} lines</span>`
+      );
+    }
+    if (hasGSplats) {
+      entries.push(
+        `<span data-geom="splats" title="Visible gaussian splats">${templateFormatNumber(stats.visibleSplats)} splats</span>`
+      );
+    }
+    // Nothing loaded yet → show a points placeholder so the row isn't empty.
+    if (entries.length === 0) {
+      entries.push(
+        `<span data-geom="points" title="Visible points">${templateFormatNumber(stats.visiblePoints)} pts</span>`
+      );
+    }
+    return entries.join('');
+  }
+
+  /**
    * Try to update just the compact view values without replacing innerHTML.
    * This preserves event handlers and prevents interaction loss during polling updates.
    * @returns true if incremental update succeeded, false if full rebuild is needed
    */
   private updateCompactViewValues(): boolean {
-    const pointsEl = this.panel?.querySelector(
-      '.luxar-monitor-compact .luxar-monitor-compact__points'
+    const geomsEl = this.panel?.querySelector(
+      '.luxar-monitor-compact .luxar-monitor-compact__geoms'
     );
     const memoryEl = this.panel?.querySelector(
       '.luxar-monitor-compact .luxar-monitor-compact__memory'
@@ -893,7 +941,7 @@ export class DataLoadingMonitor {
     const qpsEl = this.panel?.querySelector('.luxar-monitor-compact .luxar-monitor-compact__qps');
 
     // If structure doesn't exist yet, need full rebuild
-    if (!pointsEl || !memoryEl || !qpsEl) return false;
+    if (!geomsEl || !memoryEl || !qpsEl) return false;
 
     // Update metrics from all loaders
     for (const [path, loader] of this.loaders) {
@@ -902,7 +950,9 @@ export class DataLoadingMonitor {
     }
 
     const stats = this.getGlobalStats();
-    pointsEl.textContent = templateFormatNumber(stats.visiblePoints);
+    // Rewrite only the geometry summary's inner HTML — it holds no event
+    // handlers, so this is safe and leaves the expand button intact.
+    geomsEl.innerHTML = this.buildCompactGeomSummary(stats);
     memoryEl.textContent = templateFormatBytes(stats.totalMemory);
     qpsEl.textContent = `${stats.queriesPerSecond.toFixed(1)}/s`;
     return true;
@@ -940,8 +990,8 @@ export class DataLoadingMonitor {
           ${hasSpatialIndex ? '🔍' : '📦'}
         </span>
 
-        <span class="luxar-monitor-compact__points" title="Visible points">
-          ${templateFormatNumber(stats.visiblePoints)}
+        <span class="luxar-monitor-compact__geoms">
+          ${this.buildCompactGeomSummary(stats)}
         </span>
 
         <span class="luxar-monitor-compact__memory" title="Memory usage">
@@ -1340,11 +1390,36 @@ export class DataLoadingMonitor {
    */
   private renderTabs(): string {
     const tabs = [
-      { id: 'overview', label: 'Overview', icon: '📊' },
-      { id: 'cache', label: 'Cache', icon: '💾' },
-      { id: 'memory', label: 'Memory', icon: '🧠' },
-      { id: 'performance', label: 'Performance', icon: '⚡' },
-      { id: 'insights', label: 'Insights', icon: '💡' },
+      {
+        id: 'overview',
+        label: 'Overview',
+        icon: '📊',
+        tooltip: 'Visible element counts, memory, query speed, network I/O, and the scene graph',
+      },
+      {
+        id: 'cache',
+        label: 'Cache',
+        icon: '💾',
+        tooltip: 'L0/L1/L2 cache sizes, hit rates, evictions, health, and total usage',
+      },
+      {
+        id: 'memory',
+        label: 'Memory',
+        icon: '🧠',
+        tooltip: 'GPU buffer pool reuse and CPU-side data accumulator usage',
+      },
+      {
+        id: 'performance',
+        label: 'Performance',
+        icon: '⚡',
+        tooltip: 'Query latency, throughput, and loading performance over time',
+      },
+      {
+        id: 'insights',
+        label: 'Insights',
+        icon: '💡',
+        tooltip: 'Recommendations and detected issues for tuning loading and caching',
+      },
     ];
 
     return tabs
@@ -1352,7 +1427,7 @@ export class DataLoadingMonitor {
         (tab) => `
       <button
         class="luxar-data-monitor__tab ${this.uiState.activeTab === tab.id ? 'luxar-data-monitor__tab--active' : ''}"
-        data-action="setTab" data-tab-id="${tab.id}"
+        data-action="setTab" data-tab-id="${tab.id}" title="${tab.tooltip}"
       >
         ${tab.icon}&nbsp;${tab.label}
       </button>
@@ -1483,17 +1558,19 @@ export class DataLoadingMonitor {
     let totalLoads = 0;
     let totalQueryTime = 0;
     let activeSpatial = 0;
-    let datasetSize = 0; // Total points in all datasets (from zarr metadata)
-    let visiblePoints = 0; // Currently visible/rendered points
 
+    // Per-loader metrics drive genuine per-loader throughput only
+    // (cumulative loaded, memory, query stats). Dataset totals and visible
+    // counts are sourced from the scene graph below — symmetric across all
+    // three geometry types. Progressive multi-LOD nodes connect as a single
+    // loader (their adapter re-paths inner events to the node path), so each
+    // node contributes exactly one entry here — no per-LOD double-counting.
     for (const metrics of this.metrics.values()) {
       totalPoints += metrics.pointsLoaded;
       totalMemory += metrics.memoryUsed;
       totalQueries += metrics.queries;
       totalLoads += metrics.loads;
       totalQueryTime += metrics.avgQueryTime * metrics.queries;
-      datasetSize += metrics.datasetSize || 0;
-      visiblePoints += metrics.visiblePoints || 0;
 
       if (
         metrics.type === 'point-spatial-index' ||
@@ -1508,12 +1585,15 @@ export class DataLoadingMonitor {
     this.calculateRates();
     const qps = this.cachedRates.queriesPerSec;
 
-    // Get line segment stats from scene graph
+    // Dataset totals + visible counts come from the scene graph, identically
+    // for points / lines / gsplats. Visible counts are refreshed each update
+    // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
+    const datasetSize = this.sceneGraphState.totalPoints;
+    const visiblePoints = this.sceneGraphState.visiblePoints;
+
     const datasetSegments = this.sceneGraphState.totalSegments;
-    // Use tracked visible segments (updated by scene loader after nD clipping)
     const visibleSegments = this.sceneGraphState.visibleSegments;
 
-    // Get gsplat stats from scene graph
     const datasetSplats = this.sceneGraphState.totalSplats;
     const visibleSplats = this.sceneGraphState.visibleSplats;
 

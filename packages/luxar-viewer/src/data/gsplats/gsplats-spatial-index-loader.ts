@@ -120,7 +120,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       errors: 0,
       pointsLoaded: 0, // Shared loader metric; counts splats for gsplats.
       bytesLoaded: 0,
-      datasetSize: 0,
       visiblePoints: 0, // counts visible splats for gsplats
       avgQueryTime: 0,
       avgLoadTime: 0,
@@ -670,10 +669,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    const attrs = this.node.attrs as unknown as GSplatsMetadata;
-    if (typeof attrs.n_splats === 'number') {
-      this.metrics.datasetSize = attrs.n_splats;
-    }
     return { ...this.metrics };
   }
 

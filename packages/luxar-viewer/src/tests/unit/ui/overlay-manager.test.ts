@@ -476,6 +476,72 @@ describe('OverlayManager.updateHoverContent', () => {
     expect(firstHtml).toBeDefined();
   });
 
+  it('preserves the <img> element across fade-out/re-show of identical content', async () => {
+    // Regression: the hover loop fades the tooltip to opacity 0 on every
+    // mousemove (updateHoverContent(null)) and re-shows it after the
+    // settle. That null resets the manager-level dedup, so the re-show
+    // used to rewrite innerHTML and recreate the <img> element. A fresh
+    // <img> re-decodes its (cached) blob URL asynchronously, flickering
+    // the thumbnail under cursor jitter. The per-entry `lastRendered`
+    // guard must skip the rewrite when the rendered content is identical,
+    // keeping the same (already-decoded) <img> node alive.
+    await manager.loadOverlays(
+      [
+        {
+          name: 'hover-img',
+          type: 'overlay_html',
+          position: [0.5, 0.97],
+          opacity: 0.95,
+          anchor: 'bottom-center',
+          transition: 'none',
+          transition_duration: 0.3,
+          interactive: false,
+          z_index: 0,
+          hover: true,
+          html: '<div><strong>{hover_label}</strong><br/>{hover_image_label}</div>',
+          hover_image_size: [0.08, 0.08],
+        } as OverlayConfig,
+      ],
+      'http://example.com'
+    );
+
+    const el = document.querySelector('[data-overlay-name="hover-img"]') as HTMLDivElement;
+    const content = {
+      label: 'species_0',
+      imageUrl: 'blob:http://example.com/abc-123',
+      nodeName: '/ring',
+      elementIndex: 0,
+    };
+
+    // First show — builds the <img>.
+    manager.updateHoverContent(content);
+    const firstImg = el.querySelector('img');
+    expect(firstImg).not.toBeNull();
+    expect(el.style.opacity).toBe('0.95');
+
+    // Mousemove fades it out (DOM untouched, just opacity).
+    manager.updateHoverContent(null);
+    expect(el.style.opacity).toBe('0');
+    expect(el.querySelector('img')).toBe(firstImg); // <img> survives the fade
+
+    // Settle re-shows identical content: must reuse the SAME <img> node
+    // (no innerHTML rewrite ⇒ no async re-decode flicker).
+    manager.updateHoverContent(content);
+    expect(el.querySelector('img')).toBe(firstImg);
+    expect(el.style.opacity).toBe('0.95');
+
+    // A different element (new image) does recreate the <img>.
+    manager.updateHoverContent({
+      label: 'species_1',
+      imageUrl: 'blob:http://example.com/def-456',
+      nodeName: '/ring',
+      elementIndex: 1,
+    });
+    const secondImg = el.querySelector('img');
+    expect(secondImg).not.toBeNull();
+    expect(secondImg).not.toBe(firstImg);
+  });
+
   it('shows a hover overlay configured with both visible_range and transition:"fade"', async () => {
     // Regression: createOverlayElement previously added the
     // luxar-overlay--hidden class for ANY overlay with visible_range +

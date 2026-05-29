@@ -186,7 +186,7 @@ export async function createProgressiveGSplatsLoader(
     );
   }
 
-  return new GSplatsProgressiveLoader(lodLoaders, nAdditive);
+  return new GSplatsProgressiveLoader(lodLoaders, nAdditive, node.path);
 }
 
 /**
@@ -248,7 +248,7 @@ export async function createProgressivePointsLoader(
     );
   }
 
-  return new PointsProgressiveLoader(lodLoaders, nAdditive);
+  return new PointsProgressiveLoader(lodLoaders, nAdditive, node.path);
 }
 
 /**
@@ -306,5 +306,5 @@ export async function createProgressiveLinesLoader(
     );
   }
 
-  return new LinesProgressiveLoader(lodLoaders, nAdditive);
+  return new LinesProgressiveLoader(lodLoaders, nAdditive, node.path);
 }

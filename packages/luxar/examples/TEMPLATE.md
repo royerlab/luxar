@@ -56,18 +56,17 @@ Educational value:
 
 #### C. Imports (Standard Order)
 ```python
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
+from luxar.utils.paths import get_examples_output_dir
 ```
 
 **Import Rules:**
-- Standard library first (`pathlib`, etc.)
+- Standard library first (`pathlib`, etc.) — usually unneeded
 - Third-party packages (`numpy`, `arbol`)
-- Luxar imports last
+- Luxar imports last; pull `get_examples_output_dir` from `luxar.utils.paths`
 - Alphabetical within each group
 - Only import what you use
 
@@ -96,7 +95,7 @@ def create_some_data(param: int) -> np.ndarray:
 ```python
 def main():
     """Create [description of what this example creates]."""
-    output_path = Path(__file__).parent / "example_name_example.zarr"
+    output_path = get_examples_output_dir() / "example_name_example.zarr"
 
     # Initial descriptive output using arbol
     aprint(f"Creating [example name] at {output_path}")
@@ -265,6 +264,70 @@ r = 0.5
 s = 2.0
 ```
 
+### Node Naming
+
+Use **snake_case** for node names passed as the first argument to `add_points` /
+`add_lines` / `add_gsplats` / `add_group`. These names become zarr group paths and
+hover-tooltip labels; snake_case keeps them consistent with the rest of the
+codebase and the viewer's path conventions.
+
+```python
+# GOOD
+scene.add_points("rainbow_spiral", positions, …)
+scene.add_lines("floor_grid", vertices, …)
+parent = scene.add_group("solar_system")
+
+# BAD (some legacy examples use this — do not propagate)
+scene.add_points("RainbowSpiral", positions, …)
+```
+
+### Hierarchical Adds
+
+Prefer the **method-on-parent** idiom over `parent=` kwarg:
+
+```python
+# GOOD — natural read order
+sun_group = scene.add_group("sun_group")
+sun_group.add_points("sun", positions, …)
+earth_group = sun_group.add_group("earth_system")
+earth_group.add_points("earth", positions, …)
+
+# Discouraged — works but mixes hierarchy with a flat call
+scene.add_points("sun", positions, parent=sun_group)
+```
+
+### Color Convention
+
+Pick ONE color convention per example and stick to it:
+
+- **float32 in [0.0, 1.0]** — the default; use `np.array([…], dtype=np.float32)`
+  or a bare list of floats `[1.0, 0.31, 0.31]`.
+- **uint8 in [0, 255]** — only when working with image-derived data; cast
+  explicitly: `np.array([…], dtype=np.uint8)`.
+
+Mixing within the same scene is a bug: Luxar auto-detects HDR when any value
+exceeds 1.0, so a stray `[80, 255, 80]` (intended as uint8) silently becomes a
+massively-overbright HDR triple.
+
+### Size Cap
+
+Examples should stay **≤ ~100,000 elements** (points / vertices / splats) and
+**≤ ~250 lines of code**. Larger, more complex showcases belong in
+`packages/luxar/src/luxar/demos/`.
+
+### Examples Are Also E2E Fixtures
+
+Most existing examples are referenced by the viewer's E2E suite (see
+`packages/luxar-viewer/src/tests/e2e/`). The generated `.zarr` is the contract:
+
+- **Do not** change colors, point counts, RNG seeds, sharpness math, or radii
+  in an existing example without first checking which spec files reference its
+  `.zarr` output (`grep -rn '<name>_example' packages/luxar-viewer/src/tests/e2e/`)
+  and updating any visual-regression baselines.
+- **Net-new** examples added per the conventions above have no such constraint.
+- Cosmetic-only edits (aprint text, docstrings, dead-comment cleanup, control-flow
+  restructuring that doesn't change written data) are safe.
+
 ---
 
 ## Example Categories
@@ -379,12 +442,11 @@ Educational value:
 - Important principles illustrated
 """
 
-from pathlib import Path
-
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.utils.paths import get_examples_output_dir
 
 
 def create_example_data(n_points: int) -> tuple[np.ndarray, np.ndarray]:
@@ -407,43 +469,22 @@ def create_example_data(n_points: int) -> tuple[np.ndarray, np.ndarray]:
 
 def main():
     """Create an example demonstrating [specific feature]."""
-    output_path = Path(__file__).parent / "example_name_example.zarr"
+    output_path = get_examples_output_dir() / "example_name_example.zarr"
 
     aprint(f"Creating example at {output_path}")
     aprint("This example demonstrates [key concept]")
-    aprint("")
-    aprint("Scene features:")
-    aprint("- Feature 1")
-    aprint("- Feature 2")
 
     # Create scene
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-        # Add educational metadata
-        scene.attrs["description"] = """
-Example Name
-============
-
-[Detailed description]
-
-Educational features:
-- Learning point 1
-- Learning point 2
-
-Viewing tips:
-- What to look for
-- How to interact with it
-        """
-
         # Generate data
-        aprint("\nGenerating example data...")
         n_points = 1000
         positions, colors = create_example_data(n_points)
 
-        # Add to scene
+        # Add to scene (snake_case node name)
         scene.add_points(
-            "ExamplePoints",
+            "example_points",
             positions,
             colors=colors,
             opacity=1.0,

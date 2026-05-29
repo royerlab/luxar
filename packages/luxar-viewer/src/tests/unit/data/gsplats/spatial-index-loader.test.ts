@@ -96,11 +96,6 @@ describe('GSplatsSpatialIndexLoader', () => {
       expect(metrics.bytesLoaded).toBe(0);
     });
 
-    it('reports n_splats as the dataset size on getMetrics', () => {
-      const metrics = loader.getMetrics();
-      expect(metrics.datasetSize).toBe(5000);
-    });
-
     it('returns an empty active-queries list initially', () => {
       expect(loader.getActiveQueries()).toEqual([]);
     });

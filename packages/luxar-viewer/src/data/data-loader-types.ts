@@ -60,6 +60,7 @@ export type {
 
 import type { UpdateSession } from '../profiling/update-profiler';
 import type { LoadedPointsData, PointRange } from '../types/points';
+import type { LoaderMetrics, MonitorEventListener, QueryInfo } from '../types/data-monitor-types';
 
 /**
  * Core interface for points data loaders. Implementations handle
@@ -79,6 +80,17 @@ export interface DataLoader {
 
   /** Clean up resources */
   dispose(): void;
+
+  /**
+   * LoaderMonitor surface (optional, for the data-loading-monitor UI).
+   * Mirrors the surface that `points-spatial-index-loader.ts` exposes —
+   * implementations that don't track metrics may omit these methods.
+   * Symmetric with `LinesDataLoader` / `GSplatsDataLoader`.
+   */
+  addEventListener?(listener: MonitorEventListener): void;
+  removeEventListener?(listener: MonitorEventListener): void;
+  getMetrics?(): LoaderMetrics;
+  getActiveQueries?(): QueryInfo[];
 }
 
 /**

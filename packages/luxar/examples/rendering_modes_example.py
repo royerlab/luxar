@@ -87,7 +87,10 @@ def main():
 
         # 2. Normal blending - transparent green sphere
         positions2 = base_positions + np.array([0, 2, 0])
-        colors2 = [80, 255, 80]  # Green
+        # NOTE: integer triple is detected as HDR (max>1.0); the visual
+        # E2E baseline (blending-modes-rendering.png) captures this. Do
+        # NOT change to floats — see packages/luxar-viewer/.../blending-modes.spec.ts.
+        colors2 = [80, 255, 80]  # Green (HDR-detected by intent — see note above)
         scene.add_points(
             "NormalTransparent",
             positions2,

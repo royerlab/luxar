@@ -26,7 +26,30 @@ export function getOrComputeWorldBox(
   if (!geom || !geom.boundingBox) return null;
   let worldBox = cache.get(pickId);
   if (!worldBox) {
-    worldBox = new THREE.Box3().copy(geom.boundingBox).applyMatrix4(entry.main.matrixWorld);
+    // The cull box must cover each element's rendered footprint, not just
+    // its center — an element whose center sits on the box surface (e.g. a
+    // point at the scene's +X extreme) would otherwise be pickable only
+    // from its inward side; aiming at its outward half misses the box, the
+    // readback is skipped, and no tooltip appears.
+    //
+    // Lines and gsplats already fold their footprint into `boundingBox` at
+    // geometry creation (`line-geometry.ts` expands by max half-width,
+    // `gsplat-geometry.ts` by maxRowNorm × truncation) because their meshes
+    // are frustum-culled and need a footprint-aware box for that too — so
+    // the pick cull inherits the correct margin for free.
+    //
+    // Points are the exception: their mesh has frustum culling DISABLED, so
+    // `boundingBox` is left as the centers-only bounds (set identically in
+    // `create-points-node.ts` and both spots in `commit-points-geometry.ts`).
+    // We add the radius margin here instead — one cull-side site that covers
+    // all three points paths via the `userData.radiusScale` they each set.
+    // The cull is a perf shortcut only, so the margin is harmless even when
+    // generous: at worst it permits a readback that votes all-background and
+    // returns null.
+    const local = geom.boundingBox.clone();
+    const maxRadius = (geom.userData?.radiusScale as number) ?? 0;
+    if (maxRadius > 0) local.expandByScalar(maxRadius);
+    worldBox = local.applyMatrix4(entry.main.matrixWorld);
     cache.set(pickId, worldBox);
   }
   return worldBox;

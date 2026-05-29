@@ -17,4 +17,6 @@ export interface WorkerInstance {
   worker: Worker;
   api: Remote<DataWorkerAPI>;
   activeQueries: number;
+  /** True when this worker is on the TypeScript fallback (compiled WASM not loaded). */
+  wasmFallback: boolean;
 }

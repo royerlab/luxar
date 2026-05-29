@@ -1,0 +1,150 @@
+"""Smoke tests for ``packages/luxar/examples/*.py``.
+
+For each example we redirect ``luxar.utils.paths.get_examples_output_dir``
+to a per-test ``tmp_path`` (so the shared ``datasets/examples/``
+location isn't clobbered), import the example module by file path, run
+its ``main()``, and assert that an output zarr exists.
+
+Heavy examples are explicitly excluded:
+
+- ``temporal_spiral_sphere_4d_example`` — generates ~102M point-records;
+  intended as a stress fixture, not a smoke target.
+- ``dense_cubic_gradient_example`` — 1.5M points; same rationale.
+- ``rainbow_sphere_spiral_example`` — 200K points; slow on CI.
+- ``performance_benchmark_example`` — runs 100 nodes × 1K points;
+  intentionally a benchmark, not a smoke target.
+- ``metal_acceleration_example`` — needs MPS or CUDA torch backend
+  with non-trivial setup; out of scope for a smoke test.
+- ``gsplats_fit_volume_example`` / ``gsplats_lod_example`` — run a
+  small fitter on CPU. Included but marked slow.
+
+The full smoke suite runs in roughly 30-90 seconds depending on the
+machine. Each test is independent, so failures isolate to one example.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
+from typing import Iterable
+
+import pytest
+
+import luxar.utils.paths as luxar_paths
+
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent
+
+HEAVY_EXAMPLES = frozenset(
+    {
+        "temporal_spiral_sphere_4d_example",
+        "dense_cubic_gradient_example",
+        "rainbow_sphere_spiral_example",
+        "performance_benchmark_example",
+        "metal_acceleration_example",
+    }
+)
+
+# Run on CPU, take ~3-10s each; mark slow so they can be opt-out under
+# `pytest -m 'not slow'`.
+SLOW_EXAMPLES = frozenset(
+    {
+        "gsplats_fit_volume_example",
+        "gsplats_lod_example",
+    }
+)
+
+
+def _discover_example_stems() -> list[str]:
+    """All ``*_example.py`` stems in ``packages/luxar/examples/`` (sorted)."""
+    return sorted(
+        path.stem for path in EXAMPLES_DIR.glob("*_example.py") if path.is_file()
+    )
+
+
+def _load_example(stem: str):
+    """Import an example by file path, without registering it on ``sys.path``.
+
+    Importing by file path avoids name clashes — the examples directory
+    is not a package — and lets each test load its own fresh module
+    object even if other tests have already loaded a sibling module.
+    """
+    path = EXAMPLES_DIR / f"{stem}.py"
+    if not path.exists():
+        pytest.skip(f"Example missing on disk: {path}")
+    spec = importlib.util.spec_from_file_location(f"_smoke_{stem}", path)
+    if spec is None or spec.loader is None:
+        pytest.skip(f"Could not load spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
+    """Build pytest parameters, applying ``slow`` marks where appropriate."""
+    params: list[pytest.param] = []
+    for stem in stems:
+        marks = ()
+        if stem in SLOW_EXAMPLES:
+            marks = (pytest.mark.slow,)
+        params.append(pytest.param(stem, marks=marks))
+    return params
+
+
+_ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
+
+
+@pytest.fixture
+def redirected_examples_dir(tmp_path, monkeypatch):
+    """Redirect ``get_examples_output_dir`` for the duration of one test.
+
+    Each example writes ``<output_dir>/<name>_example.zarr``; routing to
+    ``tmp_path`` keeps tests hermetic and parallel-safe.
+    """
+    monkeypatch.setattr(luxar_paths, "get_examples_output_dir", lambda: tmp_path)
+    # Also patch any modules that have already imported the symbol by
+    # name. Most examples use ``from luxar.utils.paths import
+    # get_examples_output_dir``, which captures the symbol at import
+    # time, so a plain ``monkeypatch.setattr`` on the module is not
+    # enough — we need to clear cached examples too.
+    cached_modules = [
+        name for name in list(sys.modules) if name.startswith("_smoke_")
+    ]
+    for name in cached_modules:
+        del sys.modules[name]
+    return tmp_path
+
+
+@pytest.mark.parametrize("stem", _parametrize_stems(_ALL_STEMS))
+def test_example_runs_and_writes_zarr(stem, redirected_examples_dir, monkeypatch):
+    """Each example's ``main()`` runs without exception and produces a zarr.
+
+    A handful of historical examples don't follow the ``<stem>.zarr``
+    naming convention (``build_example`` emits ``build_example_manual.zarr``
+    + ``build_example_structured.zarr``; ``memory_optimization_example``
+    emits three encoding-mode variants). To keep this test useful as a
+    smoke check across the full example surface, we assert only that at
+    least one ``*.zarr`` was created — the stricter naming contract is
+    a separate concern documented in ``TEMPLATE.md``.
+    """
+    if "CI" in os.environ and stem in SLOW_EXAMPLES:
+        pytest.skip("Skipping slow example under CI; run locally with -m slow")
+
+    # Isolate ``sys.argv`` so examples that use ``argparse``
+    # (``spatial_index_demo_example``) don't see pytest's own argv.
+    monkeypatch.setattr(sys, "argv", [f"{stem}.py"])
+
+    module = _load_example(stem)
+    if not hasattr(module, "main"):
+        pytest.fail(f"{stem}.py has no top-level main() function")
+
+    module.main()
+
+    zarrs = sorted(redirected_examples_dir.glob("*.zarr"))
+    assert zarrs, (
+        f"Expected at least one *.zarr in {redirected_examples_dir} after "
+        f"running {stem}.main(); directory contents: "
+        f"{list(redirected_examples_dir.iterdir())}"
+    )

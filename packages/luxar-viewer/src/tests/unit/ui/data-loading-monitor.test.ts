@@ -83,7 +83,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 0,
           bytesLoaded: 0,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
@@ -133,7 +132,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 1000,
           bytesLoaded: 0,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 50,
           avgLoadTime: 0,
@@ -177,7 +175,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 0,
           bytesLoaded: 0,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
@@ -292,7 +289,6 @@ describe('DataLoadingMonitor', () => {
           errors: 1,
           pointsLoaded: 10000,
           bytesLoaded: 40000,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 25,
           avgLoadTime: 100,
@@ -346,7 +342,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 500,
           bytesLoaded: 2000,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 75,
           avgLoadTime: 0,
@@ -380,7 +375,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 90000,
           bytesLoaded: 360000,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 200,
           avgLoadTime: 150,
@@ -489,7 +483,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 0,
           bytesLoaded: 0,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
@@ -514,7 +507,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 0,
           bytesLoaded: 0,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
@@ -571,7 +563,6 @@ describe('DataLoadingMonitor', () => {
           errors: 0,
           pointsLoaded: 100,
           bytesLoaded: 400,
-          datasetSize: 0,
           visiblePoints: 0,
           avgQueryTime: 10,
           avgLoadTime: 0,
@@ -952,6 +943,78 @@ describe('DataLoadingMonitor', () => {
 
       expect(state.linesNodes).toBe(2);
       expect(state.totalSegments).toBe(300);
+    });
+
+    it('should track visible points separately from total points', () => {
+      // Set up scene with points
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/points1',
+            name: 'points1',
+            type: 'points' as const,
+            pointCount: 200000,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Initially visiblePoints equals totalPoints
+      let state = monitor.getSceneGraph();
+      expect(state.totalPoints).toBe(200000);
+      expect(state.visiblePoints).toBe(200000);
+
+      // Update visible points (simulating nD slicing / progressive LOD)
+      monitor.updateVisiblePoints(50000);
+
+      state = monitor.getSceneGraph();
+      expect(state.totalPoints).toBe(200000); // Total unchanged
+      expect(state.visiblePoints).toBe(50000); // Only visible count updated
+
+      // getGlobalStats should source points from the scene graph, so a
+      // progressive points loader (no LoaderMonitor surface) still reports.
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSize).toBe(200000);
+      expect(stats.visiblePoints).toBe(50000);
+    });
+
+    it('should report visible points in getGlobalStats across multiple nodes', () => {
+      // Set up scene with multiple points nodes
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/points1',
+            name: 'points1',
+            type: 'points' as const,
+            pointCount: 500,
+            children: [],
+          },
+          {
+            path: '/points2',
+            name: 'points2',
+            type: 'points' as const,
+            pointCount: 500,
+            children: [],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+
+      // Update with combined visible count
+      monitor.updateVisiblePoints(200);
+
+      const stats = monitor.getGlobalStats();
+      expect(stats.datasetSize).toBe(1000); // 500 + 500
+      expect(stats.visiblePoints).toBe(200); // Only what's visible
     });
 
     it('should track visible segments separately from total segments', () => {

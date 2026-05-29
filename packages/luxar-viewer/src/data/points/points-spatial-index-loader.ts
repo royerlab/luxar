@@ -171,7 +171,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       errors: 0,
       pointsLoaded: 0,
       bytesLoaded: 0,
-      datasetSize: 0, // Will be set after index is loaded
       visiblePoints: 0, // Updated on each query
       avgQueryTime: 0,
       avgLoadTime: 0,
@@ -1383,12 +1382,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
         rangesInCache: 0, // Range-based per-loader cache is not used.
       };
-
-      // Set dataset size from chunk index metadata
-      this.metrics.datasetSize = this.chunkIndex.metadata.total_points;
-    } else if (this.totalPointsNoIndex > 0) {
-      // No chunk index but we have point count from the positions array
-      this.metrics.datasetSize = this.totalPointsNoIndex;
     }
 
     return { ...this.metrics };

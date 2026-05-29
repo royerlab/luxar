@@ -23,7 +23,7 @@
 
 import { expose } from 'comlink';
 import { state } from './data-worker/state';
-import { initialize as initializeImpl } from './data-worker/initialize';
+import { initialize as initializeImpl, type WorkerInitResult } from './data-worker/initialize';
 import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
 import { computeNDVisibilityPoints as computeNDVisibilityPointsImpl } from './data-worker/visibility/points';
 import { computeNDVisibilityLines as computeNDVisibilityLinesImpl } from './data-worker/visibility/lines';
@@ -44,12 +44,13 @@ import type {
 } from './data-worker/types';
 export type { EffectiveRadiusConfig, ProjectionViewState };
 export type { PointsOutputBuffers };
+export type { WorkerInitResult };
 
 /**
  * Comlink RPC surface. Each entry binds `state` to its task helper.
  */
 export const workerAPI = {
-  initialize: (): Promise<void> => initializeImpl(state),
+  initialize: (): Promise<WorkerInitResult> => initializeImpl(state),
   querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
     querySpatialIndexImpl(state, p),
   computeNDVisibilityPoints: (p: Parameters<typeof computeNDVisibilityPointsImpl>[1]) =>
