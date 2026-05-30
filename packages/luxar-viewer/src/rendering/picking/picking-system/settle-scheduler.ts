@@ -54,6 +54,18 @@ export class SettleScheduler {
 
   /** Cursor left the canvas — drop the pending position and cancel rAF. */
   recordMouseLeave(): void {
+    this.cancelPending();
+  }
+
+  /**
+   * Drop the pending cursor and cancel the armed rAF without forgetting
+   * the suppression state. Used when the stored canvas-local coordinate
+   * is no longer valid — e.g. a page/ancestor scroll moved the canvas
+   * after the rect was cached but before the settle pick fired, so the
+   * pending coordinate would resolve against the stale frame. Picking
+   * re-arms naturally on the next mousemove (which re-fetches the rect).
+   */
+  cancelPending(): void {
     this._pendingMouse = null;
     this.cancelRaf();
   }

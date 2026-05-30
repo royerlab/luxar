@@ -75,15 +75,15 @@ describe('getOrComputeWorldBox', () => {
     expect(cache.size).toBe(0);
   });
 
-  it('expands the AABB by the geometry max radius (userData.radiusScale)', () => {
+  it('expands the AABB by the geometry max radius (userData.maxActualRadius)', () => {
     // Regression: the center-only bounding box clips the pick footprint
     // of elements sitting on the box surface (e.g. a point at the scene's
     // +X extreme), making them unpickable from their outward side. The
     // world box must grow by the element radius so the cull covers the
-    // rendered disc. Unit cube at origin + radiusScale 0.5 → [-1, 1].
+    // rendered disc. Unit cube at origin + maxActualRadius 0.5 → [-1, 1].
     const cache = new Map<number, THREE.Box3>();
     const entry = makeEntry();
-    (entry.main as THREE.Mesh).geometry.userData = { radiusScale: 0.5 };
+    (entry.main as THREE.Mesh).geometry.userData = { maxActualRadius: 0.5 };
 
     const box = getOrComputeWorldBox(1, entry, cache);
 
@@ -92,6 +92,42 @@ describe('getOrComputeWorldBox', () => {
     expect(box!.min.x).toBeCloseTo(-1, 5);
     expect(box!.max.x).toBeCloseTo(1, 5);
     expect(box!.max.y).toBeCloseTo(1, 5);
+  });
+
+  it('expands by a large Float32 radius (maxActualRadius, not radiusScale)', () => {
+    // W1 regression: Float32 radii set radiusScale = 1.0 (a shader
+    // normalization factor) but carry the real world-space max in
+    // maxActualRadius. A point with radius 50 at the scene edge must have
+    // its full footprint inside the cull box — using radiusScale here
+    // would expand by only 1.0 and clip the disc, skipping the readback.
+    const cache = new Map<number, THREE.Box3>();
+    const entry = makeEntry();
+    (entry.main as THREE.Mesh).geometry.userData = {
+      radiusScale: 1.0,
+      maxActualRadius: 50,
+    };
+
+    const box = getOrComputeWorldBox(1, entry, cache);
+
+    expect(box).not.toBeNull();
+    // Cube half-extent 0.5 + radius 50 = 50.5 on every axis.
+    expect(box!.min.x).toBeCloseTo(-50.5, 5);
+    expect(box!.max.x).toBeCloseTo(50.5, 5);
+    expect(box!.max.y).toBeCloseTo(50.5, 5);
+  });
+
+  it('falls back to radiusScale when maxActualRadius is absent', () => {
+    // Back-compat: geometry produced before maxActualRadius existed only
+    // carries radiusScale. The cull must still expand by that value.
+    const cache = new Map<number, THREE.Box3>();
+    const entry = makeEntry();
+    (entry.main as THREE.Mesh).geometry.userData = { radiusScale: 2 };
+
+    const box = getOrComputeWorldBox(1, entry, cache);
+
+    expect(box).not.toBeNull();
+    // Cube half-extent 0.5 + radius 2 = 2.5 on every axis.
+    expect(box!.max.x).toBeCloseTo(2.5, 5);
   });
 });
 

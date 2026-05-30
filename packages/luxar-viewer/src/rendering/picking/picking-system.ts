@@ -360,9 +360,16 @@ export class PickingSystem {
    * the pick buffer or fade the tooltip — the view is unchanged, only the
    * canvas's screen position moved. The next mousemove lazily recomputes
    * the rect.
+   *
+   * We also drop any pending settle pick: its stored coordinate is
+   * already canvas-local (converted at mousemove time against the
+   * now-stale rect), so firing it after the scroll would pick the wrong
+   * spot. Cancelling lets the next mousemove re-arm with a fresh,
+   * correctly-mapped coordinate.
    */
   invalidateCanvasRect(): void {
     this._canvasRect = null;
+    this.scheduler.cancelPending();
   }
 
   /**

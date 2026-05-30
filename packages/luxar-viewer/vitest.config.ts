@@ -7,6 +7,21 @@ export default defineConfig({
     globals: true,
     globalSetup: ['./src/tests/global-setup.ts'],
     setupFiles: ['./src/tests/setup.ts'],
+    // Per-test / per-hook ceilings. The defaults (5s) are too tight for the
+    // heavier jsdom + zarr/scene-loader suites under whole-suite execution,
+    // where worker contention stretches individual tests; a too-tight ceiling
+    // turned transient slowness into hard `Test timed out` / `Hook timed out`
+    // failures. 15s gives headroom without masking genuine hangs.
+    testTimeout: 15000,
+    hookTimeout: 15000,
+    // Cap worker concurrency. On high-core machines Vitest's default fork
+    // count oversubscribes the box; combined with the jsdom + WebGL-mock
+    // memory footprint this produced `[vitest-pool-runner]: Timeout waiting
+    // for worker to respond` errors in the full coverage run. A fixed, modest
+    // pool keeps the suite within resource limits and deterministic across
+    // machines.
+    maxWorkers: 4,
+    minWorkers: 1,
     exclude: [
       '**/node_modules/**',
       '**/dist/**',

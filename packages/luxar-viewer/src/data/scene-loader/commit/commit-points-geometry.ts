@@ -118,6 +118,11 @@ export function commitPointsGeometry(
       const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
       const maxSharpness = (attrs?.max_sharpness as number | undefined) ?? 31.0;
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
+      // World-space max radius for the pick-AABB margin (ray-aabb.ts).
+      // The metadata max_radius is the actual max in world units for
+      // every dtype, so use it directly — unlike radiusScale, which is
+      // only a normalization factor and stays 1.0 for Float32 radii.
+      geometry.userData.maxActualRadius = maxRadius;
       geometry.userData.sharpnessScale = data.sharpness instanceof Uint8Array ? maxSharpness : 1.0;
 
       points.geometry = geometry;

@@ -188,6 +188,33 @@ describe('NodeFactory', () => {
       expect(radiusAttr).toBeDefined();
       expect(radiusAttr.normalized).toBe(true);
       expect(geometry.userData.radiusScale).toBe(2.0);
+      // Uint8: radiusScale and maxActualRadius coincide (both = maxRadius).
+      expect(geometry.userData.maxActualRadius).toBe(2.0);
+    });
+
+    it('should record maxActualRadius for float32 radii while keeping radiusScale at 1.0', () => {
+      // W1 regression: Float32 radii are already in world units, so the
+      // shader normalization factor radiusScale stays 1.0. The pick-AABB
+      // margin must instead come from maxActualRadius (the metadata
+      // max_radius), or large-radius points get culled before readback.
+      const data = createMockPointsData({
+        pointCount: 50,
+        hasRadii: true,
+        radiiType: 'float32',
+      });
+      const geometry = factory.createPointsGeometry(data, 50.0);
+
+      expect(geometry.getAttribute('aRadius').normalized).toBe(false);
+      expect(geometry.userData.radiusScale).toBe(1.0); // shader contract unchanged
+      expect(geometry.userData.maxActualRadius).toBe(50.0); // real world-space max
+    });
+
+    it('should default maxActualRadius to the fill radius when radii are absent', () => {
+      const data = createMockPointsData({ pointCount: 50 });
+      const geometry = factory.createPointsGeometry(data);
+
+      // No radii → aRadius filled with 0.5; the pick margin matches.
+      expect(geometry.userData.maxActualRadius).toBe(0.5);
     });
 
     it('should store radius and sharpness scales in userData', () => {
@@ -358,24 +385,7 @@ describe('NodeFactory', () => {
     it('should throw when row-major slot is just above the 0.001 threshold', () => {
       // |0.002| > 0.001 → registers; col-major slots are zero so it's
       // unambiguously row-major. Pins the exact threshold direction.
-      const overThreshold = [
-        1,
-        0,
-        0,
-        0.002,
-        0,
-        1,
-        0,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        0,
-        0,
-        1,
-      ];
+      const overThreshold = [1, 0, 0, 0.002, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
       expect(() => factory.validateTransformFormat(overThreshold)).toThrow(/row-major/);
     });
 

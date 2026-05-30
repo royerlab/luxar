@@ -143,6 +143,34 @@ describe('SettleScheduler', () => {
     expect(h.firePick).not.toHaveBeenCalled();
   });
 
+  it('cancelPending drops the armed cursor so no stale pick fires (scroll case)', () => {
+    // C2 regression: a page/ancestor scroll invalidates the cached canvas
+    // rect, so the already-converted canvas-local pending coordinate is
+    // stale. cancelPending() must drop it; the re-pick comes from the next
+    // fresh mousemove, not the stale armed one.
+    h.scheduler.recordMouseMove(100, 200);
+    h.scheduler.cancelPending();
+    h.advance(HOVER_SETTLE_MS + 50);
+    h.flushRaf();
+    h.flushRaf();
+    expect(h.firePick).not.toHaveBeenCalled();
+
+    // A fresh mousemove re-arms and fires at the new coordinate.
+    h.scheduler.recordMouseMove(300, 400);
+    h.advance(HOVER_SETTLE_MS + 10);
+    h.flushRaf();
+    h.flushRaf();
+    expect(h.firePick).toHaveBeenCalledExactlyOnceWith(300, 400);
+  });
+
+  it('cancelPending preserves suppression state', () => {
+    // Unlike a fresh suppress/resume cycle, cancelPending only drops the
+    // pending cursor — it must not flip the suppressed flag.
+    h.scheduler.setSuppressed(true);
+    h.scheduler.cancelPending();
+    expect(h.scheduler.isSuppressed).toBe(true);
+  });
+
   it('recordMouseMove while suppressed tracks the cursor but does not schedule a pick', () => {
     // Contract: the position + timestamp are tracked even while suppressed
     // (so the resume re-pick uses the latest cursor), but no pick fires

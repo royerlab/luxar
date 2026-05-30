@@ -42,12 +42,20 @@ export function getOrComputeWorldBox(
     // `boundingBox` is left as the centers-only bounds (set identically in
     // `create-points-node.ts` and both spots in `commit-points-geometry.ts`).
     // We add the radius margin here instead — one cull-side site that covers
-    // all three points paths via the `userData.radiusScale` they each set.
+    // all three points paths via the `userData.maxActualRadius` they each set.
+    // Use maxActualRadius (the world-space max radius) rather than
+    // radiusScale: radiusScale is only a shader normalization factor and is
+    // 1.0 for Float32 radii, so a large Float32-radius point at the scene
+    // edge would otherwise be culled before readback. Fall back to
+    // radiusScale for any geometry that predates maxActualRadius.
     // The cull is a perf shortcut only, so the margin is harmless even when
     // generous: at worst it permits a readback that votes all-background and
     // returns null.
     const local = geom.boundingBox.clone();
-    const maxRadius = (geom.userData?.radiusScale as number) ?? 0;
+    const maxRadius =
+      (geom.userData?.maxActualRadius as number | undefined) ??
+      (geom.userData?.radiusScale as number | undefined) ??
+      0;
     if (maxRadius > 0) local.expandByScalar(maxRadius);
     worldBox = local.applyMatrix4(entry.main.matrixWorld);
     cache.set(pickId, worldBox);

@@ -63,7 +63,14 @@ export function createPointsGeometry(
 
   // Per-instance radii (with dtype-aware normalization).
   let radiusScale = 1.0;
+  // World-space maximum radius, used for the pick-AABB margin in
+  // ray-aabb.ts. Distinct from radiusScale: radiusScale is a shader
+  // normalization factor (1.0 for Float32/Float16 world-unit radii,
+  // maxRadius for Uint8 normalized radii), whereas maxActualRadius is
+  // always the real max radius in world units regardless of dtype.
+  let maxActualRadius = 0.5; // matches the no-radii fill default below
   if (data.radii) {
+    maxActualRadius = maxRadius;
     if (
       typeof globalThis.Float16Array !== 'undefined' &&
       data.radii instanceof globalThis.Float16Array
@@ -155,6 +162,7 @@ export function createPointsGeometry(
 
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.radiusScale = radiusScale;
+  geometry.userData.maxActualRadius = maxActualRadius;
   geometry.userData.sharpnessScale = sharpnessScale;
   geometry.userData.pointCount = pointCount;
 
