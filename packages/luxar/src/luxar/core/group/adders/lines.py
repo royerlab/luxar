@@ -95,9 +95,7 @@ def add_lines_impl(
                 max_elements = DEFAULT_MAX_ELEMENTS
                 split_rule = "midpoint"
             elif isinstance(split, dict):
-                max_elements = int(
-                    split.get("max_elements", DEFAULT_MAX_ELEMENTS)
-                )
+                max_elements = int(split.get("max_elements", DEFAULT_MAX_ELEMENTS))
                 if max_elements < 1:
                     raise ValueError(
                         f"split max_elements must be >= 1, got {max_elements}"
@@ -105,13 +103,11 @@ def add_lines_impl(
                 split_rule = str(split.get("rule", "midpoint"))
                 if split_rule not in ("midpoint", "sah"):
                     raise ValueError(
-                        f"split rule must be 'midpoint' or 'sah'; "
-                        f"got {split_rule!r}"
+                        f"split rule must be 'midpoint' or 'sah'; got {split_rule!r}"
                     )
             else:
                 raise TypeError(
-                    f"split must be None, True, or dict; got "
-                    f"{type(split).__name__}"
+                    f"split must be None, True, or dict; got {type(split).__name__}"
                 )
 
             if image_labels is not None:
@@ -120,9 +116,7 @@ def add_lines_impl(
                     "Decompose the data manually or omit image_labels."
                 )
 
-            polyline_indices = identify_polylines(
-                n_vertices, line_type, indices
-            )
+            polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
             if split_rule == "sah":
                 # SAH operates on per-polyline centroids in this
@@ -132,9 +126,7 @@ def add_lines_impl(
                 else:
                     centroids = np.array(
                         [
-                            vert_arr[p, :3].mean(axis=0)
-                            if p.size > 0
-                            else np.zeros(3)
+                            vert_arr[p, :3].mean(axis=0) if p.size > 0 else np.zeros(3)
                             for p in polyline_indices
                         ],
                         dtype=np.float64,
@@ -145,15 +137,11 @@ def add_lines_impl(
                         1,
                         n_vertices // max(1, len(polyline_indices)),
                     )
-                    centroid_cap = max(
-                        1, max_elements // approx_per_poly
-                    )
+                    centroid_cap = max(1, max_elements // approx_per_poly)
                     centroid_parts = sah_bsp_partition(
                         centroids, max_elements=centroid_cap
                     )
-                    polyline_parts = [
-                        idx_arr.tolist() for idx_arr in centroid_parts
-                    ]
+                    polyline_parts = [idx_arr.tolist() for idx_arr in centroid_parts]
             else:
                 polyline_parts = midpoint_bsp_polylines(
                     vert_arr, polyline_indices, max_elements
@@ -194,8 +182,7 @@ def add_lines_impl(
             if additive_spec is not None:
                 widths_arr = (
                     widths
-                    if isinstance(widths, np.ndarray)
-                    and widths.shape == (n_vertices,)
+                    if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)
                     else None
                 )
                 colors_for_energy = (
@@ -243,9 +230,7 @@ def add_lines_impl(
                     )
                 # 1 level (degenerate single polyline) → fall through.
 
-        aprint(
-            f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D."
-        )
+        aprint(f"Adding lines node '{name}' with {n_vertices:,} vertices in {ndim}D.")
 
         scene._validate_data_dimensions(vert_arr, name, data_type="vertices")
 
@@ -356,8 +341,7 @@ def add_lines_split_wrapper_impl(
     )
 
     part_sizes = [
-        sum(int(polyline_indices[p].size) for p in part)
-        for part in polyline_parts
+        sum(int(polyline_indices[p].size) for p in part) for part in polyline_parts
     ]
     aprint(
         f"  ✂️  Split '{name}' into {len(polyline_parts)} parts via "
@@ -408,15 +392,9 @@ def add_lines_split_wrapper_impl(
             else widths[part_vertex_idx]
         )
         part_colors = slice_optional_array(colors, part_vertex_idx, n_vertices)
-        part_sharpness = slice_optional_array(
-            sharpness, part_vertex_idx, n_vertices
-        )
-        part_scalars = slice_optional_array(
-            scalars, part_vertex_idx, n_vertices
-        )
-        part_labels = slice_optional_array(
-            labels, part_vertex_idx, n_vertices
-        )
+        part_sharpness = slice_optional_array(sharpness, part_vertex_idx, n_vertices)
+        part_scalars = slice_optional_array(scalars, part_vertex_idx, n_vertices)
+        part_labels = slice_optional_array(labels, part_vertex_idx, n_vertices)
 
         # Choose the per-part line_type. ``polyline`` / ``loop`` with
         # one polyline = one part, so the original type is preserved.
@@ -467,9 +445,7 @@ def add_lines_split_wrapper_impl(
             **leaf_attrs,
         )
 
-    wrapper._persist_attr(
-        "position_bounds", position_bounds_from_array(vert_arr)
-    )
+    wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
 
     return wrapper
 
@@ -533,21 +509,13 @@ def add_lines_multi_lod_wrapper_impl(
         level_slices.append(
             {
                 "vertices": vert_arr[vertex_index_arr].astype(np.float32),
-                "widths": slice_optional_array(
-                    widths, vertex_index_arr, n_vertices
-                ),
-                "colors": slice_optional_array(
-                    colors, vertex_index_arr, n_vertices
-                ),
+                "widths": slice_optional_array(widths, vertex_index_arr, n_vertices),
+                "colors": slice_optional_array(colors, vertex_index_arr, n_vertices),
                 "sharpness": slice_optional_array(
                     sharpness, vertex_index_arr, n_vertices
                 ),
-                "scalars": slice_optional_array(
-                    scalars, vertex_index_arr, n_vertices
-                ),
-                "labels": slice_optional_array(
-                    labels, vertex_index_arr, n_vertices
-                ),
+                "scalars": slice_optional_array(scalars, vertex_index_arr, n_vertices),
+                "labels": slice_optional_array(labels, vertex_index_arr, n_vertices),
                 "segments": level_segments,
                 "n_polylines": len(level_polylines),
             }

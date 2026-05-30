@@ -90,15 +90,11 @@ class TestMidpointBspPartition:
 
     def test_rejects_fewer_than_3_spatial_dims(self) -> None:
         with pytest.raises(ValueError, match="at least 3 spatial dimensions"):
-            midpoint_bsp_partition(
-                np.zeros((10, 2), dtype=np.float32), max_elements=5
-            )
+            midpoint_bsp_partition(np.zeros((10, 2), dtype=np.float32), max_elements=5)
 
     def test_rejects_zero_max_elements(self) -> None:
         with pytest.raises(ValueError, match="max_elements must be >= 1"):
-            midpoint_bsp_partition(
-                np.zeros((10, 3), dtype=np.float32), max_elements=0
-            )
+            midpoint_bsp_partition(np.zeros((10, 3), dtype=np.float32), max_elements=0)
 
     def test_max_elements_default(self) -> None:
         """Default cap is large enough that a 10K-point input stays as one part."""
@@ -185,9 +181,7 @@ class TestAddPointsSplit:
         pos = rng.rand(300, 3).astype(np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points(
-                "pts", pos, split=dict(max_elements=120), layer=True
-            )
+            scene.add_points("pts", pos, split=dict(max_elements=120), layer=True)
 
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["pts"]
@@ -262,9 +256,7 @@ class TestAddGSplatsSplit:
         centers = rng.uniform(-10, 10, (n, 3)).astype(np.float32)
         amplitudes = rng.uniform(0.1, 1.0, n).astype(np.float32)
         # Packed isotropic Cholesky: [1, 0, 1, 0, 0, 1] broadcast.
-        chol = np.tile(
-            np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
-        )
+        chol = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1))
         return centers, amplitudes, chol
 
     def test_over_cap_creates_split_wrapper(self, tmp_path) -> None:
@@ -346,16 +338,16 @@ class TestAddSplitGroup:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="display_type for a split"):
                 scene.add_split_group(
-                    "bad", display_type="meshes", max_elements=10  # type: ignore[arg-type]
+                    "bad",
+                    display_type="meshes",
+                    max_elements=10,  # type: ignore[arg-type]
                 )
 
     def test_invalid_max_elements_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="max_elements must be"):
-                scene.add_split_group(
-                    "bad", display_type="points", max_elements=0
-                )
+                scene.add_split_group("bad", display_type="points", max_elements=0)
 
     def test_validate_empty_children_raises(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
@@ -373,12 +365,8 @@ class TestAddSplitGroup:
             grp = scene.add_split_group(
                 "homog", display_type="gsplats", max_elements=100
             )
-            grp.add_gsplats(
-                "part_0", centers=c, amplitudes=a, cholesky_factors=ch
-            )
-            grp.add_gsplats(
-                "part_1", centers=c, amplitudes=a, cholesky_factors=ch
-            )
+            grp.add_gsplats("part_0", centers=c, amplitudes=a, cholesky_factors=ch)
+            grp.add_gsplats("part_1", centers=c, amplitudes=a, cholesky_factors=ch)
             validate_split_group(grp)  # no raise
 
     def test_validate_mixed_children_raises(self, tmp_path) -> None:
@@ -387,12 +375,8 @@ class TestAddSplitGroup:
         pos = np.zeros((5, 3), dtype=np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            grp = scene.add_split_group(
-                "bad", display_type="gsplats", max_elements=100
-            )
-            grp.add_gsplats(
-                "part_0", centers=c, amplitudes=a, cholesky_factors=ch
-            )
+            grp = scene.add_split_group("bad", display_type="gsplats", max_elements=100)
+            grp.add_gsplats("part_0", centers=c, amplitudes=a, cholesky_factors=ch)
             grp.add_points("part_1", pos)
             with pytest.raises(ValueError, match="non-homogeneous"):
                 validate_split_group(grp)
@@ -413,9 +397,7 @@ class TestCompilerAutoSplit:
     """
 
     def test_below_threshold_writes_single_leaf(self, tmp_path) -> None:
-        pos = np.random.RandomState(0).uniform(-10, 10, (50, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(0).uniform(-10, 10, (50, 3)).astype(np.float32)
         with LuxarZarrCompiler(
             tmp_path / "t.zarr", auto_split_max_elements=100
         ) as compiler:
@@ -427,9 +409,7 @@ class TestCompilerAutoSplit:
         assert store["pts"].attrs["type"] == "points"
 
     def test_above_threshold_wraps_in_split(self, tmp_path) -> None:
-        pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(np.float32)
         with LuxarZarrCompiler(
             tmp_path / "t.zarr", auto_split_max_elements=100
         ) as compiler:
@@ -445,9 +425,7 @@ class TestCompilerAutoSplit:
 
     def test_user_explicit_split_wins(self, tmp_path) -> None:
         """User-explicit ``split=`` always wins, even with smaller threshold."""
-        pos = np.random.RandomState(2).uniform(-10, 10, (300, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(2).uniform(-10, 10, (300, 3)).astype(np.float32)
         with LuxarZarrCompiler(
             tmp_path / "t.zarr", auto_split_max_elements=50
         ) as compiler:
@@ -458,6 +436,7 @@ class TestCompilerAutoSplit:
             scene.add_points("pts", pos, split=dict(max_elements=200))
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["pts"]
+
         # Walk to leaf points nodes (the BSP recurses, so leaves can be
         # nested several levels deep) and check the user-explicit cap.
         def collect_leaves(g, out):
@@ -497,9 +476,7 @@ class TestCompilerAutoSplit:
 
     def test_default_none_disables_auto_split(self, tmp_path) -> None:
         """No threshold = no split, regardless of size."""
-        pos = np.random.RandomState(3).uniform(-10, 10, (5000, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(3).uniform(-10, 10, (5000, 3)).astype(np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos)
@@ -507,10 +484,6 @@ class TestCompilerAutoSplit:
 
     def test_invalid_threshold_raises(self, tmp_path) -> None:
         with pytest.raises(ValueError, match="must be positive"):
-            LuxarZarrCompiler(
-                tmp_path / "bad.zarr", auto_split_max_elements=0
-            )
+            LuxarZarrCompiler(tmp_path / "bad.zarr", auto_split_max_elements=0)
         with pytest.raises(ValueError, match="must be positive"):
-            LuxarZarrCompiler(
-                tmp_path / "bad2.zarr", auto_split_max_elements=-1
-            )
+            LuxarZarrCompiler(tmp_path / "bad2.zarr", auto_split_max_elements=-1)

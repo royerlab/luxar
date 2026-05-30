@@ -209,9 +209,7 @@ def poisson_disk_order(
     for level in range(n_lods):
         if level < n_lods - 1:
             r = base_r * (0.5**level)
-            picked = _select_blue_noise_subset(
-                pos, candidate_order, r, mins, available
-            )
+            picked = _select_blue_noise_subset(pos, candidate_order, r, mins, available)
         else:
             # Last level: absorb everything still available so the
             # permutation covers every input.
@@ -220,8 +218,6 @@ def poisson_disk_order(
         available[picked] = False
 
     perm_parts = [arr for arr in per_level_indices if arr.size > 0]
-    perm = (
-        np.concatenate(perm_parts) if perm_parts else np.empty(0, dtype=np.intp)
-    )
+    perm = np.concatenate(perm_parts) if perm_parts else np.empty(0, dtype=np.intp)
     counts = [int(arr.size) for arr in per_level_indices]
     return perm, counts

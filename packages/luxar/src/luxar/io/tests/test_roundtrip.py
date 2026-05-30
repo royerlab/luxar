@@ -39,9 +39,7 @@ class TestBasicRoundTrip:
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
-            compiler.write_points(
-                "single", positions, colors=colors, radii=radii
-            )
+            compiler.write_points("single", positions, colors=colors, radii=radii)
 
         scene = LuxarScene.load(output_path)
         data = scene.get_points("single")
@@ -325,9 +323,7 @@ class TestSceneDimensions:
 
         dims = Dimensions(
             [
-                Dimension(
-                    "time", unit="s", display=False, discrete=True, range=(0, 5)
-                ),
+                Dimension("time", unit="s", display=False, discrete=True, range=(0, 5)),
                 Dimension("x", unit="um"),
                 Dimension("y", unit="um"),
                 Dimension("z", unit="um"),

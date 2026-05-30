@@ -18,9 +18,7 @@ if TYPE_CHECKING:
     from ..scene import Scene
 
 
-def resolve_auto_split(
-    scene: "Scene", n_elements: int, user_split: Any
-) -> Any:
+def resolve_auto_split(scene: "Scene", n_elements: int, user_split: Any) -> Any:
     """Resolve the effective ``split=`` for a leaf-adder call.
 
     Opt-in compiler-level auto-split: when

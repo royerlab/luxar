@@ -633,9 +633,7 @@ class TestLodGroupAxis:
                     lod_group=dict(min_pixel_sizes=[100.0, 50.0]),  # decreasing
                 )
 
-    def test_min_pixel_size_attr_rejected_on_multi_substitutive(
-        self, tmp_path
-    ) -> None:
+    def test_min_pixel_size_attr_rejected_on_multi_substitutive(self, tmp_path) -> None:
         """Passing ``min_pixel_size=`` to multi-substitutive path raises.
 
         Multi-substitutive paths derive ``min_pixel_size`` per child. An
@@ -660,9 +658,7 @@ class TestLodGroupAxis:
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(TypeError, match="lod_group must be"):
-                scene.add_gsplats_from_data(
-                    "splats", data, lod_group="auto"
-                )  # type: ignore[arg-type]
+                scene.add_gsplats_from_data("splats", data, lod_group="auto")  # type: ignore[arg-type]
 
 
 class TestAdditiveLodAxis:
@@ -722,9 +718,7 @@ class TestAdditiveLodAxis:
         data = _make_flat_gsplat_data(n=8)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_gsplats_from_data(
-                "splats", data, additive_lod=dict(n_lods=2)
-            )
+            scene.add_gsplats_from_data("splats", data, additive_lod=dict(n_lods=2))
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         assert store["splats"].attrs["n_additive_sublods"] == 2
 

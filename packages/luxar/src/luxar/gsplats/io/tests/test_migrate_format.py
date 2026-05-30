@@ -53,16 +53,10 @@ def _make_v1_0(path: Path, n: int, *, with_fitting: bool = False) -> None:
         }
     )
     rng = np.random.default_rng(0)
-    splats.create_dataset(
-        "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
-    )
-    splats.create_dataset(
-        "amplitudes", data=rng.random(n).astype(np.float32)
-    )
+    splats.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
     splats.create_dataset("cholesky_factors", data=_identity_chol(n))
-    splats.create_dataset(
-        "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)
-    )
+    splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     if with_fitting:
         fitting = root.create_group("fitting")
         fitting.attrs.update(
@@ -124,16 +118,10 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
                 },
             }
         )
-        lod.create_dataset(
-            "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
-        )
-        lod.create_dataset(
-            "amplitudes", data=rng.random(n).astype(np.float32)
-        )
+        lod.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        lod.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
         lod.create_dataset("cholesky_factors", data=_identity_chol(n))
-        lod.create_dataset(
-            "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)
-        )
+        lod.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
     zarr.consolidate_metadata(store)
 
 
@@ -389,12 +377,8 @@ class TestMigrateFormat:
         out = tmp_path / "out.gsplats.zarr"
         migrate_format(legacy, out)
         data = load_gsplats(out)
-        np.testing.assert_array_equal(
-            data.additive_sublods[0].centers, src_centers_0
-        )
-        np.testing.assert_array_equal(
-            data.additive_sublods[1].centers, src_centers_1
-        )
+        np.testing.assert_array_equal(data.additive_sublods[0].centers, src_centers_0)
+        np.testing.assert_array_equal(data.additive_sublods[1].centers, src_centers_1)
 
     # [P5][P1] boundary: v1.0 with the smallest non-degenerate splat count (1)
     def test_migrate_v1_0_single_splat_roundtrip(self, tmp_path: Path) -> None:
@@ -488,9 +472,7 @@ class TestMigrateFormat:
         splats.create_dataset(
             "centers", data=(rng.random((n, 3)) * 10).astype(np.float32)
         )
-        splats.create_dataset(
-            "amplitudes", data=rng.random(n).astype(np.float32)
-        )
+        splats.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
         splats.create_dataset("cholesky_factors", data=_identity_chol(n))
         splats.create_dataset(
             "chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32)

@@ -26,26 +26,20 @@ from luxar.io.compiler import LuxarZarrCompiler
 
 class TestSahBspPartition:
     def test_under_cap_returns_single_part(self):
-        pos = np.random.RandomState(0).uniform(-1, 1, (40, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(0).uniform(-1, 1, (40, 3)).astype(np.float32)
         parts = sah_bsp_partition(pos, max_elements=100)
         assert len(parts) == 1
         assert parts[0].size == 40
 
     def test_above_cap_splits(self):
-        pos = np.random.RandomState(1).uniform(-10, 10, (400, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(1).uniform(-10, 10, (400, 3)).astype(np.float32)
         parts = sah_bsp_partition(pos, max_elements=120)
         assert len(parts) >= 2
         for p in parts:
             assert p.size <= 120
 
     def test_complete_cover(self):
-        pos = np.random.RandomState(2).uniform(-5, 5, (200, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(2).uniform(-5, 5, (200, 3)).astype(np.float32)
         parts = sah_bsp_partition(pos, max_elements=80)
         collected = np.concatenate(parts)
         assert sorted(collected.tolist()) == list(range(200))
@@ -102,9 +96,7 @@ class TestSahBspPartition:
 
 class TestSahRuleEndToEnd:
     def test_add_points_sah_rule(self, tmp_path):
-        pos = np.random.RandomState(0).uniform(-10, 10, (400, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(0).uniform(-10, 10, (400, 3)).astype(np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points(
@@ -114,23 +106,17 @@ class TestSahRuleEndToEnd:
         assert node.attrs.get("kind") == "split"
 
     def test_add_points_invalid_rule_raises(self, tmp_path):
-        pos = np.random.RandomState(0).uniform(-10, 10, (100, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(0).uniform(-10, 10, (100, 3)).astype(np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="split rule"):
-                scene.add_points(
-                    "pts", pos, split=dict(max_elements=50, rule="bogus")
-                )
+                scene.add_points("pts", pos, split=dict(max_elements=50, rule="bogus"))
 
     def test_add_gsplats_sah_rule(self, tmp_path):
         rng = np.random.RandomState(0)
         c = rng.uniform(-10, 10, (200, 3)).astype(np.float32)
         a = rng.uniform(0.1, 1.0, 200).astype(np.float32)
-        ch = np.tile(
-            np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (200, 1)
-        )
+        ch = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (200, 1))
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats(
@@ -145,9 +131,7 @@ class TestSahRuleEndToEnd:
 
     def test_midpoint_default_is_unchanged(self, tmp_path):
         """``split=dict(max_elements=N)`` without ``rule`` defaults to midpoint."""
-        pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(
-            np.float32
-        )
+        pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(np.float32)
         # The midpoint partitioner is what produced this baseline before
         # SAH existed — sanity check that omitting rule= preserves it.
         midpoint_parts = midpoint_bsp_partition(pos, max_elements=120)

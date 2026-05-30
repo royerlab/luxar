@@ -158,12 +158,14 @@ class Scene(Group):
         # delegate, one for the per-leaf adder impl (e.g.
         # `add_points_impl`) that now sits between Group.add_<type> and us.
         from .validation import resolve_extend_to_all
+
         return resolve_extend_to_all(
             self, extend_to_all, positions, data_type, _stacklevel=_stacklevel + 2
         )
 
     def _analyze_extend_candidates(self, positions: np.ndarray) -> List[str]:
         from .validation import analyze_extend_candidates
+
         return analyze_extend_candidates(self, positions)
 
     def _validate_data_dimensions(
@@ -174,6 +176,7 @@ class Scene(Group):
         _stacklevel: int = 3,
     ) -> None:
         from .validation import validate_data_dimensions
+
         validate_data_dimensions(
             self, positions, node_name, data_type, _stacklevel=_stacklevel + 2
         )
@@ -187,6 +190,7 @@ class Scene(Group):
         fill: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, List[str]]:
         from .dim_order import apply_dim_order
+
         return apply_dim_order(self, positions, dim_order, fill)
 
     # ---------------------------------------------------------- properties
@@ -515,6 +519,7 @@ class Scene(Group):
 
     def _next_overlay_name(self, name: Optional[str]) -> str:
         from .overlays.internals import next_overlay_name
+
         return next_overlay_name(self, name)
 
     def _write_overlay(
@@ -527,6 +532,7 @@ class Scene(Group):
         image_filename: Optional[str] = None,
     ) -> Overlay:
         from .overlays.internals import write_overlay
+
         return write_overlay(
             self, name, overlay_type, position, attrs, image_data, image_filename
         )
@@ -543,6 +549,7 @@ class Scene(Group):
 
     def _auto_inject_hover_overlay(self) -> None:
         from .overlays.hover_inject import auto_inject_hover_overlay
+
         auto_inject_hover_overlay(self)
 
     # ---------------------------------------------------------- export

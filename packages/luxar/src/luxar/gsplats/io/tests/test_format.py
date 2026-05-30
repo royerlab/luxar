@@ -138,7 +138,9 @@ class TestFormatCompliance:
             amplitudes = root["splats/substitutive_0/additive_0"]["amplitudes"]
             assert len(amplitudes.shape) == 1
 
-            cholesky_factors = root["splats/substitutive_0/additive_0"]["cholesky_factors"]
+            cholesky_factors = root["splats/substitutive_0/additive_0"][
+                "cholesky_factors"
+            ]
             assert cholesky_factors.shape[1] == 6  # d*(d+1)//2 for d=3
 
             chunk_bounds = root["splats/substitutive_0/additive_0"]["chunk_bounds"]
@@ -315,7 +317,9 @@ class TestFormatCompliance:
             assert root["splats/substitutive_0/additive_0"].attrs["ndim"] == 3
 
             # Center bounds should have 3 dimensions
-            center_bounds = root["splats/substitutive_0/additive_0"].attrs["center_bounds"]
+            center_bounds = root["splats/substitutive_0/additive_0"].attrs[
+                "center_bounds"
+            ]
             assert len(center_bounds["min"]) == 3
             assert len(center_bounds["max"]) == 3
 
@@ -336,7 +340,9 @@ class TestFormatCompliance:
 
             # Check semantic types via encoding names (spec Section "Semantic Types")
             # Centers: COORDINATE → float32 in MEMORY mode (new default with float16_allowed=False)
-            centers_enc = root["splats/substitutive_0/additive_0"]["centers"].attrs.get("encoding", {})
+            centers_enc = root["splats/substitutive_0/additive_0"]["centers"].attrs.get(
+                "encoding", {}
+            )
             assert centers_enc["name"] == "float32"
 
             # Sharpnesses: BOUNDED_SCALAR → bounded_scalar_uint8 in MEMORY mode

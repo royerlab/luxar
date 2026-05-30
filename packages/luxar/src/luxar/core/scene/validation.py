@@ -103,9 +103,7 @@ def analyze_extend_candidates(scene: "Scene", positions: np.ndarray) -> List[str
             value = unique_values[0]
             range_min, range_max = dim.range
 
-            if range_max > range_min and (
-                value >= range_min and value <= range_max
-            ):
+            if range_max > range_min and (value >= range_min and value <= range_max):
                 if dim.name:
                     candidates.append(dim.name)
 

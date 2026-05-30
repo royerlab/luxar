@@ -88,9 +88,7 @@ def midpoint_bsp_partition(
         ``O(n log n)`` sort per level.
     """
     if positions.ndim != 2:
-        raise ValueError(
-            f"positions must be 2-D (N, d); got shape {positions.shape}"
-        )
+        raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
     if positions.shape[1] < 3:
         raise ValueError(
             "midpoint_bsp_partition needs at least 3 spatial dimensions; "
@@ -184,9 +182,7 @@ def midpoint_bsp_polylines(
         accounting done in vertex counts.
     """
     if vertices.ndim != 2:
-        raise ValueError(
-            f"vertices must be 2-D (N, d); got shape {vertices.shape}"
-        )
+        raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
     if vertices.shape[1] < 3:
         raise ValueError(
             "midpoint_bsp_polylines needs at least 3 spatial dimensions; "
@@ -286,9 +282,7 @@ def sah_bsp_partition(
         cluster + a long thin streamer).
     """
     if positions.ndim != 2:
-        raise ValueError(
-            f"positions must be 2-D (N, d); got shape {positions.shape}"
-        )
+        raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
     if positions.shape[1] < 3:
         raise ValueError(
             "sah_bsp_partition needs at least 3 spatial dimensions; "
@@ -313,9 +307,7 @@ def sah_bsp_partition(
         # 2*(xy + xz + yz) — half-surface-area also works (constant
         # factor washes through the argmin), but full SA matches the
         # textbook form.
-        return float(
-            2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2])
-        )
+        return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
 
     result: List[NDArray[np.intp]] = []
 
@@ -338,9 +330,7 @@ def sah_bsp_partition(
             if extents[axis] == 0:
                 continue
             # Uniform candidate positions strictly interior to the box.
-            cand = np.linspace(
-                mins[axis], maxs[axis], n_candidates + 2
-            )[1:-1]
+            cand = np.linspace(mins[axis], maxs[axis], n_candidates + 2)[1:-1]
             for pos in cand:
                 left_mask = sub[:, axis] < pos
                 n_left = int(left_mask.sum())
@@ -356,10 +346,9 @@ def sah_bsp_partition(
                 right_mins = mins.copy()
                 right_maxs = maxs.copy()
                 right_mins[axis] = pos
-                score = (
-                    n_left * surface_area(left_mins, left_maxs)
-                    + n_right * surface_area(right_mins, right_maxs)
-                )
+                score = n_left * surface_area(
+                    left_mins, left_maxs
+                ) + n_right * surface_area(right_mins, right_maxs)
                 if score < best_score:
                     best_score = score
                     best_axis = axis
@@ -410,9 +399,7 @@ def validate_split_group(group: "Node") -> None:
     may not yet have been computed.
     """
     if not group.children:
-        raise ValueError(
-            f"Split group '{group.path or group.name}' has no children"
-        )
+        raise ValueError(f"Split group '{group.path or group.name}' has no children")
     display = group.attrs.get("display_type")
     if not isinstance(display, str) or not display:
         raise ValueError(

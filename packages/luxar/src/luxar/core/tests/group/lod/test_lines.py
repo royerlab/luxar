@@ -103,9 +103,12 @@ class TestComputeAdditiveOrderLines:
         # Build polylines where length × width is deterministic.
         verts = np.array(
             [
-                [0, 0, 0], [10, 0, 0],     # length 10
-                [0, 0, 0], [1, 0, 0],      # length 1
-                [0, 0, 0], [5, 0, 0],      # length 5
+                [0, 0, 0],
+                [10, 0, 0],  # length 10
+                [0, 0, 0],
+                [1, 0, 0],  # length 1
+                [0, 0, 0],
+                [5, 0, 0],  # length 5
             ],
             dtype=np.float32,
         )
@@ -142,8 +145,11 @@ class TestMakeAdditiveLodLines:
         verts = np.random.RandomState(0).rand(20, 3).astype(np.float32)
         widths = np.random.RandomState(1).rand(20).astype(np.float32)
         levels = make_additive_lod_lines(
-            verts, line_type="segments", widths=widths,
-            method="random", n_lods=4,
+            verts,
+            line_type="segments",
+            widths=widths,
+            method="random",
+            n_lods=4,
         )
         total_polys = sum(len(level) for level in levels)
         assert total_polys == 10  # 20 vertices ÷ 2 per segment
@@ -153,7 +159,9 @@ class TestMakeAdditiveLodLines:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             levels = make_additive_lod_lines(
-                verts, line_type="polyline", n_lods=4,
+                verts,
+                line_type="polyline",
+                n_lods=4,
             )
             assert len(w) == 1
             assert "single polyline" in str(w[0].message)
@@ -165,19 +173,23 @@ class TestMakeAdditiveLodLines:
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             levels = make_additive_lod_lines(
-                verts, line_type="loop", n_lods=4,
+                verts,
+                line_type="loop",
+                n_lods=4,
             )
         assert len(levels) == 1
 
     def test_indexed_multi_component(self) -> None:
-        indices = np.array(
-            [[0, 1], [1, 2], [3, 4], [5, 6], [6, 7]], dtype=np.uint32
-        )
+        indices = np.array([[0, 1], [1, 2], [3, 4], [5, 6], [6, 7]], dtype=np.uint32)
         verts = np.random.RandomState(0).rand(8, 3).astype(np.float32)
         widths = np.ones(8, dtype=np.float32)
         levels = make_additive_lod_lines(
-            verts, line_type="indexed", indices=indices,
-            widths=widths, method="random", n_lods=4,
+            verts,
+            line_type="indexed",
+            indices=indices,
+            widths=widths,
+            method="random",
+            n_lods=4,
         )
         total_polys = sum(len(level) for level in levels)
         assert total_polys == 3  # three connected components
@@ -221,7 +233,10 @@ class TestAddLinesAdditiveLod:
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(
-                "ln", vertices, widths=widths, line_type="segments",
+                "ln",
+                vertices,
+                widths=widths,
+                line_type="segments",
                 additive_lod=dict(n_lods=4, method="random"),
             )
 
@@ -235,9 +250,7 @@ class TestAddLinesAdditiveLod:
         subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
         assert len(subgroups) == 4
 
-    def test_polyline_single_falls_through_to_single_shot(
-        self, tmp_path
-    ) -> None:
+    def test_polyline_single_falls_through_to_single_shot(self, tmp_path) -> None:
         """Single-polyline + additive_lod=True → warning + single-shot write."""
         output = tmp_path / "t.zarr"
         rng = np.random.RandomState(1)
@@ -249,7 +262,10 @@ class TestAddLinesAdditiveLod:
             with LuxarZarrCompiler(output) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 node = scene.add_lines(
-                    "ln", vertices, widths=widths, line_type="polyline",
+                    "ln",
+                    vertices,
+                    widths=widths,
+                    line_type="polyline",
                     additive_lod=True,
                 )
                 assert isinstance(node, Lines)

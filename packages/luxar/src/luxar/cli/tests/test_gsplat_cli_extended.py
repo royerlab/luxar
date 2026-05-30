@@ -1955,7 +1955,9 @@ class TestLODCommand:
         ladder = GSplatData.load(out)
         # Multi-LOD with 2 levels; sum of per-level counts equals total
         assert ladder.n_additive_sublods == 2
-        per_level = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
+        per_level = [
+            ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)
+        ]
         assert sum(per_level) == ladder.n_splats == 32
 
     def test_lod_additive_quiet_suppresses_per_lod_lines(
@@ -1971,9 +1973,15 @@ class TestLODCommand:
         loud = runner.invoke(
             app,
             [
-                "gsplat", "lod", "additive",
-                str(medium_gsplats), str(out_loud),
-                "--n-lods", "2", "--method", "self_energy",
+                "gsplat",
+                "lod",
+                "additive",
+                str(medium_gsplats),
+                str(out_loud),
+                "--n-lods",
+                "2",
+                "--method",
+                "self_energy",
             ],
         )
         assert loud.exit_code == 0, f"loud invocation failed:\n{loud.stdout}"
@@ -1981,9 +1989,15 @@ class TestLODCommand:
         quiet = runner.invoke(
             app,
             [
-                "gsplat", "lod", "additive",
-                str(medium_gsplats), str(out_quiet),
-                "--n-lods", "2", "--method", "self_energy",
+                "gsplat",
+                "lod",
+                "additive",
+                str(medium_gsplats),
+                str(out_quiet),
+                "--n-lods",
+                "2",
+                "--method",
+                "self_energy",
                 "--quiet",
             ],
         )
@@ -2012,9 +2026,12 @@ class TestLODCommand:
                 "substitutive",
                 str(medium_gsplats),
                 str(out_path),
-                "--K", "2",
-                "--L", "2",
-                "--device", "cpu",
+                "--K",
+                "2",
+                "--L",
+                "2",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"lod substitutive failed:\n{result.stdout}"
@@ -2026,7 +2043,11 @@ class TestLODCommand:
         for lev in loaded.substitutive_levels:
             assert lev.n_additive_lods == 1
         # compression_factor = K^level_index = 2^s
-        assert [lev.compression_factor for lev in loaded.substitutive_levels] == [1, 2, 4]
+        assert [lev.compression_factor for lev in loaded.substitutive_levels] == [
+            1,
+            2,
+            4,
+        ]
 
     def test_lod_substitutive_quiet_suppresses_per_level_lines(
         self,
@@ -2044,9 +2065,12 @@ class TestLODCommand:
                 "substitutive",
                 str(medium_gsplats),
                 str(out_path),
-                "--K", "2",
-                "--L", "1",
-                "--device", "cpu",
+                "--K",
+                "2",
+                "--L",
+                "1",
+                "--device",
+                "cpu",
                 "--quiet",
             ],
         )
@@ -2074,10 +2098,14 @@ class TestLODCommand:
                 "pyramid",
                 str(medium_gsplats),
                 str(out_path),
-                "--substitutive", "K=2,L=2",
-                "--additive", "2",
-                "--additive-method", "self_energy",
-                "--device", "cpu",
+                "--substitutive",
+                "K=2,L=2",
+                "--additive",
+                "2",
+                "--additive-method",
+                "self_energy",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"lod pyramid failed:\n{result.stdout}"
@@ -2101,9 +2129,17 @@ class TestLODCommand:
         r1 = runner.invoke(
             app,
             [
-                "gsplat", "lod", "substitutive",
-                str(medium_gsplats), str(pyramid_path),
-                "--K", "2", "--L", "2", "--device", "cpu",
+                "gsplat",
+                "lod",
+                "substitutive",
+                str(medium_gsplats),
+                str(pyramid_path),
+                "--K",
+                "2",
+                "--L",
+                "2",
+                "--device",
+                "cpu",
             ],
         )
         assert r1.exit_code == 0, f"substitutive prep failed:\n{r1.stdout}"
@@ -2113,10 +2149,17 @@ class TestLODCommand:
         r2 = runner.invoke(
             app,
             [
-                "gsplat", "lod", "additive",
-                str(pyramid_path), str(ladder_path),
-                "--n-lods", "2", "--method", "self_energy",
-                "--substitutive-level", "1",
+                "gsplat",
+                "lod",
+                "additive",
+                str(pyramid_path),
+                str(ladder_path),
+                "--n-lods",
+                "2",
+                "--method",
+                "self_energy",
+                "--substitutive-level",
+                "1",
             ],
         )
         assert r2.exit_code == 0, f"additive on level 1 failed:\n{r2.stdout}"
@@ -2140,10 +2183,17 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", "additive",
-                str(medium_gsplats), str(out_path),
-                "--n-lods", "2", "--method", "self_energy",
-                "--substitutive-level", "5",
+                "gsplat",
+                "lod",
+                "additive",
+                str(medium_gsplats),
+                str(out_path),
+                "--n-lods",
+                "2",
+                "--method",
+                "self_energy",
+                "--substitutive-level",
+                "5",
             ],
         )
         assert result.exit_code != 0
@@ -2195,15 +2245,9 @@ class TestMigrateFormatCommand:
         splats.create_dataset(
             "centers", data=(rng.random((n, 3)) * 10).astype("float32")
         )
-        splats.create_dataset(
-            "amplitudes", data=rng.random(n).astype("float32")
-        )
-        splats.create_dataset(
-            "cholesky_factors", data=self._identity_chol(n)
-        )
-        splats.create_dataset(
-            "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
-        )
+        splats.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
+        splats.create_dataset("cholesky_factors", data=self._identity_chol(n))
+        splats.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32"))
         zarr.consolidate_metadata(store)
 
     def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
@@ -2232,18 +2276,12 @@ class TestMigrateFormatCommand:
         rng = np.random.default_rng(0)
         for i, n in enumerate(lod_sizes):
             lod = splats.create_group(f"lod_{i}")
-            lod.attrs.update(
-                {"n_splats": n, "ndim": 3, "ordering": "none"}
-            )
+            lod.attrs.update({"n_splats": n, "ndim": 3, "ordering": "none"})
             lod.create_dataset(
                 "centers", data=(rng.random((n, 3)) * 10).astype("float32")
             )
-            lod.create_dataset(
-                "amplitudes", data=rng.random(n).astype("float32")
-            )
-            lod.create_dataset(
-                "cholesky_factors", data=self._identity_chol(n)
-            )
+            lod.create_dataset("amplitudes", data=rng.random(n).astype("float32"))
+            lod.create_dataset("cholesky_factors", data=self._identity_chol(n))
             lod.create_dataset(
                 "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
             )
@@ -2272,9 +2310,7 @@ class TestMigrateFormatCommand:
         }
         (dir_path / "manifest.json").write_text(json.dumps(manifest))
 
-    def test_migrate_v1_0(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_migrate_v1_0(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
         legacy = tmp_path / "legacy.gsplats.zarr"
@@ -2291,9 +2327,7 @@ class TestMigrateFormatCommand:
         assert data.n_additive_sublods == 1
         assert data.n_splats == 7
 
-    def test_migrate_v1_1(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_migrate_v1_1(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
         legacy = tmp_path / "legacy.gsplats.zarr"
@@ -2347,9 +2381,7 @@ class TestMigrateFormatCommand:
         assert result.exit_code != 0
         assert "exists" in result.stdout.lower()
 
-    def test_migrate_overwrite(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_migrate_overwrite(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
         legacy = tmp_path / "legacy.gsplats.zarr"

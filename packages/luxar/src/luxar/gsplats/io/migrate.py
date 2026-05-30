@@ -69,9 +69,7 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
         with tarfile.open(compressed_path, "r:gz") as tar_ref:
             for member in tar_ref.getmembers():
                 member_path = Path(temp_dir) / member.name
-                if not member_path.resolve().is_relative_to(
-                    Path(temp_dir).resolve()
-                ):
+                if not member_path.resolve().is_relative_to(Path(temp_dir).resolve()):
                     raise ValueError(
                         f"Tar member '{member.name}' would escape extraction directory"
                     )
@@ -102,9 +100,11 @@ def detect_legacy_format(input_path: Path) -> str:
             return "substitutive_dir"
     # Otherwise treat as a .gsplats.zarr or compressed archive; sniff the
     # root .zattrs to read format_version
-    if input_path.is_dir() or input_path.suffix in (".zip", ".gz") or str(
-        input_path
-    ).endswith((".gsplats.zarr.zip", ".gsplats.zarr.tar.gz")):
+    if (
+        input_path.is_dir()
+        or input_path.suffix in (".zip", ".gz")
+        or str(input_path).endswith((".gsplats.zarr.zip", ".gsplats.zarr.tar.gz"))
+    ):
         zarr_path = input_path
         cleanup_temp = None
         try:
@@ -187,9 +187,7 @@ def _read_v1_x_root(
             AdditiveSubLOD(
                 centers=decoder.decode(splats_group["centers"], root),
                 amplitudes=decoder.decode(splats_group["amplitudes"], root),
-                cholesky_factors=decoder.decode(
-                    splats_group["cholesky_factors"], root
-                ),
+                cholesky_factors=decoder.decode(splats_group["cholesky_factors"], root),
                 colors=decoder.decode(splats_group["colors"], root)
                 if "colors" in splats_group
                 else None,

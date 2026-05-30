@@ -92,9 +92,7 @@ def add_gsplats_impl(
                 max_elements = DEFAULT_MAX_ELEMENTS
                 split_rule = "midpoint"
             elif isinstance(split, dict):
-                max_elements = int(
-                    split.get("max_elements", DEFAULT_MAX_ELEMENTS)
-                )
+                max_elements = int(split.get("max_elements", DEFAULT_MAX_ELEMENTS))
                 if max_elements < 1:
                     raise ValueError(
                         f"split max_elements must be >= 1, got {max_elements}"
@@ -102,13 +100,11 @@ def add_gsplats_impl(
                 split_rule = str(split.get("rule", "midpoint"))
                 if split_rule not in ("midpoint", "sah"):
                     raise ValueError(
-                        f"split rule must be 'midpoint' or 'sah'; "
-                        f"got {split_rule!r}"
+                        f"split rule must be 'midpoint' or 'sah'; got {split_rule!r}"
                     )
             else:
                 raise TypeError(
-                    f"split must be None, True, or dict; got "
-                    f"{type(split).__name__}"
+                    f"split must be None, True, or dict; got {type(split).__name__}"
                 )
 
             if image_labels is not None:
@@ -244,9 +240,7 @@ def add_gsplats_split_wrapper_impl(
             name=f"part_{i}",
             centers=ctr_arr[indices],
             amplitudes=slice_optional_array(amplitudes, indices, n_splats),
-            cholesky_factors=slice_optional_array(
-                chol_arr, indices, n_splats
-            ),
+            cholesky_factors=slice_optional_array(chol_arr, indices, n_splats),
             colors=slice_optional_array(colors, indices, n_splats),
             labels=slice_optional_array(labels, indices, n_splats),
             image_labels=None,
@@ -262,8 +256,6 @@ def add_gsplats_split_wrapper_impl(
             **leaf_attrs,
         )
 
-    wrapper._persist_attr(
-        "position_bounds", position_bounds_from_array(ctr_arr)
-    )
+    wrapper._persist_attr("position_bounds", position_bounds_from_array(ctr_arr))
 
     return wrapper

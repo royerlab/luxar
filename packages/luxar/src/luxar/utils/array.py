@@ -77,6 +77,5 @@ def validate_array_shape(
     if check_finite and np.issubdtype(array.dtype, np.floating):
         if not np.all(np.isfinite(array)):
             raise ValueError(
-                f"{name.capitalize()} must contain only finite values "
-                f"(no NaN or ±Inf)"
+                f"{name.capitalize()} must contain only finite values (no NaN or ±Inf)"
             )

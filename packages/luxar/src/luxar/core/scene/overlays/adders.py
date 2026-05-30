@@ -95,9 +95,7 @@ def add_text_impl(
         attrs["visible_range"] = validated_range
 
     overlay = write_overlay(scene, name, "overlay_text", position, attrs)
-    aprint(
-        f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
-    )
+    aprint(f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
     return overlay
 
 
@@ -164,9 +162,7 @@ def add_image_impl(
         image_data=image_bytes,
         image_filename=image_filename,
     )
-    aprint(
-        f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
-    )
+    aprint(f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
     return overlay
 
 
@@ -230,7 +226,5 @@ def add_html_impl(
         attrs["visible_range"] = validated_range
 
     overlay = write_overlay(scene, name, "overlay_html", position, attrs)
-    aprint(
-        f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
-    )
+    aprint(f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
     return overlay

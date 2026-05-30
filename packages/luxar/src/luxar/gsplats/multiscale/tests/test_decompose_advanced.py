@@ -324,9 +324,7 @@ class TestConvergenceEdgeCases:
         small and large amplitudes."""
         for scale in (0.1, 1.0, 10.0):
             V = simple_2d_image * scale
-            _, stats = decompose_image(
-                V, scales=[1, 2], n_iters=500, verbose=False
-            )
+            _, stats = decompose_image(V, scales=[1, 2], n_iters=500, verbose=False)
             image_range = float(V.max() - V.min())
             adaptive_threshold = 0.01 * image_range
             assert stats["converged"], (
