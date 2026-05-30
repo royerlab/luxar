@@ -636,6 +636,27 @@ describe('PickingSystem — settle scheduler', () => {
     expect(performPick).not.toHaveBeenCalled();
   });
 
+  it('invalidateCanvasRect drops the pending pick so no stale-coordinate pick fires', () => {
+    // C2 regression: a page/ancestor scroll fires invalidateCanvasRect()
+    // to bust the cached rect. The pending settle coordinate was already
+    // converted to canvas-local against that now-stale rect, so firing it
+    // would pick the wrong spot. The pending pick must be dropped.
+    system.onMouseMove(makeMouseEvent(100, 100));
+    system.invalidateCanvasRect();
+    harness.advanceTime(200);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+
+    // A fresh mousemove (which re-maps against the recomputed rect) re-arms
+    // and fires normally.
+    system.onMouseMove(makeMouseEvent(120, 140));
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+  });
+
   it('suppress(true) cancels any pending rAF and blocks future picks', () => {
     system.onMouseMove(makeMouseEvent(100, 100));
     system.suppress(true);

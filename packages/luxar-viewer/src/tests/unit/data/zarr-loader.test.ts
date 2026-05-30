@@ -47,7 +47,7 @@
  * paths silently no-op (see MED-7 in the audit findings).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { loadScene } from '../../../data';
 import * as zarrita from 'zarrita';
 import * as THREE from 'three';
@@ -233,6 +233,20 @@ describe('zarr-loader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockStoreContents = [];
+    mockFetchStore = undefined;
+    mockOpenResult = null;
+    mockGetResult = () => null;
+  });
+
+  // Reset the module-scope mock state after every test. The zarrita mock
+  // factory captures these closures at module load, so without an explicit
+  // teardown a stale `mockFetchStore` / contents array can leak into sibling
+  // test files under whole-suite execution — one of the test-order pollution
+  // sources behind the full-suite Vitest timeouts.
+  afterEach(() => {
+    vi.restoreAllMocks();
+    mockStoreContents = [];
+    mockFetchStore = undefined;
     mockOpenResult = null;
     mockGetResult = () => null;
   });

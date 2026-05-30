@@ -87,6 +87,16 @@ export function commitPointsGeometry(
   // Type guard already passed in the early-return above.
   points.userData.visiblePointCount = data.pointCount;
 
+  // World-space radius footprint, shared by every commit path so the
+  // boundingBox carries the rendered disc extent (the three-geometry
+  // invariant — see create-points-node.ts). Uint8 radii normalize to
+  // [0, max_radius]; Float32 radii are already world units, so max_radius
+  // is the correct world-space max for both. No radii → 0.5 fill default.
+  const attrs = points.userData.attrs;
+  const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
+  const maxSharpness = (attrs?.max_sharpness as number | undefined) ?? 31.0;
+  const footprintRadius = data.radii ? maxRadius : 0.5;
+
   const bufferSession = session?.begin('Update Buffers');
   try {
     if (gpuBufferPool) {
@@ -102,6 +112,7 @@ export function commitPointsGeometry(
 
       if (data.metadata.bounds) {
         geometry.boundingBox = data.metadata.bounds.clone();
+        if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
         geometry.boundingSphere = new THREE.Sphere();
         geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
       }
@@ -114,9 +125,6 @@ export function commitPointsGeometry(
       if (!geometry.userData) {
         geometry.userData = {};
       }
-      const attrs = points.userData.attrs;
-      const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
-      const maxSharpness = (attrs?.max_sharpness as number | undefined) ?? 31.0;
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       geometry.userData.sharpnessScale = data.sharpness instanceof Uint8Array ? maxSharpness : 1.0;
 
@@ -192,6 +200,7 @@ export function commitPointsGeometry(
       // instead (same pattern as the pool-enabled path above).
       if (data.metadata.bounds) {
         oldGeometry.boundingBox = data.metadata.bounds.clone();
+        if (footprintRadius > 0) oldGeometry.boundingBox.expandByScalar(footprintRadius);
         oldGeometry.boundingSphere = new THREE.Sphere();
         oldGeometry.boundingBox.getBoundingSphere(oldGeometry.boundingSphere);
       }
@@ -208,7 +217,10 @@ export function commitPointsGeometry(
       if (oldGeometry) {
         oldGeometry.dispose();
       }
-      points.geometry = nodeFactory.createPointsGeometry(data);
+      // Pass max_radius / max_sharpness so the rebuilt geometry bakes the
+      // correct footprint into boundingBox (and the right dtype scales);
+      // omitting them would default maxRadius=1.0 and clip large radii.
+      points.geometry = nodeFactory.createPointsGeometry(data, maxRadius, maxSharpness);
       // dispose+recreate path picks up new dtype-aware scales from
       // the freshly built geometry's userData.
       syncPointMaterialWithGeometry(points);
