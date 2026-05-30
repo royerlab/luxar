@@ -12,9 +12,11 @@
  * picking system's tie-breaking prefers the brightest hit. Matches
  * the GLSL `gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0)` path.
  *
- * The pick sprite is HALF the radius of the visual sprite, so the
- * pick footprint is the bright core only — peripheral falloff
- * regions don't capture hover state.
+ * The pick sprite is 80% of the radius of the visual sprite
+ * (the 0.8 factor below) — slightly tighter than the visible disc so
+ * overlapping points still resolve to the one whose core you're over,
+ * but forgiving enough that sparse points don't need pixel-perfect aim.
+ * Keep in sync with shaders.ts.
  *
  * @module rendering/picking/point/pick.tsl
  */
@@ -105,7 +107,8 @@ export function pointPickWebGPUFactory(
     .select(float(1.0), length(mvPos.xyz).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
-  // Tighter picking: × 0.5 vs the visual material. Guard the
+  // Picking footprint: × 0.8 vs the visual material
+  // (keep the 0.8 in sync with shaders.ts). Guard the
   // sharpness-compensation expression against Inf/NaN the same way
   // point.tsl.ts:188-191 does — degenerate sharpness must not poison
   // the quad expansion.
@@ -118,7 +121,7 @@ export function pointPickWebGPUFactory(
   const sharpnessComp: TSLNode = sharpnessCompFinite.select(sharpnessCompRaw, float(1.0));
   const pickPointSize: TSLNode = max(
     float(1.0),
-    clamp(basePointSize.mul(sharpnessComp).mul(0.5), float(1.0), uMaxPointSize)
+    clamp(basePointSize.mul(sharpnessComp).mul(0.8), float(1.0), uMaxPointSize)
   );
 
   const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);

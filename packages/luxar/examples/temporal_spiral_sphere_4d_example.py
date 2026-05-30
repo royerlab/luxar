@@ -7,7 +7,7 @@ This example demonstrates:
 - Undulating rainbow colors across temporal frames
 - Pulsating point sizes with spatial patterns
 - Dynamic sharpness variations
-- High-density points (200,000 points per frame × 256 frames)
+- High-density points (200,000 points per frame × 512 frames)
 
 Educational value:
 - Learn to create large-scale temporal animations
@@ -109,8 +109,6 @@ def create_pulsating_radii(
     Returns:
         Array of point radii
     """
-    # n_points = len(positions)  # Currently unused but may be needed later
-
     # Time-based pulsation
     time_phase = 2 * np.pi * t_frame / n_frames
 
@@ -150,8 +148,6 @@ def create_dynamic_sharpness(
     Returns:
         Array of sharpness values
     """
-    # n_points = len(positions)  # Currently unused but may be needed later
-
     # Time-based variation
     time_phase = 2 * np.pi * t_frame / n_frames
 

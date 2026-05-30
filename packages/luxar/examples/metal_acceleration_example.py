@@ -63,8 +63,7 @@ def main():
                 volume,
                 seeds=200,  # Number of splats
                 n_iters=100,  # Iterations
-                device=device,
-                use_metal=True,  # Enable Metal (auto-detects availability)
+                device=device,  # 'mps' selects Metal automatically on Apple Silicon
                 verbose=True,
             )
 

@@ -72,16 +72,36 @@ export function setWasmJsUrl(url: string | undefined): void {
  */
 export async function initWasm(): Promise<WasmModule> {
   try {
-    // Compute WASM module URL relative to this bundle file. At build time,
-    // this module is bundled into assets/index-*.js and the WASM files live
-    // at wasm/ (sibling of assets/). Using a variable prevents Vite from
-    // trying to resolve the path as a source asset at build time.
+    // Compute WASM module URL. The correct base differs by build:
+    //
+    //   • Production / library build: this module is bundled into
+    //     assets/index-*.js and the WASM files live at wasm/ (sibling of
+    //     assets/), so the import.meta.url-relative '../wasm/luxar_wasm.js'
+    //     resolves correctly. Using a variable prevents Vite from trying to
+    //     resolve the path as a source asset at build time.
+    //
+    //   • Vite dev server: this module is served from /src/wasm/index.ts, so
+    //     the same relative path would resolve to /src/wasm/luxar_wasm.js —
+    //     but `make build-wasm` writes the compiled module to public/wasm/,
+    //     which the dev server serves at /wasm/. Resolve against the origin
+    //     in that case so dev picks up the built WASM instead of silently
+    //     falling back to the (slower) TypeScript implementation.
     //
     // Embedders whose bundlers don't support `import.meta.url` resolution
     // can override the URL via {@link setWasmJsUrl} (forwarded by
-    // LuxarAppOptions.wasmPath).
+    // LuxarAppOptions.wasmPath); the override takes precedence over both.
     const wasmRelativePath = '../wasm/luxar_wasm.js';
-    const wasmJsUrl = wasmJsUrlOverride ?? new URL(wasmRelativePath, import.meta.url).href;
+    const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+    let wasmJsUrl: string;
+    if (wasmJsUrlOverride) {
+      wasmJsUrl = wasmJsUrlOverride;
+    } else if (isDev) {
+      // public/ is served at the server root in dev regardless of the
+      // production-only relative `base`.
+      wasmJsUrl = new URL('/wasm/luxar_wasm.js', self.location.origin).href;
+    } else {
+      wasmJsUrl = new URL(wasmRelativePath, import.meta.url).href;
+    }
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
@@ -128,4 +148,15 @@ export function isWasmSupported(): boolean {
  */
 export function getFallback(): WasmModule {
   return new TypeScriptFallback();
+}
+
+/**
+ * Whether the given module is the TypeScript fallback rather than the
+ * compiled WASM backend. {@link initWasm} returns a {@link TypeScriptFallback}
+ * when the compiled module can't be loaded (e.g. not built in dev), so
+ * callers can report the active backend accurately instead of always
+ * claiming "WASM loaded".
+ */
+export function isWasmFallback(module: WasmModule): boolean {
+  return module instanceof TypeScriptFallback;
 }

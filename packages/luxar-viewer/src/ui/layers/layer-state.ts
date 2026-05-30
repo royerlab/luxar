@@ -7,6 +7,7 @@
 
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering/material-manager';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Geometry type of a layer.
@@ -21,6 +22,21 @@ import type { BlendingMode } from '../../rendering/material-manager';
  * drives the per-layer badge / LOD dropdown.
  */
 export type LayerType = 'points' | 'lines' | 'gsplats' | 'group';
+
+/**
+ * Coerce a node's raw `layer` attr into "exposed in the Layers panel".
+ *
+ * The Python writer (`validate_layer`) always normalises to a JSON boolean,
+ * but hand-edited or third-party zarr may carry a number (`1`/`0`). Accept
+ * strict `true` and truthy finite numbers so such values don't silently drop
+ * the node from the panel; everything else (incl. `undefined`, strings) is
+ * not-a-layer. Pure — callers log a warning for malformed (non-boolean) values.
+ */
+export function isLayerEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
+  return false;
+}
 
 /** Specialized-group discriminant on a layer. */
 export type LayerKind = 'lod' | 'split';
@@ -183,7 +199,16 @@ export class LayerStateManager {
     // Skip the root scene node; collect anything else with layer=true.
     // Groups exposed as layers act as composites — their controls fan out
     // to every data descendant when applied in the scene.
-    if (node.type !== 'scene' && node.attrs.layer === true) {
+    const layerAttr = node.attrs.layer;
+    if (layerAttr !== undefined && typeof layerAttr !== 'boolean') {
+      // Producers should write a JSON boolean; coerce truthy values but warn
+      // so a malformed (e.g. string) attr doesn't silently drop the node.
+      log.warning(
+        Modules.UI,
+        `Node "${node.path}" has a non-boolean 'layer' attr (${typeof layerAttr}); coercing.`
+      );
+    }
+    if (node.type !== 'scene' && isLayerEnabled(layerAttr)) {
       const isLayerType =
         node.type === 'points' ||
         node.type === 'lines' ||

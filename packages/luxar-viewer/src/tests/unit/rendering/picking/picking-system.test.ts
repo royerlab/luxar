@@ -21,7 +21,17 @@ import {
   PickingSystem,
   computePickBufferSize,
   MAX_PICK_BUFFER_DIM,
+  type PickResult,
 } from '../../../../rendering/picking/picking-system';
+
+/** A promise plus its external `resolve` — lets a test gate when the readback completes. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 function makeStubRenderer(): THREE.WebGLRenderer {
   // PickingSystem ctor + the lifecycle methods we test only need
@@ -654,6 +664,20 @@ describe('PickingSystem — settle scheduler', () => {
     expect(performPick).toHaveBeenCalledTimes(1);
   });
 
+  it('tracks cursor moves during suppression so the resume re-pick uses the latest position', () => {
+    // Orbit-with-move: cursor is over A, user starts orbiting and drags the
+    // cursor to B while suppressed, then releases. The camera-settle re-pick
+    // must fire at B (the actual cursor) — not the stale pre-orbit A.
+    system.onMouseMove(makeMouseEvent(100, 100)); // over A, before orbit
+    system.suppress(true);
+    system.onMouseMove(makeMouseEvent(250, 175)); // cursor moves to B during orbit
+    system.suppress(false);
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledExactlyOnceWith(250, 175);
+  });
+
   it('onMouseMove fades the existing overlay (onPickResult called with null)', () => {
     system.onMouseMove(makeMouseEvent(100, 100));
     expect(onPickResult).toHaveBeenCalledWith(null);
@@ -838,5 +862,79 @@ describe('PickingSystem — cursor clamping', () => {
     // Pick buffer is 400x300 (half of 800x600). PICK_SIZE = 5. Max read is 395/295.
     expect(lastReadX).toBeLessThanOrEqual(400 - 5);
     expect(lastReadY).toBeLessThanOrEqual(300 - 5);
+  });
+});
+
+// =============================================================================
+// performPick — stale-readback ordering guard (async race)
+// =============================================================================
+
+describe('PickingSystem — stale readback ordering', () => {
+  type PerformPick = (x: number, y: number) => Promise<void>;
+
+  /**
+   * Build a system that reaches the post-readback emit: canvas sized,
+   * `renderPickBuffer` stubbed (no GL), one node registered straddling the
+   * camera origin so the cursor ray always hits (skips the ray-cull
+   * early-out), and `readbackAndVote` replaced by a caller-gated promise.
+   */
+  function buildGatedSystem() {
+    const onPickResult = vi.fn();
+    const renderer = {
+      domElement: document.createElement('canvas'),
+      getDrawingBufferSize: vi.fn((t: THREE.Vector2) => t.set(800, 600)),
+      readRenderTargetPixels: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    Object.defineProperty(renderer.domElement, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(renderer.domElement, 'clientHeight', { value: 600, configurable: true });
+
+    const system = new PickingSystem(renderer, makeStubCapabilities(), makeCamera(), onPickResult);
+    (system as unknown as { renderPickBuffer: () => void }).renderPickBuffer = () => {};
+
+    // A box centered on the camera origin → every cursor ray intersects it.
+    const geom = new THREE.BoxGeometry(100, 100, 100);
+    geom.computeBoundingBox();
+    const mainNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    mainNode.updateMatrixWorld(true);
+    const pickNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    const id = system.allocatePickId();
+    system.registerNode(mainNode, pickNode, id);
+
+    const gate = deferred<PickResult | null>();
+    const fakeResult: PickResult = { nodeId: id, elementId: 7, brightness: 1, mainNode };
+    (system as unknown as { readbackAndVote: () => Promise<PickResult | null> }).readbackAndVote =
+      () => gate.promise;
+
+    const performPick = (system as unknown as { performPick: PerformPick }).performPick.bind(
+      system
+    );
+    return { system, onPickResult, gate, fakeResult, performPick };
+  }
+
+  it('drops the readback result when a markDirty superseded the pick mid-readback', async () => {
+    const { system, onPickResult, gate, fakeResult, performPick } = buildGatedSystem();
+
+    const pending = performPick(400, 300); // center ray → hits the box → reaches readback
+    onPickResult.mockClear(); // ignore any pre-readback emit
+
+    // A camera/view change lands while the readback is still in flight.
+    system.markDirty();
+    gate.resolve(fakeResult); // the now-stale readback finally returns
+    await pending;
+
+    // The stale result must NOT be emitted (markDirty's null fade stands).
+    expect(onPickResult).not.toHaveBeenCalledWith(fakeResult);
+    expect(onPickResult).toHaveBeenCalledWith(null);
+  });
+
+  it('emits the readback result when nothing superseded the pick', async () => {
+    const { onPickResult, gate, fakeResult, performPick } = buildGatedSystem();
+
+    const pending = performPick(400, 300);
+    onPickResult.mockClear();
+    gate.resolve(fakeResult); // no supersede → result is still the latest
+    await pending;
+
+    expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
   });
 });

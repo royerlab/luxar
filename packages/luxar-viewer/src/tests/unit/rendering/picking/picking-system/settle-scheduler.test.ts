@@ -143,17 +143,27 @@ describe('SettleScheduler', () => {
     expect(h.firePick).not.toHaveBeenCalled();
   });
 
-  it('recordMouseMove while suppressed is a no-op (timestamp + pending cursor untouched)', () => {
+  it('recordMouseMove while suppressed tracks the cursor but does not schedule a pick', () => {
+    // Contract: the position + timestamp are tracked even while suppressed
+    // (so the resume re-pick uses the latest cursor), but no pick fires
+    // mid-interaction because the rAF is never scheduled while suppressed.
     h.scheduler.setSuppressed(true);
     h.scheduler.recordMouseMove(100, 200);
-    expect(h.scheduler.lastMouseMoveTime).toBe(0);
+    expect(h.scheduler.lastMouseMoveTime).toBe(1000); // tracked (clock starts at 1000)
 
-    // Re-enabling without a pending cursor must NOT trigger a pick.
-    h.scheduler.setSuppressed(false);
+    // Still suppressed → advancing past the settle window fires nothing.
     h.advance(HOVER_SETTLE_MS + 10);
     h.flushRaf();
     h.flushRaf();
     expect(h.firePick).not.toHaveBeenCalled();
+
+    // Resume → the tracked position drives the settle re-pick, no fresh
+    // mousemove required.
+    h.scheduler.setSuppressed(false);
+    h.advance(HOVER_SETTLE_MS + 10);
+    h.flushRaf();
+    h.flushRaf();
+    expect(h.firePick).toHaveBeenCalledExactlyOnceWith(100, 200);
   });
 
   it('ctx.shouldFire() returning false suppresses the call AND leaves lastPickFiredTime unchanged', () => {

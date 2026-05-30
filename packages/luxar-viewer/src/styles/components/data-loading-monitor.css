@@ -191,7 +191,7 @@
   font-size: var(--luxar-text-lg);
 }
 
-.luxar-monitor-compact__points,
+.luxar-monitor-compact__geoms,
 .luxar-monitor-compact__memory,
 .luxar-monitor-compact__qps {
   display: flex;
@@ -199,6 +199,13 @@
   gap: var(--luxar-spacing-2);
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-sm);
+}
+
+/* One count per present geometry type (points / lines / gsplats), kept
+   together with a tighter gap than the surrounding compact-row items. */
+.luxar-monitor-compact__geoms {
+  gap: var(--luxar-spacing-3);
+  white-space: nowrap;
 }
 
 .luxar-monitor-compact__alert {
@@ -426,7 +433,8 @@
   background: var(--luxar-bg-tertiary);
   padding: var(--luxar-spacing-3) var(--luxar-spacing-4);
   border-radius: var(--luxar-radius-sm);
-  margin-bottom: var(--luxar-spacing-3);
+  /* Vertical separation comes from .luxar-tab-content--cache's flex gap;
+     no own margin (avoids stacking extra space on top of the gap). */
 }
 
 .luxar-cache-section__header {
@@ -496,15 +504,16 @@
 
 /* ========== Cache status badges (S1) ========== */
 
-/* Pill row at the top of the cache tab summarising operational
-   state. Each badge inherits its tint from a .luxar-color--* modifier
+/* Pill row summarising operational state. In the full cache view this
+   sits inline on the right of the CACHE HEALTH header; in the
+   disabled/fallback views it stands alone (separated by the cache tab's
+   flex gap). No own vertical padding/margin so it stays compact in both
+   places. Each badge inherits its tint from a .luxar-color--* modifier
    class applied alongside .luxar-badge. */
 .luxar-cache-status {
   display: flex;
   flex-wrap: wrap;
   gap: var(--luxar-spacing-2);
-  padding: var(--luxar-spacing-2) 0;
-  margin-bottom: var(--luxar-spacing-3);
 }
 
 .luxar-badge {
@@ -519,23 +528,31 @@
   letter-spacing: 0.02em;
 }
 
-/* ========== Cache Health section (S1) ========== */
+/* ========== Cache Health section (S1) ==========
+   Styled to match .luxar-cache-section (flat bg-tertiary, no border)
+   so it reads as a peer of the L0/L1/L2 sections. Vertical separation
+   comes from the cache tab's flex `gap` — no own margin. */
 
 .luxar-cache-health {
-  background: var(--luxar-bg-secondary);
-  border: 1px solid var(--luxar-border-subtle);
+  background: var(--luxar-bg-tertiary);
   border-radius: var(--luxar-radius-sm);
-  padding: var(--luxar-spacing-3);
-  margin: var(--luxar-spacing-3) 0;
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-4);
 }
 
+/* Header carries the title on the left and the status badges on the
+   right, mirroring .luxar-cache-section__header (title + clear button). */
 .luxar-cache-health__header {
-  font-size: 0.75em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--luxar-text-secondary);
-  margin-bottom: var(--luxar-spacing-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-3);
+}
+
+.luxar-cache-health__title {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  font-weight: var(--luxar-font-semibold);
 }
 
 .luxar-cache-health__row {
@@ -704,7 +721,8 @@
 [data-theme='light'] .luxar-metric-card,
 [data-theme='light'] .luxar-stat-grid__item,
 [data-theme='light'] .luxar-loader-item,
-[data-theme='light'] .luxar-cache-section {
+[data-theme='light'] .luxar-cache-section,
+[data-theme='light'] .luxar-cache-health {
   background: rgba(0, 0, 0, 0.03);
 }
 

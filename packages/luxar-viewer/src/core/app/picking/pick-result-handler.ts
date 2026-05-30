@@ -29,9 +29,7 @@ import type { PickResult } from '../../../rendering/picking/picking-system';
  * Returns ``null`` when no kind=split ancestor exists — caller falls
  * back to the leaf node's own name.
  */
-function findOutermostSplitWrapperName(
-  mainNode: THREE.Object3D
-): string | null {
+function findOutermostSplitWrapperName(mainNode: THREE.Object3D): string | null {
   let outermost: string | null = null;
   let cur: THREE.Object3D | null = mainNode.parent ?? null;
   while (cur) {
@@ -80,11 +78,20 @@ export interface PickResultHandlerPorts {
  *   here is the second line of defense).
  * - Either fetch rejects → log a warning and clear hover. Errors must
  *   not kill the hover loop.
+ * - Ordering: the label/image fetch is async, so a slow fetch from an
+ *   older invocation could resolve AFTER a newer one (e.g. an uncached
+ *   image while the cursor moves on) and re-show a stale tooltip over
+ *   fresher state. A monotonic `latest` token, captured per call, gates
+ *   the post-`await` emit: a superseded invocation drops its result. A
+ *   `null` (hide) call applies immediately and bumps the token, so it
+ *   also cancels any in-flight content fetch.
  */
 export function buildPickResultHandler(
   ports: PickResultHandlerPorts
 ): (result: PickResult | null) => Promise<void> {
+  let latest = 0;
   return async (result) => {
+    const seq = ++latest;
     try {
       if (!result) {
         ports.overlayManager?.updateHoverContent(null);
@@ -100,12 +107,17 @@ export function buildPickResultHandler(
         ports.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
         ports.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ?? Promise.resolve(null),
       ]);
+      // A newer pick result (or a fade-to-null) arrived while we were
+      // fetching — drop this stale one rather than clobber fresher state.
+      if (seq !== latest) return;
       const hasContent = label || imageUrl;
       ports.overlayManager?.updateHoverContent(
         hasContent ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId } : null
       );
     } catch (err) {
-      // Don't let label loading errors kill the hover loop.
+      // Don't let label loading errors kill the hover loop. Stay silent if
+      // superseded — clearing here would wipe a newer invocation's result.
+      if (seq !== latest) return;
       log.warning(Modules.APP, `Picking callback error: ${err}`);
       ports.overlayManager?.updateHoverContent(null);
     }

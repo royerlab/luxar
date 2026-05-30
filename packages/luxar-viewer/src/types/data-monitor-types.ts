@@ -83,8 +83,7 @@ export interface LoaderMetrics {
   // Performance metrics
   pointsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
-  // Dataset info (NEW)
-  datasetSize: number; // Total points in dataset (from zarr metadata)
+  // Dataset info
   visiblePoints: number; // Currently visible/rendered points (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
@@ -486,6 +485,8 @@ export interface SceneGraphState {
   gsplatsNodes: number;
   /** Total points across all nodes */
   totalPoints: number;
+  /** Currently visible points (after nD clipping / progressive LOD) */
+  visiblePoints: number;
   /** Total segments across all lines */
   totalSegments: number;
   /** Currently visible segments (after nD clipping) */

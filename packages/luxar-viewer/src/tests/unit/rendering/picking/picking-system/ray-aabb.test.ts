@@ -74,6 +74,25 @@ describe('getOrComputeWorldBox', () => {
     expect(getOrComputeWorldBox(1, entry, cache)).toBeNull();
     expect(cache.size).toBe(0);
   });
+
+  it('expands the AABB by the geometry max radius (userData.radiusScale)', () => {
+    // Regression: the center-only bounding box clips the pick footprint
+    // of elements sitting on the box surface (e.g. a point at the scene's
+    // +X extreme), making them unpickable from their outward side. The
+    // world box must grow by the element radius so the cull covers the
+    // rendered disc. Unit cube at origin + radiusScale 0.5 → [-1, 1].
+    const cache = new Map<number, THREE.Box3>();
+    const entry = makeEntry();
+    (entry.main as THREE.Mesh).geometry.userData = { radiusScale: 0.5 };
+
+    const box = getOrComputeWorldBox(1, entry, cache);
+
+    expect(box).not.toBeNull();
+    // Cube half-extent 0.5 + radius 0.5 = 1.0 on every axis.
+    expect(box!.min.x).toBeCloseTo(-1, 5);
+    expect(box!.max.x).toBeCloseTo(1, 5);
+    expect(box!.max.y).toBeCloseTo(1, 5);
+  });
 });
 
 describe('rayHitsAnyNode', () => {

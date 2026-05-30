@@ -16,6 +16,30 @@ interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  getMetrics: ReturnType<typeof vi.fn>;
+  getActiveQueries: ReturnType<typeof vi.fn>;
+  addEventListener: ReturnType<typeof vi.fn>;
+  removeEventListener: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal LoaderMetrics stub with the fields the aggregator reads. */
+function stubMetrics(over: Partial<Record<string, number>> = {}) {
+  return {
+    type: 'gsplats-spatial-index' as const,
+    path: '/test_gsplats/additive_x',
+    queries: 0,
+    loads: 0,
+    evictions: 0,
+    errors: 0,
+    pointsLoaded: 0,
+    bytesLoaded: 0,
+    visiblePoints: 0,
+    avgQueryTime: 0,
+    avgLoadTime: 0,
+    memoryUsed: 0,
+    memoryLimit: 0,
+    ...over,
+  };
 }
 
 function makeLodData(
@@ -48,11 +72,18 @@ function makeLodData(
   };
 }
 
-function makeSubLoader(initialData: LoadedGSplatsData): SubLoaderStub {
+function makeSubLoader(
+  initialData: LoadedGSplatsData,
+  metrics: Record<string, number> = {}
+): SubLoaderStub {
   return {
     updateView: vi.fn().mockResolvedValue(initialData),
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
+    getMetrics: vi.fn(() => stubMetrics(metrics)),
+    getActiveQueries: vi.fn(() => []),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   };
 }
 
@@ -75,7 +106,8 @@ describe('GSplatsProgressiveLoader', () => {
     lodC = makeSubLoader(makeLodData(25, 3, { color: 'uint8' }));
     loader = new GSplatsProgressiveLoader(
       [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
-      3
+      3,
+      '/test_gsplats'
     );
   });
 
@@ -324,6 +356,54 @@ describe('GSplatsProgressiveLoader', () => {
       await loader.loadGSplats(baseViewState);
       loader.dispose();
       expect(loader.loadedLODCount).toBe(0);
+    });
+  });
+
+  describe('LoaderMonitor surface', () => {
+    it('exposes the four monitor methods (so connectLoaderToMonitor wires it)', () => {
+      expect(typeof loader.addEventListener).toBe('function');
+      expect(typeof loader.removeEventListener).toBe('function');
+      expect(typeof loader.getMetrics).toBe('function');
+      expect(typeof loader.getActiveQueries).toBe('function');
+    });
+
+    it('getMetrics aggregates inner-loader metrics under the node path', () => {
+      lodA = makeSubLoader(makeLodData(100), { queries: 2, pointsLoaded: 100, memoryUsed: 10 });
+      lodB = makeSubLoader(makeLodData(50), { queries: 3, pointsLoaded: 50, memoryUsed: 20 });
+      loader = new GSplatsProgressiveLoader(
+        [lodA, lodB] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/test_gsplats'
+      );
+
+      const metrics = loader.getMetrics();
+      expect(metrics.path).toBe('/test_gsplats');
+      expect(metrics.type).toBe('gsplats-spatial-index');
+      expect(metrics.queries).toBe(5); // 2 + 3
+      expect(metrics.pointsLoaded).toBe(150); // 100 + 50
+      expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('addEventListener / removeEventListener fan out to every inner loader', () => {
+      // The wrapper registers a re-pathing wrapper (not the raw listener) on
+      // each inner loader — the re-path itself is asserted in the
+      // ProgressiveMonitorAdapter unit test. Here we just confirm fan-out.
+      const listener = vi.fn();
+      loader.addEventListener(listener);
+      expect(lodA.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodB.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.addEventListener).toHaveBeenCalledTimes(1);
+
+      loader.removeEventListener(listener);
+      expect(lodA.removeEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.removeEventListener).toHaveBeenCalledTimes(1);
+    });
+
+    it('getActiveQueries merges inner active-query lists', () => {
+      lodA.getActiveQueries.mockReturnValue([{ id: 'a' }]);
+      lodB.getActiveQueries.mockReturnValue([{ id: 'b' }, { id: 'c' }]);
+      lodC.getActiveQueries.mockReturnValue([]);
+      expect(loader.getActiveQueries()).toHaveLength(3);
     });
   });
 });

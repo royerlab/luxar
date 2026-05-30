@@ -23,7 +23,7 @@
  */
 
 import type { Remote } from 'comlink';
-import type { DataWorkerAPI } from '../../data-worker';
+import type { DataWorkerAPI, WorkerInitResult } from '../../data-worker';
 
 export function initializeWithGuard(
   worker: Worker,
@@ -31,18 +31,18 @@ export function initializeWithGuard(
   workerNumber: number,
   timeoutMs: number,
   attachPermanentHandlers: () => void
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+): Promise<WorkerInitResult> {
+  return new Promise<WorkerInitResult>((resolve, reject) => {
     let settled = false;
-    const settle = (kind: 'ok' | 'err', err?: Error): void => {
+    const settle = (kind: 'ok' | 'err', payload?: WorkerInitResult | Error): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       // Restore the permanent runtime handlers; the early ones below
       // are scoped to the init race only.
       attachPermanentHandlers();
-      if (kind === 'ok') resolve();
-      else reject(err);
+      if (kind === 'ok') resolve(payload as WorkerInitResult);
+      else reject(payload as Error);
     };
     // Mirror withTimeout() semantics: 0/negative/non-finite disables the
     // guard. `config/validation.ts` documents this convention for all
@@ -71,7 +71,7 @@ export function initializeWithGuard(
       );
     };
     api.initialize().then(
-      () => settle('ok'),
+      (result) => settle('ok', result),
       (err) => settle('err', err instanceof Error ? err : new Error(String(err)))
     );
   });

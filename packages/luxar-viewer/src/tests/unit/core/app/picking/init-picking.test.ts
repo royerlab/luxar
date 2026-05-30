@@ -429,11 +429,13 @@ describe('initPicking', () => {
         getOverlayManager: () => undefined,
       });
 
-      // .on covers mousemove + mouseleave + window.resize.
+      // .on covers mousemove + mouseleave + window.resize + window.scroll
+      // (scroll busts the cached canvas rect when the canvas moves on screen).
       const targets = onSpy.mock.calls.map((c) => c[1]);
       expect(targets).toContain('mousemove');
       expect(targets).toContain('mouseleave');
       expect(targets).toContain('resize');
+      expect(targets).toContain('scroll');
 
       // core.md W10 strengthening: previously `>=4`. Pin to EXACTLY 4 so
       // a regression that double-registered a cleanup (or added a 5th

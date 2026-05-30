@@ -28,6 +28,7 @@ function makeInstance(activeQueries: number, label: string): WorkerInstance {
     worker: { _label: label } as unknown as Worker,
     api: { _label: label } as unknown as WorkerInstance['api'],
     activeQueries,
+    wasmFallback: false,
   };
 }
 
