@@ -141,17 +141,20 @@ describe('camera-utils', () => {
     // frustum, very high zoom}.
     it('zoom=1, symmetric frustum: height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
+      // top - bottom = 5 - (-5) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
     it('zoom=2 halves the effective frustum height (10 → 5)', () => {
       const cam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 100);
       cam.zoom = 2;
+      // Effective height = (top - bottom) / zoom = 10 / 2 = 5
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(5, 5);
     });
 
     it('asymmetric frustum (top=8, bottom=-2): height = top - bottom = 10', () => {
       const cam = new THREE.OrthographicCamera(-3, 7, 8, -2, 0.1, 100);
+      // top - bottom = 8 - (-2) = 10, zoom = 1
       expect(getOrthoFrustumHeight(cam)).toBeCloseTo(10, 5);
     });
 
