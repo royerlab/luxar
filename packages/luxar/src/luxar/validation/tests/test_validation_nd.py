@@ -396,9 +396,7 @@ class TestBroadcastToAllSlices:
                 Dimension("x", "um", (-10, 10), 1, display=True),
                 Dimension("y", "um", (-10, 10), 1, display=True),
                 Dimension("z", "um", (-10, 10), 1, display=True),
-                Dimension(
-                    "time", "ms", (0, 2), 1, display=False, discrete=True
-                ),
+                Dimension("time", "ms", (0, 2), 1, display=False, discrete=True),
             ]
         )
         positions = np.array([[1.0, 2.0, 3.0, 0.0]], dtype=np.float32)
@@ -420,15 +418,11 @@ class TestBroadcastToAllSlices:
                 Dimension("x", "um", (-10, 10), 1, display=True),
                 Dimension("y", "um", (-10, 10), 1, display=True),
                 Dimension("z", "um", (-10, 10), 1, display=True),
-                Dimension(
-                    "time", "ms", (0, 2), 1, display=False, discrete=True
-                ),
+                Dimension("time", "ms", (0, 2), 1, display=False, discrete=True),
             ]
         )
         positions = np.zeros((0, 4), dtype=np.float32)
-        new_pos, new_col, new_rad = broadcast_to_all_slices(
-            positions, None, None, dims
-        )
+        new_pos, new_col, new_rad = broadcast_to_all_slices(positions, None, None, dims)
         # Empty stays empty regardless of broadcast factor.
         assert new_pos.shape == (0, 4)
         assert new_col is None

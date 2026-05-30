@@ -37,9 +37,7 @@ from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
-LinesMethodName = Literal[
-    "random", "salience", "spatial-uniform", "poisson-disk"
-]
+LinesMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
 
 DEFAULT_N_LODS: int = 4
 DEFAULT_METHOD: LinesMethodName = "random"
@@ -82,8 +80,7 @@ def identify_polylines(
     if line_type == "segments":
         if n_vertices % 2 != 0:
             raise ValueError(
-                f"line_type='segments' requires even n_vertices; got "
-                f"{n_vertices}"
+                f"line_type='segments' requires even n_vertices; got {n_vertices}"
             )
         pairs: List[NDArray[np.intp]] = []
         for i in range(0, n_vertices, 2):
@@ -92,9 +89,7 @@ def identify_polylines(
 
     if line_type == "indexed":
         if indices is None:
-            raise ValueError(
-                "line_type='indexed' requires an indices array"
-            )
+            raise ValueError("line_type='indexed' requires an indices array")
         return _indexed_connected_components(
             n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
         )
@@ -184,9 +179,7 @@ def compute_additive_order_lines(
 
     if method == "salience":
         if widths is None:
-            raise ValueError(
-                "salience ordering requires per-vertex widths; got None"
-            )
+            raise ValueError("salience ordering requires per-vertex widths; got None")
         score = np.empty(p, dtype=np.float64)
         for i, members in enumerate(polylines):
             if members.size < 2:
@@ -254,13 +247,10 @@ def _compute_lines_energy(
 
     pts3 = vertices[:, :3].astype(np.float64, copy=False)
     has_colors = colors is not None and (
-        isinstance(colors, np.ndarray)
-        and colors.ndim == 2
-        and colors.shape[1] >= 3
+        isinstance(colors, np.ndarray) and colors.ndim == 2 and colors.shape[1] >= 3
     )
     has_scalars = scalars is not None and (
-        isinstance(scalars, np.ndarray)
-        and scalars.shape == (vertices.shape[0],)
+        isinstance(scalars, np.ndarray) and scalars.shape == (vertices.shape[0],)
     )
     if has_colors:
         c = np.asarray(colors)[:, :3].astype(np.float64, copy=False)
@@ -270,7 +260,11 @@ def _compute_lines_energy(
     else:
         vertex_lum = None
 
-    if widths is not None and isinstance(widths, np.ndarray) and widths.shape == (vertices.shape[0],):
+    if (
+        widths is not None
+        and isinstance(widths, np.ndarray)
+        and widths.shape == (vertices.shape[0],)
+    ):
         vertex_w = widths.astype(np.float64, copy=False)
     else:
         vertex_w = None
@@ -364,9 +358,7 @@ def make_additive_lod_lines(
     # with a per-polyline luminance × tube-volume score.
     energy: Optional[NDArray[np.float64]] = None
     if method == "salience" and salience_kind == "energy":
-        energy = _compute_lines_energy(
-            vertices, polylines, widths, colors, scalars
-        )
+        energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
         perm = np.argsort(-energy, kind="stable").astype(np.intp)
         natural_counts: List[int] = []
     else:
@@ -385,16 +377,16 @@ def make_additive_lod_lines(
         cursor = 0
         for count in natural_counts:
             if count > 0:
-                level_polylines = [polylines[int(i)] for i in perm[cursor : cursor + count]]
+                level_polylines = [
+                    polylines[int(i)] for i in perm[cursor : cursor + count]
+                ]
                 out.append(level_polylines)
             cursor += count
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
     if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
-        energy = _compute_lines_energy(
-            vertices, polylines, widths, colors, scalars
-        )
+        energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
 
     if isinstance(counts, str):
         # Energy: fractions → cumulative counts (over polylines).
@@ -406,18 +398,14 @@ def make_additive_lod_lines(
                 "'energy:<fractions>'"
             )
         if energy is None:
-            energy = _compute_lines_energy(
-                vertices, polylines, widths, colors, scalars
-            )
-        fracs = [float(s) for s in counts[len("energy:"):].split(",") if s.strip()]
+            energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
+        fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
         breakpoints = _energy_breakpoints_to_counts(energy, perm, fracs)
     elif counts is not None:
         breakpoints = _validate_counts(counts, p)
     else:
         per_level = max(1, (p + n_lods - 1) // n_lods)
-        breakpoints = [
-            min(p, (i + 1) * per_level) for i in range(n_lods - 1)
-        ]
+        breakpoints = [min(p, (i + 1) * per_level) for i in range(n_lods - 1)]
 
     out = []
     start = 0
@@ -477,8 +465,7 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
         }
     if not isinstance(spec, dict):
         raise TypeError(
-            f"additive_lod must be None, bool, or dict; got "
-            f"{type(spec).__name__}"
+            f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
         )
     kwargs = dict(spec)
     kwargs.pop("recompute", None)

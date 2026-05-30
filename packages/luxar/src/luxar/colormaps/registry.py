@@ -128,8 +128,7 @@ def _resolve_array(arr: np.ndarray) -> NDArray[np.uint8]:
         # gives a clearer error than "range [0, 1]" for either case.
         if not np.all(np.isfinite(arr)):
             raise ValueError(
-                "Float colormap values must be finite "
-                "(contains NaN or ±Inf)"
+                "Float colormap values must be finite (contains NaN or ±Inf)"
             )
         if np.any(arr < 0) or np.any(arr > 1):
             raise ValueError("Float colormap values must be in [0, 1] range")

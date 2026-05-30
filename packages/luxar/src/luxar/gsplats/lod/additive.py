@@ -613,9 +613,7 @@ def make_additive_lod(
                     centers=centers_full[prev:end].astype(np.float32, copy=False),
                     amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
                     cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
-                    colors=(
-                        colors_full[prev:end] if colors_full is not None else None
-                    ),
+                    colors=(colors_full[prev:end] if colors_full is not None else None),
                     stats=lod_stats,
                     truncation_radius=target_view.truncation_radius,
                 )

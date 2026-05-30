@@ -448,17 +448,31 @@ class TestTransformUtilities:
         # without the transpose (NumPy [0][3]=5 → flat [3]) would also
         # fail this assertion.
         assert values[15] == 1.0
-        assert values[3] == 0.0  # NOT 5 — this is the dead-give-away of a missing transpose
+        assert (
+            values[3] == 0.0
+        )  # NOT 5 — this is the dead-give-away of a missing transpose
 
     def test_from_list_reads_translation_from_three_js_indices_12_13_14(self) -> None:
         # Build a list with translation at THREE.js indices [12, 13, 14]
         # and verify from_list places them at NumPy row-major [0][3],
         # [1][3], [2][3].
         values = [
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            5, 7, 11, 1,   # translation row in THREE.js column-major flat
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            5,
+            7,
+            11,
+            1,  # translation row in THREE.js column-major flat
         ]
         m = from_list(values)
         assert m[0, 3] == 5.0

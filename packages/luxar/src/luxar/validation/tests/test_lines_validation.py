@@ -212,9 +212,7 @@ def test_valid_widths(tmp_path) -> None:
     ],
     ids=lambda x: x if isinstance(x, str) else None,
 )
-def test_invalid_sharpness(
-    tmp_path, sharpness_factory, error_pattern, test_id
-) -> None:
+def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) -> None:
     """Lines sharpness rejection mirrors Points."""
     store = tmp_path / f"invalid_sharpness_{test_id}.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:

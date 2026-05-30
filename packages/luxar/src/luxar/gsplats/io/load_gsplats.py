@@ -202,9 +202,7 @@ def load_gsplats(
             compression_factor = int(sub_group.attrs.get("compression_factor", 1))
             parent_method_raw = sub_group.attrs.get("parent_method", "")
             parent_method = (
-                None
-                if parent_method_raw in ("", None)
-                else str(parent_method_raw)
+                None if parent_method_raw in ("", None) else str(parent_method_raw)
             )
             level_index = int(sub_group.attrs.get("level_index", s))
             level_stats: Dict[str, Any] = {}

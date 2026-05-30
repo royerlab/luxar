@@ -533,9 +533,9 @@ class TestNetworkSimulationMiddleware:
         # the middleware sleeps the entire expected_time deterministically.
         # Assert the expected sleep is in the recorded list. Other entries
         # may be event-loop-internal sleeps under load on slow CI.
-        assert any(
-            abs(s - 0.08) < 1e-9 for s in sleep_calls
-        ), f"expected a ~0.08s sleep from bandwidth throttle; got {sleep_calls[:10]}..."
+        assert any(abs(s - 0.08) < 1e-9 for s in sleep_calls), (
+            f"expected a ~0.08s sleep from bandwidth throttle; got {sleep_calls[:10]}..."
+        )
         assert message_count == 2
 
     def test_packet_loss_drops_requests(self):

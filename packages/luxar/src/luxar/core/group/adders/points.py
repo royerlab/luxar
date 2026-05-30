@@ -64,9 +64,7 @@ def add_points_impl(
         scene = group._find_scene()
 
         pos_arr: np.ndarray = (
-            positions
-            if isinstance(positions, np.ndarray)
-            else np.asarray(positions)
+            positions if isinstance(positions, np.ndarray) else np.asarray(positions)
         )
         if pos_arr.ndim != 2:
             raise ValueError(
@@ -101,9 +99,7 @@ def add_points_impl(
                 max_elements = DEFAULT_MAX_ELEMENTS
                 split_rule = "midpoint"
             elif isinstance(split, dict):
-                max_elements = int(
-                    split.get("max_elements", DEFAULT_MAX_ELEMENTS)
-                )
+                max_elements = int(split.get("max_elements", DEFAULT_MAX_ELEMENTS))
                 if max_elements < 1:
                     raise ValueError(
                         f"split max_elements must be >= 1, got {max_elements}"
@@ -111,13 +107,11 @@ def add_points_impl(
                 split_rule = str(split.get("rule", "midpoint"))
                 if split_rule not in ("midpoint", "sah"):
                     raise ValueError(
-                        f"split rule must be 'midpoint' or 'sah'; "
-                        f"got {split_rule!r}"
+                        f"split rule must be 'midpoint' or 'sah'; got {split_rule!r}"
                     )
             else:
                 raise TypeError(
-                    f"split must be None, True, or dict; got "
-                    f"{type(split).__name__}"
+                    f"split must be None, True, or dict; got {type(split).__name__}"
                 )
 
             if image_labels is not None:
@@ -183,8 +177,7 @@ def add_points_impl(
                 )
                 scalars_for_energy = (
                     scalars
-                    if isinstance(scalars, np.ndarray)
-                    and scalars.shape == (n_points,)
+                    if isinstance(scalars, np.ndarray) and scalars.shape == (n_points,)
                     else None
                 )
                 levels = make_additive_lod_points(
@@ -364,9 +357,7 @@ def add_points_split_wrapper_impl(
     # one logical entity. Computed directly from ``pos_arr`` — same
     # result as unioning per-child bboxes, simpler than round-tripping
     # through the children's on-disk attrs.
-    wrapper._persist_attr(
-        "position_bounds", position_bounds_from_array(pos_arr)
-    )
+    wrapper._persist_attr("position_bounds", position_bounds_from_array(pos_arr))
 
     return wrapper
 
@@ -411,21 +402,11 @@ def add_points_multi_lod_wrapper_impl(
         level_slices.append(
             {
                 "positions": pos_arr[level_indices].astype(np.float32),
-                "colors": slice_optional_array(
-                    colors, level_indices, n_points
-                ),
-                "radii": slice_optional_array(
-                    radii, level_indices, n_points
-                ),
-                "sharpness": slice_optional_array(
-                    sharpness, level_indices, n_points
-                ),
-                "scalars": slice_optional_array(
-                    scalars, level_indices, n_points
-                ),
-                "labels": slice_optional_array(
-                    labels, level_indices, n_points
-                ),
+                "colors": slice_optional_array(colors, level_indices, n_points),
+                "radii": slice_optional_array(radii, level_indices, n_points),
+                "sharpness": slice_optional_array(sharpness, level_indices, n_points),
+                "scalars": slice_optional_array(scalars, level_indices, n_points),
+                "labels": slice_optional_array(labels, level_indices, n_points),
             }
         )
 

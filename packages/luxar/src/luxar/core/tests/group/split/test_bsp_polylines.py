@@ -77,9 +77,7 @@ class TestMidpointBspPolylines:
         parts = midpoint_bsp_polylines(v, ps, max_elements=15)
         for part in parts:
             vertex_count = sum(int(ps[p].size) for p in part)
-            assert vertex_count <= 15, (
-                f"part of size {vertex_count} exceeds cap 15"
-            )
+            assert vertex_count <= 15, f"part of size {vertex_count} exceeds cap 15"
 
     def test_single_oversized_polyline_kept_atomic(self):
         """A polyline larger than the cap stays in its own part."""
@@ -175,9 +173,7 @@ class TestAddLinesSplit:
         # 200 vertices in one polyline; cap=50. With polyline-atomic
         # invariant, the single polyline can't be broken up so we expect
         # to fall through to a single-leaf write.
-        v = np.random.RandomState(3).uniform(-10, 10, (200, 3)).astype(
-            np.float32
-        )
+        v = np.random.RandomState(3).uniform(-10, 10, (200, 3)).astype(np.float32)
         w = np.full(200, 0.05, dtype=np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())

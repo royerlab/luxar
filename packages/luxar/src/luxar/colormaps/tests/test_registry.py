@@ -49,7 +49,9 @@ class TestBuiltinColormaps:
     # `astype(uint8)` (truncation) — visible as off-by-one color at
     # the ramp ends. The general-shape test above covers the centre;
     # this one nails down the endpoints.
-    @pytest.mark.parametrize("name", ["green", "magenta", "cyan", "red", "blue", "yellow"])
+    @pytest.mark.parametrize(
+        "name", ["green", "magenta", "cyan", "red", "blue", "yellow"]
+    )
     def test_linear_ramp_endpoints_exact_uint8(self, name: str) -> None:
         lut = get_builtin_lut(name)
         # Index 0 is the all-black anchor for every linear ramp.

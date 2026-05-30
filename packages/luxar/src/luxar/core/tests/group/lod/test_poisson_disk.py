@@ -123,16 +123,12 @@ class TestPointsPoissonDiskIntegration:
     def test_make_additive_lod_respects_natural_partition(self):
         rng = np.random.RandomState(1)
         pos = rng.uniform(-5, 5, (200, 3)).astype(np.float32)
-        levels = make_additive_lod_points(
-            pos, method="poisson-disk", n_lods=4
-        )
+        levels = make_additive_lod_points(pos, method="poisson-disk", n_lods=4)
         total = sum(L.size for L in levels)
         assert total == 200
 
     def test_resolver_accepts_poisson_disk(self):
-        spec = resolve_additive_axis_points(
-            {"method": "poisson-disk", "n_lods": 3}
-        )
+        spec = resolve_additive_axis_points({"method": "poisson-disk", "n_lods": 3})
         assert spec["method"] == "poisson-disk"
         assert spec["n_lods"] == 3
 

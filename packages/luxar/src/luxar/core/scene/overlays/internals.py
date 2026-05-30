@@ -27,9 +27,7 @@ def next_overlay_name(scene: "Scene", name: Optional[str]) -> str:
     # Check for duplicate names
     existing_names = {o.name for o in scene._overlays}
     if name in existing_names:
-        raise ValueError(
-            f"Overlay name '{name}' already exists. Use a unique name."
-        )
+        raise ValueError(f"Overlay name '{name}' already exists. Use a unique name.")
     return name
 
 

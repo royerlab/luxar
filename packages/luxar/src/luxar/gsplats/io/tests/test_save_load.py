@@ -97,10 +97,15 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path), mode="r")
             root["splats"]
 
-            assert root["splats/substitutive_0/additive_0"].attrs["ordering"] == "morton"
+            assert (
+                root["splats/substitutive_0/additive_0"].attrs["ordering"] == "morton"
+            )
             assert "ordering_min" in root["splats/substitutive_0/additive_0"].attrs
             assert "ordering_max" in root["splats/substitutive_0/additive_0"].attrs
-            assert "ordering_bits_per_dim" in root["splats/substitutive_0/additive_0"].attrs
+            assert (
+                "ordering_bits_per_dim"
+                in root["splats/substitutive_0/additive_0"].attrs
+            )
 
     def test_save_with_hilbert_ordering(self) -> None:
         """Test save with Hilbert ordering."""
@@ -118,7 +123,10 @@ class TestSaveGsplats:
                 root = zarr.open_group(str(path), mode="r")
                 root["splats"]
 
-                assert root["splats/substitutive_0/additive_0"].attrs["ordering"] == "hilbert"
+                assert (
+                    root["splats/substitutive_0/additive_0"].attrs["ordering"]
+                    == "hilbert"
+                )
 
             except ImportError:
                 pytest.skip("hilbertcurve package not installed")
@@ -154,7 +162,9 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path_memory), mode="r")
             # MEMORY mode uses float32 by default (float16_allowed=False for compatibility)
             # Check encoding metadata
-            enc = root["splats/substitutive_0/additive_0/centers"].attrs.get("encoding", {})
+            enc = root["splats/substitutive_0/additive_0/centers"].attrs.get(
+                "encoding", {}
+            )
             assert (
                 enc["name"] == "float16"
             )  # Should be float16 because we passed float16_allowed=True
@@ -689,7 +699,10 @@ class TestCompression:
             root = zarr.open(str(path), "r")
             assert root["splats/substitutive_0/additive_0/centers"].chunks[0] <= 50
             assert root["splats/substitutive_0/additive_0/amplitudes"].chunks[0] <= 50
-            assert root["splats/substitutive_0/additive_0/cholesky_factors"].chunks[0] <= 50
+            assert (
+                root["splats/substitutive_0/additive_0/cholesky_factors"].chunks[0]
+                <= 50
+            )
 
     def test_gsplatdata_save_default_compression(self):
         """GSplatData.save() uses Blosc compression by default."""
@@ -702,7 +715,9 @@ class TestCompression:
             g.save(path)
 
             root = zarr.open(str(path), "r")
-            assert isinstance(root["splats/substitutive_0/additive_0/centers"].compressor, Blosc)
+            assert isinstance(
+                root["splats/substitutive_0/additive_0/centers"].compressor, Blosc
+            )
 
     def test_multi_lod_compression(self):
         """Multi-LOD save applies compression to each LOD."""
@@ -725,8 +740,12 @@ class TestCompression:
 
             root = zarr.open(str(path), "r")
             # Both LODs should have compression
-            assert isinstance(root["splats/substitutive_0/additive_0/centers"].compressor, Blosc)
-            assert isinstance(root["splats/substitutive_0/additive_1/centers"].compressor, Blosc)
+            assert isinstance(
+                root["splats/substitutive_0/additive_0/centers"].compressor, Blosc
+            )
+            assert isinstance(
+                root["splats/substitutive_0/additive_1/centers"].compressor, Blosc
+            )
             # Chunks capped at LOD size
             assert root["splats/substitutive_0/additive_0/centers"].chunks[0] <= 50
             assert root["splats/substitutive_0/additive_1/centers"].chunks[0] <= 80
