@@ -50,6 +50,25 @@ vi.mock('../../../../rendering/colormap-textures', () => ({
   getColormapTexture: vi.fn(() => null),
 }));
 
+// `SceneLoaderManager` is consulted by the LOD-level dropdown to find
+// the lod_group registry on the current scene loader. Tests mock it so
+// the dropdown change handler can drive a stub registry.
+const setSelectorModeMock = vi.fn();
+const registryGetMock = vi.fn(() => undefined);
+const getDefaultLoaderMock = vi.fn(() => ({
+  lodGroupRegistry: {
+    setSelectorMode: setSelectorModeMock,
+    get: registryGetMock,
+  },
+}));
+vi.mock('../../../../data/scene-loader-manager', () => ({
+  SceneLoaderManager: {
+    getInstance: () => ({
+      getDefaultLoader: getDefaultLoaderMock,
+    }),
+  },
+}));
+
 import { LayersPanel } from '../../../../ui/layers/layers-panel';
 
 function makeAnimationController(): AnimationController {
@@ -276,5 +295,131 @@ describe('LayersPanel.dispose', () => {
     // not throw and (because handlers were removed) does not flip
     // the layer's visibility.
     expect(() => eyeBtn?.click()).not.toThrow();
+  });
+});
+
+function findActiveLevelSelect(container: HTMLElement): HTMLSelectElement | null {
+  // Three selects share the class; find the one whose sibling label
+  // text is "Active level".
+  const groups = Array.from(
+    container.querySelectorAll('.luxar-layers-panel__control-group')
+  );
+  for (const group of groups) {
+    const label = group.querySelector('.luxar-layers-panel__control-label');
+    if (label?.textContent === 'Active level') {
+      return group.querySelector(
+        '.luxar-layers-panel__select'
+      ) as HTMLSelectElement | null;
+    }
+  }
+  return null;
+}
+
+describe('LayersPanel — LOD active-level dropdown', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  function makeLodSceneGraph(): SceneNode {
+    // kind=lod group with two child levels — Layer state will surface
+    // `lodGroupChildCount = 2` and render the active-level dropdown.
+    return {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'pyramid',
+          path: '/pyramid',
+          type: 'group',
+          attrs: { layer: true, kind: 'lod', display_type: 'points' },
+          children: [
+            { name: 'lod_0', path: '/pyramid/lod_0', type: 'points', attrs: {}, children: [] },
+            { name: 'lod_1', path: '/pyramid/lod_1', type: 'points', attrs: {}, children: [] },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+    setSelectorModeMock.mockClear();
+    getDefaultLoaderMock.mockClear();
+    showToastMock.mockClear();
+  });
+
+  it('change → setSelectorMode is called AND requestRender wakes the animation loop', () => {
+    // Regression guard: previously the change handler called
+    // registry.setSelectorMode(...) but never animationController.startAnimation(),
+    // so the level swap (which runs in a per-frame callback) was invisible
+    // when the loop was idle.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+
+    // Select the lod layer so it becomes primary.
+    panel.layerState.select('/pyramid', 'single');
+
+    // The panel renders three selects sharing this class (blend,
+    // colormap, lod-active-level). Find the lod-level dropdown by its
+    // label ("Active level") rather than by class index.
+    const select = findActiveLevelSelect(container);
+    expect(select).not.toBeNull();
+
+    // Find the lock-to-level-1 option.
+    select!.value = '1';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(setSelectorModeMock).toHaveBeenCalledWith('/pyramid', { lockLevel: 1 });
+    expect(animationController.startAnimation).toHaveBeenCalled();
+  });
+
+  it('change to "auto" propagates as auto-mode and still wakes the animation loop', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    // The panel renders three selects sharing this class (blend,
+    // colormap, lod-active-level). Find the lod-level dropdown by its
+    // label ("Active level") rather than by class index.
+    const select = findActiveLevelSelect(container);
+    select!.value = 'auto';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(setSelectorModeMock).toHaveBeenCalledWith('/pyramid', 'auto');
+    expect(animationController.startAnimation).toHaveBeenCalled();
+  });
+
+  it('does NOT wake the loop when setSelectorMode throws for every path', () => {
+    // When the registry rejects every path (e.g. stale path after scene
+    // reload), no visibility change happens, so calling requestRender
+    // would be a spurious wake. The fix gates the call on at least one
+    // successful apply.
+    setSelectorModeMock.mockImplementation(() => {
+      throw new Error('unknown lod_group path');
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    // The panel renders three selects sharing this class (blend,
+    // colormap, lod-active-level). Find the lod-level dropdown by its
+    // label ("Active level") rather than by class index.
+    const select = findActiveLevelSelect(container);
+    // Clear startAnimation calls from prior interactions (selection +
+    // renderControls plumbing).
+    (animationController.startAnimation as ReturnType<typeof vi.fn>).mockClear();
+
+    select!.value = '0';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(setSelectorModeMock).toHaveBeenCalled();
+    expect(animationController.startAnimation).not.toHaveBeenCalled();
   });
 });
