@@ -138,6 +138,7 @@ def fit_progressive_gaussian_splats(
     device: Optional[str] = None,
     verbose: bool = True,
     truncate: float = 2.75,
+    residual_pass_min_iters: int = 500,
     **kwargs: Any,
 ) -> GSplatData:
     """Fit Gaussian splats progressively via iterative residual decomposition.
@@ -181,6 +182,14 @@ def fit_progressive_gaussian_splats(
         Whether to print progress information.
     truncate : float
         Truncation radius in standard deviations for rendering.
+    residual_pass_min_iters : int, default=500
+        Minimum optimizer iterations for *residual* passes (pass 1+).  Pass 0
+        always honours ``iters_per_pass`` directly.  The default of 500 is
+        the historical floor that protects fit quality when callers supply
+        a small ``iters_per_pass`` (the decayed value can otherwise drop
+        below what residual passes need to converge).  Lower this only for
+        tests that need short runtime — production callers should leave it
+        at the default.
     **kwargs
         Additional keyword arguments passed through to ``fit_gaussian_splats``.
 
@@ -352,13 +361,14 @@ def fit_progressive_gaussian_splats(
 
         # Adaptive iteration count: later passes fit progressively smaller
         # residuals and converge faster. Scale iterations with pass index.
-        # Pass 0: full iters.  Pass 1+: decreasing from 100% to 60%.
+        # Pass 0: full iters.  Pass 1+: decreasing from 100% to 60%, floored
+        # by residual_pass_min_iters (default 500 — see param docstring).
         if pass_i == 0:
             pass_iters = iters_per_pass
         else:
             # Gentle decay: pass 1=95%, pass 2=90%, ..., min 80%
             decay = max(0.8, 1.0 - 0.05 * pass_i)
-            pass_iters = max(500, int(iters_per_pass * decay))
+            pass_iters = max(residual_pass_min_iters, int(iters_per_pass * decay))
 
         result = fit_gaussian_splats(
             target,
