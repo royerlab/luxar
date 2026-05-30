@@ -234,7 +234,8 @@ def fit_tiled(
         is culled.  Set to ``None`` to disable.
     **fit_kwargs
         All other keyword arguments forwarded to the per-tile fitting function
-        (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``).
+        (e.g. ``seeds``, ``n_iters``, ``preset``, ``device``,
+        ``residual_pass_min_iters`` when ``progressive=True``).
 
     Returns
     -------

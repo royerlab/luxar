@@ -379,25 +379,19 @@ class TestFitTiled:
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
 class TestTiledProgressive:
-    """Tests for tiled fitting with progressive=True."""
+    """Tests for tiled fitting with progressive=True.
 
-    def test_tiled_progressive_basic(self) -> None:
+    ``test_tiled_progressive_basic`` and ``test_tiled_progressive_stats``
+    share the ``shared_tiled_progressive_fit`` module-scoped fixture (see
+    ``conftest.py``) — they originally ran nearly identical fits and
+    checked disjoint facets of the result.  The fixture uses
+    ``residual_pass_min_iters=30`` to bypass the production 500-iter floor.
+    """
+
+    @pytest.mark.slow
+    def test_tiled_progressive_basic(self, shared_tiled_progressive_fit) -> None:
         """Basic tiled+progressive produces multi-LOD result."""
-        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
-
-        V = np.random.RandomState(42).rand(32, 32).astype(np.float32)
-        result = fit_tiled(
-            V,
-            tile_size=16,
-            overlap=4,
-            progressive=True,
-            max_splats_per_pass=50,
-            psnr_patience=0.01,
-            max_passes=3,  # Force multiple passes
-            seeds=150,
-            iters_per_pass=30,
-            verbose=False,
-        )
+        result = shared_tiled_progressive_fit.result
         assert result.n_splats > 0
         assert result.n_additive_sublods >= 1  # At least one LOD
         assert result.stats.get("progressive") is True
@@ -475,22 +469,10 @@ class TestTiledProgressive:
         assert merged.additive_sublod(1).n_splats == 5
         assert merged.additive_sublod(2).n_splats == 5
 
-    def test_tiled_progressive_stats(self) -> None:
+    @pytest.mark.slow
+    def test_tiled_progressive_stats(self, shared_tiled_progressive_fit) -> None:
         """Stats reflect progressive tiled fitting."""
-        from luxar.gsplats.fit_tiled_gsplats import fit_tiled
-
-        V = np.random.RandomState(42).rand(32, 32).astype(np.float32)
-        result = fit_tiled(
-            V,
-            tile_size=16,
-            overlap=4,
-            progressive=True,
-            max_splats_per_pass=50,
-            psnr_patience=0.01,
-            seeds=100,
-            iters_per_pass=30,
-            verbose=False,
-        )
+        result = shared_tiled_progressive_fit.result
         assert result.stats.get("tiled_fitting") is True
         assert result.stats.get("progressive") is True
         assert result.stats.get("num_tiles", 0) > 1
