@@ -188,15 +188,17 @@ describe('NodeFactory', () => {
       expect(radiusAttr).toBeDefined();
       expect(radiusAttr.normalized).toBe(true);
       expect(geometry.userData.radiusScale).toBe(2.0);
-      // Uint8: radiusScale and maxActualRadius coincide (both = maxRadius).
-      expect(geometry.userData.maxActualRadius).toBe(2.0);
+      // Uint8 normalized radii map to [0, maxRadius], so the footprint
+      // baked into boundingBox is maxRadius (2.0): centers [0,10] → [-2,12].
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-2, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(12, 5);
     });
 
-    it('should record maxActualRadius for float32 radii while keeping radiusScale at 1.0', () => {
+    it('should bake a large float32 radius footprint into boundingBox (radiusScale stays 1.0)', () => {
       // W1 regression: Float32 radii are already in world units, so the
-      // shader normalization factor radiusScale stays 1.0. The pick-AABB
-      // margin must instead come from maxActualRadius (the metadata
-      // max_radius), or large-radius points get culled before readback.
+      // shader normalization factor radiusScale stays 1.0. The rendered
+      // footprint must instead be baked into boundingBox from the metadata
+      // max_radius, or large-radius points get culled before pick readback.
       const data = createMockPointsData({
         pointCount: 50,
         hasRadii: true,
@@ -206,15 +208,18 @@ describe('NodeFactory', () => {
 
       expect(geometry.getAttribute('aRadius').normalized).toBe(false);
       expect(geometry.userData.radiusScale).toBe(1.0); // shader contract unchanged
-      expect(geometry.userData.maxActualRadius).toBe(50.0); // real world-space max
+      // Footprint 50 baked into boundingBox: centers [0,10] → [-50,60].
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-50, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(60, 5);
     });
 
-    it('should default maxActualRadius to the fill radius when radii are absent', () => {
+    it('should bake the fill radius footprint into boundingBox when radii are absent', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      // No radii → aRadius filled with 0.5; the pick margin matches.
-      expect(geometry.userData.maxActualRadius).toBe(0.5);
+      // No radii → aRadius filled with 0.5; boundingBox grows by 0.5.
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-0.5, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
     });
 
     it('should store radius and sharpness scales in userData', () => {
@@ -230,13 +235,15 @@ describe('NodeFactory', () => {
       expect(geometry.userData.sharpnessScale).toBe(1.0); // Float32 sharpness = 1.0 scale
     });
 
-    it('should set bounding box from metadata', () => {
+    it('should set bounding box from metadata (plus footprint margin)', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
+      // Centers bounds are [0,10]; with no radii the 0.5 fill footprint is
+      // baked in → [-0.5, 10.5].
       expect(geometry.boundingBox).not.toBeNull();
-      expect(geometry.boundingBox?.min.x).toBe(0);
-      expect(geometry.boundingBox?.max.x).toBe(10);
+      expect(geometry.boundingBox?.min.x).toBeCloseTo(-0.5, 5);
+      expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
     });
   });
 

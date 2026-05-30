@@ -63,14 +63,15 @@ export function createPointsGeometry(
 
   // Per-instance radii (with dtype-aware normalization).
   let radiusScale = 1.0;
-  // World-space maximum radius, used for the pick-AABB margin in
-  // ray-aabb.ts. Distinct from radiusScale: radiusScale is a shader
+  // World-space maximum radius, used below to expand boundingBox to the
+  // rendered footprint (the shared three-geometry invariant — see the
+  // boundingBox block). Distinct from radiusScale, which is only a shader
   // normalization factor (1.0 for Float32/Float16 world-unit radii,
-  // maxRadius for Uint8 normalized radii), whereas maxActualRadius is
-  // always the real max radius in world units regardless of dtype.
-  let maxActualRadius = 0.5; // matches the no-radii fill default below
+  // maxRadius for Uint8 normalized radii); footprintRadius is always the
+  // real max radius in world units regardless of dtype.
+  let footprintRadius = 0.5; // matches the no-radii fill default below
   if (data.radii) {
-    maxActualRadius = maxRadius;
+    footprintRadius = maxRadius;
     if (
       typeof globalThis.Float16Array !== 'undefined' &&
       data.radii instanceof globalThis.Float16Array
@@ -154,15 +155,20 @@ export function createPointsGeometry(
   geometry.instanceCount = pointCount;
   geometry.setDrawRange(0, 6);
 
-  // Bounding box/sphere of the per-instance positions; base-quad bounds
-  // are irrelevant since frustum culling is disabled on the mesh.
+  // Bounding box/sphere of the per-instance positions, expanded by the
+  // rendered footprint (the per-instance disc radius). This is the shared
+  // three-geometry invariant: lines (`line-geometry.ts`) expand by max
+  // half-width and gsplats (`gsplat-geometry.ts`) by maxRowNorm × truncation,
+  // so the pick cull (`ray-aabb.ts`) and camera framing treat all three
+  // identically off `boundingBox` alone — no per-geometry special-casing.
+  // (The base-quad bounds are irrelevant; frustum culling is disabled here.)
   geometry.boundingBox = data.metadata.bounds.clone();
+  if (footprintRadius > 0) geometry.boundingBox.expandByScalar(footprintRadius);
   geometry.boundingSphere = new THREE.Sphere();
   geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
 
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.radiusScale = radiusScale;
-  geometry.userData.maxActualRadius = maxActualRadius;
   geometry.userData.sharpnessScale = sharpnessScale;
   geometry.userData.pointCount = pointCount;
 
