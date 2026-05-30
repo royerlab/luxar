@@ -1344,9 +1344,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_levels = len(levels)
 
         # Compute global bounds + total count from all levels' positions.
-        all_positions = np.concatenate(
-            [L["positions"] for L in levels], axis=0
-        )
+        all_positions = np.concatenate([L["positions"] for L in levels], axis=0)
         n_points_total = int(all_positions.shape[0])
         global_bounds = self._compute_position_bounds(all_positions)
 
@@ -1426,9 +1424,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group = self.store.require_group(path)
         n_levels = len(levels)
 
-        all_vertices = np.concatenate(
-            [L["vertices"] for L in levels], axis=0
-        )
+        all_vertices = np.concatenate([L["vertices"] for L in levels], axis=0)
         n_vertices_total = int(all_vertices.shape[0])
         n_polylines_total = sum(int(L.get("n_polylines", 0)) for L in levels)
         global_bounds = self._compute_position_bounds(all_vertices)
@@ -1441,8 +1437,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             segments_arr = lvl.get("segments")
             flat_indices = (
                 np.asarray(segments_arr, dtype=np.uint32).reshape(-1)
-                if segments_arr is not None
-                and len(np.asarray(segments_arr)) > 0
+                if segments_arr is not None and len(np.asarray(segments_arr)) > 0
                 else None
             )
             level_meta = self.write_lines(
@@ -2122,10 +2117,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         def walk(group: "zarr.Group") -> None:
             attrs = dict(group.attrs)
-            if (
-                attrs.get("kind") == "lod"
-                and "position_bounds" not in attrs
-            ):
+            if attrs.get("kind") == "lod" and "position_bounds" not in attrs:
                 aggregated = resolve(group)
                 if aggregated is not None:
                     group.attrs["position_bounds"] = aggregated
@@ -2155,6 +2147,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         **Never overwrites** an authored ``display_type`` — only fills
         missing values.
         """
+
         def resolve(group: "zarr.Group") -> str:
             """Return the display_type of a group (leaf or wrapper)."""
             attrs = dict(group.attrs)

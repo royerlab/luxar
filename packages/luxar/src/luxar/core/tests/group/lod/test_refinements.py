@@ -55,16 +55,14 @@ class TestDisplayTypeBackfill:
         """If user authored display_type, the compiler must not touch it."""
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            lod = scene.add_lod_group(
-                "with_explicit", display_type="custom_marker"
-            )
+            lod = scene.add_lod_group("with_explicit", display_type="custom_marker")
             pos = np.random.RandomState(0).rand(50, 3).astype(np.float32)
             lod.add_points("level_0", pos, min_pixel_size=0.0)
 
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
-        assert (
-            store["with_explicit"].attrs["display_type"] == "custom_marker"
-        ), "user-authored display_type must not be overwritten"
+        assert store["with_explicit"].attrs["display_type"] == "custom_marker", (
+            "user-authored display_type must not be overwritten"
+        )
 
 
 class TestPositionBoundsBackfill:
@@ -80,13 +78,9 @@ class TestPositionBoundsBackfill:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("ladder")
             # Coarse child: small bbox at origin.
-            pos_coarse = np.array(
-                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32
-            )
+            pos_coarse = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
             # Fine child: larger bbox extending the union.
-            pos_fine = np.array(
-                [[-2.0, 0.0, 0.0], [5.0, 4.0, 3.0]], dtype=np.float32
-            )
+            pos_fine = np.array([[-2.0, 0.0, 0.0], [5.0, 4.0, 3.0]], dtype=np.float32)
             lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
             lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
 
@@ -147,9 +141,7 @@ class TestPositionBoundsBackfill:
                     "max": [100.0, 100.0, 100.0],
                 },
             )
-            pos = np.array(
-                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32
-            )
+            pos = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
             lod.add_points("level_0", pos, min_pixel_size=0.0)
 
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
@@ -218,9 +210,7 @@ class TestBasePixelSizeKnob:
                 return self
 
         data = FakeData()
-        _, _, bps = resolve_substitutive_axis(
-            data, {"base_pixel_size": 25.0}
-        )
+        _, _, bps = resolve_substitutive_axis(data, {"base_pixel_size": 25.0})
         assert bps == 25.0
 
     def test_resolve_substitutive_axis_rejects_invalid_bps(self):
@@ -318,9 +308,7 @@ class TestPointsEnergy:
         # Make dark/big actually dimmer than bright/small. With radius
         # diff 5×, volume ratio = 125×; need luminance ratio >125 to
         # invert.
-        colors = np.array(
-            [[0.01, 0.01, 0.01], [1.0, 1.0, 1.0]], dtype=np.float32
-        )
+        colors = np.array([[0.01, 0.01, 0.01], [1.0, 1.0, 1.0]], dtype=np.float32)
 
         # salience_kind='size' (default): index 0 ranks first (larger radius).
         size_levels = make_additive_lod_points(
@@ -380,8 +368,7 @@ class TestLinesEnergy:
         # 2 unit-length segments along x, widths 1 and 2 → tube_volume
         # ratio 4×. White colors → mean_luminance = 1.
         v = np.array(
-            [[0, 0, 0], [1, 0, 0],
-             [0, 1, 0], [1, 1, 0]],
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
             dtype=np.float32,
         )
         polylines = [
@@ -396,8 +383,7 @@ class TestLinesEnergy:
 
     def test_compute_lines_energy_with_colors(self):
         v = np.array(
-            [[0, 0, 0], [1, 0, 0],
-             [0, 1, 0], [1, 1, 0]],
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
             dtype=np.float32,
         )
         polylines = [
