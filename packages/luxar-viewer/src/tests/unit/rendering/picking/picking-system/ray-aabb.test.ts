@@ -75,23 +75,38 @@ describe('getOrComputeWorldBox', () => {
     expect(cache.size).toBe(0);
   });
 
-  it('expands the AABB by the geometry max radius (userData.radiusScale)', () => {
-    // Regression: the center-only bounding box clips the pick footprint
-    // of elements sitting on the box surface (e.g. a point at the scene's
-    // +X extreme), making them unpickable from their outward side. The
-    // world box must grow by the element radius so the cull covers the
-    // rendered disc. Unit cube at origin + radiusScale 0.5 → [-1, 1].
+  it('uses boundingBox verbatim — the footprint is already baked in by the producers', () => {
+    // The three-geometry invariant: every producer bakes its rendered
+    // footprint into boundingBox at creation/commit (points expand by the
+    // disc radius, lines by max half-width, gsplats by maxRowNorm ×
+    // truncation). So the cull must NOT add its own margin — it transforms
+    // the local box to world space as-is. Here the geometry's box is a unit
+    // cube at the origin; the world box matches it exactly.
     const cache = new Map<number, THREE.Box3>();
     const entry = makeEntry();
-    (entry.main as THREE.Mesh).geometry.userData = { radiusScale: 0.5 };
 
     const box = getOrComputeWorldBox(1, entry, cache);
 
     expect(box).not.toBeNull();
-    // Cube half-extent 0.5 + radius 0.5 = 1.0 on every axis.
-    expect(box!.min.x).toBeCloseTo(-1, 5);
-    expect(box!.max.x).toBeCloseTo(1, 5);
-    expect(box!.max.y).toBeCloseTo(1, 5);
+    expect(box!.min.x).toBeCloseTo(-0.5, 5);
+    expect(box!.max.x).toBeCloseTo(0.5, 5);
+    expect(box!.max.y).toBeCloseTo(0.5, 5);
+  });
+
+  it('does not add any margin regardless of userData (no footprint re-expansion)', () => {
+    // Guard against re-introducing a cull-time margin: even if a geometry
+    // carries radius-like userData, the cull ignores it — boundingBox is
+    // the single source of truth for the footprint.
+    const cache = new Map<number, THREE.Box3>();
+    const entry = makeEntry();
+    (entry.main as THREE.Mesh).geometry.userData = { radiusScale: 1.0, maxActualRadius: 50 };
+
+    const box = getOrComputeWorldBox(1, entry, cache);
+
+    expect(box).not.toBeNull();
+    // Unchanged unit cube: no extra 50-unit margin.
+    expect(box!.min.x).toBeCloseTo(-0.5, 5);
+    expect(box!.max.x).toBeCloseTo(0.5, 5);
   });
 });
 

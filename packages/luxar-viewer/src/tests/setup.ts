@@ -9,6 +9,7 @@
  * All mocks are now organized in separate files under ./mocks/
  */
 
+import { afterEach } from 'vitest';
 import { installAllMocks } from './mocks';
 import { __setMinInstanceCapacityForTesting } from '../rendering/gpu-buffer-pool';
 
@@ -64,6 +65,17 @@ Reflect.construct = function patchedConstruct<T extends object>(
 
 // Install all mocks
 installAllMocks();
+
+// Drain any animation frames left pending by a test after each test. The
+// rAF mock (browser-apis.mock.ts) backs each frame with a real setTimeout;
+// frames that are never flushed or cancelled accumulate as live timers and,
+// under whole-suite execution, contribute to worker-pool exhaustion and the
+// `Timeout waiting for worker to respond` failures. The cleanup helper is
+// installed by installAnimationFrameMock(); guard in case a test swapped the
+// rAF implementation.
+afterEach(() => {
+  (globalThis as { __clearAllAnimationFrames?: () => void }).__clearAllAnimationFrames?.();
+});
 
 // Silence the jsdom "Not implemented: navigation (except hash changes)"
 // errors emitted whenever production code calls `<a>.click()` to trigger

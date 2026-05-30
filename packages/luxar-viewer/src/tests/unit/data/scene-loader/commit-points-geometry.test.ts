@@ -131,4 +131,37 @@ describe('commitPointsGeometry', () => {
     expect(points.geometry).toBe(geom);
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
   });
+
+  it('bakes the radius footprint into boundingBox (three-geometry invariant)', () => {
+    // Symmetry with lines/gsplats: the committed boundingBox must include
+    // the rendered disc footprint, not just the centers — so the pick cull
+    // (ray-aabb) and camera framing cover large radii. Here centers bounds
+    // are [-1,1] and max_radius is 10 → boundingBox grows to [-11,11].
+    const root = new THREE.Group();
+    const points = new THREE.Mesh();
+    points.name = '/p';
+    points.userData = {
+      nodeType: 'points',
+      visiblePointCount: 0,
+      attrs: { max_radius: 10 },
+    };
+    const stride = 3;
+    const interleaved = new THREE.InstancedInterleavedBuffer(
+      new Float32Array(3 * stride),
+      stride,
+      1
+    );
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
+    geom.setAttribute('aRadius', new THREE.InterleavedBufferAttribute(interleaved, 1, 0));
+    points.geometry = geom;
+    root.add(points);
+
+    commitPointsGeometry('/p', makeData(3, /*withRadii=*/ true), root, null, mockNodeFactory);
+
+    expect(points.geometry).toBe(geom);
+    expect(geom.boundingBox).not.toBeNull();
+    expect(geom.boundingBox!.min.x).toBeCloseTo(-11, 5);
+    expect(geom.boundingBox!.max.x).toBeCloseTo(11, 5);
+  });
 });
