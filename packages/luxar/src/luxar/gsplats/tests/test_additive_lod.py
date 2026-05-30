@@ -139,12 +139,16 @@ def test_make_additive_lod_equal_count() -> None:
     ladder = make_additive_lod(data, n_lods=4)
     assert ladder.n_additive_sublods == 4
     assert ladder.n_splats == data.n_splats
-    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
+    sizes = [
+        ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)
+    ]
     assert sum(sizes) == data.n_splats
     # Equal-count: at most a 1-splat spread across levels for divisible N.
     assert max(sizes) - min(sizes) <= 1
     # up_to_lod prefix should grow monotonically.
-    counts = [ladder.additive_prefix(k).n_splats for k in range(ladder.n_additive_sublods)]
+    counts = [
+        ladder.additive_prefix(k).n_splats for k in range(ladder.n_additive_sublods)
+    ]
     assert all(counts[i] < counts[i + 1] for i in range(len(counts) - 1))
 
 
@@ -152,7 +156,9 @@ def test_make_additive_lod_explicit_counts() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=7)
     ladder = make_additive_lod(data, breakpoints=[5, 10, 15, 20])
     assert ladder.n_additive_sublods == 4
-    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
+    sizes = [
+        ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)
+    ]
     assert sizes == [5, 5, 5, 5]
     assert ladder.stats["lod_breakpoints_kind"] == "explicit-counts"
 
@@ -163,7 +169,9 @@ def test_make_additive_lod_explicit_counts_partial() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=8)
     ladder = make_additive_lod(data, breakpoints=[5, 10])
     assert ladder.n_additive_sublods == 3
-    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
+    sizes = [
+        ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)
+    ]
     assert sizes == [5, 5, 10]
 
 
@@ -235,7 +243,12 @@ def test_make_additive_lod_substitutive_level_arg() -> None:
 
     data = _make_random_gsplat(n=32, ndim=3, seed=12)
     pyr = make_substitutive_lod(
-        data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu", seed=0
+        data,
+        compression_factor=4,
+        levels=2,
+        method="kmeans_lloyd",
+        device="cpu",
+        seed=0,
     )
     # Pyramid has 3 substitutive levels, each with M=1 additive sub-LOD.
     assert pyr.n_substitutive == 3

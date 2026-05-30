@@ -51,7 +51,9 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     # the default-cell view for the legacy single-set fields.
     splats_group = root["splats"]
     info["n_substitutive"] = int(splats_group.attrs.get("n_substitutive", 1))
-    info["default_substitutive"] = int(splats_group.attrs.get("default_substitutive", 0))
+    info["default_substitutive"] = int(
+        splats_group.attrs.get("default_substitutive", 0)
+    )
 
     default_sub_idx = info["default_substitutive"]
     default_cell = splats_group[f"substitutive_{default_sub_idx}"]["additive_0"]

@@ -307,8 +307,12 @@ class TestLODPreservation:
         embedded = data.embed_dimension(values, sigma=0.0)
         assert embedded.n_additive_sublods == 2
         # LOD 0 should get values 0-9, LOD 1 should get values 10-19
-        np.testing.assert_allclose(embedded.additive_sublod(0).centers[:, 3], np.arange(10))
-        np.testing.assert_allclose(embedded.additive_sublod(1).centers[:, 3], np.arange(10, 20))
+        np.testing.assert_allclose(
+            embedded.additive_sublod(0).centers[:, 3], np.arange(10)
+        )
+        np.testing.assert_allclose(
+            embedded.additive_sublod(1).centers[:, 3], np.arange(10, 20)
+        )
 
     def test_combine_as_new_dimension_preserves_lods(self):
         d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3, seed=1)
@@ -675,9 +679,7 @@ class TestGSplatData2DAccessors:
     ) -> "SubstitutiveLevel":
         from luxar.gsplats.gsplat_data import SubstitutiveLevel
 
-        sublods = [
-            self._make_additive(n_per, seed=i) for i in range(n_additive)
-        ]
+        sublods = [self._make_additive(n_per, seed=i) for i in range(n_additive)]
         return SubstitutiveLevel(
             additive_sublods=sublods,
             compression_factor=compression,
@@ -710,7 +712,9 @@ class TestGSplatData2DAccessors:
         assert data.n_substitutive == 1
         # Existing lods accessor still works and matches default substitutive level
         assert data.n_additive_sublods == 2
-        assert list(data.additive_sublods) == list(data.default_substitutive_level.additive_sublods)
+        assert list(data.additive_sublods) == list(
+            data.default_substitutive_level.additive_sublods
+        )
 
     def test_substitutive_levels_form_yields_multi(self):
         """``substitutive_levels=...`` constructor produces ``[N, M_i]`` shape."""
@@ -732,9 +736,7 @@ class TestGSplatData2DAccessors:
             self._make_substitutive_level(n_additive=2, n_per=4, compression=1),
             self._make_substitutive_level(n_additive=1, n_per=3, compression=2),
         ]
-        data = GSplatData.from_substitutive_levels(
-            levels, stats={"hello": "world"}
-        )
+        data = GSplatData.from_substitutive_levels(levels, stats={"hello": "world"})
         assert data.n_substitutive == 2
         assert data.stats == {"hello": "world"}
 

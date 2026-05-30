@@ -46,8 +46,7 @@ def apply_dim_order(
     for name in dim_order:
         if name not in scene_names:
             raise ValueError(
-                f"dim_order name '{name}' not found in scene dimensions "
-                f"{scene_names}"
+                f"dim_order name '{name}' not found in scene dimensions {scene_names}"
             )
 
     # Validate fill keys are valid dim names and not in dim_order

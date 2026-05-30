@@ -5,4 +5,3 @@ These free functions back `Group.add_gsplats_from_data`,
 in `core/group/group.py` keeps the public signatures + docstrings and
 delegates to these.
 """
-

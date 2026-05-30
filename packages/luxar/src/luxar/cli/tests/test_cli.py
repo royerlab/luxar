@@ -208,9 +208,9 @@ def test_info_command_empty_directory(runner, tmp_path) -> None:
     assert result.exit_code == 1
     # Some kind of error must be reported — either "Error reading info"
     # (the catch-all path) or a more specific zarr-related message.
-    assert any(
-        s in result.stdout for s in ("Error", "invalid", "Invalid", "not")
-    ), f"empty-dir info should report an error; got: {result.stdout!r}"
+    assert any(s in result.stdout for s in ("Error", "invalid", "Invalid", "not")), (
+        f"empty-dir info should report an error; got: {result.stdout!r}"
+    )
 
 
 def test_info_command_zarr_group_without_luxar_metadata(runner, tmp_path) -> None:
@@ -353,9 +353,7 @@ def test_cli_help_commands(runner) -> None:
         # "Options" section is universal — Click renders it as "Options:"
         # (Click) or "╭─ Options" (Typer's rich-rendered mode); the
         # substring "Options" matches both.
-        assert "Options" in result.stdout, (
-            f"{command} --help missing Options section"
-        )
+        assert "Options" in result.stdout, f"{command} --help missing Options section"
 
 
 def test_invalid_command(runner) -> None:
@@ -499,7 +497,9 @@ def test_demo_rejects_float_points(runner, tmp_path) -> None:
     # demo command DOES NOT proceed (a regression that silently
     # accepted 1.5 and floored to 1 would slip both checks).
     combined = (result.stdout or "") + (result.stderr or "")
-    assert "Invalid" in combined or "must be" in combined or "is not a valid" in combined
+    assert (
+        "Invalid" in combined or "must be" in combined or "is not a valid" in combined
+    )
 
 
 def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:

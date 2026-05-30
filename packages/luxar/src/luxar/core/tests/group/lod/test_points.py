@@ -49,9 +49,7 @@ class TestComputeAdditiveOrderPoints:
     def test_salience_sorts_by_radii_descending(self) -> None:
         pos = np.random.RandomState(0).rand(10, 3).astype(np.float32)
         radii = np.linspace(0.1, 1.0, 10, dtype=np.float32)
-        perm, _ = compute_additive_order_points(
-            pos, radii=radii, method="salience"
-        )
+        perm, _ = compute_additive_order_points(pos, radii=radii, method="salience")
         # Largest radius (index 9) should be first.
         assert perm[0] == 9
         assert perm[-1] == 0
@@ -101,17 +99,13 @@ class TestMakeAdditiveLodPoints:
 
     def test_counts_breakpoints(self) -> None:
         pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
-        levels = make_additive_lod_points(
-            pos, method="random", counts=[10, 30, 70]
-        )
+        levels = make_additive_lod_points(pos, method="random", counts=[10, 30, 70])
         sizes = [len(L) for L in levels]
         assert sizes == [10, 20, 40, 30]  # cumulative → per-level deltas
 
     def test_spatial_uniform_uses_natural_partition(self) -> None:
         pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
-        levels = make_additive_lod_points(
-            pos, method="spatial-uniform", n_lods=4
-        )
+        levels = make_additive_lod_points(pos, method="spatial-uniform", n_lods=4)
         assert sum(len(L) for L in levels) == 100
 
     def test_fewer_elements_than_n_lods(self) -> None:

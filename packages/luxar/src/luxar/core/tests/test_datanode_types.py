@@ -77,9 +77,7 @@ class TestGeometryTypeParity:
         assert with_labels.has_labels is True
 
     def test_has_image_labels_reads_metadata_key(self, geometry_cls) -> None:
-        no = geometry_cls(
-            "p", metadata={"n_points": 0, "n_vertices": 0, "n_splats": 0}
-        )
+        no = geometry_cls("p", metadata={"n_points": 0, "n_vertices": 0, "n_splats": 0})
         assert no.has_image_labels is False
 
         yes = geometry_cls(

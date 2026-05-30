@@ -151,9 +151,7 @@ def derive_min_pixel_sizes(
         raise ValueError(f"coarsest child must have at least 1 splat, got {n0}")
     bps = BASE_PIXEL_SIZE if base_pixel_size is None else float(base_pixel_size)
     if bps <= 0:
-        raise ValueError(
-            f"base_pixel_size must be positive, got {bps}"
-        )
+        raise ValueError(f"base_pixel_size must be positive, got {bps}")
     thresholds: list[float] = [0.0]
     for n in splat_counts[1:]:
         thresholds.append(bps * (n / n0) ** 0.5)
@@ -192,9 +190,7 @@ def validate_lod_group(group: "Node") -> None:
     children at load time.
     """
     if not group.children:
-        raise ValueError(
-            f"LOD group '{group.path or group.name}' has no children"
-        )
+        raise ValueError(f"LOD group '{group.path or group.name}' has no children")
     n_children = len(group.children)
     default_level = int(group.attrs.get("default_level", 0))
     if not 0 <= default_level < n_children:
@@ -332,9 +328,7 @@ def resolve_substitutive_axis(
         new_data = make_substitutive_lod(data, **kwargs)
         return new_data, explicit_min_pixel_sizes, base_pixel_size
 
-    raise TypeError(
-        f"lod_group must be None, bool, or dict; got {type(spec).__name__}"
-    )
+    raise TypeError(f"lod_group must be None, bool, or dict; got {type(spec).__name__}")
 
 
 def resolve_additive_axis(

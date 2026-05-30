@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ...io.writer import ZarrWriterProtocol
     from ..scene import Scene
 
+
 class Group(Node):
     """A group node that can contain data children (Points, Lines, GSplats).
 
@@ -284,7 +285,6 @@ class Group(Node):
             **attrs,
         )
 
-
     def add_gsplats(
         self,
         name: str,
@@ -369,7 +369,6 @@ class Group(Node):
             split=split,
             **attrs,
         )
-
 
     def add_gsplats_from_data(
         self,

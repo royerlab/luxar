@@ -35,9 +35,7 @@ from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
-PointsMethodName = Literal[
-    "random", "salience", "spatial-uniform", "poisson-disk"
-]
+PointsMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
 
 
 # Default for ``additive_lod=True`` and ``additive_lod=dict()``.
@@ -87,13 +85,10 @@ def compute_additive_order_points(
 
     if method == "salience":
         if radii is None:
-            raise ValueError(
-                "salience ordering requires per-element radii; got None"
-            )
+            raise ValueError("salience ordering requires per-element radii; got None")
         if radii.shape[0] != n:
             raise ValueError(
-                f"radii length ({radii.shape[0]}) must match positions "
-                f"length ({n})"
+                f"radii length ({radii.shape[0]}) must match positions length ({n})"
             )
         # Sort by radii descending; stable so identical scores keep
         # their original index order (deterministic).
@@ -136,9 +131,7 @@ def _perceptual_luminance(colors: NDArray) -> NDArray[np.float64]:
     weighted-sum is linear. Returns ``(N,)`` float64.
     """
     if colors.ndim != 2 or colors.shape[1] < 3:
-        raise ValueError(
-            f"colors must be (N, 3) or (N, 4); got shape {colors.shape}"
-        )
+        raise ValueError(f"colors must be (N, 3) or (N, 4); got shape {colors.shape}")
     c = colors[:, :3].astype(np.float64, copy=False)
     return 0.2126 * c[:, 0] + 0.7152 * c[:, 1] + 0.0722 * c[:, 2]
 
@@ -163,9 +156,7 @@ def _compute_points_energy(
     else:
         radii_arr = np.asarray(radii, dtype=np.float64).reshape(-1)
         if radii_arr.size != n:
-            raise ValueError(
-                f"radii has {radii_arr.size} entries but expected {n}"
-            )
+            raise ValueError(f"radii has {radii_arr.size} entries but expected {n}")
     # Squared then cubed via multiply to avoid abs / pow rounding.
     volume = radii_arr * radii_arr * radii_arr
 
@@ -174,9 +165,7 @@ def _compute_points_energy(
     elif scalars is not None:
         lum = np.asarray(scalars, dtype=np.float64).reshape(-1)
         if lum.size != n:
-            raise ValueError(
-                f"scalars has {lum.size} entries but expected {n}"
-            )
+            raise ValueError(f"scalars has {lum.size} entries but expected {n}")
     else:
         lum = np.ones(n, dtype=np.float64)
 
@@ -204,9 +193,7 @@ def _energy_breakpoints_to_counts(
         # Degenerate (zero radii, zero luminance, etc.) — fall back to
         # equal-count cuts so the user still gets a useful ladder.
         n = perm.size
-        return [
-            min(n, int(round(f * n))) for f in sorted(fractions) if 0 < f < 1
-        ]
+        return [min(n, int(round(f * n))) for f in sorted(fractions) if 0 < f < 1]
     cumulative = np.cumsum(energy[perm])
     counts: List[int] = []
     sorted_fracs = sorted(fractions)
@@ -227,7 +214,9 @@ def _energy_breakpoints_to_counts(
 
 
 def _parse_breakpoints_spec(
-    spec: Any, total: int, energy: Optional[NDArray[np.float64]] = None,
+    spec: Any,
+    total: int,
+    energy: Optional[NDArray[np.float64]] = None,
     perm: Optional[NDArray[np.intp]] = None,
 ) -> Optional[List[int]]:
     """Parse the ``counts``/``breakpoints`` kwarg into cumulative integer counts.
@@ -252,10 +241,9 @@ def _parse_breakpoints_spec(
             )
         if energy is None or perm is None:
             raise ValueError(
-                "energy: breakpoints require both energy and perm; "
-                "internal error"
+                "energy: breakpoints require both energy and perm; internal error"
             )
-        fracs = [float(s) for s in spec[len("energy:"):].split(",") if s.strip()]
+        fracs = [float(s) for s in spec[len("energy:") :].split(",") if s.strip()]
         return _energy_breakpoints_to_counts(energy, perm, fracs)
     return _validate_counts(list(spec), total)
 
@@ -353,9 +341,7 @@ def make_additive_lod_points(
     if breakpoints is None:
         # Equal-count split into n_lods levels.
         per_level = max(1, (n + n_lods - 1) // n_lods)  # ceil-divide
-        breakpoints = [
-            min(n, (i + 1) * per_level) for i in range(n_lods - 1)
-        ]
+        breakpoints = [min(n, (i + 1) * per_level) for i in range(n_lods - 1)]
 
     # Slice the permutation. Trailing empty levels collapse silently.
     out = []
@@ -434,8 +420,7 @@ def resolve_additive_axis_points(
         }
     if not isinstance(spec, dict):
         raise TypeError(
-            f"additive_lod must be None, bool, or dict; got "
-            f"{type(spec).__name__}"
+            f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
         )
     kwargs = dict(spec)
     # ``recompute`` is gsplats-only; tolerate but don't act on it.

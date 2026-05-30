@@ -203,7 +203,7 @@ class TestHierarchy:
         # Empty-bin tolerance is preserved by leaving the upper bound
         # unchanged at the target.
         target_l1 = 16  # ceil(64/4)
-        target_l2 = 4   # ceil(16/4)
+        target_l2 = 4  # ceil(16/4)
         assert pyramid.substitutive_levels[1].n_splats_total >= target_l1 // 4, (
             f"level-1 collapsed to "
             f"{pyramid.substitutive_levels[1].n_splats_total} splats "
@@ -289,9 +289,7 @@ class TestHierarchy:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _total_residual_for_assignments(
-    data: GSplatData, pyramid: GSplatData
-) -> float:
+def _total_residual_for_assignments(data: GSplatData, pyramid: GSplatData) -> float:
     """Helper: compute the sum of residual energies of all bins in
     a single-level reduction, recovering it from the difference
     ``‖f‖² - ⟨f, g⟩`` at the level."""

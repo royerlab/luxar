@@ -423,4 +423,3 @@ class TestMergeWithChannelColors:
 
         # Output should be white, not black
         assert np.allclose(merged.colors[0], [1.0, 1.0, 1.0])
-

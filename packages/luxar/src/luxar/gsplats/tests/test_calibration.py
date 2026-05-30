@@ -369,9 +369,8 @@ class TestNoiseFloor:
         # Three structurally-different smooth signals
         signals = {
             "sinusoid": 0.5 + 0.3 * np.sin(2 * np.pi * X) * np.cos(2 * np.pi * Y),
-            "radial": 0.5 + 0.3 * np.exp(
-                -((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) / 0.1
-            ),
+            "radial": 0.5
+            + 0.3 * np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) / 0.1),
             "ramp": 0.2 + 0.6 * X,
         }
         sigmas = []

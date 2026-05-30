@@ -161,8 +161,6 @@ class TestFullEncodingRoundtrip:
 
     def test_empty_color_sdr_roundtrip(self, tmp_path) -> None:
         data = np.zeros((0, 3), dtype=np.float32)
-        decoded = self._roundtrip(
-            tmp_path, data, SemanticType.COLOR, color_mode="sdr"
-        )
+        decoded = self._roundtrip(tmp_path, data, SemanticType.COLOR, color_mode="sdr")
         assert decoded.shape == (0, 3)
         np.testing.assert_array_equal(decoded, data)

@@ -241,8 +241,7 @@ class SubstitutiveLevel:
         for sub in self.additive_sublods:
             if not isinstance(sub, AdditiveSubLOD):
                 raise TypeError(
-                    f"Each entry must be an AdditiveSubLOD, got "
-                    f"{type(sub).__name__}"
+                    f"Each entry must be an AdditiveSubLOD, got {type(sub).__name__}"
                 )
         if self.compression_factor < 1:
             raise ValueError(
@@ -394,8 +393,12 @@ class GSplatData(_SplatArrayMixin):
             self.cholesky_factors = lod0.cholesky_factors
             self.colors = lod0.colors
         else:
-            self.centers = np.concatenate([lod.centers for lod in self.additive_sublods], axis=0)
-            self.amplitudes = np.concatenate([lod.amplitudes for lod in self.additive_sublods])
+            self.centers = np.concatenate(
+                [lod.centers for lod in self.additive_sublods], axis=0
+            )
+            self.amplitudes = np.concatenate(
+                [lod.amplitudes for lod in self.additive_sublods]
+            )
             self.cholesky_factors = np.concatenate(
                 [lod.cholesky_factors for lod in self.additive_sublods], axis=0
             )
@@ -426,7 +429,9 @@ class GSplatData(_SplatArrayMixin):
         else:
             amp_range = "[]"
         colors = "yes" if self.colors is not None else "no"
-        lod_str = f", {self.n_additive_sublods} LODs" if self.n_additive_sublods > 1 else ""
+        lod_str = (
+            f", {self.n_additive_sublods} LODs" if self.n_additive_sublods > 1 else ""
+        )
         return (
             f"GSplatData({n:,} splats, {ndim}D, "
             f"amplitudes={amp_range}, colors={colors}{lod_str})"
@@ -559,8 +564,7 @@ class GSplatData(_SplatArrayMixin):
         """
         if not 0 <= level < self.n_substitutive:
             raise IndexError(
-                f"substitutive level {level} out of range "
-                f"[0, {self.n_substitutive})"
+                f"substitutive level {level} out of range [0, {self.n_substitutive})"
             )
         return GSplatData(
             substitutive_levels=[self.substitutive_levels[level]],
@@ -919,7 +923,11 @@ class GSplatData(_SplatArrayMixin):
         if max_lods > 1:
             merged_lods = []
             for level in range(max_lods):
-                level_lods = [d.additive_sublod(level) for d in non_empty if level < d.n_additive_sublods]
+                level_lods = [
+                    d.additive_sublod(level)
+                    for d in non_empty
+                    if level < d.n_additive_sublods
+                ]
                 centers = np.concatenate([lod.centers for lod in level_lods], axis=0)
                 amplitudes = np.concatenate([lod.amplitudes for lod in level_lods])
                 cholesky = np.concatenate(

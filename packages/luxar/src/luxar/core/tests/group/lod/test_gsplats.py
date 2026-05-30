@@ -195,9 +195,11 @@ class TestLODGroupValidation:
                 )
             # Should not raise.
             validate_lod_group(lod)
-            assert [
-                float(c.attrs["min_pixel_size"]) for c in lod.children
-            ] == [0.0, 10.0, 50.0]
+            assert [float(c.attrs["min_pixel_size"]) for c in lod.children] == [
+                0.0,
+                10.0,
+                50.0,
+            ]
 
     def test_validate_rejects_default_level_out_of_range(self, tmp_path) -> None:
         """``default_level`` past the number of children must fail validation.

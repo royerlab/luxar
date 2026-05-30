@@ -186,12 +186,8 @@ def make_substitutive_lod(
                 AdditiveSubLOD(
                     centers=np.asarray(src.centers, dtype=np.float32),
                     amplitudes=np.asarray(src.amplitudes, dtype=np.float32),
-                    cholesky_factors=np.asarray(
-                        src.cholesky_factors, dtype=np.float32
-                    ),
-                    colors=(
-                        np.asarray(src.colors) if src.colors is not None else None
-                    ),
+                    cholesky_factors=np.asarray(src.cholesky_factors, dtype=np.float32),
+                    colors=(np.asarray(src.colors) if src.colors is not None else None),
                     stats={"lod_method": "none", "lod_level": 0},
                     truncation_radius=src.truncation_radius,
                 )
@@ -213,9 +209,7 @@ def make_substitutive_lod(
                     additive_sublods=[
                         AdditiveSubLOD(
                             centers=np.asarray(current.centers, dtype=np.float32),
-                            amplitudes=np.asarray(
-                                current.amplitudes, dtype=np.float32
-                            ),
+                            amplitudes=np.asarray(current.amplitudes, dtype=np.float32),
                             cholesky_factors=np.asarray(
                                 current.cholesky_factors, dtype=np.float32
                             ),

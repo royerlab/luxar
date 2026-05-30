@@ -97,9 +97,7 @@ def stratified_grid_order(
         bucket_xyz = np.minimum((normalized * res).astype(np.int64), res - 1)
         # Flatten to a single bucket id per element.
         bucket_id = (
-            bucket_xyz[:, 0] * (res * res)
-            + bucket_xyz[:, 1] * res
-            + bucket_xyz[:, 2]
+            bucket_xyz[:, 0] * (res * res) + bucket_xyz[:, 1] * res + bucket_xyz[:, 2]
         )
 
         # Find the first unassigned element in each occupied bucket.

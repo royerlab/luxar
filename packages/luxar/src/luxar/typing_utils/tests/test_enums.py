@@ -244,7 +244,11 @@ class TestRenderingLimits:
 
     def test_defaults_lie_within_rendering_limits(self) -> None:
         # OPACITY default must be in [OPACITY_MIN, OPACITY_MAX]
-        assert RenderingLimits.OPACITY_MIN <= Defaults.OPACITY <= RenderingLimits.OPACITY_MAX
+        assert (
+            RenderingLimits.OPACITY_MIN
+            <= Defaults.OPACITY
+            <= RenderingLimits.OPACITY_MAX
+        )
         # GAMMA default in [GAMMA_MIN, GAMMA_MAX]
         assert RenderingLimits.GAMMA_MIN <= Defaults.GAMMA <= RenderingLimits.GAMMA_MAX
         # SHARPNESS default in [SHARPNESS_MIN, SHARPNESS_MAX]

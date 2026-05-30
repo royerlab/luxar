@@ -34,9 +34,7 @@ def add_lod_group_impl(
     if default_level < 0:
         raise ValueError(f"default_level must be >= 0, got {default_level}")
     if base_pixel_size is not None and base_pixel_size <= 0:
-        raise ValueError(
-            f"base_pixel_size must be positive, got {base_pixel_size}"
-        )
+        raise ValueError(f"base_pixel_size must be positive, got {base_pixel_size}")
     try:
         aprint(f"Adding child kind=lod group '{name}' to node '{node.name}'.")
         extra: Dict[str, Any] = {}
@@ -54,12 +52,9 @@ def add_lod_group_impl(
         return child
     except Exception as e:
         aprint(
-            f"Failed to add child kind=lod group '{name}' to node "
-            f"'{node.name}': {e}"
+            f"Failed to add child kind=lod group '{name}' to node '{node.name}': {e}"
         )
-        raise ValueError(
-            f"Could not create child kind=lod group '{name}': {e}"
-        ) from e
+        raise ValueError(f"Could not create child kind=lod group '{name}': {e}") from e
 
 
 def add_split_group_impl(
@@ -77,13 +72,9 @@ def add_split_group_impl(
             f"'points' / 'lines' / 'gsplats', got {display_type!r}"
         )
     if not isinstance(max_elements, int) or max_elements < 1:
-        raise ValueError(
-            f"max_elements must be an int >= 1, got {max_elements!r}"
-        )
+        raise ValueError(f"max_elements must be an int >= 1, got {max_elements!r}")
     try:
-        aprint(
-            f"Adding child kind=split group '{name}' to node '{node.name}'."
-        )
+        aprint(f"Adding child kind=split group '{name}' to node '{node.name}'.")
         child = node.add_group(
             name,
             kind="split",
@@ -95,8 +86,7 @@ def add_split_group_impl(
         return child
     except Exception as e:
         aprint(
-            f"Failed to add child kind=split group '{name}' to node "
-            f"'{node.name}': {e}"
+            f"Failed to add child kind=split group '{name}' to node '{node.name}': {e}"
         )
         raise ValueError(
             f"Could not create child kind=split group '{name}': {e}"

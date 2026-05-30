@@ -43,9 +43,7 @@ COMPOSITING_ATTRS = frozenset(
 )
 
 
-def slice_optional_array(
-    value: Any, indices: np.ndarray, n_elements: int
-) -> Any:
+def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> Any:
     """Slice an array-valued leaf parameter by index; pass non-per-element values through.
 
     Used by the ``split=`` wrapping path on the leaf adders. Returns

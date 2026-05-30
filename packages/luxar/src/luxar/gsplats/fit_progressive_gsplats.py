@@ -500,7 +500,9 @@ def fit_progressive_gaussian_splats(
                     f"to avoid wasting compute on splats that get culled."
                 )
 
-    final_result = GSplatData.from_additive_sublods(accumulated_lods, stats=overall_stats)
+    final_result = GSplatData.from_additive_sublods(
+        accumulated_lods, stats=overall_stats
+    )
 
     # Convert to physical coordinates if the caller requested it
     if caller_output_space == "real" and caller_voxel_size is not None:
@@ -522,7 +524,9 @@ def fit_progressive_gaussian_splats(
                     truncation_radius=lod.truncation_radius,
                 )
             )
-        final_result = GSplatData.from_additive_sublods(converted_lods, stats=overall_stats)
+        final_result = GSplatData.from_additive_sublods(
+            converted_lods, stats=overall_stats
+        )
         if verbose:
             aprint(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
