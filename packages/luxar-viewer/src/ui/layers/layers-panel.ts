@@ -702,13 +702,20 @@ export class LayersPanel {
                   primary.nestedLodGroupPaths.length > 0
                 ? primary.nestedLodGroupPaths
                 : [];
+          let anyApplied = false;
           for (const p of paths) {
             try {
               registry.setSelectorMode(p, mode);
+              anyApplied = true;
             } catch (err) {
               log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
             }
           }
+          // The actual visibility swap happens in a per-frame callback;
+          // if the animation loop is idle (no camera/slice change),
+          // setSelectorMode alone is not enough. Wake the loop so the
+          // new active level is painted.
+          if (anyApplied) this.requestRender();
         }
       }
       this.controlsInteracting = false;
