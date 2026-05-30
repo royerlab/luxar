@@ -88,7 +88,8 @@ describe('LinesProgressiveLoader', () => {
     lodC = makeSubLoader(makeLodData(4, 2, 3, { color: 'uint8' }));
     loader = new LinesProgressiveLoader(
       [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-      3
+      3,
+      '/lines'
     );
   });
 
@@ -304,7 +305,8 @@ describe('LinesProgressiveLoader', () => {
       lodC = makeSubLoader(makeLodData(4, 2, 3, { color: 'uint16' }));
       loader = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-        3
+        3,
+        '/lines'
       );
       const result = await loader.loadLines(baseViewState);
       expect(result.colors).toBeInstanceOf(Uint16Array);
@@ -318,7 +320,8 @@ describe('LinesProgressiveLoader', () => {
       lodC = makeSubLoader(makeLodData(4, 2, 3, { color: 'float32' }));
       loader = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-        3
+        3,
+        '/lines'
       );
       const result = await loader.loadLines(baseViewState);
       expect(result.colors).toBeInstanceOf(Float32Array);
@@ -329,7 +332,8 @@ describe('LinesProgressiveLoader', () => {
       lodB = makeSubLoader(makeLodData(10, 5, 3)); // no colors
       loader = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-        3
+        3,
+        '/lines'
       );
       const result = await loader.loadLines(baseViewState);
       expect(result.colors).toBeInstanceOf(Uint8Array);
@@ -343,7 +347,8 @@ describe('LinesProgressiveLoader', () => {
       lodC = makeSubLoader(makeLodData(4, 2, 3));
       loader = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-        3
+        3,
+        '/lines'
       );
       const result = await loader.loadLines(baseViewState);
       expect(result.colors).toBeNull();
@@ -353,7 +358,8 @@ describe('LinesProgressiveLoader', () => {
       lodA = makeSubLoader(makeLodData(20, 10, 3, { sharpness: true }));
       loader = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
-        3
+        3,
+        '/lines'
       );
       const result = await loader.loadLines(baseViewState);
       expect(result.sharpness).toBeInstanceOf(Float32Array);

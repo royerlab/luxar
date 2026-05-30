@@ -81,7 +81,8 @@ describe('PointsProgressiveLoader', () => {
     lodC = makeSubLoader(makeLodData(25, 3, { color: 'uint8' }));
     loader = new PointsProgressiveLoader(
       [lodA, lodB, lodC] as unknown as PointsSpatialIndexLoader[],
-      3
+      3,
+      '/points'
     );
   });
 
