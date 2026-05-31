@@ -217,6 +217,18 @@ export class OPFSStore {
       return undefined;
     }
 
+    // The index is the source of truth for what's cached. A key absent
+    // from it is either genuinely uncached or an orphaned file — e.g. a
+    // generation-skipped write whose best-effort delete failed, leaving
+    // bytes on disk that a content-hash invalidation meant to drop.
+    // Serving such a file could resurrect stale data, so treat an
+    // unindexed key as a miss. Bonus: skips an OPFS read for uncached
+    // keys (the common cold-miss path).
+    if (!this.index.has(key)) {
+      this.missCount++;
+      return undefined;
+    }
+
     const timeoutMs = config.cache.opfsOperationTimeoutMs;
     try {
       const data = await withTimeout(
@@ -263,18 +275,29 @@ export class OPFSStore {
   async set(key: string, data: Uint8Array): Promise<void> {
     if (this.disposed || !this.opfsRoot) return;
 
-    // Await any pending write for this key to prevent race conditions
-    const pending = this.pendingWrites.get(key);
-    if (pending) {
-      await pending;
-    }
-
-    const writePromise = this.doSet(key, data);
+    // Chain this write onto any in-flight write for the same key so the
+    // doSet() bodies run strictly in arrival order. Previously we only
+    // awaited the single pending write at entry; if ≥2 callers awaited the
+    // same promise they would resume together and run doSet() — and thus
+    // createWritable()+write()+close() on the SAME OPFS file — concurrently.
+    // The File System Access API does not guarantee overlapping writables
+    // to one file are safe (they can corrupt the file or throw). Chaining
+    // makes a given key's file I/O strictly sequential. (The in-memory
+    // index update cannot itself race: it is a synchronous block with no
+    // await, so it is atomic per call.) `prev.then(run, run)` runs our
+    // write whether the previous one resolved or rejected (doSet swallows
+    // its own errors, but stay defensive). The tail-check in `finally`
+    // avoids a finishing earlier write deleting a newer writer's entry.
+    const prev = this.pendingWrites.get(key);
+    const run = (): Promise<void> => this.doSet(key, data);
+    const writePromise = prev ? prev.then(run, run) : run();
     this.pendingWrites.set(key, writePromise);
     try {
       await writePromise;
     } finally {
-      this.pendingWrites.delete(key);
+      if (this.pendingWrites.get(key) === writePromise) {
+        this.pendingWrites.delete(key);
+      }
     }
   }
 
@@ -304,22 +327,48 @@ export class OPFSStore {
     // LRU eviction until we have space — O(1) per eviction via Map
     // insertion order. Run BEFORE the quota check so the browser sees
     // the freed space when we ask navigator.storage.estimate().
+    // Each iteration must make progress (index shrinks) — bail if delete()
+    // fails to remove the head entry (transient I/O error) so we never
+    // spin forever re-selecting the same undeletable key, and so evictions
+    // counts only entries actually removed.
     while (this.totalSize + size > this.maxSize && this.index.size > 0) {
+      const before = this.index.size;
       const lruKey = this.index.keys().next().value;
-      if (lruKey !== undefined) {
-        // Note: delete() already decrements totalSize, don't double-decrement
-        await this.delete(lruKey);
-        this.evictions++;
-      } else {
-        break;
-      }
+      if (lruKey === undefined) break;
+      // Note: delete() already decrements totalSize, don't double-decrement
+      await this.delete(lruKey);
+      if (this.index.size === before) break; // no progress — avoid spinning on a failing delete
+      this.evictions++;
     }
 
-    // Check quota only after own-LRU eviction. Otherwise a write that
-    // would have fit after evicting old L2 entries gets skipped.
-    if (!(await this.checkQuota(size))) {
+    // Quota-pressure eviction. The own-LRU loop above only fires when
+    // `totalSize` approaches `maxSize`, but the browser-granted OPFS quota
+    // is frequently smaller than `maxSize` (default 2 GB) — on Firefox,
+    // private mode, and small disks. Without this loop, a tight quota
+    // would skip the write while the maxSize-based trigger never fires, so
+    // the cache freezes holding stale entries and silently drops new ones
+    // (TODO #4). checkQuota() reflects bytes actually on disk and delete()
+    // frees them, so evicting LRU entries genuinely recovers quota. Evict
+    // and re-check until the write fits or there is nothing left to evict.
+    // Each iteration must make progress (index shrinks) — bail if delete()
+    // fails to remove the head entry (transient I/O error) so we never spin.
+    let hasQuota = await this.checkQuota(size);
+    while (!hasQuota && this.index.size > 0) {
+      const before = this.index.size;
+      const lruKey = this.index.keys().next().value;
+      if (lruKey === undefined) break;
+      await this.delete(lruKey);
+      if (this.index.size === before) break; // no progress — avoid spinning on a failing delete
+      this.evictions++;
+      hasQuota = await this.checkQuota(size);
+    }
+
+    if (!hasQuota) {
       this.quotaWriteSkipped++;
-      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
+      log.warning(
+        Modules.CACHE,
+        'OPFSStore insufficient storage quota even after eviction, skipping write'
+      );
       return;
     }
 
@@ -591,7 +640,13 @@ export class OPFSStore {
         this.compactOrderCounter();
       }
 
-      this.scheduleMetadataSave();
+      // Intentionally do NOT schedule a metadata save here. touch() only
+      // reorders the in-memory LRU; persisting that on every read forced a
+      // full-index JSON serialize per read-burst. Read-driven order is
+      // best-effort — it rides along with the next structural save (set /
+      // delete / contentHash / validationMode) and is flushed
+      // unconditionally on dispose(). Losing it on a hard crash only yields
+      // a slightly stale eviction order next session, which is harmless.
     }
   }
 
@@ -644,34 +699,36 @@ export class OPFSStore {
   }
 
   /**
-   * Tear down the store. Flushes pending metadata writes, awaits any
-   * in-flight saves, drains pending same-key writes, then marks the
-   * store disposed so subsequent set/get/touch are no-ops.
+   * Tear down the store. Drains pending writes, awaits any in-flight
+   * metadata save, then flushes a final snapshot UNCONDITIONALLY before
+   * marking the store disposed so subsequent set/get/touch are no-ops.
    *
    * Order matters:
    * 1. Bump generation FIRST so any in-flight doSet that resolves
    *    afterwards detects the mismatch and skips its index update.
-   * 2. Cancel the debounced timer (if pending) and run a final
-   *    saveMetadata so the on-disk index reflects what's in memory.
-   * 3. Await the in-flight saveMetadata triggered by the timer (if any).
-   * 4. Drain pendingWrites so file I/O for in-flight set() calls
-   *    finishes before we declare the store disposed.
+   * 2. Cancel the debounced timer (we flush directly below).
+   * 3. Drain pendingWrites so file I/O for in-flight set() calls finishes
+   *    and the index reflects settled state before we snapshot it.
+   * 4. Await any metadata save already mid-write so the final save wins
+   *    on disk (last writer), then write the latest snapshot. The flush is
+   *    unconditional (not gated on hasPendingSave) because read-driven LRU
+   *    order no longer schedules its own save (see touch()); dispose is
+   *    where a read-only session's order gets persisted.
    * 5. Set disposed = true.
    */
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.generation++;
 
-    if (this.metadata.hasPendingSave()) {
-      this.metadata.cancelPendingSave();
-      if (this.opfsRoot) {
-        await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
-      }
-    }
-    await this.metadata.awaitInFlight();
+    this.metadata.cancelPendingSave();
 
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
+    await this.metadata.awaitInFlight();
+    if (this.opfsRoot) {
+      await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
     }
 
     this.disposed = true;
