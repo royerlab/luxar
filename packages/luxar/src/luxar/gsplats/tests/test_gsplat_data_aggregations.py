@@ -1,12 +1,12 @@
 """Tests for GSplatData computed properties, filtering, and reshape ops.
 
-Split out from ``test_gsplat_data.py`` to keep that file focused on
+Partition out from ``test_gsplat_data.py`` to keep that file focused on
 the core data API. This file covers:
 
 - Computed properties: ``TestVolumes``, ``TestMasses``,
   ``TestMarginalSigmas``, ``TestEccentricities``
 - Filtering / slicing: ``TestFilter``, ``TestFilterBy``, ``TestSliceBy``
-- Reshape ops: ``TestConcatenate``, ``TestSplit``,
+- Reshape ops: ``TestConcatenate``, ``TestPartition``,
   ``TestEmbedDimension``, ``TestCombineAsNewDimension``
 """
 
@@ -554,26 +554,26 @@ class TestConcatenate:
         assert result.n_splats == 5
 
 
-# ── Split ───────────────────────────────────────────────
+# ── Partition ───────────────────────────────────────────────
 
 
-class TestSplit:
+class TestPartition:
     def test_equal_parts(self):
         gs = _make_3d_gsplat(n=10)
-        parts = gs.split(2)
+        parts = gs.partition(2)
         assert len(parts) == 2
         assert parts[0].n_splats == 5
         assert parts[1].n_splats == 5
 
     def test_uneven(self):
         gs = _make_3d_gsplat(n=10)
-        parts = gs.split(3)
+        parts = gs.partition(3)
         assert len(parts) == 3
         assert sum(p.n_splats for p in parts) == 10
 
     def test_at_indices(self):
         gs = _make_3d_gsplat(n=10)
-        parts = gs.split([3, 7])
+        parts = gs.partition([3, 7])
         assert len(parts) == 3
         assert parts[0].n_splats == 3
         assert parts[1].n_splats == 4
@@ -581,7 +581,7 @@ class TestSplit:
 
     def test_roundtrip_with_concatenate(self):
         gs = _make_3d_gsplat(n=10)
-        parts = gs.split(3)
+        parts = gs.partition(3)
         recombined = GSplatData.concatenate(parts)
         assert recombined.n_splats == 10
         assert np.allclose(recombined.centers, gs.centers)
@@ -598,7 +598,7 @@ class TestSplit:
                 [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]], dtype=np.float32
             ),
         )
-        parts = gs.split(2)
+        parts = gs.partition(2)
         assert parts[0].colors is not None
         assert np.allclose(parts[0].colors[0], [1, 0, 0])
 

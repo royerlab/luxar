@@ -2,7 +2,7 @@
 
 `Group` is re-exported here so `from luxar.core.group import Group` and
 `from luxar import Group` continue to resolve through the same path as
-before. Helpers (split, lod, adders, compositing, dim_order) live in
+before. Helpers (partition, lod, adders, compositing, dim_order) live in
 sibling submodules and subpackages.
 """
 

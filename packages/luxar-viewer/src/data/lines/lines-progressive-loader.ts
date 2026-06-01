@@ -26,6 +26,10 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import {
+  concatOptionalField,
+  concatRequiredField,
+} from '../loaders/progressive/concat-helpers';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 const CACHE_HIT_THRESHOLD_MS = 15;
@@ -76,10 +80,16 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   const ndim = parts[0].ndim;
   const totalVertices = parts.reduce((s, p) => s + p.vertexCount, 0);
   const totalSegments = parts.reduce((s, p) => s + p.segmentCount, 0);
+  const count = (p: LoadedLinesData) => p.vertexCount;
 
-  const positions = new Float32Array(totalVertices * ndim);
+  // Straightforward per-vertex fields via the shared helpers (dtype preserved).
+  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
+  const widths = concatRequiredField(parts, (p) => p.widths, count);
+  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count);
+
+  // Bespoke fields: segments need vertex-offset remapping; colors fill missing
+  // LODs with white; sharpness is partial (nullable, not all-or-nothing).
   const segments = new Uint32Array(totalSegments * 2);
-  const widths = new Float32Array(totalVertices);
 
   const firstWithColors = parts.find((p) => p.colors !== null);
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
@@ -96,19 +106,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   let sharpness: Float32Array | null =
     firstWithSharpness?.sharpness ? new Float32Array(totalVertices) : null;
 
-  const allHaveScalars = parts.every((p) => p.scalars !== undefined);
-  let scalars: ScalarArray | undefined;
-  if (allHaveScalars) {
-    const first = parts[0].scalars as ScalarArray;
-    const ctor = first.constructor as new (n: number) => ScalarArray;
-    scalars = new ctor(totalVertices);
-  }
-
   let vertexOffset = 0;
   let segmentOffset = 0;
   for (const part of parts) {
-    positions.set(part.positions, vertexOffset * ndim);
-    widths.set(part.widths, vertexOffset);
     // Offset-adjust segment indices into the concatenated vertex array.
     for (let i = 0; i < part.segments.length; i++) {
       segments[segmentOffset * 2 + i] = part.segments[i] + vertexOffset;
@@ -125,9 +125,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     if (sharpness && part.sharpness) {
       sharpness.set(part.sharpness, vertexOffset);
     }
-    if (scalars && part.scalars) {
-      scalars.set(part.scalars, vertexOffset);
-    }
+    // (scalars are fully concatenated above via concatOptionalField.)
     vertexOffset += part.vertexCount;
     segmentOffset += part.segmentCount;
   }
@@ -202,7 +200,8 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const lodData = await this.lodLoaders[level].updateView(viewState, session);
+      const { data: lodData, allResident } =
+        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
@@ -211,7 +210,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         log.custom(
           LogEmoji.BROADCAST,
           Modules.LINES_LOADER,
-          `LOD ${level}/${this.nLods - 1}: ${lodData.segmentCount} segments (${elapsed.toFixed(1)}ms)`
+          `LOD ${level}/${this.nLods - 1}: ${lodData.segmentCount} segments (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
         );
       }
 
@@ -219,7 +218,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
         break;
       }
 
-      if (level > startLevel && elapsed > CACHE_HIT_THRESHOLD_MS) {
+      // Stop after a cache miss; refinement loop continues next frame. The
+      // wall-clock budget remains a secondary guard. LOD 0 always loads.
+      if (level > startLevel && (!allResident || elapsed > CACHE_HIT_THRESHOLD_MS)) {
         break;
       }
     }

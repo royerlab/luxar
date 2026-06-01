@@ -126,7 +126,7 @@ class Group(Node):
         grid_shape: Optional[Tuple[int, ...]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
-        split: Any = None,
+        partition: Any = None,
         additive_lod: Any = None,
         **attrs: Any,
     ) -> Union[Points, "Group"]:
@@ -155,21 +155,22 @@ class Group(Node):
                 Unmapped dims are filled with ``fill`` values and auto-extended.
             fill: Fixed coordinate values for unmapped scene dimensions
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
-            split: Spatial-decomposition control. ``None`` (default) writes
-                a single Points node. ``True`` decomposes via midpoint BSP
-                with ``max_elements = DEFAULT_MAX_ELEMENTS``.
-                ``dict(max_elements=N)`` uses an explicit cap. When the
-                decomposition yields more than one part, returns a
-                kind=split ``Group`` wrapper carrying ``display_type=
+            partition: Spatial-decomposition control. ``None`` (default) writes
+                a single Points node. ``True`` decomposes via balanced median
+                BSP with ``max_elements = DEFAULT_MAX_ELEMENTS``.
+                ``dict(max_elements=N, rule=...)`` uses an explicit cap and
+                rule (``"median"`` default, ``"midpoint"``, or ``"sah"``).
+                When the decomposition yields more than one part, returns a
+                kind=partition ``Group`` wrapper carrying ``display_type=
                 "points"``; the wrapper's children are ``part_<i>`` Points
                 nodes. The wrapper's ``position_bounds`` is the union of
                 the children's so picking treats the layer as one entity.
-                ``image_labels`` is not supported alongside ``split=``
+                ``image_labels`` is not supported alongside ``partition=``
                 (the sparse-dict semantics complicate slicing).
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control. When ``split=`` produces a
+                  panel for per-node control. When ``partition=`` produces a
                   wrapper, ``layer=True`` lands on the wrapper, not on
                   each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
@@ -179,8 +180,8 @@ class Group(Node):
                   ``colormap``: standard rendering attributes.
 
         Returns:
-            The created ``Points`` node, or a kind=split ``Group``
-            wrapper when ``split=`` produced more than one part.
+            The created ``Points`` node, or a kind=partition ``Group``
+            wrapper when ``partition=`` produced more than one part.
         """
         from .adders.points import add_points_impl
 
@@ -199,7 +200,7 @@ class Group(Node):
             grid_shape=grid_shape,
             dim_order=dim_order,
             fill=fill,
-            split=split,
+            partition=partition,
             additive_lod=additive_lod,
             **attrs,
         )
@@ -229,7 +230,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         additive_lod: Any = None,
-        split: Any = None,
+        partition: Any = None,
         **attrs: Any,
     ) -> Union[Lines, "Group"]:
         """Add a lines node.
@@ -281,7 +282,7 @@ class Group(Node):
             dim_order=dim_order,
             fill=fill,
             additive_lod=additive_lod,
-            split=split,
+            partition=partition,
             **attrs,
         )
 
@@ -305,7 +306,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
-        split: Any = None,
+        partition: Any = None,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add a Gaussian splats node.
@@ -326,19 +327,20 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dimensions in the
                 Cholesky embedding (default 1.0). Controls splat extent in
                 unmapped dims.
-            split: Spatial-decomposition control. ``None`` (default) writes
-                a single GSplats node. ``True`` decomposes via midpoint BSP
-                with ``max_elements = DEFAULT_MAX_ELEMENTS``.
-                ``dict(max_elements=N)`` uses an explicit cap. When the
-                decomposition yields more than one part, returns a
-                kind=split ``Group`` wrapper carrying ``display_type=
+            partition: Spatial-decomposition control. ``None`` (default) writes
+                a single GSplats node. ``True`` decomposes via balanced median
+                BSP with ``max_elements = DEFAULT_MAX_ELEMENTS``.
+                ``dict(max_elements=N, rule=...)`` uses an explicit cap and
+                rule (``"median"`` default, ``"midpoint"``, or ``"sah"``).
+                When the decomposition yields more than one part, returns a
+                kind=partition ``Group`` wrapper carrying ``display_type=
                 "gsplats"``; the wrapper's children are ``part_<i>``
                 GSplats nodes. ``image_labels`` is not supported alongside
-                ``split=``.
+                ``partition=``.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
-                  panel for per-node control. When ``split=`` produces a
+                  panel for per-node control. When ``partition=`` produces a
                   wrapper, ``layer=True`` lands on the wrapper, not on
                   each leaf part.
                 - ``visible`` (bool): Initial visibility when scene loads
@@ -347,8 +349,8 @@ class Group(Node):
                   ``colormap``: standard rendering attributes.
 
         Returns:
-            The created ``GSplats`` node, or a kind=split ``Group``
-            wrapper when ``split=`` produced more than one part.
+            The created ``GSplats`` node, or a kind=partition ``Group``
+            wrapper when ``partition=`` produced more than one part.
         """
         from .adders.gsplats import add_gsplats_impl
 
@@ -366,7 +368,7 @@ class Group(Node):
             dim_order=dim_order,
             fill=fill,
             fill_sigma=fill_sigma,
-            split=split,
+            partition=partition,
             **attrs,
         )
 
@@ -414,9 +416,10 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name.
             fill: Fixed coordinate values for unmapped dimensions.
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding.
-            lod_group: Substitutive-axis control. ``None`` (pass-through; drop
-                non-default substitutive levels), ``True`` (require stored
-                levels), ``False`` (collapse to finest), ``dict(...)`` (compute
+            lod_group: Substitutive-axis control. ``None`` (default; auto-lower
+                a multi-substitutive pyramid into a ``kind=lod`` Group),
+                ``True`` (require stored levels), ``False`` (collapse to
+                finest), ``dict(...)`` (compute
                 via :func:`make_substitutive_lod`), or ``dict(..., recompute=
                 True)``. Optional ``min_pixel_sizes=[...]`` inside the dict
                 overrides the auto-derived thresholds.
@@ -468,9 +471,10 @@ class Group(Node):
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
 
-        If the source file carries multiple substitutive levels, only the
-        default substitutive level's additive ladder is written into the
-        scene; other substitutive levels are dropped (see
+        If the source file carries multiple substitutive levels, the
+        pyramid is auto-lowered into a ``kind=lod`` Group (one gsplats
+        child per substitutive level); pass ``lod_group=False`` to
+        collapse to the finest level instead (see
         ``add_gsplats_from_data`` for the convention).
 
         Args:

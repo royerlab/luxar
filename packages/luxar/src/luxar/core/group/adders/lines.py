@@ -1,4 +1,4 @@
-"""add_lines body + split/multi-LOD wrapper impls.
+"""add_lines body + partition/multi-LOD wrapper impls.
 
 Pure functions taking a ``group: Group`` parameter as the first arg.
 Called by ``Group.add_lines`` (a thin signature + docstring + delegate)
@@ -52,7 +52,7 @@ def add_lines_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     additive_lod: Any = None,
-    split: Any = None,
+    partition: Any = None,
     **attrs: Any,
 ) -> Union[Lines, "Group"]:
     try:
@@ -74,51 +74,54 @@ def add_lines_impl(
         n_vertices = vert_arr.shape[0]
         ndim = vert_arr.shape[1]
 
-        # NOTE: compiler-level auto-split heuristic is a separate PR
-        # (β); add_lines honors user-explicit ``split=`` here and
-        # will pick up the auto-split path automatically once β
-        # merges. Until then, ``split=`` is opt-in via the call site.
+        # NOTE: compiler-level auto-partition heuristic is a separate PR
+        # (β); add_lines honors user-explicit ``partition=`` here and
+        # will pick up the auto-partition path automatically once β
+        # merges. Until then, ``partition=`` is opt-in via the call site.
 
-        # Split branch — polyline-aware BSP. Whole polylines are
+        # Partition branch — polyline-aware BSP. Whole polylines are
         # atomic; the BSP runs over per-polyline centroids and assigns
         # each polyline atomically to a part. Mirrors add_points but
         # at the polyline granularity.
-        if split is not None and vert_arr.shape[1] >= 3:
+        if partition is not None and vert_arr.shape[1] >= 3:
             from ..lod.lines import identify_polylines
-            from ..split import (
+            from ..partition import (
                 DEFAULT_MAX_ELEMENTS,
+                median_bsp_polylines,
                 midpoint_bsp_polylines,
                 sah_bsp_partition,
             )
 
-            if split is True:
+            if partition is True:
                 max_elements = DEFAULT_MAX_ELEMENTS
-                split_rule = "midpoint"
-            elif isinstance(split, dict):
-                max_elements = int(split.get("max_elements", DEFAULT_MAX_ELEMENTS))
+                partition_rule = "median"
+            elif isinstance(partition, dict):
+                max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
                 if max_elements < 1:
                     raise ValueError(
-                        f"split max_elements must be >= 1, got {max_elements}"
+                        f"partition max_elements must be >= 1, got {max_elements}"
                     )
-                split_rule = str(split.get("rule", "midpoint"))
-                if split_rule not in ("midpoint", "sah"):
+                partition_rule = str(partition.get("rule", "median"))
+                if partition_rule not in ("median", "midpoint", "sah"):
                     raise ValueError(
-                        f"split rule must be 'midpoint' or 'sah'; got {split_rule!r}"
+                        f"partition rule must be 'median', 'midpoint', or 'sah'; "
+                        f"got {partition_rule!r}"
                     )
             else:
                 raise TypeError(
-                    f"split must be None, True, or dict; got {type(split).__name__}"
+                    f"partition must be None, True, or dict; "
+                    f"got {type(partition).__name__}"
                 )
 
             if image_labels is not None:
                 raise ValueError(
-                    "image_labels is not supported alongside split=. "
+                    "image_labels is not supported alongside partition=. "
                     "Decompose the data manually or omit image_labels."
                 )
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
-            if split_rule == "sah":
+            if partition_rule == "sah":
                 # SAH operates on per-polyline centroids in this
                 # context too — same atomic-polyline guarantee.
                 if not polyline_indices:
@@ -142,13 +145,17 @@ def add_lines_impl(
                         centroids, max_elements=centroid_cap
                     )
                     polyline_parts = [idx_arr.tolist() for idx_arr in centroid_parts]
-            else:
+            elif partition_rule == "midpoint":
                 polyline_parts = midpoint_bsp_polylines(
+                    vert_arr, polyline_indices, max_elements
+                )
+            else:
+                polyline_parts = median_bsp_polylines(
                     vert_arr, polyline_indices, max_elements
                 )
 
             if len(polyline_parts) > 1:
-                return add_lines_split_wrapper_impl(
+                return add_lines_partition_wrapper_impl(
                     group,
                     name=name,
                     vert_arr=vert_arr,
@@ -297,7 +304,7 @@ def add_lines_impl(
         raise ValueError(f"Could not add lines '{name}': {e}") from e
 
 
-def add_lines_split_wrapper_impl(
+def add_lines_partition_wrapper_impl(
     group: "Group",
     *,
     name: str,
@@ -317,7 +324,7 @@ def add_lines_split_wrapper_impl(
     max_elements: int,
     **attrs: Any,
 ) -> "Group":
-    """Build a kind=split wrapper Group with one Lines child per BSP part.
+    """Build a kind=partition wrapper Group with one Lines child per BSP part.
 
     Polylines are atomic — each polyline lands in exactly one part.
     For the ``segments`` / ``indexed`` line types, the resulting
@@ -326,14 +333,14 @@ def add_lines_split_wrapper_impl(
     each component the BSP grouped together. For ``polyline`` /
     ``loop`` types (where the input is a single polyline), the BSP
     only ever produces one part — the user is already at the single-
-    polyline granularity and there's nothing to split. We refuse the
-    split in that case with a clear error.
+    polyline granularity and there's nothing to partition. We refuse the
+    partition in that case with a clear error.
     """
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
     parent_node = parent or group
-    wrapper = parent_node.add_split_group(
+    wrapper = parent_node.add_partition_group(
         name=name,
         display_type="lines",
         max_elements=max_elements,
@@ -344,7 +351,7 @@ def add_lines_split_wrapper_impl(
         sum(int(polyline_indices[p].size) for p in part) for part in polyline_parts
     ]
     aprint(
-        f"  ✂️  Split '{name}' into {len(polyline_parts)} parts via "
+        f"  ✂️  Partitioned '{name}' into {len(polyline_parts)} parts via "
         f"polyline-centroid BSP "
         f"(max_elements={max_elements:,}, sizes={part_sizes})"
     )
@@ -373,7 +380,7 @@ def add_lines_split_wrapper_impl(
                 # consecutive members aren't necessarily a segment;
                 # we approximate by linking consecutive members,
                 # which is exact for ``segments`` (the only case the
-                # split path actually decomposes — see polyline /
+                # partition path actually decomposes — see polyline /
                 # loop guard below).
                 for k in range(0, members.size - 1, 2):
                     new_segments.append([cursor + k, cursor + k + 1])
@@ -434,14 +441,14 @@ def add_lines_split_wrapper_impl(
             sharpness=part_sharpness,
             scalars=part_scalars,
             labels=part_labels,
-            # image_labels banned alongside split= (see add_lines entry)
+            # image_labels banned alongside partition= (see add_lines entry)
             image_labels=None,
             indices=part_indices,
             line_type=part_line_type,
             extend_to_all=extend_to_all,
             dim_order=None,
             fill=None,
-            split=None,
+            partition=None,
             **leaf_attrs,
         )
 

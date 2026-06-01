@@ -236,7 +236,7 @@ and renders the **finest** child whose threshold is satisfied (with 10%
 asymmetric hysteresis on the downgrade direction to suppress flicker).
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
-gsplats, or themselves specialized groups (e.g. a Split group inside an
+gsplats, or themselves specialized groups (e.g. a Partition group inside an
 LOD group). The finest child's resolved `display_type` becomes the LOD
 group's `display_type`.
 
@@ -294,14 +294,15 @@ scene.add_gsplats_from_data(
 )
 ```
 
-#### `kind: "split"` — Spatial-decomposition group
+#### `kind: "partition"` — Spatial-decomposition group
 
 Decomposes a single large leaf node (10M+ elements) into N smaller
 children for per-child frustum culling and per-child LOD. The user
-adds one node; the writer splits it via recursive midpoint BSP at
-compile time. The viewer renders all children simultaneously (no
-per-frame selector — THREE's per-mesh frustum culling does the
-per-part culling).
+adds one node; the writer partitions it via recursive BSP at
+compile time (balanced **median** split by default; `midpoint` and
+`sah` rules are also available). The viewer renders all children
+simultaneously (no per-frame selector — THREE's per-mesh frustum
+culling does the per-part culling).
 
 Children are **homogeneous**: every child's resolved `display_type`
 must match the wrapper's (you cannot decompose a single logical
@@ -311,7 +312,7 @@ layer into mixed-type parts).
 ```json
 {
   "type": "group",
-  "kind": "split",
+  "kind": "partition",
   "display_type": "points",     // All children resolve to this type.
   "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
   "position_bounds": {           // Union of children's bboxes — lets
@@ -335,25 +336,25 @@ layer into mixed-type parts).
 - Subgroup naming is **not** enforced; the convenience kwarg writes
   `part_0`, `part_1`, … in BSP recursion order.
 - Each child is a standard `points` / `lines` / `gsplats` node (or
-  itself a kind=lod / kind=split group). All must resolve to the
+  itself a kind=lod / kind=partition group). All must resolve to the
   same `display_type`.
 
 **Builder API (Python):**
 ```python
-# Convenience kwarg on the leaf adders — split applies at compile time
+# Convenience kwarg on the leaf adders — partition applies at compile time
 # and the user never sees the wrapper unless they inspect the zarr:
-scene.add_points("pts", positions, split=True)                 # default cap
-scene.add_points("pts", positions, split=dict(max_elements=500_000))
+scene.add_points("pts", positions, partition=True)                 # default cap
+scene.add_points("pts", positions, partition=dict(max_elements=500_000))
 scene.add_gsplats("splats", centers, amplitudes, cholesky,
-                  split=dict(max_elements=2_000_000))
+                  partition=dict(max_elements=2_000_000, rule="median"))
 
 # Manual (explicit tree construction):
-split = scene.add_split_group("manual",
-                              display_type="points",
-                              max_elements=500_000,
-                              layer=True)
-split.add_points("part_0", subset0)
-split.add_points("part_1", subset1)
+part = scene.add_partition_group("manual",
+                                 display_type="points",
+                                 max_elements=500_000,
+                                 layer=True)
+part.add_points("part_0", subset0)
+part.add_points("part_1", subset1)
 ```
 
 #### Multi-additive LOD (progressive loading) — Points / Lines / GSplats
@@ -407,7 +408,7 @@ scene.add_gsplats_from_data("splats", data,                         # gsplats kw
                             additive_lod=dict(n_lods=4))
 ```
 
-Composition with `split=` is "split-outer, additive-LOD-inner": each
+Composition with `partition=` is "partition-outer, additive-LOD-inner": each
 spatial part gets its own LOD ladder.
 
 ### 3. Points Nodes

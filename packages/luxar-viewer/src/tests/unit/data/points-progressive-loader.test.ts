@@ -15,6 +15,7 @@ import type { LoadedPointsData, PointsViewState } from '../../../types/points';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
+  updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
 }
@@ -55,8 +56,20 @@ function makeLodData(
 }
 
 function makeSubLoader(initialData: LoadedPointsData): SubLoaderStub {
+  const updateView = vi.fn().mockResolvedValue(initialData);
+  // The progressive loader now calls updateViewWithResidency; delegate to
+  // updateView so existing `.updateView` assertions still hold. Default
+  // allResident=true so timing-based break tests are unaffected; tests that
+  // exercise the residency break override this mock per-case.
+  const updateViewWithResidency = vi.fn(
+    async (vs: PointsViewState, s?: unknown) => ({
+      data: await updateView(vs, s),
+      allResident: true,
+    })
+  );
   return {
-    updateView: vi.fn().mockResolvedValue(initialData),
+    updateView,
+    updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
   };
@@ -197,6 +210,29 @@ describe('PointsProgressiveLoader', () => {
       expect(lodC.updateView).not.toHaveBeenCalled();
 
       performanceNowSpy.mockRestore();
+    });
+
+    it('stops loading further LODs after a cache miss (fast but not resident)', async () => {
+      // LOD B is fast (no timing break) but reports a cache miss → the loop
+      // must still stop so the frame renders and refinement continues.
+      lodB.updateViewWithResidency.mockImplementation(async () => ({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+
+      await loader.loadPoints(baseViewState);
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('keeps loading while levels are resident', async () => {
+      // All resident + fast → the loop loads every level in one call.
+      await loader.loadPoints(baseViewState);
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalled();
     });
   });
 

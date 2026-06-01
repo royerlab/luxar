@@ -444,7 +444,7 @@ export class LayersPanel {
     badge.textContent = typeMap[layer.type] || layer.type;
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``
-    // for kind=split. When a kind=split layer wraps kind=lod
+    // for kind=partition. When a kind=partition layer wraps kind=lod
     // descendants, the badge combines both counts as
     // ``N parts × M LODs`` (M = max child count across nested groups).
     // Appears alongside the type badge; visible-only when the count is
@@ -455,7 +455,7 @@ export class LayersPanel {
       kindBadge.className =
         'luxar-layer-row__badge luxar-layer-row__badge--kind';
       kindBadge.textContent = `${layer.lodGroupChildCount} LODs`;
-    } else if (layer.kind === 'split' && (layer.splitPartCount ?? 0) > 0) {
+    } else if (layer.kind === 'partition' && (layer.partCount ?? 0) > 0) {
       kindBadge = document.createElement('span');
       kindBadge.className =
         'luxar-layer-row__badge luxar-layer-row__badge--kind';
@@ -464,9 +464,9 @@ export class LayersPanel {
         layer.nestedLodGroupPaths.length > 0 &&
         (layer.nestedLodMaxChildCount ?? 0) > 0
       ) {
-        kindBadge.textContent = `${layer.splitPartCount} parts × ${layer.nestedLodMaxChildCount} LODs`;
+        kindBadge.textContent = `${layer.partCount} parts × ${layer.nestedLodMaxChildCount} LODs`;
       } else {
-        kindBadge.textContent = `${layer.splitPartCount} parts`;
+        kindBadge.textContent = `${layer.partCount} parts`;
       }
     }
 
@@ -691,13 +691,13 @@ export class LayersPanel {
         if (registry) {
           const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
           // Resolve the set of paths to update. A kind=lod layer updates
-          // itself; a kind=split layer that wraps lod_groups broadcasts
+          // itself; a kind=partition layer that wraps lod_groups broadcasts
           // to every nested path (clamped per-group by setSelectorMode
           // on ragged ladders — see lod-group-registry).
           const paths: string[] =
             primary.kind === 'lod'
               ? [primary.path]
-              : primary.kind === 'split' &&
+              : primary.kind === 'partition' &&
                   primary.nestedLodGroupPaths &&
                   primary.nestedLodGroupPaths.length > 0
                 ? primary.nestedLodGroupPaths
@@ -784,14 +784,14 @@ export class LayersPanel {
       }
     }
 
-    // Active-level dropdown — shown for kind=lod layers AND for kind=split
+    // Active-level dropdown — shown for kind=lod layers AND for kind=partition
     // layers that wrap nested lod_groups (broadcast). The dropdown
     // option list reflects either the layer's own child count
-    // (kind=lod) or the largest nested ladder (kind=split).
+    // (kind=lod) or the largest nested ladder (kind=partition).
     if (this.lodLevelSelect && this.lodLevelStatus) {
       const lodContainer = this.lodLevelSelect.parentElement!;
-      const broadcastSplit =
-        primary.kind === 'split' &&
+      const broadcastPartition =
+        primary.kind === 'partition' &&
         primary.nestedLodGroupPaths &&
         primary.nestedLodGroupPaths.length > 0 &&
         (primary.nestedLodMaxChildCount ?? 0) > 0;
@@ -813,7 +813,7 @@ export class LayersPanel {
           this.lodLevelSelect.value = 'auto';
           this.lodLevelStatus.textContent = '';
         }
-      } else if (broadcastSplit) {
+      } else if (broadcastPartition) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
 

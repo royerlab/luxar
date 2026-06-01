@@ -220,8 +220,8 @@ describe('buildPickResultHandler', () => {
     warnSpy.mockRestore();
   });
 
-  it('reports the kind=split wrapper path when the hit sits under one', async () => {
-    // Split-aware picking: a hit on an inner ``part_<i>`` leaf must
+  it('reports the kind=partition wrapper path when the hit sits under one', async () => {
+    // Partition-aware picking: a hit on an inner ``part_<i>`` leaf must
     // surface the wrapper's path as ``nodeName`` (and as the path used
     // to look up labels). Matches the layers-panel's outermost-as-layer
     // convention.
@@ -229,7 +229,7 @@ describe('buildPickResultHandler', () => {
     s.getLabel.mockResolvedValue('Cell 42');
     const wrapper = new THREE.Group();
     wrapper.name = '/Splat';
-    wrapper.userData.kind = 'split';
+    wrapper.userData.kind = 'partition';
     const part = new THREE.Object3D();
     part.name = '/Splat/part_3';
     wrapper.add(part);
@@ -249,15 +249,15 @@ describe('buildPickResultHandler', () => {
     });
   });
 
-  it('picks the OUTERMOST kind=split when nested', async () => {
+  it('picks the OUTERMOST kind=partition when nested', async () => {
     const s = makeStubs();
     s.getLabel.mockResolvedValue('Cell 42');
     const outer = new THREE.Group();
     outer.name = '/Outer';
-    outer.userData.kind = 'split';
+    outer.userData.kind = 'partition';
     const inner = new THREE.Group();
     inner.name = '/Outer/part_1';
-    inner.userData.kind = 'split';
+    inner.userData.kind = 'partition';
     outer.add(inner);
     const leaf = new THREE.Object3D();
     leaf.name = '/Outer/part_1/part_0';
@@ -272,7 +272,7 @@ describe('buildPickResultHandler', () => {
     expect(s.getLabel).toHaveBeenCalledWith('/Outer', 42);
   });
 
-  it('falls back to the leaf name when no kind=split ancestor exists', async () => {
+  it('falls back to the leaf name when no kind=partition ancestor exists', async () => {
     // Plain group ancestors (kind=undefined) must not affect picking.
     const s = makeStubs();
     s.getLabel.mockResolvedValue('hi');

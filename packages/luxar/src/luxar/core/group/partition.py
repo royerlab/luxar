@@ -1,28 +1,40 @@
-"""luxar.split – Helpers for the split-kind specialized Group.
+"""luxar.partition – Helpers for the partition-kind specialized Group.
 
-A split-kind ``Group`` is a compile-time decomposition of a single large
+A partition-kind ``Group`` is a compile-time decomposition of a single large
 geometry node (10M+ points / lines / splats) into multiple smaller child nodes
 so that per-child frustum culling, per-child LOD, etc. can kick in. The user
 does not see the decomposition: they call ``add_points(...)`` (or the like)
-with ``split=True`` / ``split=dict(max_elements=N)`` and the layers panel
-presents one logical layer of the original geometry type.
+with ``partition=True`` / ``partition=dict(max_elements=N)`` and the layers
+panel presents one logical layer of the original geometry type.
 
-The decomposition is **recursive midpoint BSP**: at each step we split along
-the longest axis of the current bounding box at the midpoint of that axis,
-recursing until each part has at most ``max_elements`` elements. Predictable
-axis-aligned tile boundaries; parts may be uneven in size (which is fine —
-frustum culling discards empty tiles cheaply).
+The decomposition is a **recursive BSP**: at each step we split the current
+bounding box along an axis and recurse until each part has at most
+``max_elements`` elements. Three split rules are available (selected via the
+``partition=dict(rule=...)`` kwarg):
+
+* ``"median"`` (default) — split the longest axis at the **median** coordinate,
+  giving balanced part counts in O(n) per level. Best for the clustered data
+  scientific scenes usually contain.
+* ``"midpoint"`` — split the longest axis at the geometric **midpoint**.
+  Cheapest; predictable axis-aligned tiles but parts may be very uneven on
+  clustered data.
+* ``"sah"`` — surface-area-heuristic split-plane selection; best for heavily
+  skewed data (one dense cluster + a thin streamer) at higher cost.
 
 This module hosts:
 
-* :func:`midpoint_bsp_partition` — the pure-NumPy splitter. Returns a list of
-  index arrays into the original positions.
-* :func:`validate_split_group` — the well-formedness check (free function,
+* :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
+  :func:`sah_bsp_partition` — the pure-NumPy point/gsplats splitters. Each
+  returns a list of index arrays into the original positions.
+* :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
+  polyline-atomic variants for ``add_lines``.
+* :func:`validate_partition_group` — the well-formedness check (free function,
   matches the validator pattern in ``core/group/lod/gsplats.py``).
-* :data:`SplitSpec` — the value-vocabulary type alias for the ``split=``
-  convenience kwarg on ``add_points`` / ``add_lines`` / ``add_gsplats``.
+* :data:`PartitionSpec` — the value-vocabulary type alias for the
+  ``partition=`` convenience kwarg on ``add_points`` / ``add_lines`` /
+  ``add_gsplats``.
 * :data:`DEFAULT_MAX_ELEMENTS` — the cap used when the user passes
-  ``split=True`` without a dict.
+  ``partition=True`` without a dict.
 """
 
 from __future__ import annotations
@@ -38,17 +50,17 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
-#: Sentinel-typed alias for the value vocabulary of the ``split=`` kwarg.
-#: ``None`` = no split, ``True`` = use :data:`DEFAULT_MAX_ELEMENTS`,
-#: ``dict[str, Any]`` = user-supplied (currently only ``max_elements=`` is
-#: honored; reserved for future split-algorithm parameters).
-SplitSpec = Union[None, bool, dict]
+#: Sentinel-typed alias for the value vocabulary of the ``partition=`` kwarg.
+#: ``None`` = no partition, ``True`` = use :data:`DEFAULT_MAX_ELEMENTS`,
+#: ``dict[str, Any]`` = user-supplied (``max_elements=`` and ``rule=`` are
+#: honored; reserved for future partition-algorithm parameters).
+PartitionSpec = Union[None, bool, dict]
 
 
-#: Default cap for ``split=True`` (no dict). Sits in the upper half of the
+#: Default cap for ``partition=True`` (no dict). Sits in the upper half of the
 #: 100K–10M smooth-interaction range from ``CLAUDE.md`` — large enough that
 #: a single tile is still a comfortable WebGL batch, small enough that
-#: splitting is worth it for the 10M+ node sizes the feature targets.
+#: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
 
 
@@ -83,9 +95,8 @@ def midpoint_bsp_partition(
         Pure NumPy, no external deps. The recursion picks the longest of
         ``x``/``y``/``z`` at each level and splits at the midpoint of its
         current bbox. Resulting parts are axis-aligned but not necessarily
-        balanced in element count — a feature, since real-world data is
-        rarely uniform and forcing balance via median-split would cost an
-        ``O(n log n)`` sort per level.
+        balanced in element count. For balanced parts use
+        :func:`median_bsp_partition` (the default rule).
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
@@ -142,7 +153,97 @@ def midpoint_bsp_partition(
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Polyline-aware BSP (for add_lines split=)
+# Recursive median (balanced) BSP — the default rule
+# ────────────────────────────────────────────────────────────────────────
+
+
+def median_bsp_partition(
+    positions: NDArray,
+    max_elements: int,
+) -> List[NDArray[np.intp]]:
+    """Recursively split ``positions`` along longest-axis **medians**.
+
+    Identical contract to :func:`midpoint_bsp_partition`, but each split
+    falls at the median coordinate of the longest axis instead of its
+    geometric midpoint. This yields parts that are balanced in element
+    count (each side gets ~half the elements), which matters for the
+    clustered, non-uniform data scientific scenes usually contain: a
+    geometric-midpoint split of a tight cluster can put nearly all
+    elements on one side and recurse many times, whereas a median split
+    halves the count every level (≈ ``ceil(log2(N / max_elements))``
+    levels total).
+
+    Args:
+        positions: ``(N, d)`` array; at least 3 spatial dims (only the
+            first 3 drive the split, the rest ride along).
+        max_elements: Cap on a single part's size. Each returned part has
+            ``len(part) <= max_elements`` except the degenerate all-coincident
+            case.
+
+    Returns:
+        List of index arrays into ``positions``; concatenation permutes
+        ``np.arange(len(positions))``.
+
+    Notes:
+        Pure NumPy. The per-level cost is ``O(n)`` (``np.median`` +
+        boolean masking), comparable to midpoint and far below SAH's
+        ``O(n · n_candidates · 3)``. Ties at the median are split by
+        ``<`` so the left side takes strictly-smaller coordinates; an
+        all-on-one-side outcome (every coordinate equal to the median)
+        falls back to a stable count-bisection.
+    """
+    if positions.ndim != 2:
+        raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
+    if positions.shape[1] < 3:
+        raise ValueError(
+            "median_bsp_partition needs at least 3 spatial dimensions; "
+            f"got positions with shape {positions.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
+    n = positions.shape[0]
+    if n == 0:
+        return []
+
+    spatial = positions[:, :3]
+
+    result: List[NDArray[np.intp]] = []
+
+    def recurse(indices: NDArray[np.intp]) -> None:
+        if indices.size <= max_elements:
+            result.append(indices)
+            return
+        sub = spatial[indices]
+        mins = sub.min(axis=0)
+        maxs = sub.max(axis=0)
+        extents = maxs - mins
+        axis = int(np.argmax(extents))
+        if extents[axis] == 0:
+            # All elements coincide spatially — no split makes progress.
+            result.append(indices)
+            return
+        coords = sub[:, axis]
+        median = float(np.median(coords))
+        left_mask = coords < median
+        left = indices[left_mask]
+        right = indices[~left_mask]
+        # All coordinates equal to (or above) the median — the ``<`` test
+        # put everything on the right. Fall back to a stable count-bisection.
+        if left.size == 0 or right.size == 0:
+            order = np.argsort(coords, kind="stable")
+            half = indices.size // 2
+            left = indices[order[:half]]
+            right = indices[order[half:]]
+        recurse(left)
+        recurse(right)
+
+    recurse(np.arange(n, dtype=np.intp))
+    return result
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Polyline-aware BSP (for add_lines partition=)
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -239,8 +340,87 @@ def midpoint_bsp_polylines(
     return result
 
 
+def median_bsp_polylines(
+    vertices: NDArray,
+    polyline_indices: List[NDArray[np.intp]],
+    max_elements: int,
+) -> List[List[int]]:
+    """Recursive **median** BSP over per-polyline centroids.
+
+    Identical contract to :func:`midpoint_bsp_polylines`, but each split
+    falls at the median centroid coordinate of the longest axis instead
+    of its geometric midpoint, so polylines are balanced across parts.
+    Polylines stay atomic (every vertex of a polyline lands in one part);
+    the per-part cap is accounted in vertex counts.
+
+    Args:
+        vertices: ``(N, d)`` array of vertex positions; at least 3 spatial
+            dims (only first 3 drive the split).
+        polyline_indices: Per-polyline vertex-index arrays (output of
+            :func:`luxar.core.group.lod.lines.identify_polylines`).
+        max_elements: Cap on a single part's vertex count.
+
+    Returns:
+        List of parts; each part is a list of polyline indices. Concatenation
+        permutes ``range(len(polyline_indices))``.
+    """
+    if vertices.ndim != 2:
+        raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
+    if vertices.shape[1] < 3:
+        raise ValueError(
+            "median_bsp_polylines needs at least 3 spatial dimensions; "
+            f"got vertices with shape {vertices.shape}"
+        )
+    if max_elements < 1:
+        raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
+    n_polylines = len(polyline_indices)
+    if n_polylines == 0:
+        return []
+
+    spatial = vertices[:, :3]
+    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    sizes = np.zeros(n_polylines, dtype=np.intp)
+    for p, members in enumerate(polyline_indices):
+        if members.size == 0:
+            continue
+        centroids[p] = spatial[members].mean(axis=0)
+        sizes[p] = members.size
+
+    result: List[List[int]] = []
+
+    def recurse(poly_idx: NDArray[np.intp]) -> None:
+        total_verts = int(sizes[poly_idx].sum())
+        if total_verts <= max_elements or poly_idx.size <= 1:
+            result.append(poly_idx.tolist())
+            return
+        sub = centroids[poly_idx]
+        mins = sub.min(axis=0)
+        maxs = sub.max(axis=0)
+        extents = maxs - mins
+        axis = int(np.argmax(extents))
+        if extents[axis] == 0:
+            result.append(poly_idx.tolist())
+            return
+        coords = sub[:, axis]
+        median = float(np.median(coords))
+        left_mask = coords < median
+        left = poly_idx[left_mask]
+        right = poly_idx[~left_mask]
+        if left.size == 0 or right.size == 0:
+            order = np.argsort(coords, kind="stable")
+            half = poly_idx.size // 2
+            left = poly_idx[order[:half]]
+            right = poly_idx[order[half:]]
+        recurse(left)
+        recurse(right)
+
+    recurse(np.arange(n_polylines, dtype=np.intp))
+    return result
+
+
 # ────────────────────────────────────────────────────────────────────────
-# SAH (Surface-Area Heuristic) BSP — opt-in alternative to midpoint
+# SAH (Surface-Area Heuristic) BSP — opt-in alternative to median/midpoint
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -259,7 +439,7 @@ def sah_bsp_partition(
     and pick the (axis, position) minimizing the heuristic. The
     intuition: an SAH split balances the **work** of further traversal
     (∝ count × surface area) on each side, so non-uniform datasets get a
-    better tree than midpoint-only.
+    better tree than median/midpoint alone.
 
     Args:
         positions: ``(N, d)`` array. At least 3 spatial dims.
@@ -277,7 +457,7 @@ def sah_bsp_partition(
     Notes:
         Pure NumPy. Cost per recursion is ``O(N * n_candidates * 3)``.
         For the same dataset SAH typically produces fewer but more
-        view-frustum-aligned parts than midpoint; the practical
+        view-frustum-aligned parts than median/midpoint; the practical
         difference shows up on heavily skewed real-world data (one dense
         cluster + a long thin streamer).
     """
@@ -380,8 +560,8 @@ def sah_bsp_partition(
 # ────────────────────────────────────────────────────────────────────────
 
 
-def validate_split_group(group: "Node") -> None:
-    """Check that a kind=split ``Group`` is well-formed.
+def validate_partition_group(group: "Node") -> None:
+    """Check that a kind=partition ``Group`` is well-formed.
 
     Raises ``ValueError`` if:
 
@@ -390,7 +570,7 @@ def validate_split_group(group: "Node") -> None:
     - ``max_elements`` is missing or < 1;
     - any child's resolved ``display_type`` (per
       :func:`luxar.core.group.lod.gsplats.resolve_display_type`) differs from the parent's
-      — homogeneity is mandatory for Split (you can't decompose a single
+      — homogeneity is mandatory for a partition (you can't decompose a single
       logical layer into mixed-type parts).
 
     The ``position_bounds`` union check (parent's bbox = union of
@@ -399,24 +579,26 @@ def validate_split_group(group: "Node") -> None:
     may not yet have been computed.
     """
     if not group.children:
-        raise ValueError(f"Split group '{group.path or group.name}' has no children")
+        raise ValueError(
+            f"Partition group '{group.path or group.name}' has no children"
+        )
     display = group.attrs.get("display_type")
     if not isinstance(display, str) or not display:
         raise ValueError(
-            f"Split group '{group.path or group.name}' is missing the "
+            f"Partition group '{group.path or group.name}' is missing the "
             "required 'display_type' attribute"
         )
     max_elements = group.attrs.get("max_elements")
     if not isinstance(max_elements, int) or max_elements < 1:
         raise ValueError(
-            f"Split group '{group.path or group.name}' has invalid "
+            f"Partition group '{group.path or group.name}' has invalid "
             f"max_elements={max_elements!r}; expected an int >= 1"
         )
     for i, child in enumerate(group.children):
         child_display = resolve_display_type(child)
         if child_display != display:
             raise ValueError(
-                f"Split group '{group.path or group.name}' is non-homogeneous: "
+                f"Partition group '{group.path or group.name}' is non-homogeneous: "
                 f"display_type={display!r} but child {i} ({child.name!r}) "
                 f"resolves to display_type={child_display!r}"
             )

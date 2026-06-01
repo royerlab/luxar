@@ -299,9 +299,9 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayers()).toEqual([]);
   });
 
-  // ─── Specialized groups (kind=split, kind=lod) ─────────
+  // ─── Specialized groups (kind=partition, kind=lod) ─────────
 
-  it('discovers nested lod_groups under a kind=split layer', () => {
+  it('discovers nested lod_groups under a kind=partition layer', () => {
     const graph: SceneNode = {
       path: '',
       type: 'scene',
@@ -309,31 +309,31 @@ describe('LayerStateManager', () => {
       hasSpatialIndex: false,
       children: [
         {
-          path: '/split_root',
+          path: '/partition_root',
           type: 'group',
-          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
           hasSpatialIndex: false,
           children: [
             {
-              path: '/split_root/part_0',
+              path: '/partition_root/part_0',
               type: 'group',
               attrs: { kind: 'lod', display_type: 'gsplats' },
               hasSpatialIndex: false,
               children: [
                 {
-                  path: '/split_root/part_0/level_0',
+                  path: '/partition_root/part_0/level_0',
                   type: 'gsplats',
                   attrs: {},
                   hasSpatialIndex: true,
                 },
                 {
-                  path: '/split_root/part_0/level_1',
+                  path: '/partition_root/part_0/level_1',
                   type: 'gsplats',
                   attrs: {},
                   hasSpatialIndex: true,
                 },
                 {
-                  path: '/split_root/part_0/level_2',
+                  path: '/partition_root/part_0/level_2',
                   type: 'gsplats',
                   attrs: {},
                   hasSpatialIndex: true,
@@ -341,20 +341,20 @@ describe('LayerStateManager', () => {
               ],
             },
             {
-              path: '/split_root/part_1',
+              path: '/partition_root/part_1',
               type: 'group',
               attrs: { kind: 'lod', display_type: 'gsplats' },
               hasSpatialIndex: false,
               // Ragged ladder: 2 children vs 3 in part_0.
               children: [
                 {
-                  path: '/split_root/part_1/level_0',
+                  path: '/partition_root/part_1/level_0',
                   type: 'gsplats',
                   attrs: {},
                   hasSpatialIndex: true,
                 },
                 {
-                  path: '/split_root/part_1/level_1',
+                  path: '/partition_root/part_1/level_1',
                   type: 'gsplats',
                   attrs: {},
                   hasSpatialIndex: true,
@@ -366,18 +366,18 @@ describe('LayerStateManager', () => {
       ],
     };
     mgr.initFromSceneGraph(graph);
-    const wrapper = mgr.getLayer('/split_root')!;
-    expect(wrapper.kind).toBe('split');
-    expect(wrapper.splitPartCount).toBe(2);
+    const wrapper = mgr.getLayer('/partition_root')!;
+    expect(wrapper.kind).toBe('partition');
+    expect(wrapper.partCount).toBe(2);
     expect(wrapper.nestedLodGroupPaths).toEqual([
-      '/split_root/part_0',
-      '/split_root/part_1',
+      '/partition_root/part_0',
+      '/partition_root/part_1',
     ]);
     // Combined-badge sizing: largest ladder wins.
     expect(wrapper.nestedLodMaxChildCount).toBe(3);
   });
 
-  it('leaves nestedLodGroupPaths undefined for kind=split with no nested lod', () => {
+  it('leaves nestedLodGroupPaths undefined for kind=partition with no nested lod', () => {
     const graph: SceneNode = {
       path: '',
       type: 'scene',
@@ -385,13 +385,13 @@ describe('LayerStateManager', () => {
       hasSpatialIndex: false,
       children: [
         {
-          path: '/split_root',
+          path: '/partition_root',
           type: 'group',
-          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
           hasSpatialIndex: false,
           children: [
             {
-              path: '/split_root/part_0',
+              path: '/partition_root/part_0',
               type: 'gsplats',
               attrs: {},
               hasSpatialIndex: true,
@@ -401,7 +401,7 @@ describe('LayerStateManager', () => {
       ],
     };
     mgr.initFromSceneGraph(graph);
-    const wrapper = mgr.getLayer('/split_root')!;
+    const wrapper = mgr.getLayer('/partition_root')!;
     expect(wrapper.nestedLodGroupPaths).toBeUndefined();
     expect(wrapper.nestedLodMaxChildCount).toBeUndefined();
   });
@@ -416,13 +416,13 @@ describe('LayerStateManager', () => {
       hasSpatialIndex: false,
       children: [
         {
-          path: '/split_root',
+          path: '/partition_root',
           type: 'group',
-          attrs: { layer: true, kind: 'split', display_type: 'gsplats' },
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
           hasSpatialIndex: false,
           children: [
             {
-              path: '/split_root/inner_lod',
+              path: '/partition_root/inner_lod',
               type: 'group',
               attrs: { kind: 'lod', display_type: 'gsplats' },
               hasSpatialIndex: false,
@@ -431,7 +431,7 @@ describe('LayerStateManager', () => {
                 // lod_group nested inside another lod_group's children:
                 // we must NOT collect it.
                 {
-                  path: '/split_root/inner_lod/inner_lod',
+                  path: '/partition_root/inner_lod/inner_lod',
                   type: 'group',
                   attrs: { kind: 'lod' },
                   hasSpatialIndex: false,
@@ -444,7 +444,7 @@ describe('LayerStateManager', () => {
       ],
     };
     mgr.initFromSceneGraph(graph);
-    const wrapper = mgr.getLayer('/split_root')!;
-    expect(wrapper.nestedLodGroupPaths).toEqual(['/split_root/inner_lod']);
+    const wrapper = mgr.getLayer('/partition_root')!;
+    expect(wrapper.nestedLodGroupPaths).toEqual(['/partition_root/inner_lod']);
   });
 });

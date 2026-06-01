@@ -104,9 +104,9 @@ Each script prints the absolute output path on completion. Defaults to
 | File | What it teaches |
 |---|---|
 | `progressive_points_lines_example.py` | Multi-additive LOD (PR α). |
-| `split_of_lod_example.py` | Auto-split + nested LOD UX (PR β). |
-| `split_only_example.py` | Pure spatial split (auto and manual), no LOD. |
-| `lines_split_and_sampling_example.py` | Polyline-atomic BSP, Poisson-disk LOD, SAH BSP (PR γ). |
+| `partition_of_lod_example.py` | Auto-partition + nested LOD UX. |
+| `partition_only_example.py` | Pure spatial partition (auto and manual), no LOD. |
+| `lines_partition_and_sampling_example.py` | Polyline-atomic BSP, Poisson-disk LOD, SAH BSP. |
 | `energy_breakpoints_example.py` | Energy-aware LOD ordering + base_pixel_size (PR δ). |
 
 ### Gaussian splats

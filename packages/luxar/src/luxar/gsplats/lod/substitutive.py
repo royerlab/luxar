@@ -332,7 +332,16 @@ def _reduce_one_level(
 
     # 1) Warm-start partition
     if method.startswith("kmeans"):
-        assignments = _kmeans_partition(centres_t, M=M_target, seed=seed, max_iter=20)
+        # Shape-aware seeding for the refined ``kmeans_lloyd`` workhorse:
+        # cluster on centres augmented with covariance (marginal-σ) features
+        # so spatially-near but shape-incompatible splats don't share a bin
+        # — the very anisotropy the substitutive format exists to represent.
+        # Plain ``kmeans`` stays centres-only as a reproducible baseline.
+        if method.endswith("_lloyd"):
+            kmeans_input = _augment_with_shape(centres_t, L_t)
+        else:
+            kmeans_input = centres_t
+        assignments = _kmeans_partition(kmeans_input, M=M_target, seed=seed, max_iter=20)
     else:
         assignments = _greedy_partition(centres_t, L_t, amps_t, M_target=M_target)
 
@@ -382,6 +391,45 @@ def _reduce_one_level(
 # ─────────────────────────────────────────────────────────────────────
 # k-means warm start (PyTorch)
 # ─────────────────────────────────────────────────────────────────────
+
+
+def _augment_with_shape(
+    centres: torch.Tensor,
+    L: torch.Tensor,
+    *,
+    weight: float = 0.5,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """Augment centres with covariance (shape) features for k-means seeding.
+
+    Each splat contributes its per-dimension marginal standard deviations
+    ``σ_i = sqrt(Σ_ii) = sqrt(Σ_j L[i,j]²)``, log-compressed to tame the
+    dynamic range, and rescaled so the shape block carries roughly
+    ``weight`` × the spatial block's spread. The result is the centres
+    concatenated with the scaled log-σ features — clustering on it keeps
+    spatially-near but differently-shaped (anisotropic) splats apart.
+
+    Args:
+        centres: ``(N, D)`` splat centres.
+        L: ``(N, D, D)`` lower-triangular Cholesky factors (Σ = L Lᵀ).
+        weight: Relative influence of the shape block vs. the spatial block
+            (0 → centres-only; larger → shape dominates). Default 0.5.
+        eps: Numerical floor for the log and the scale ratio.
+
+    Returns:
+        ``(N, 2D)`` augmented feature tensor (same dtype/device as ``centres``).
+    """
+    if weight <= 0:
+        return centres
+    # Marginal σ per dimension: sqrt of the row sum of squares of L.
+    sigma = L.pow(2).sum(dim=2).clamp_min(eps).sqrt()  # (N, D)
+    log_sigma = torch.log(sigma.clamp_min(eps))
+    # Scale the shape block to be commensurate with the spatial block: match
+    # the mean per-dim spread, then apply the relative ``weight``.
+    centre_scale = centres.std(dim=0).mean()
+    shape_scale = log_sigma.std(dim=0).mean().clamp_min(eps)
+    beta = weight * (centre_scale / shape_scale)
+    return torch.cat([centres, beta * log_sigma], dim=1)
 
 
 def _kmeans_partition(

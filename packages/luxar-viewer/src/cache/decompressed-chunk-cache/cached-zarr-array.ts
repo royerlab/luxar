@@ -12,6 +12,7 @@
 
 import type * as zarr from '../../data/zarr';
 import { DecompressedChunkCache, type DecompressedChunk } from '../decompressed-chunk-cache';
+import type { ResidencyProbe } from '../residency-probe';
 
 /**
  * Clone an ArrayBufferView by allocating a fresh underlying buffer.
@@ -52,6 +53,10 @@ const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
  * @param array - Original zarr.Array to wrap
  * @param cache - L0 decompressed chunk cache instance
  * @param arrayPath - Full path to the array (used for cache key generation)
+ * @param getProbe - Optional accessor for the currently-active residency
+ *   probe. Called on every `getChunk` to report hit/miss. Returning `null`
+ *   (the default / when no load is in flight) disables reporting — this is
+ *   how prefetch traffic is kept from contaminating a demand load's signal.
  * @returns Proxied zarr.Array with L0 caching enabled
  *
  * @example
@@ -71,7 +76,8 @@ const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
 export function wrapWithCache<D extends zarr.DataType>(
   array: zarr.Array<D, zarr.Readable>,
   cache: DecompressedChunkCache,
-  arrayPath: string
+  arrayPath: string,
+  getProbe?: () => ResidencyProbe | null
 ): zarr.Array<D, zarr.Readable> {
   // Don't double-wrap
   if (isCachedArray(array)) {
@@ -134,6 +140,8 @@ export function wrapWithCache<D extends zarr.DataType>(
           // Check L0 cache first
           const cached = cache.get(key);
           if (cached) {
+            // Resident: served from L0 with no fresh fetch/decode.
+            getProbe?.()?.record(true);
             // Return cached decompressed chunk
             return {
               data: cached.data as zarr.TypedArray<D>,
@@ -144,9 +152,16 @@ export function wrapWithCache<D extends zarr.DataType>(
 
           // Same-chunk coalescing: if another caller is already
           // decompressing this chunk, await their promise instead of
-          // re-running Blosc.
+          // re-running Blosc. No fresh Blosc work is triggered for this
+          // caller, so treat the coalesced wait as a hit for residency.
           const pending = pendingChunks.get(key);
-          if (pending) return pending;
+          if (pending) {
+            getProbe?.()?.record(true);
+            return pending;
+          }
+
+          // Genuine miss: a fetch + Blosc decode is about to run.
+          getProbe?.()?.record(false);
 
           const chunkPromise = (async () => {
             try {

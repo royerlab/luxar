@@ -64,6 +64,7 @@ import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 type WritableNumericArray = {
@@ -128,6 +129,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
+
+  // Active cache-residency probe for the in-flight demand load. Set by
+  // updateViewWithResidency() and read by the wrapped arrays' getChunk;
+  // null at all other times (so prefetch traffic isn't recorded).
+  private _activeProbe: ResidencyAccumulator | null = null;
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -304,7 +310,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.registerBounds('positions', positionsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
-        positionsArray = wrapWithCache(positionsArray, this.l0Cache, `${this.node.path}/positions`);
+        positionsArray = wrapWithCache(
+          positionsArray,
+          this.l0Cache,
+          `${this.node.path}/positions`,
+          () => this._activeProbe
+        );
       }
       this.arrays.positions = positionsArray;
     } catch (e) {
@@ -318,7 +329,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.registerBounds('colors', colorsArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
-        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+        colorsArray = wrapWithCache(
+          colorsArray,
+          this.l0Cache,
+          `${this.node.path}/colors`,
+          () => this._activeProbe
+        );
       }
       this.arrays.colors = colorsArray;
     } catch (e: unknown) {
@@ -333,7 +349,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.registerBounds('radii', radiiArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
-        radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`);
+        radiiArray = wrapWithCache(
+          radiiArray,
+          this.l0Cache,
+          `${this.node.path}/radii`,
+          () => this._activeProbe
+        );
       }
       this.arrays.radii = radiiArray;
     } catch (e: unknown) {
@@ -353,7 +374,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/sharpnesses`
+          `${this.node.path}/sharpnesses`,
+          () => this._activeProbe
         );
       }
       this.arrays.sharpness = sharpnessArray;
@@ -376,7 +398,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         });
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
-          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`);
+          scalarsArray = wrapWithCache(
+            scalarsArray,
+            this.l0Cache,
+            `${this.node.path}/scalars`,
+            () => this._activeProbe
+          );
         }
         this.arrays.scalars = scalarsArray;
       } catch (e: unknown) {
@@ -766,6 +793,27 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.rangeLoader.setVerbose(false);
     }
     return result;
+  }
+
+  /**
+   * Like {@link updateView} but also reports whether the load was served
+   * entirely from cache. Drives the progressive loader's per-frame decision
+   * to keep loading the next LOD level (resident) or stop and let the
+   * refinement loop continue after a miss. A load that touches no chunks
+   * counts as resident (`allResident: true`).
+   */
+  async updateViewWithResidency(
+    viewState: ViewState,
+    session?: UpdateSession
+  ): Promise<{ data: LoadedPointsData; allResident: boolean }> {
+    const probe = new ResidencyAccumulator();
+    this._activeProbe = probe;
+    try {
+      const data = await this.updateView(viewState, session);
+      return { data, allResident: probe.allResident };
+    } finally {
+      this._activeProbe = null;
+    }
   }
 
   /**

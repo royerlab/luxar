@@ -1145,29 +1145,29 @@ class TestFilterCommand:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Split command tests
+# Partition command tests
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestSplitCommand:
-    """Tests for luxar gsplat split CLI command."""
+class TestPartitionCommand:
+    """Tests for luxar gsplat partition CLI command."""
 
-    def test_split_by_parts(
+    def test_partition_by_parts(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "split_output"
+        out_dir = tmp_path / "partition_output"
         result = runner.invoke(
             app,
             [
                 "gsplat",
-                "split",
+                "partition",
                 str(sample_gsplats),
                 str(out_dir),
                 "--parts",
                 "3",
             ],
         )
-        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
         assert out_dir.exists()
 
         from luxar.gsplats.gsplat_data import GSplatData
@@ -1181,22 +1181,22 @@ class TestSplitCommand:
         total = sum(p.n_splats for p in parts)
         assert total == 5  # sample_gsplats has 5 splats
 
-    def test_split_by_indices(
+    def test_partition_by_indices(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "split_output"
+        out_dir = tmp_path / "partition_output"
         result = runner.invoke(
             app,
             [
                 "gsplat",
-                "split",
+                "partition",
                 str(sample_gsplats),
                 str(out_dir),
                 "--indices",
                 "2,4",
             ],
         )
-        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
 
         from luxar.gsplats.gsplat_data import GSplatData
 
@@ -1207,15 +1207,15 @@ class TestSplitCommand:
         assert parts[1].n_splats == 2
         assert parts[2].n_splats == 1
 
-    def test_split_with_compression(
+    def test_partition_with_compression(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "split_output"
+        out_dir = tmp_path / "partition_output"
         result = runner.invoke(
             app,
             [
                 "gsplat",
-                "split",
+                "partition",
                 str(sample_gsplats),
                 str(out_dir),
                 "--parts",
@@ -1224,41 +1224,41 @@ class TestSplitCommand:
                 "zip",
             ],
         )
-        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
         assert out_dir.exists()
 
-    def test_split_missing_mode(
+    def test_partition_missing_mode(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
         """Neither --parts nor --indices -> error."""
-        out_dir = tmp_path / "split_output"
+        out_dir = tmp_path / "partition_output"
         result = runner.invoke(
             app,
-            ["gsplat", "split", str(sample_gsplats), str(out_dir)],
+            ["gsplat", "partition", str(sample_gsplats), str(out_dir)],
         )
         assert result.exit_code == 1
 
-    def test_split_roundtrip_with_merge(
+    def test_partition_roundtrip_with_merge(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        """Split then merge should preserve total splat count."""
-        split_dir = tmp_path / "split_output"
+        """Partition then merge should preserve total splat count."""
+        partition_dir = tmp_path / "partition_output"
         result = runner.invoke(
             app,
             [
                 "gsplat",
-                "split",
+                "partition",
                 str(sample_gsplats),
-                str(split_dir),
+                str(partition_dir),
                 "--parts",
                 "2",
             ],
         )
-        assert result.exit_code == 0, f"split failed: {result.stdout}"
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
 
         # Merge back
         merged = tmp_path / "merged.gsplats.zarr"
-        part_paths = [str(split_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)]
+        part_paths = [str(partition_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)]
         result = runner.invoke(
             app,
             ["gsplat", "merge"] + part_paths + ["-o", str(merged)],

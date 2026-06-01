@@ -27,6 +27,7 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
@@ -88,12 +89,14 @@ function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
   const ndim = parts[0].ndim;
   const totalSplats = parts.reduce((sum, p) => sum + p.splatCount, 0);
   const cholSize = (ndim * (ndim + 1)) / 2;
+  const count = (p: LoadedGSplatsData) => p.splatCount;
 
-  const positions = new Float32Array(totalSplats * ndim);
-  const amplitudes = new Float32Array(totalSplats);
-  const choleskyFactors = new Float32Array(totalSplats * cholSize);
+  // Required per-splat fields via the shared helpers (dtype preserved).
+  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
+  const amplitudes = concatRequiredField(parts, (p) => p.amplitudes, count);
+  const choleskyFactors = concatRequiredField(parts, (p) => p.choleskyFactors, count, cholSize);
 
-  // Determine color type from first part that has colors
+  // Bespoke: colors fill missing LODs with white (per-dtype fill value).
   const firstWithColors = parts.find((p) => p.colors !== null);
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
   if (firstWithColors?.colors) {
@@ -108,10 +111,6 @@ function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplatsData {
 
   let offset = 0;
   for (const part of parts) {
-    positions.set(part.positions, offset * ndim);
-    amplitudes.set(part.amplitudes, offset);
-    choleskyFactors.set(part.choleskyFactors, offset * cholSize);
-
     if (colors && part.colors) {
       colors.set(part.colors, offset * 3);
     } else if (colors && !part.colors) {
@@ -212,7 +211,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const lodData = await this.lodLoaders[level].updateView(viewState, session);
+      const { data: lodData, allResident } =
+        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
@@ -221,7 +221,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         log.custom(
           LogEmoji.BROADCAST,
           Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          `LOD ${level}/${this.nLods - 1}: ${lodData.splatCount} splats (${elapsed.toFixed(1)}ms)`
+          `LOD ${level}/${this.nLods - 1}: ${lodData.splatCount} splats (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
         );
       }
 
@@ -231,10 +231,12 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         break;
       }
 
-      // Stop if this load was slow (likely a cache miss / network fetch).
-      // The refinement loop will pick up remaining LODs after the frame renders.
-      // Always load at least LOD 0 regardless of timing.
-      if (level > startLevel && elapsed > CACHE_HIT_THRESHOLD_MS) {
+      // Stop after a cache miss (this level required a fresh fetch/decode) so
+      // the frame can render; the refinement loop picks up the rest. The
+      // wall-clock budget is kept only as a secondary guard against a huge
+      // resident-but-slow level (GC pause, slow projection, probe gap).
+      // Always load at least LOD 0 (level === startLevel) regardless.
+      if (level > startLevel && (!allResident || elapsed > CACHE_HIT_THRESHOLD_MS)) {
         break;
       }
     }

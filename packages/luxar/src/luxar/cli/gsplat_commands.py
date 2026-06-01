@@ -1133,22 +1133,24 @@ def filter_dataset(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# split — Split dataset into multiple parts
+# partition — Partition dataset into multiple parts
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@app_gsplat.command("split")
-def split_dataset(
+@app_gsplat.command("partition")
+def partition_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
-    output_dir: Path = typer.Argument(..., help="Output directory for split parts"),
-    # Split mode (exactly one required)
+    output_dir: Path = typer.Argument(
+        ..., help="Output directory for partitioned parts"
+    ),
+    # Partition mode (exactly one required)
     parts: Optional[int] = typer.Option(
-        None, "--parts", "-n", help="Split into N roughly equal parts"
+        None, "--parts", "-n", help="Partition into N roughly equal parts"
     ),
     indices: Optional[str] = typer.Option(
-        None, "--indices", help="Split at splat indices: '100,500,1000'"
+        None, "--indices", help="Partition at splat indices: '100,500,1000'"
     ),
     # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
@@ -1158,26 +1160,26 @@ def split_dataset(
         None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
     ),
 ) -> None:
-    """Split a Gaussian splat dataset into multiple parts.
+    """Partition a Gaussian splat dataset into multiple parts.
 
     Two modes (exactly one required):
 
-    1. Equal parts (--parts N): Split into N roughly equal parts.
+    1. Equal parts (--parts N): Partition into N roughly equal parts.
 
-    2. At indices (--indices): Split at specific splat indices.
+    2. At indices (--indices): Partition at specific splat indices.
 
     Output files are named part_000.gsplats.zarr, part_001.gsplats.zarr, etc.
     in the specified output directory.
 
     Examples:
-        # Split into 4 equal parts
-        luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
+        # Partition into 4 equal parts
+        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 4
 
-        # Split at specific indices (produces 3 parts: [0:100], [100:500], [500:])
-        luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
+        # Partition at specific indices (produces 3 parts: [0:100], [100:500], [500:])
+        luxar gsplat partition input.gsplats.zarr output_dir/ --indices "100,500"
 
-        # Split with compression
-        luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
+        # Partition with compression
+        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 3 --compress zip
     """
     try:
         from luxar.gsplats.gsplat_data import GSplatData
@@ -1192,35 +1194,35 @@ def split_dataset(
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
-        with asection(f"Splitting: {input_path.name}"):
+        with asection(f"Partitioning: {input_path.name}"):
             # Load
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
-            # Split
-            with asection("Splitting"):
+            # Partition
+            with asection("Partitioning"):
                 if parts is not None:
                     aprint(f"Mode: {parts} equal parts")
-                    split_parts = data.split(parts)
+                    out_parts = data.partition(parts)
                 else:
                     assert (
                         indices is not None
                     )  # ensured by mutual exclusivity check above
                     idx_list = [int(x.strip()) for x in indices.split(",")]
-                    aprint(f"Mode: split at indices {idx_list}")
-                    split_parts = data.split(idx_list)
+                    aprint(f"Mode: partition at indices {idx_list}")
+                    out_parts = data.partition(idx_list)
 
-                aprint(f"Produced {len(split_parts)} parts:")
-                for i, part in enumerate(split_parts):
+                aprint(f"Produced {len(out_parts)} parts:")
+                for i, part in enumerate(out_parts):
                     aprint(f"  part_{i:03d}: {part.n_splats:,} splats")
 
             # Filter out empty parts
             nonempty_parts = [
-                (i, part) for i, part in enumerate(split_parts) if part.n_splats > 0
+                (i, part) for i, part in enumerate(out_parts) if part.n_splats > 0
             ]
-            if len(nonempty_parts) < len(split_parts):
-                n_empty = len(split_parts) - len(nonempty_parts)
+            if len(nonempty_parts) < len(out_parts):
+                n_empty = len(out_parts) - len(nonempty_parts)
                 aprint(f"  Skipping {n_empty} empty part(s)")
 
             # Save

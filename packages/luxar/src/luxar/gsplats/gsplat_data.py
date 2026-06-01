@@ -870,7 +870,7 @@ class GSplatData(_SplatArrayMixin):
             bbox.append((lo, hi))
         return self.filter_by(bbox=bbox)
 
-    # ── Combine / Split / Embed ─────────────────────────────
+    # ── Combine / Partition / Embed ─────────────────────────────
 
     @classmethod
     def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
@@ -1029,12 +1029,14 @@ class GSplatData(_SplatArrayMixin):
         ]
         return cls.concatenate(embedded)
 
-    def split(self, n_or_indices: "int | list[int] | np.ndarray") -> "list[GSplatData]":
-        """Split into multiple GSplatData objects.
+    def partition(
+        self, n_or_indices: "int | list[int] | np.ndarray"
+    ) -> "list[GSplatData]":
+        """Partition into multiple GSplatData objects.
 
         Args:
-            n_or_indices: If int, split into n roughly equal parts.
-                If list/array of ints, split at those indices.
+            n_or_indices: If int, partition into n roughly equal parts.
+                If list/array of ints, partition at those indices.
 
         Returns:
             List of GSplatData objects.
