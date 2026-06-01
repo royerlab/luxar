@@ -1,11 +1,11 @@
-"""Tests for ``add_lines(split=...)`` — polyline-centroid BSP.
+"""Tests for ``add_lines(partition=...)`` — polyline-centroid BSP.
 
-Lines splits are polyline-atomic: every vertex of a polyline stays in
+Lines partitions are polyline-atomic: every vertex of a polyline stays in
 exactly one output part, and the BSP runs over per-polyline centroids
 (mean of constituent vertex positions). Covers:
 
-- :func:`luxar.core.group.split.midpoint_bsp_polylines` directly.
-- The ``split=`` kwarg on ``add_lines`` for line_type='segments' and
+- :func:`luxar.core.group.partition.midpoint_bsp_polylines` directly.
+- The ``partition=`` kwarg on ``add_lines`` for line_type='segments' and
   'indexed'.
 - The new ``rule='sah'`` opt-in.
 """
@@ -19,7 +19,7 @@ import zarr
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.lines import identify_polylines
-from luxar.core.group.split import midpoint_bsp_polylines
+from luxar.core.group.partition import midpoint_bsp_polylines
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────
@@ -95,11 +95,11 @@ class TestMidpointBspPolylines:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# add_lines(split=...) — end-to-end
+# add_lines(partition=...) — end-to-end
 # ────────────────────────────────────────────────────────────────────────
 
 
-class TestAddLinesSplit:
+class TestAddLinesPartition:
     @staticmethod
     def _segments_data(n_segments: int, seed: int = 0):
         """Build (vertices, widths) for ``n_segments`` random line segments."""
@@ -108,7 +108,7 @@ class TestAddLinesSplit:
         widths = np.full(2 * n_segments, 0.05, dtype=np.float32)
         return vertices, widths
 
-    def test_over_cap_creates_split_wrapper(self, tmp_path):
+    def test_over_cap_creates_partition_wrapper(self, tmp_path):
         v, w = self._segments_data(200, seed=0)  # 400 vertices total
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -117,10 +117,10 @@ class TestAddLinesSplit:
                 vertices=v,
                 widths=w,
                 line_type="segments",
-                split=dict(max_elements=120),
+                partition=dict(max_elements=120),
             )
             assert isinstance(node, Group)
-            assert node.attrs.get("kind") == "split"
+            assert node.attrs.get("kind") == "partition"
             assert node.attrs.get("display_type") == "lines"
 
     def test_polylines_atomic_at_write_time(self, tmp_path):
@@ -133,7 +133,7 @@ class TestAddLinesSplit:
                 vertices=v,
                 widths=w,
                 line_type="segments",
-                split=dict(max_elements=100),
+                partition=dict(max_elements=100),
             )
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["lines"]
@@ -154,8 +154,8 @@ class TestAddLinesSplit:
         )
         assert len(counts) >= 2
 
-    def test_split_under_cap_falls_through(self, tmp_path):
-        """split= with input under the cap → no wrapper."""
+    def test_partition_under_cap_falls_through(self, tmp_path):
+        """partition= with input under the cap → no wrapper."""
         v, w = self._segments_data(5, seed=2)  # 10 vertices
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -164,12 +164,12 @@ class TestAddLinesSplit:
                 vertices=v,
                 widths=w,
                 line_type="segments",
-                split=dict(max_elements=100),
+                partition=dict(max_elements=100),
             )
-        assert node.attrs.get("kind") != "split"
+        assert node.attrs.get("kind") != "partition"
 
-    def test_split_with_polyline_type_is_no_op(self, tmp_path):
-        """A single polyline = one polyline → BSP can't split → single leaf."""
+    def test_partition_with_polyline_type_is_no_op(self, tmp_path):
+        """A single polyline = one polyline → BSP can't partition → single leaf."""
         # 200 vertices in one polyline; cap=50. With polyline-atomic
         # invariant, the single polyline can't be broken up so we expect
         # to fall through to a single-leaf write.
@@ -182,24 +182,24 @@ class TestAddLinesSplit:
                 vertices=v,
                 widths=w,
                 line_type="polyline",
-                split=dict(max_elements=50),
+                partition=dict(max_elements=50),
             )
-        assert node.attrs.get("kind") != "split"
+        assert node.attrs.get("kind") != "partition"
 
-    def test_invalid_split_rule_raises(self, tmp_path):
+    def test_invalid_partition_rule_raises(self, tmp_path):
         v, w = self._segments_data(50, seed=4)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="split rule"):
+            with pytest.raises(ValueError, match="partition rule"):
                 scene.add_lines(
                     "lines",
                     vertices=v,
                     widths=w,
                     line_type="segments",
-                    split=dict(max_elements=20, rule="invalid"),
+                    partition=dict(max_elements=20, rule="invalid"),
                 )
 
-    def test_sah_rule_produces_split(self, tmp_path):
+    def test_sah_rule_produces_partition(self, tmp_path):
         v, w = self._segments_data(200, seed=5)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -208,22 +208,22 @@ class TestAddLinesSplit:
                 vertices=v,
                 widths=w,
                 line_type="segments",
-                split=dict(max_elements=120, rule="sah"),
+                partition=dict(max_elements=120, rule="sah"),
             )
         assert isinstance(node, Group)
-        assert node.attrs.get("kind") == "split"
+        assert node.attrs.get("kind") == "partition"
 
-    def test_image_labels_alongside_split_raises(self, tmp_path):
+    def test_image_labels_alongside_partition_raises(self, tmp_path):
         v, w = self._segments_data(100, seed=6)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="image_labels.*split"):
+            with pytest.raises(ValueError, match="image_labels.*partition"):
                 scene.add_lines(
                     "lines",
                     vertices=v,
                     widths=w,
                     line_type="segments",
-                    split=dict(max_elements=50),
+                    partition=dict(max_elements=50),
                     image_labels=["foo"],
                 )
 
@@ -233,7 +233,7 @@ class TestAddLinesSplit:
 # ────────────────────────────────────────────────────────────────────────
 
 
-class TestIdentifyPolylinesForSplit:
+class TestIdentifyPolylinesForPartition:
     def test_segments_pairs_per_polyline(self):
         polys = identify_polylines(10, "segments")
         assert len(polys) == 5

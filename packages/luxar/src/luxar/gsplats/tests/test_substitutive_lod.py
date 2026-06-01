@@ -477,3 +477,81 @@ class TestApiContract:
                 loaded.substitutive_levels[s].n_splats_total
                 == pyramid.substitutive_levels[s].n_splats_total
             )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Shape-aware k-means warm start (WS7)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestShapeAwareSeeding:
+    def test_augment_appends_scaled_shape_block(self):
+        """`_augment_with_shape` returns (N, 2D) and weight=0 is a no-op."""
+        import torch
+
+        from luxar.gsplats.lod.substitutive import _augment_with_shape
+
+        data = _make_anisotropic_3d(n=20, seed=3)
+        centres, L, _ = _gsplat_to_torch(data)
+        aug = _augment_with_shape(centres, L, weight=0.5)
+        assert aug.shape == (centres.shape[0], 2 * centres.shape[1])
+        # The leading block is the untouched centres.
+        assert torch.allclose(aug[:, : centres.shape[1]], centres)
+        # weight=0 → centres-only passthrough.
+        none = _augment_with_shape(centres, L, weight=0.0)
+        assert torch.allclose(none, centres)
+
+    def test_shape_aware_not_worse_than_centers_only(self):
+        """kmeans_lloyd (shape-aware seed) should not regress vs plain kmeans
+        on anisotropic data — same non-regression contract as Lloyd."""
+        data = _make_anisotropic_3d(n=48, seed=11)
+        out_plain = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans",  # centers-only baseline
+            device="cpu",
+            seed=11,
+        )
+        out_shape = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",  # shape-aware seed + Lloyd refinement
+            lloyd_iterations=5,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=11,
+        )
+        rel_plain = _rel_l2_render(data, out_plain.at_substitutive(1))
+        rel_shape = _rel_l2_render(data, out_shape.at_substitutive(1))
+        assert rel_shape <= rel_plain + 0.05, (
+            f"shape-aware worse: {rel_shape:.3f} vs centers-only {rel_plain:.3f}"
+        )
+
+    def test_empty_bins_culled(self):
+        """Coincident points force empty k-means bins; representatives with
+        zero amplitude must be culled (no degenerate output splats)."""
+        # 16 points but only 2 distinct locations → many empty bins at K=4.
+        centres = np.zeros((16, 3), dtype=np.float32)
+        centres[8:] = np.array([5.0, 5.0, 5.0], dtype=np.float32)
+        chol = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (16, 1))
+        data = GSplatData(
+            centers=centres,
+            amplitudes=np.ones(16, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=2,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        level_1 = out.at_substitutive(1)
+        assert level_1.n_splats >= 1
+        assert np.all(level_1.amplitudes > 0)  # no zero-amplitude empties
+        assert np.all(np.isfinite(level_1.centers))

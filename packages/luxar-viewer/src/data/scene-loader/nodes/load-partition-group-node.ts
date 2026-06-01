@@ -1,5 +1,5 @@
 /**
- * Initial-load path for a single kind=`split` `Group` scene-graph node.
+ * Initial-load path for a single kind=`partition` `Group` scene-graph node.
  *
  * Mirrors the generic-group branch in `load-scene-nodes.ts` — creates
  * a `THREE.Group`, applies the transform, recurses into children — and
@@ -19,19 +19,19 @@
  *
  * Sibling of `load-lod-group-node.ts` (which has a per-frame selector).
  *
- * @module data/scene-loader/nodes/load-split-group-node
+ * @module data/scene-loader/nodes/load-partition-group-node
  */
 
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
-import type { SplitGroupMetadata } from '../../../types/split-group';
+import type { PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
 import type { LoadSceneChildren } from './load-lod-group-node';
 
 /**
- * Load a kind=`split` `Group` on initial scene construction.
+ * Load a kind=`partition` `Group` on initial scene construction.
  *
  * Pattern:
  *   1. Create a `THREE.Group` for the wrapper; apply transform.
@@ -44,53 +44,53 @@ import type { LoadSceneChildren } from './load-lod-group-node';
  * dep-cruiser check rejects static back-references. Same pattern as
  * ``load-lod-group-node.ts``.
  *
- * No registry needed — Split has no per-frame decision to make. THREE's
+ * No registry needed — Partition has no per-frame decision to make. THREE's
  * per-mesh frustum culling handles per-part culling automatically once
  * the children attach.
  */
-export async function loadSplitGroupNode(
+export async function loadPartitionGroupNode(
   node: SceneNode,
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx,
   loadChildren: LoadSceneChildren
 ): Promise<THREE.Group> {
-  const attrs = node.attrs as unknown as SplitGroupMetadata;
+  const attrs = node.attrs as unknown as PartitionGroupMetadata;
   log.custom(
     '✂️',
     Modules.SCENE_LOADER,
-    `Loading split-kind group: ${node.path} (display_type=${attrs.display_type}, max_elements=${attrs.max_elements})`
+    `Loading partition-kind group: ${node.path} (display_type=${attrs.display_type}, max_elements=${attrs.max_elements})`
   );
 
-  const splitGroup = new THREE.Group();
-  splitGroup.name = node.path;
+  const partitionGroup = new THREE.Group();
+  partitionGroup.name = node.path;
   // Mark the THREE node with its specialized-group kind so the picking
   // system can resolve a hit on an inner ``part_<i>`` child back to the
   // wrapper's path. Mirrors the convention in load-lod-group-node.ts.
-  splitGroup.userData.kind = 'split';
+  partitionGroup.userData.kind = 'partition';
   if (attrs.transform) {
-    ctx.nodeFactory.applyTransform(splitGroup, attrs.transform);
+    ctx.nodeFactory.applyTransform(partitionGroup, attrs.transform);
   }
-  parentThree.add(splitGroup);
+  parentThree.add(partitionGroup);
 
   const sceneChildren = node.children ?? [];
   if (sceneChildren.length === 0) {
     log.warning(
       Modules.SCENE_LOADER,
-      `split-kind group ${node.path} has no children`
+      `partition-kind group ${node.path} has no children`
     );
-    return splitGroup;
+    return partitionGroup;
   }
 
   for (const child of sceneChildren) {
     const childLoc = parentLoc.resolve(child.path.slice(1));
-    await loadChildren(child, splitGroup, childLoc, ctx);
+    await loadChildren(child, partitionGroup, childLoc, ctx);
   }
 
   log.info(
     Modules.SCENE_LOADER,
-    `  Loaded ${sceneChildren.length} part(s) for split group ${node.path}`
+    `  Loaded ${sceneChildren.length} part(s) for partition group ${node.path}`
   );
 
-  return splitGroup;
+  return partitionGroup;
 }

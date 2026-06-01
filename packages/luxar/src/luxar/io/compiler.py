@@ -138,7 +138,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     colors = np.random.rand(1000, 3).astype(np.float32) * 5.0
         ...     scene.add_points('bright_points', positions, colors=colors)
 
-        Large datasets (split into multiple nodes):
+        Large datasets (partitioned into multiple nodes):
         >>> dims = Dimensions.default_3d()
         >>> with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
@@ -158,7 +158,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         encoding_mode: EncodingMode = EncodingMode.AUTO,
         ordering_method: Literal["morton", "hilbert"] = "hilbert",
         float16_allowed: bool = False,
-        auto_split_max_elements: Optional[int] = None,
+        auto_partition_max_elements: Optional[int] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -170,11 +170,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             encoding_mode: Encoding mode for array storage (AUTO/PRECISION/MEMORY)
             ordering_method: Spatial ordering method ("morton" or "hilbert", default: "hilbert")
             float16_allowed: Allow float16 encoding in MEMORY mode (default: False for TypeScript compatibility)
-            auto_split_max_elements: If set, ``add_points`` and ``add_gsplats``
-                automatically apply ``split=dict(max_elements=N)`` when the
-                input element count exceeds N. User-explicit ``split=`` at
+            auto_partition_max_elements: If set, ``add_points`` and ``add_gsplats``
+                automatically apply ``partition=dict(max_elements=N)`` when the
+                input element count exceeds N. User-explicit ``partition=`` at
                 the call site always wins. Default ``None`` (opt-in, no
-                auto-split). Useful for large datasets where you want a
+                auto-partition). Useful for large datasets where you want a
                 per-part frustum-cull benefit without explicit per-call
                 boilerplate.
 
@@ -197,14 +197,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.enable_spatial_index = enable_spatial_index
         self.ordering_method = ordering_method
 
-        # Opt-in auto-split threshold. Read at add_points / add_gsplats
-        # time via Group._auto_split_threshold(). None disables.
-        if auto_split_max_elements is not None and auto_split_max_elements <= 0:
+        # Opt-in auto-partition threshold. Read at add_points / add_gsplats
+        # time via resolve_auto_partition(). None disables.
+        if (
+            auto_partition_max_elements is not None
+            and auto_partition_max_elements <= 0
+        ):
             raise ValueError(
-                "auto_split_max_elements must be positive; "
-                f"got {auto_split_max_elements}"
+                "auto_partition_max_elements must be positive; "
+                f"got {auto_partition_max_elements}"
             )
-        self.auto_split_max_elements: Optional[int] = auto_split_max_elements
+        self.auto_partition_max_elements: Optional[int] = auto_partition_max_elements
 
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
@@ -2058,12 +2061,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Walks the zarr tree post-order and, for every group whose attrs
         declare ``kind == 'lod'`` without a ``position_bounds``, computes
         the union of its children's ``position_bounds`` (recursing into
-        nested ``kind="lod"`` / ``kind="split"`` wrappers and plain
+        nested ``kind="lod"`` / ``kind="partition"`` wrappers and plain
         groups). The convenience-builder path
         (``_add_gsplats_as_lod_group``) leaves the parent without bounds
-        because each leaf carries its own; ``kind="split"`` wrappers
+        because each leaf carries its own; ``kind="partition"`` wrappers
         already persist their union at write time
-        (``Group._add_*_split_wrapper``); only ``kind="lod"`` wrappers
+        (``add_*_partition_wrapper_impl``); only ``kind="lod"`` wrappers
         were left without aggregate bounds, so the viewer's
         ``loadLodGroupNode`` saw empty bounds for a nested LOD-of-LOD
         construction and skipped that level in projection.
@@ -2138,7 +2141,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Walks the zarr tree and, for every group whose attrs declare
         ``kind == 'lod'`` without a ``display_type``, resolves one from
         the **finest** child's own type (recursing through nested
-        kind=lod / kind=split groups). The convenience-builder path
+        kind=lod / kind=partition groups). The convenience-builder path
         (``_add_gsplats_as_lod_group``) already sets ``display_type``
         explicitly; this hook serves explicit-builder constructions
         where the user wrote ``add_lod_group(...)`` + a mix of leaf
@@ -2155,9 +2158,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if t in ("points", "lines", "gsplats"):
                 return str(t)  # leaf
             kind = attrs.get("kind")
-            if kind in ("lod", "split") and "display_type" in attrs:
+            if kind in ("lod", "partition") and "display_type" in attrs:
                 return str(attrs["display_type"])
-            # Plain group or kind=lod / kind=split without display_type
+            # Plain group or kind=lod / kind=partition without display_type
             # → recurse into children. Children of an lod_group are
             # stored in coarsest→finest order, so the finest is the
             # last one — that's the one to read.

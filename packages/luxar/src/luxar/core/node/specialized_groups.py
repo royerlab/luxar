@@ -1,7 +1,7 @@
-"""Free-function impls for `Node.add_lod_group` and `Node.add_split_group`.
+"""Free-function impls for `Node.add_lod_group` and `Node.add_partition_group`.
 
 These two convenience builders live on `Node` (so any Node can spawn a
-kind=lod or kind=split Group as a child). The bodies are extracted here
+kind=lod or kind=partition Group as a child). The bodies are extracted here
 to keep node.py readable.
 """
 
@@ -57,7 +57,7 @@ def add_lod_group_impl(
         raise ValueError(f"Could not create child kind=lod group '{name}': {e}") from e
 
 
-def add_split_group_impl(
+def add_partition_group_impl(
     node: "Node",
     name: str,
     *,
@@ -65,29 +65,30 @@ def add_split_group_impl(
     max_elements: int,
     **attrs: Any,
 ) -> "Group":
-    """Body of :meth:`Node.add_split_group`."""
+    """Body of :meth:`Node.add_partition_group`."""
     if display_type not in ("points", "lines", "gsplats"):
         raise ValueError(
-            "display_type for a split group must be one of "
+            "display_type for a partition group must be one of "
             f"'points' / 'lines' / 'gsplats', got {display_type!r}"
         )
     if not isinstance(max_elements, int) or max_elements < 1:
         raise ValueError(f"max_elements must be an int >= 1, got {max_elements!r}")
     try:
-        aprint(f"Adding child kind=split group '{name}' to node '{node.name}'.")
+        aprint(f"Adding child kind=partition group '{name}' to node '{node.name}'.")
         child = node.add_group(
             name,
-            kind="split",
+            kind="partition",
             display_type=display_type,
             max_elements=max_elements,
             **attrs,
         )
-        aprint(f"✓ Child kind=split group '{name}' added successfully.")
+        aprint(f"✓ Child kind=partition group '{name}' added successfully.")
         return child
     except Exception as e:
         aprint(
-            f"Failed to add child kind=split group '{name}' to node '{node.name}': {e}"
+            f"Failed to add child kind=partition group '{name}' to "
+            f"node '{node.name}': {e}"
         )
         raise ValueError(
-            f"Could not create child kind=split group '{name}': {e}"
+            f"Could not create child kind=partition group '{name}': {e}"
         ) from e

@@ -15,7 +15,7 @@ import { log, Modules } from '../../utils/log';
  * - ``group`` — composite container; controls fan out to descendants.
  * - ``points`` / ``lines`` / ``gsplats`` — leaf data layers.
  *
- * Specialized groups (``kind === 'lod'``, future ``'split'``) appear in
+ * Specialized groups (``kind === 'lod'``, future ``'partition'``) appear in
  * the layers panel as their underlying ``display_type`` (one of the
  * three leaf types) — never as ``'group'``. The specialized-group
  * nature is surfaced via the ``kind`` field on ``LayerInfo``, which
@@ -39,7 +39,7 @@ export function isLayerEnabled(value: unknown): boolean {
 }
 
 /** Specialized-group discriminant on a layer. */
-export type LayerKind = 'lod' | 'split';
+export type LayerKind = 'lod' | 'partition';
 
 /** Information about a single layer in the Layers panel */
 export interface LayerInfo {
@@ -49,13 +49,13 @@ export interface LayerInfo {
   name: string;
   /**
    * Geometry type the user sees this layer as. For specialized groups
-   * (kind=lod / kind=split), this is the resolved ``display_type`` attr
+   * (kind=lod / kind=partition), this is the resolved ``display_type`` attr
    * from disk — not ``'group'``.
    */
   type: LayerType;
   /**
    * Specialized-group kind, if the underlying scene-graph node is a
-   * kind=lod or kind=split ``Group``. Drives the layer-header badge and
+   * kind=lod or kind=partition ``Group``. Drives the layer-header badge and
    * the inline LOD-level dropdown.
    */
   kind?: LayerKind;
@@ -90,17 +90,17 @@ export interface LayerInfo {
    */
   lodGroupChildCount?: number;
   /**
-   * For ``kind === 'split'`` layers: number of BSP child parts. Drives
-   * the "N parts" badge on the layer header. Absent for non-Split
+   * For ``kind === 'partition'`` layers: number of BSP child parts. Drives
+   * the "N parts" badge on the layer header. Absent for non-Partition
    * layers.
    */
-  splitPartCount?: number;
+  partCount?: number;
   /**
-   * For ``kind === 'split'`` layers that wrap kind=lod descendants:
+   * For ``kind === 'partition'`` layers that wrap kind=lod descendants:
    * absolute paths of every nested lod_group in the subtree. The
    * "Active level" dropdown on the wrapper broadcasts to every path
    * (clamped per-group by ``LODGroupRegistry.setSelectorMode`` on
-   * ragged ladders). Absent for non-Split layers and for Split layers
+   * ragged ladders). Absent for non-Partition layers and for Partition layers
    * with no nested LODs.
    *
    * Also used to compute the ``[N parts × M LODs]`` combined badge:
@@ -230,7 +230,7 @@ export class LayerStateManager {
         // data (`has_scalars`) or an authored `colormap`; a bare gsplats
         // node with no scalars must NOT advertise colormap support, or
         // the UI offers a no-op colormap dropdown.
-        // kind=lod / kind=split groups are composite containers; the
+        // kind=lod / kind=partition groups are composite containers; the
         // colormap applies to descendants via composition just like a
         // plain group.
         const colormap = node.attrs.colormap as string | undefined;
@@ -275,7 +275,7 @@ export class LayerStateManager {
         // groups and leaf nodes.
         const rawKind = node.attrs.kind as LayerKind | undefined;
         const kind: LayerKind | undefined =
-          node.type === 'group' && (rawKind === 'lod' || rawKind === 'split')
+          node.type === 'group' && (rawKind === 'lod' || rawKind === 'partition')
             ? rawKind
             : undefined;
 
@@ -289,21 +289,21 @@ export class LayerStateManager {
             ? displayType
             : (node.type as LayerType);
 
-        // Kind-specific badge counts. lod → "N LODs" + dropdown; split →
+        // Kind-specific badge counts. lod → "N LODs" + dropdown; partition →
         // "N parts" status chip. Other layers leave both undefined.
         const lodGroupChildCount =
           kind === 'lod' ? (node.children?.length ?? 0) : undefined;
-        const splitPartCount =
-          kind === 'split' ? (node.children?.length ?? 0) : undefined;
+        const partCount =
+          kind === 'partition' ? (node.children?.length ?? 0) : undefined;
 
-        // Split-of-LOD discovery. A kind=split layer that wraps
+        // Partition-of-LOD discovery. A kind=partition layer that wraps
         // kind=lod descendants gets a broadcast dropdown over every
         // nested lod_group. The walk stops at the first lod_group it
         // hits per branch — an lod_group's own children are leaves of
         // the LOD ladder, not further LOD wrappers.
         let nestedLodGroupPaths: string[] | undefined;
         let nestedLodMaxChildCount: number | undefined;
-        if (kind === 'split') {
+        if (kind === 'partition') {
           const collected: string[] = [];
           let maxCount = 0;
           const visit = (n: SceneNode): void => {
@@ -345,7 +345,7 @@ export class LayerStateManager {
           supportsColormap,
           scalarDataRange: colormapScalarRange,
           lodGroupChildCount,
-          splitPartCount,
+          partCount,
           nestedLodGroupPaths,
           nestedLodMaxChildCount,
         });

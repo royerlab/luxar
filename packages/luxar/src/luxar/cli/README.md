@@ -33,7 +33,7 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, cull, fit, convert, render, merge, filter, split, slice, compare, transform, denoise, napari, benchmark, batch plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, cull, fit, convert, render, merge, filter, partition, slice, compare, transform, denoise, napari, benchmark, batch plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
@@ -177,12 +177,12 @@ luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01
 
 **Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
 
-#### `luxar gsplat split`
-Split a dataset into multiple parts.
+#### `luxar gsplat partition`
+Partition a dataset into multiple parts.
 ```bash
-luxar gsplat split input.gsplats.zarr output_dir/ --parts 4
-luxar gsplat split input.gsplats.zarr output_dir/ --indices "100,500"
-luxar gsplat split input.gsplats.zarr output_dir/ --parts 3 --compress zip
+luxar gsplat partition input.gsplats.zarr output_dir/ --parts 4
+luxar gsplat partition input.gsplats.zarr output_dir/ --indices "100,500"
+luxar gsplat partition input.gsplats.zarr output_dir/ --parts 3 --compress zip
 ```
 
 #### `luxar gsplat slice`

@@ -309,9 +309,9 @@ luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
 luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr                          # substitutive directory
 
-# Split into parts
-luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
-luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"
+# Partition into parts
+luxar gsplat partition splats.gsplats.zarr output_dir/ --parts 4
+luxar gsplat partition splats.gsplats.zarr output_dir/ --indices "1000,5000"
 
 # Merge multiple datasets
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr

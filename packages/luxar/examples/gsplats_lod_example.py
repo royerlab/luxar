@@ -7,8 +7,8 @@ its finer level with a smaller set of synthesized representative
 splats. The viewer picks a level based on projected pixel size.
 
 This complements the four existing LOD examples
-(``progressive_points_lines_example.py``, ``split_of_lod_example.py``,
-``lines_split_and_sampling_example.py``, ``energy_breakpoints_example.py``)
+(``progressive_points_lines_example.py``, ``partition_of_lod_example.py``,
+``lines_partition_and_sampling_example.py``, ``energy_breakpoints_example.py``)
 which all focus on **additive** LOD (each level adds new elements on
 top of the previous one). Substitutive and additive are independent
 axes — together they form the 2-D LOD pyramid described in the

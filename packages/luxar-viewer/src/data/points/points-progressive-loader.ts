@@ -39,6 +39,10 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import {
+  concatOptionalField,
+  concatRequiredField,
+} from '../loaders/progressive/concat-helpers';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /** Shared cache-hit threshold; matches `gsplats-progressive-loader`. */
@@ -94,18 +98,9 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
 
   const ndim = parts[0].ndim;
   const totalPoints = parts.reduce((sum, p) => sum + p.pointCount, 0);
+  const count = (p: LoadedPointsData) => p.pointCount;
 
-  const positions = new Float32Array(totalPoints * ndim);
-  let offset = 0;
-  for (const part of parts) {
-    positions.set(part.positions, offset * ndim);
-    offset += part.pointCount;
-  }
-
-  const allHaveColors = parts.every((p) => p.colors !== undefined);
-  const allHaveRadii = parts.every((p) => p.radii !== undefined);
-  const allHaveSharpness = parts.every((p) => p.sharpness !== undefined);
-  const allHaveScalars = parts.every((p) => p.scalars !== undefined);
+  const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
 
   // Aggregate bounds across all loaded levels.
   const aggBounds = new THREE.Box3();
@@ -125,50 +120,15 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
     },
   };
 
-  if (allHaveColors) {
-    const first = parts[0].colors as ColorArray;
-    const ctor = first.constructor as new (n: number) => ColorArray;
-    const colors = new ctor(totalPoints * 3);
-    let o = 0;
-    for (const part of parts) {
-      colors.set(part.colors!, o * 3);
-      o += part.pointCount;
-    }
-    result.colors = colors;
-  }
-  if (allHaveRadii) {
-    const first = parts[0].radii as ScalarArray;
-    const ctor = first.constructor as new (n: number) => ScalarArray;
-    const radii = new ctor(totalPoints);
-    let o = 0;
-    for (const part of parts) {
-      radii.set(part.radii!, o);
-      o += part.pointCount;
-    }
-    result.radii = radii;
-  }
-  if (allHaveSharpness) {
-    const first = parts[0].sharpness as ScalarArray;
-    const ctor = first.constructor as new (n: number) => ScalarArray;
-    const sharpness = new ctor(totalPoints);
-    let o = 0;
-    for (const part of parts) {
-      sharpness.set(part.sharpness!, o);
-      o += part.pointCount;
-    }
-    result.sharpness = sharpness;
-  }
-  if (allHaveScalars) {
-    const first = parts[0].scalars as ScalarArray;
-    const ctor = first.constructor as new (n: number) => ScalarArray;
-    const scalars = new ctor(totalPoints);
-    let o = 0;
-    for (const part of parts) {
-      scalars.set(part.scalars!, o);
-      o += part.pointCount;
-    }
-    result.scalars = scalars;
-  }
+  // Optional per-point fields: all-or-nothing across LODs (dtype preserved).
+  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3);
+  if (colors) result.colors = colors;
+  const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count);
+  if (radii) result.radii = radii;
+  const sharpness = concatOptionalField(parts, (p) => p.sharpness as ScalarArray, count);
+  if (sharpness) result.sharpness = sharpness;
+  const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count);
+  if (scalars) result.scalars = scalars;
 
   return result;
 }
@@ -228,7 +188,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const lodData = await this.lodLoaders[level].updateView(viewState, session);
+      const { data: lodData, allResident } =
+        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
@@ -239,7 +200,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
           Modules.SPATIAL_INDEX_LOADER,
           `LOD ${level}/${this.nLods - 1}: ${
             lodData.positions.length / 3
-          } points (${elapsed.toFixed(1)}ms)`
+          } points (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
         );
       }
 
@@ -249,7 +210,9 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         break;
       }
 
-      if (level > startLevel && elapsed > CACHE_HIT_THRESHOLD_MS) {
+      // Stop after a cache miss; refinement loop continues next frame. The
+      // wall-clock budget remains a secondary guard. LOD 0 always loads.
+      if (level > startLevel && (!allResident || elapsed > CACHE_HIT_THRESHOLD_MS)) {
         break;
       }
     }

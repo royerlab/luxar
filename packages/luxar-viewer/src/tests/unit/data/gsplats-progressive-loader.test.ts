@@ -14,6 +14,7 @@ import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
+  updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -76,8 +77,16 @@ function makeSubLoader(
   initialData: LoadedGSplatsData,
   metrics: Record<string, number> = {}
 ): SubLoaderStub {
+  const updateView = vi.fn().mockResolvedValue(initialData);
+  // Progressive loader calls updateViewWithResidency; delegate to updateView
+  // (default allResident=true) so existing assertions / timing tests hold.
+  const updateViewWithResidency = vi.fn(async (vs: unknown, s?: unknown) => ({
+    data: await updateView(vs, s),
+    allResident: true,
+  }));
   return {
-    updateView: vi.fn().mockResolvedValue(initialData),
+    updateView,
+    updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),

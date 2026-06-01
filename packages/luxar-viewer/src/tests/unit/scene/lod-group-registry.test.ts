@@ -58,6 +58,24 @@ describe('pickChildWithHysteresis', () => {
     expect(pickChildWithHysteresis([], 0, 100)).toBe(-1);
   });
 
+  it('uses a gap-relative downgrade band for tightly-spaced levels', () => {
+    // Levels 10 and 11 are within 10% of each other (e.g. from the
+    // derive_min_pixel_sizes ×1.1 nudge). The spacing-aware band is
+    // ratio * gap = 0.1 * (11 - 10) = 0.1, so the deadband is [10.9, 11):
+    // level 1 still renders on the way down instead of being skipped.
+    const tight = [0, 10, 11];
+    expect(pickChildWithHysteresis(tight, 2, 10.95)).toBe(2); // deadband → stay
+    expect(pickChildWithHysteresis(tight, 2, 10.5)).toBe(1); // one clean level down
+    expect(pickChildWithHysteresis(tight, 2, 9.9)).toBe(0); // into level 0's range
+  });
+
+  it('reduces to the threshold-fraction band for the bottom level', () => {
+    // prev threshold is 0, so gap == currentThreshold and the band equals
+    // the original currentThreshold * (1 - ratio) behaviour.
+    expect(pickChildWithHysteresis(thresholds, 1, 91)).toBe(1); // 91 ≥ 90 → stay
+    expect(pickChildWithHysteresis(thresholds, 1, 89)).toBe(0); // 89 < 90 → down
+  });
+
   it('handles a current index that no longer satisfies its threshold', () => {
     // current=2 (threshold 500) but diagonal is only 50 → expected
     // downgrade to 0 (well below 500 * 0.9).

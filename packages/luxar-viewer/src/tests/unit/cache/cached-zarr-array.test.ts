@@ -13,6 +13,7 @@ import {
   unwrapCachedArray,
   cloneArrayBufferView,
 } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ResidencyAccumulator } from '../../../cache/residency-probe';
 
 // Mock zarr types for testing
 type MockChunk = {
@@ -444,5 +445,67 @@ describe('cached-zarr-array', () => {
       // This tests that the getter works correctly through the proxy
       expect(wrapped.shape).toEqual([100, 3]);
     });
+  });
+
+  describe('residency probe', () => {
+    it('records a miss on cold access then a hit when warm', async () => {
+      const mockArray = createMockZarrArray();
+      const probe = new ResidencyAccumulator();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => probe);
+
+      // Cold: triggers a real getChunk → miss.
+      await wrapped.getChunk([0, 0, 0]);
+      expect(probe.misses).toBe(1);
+      expect(probe.hits).toBe(0);
+      expect(probe.allResident).toBe(false);
+
+      // Warm: same chunk now resident → hit.
+      await wrapped.getChunk([0, 0, 0]);
+      expect(probe.hits).toBe(1);
+      expect(probe.misses).toBe(1);
+    });
+
+    it('treats a coalesced concurrent access as a hit', async () => {
+      // A slow getChunk so the second call coalesces onto the first's promise.
+      let resolveChunk: (c: MockChunk) => void = () => {};
+      const slow = vi.fn().mockImplementation(
+        () => new Promise<MockChunk>((res) => (resolveChunk = res))
+      );
+      const mockArray = createMockZarrArray(slow);
+      const probe = new ResidencyAccumulator();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => probe);
+
+      const p1 = wrapped.getChunk([0, 0, 0]); // miss → starts decode
+      const p2 = wrapped.getChunk([0, 0, 0]); // coalesces → hit
+      resolveChunk({ data: new Float32Array([1, 2, 3]), shape: [3], stride: [1] });
+      await Promise.all([p1, p2]);
+
+      expect(slow).toHaveBeenCalledTimes(1); // single underlying decode
+      expect(probe.misses).toBe(1);
+      expect(probe.hits).toBe(1); // the coalesced caller
+    });
+
+    it('does not record when the probe accessor returns null', async () => {
+      const mockArray = createMockZarrArray();
+      const probe = new ResidencyAccumulator();
+      // Accessor returns null (e.g. prefetch traffic / no active load).
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => null);
+
+      await wrapped.getChunk([0, 0, 0]);
+      expect(probe.touched).toBe(false);
+    });
+  });
+});
+
+describe('ResidencyAccumulator', () => {
+  it('reports allResident only when no misses recorded', () => {
+    const acc = new ResidencyAccumulator();
+    expect(acc.allResident).toBe(true); // nothing touched → resident
+    expect(acc.touched).toBe(false);
+    acc.record(true);
+    expect(acc.allResident).toBe(true);
+    expect(acc.touched).toBe(true);
+    acc.record(false);
+    expect(acc.allResident).toBe(false);
   });
 });

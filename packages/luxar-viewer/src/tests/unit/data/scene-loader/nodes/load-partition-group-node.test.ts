@@ -1,7 +1,7 @@
 /**
- * Tests for ``loadSplitGroupNode``.
+ * Tests for ``loadPartitionGroupNode``.
  *
- * Strategy: the Split loader recurses children through ``loadSceneNodes``
+ * Strategy: the Partition loader recurses children through ``loadSceneNodes``
  * but has no per-frame state to register (no LOD-style selector). We
  * mock ``loadSceneNodes`` to attach a stub mesh per child, then assert
  * on the THREE-tree shape.
@@ -10,12 +10,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
-// Caller-injected recursion handle: the split loader now takes
+// Caller-injected recursion handle: the partition loader now takes
 // loadSceneNodes as an explicit ``loadChildren`` parameter (mirrors
 // load-lod-group-node) so tests can pass the mock directly.
 const loadSceneNodesMock = vi.fn();
 
-import { loadSplitGroupNode } from '../../../../../data/scene-loader/nodes/load-split-group-node';
+import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/load-partition-group-node';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
@@ -35,16 +35,16 @@ function makePartNode(path: string, partType: 'points' | 'gsplats' = 'points'): 
   };
 }
 
-function makeSplitGroupNode(
+function makePartitionGroupNode(
   children: SceneNode[],
   extraAttrs: Record<string, unknown> = {}
 ): SceneNode {
   return {
-    path: '/split',
+    path: '/partition',
     type: 'group',
     attrs: {
       type: 'group',
-      kind: 'split',
+      kind: 'partition',
       display_type: 'points',
       max_elements: 1000,
       ...extraAttrs,
@@ -80,20 +80,20 @@ function attachStubChildren() {
   );
 }
 
-describe('loadSplitGroupNode', () => {
+describe('loadPartitionGroupNode', () => {
   it('creates a THREE.Group with the wrapper path as its name', async () => {
     attachStubChildren();
     const ctx = makeCtx();
-    const node = makeSplitGroupNode([
-      makePartNode('/split/part_0'),
-      makePartNode('/split/part_1'),
+    const node = makePartitionGroupNode([
+      makePartNode('/partition/part_0'),
+      makePartNode('/partition/part_1'),
     ]);
 
     const parent = new THREE.Group();
-    const wrapper = await loadSplitGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(wrapper).toBeInstanceOf(THREE.Group);
-    expect(wrapper.name).toBe('/split');
+    expect(wrapper.name).toBe('/partition');
     expect(parent.children).toHaveLength(1);
     expect(parent.children[0]).toBe(wrapper);
   });
@@ -101,33 +101,33 @@ describe('loadSplitGroupNode', () => {
   it('recurses each child through loadSceneNodes', async () => {
     attachStubChildren();
     const ctx = makeCtx();
-    const node = makeSplitGroupNode([
-      makePartNode('/split/part_0'),
-      makePartNode('/split/part_1'),
-      makePartNode('/split/part_2'),
+    const node = makePartitionGroupNode([
+      makePartNode('/partition/part_0'),
+      makePartNode('/partition/part_1'),
+      makePartNode('/partition/part_2'),
     ]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
     // Each child mesh attached to the wrapper.
     expect(wrapper.children).toHaveLength(3);
     expect(wrapper.children.map((c) => c.name).sort()).toEqual([
-      '/split/part_0',
-      '/split/part_1',
-      '/split/part_2',
+      '/partition/part_0',
+      '/partition/part_1',
+      '/partition/part_2',
     ]);
   });
 
   it('all children stay visible after load (no LOD-style selector)', async () => {
     attachStubChildren();
     const ctx = makeCtx();
-    const node = makeSplitGroupNode([
-      makePartNode('/split/part_0'),
-      makePartNode('/split/part_1'),
+    const node = makePartitionGroupNode([
+      makePartNode('/partition/part_0'),
+      makePartNode('/partition/part_1'),
     ]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     for (const child of wrapper.children) {
       expect(child.visible).toBe(true);
@@ -138,12 +138,12 @@ describe('loadSplitGroupNode', () => {
     attachStubChildren();
     const ctx = makeCtx();
     const transform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1];
-    const node = makeSplitGroupNode(
-      [makePartNode('/split/part_0')],
+    const node = makePartitionGroupNode(
+      [makePartNode('/partition/part_0')],
       { transform }
     );
 
-    await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(ctx.nodeFactory.applyTransform).toHaveBeenCalledWith(
       expect.any(THREE.Group),
@@ -151,11 +151,11 @@ describe('loadSplitGroupNode', () => {
     );
   });
 
-  it('handles an empty-children Split group without crashing', async () => {
+  it('handles an empty-children Partition group without crashing', async () => {
     const ctx = makeCtx();
-    const node = makeSplitGroupNode([]);
+    const node = makePartitionGroupNode([]);
 
-    const wrapper = await loadSplitGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     expect(wrapper.children).toHaveLength(0);
     expect(loadSceneNodesMock).not.toHaveBeenCalled();

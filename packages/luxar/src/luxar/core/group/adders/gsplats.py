@@ -1,4 +1,4 @@
-"""add_gsplats body + split wrapper impl.
+"""add_gsplats body + partition wrapper impl.
 
 Pure functions taking a ``group: Group`` parameter as the first arg.
 Called by ``Group.add_gsplats`` (a thin signature + docstring + delegate)
@@ -13,7 +13,7 @@ import numpy as np
 from arbol import aprint
 
 from ...gsplats import GSplats
-from ..auto_split import resolve_auto_split
+from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
     position_bounds_from_array,
@@ -41,7 +41,7 @@ def add_gsplats_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
-    split: Any = None,
+    partition: Any = None,
     **attrs: Any,
 ) -> Union[GSplats, "Group"]:
     try:
@@ -75,50 +75,55 @@ def add_gsplats_impl(
         n_splats = ctr_arr.shape[0]
         ndim = ctr_arr.shape[1]
 
-        # Apply compiler-level auto-split heuristic (opt-in; default
-        # off). User-explicit ``split=`` always wins.
-        split = resolve_auto_split(scene, n_splats, split)
+        # Apply compiler-level auto-partition heuristic (opt-in; default
+        # off). User-explicit ``partition=`` always wins.
+        partition = resolve_auto_partition(scene, n_splats, partition)
 
-        # Split branch — decompose into N children if the user opted in
+        # Partition branch — decompose into N children if the user opted in
         # AND the BSP produces more than one part.
-        if split is not None and ctr_arr.shape[1] >= 3:
-            from ..split import (
+        if partition is not None and ctr_arr.shape[1] >= 3:
+            from ..partition import (
                 DEFAULT_MAX_ELEMENTS,
+                median_bsp_partition,
                 midpoint_bsp_partition,
                 sah_bsp_partition,
             )
 
-            if split is True:
+            if partition is True:
                 max_elements = DEFAULT_MAX_ELEMENTS
-                split_rule = "midpoint"
-            elif isinstance(split, dict):
-                max_elements = int(split.get("max_elements", DEFAULT_MAX_ELEMENTS))
+                partition_rule = "median"
+            elif isinstance(partition, dict):
+                max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
                 if max_elements < 1:
                     raise ValueError(
-                        f"split max_elements must be >= 1, got {max_elements}"
+                        f"partition max_elements must be >= 1, got {max_elements}"
                     )
-                split_rule = str(split.get("rule", "midpoint"))
-                if split_rule not in ("midpoint", "sah"):
+                partition_rule = str(partition.get("rule", "median"))
+                if partition_rule not in ("median", "midpoint", "sah"):
                     raise ValueError(
-                        f"split rule must be 'midpoint' or 'sah'; got {split_rule!r}"
+                        f"partition rule must be 'median', 'midpoint', or 'sah'; "
+                        f"got {partition_rule!r}"
                     )
             else:
                 raise TypeError(
-                    f"split must be None, True, or dict; got {type(split).__name__}"
+                    f"partition must be None, True, or dict; "
+                    f"got {type(partition).__name__}"
                 )
 
             if image_labels is not None:
                 raise ValueError(
-                    "image_labels is not supported alongside split=. "
+                    "image_labels is not supported alongside partition=. "
                     "Decompose the data manually or omit image_labels."
                 )
 
-            if split_rule == "sah":
+            if partition_rule == "sah":
                 parts = sah_bsp_partition(ctr_arr, max_elements)
-            else:
+            elif partition_rule == "midpoint":
                 parts = midpoint_bsp_partition(ctr_arr, max_elements)
+            else:
+                parts = median_bsp_partition(ctr_arr, max_elements)
             if len(parts) > 1:
-                return add_gsplats_split_wrapper_impl(
+                return add_gsplats_partition_wrapper_impl(
                     group,
                     name=name,
                     ctr_arr=ctr_arr,
@@ -201,7 +206,7 @@ def add_gsplats_impl(
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
-def add_gsplats_split_wrapper_impl(
+def add_gsplats_partition_wrapper_impl(
     group: "Group",
     *,
     name: str,
@@ -217,12 +222,12 @@ def add_gsplats_split_wrapper_impl(
     max_elements: int,
     **attrs: Any,
 ) -> "Group":
-    """Build a kind=split wrapper Group with one GSplats child per BSP part."""
+    """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
     parent_node = parent or group
-    wrapper = parent_node.add_split_group(
+    wrapper = parent_node.add_partition_group(
         name=name,
         display_type="gsplats",
         max_elements=max_elements,
@@ -230,7 +235,7 @@ def add_gsplats_split_wrapper_impl(
     )
 
     aprint(
-        f"  ✂️  Split '{name}' into {len(parts)} parts via BSP "
+        f"  ✂️  Partitioned '{name}' into {len(parts)} parts via BSP "
         f"(max_elements={max_elements:,}, "
         f"sizes={[int(p.size) for p in parts]})"
     )
@@ -250,9 +255,9 @@ def add_gsplats_split_wrapper_impl(
             dim_order=None,
             fill=None,
             fill_sigma=None,
-            # ``split=False`` bypasses compiler auto-split (see
-            # add_points_split_wrapper_impl for rationale).
-            split=False,
+            # ``partition=False`` bypasses compiler auto-partition (see
+            # add_points_partition_wrapper_impl for rationale).
+            partition=False,
             **leaf_attrs,
         )
 
