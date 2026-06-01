@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
 **Version**: 2.0.0
-**Last Updated**: 2026-03-27
+**Last Updated**: 2026-05-20
 
 ## Purpose
 
@@ -16,10 +16,12 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 > the output of `luxar gsplat fit`, `lod additive`, `lod substitutive`,
 > `lod pyramid`, etc. The viewer never consumes a `.gsplats.zarr`
 > directly. When gsplats land in a **scene** (loadable by the viewer),
-> the substitutive axis is not carried inline; only the additive ladder
-> is. Substitutive levels are dropped at scene-write time (only the
-> default substitutive level survives) — see
-> ``Group.add_gsplats_from_data``.
+> the substitutive axis is not carried inline as a 2-D matrix; instead a
+> multi-substitutive pyramid is **auto-lowered** at scene-write time into
+> a `kind=lod` Group (one gsplats child per substitutive level, with
+> per-child `min_pixel_size` thresholds), and each child still carries its
+> own additive ladder. Pass `lod_group=False` to collapse to the finest
+> substitutive level instead — see ``Group.add_gsplats_from_data``.
 
 ---
 

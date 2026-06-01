@@ -1,37 +1,37 @@
 /**
- * Split-kind Group type definitions for luxar-viewer.
+ * Partition-kind Group type definitions for luxar-viewer.
  *
- * A `Group` whose `kind === 'split'` is a compile-time decomposition of
+ * A `Group` whose `kind === 'partition'` is a compile-time decomposition of
  * a single large geometry node (10M+ elements) into multiple smaller
  * child nodes for per-child frustum culling, per-child LOD, etc. The
  * user does not see the decomposition: the layers panel presents one
  * logical layer of `display_type`. All children render simultaneously
  * (no per-frame selector — unlike `kind === 'lod'`).
  *
- * @module types/split-group
+ * @module types/partition-group
  */
 
 /**
- * Metadata stored on a kind=`split` `Group` node's `.zattrs`.
+ * Metadata stored on a kind=`partition` `Group` node's `.zattrs`.
  */
-export interface SplitGroupMetadata {
+export interface PartitionGroupMetadata {
   /** Node type identifier. */
   type: 'group';
 
   /** Specialized-group discriminant. */
-  kind: 'split';
+  kind: 'partition';
 
   /**
    * Geometry type the user sees this layer as. All children must
    * resolve to this same display type (homogeneity is mandatory for
-   * Split — you cannot decompose a single logical layer into mixed-type
+   * Partition — you cannot decompose a single logical layer into mixed-type
    * parts).
    */
   display_type: 'points' | 'lines' | 'gsplats';
 
   /**
    * Per-part element cap that drove the BSP recursion. Recorded for
-   * diagnostics and for future split-aware tools.
+   * diagnostics and for future partition-aware tools.
    */
   max_elements: number;
 
@@ -65,10 +65,10 @@ export interface SplitGroupMetadata {
 }
 
 /**
- * Type guard for `SplitGroupMetadata`.
+ * Type guard for `PartitionGroupMetadata`.
  */
-export function isSplitGroupMetadata(attrs: unknown): attrs is SplitGroupMetadata {
+export function isPartitionGroupMetadata(attrs: unknown): attrs is PartitionGroupMetadata {
   if (typeof attrs !== 'object' || attrs === null) return false;
   const record = attrs as Record<string, unknown>;
-  return record.type === 'group' && record.kind === 'split';
+  return record.type === 'group' && record.kind === 'partition';
 }

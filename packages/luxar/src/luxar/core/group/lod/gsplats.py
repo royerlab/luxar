@@ -3,7 +3,7 @@
 The LOD-kind ``Group`` selects one of N alternative children at runtime based
 on a view-driven metric (currently: the projected bbox diagonal in pixels). It
 is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``, or
-themselves a specialized group (``kind=lod`` / ``kind=split``).
+themselves a specialized group (``kind=lod`` / ``kind=partition``).
 
 Each child carries its own ``min_pixel_size`` attribute (strictly monotonic
 increasing in coarsest→finest order; coarsest = 0.0). The viewer picks the
@@ -20,7 +20,7 @@ This module hosts:
 * The ``derive_min_pixel_sizes`` heuristic and its monotonicity guard.
 * The free-function validator ``validate_lod_group``, callable on any
   ``Group`` whose ``attrs["kind"] == "lod"``.
-* The shared ``resolve_display_type`` helper used by both LOD and Split kinds,
+* The shared ``resolve_display_type`` helper used by both LOD and Partition kinds,
   which walks down through nested specialized groups to determine what
   geometry type the user sees this layer as.
 """
@@ -50,7 +50,7 @@ BASE_PIXEL_SIZE: float = 10.0
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Display-type resolution (shared with the Split kind)
+# Display-type resolution (shared with the Partition kind)
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -59,20 +59,20 @@ def resolve_display_type(node: "Node") -> str:
 
     For plain leaves and plain groups, this is the node's own ``type`` attr
     (``"points"`` / ``"lines"`` / ``"gsplats"`` / ``"group"``). For specialized
-    groups (``kind == "lod"`` or ``kind == "split"``), this is the
+    groups (``kind == "lod"`` or ``kind == "partition"``), this is the
     ``display_type`` attr the writer recorded on them — which is itself
     derived transitively when one specialized group wraps another.
 
     Used by:
-        * ``validate_split_group`` — to compare homogeneity across children
+        * ``validate_partition_group`` — to compare homogeneity across children
           even when some children are themselves specialized groups.
         * ``compute_lod_display_type`` — to walk a finest-child chain
-          through nested LOD/Split groups down to a real geometry leaf.
+          through nested LOD/Partition groups down to a real geometry leaf.
         * The compiler at finalize, to compute ``display_type`` for a
           freshly-assembled specialized group.
     """
     kind = node.attrs.get("kind")
-    if kind in ("lod", "split"):
+    if kind in ("lod", "partition"):
         display = node.attrs.get("display_type")
         if isinstance(display, str):
             return display
@@ -83,7 +83,7 @@ def compute_lod_display_type(children: List["Node"]) -> str:
     """Derive an LOD group's ``display_type`` from its finest child.
 
     Convention: children are stored in coarsest→finest order, so the
-    finest is the last entry. If that child is itself a kind=lod / kind=split
+    finest is the last entry. If that child is itself a kind=lod / kind=partition
     group, recurse through its own ``display_type``.
     """
     if not children:
@@ -131,6 +131,14 @@ def derive_min_pixel_sizes(
     linearly with that. ``BASE_PIXEL_SIZE`` (~10 px) is the detail floor
     below which a finer level isn't worth the cost.
 
+    **Heuristic caveat.** Splat *count* is only a proxy for screen
+    *coverage*: a level with 4× the splats does not necessarily resolve
+    2× the linear detail — that depends on how the splats are distributed
+    in space. The proxy is weakest for *substitutive* levels, where a
+    coarser level has fewer but larger splats; there a count-driven
+    threshold can switch a touch early. When a particular ladder switches
+    at the wrong zoom, override the anchor via ``base_pixel_size``.
+
     Args:
         splat_counts: One entry per child, in coarsest→finest order. Must
             be non-empty and the first entry must be > 0.
@@ -156,11 +164,15 @@ def derive_min_pixel_sizes(
     for n in splat_counts[1:]:
         thresholds.append(bps * (n / n0) ** 0.5)
     # Defensive: guarantee strict monotonicity even when later children have
-    # the same n_splats as the coarsest (degenerate, but the auto-derivation
-    # should not produce non-monotonic thresholds).
+    # the same (or fewer) n_splats as a previous level. Use a *relative*
+    # bump (×1.1) rather than a fixed +1px so near-equal-count levels
+    # separate proportionally to their scale — a fixed pixel nudge places
+    # the switch threshold at a meaningless absolute value for large
+    # ladders. ``thresholds[i-1]`` is always > 0 when this fires (i >= 2),
+    # so the bump is strictly increasing.
     for i in range(1, len(thresholds)):
         if thresholds[i] <= thresholds[i - 1]:
-            thresholds[i] = thresholds[i - 1] + 1.0
+            thresholds[i] = thresholds[i - 1] * 1.1
     # Belt-and-braces: same invariant the explicit-list path is checked
     # against in ``resolve_substitutive_axis``. Free now that the loop
     # above runs.
@@ -242,8 +254,11 @@ def resolve_substitutive_axis(
     +---------------------------+-----------------------------------------+
     | Spec                      | Behaviour                               |
     +===========================+=========================================+
-    | ``None`` (default)        | Pass-through; if ``n_substitutive > 1``,|
-    |                           | drop to the default substitutive level. |
+    | ``None`` (default)        | Auto-lower: if ``n_substitutive > 1``,  |
+    |                           | keep the full pyramid so it becomes a   |
+    |                           | ``kind=lod`` Group (no work discarded). |
+    |                           | Pass ``lod_group=False`` to collapse to |
+    |                           | the finest level instead.               |
     +---------------------------+-----------------------------------------+
     | ``True``                  | Require ``n_substitutive > 1`` already; |
     |                           | raise otherwise. Use stored.            |
@@ -263,8 +278,10 @@ def resolve_substitutive_axis(
     base_pixel_size: Optional[float] = None
 
     if spec is None:
-        if data.n_substitutive > 1:
-            return data.at_substitutive(data.default_substitutive), None, None
+        # Auto-lower: a multi-substitutive pyramid is expensive to build, so
+        # the default no longer silently drops it. Returning the full data
+        # routes it to the kind=lod Group builder (same as ``lod_group=True``)
+        # downstream. Use ``lod_group=False`` to collapse to the finest level.
         return data, None, None
 
     if spec is True:

@@ -50,6 +50,7 @@ import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 /**
@@ -73,6 +74,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
+
+  // Active cache-residency probe for the in-flight demand load (see
+  // updateViewWithResidency); null at all other times.
+  private _activeProbe: ResidencyAccumulator | null = null;
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -180,16 +185,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       });
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
-        centersArray = wrapWithCache(centersArray, this.l0Cache, `${this.node.path}/centers`);
+        centersArray = wrapWithCache(
+          centersArray,
+          this.l0Cache,
+          `${this.node.path}/centers`,
+          () => this._activeProbe
+        );
         amplitudesArray = wrapWithCache(
           amplitudesArray,
           this.l0Cache,
-          `${this.node.path}/amplitudes`
+          `${this.node.path}/amplitudes`,
+          () => this._activeProbe
         );
         choleskyArray = wrapWithCache(
           choleskyArray,
           this.l0Cache,
-          `${this.node.path}/cholesky_factors`
+          `${this.node.path}/cholesky_factors`,
+          () => this._activeProbe
         );
       }
       this.arrays.centers = centersArray;
@@ -210,7 +222,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
       this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
-        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+        colorsArray = wrapWithCache(
+          colorsArray,
+          this.l0Cache,
+          `${this.node.path}/colors`,
+          () => this._activeProbe
+        );
       }
       this.arrays.colors = colorsArray;
     } catch {
@@ -472,6 +489,24 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.rangeLoader.setVerbose(false);
     }
     return result;
+  }
+
+  /**
+   * Like {@link updateView} but also reports whether the load was served
+   * entirely from cache (see PointsSpatialIndexLoader.updateViewWithResidency).
+   */
+  async updateViewWithResidency(
+    viewState: GSplatsViewState,
+    session?: UpdateSession
+  ): Promise<{ data: LoadedGSplatsData; allResident: boolean }> {
+    const probe = new ResidencyAccumulator();
+    this._activeProbe = probe;
+    try {
+      const data = await this.updateView(viewState, session);
+      return { data, allResident: probe.allResident };
+    } finally {
+      this._activeProbe = null;
+    }
   }
 
   /**

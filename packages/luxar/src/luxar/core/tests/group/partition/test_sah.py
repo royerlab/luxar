@@ -2,9 +2,9 @@
 
 Verifies:
 
-- :func:`luxar.core.group.split.sah_bsp_partition` invariants: complete cover,
-  parts honor ``max_elements``, non-trivial split on uniform data.
-- ``split=dict(rule='sah')`` end-to-end through ``add_points``,
+- :func:`luxar.core.group.partition.sah_bsp_partition` invariants: complete cover,
+  parts honor ``max_elements``, non-trivial partition on uniform data.
+- ``partition=dict(rule='sah')`` end-to-end through ``add_points``,
   ``add_gsplats``, and ``add_lines``.
 """
 
@@ -16,7 +16,10 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
-from luxar.core.group.split import midpoint_bsp_partition, sah_bsp_partition
+from luxar.core.group.partition import (
+    median_bsp_partition,
+    sah_bsp_partition,
+)
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────
@@ -31,7 +34,7 @@ class TestSahBspPartition:
         assert len(parts) == 1
         assert parts[0].size == 40
 
-    def test_above_cap_splits(self):
+    def test_above_cap_partitions(self):
         pos = np.random.RandomState(1).uniform(-10, 10, (400, 3)).astype(np.float32)
         parts = sah_bsp_partition(pos, max_elements=120)
         assert len(parts) >= 2
@@ -69,7 +72,7 @@ class TestSahBspPartition:
         """SAH should respect the most-extended axis.
 
         On a strongly anisotropic input (long X, narrow Y/Z) SAH and
-        midpoint should both split along X. This isn't a quality
+        midpoint should both partition along X. This isn't a quality
         comparison — just a sanity check that the SAH path produces a
         valid partition on real-world-like skewed data.
         """
@@ -79,7 +82,7 @@ class TestSahBspPartition:
         z = rng.uniform(-0.5, 0.5, 300)
         pos = np.stack([x, y, z], axis=1).astype(np.float32)
         parts = sah_bsp_partition(pos, max_elements=150)
-        # At least one valid split.
+        # At least one valid partition.
         assert len(parts) >= 2
         # All parts respect the cap.
         for p in parts:
@@ -100,17 +103,17 @@ class TestSahRuleEndToEnd:
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points(
-                "pts", pos, split=dict(max_elements=150, rule="sah")
+                "pts", pos, partition=dict(max_elements=150, rule="sah")
             )
         assert isinstance(node, Group)
-        assert node.attrs.get("kind") == "split"
+        assert node.attrs.get("kind") == "partition"
 
     def test_add_points_invalid_rule_raises(self, tmp_path):
         pos = np.random.RandomState(0).uniform(-10, 10, (100, 3)).astype(np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="split rule"):
-                scene.add_points("pts", pos, split=dict(max_elements=50, rule="bogus"))
+            with pytest.raises(ValueError, match="partition rule"):
+                scene.add_points("pts", pos, partition=dict(max_elements=50, rule="bogus"))
 
     def test_add_gsplats_sah_rule(self, tmp_path):
         rng = np.random.RandomState(0)
@@ -124,20 +127,20 @@ class TestSahRuleEndToEnd:
                 centers=c,
                 amplitudes=a,
                 cholesky_factors=ch,
-                split=dict(max_elements=100, rule="sah"),
+                partition=dict(max_elements=100, rule="sah"),
             )
         assert isinstance(node, Group)
-        assert node.attrs.get("kind") == "split"
+        assert node.attrs.get("kind") == "partition"
 
-    def test_midpoint_default_is_unchanged(self, tmp_path):
-        """``split=dict(max_elements=N)`` without ``rule`` defaults to midpoint."""
+    def test_median_is_default_rule(self, tmp_path):
+        """``partition=dict(max_elements=N)`` without ``rule`` defaults to median."""
         pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(np.float32)
-        # The midpoint partitioner is what produced this baseline before
-        # SAH existed — sanity check that omitting rule= preserves it.
-        midpoint_parts = midpoint_bsp_partition(pos, max_elements=120)
+        # Median is the default partition rule — omitting rule= must match
+        # median_bsp_partition (and NOT the old midpoint baseline).
+        median_parts = median_bsp_partition(pos, max_elements=120)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("pts", pos, split=dict(max_elements=120))
+            scene.add_points("pts", pos, partition=dict(max_elements=120))
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         grp = store["pts"]
 
@@ -151,5 +154,5 @@ class TestSahRuleEndToEnd:
             return out
 
         sizes = sorted(collect(grp, []))
-        baseline = sorted(int(p.size) for p in midpoint_parts)
+        baseline = sorted(int(p.size) for p in median_parts)
         assert sizes == baseline

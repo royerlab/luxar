@@ -190,10 +190,21 @@ export function pickChildWithHysteresis(
   if (natural === currentIdx) return currentIdx;
   if (natural > currentIdx) return natural; // upgrade: literal threshold wins
 
-  // Downgrade: require metric to drop below current's threshold *
-  // (1 - hysteresisRatio). Otherwise stay on the current finer level.
+  // Downgrade: require the metric to drop below the current threshold by a
+  // hysteresis margin that is **spacing-aware** — a fraction
+  // (``hysteresisRatio``) of the GAP to the adjacent coarser threshold,
+  // rather than of the current threshold in isolation. For the bottom real
+  // level (coarser threshold 0) the gap equals the threshold, so this
+  // reduces to the original ``currentThreshold * (1 - ratio)`` behaviour.
+  // For tightly-spaced levels (e.g. separated only by the
+  // ``derive_min_pixel_sizes`` ×1.1 nudge) the band shrinks proportionally,
+  // so the deadband never straddles the neighbour — every level still
+  // renders on the way down and the selection can't flip-flop across a band
+  // wider than the inter-level spacing.
   const currentThreshold = thresholds[currentIdx];
-  if (diagonalPx < currentThreshold * (1 - hysteresisRatio)) {
+  const prevThreshold = thresholds[currentIdx - 1]; // currentIdx >= 1 here
+  const margin = hysteresisRatio * (currentThreshold - prevThreshold);
+  if (diagonalPx < currentThreshold - margin) {
     return natural;
   }
   return currentIdx;

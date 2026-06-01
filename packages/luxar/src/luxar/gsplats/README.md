@@ -685,7 +685,7 @@ The report module imports matplotlib lazily so it does not inflate cold-start co
 The `lod` subpackage builds streaming-ready LOD hierarchies from a fitted `GSplatData`. Two qualitatively different operators live side-by-side:
 
 - **Additive** — same `N` splats, *reordered* so that the prefix sum at any `k ≤ N` splats is the best L² approximation of the full scene. Output: a single multi-LOD `GSplatData` where each level *extends* the previous one. Use this when you want progressive streaming: the viewer can stop loading at any point and the partial reconstruction is principled.
-- **Substitutive** — synthesise `M < N` representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a single `GSplatData` with `n_substitutive = levels + 1` substitutive levels (each *replacing* the previous one). Use this when you want fixed-budget coarse mip-levels for view-dependent rendering.
+- **Substitutive** — synthesise `M < N` representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). The recommended `kmeans_lloyd` method seeds k-means with **shape-aware** features (splat centres augmented with covariance / marginal-σ descriptors) so spatially-near but differently-shaped anisotropic splats aren't forced into the same bin; plain `kmeans` stays centres-only as a baseline. Output: a single `GSplatData` with `n_substitutive = levels + 1` substitutive levels (each *replacing* the previous one). Use this when you want fixed-budget coarse mip-levels for view-dependent rendering.
 
 Both operators are pure post-processes on a fitted dataset; fitting (single-pass or progressive) returns one flat container, and an LOD hierarchy is built on demand.
 
@@ -867,6 +867,17 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 - Preserves all splat data (centers, amplitudes, covariance, colors)
 - Enables hierarchical organization with transforms
 - Works with Luxar viewer for interactive visualization
+
+> **Multi-substitutive input → `kind=lod` group.** When the `GSplatData`
+> carries more than one substitutive level (e.g. the output of
+> `luxar gsplat lod substitutive` / `pyramid`), `add_gsplats_from_data`
+> (and `add_gsplats_from_file`) **auto-lower** it by default into a
+> `kind=lod` scene group — one gsplats child per substitutive level, with
+> `min_pixel_size` thresholds derived from the per-level splat counts, so
+> the viewer view-switches between levels. No substitutive work is
+> discarded. Pass `lod_group=False` to collapse to the finest level, or
+> `lod_group=dict(min_pixel_sizes=[...])` to set the switch thresholds
+> explicitly.
 
 ### Color Support
 

@@ -1,6 +1,6 @@
-"""Compositing primitives used by Group's split-wrapping path.
+"""Compositing primitives used by Group's partition-wrapping path.
 
-These helpers are shared by the kind=split and kind=lod wrapper builders
+These helpers are shared by the kind=partition and kind=lod wrapper builders
 (see ``adders/`` and ``gsplats_pipeline/``). They are pure data
 operations — no Group/Node references — and have no side effects.
 
@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-#: Attrs that ride on a kind=lod / kind=split wrapper Group (where the user
+#: Attrs that ride on a kind=lod / kind=partition wrapper Group (where the user
 #: thinks of the wrapper as "their layer") rather than getting copied onto
 #: each internal child. Compositing semantics (opacity, gamma, ...) flow
 #: down to the children through Group inheritance at render time, so writing
@@ -46,7 +46,7 @@ COMPOSITING_ATTRS = frozenset(
 def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> Any:
     """Slice an array-valued leaf parameter by index; pass non-per-element values through.
 
-    Used by the ``split=`` wrapping path on the leaf adders. Returns
+    Used by the ``partition=`` wrapping path on the leaf adders. Returns
     unchanged when:
       * ``value`` is ``None`` or a scalar (``int`` / ``float`` / ``bool``
         / ``str``) — applies uniformly to every part.
@@ -74,8 +74,8 @@ def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:
     """Per-axis min/max of an ``(N, D)`` position array, in the writer's shape.
 
     Matches what the compiler's ``_compute_position_bounds`` writes onto
-    each leaf node, so the split-kind wrapper's ``position_bounds`` is
-    the same shape as its children's. Used by the ``split=`` wrapping
+    each leaf node, so the partition-kind wrapper's ``position_bounds`` is
+    the same shape as its children's. Used by the ``partition=`` wrapping
     path to compute the parent bbox directly from the source array
     instead of round-tripping through the per-leaf zarr writes.
     """

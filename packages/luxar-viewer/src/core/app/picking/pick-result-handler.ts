@@ -20,20 +20,20 @@ import type { PickResult } from '../../../rendering/picking/picking-system';
 
 /**
  * Walk up the parent chain of ``mainNode`` looking for the
- * **outermost** ancestor whose ``userData.kind === 'split'`` and
+ * **outermost** ancestor whose ``userData.kind === 'partition'`` and
  * return its ``name`` (= zarr path). The outermost-as-layer
- * convention matches the layers-panel: when a kind=split layer wraps
- * other kind=split or kind=lod groups, hover/click reports the
+ * convention matches the layers-panel: when a kind=partition layer wraps
+ * other kind=partition or kind=lod groups, hover/click reports the
  * topmost wrapper, not the inner part_<i>.
  *
- * Returns ``null`` when no kind=split ancestor exists — caller falls
+ * Returns ``null`` when no kind=partition ancestor exists — caller falls
  * back to the leaf node's own name.
  */
-function findOutermostSplitWrapperName(mainNode: THREE.Object3D): string | null {
+function findOutermostPartitionWrapperName(mainNode: THREE.Object3D): string | null {
   let outermost: string | null = null;
   let cur: THREE.Object3D | null = mainNode.parent ?? null;
   while (cur) {
-    if (cur.userData?.kind === 'split' && cur.name) {
+    if (cur.userData?.kind === 'partition' && cur.name) {
       outermost = cur.name;
     }
     cur = cur.parent;
@@ -97,12 +97,12 @@ export function buildPickResultHandler(
         ports.overlayManager?.updateHoverContent(null);
         return;
       }
-      // Split-aware reporting: when the hit's leaf sits under a kind=split
+      // Partition-aware reporting: when the hit's leaf sits under a kind=partition
       // wrapper, the user-facing layer is the wrapper (matches the
       // layers-panel's outermost-as-layer convention). For nested
-      // kind=split-inside-kind=split, the **outermost** wrapper wins.
-      const splitWrapper = findOutermostSplitWrapperName(result.mainNode);
-      const nodePath = splitWrapper ?? result.mainNode.name;
+      // kind=partition-inside-kind=partition, the **outermost** wrapper wins.
+      const partitionWrapper = findOutermostPartitionWrapperName(result.mainNode);
+      const nodePath = partitionWrapper ?? result.mainNode.name;
       const [label, imageUrl] = await Promise.all([
         ports.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
         ports.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ?? Promise.resolve(null),

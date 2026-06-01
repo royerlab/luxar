@@ -286,7 +286,7 @@ class Node:
             **attrs,
         )
 
-    def add_split_group(
+    def add_partition_group(
         self,
         name: str,
         *,
@@ -294,35 +294,35 @@ class Node:
         max_elements: int,
         **attrs: Any,
     ) -> "Group":
-        """Create and add a child kind=split ``Group`` node.
+        """Create and add a child kind=partition ``Group`` node.
 
-        A kind=split ``Group`` is a compile-time decomposition of a single
+        A kind=partition ``Group`` is a compile-time decomposition of a single
         large geometry node into multiple smaller children for per-child
         frustum culling and per-child LOD. The user does not see the
         decomposition — the layers panel presents one logical layer of
         ``display_type``.
 
-        For the common case where you want the splitting to happen
-        automatically, use the ``split=`` convenience kwarg on
+        For the common case where you want the partitioning to happen
+        automatically, use the ``partition=`` convenience kwarg on
         ``add_points`` / ``add_lines`` / ``add_gsplats`` instead of
         constructing the wrapper yourself.
 
         Args:
-            name: Name of the split-kind group.
+            name: Name of the partition-kind group.
             display_type: Geometry type the user sees this layer as
                 (``"points"``, ``"lines"``, or ``"gsplats"``). All children
                 must resolve to this same display type — homogeneity is
-                mandatory for Split.
+                mandatory for a partition.
             max_elements: Cap that drove the BSP recursion (recorded on the
-                group for diagnostics and for future split-aware tools).
+                group for diagnostics and for future partition-aware tools).
             **attrs: Additional node attributes.
 
         Returns:
-            The created ``Group`` (with ``kind="split"`` in its attrs).
+            The created ``Group`` (with ``kind="partition"`` in its attrs).
         """
-        from .specialized_groups import add_split_group_impl
+        from .specialized_groups import add_partition_group_impl
 
-        return add_split_group_impl(
+        return add_partition_group_impl(
             self,
             name,
             display_type=display_type,

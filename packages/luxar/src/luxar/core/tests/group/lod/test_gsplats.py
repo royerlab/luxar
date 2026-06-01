@@ -243,10 +243,39 @@ class TestDeriveMinPixelSizes:
         assert thresholds[2] == BASE_PIXEL_SIZE * 4.0
 
     def test_strict_monotonicity_enforced(self) -> None:
-        # Even when input is non-increasing, output stays monotonic by +1 px bumps.
+        # Even when input is non-increasing, output stays monotonic via the
+        # relative ×1.1 bump (not a fixed +1 px).
         thresholds = derive_min_pixel_sizes([100, 100, 100])
         for i in range(1, len(thresholds)):
             assert thresholds[i] > thresholds[i - 1]
+
+    def test_relative_nudge_is_proportional(self) -> None:
+        # Equal-count levels separate by ×1.1, so the bump scales with the
+        # threshold magnitude rather than a meaningless fixed pixel.
+        thresholds = derive_min_pixel_sizes([100, 100, 100])
+        # child1 = bps * sqrt(1) = BASE_PIXEL_SIZE; child2 = child1 * 1.1.
+        assert thresholds[1] == BASE_PIXEL_SIZE
+        assert thresholds[2] == pytest.approx(BASE_PIXEL_SIZE * 1.1)
+
+    def test_base_pixel_size_override(self) -> None:
+        # Overriding the anchor scales every non-zero threshold linearly.
+        default = derive_min_pixel_sizes([100, 400, 1600])
+        scaled = derive_min_pixel_sizes([100, 400, 1600], base_pixel_size=25.0)
+        assert scaled[0] == 0.0
+        assert scaled[1] == pytest.approx(default[1] * 2.5)
+        assert scaled[2] == pytest.approx(default[2] * 2.5)
+
+    def test_base_pixel_size_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="positive"):
+            derive_min_pixel_sizes([100, 400], base_pixel_size=0.0)
+
+    def test_extreme_count_ratio_monotonic(self) -> None:
+        # 1 → 1,000,000 splats must still yield strictly increasing finite
+        # thresholds (no overflow / non-monotonic artefacts).
+        thresholds = derive_min_pixel_sizes([1, 1000, 1_000_000])
+        for i in range(1, len(thresholds)):
+            assert thresholds[i] > thresholds[i - 1]
+        assert all(t == t for t in thresholds)  # no NaN
 
     def test_empty_input_rejected(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):

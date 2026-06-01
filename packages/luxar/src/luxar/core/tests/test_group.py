@@ -335,15 +335,15 @@ class TestMultiLODGSplats:
         grp = store["splats"]
         assert removed_attr not in grp.attrs
 
-    def test_multi_lod_drops_substitutive_levels_silently(self, tmp_path) -> None:
-        """Substitutive levels in input are dropped; only the default level is written.
+    def test_multi_lod_auto_lowers_substitutive_levels(self, tmp_path) -> None:
+        """Substitutive levels in input are auto-lowered to a kind=lod Group.
 
         The convention (documented on ``add_gsplats_from_data``): if the
-        input GSplatData carries multiple substitutive levels, only the
-        default substitutive level's additive ladder is written into
-        the scene zarr. Other substitutive levels are silently dropped.
-        Substitutive alternatives belong to the standalone processing
-        format; expressing them in a scene is a separate concern.
+        input GSplatData carries multiple substitutive levels and the
+        caller does not specify ``lod_group``, the default now auto-lowers
+        the pyramid into a ``kind=lod`` Group with one child per level
+        (no expensive substitutive work discarded). ``lod_group=False``
+        collapses to the finest level instead.
         """
         from luxar.gsplats.gsplat_data import (
             AdditiveSubLOD,
@@ -393,12 +393,13 @@ class TestMultiLODGSplats:
 
         store = zarr.open(str(output_path), mode="r")
         grp = store["splats"]
-        # Only the finest (default) substitutive level survived; coarse splat is gone.
-        assert grp.attrs["n_splats"] == 5
-        # No substitutive wrapper or attrs.
-        assert "substitutive_0" not in grp
-        assert "substitutive_1" not in grp
-        assert "n_substitutive" not in grp.attrs
+        # Auto-lowered to a kind=lod Group with one child per substitutive level.
+        assert grp.attrs["type"] == "group"
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "gsplats"
+        # Coarsest first: child_0 = 1 splat (coarsest), child_1 = 5 splats (finest).
+        assert grp["child_0"].attrs["n_splats"] == 1
+        assert grp["child_1"].attrs["n_splats"] == 5
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -467,13 +468,27 @@ def _make_multi_substitutive_gsplat_data():
 class TestLodGroupAxis:
     """``lod_group=`` semantics on ``add_gsplats_from_data``."""
 
-    def test_none_drops_to_default_substitutive(self, tmp_path) -> None:
-        """``None`` (pass-through) keeps only the default substitutive level."""
+    def test_none_auto_lowers_to_lod_group(self, tmp_path) -> None:
+        """``None`` (default) auto-lowers a multi-substitutive pyramid to a
+        ``kind=lod`` Group instead of silently dropping levels."""
         data = _make_multi_substitutive_gsplat_data()
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats_from_data("splats", data)  # lod_group=None
-        # Returned a flat GSplats, not an LODGroup.
+        # Auto-lowered to a kind=lod Group with one child per substitutive level.
+        assert isinstance(node, Group)
+        assert node.attrs.get("kind") == "lod"
+        assert len(node.children) == 2
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        assert store["splats"].attrs["type"] == "group"
+        assert store["splats"].attrs["kind"] == "lod"
+
+    def test_none_passthrough_single_substitutive(self, tmp_path) -> None:
+        """``None`` on single-substitutive data stays a flat GSplats node."""
+        data = _make_flat_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats_from_data("splats", data)  # lod_group=None
         assert type(node).__name__ == "GSplats"
         store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
         assert store["splats"].attrs["type"] == "gsplats"

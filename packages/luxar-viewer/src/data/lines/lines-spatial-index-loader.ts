@@ -48,6 +48,7 @@ import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import {
   type LinesDualChunkIndex,
@@ -79,6 +80,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
+
+  // Active cache-residency probe for the in-flight demand load (see
+  // updateViewWithResidency); null at all other times.
+  private _activeProbe: ResidencyAccumulator | null = null;
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -189,8 +194,18 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.registerBounds('segments', segmentsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
-        verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`);
-        segmentsArray = wrapWithCache(segmentsArray, this.l0Cache, `${this.node.path}/segments`);
+        verticesArray = wrapWithCache(
+          verticesArray,
+          this.l0Cache,
+          `${this.node.path}/vertices`,
+          () => this._activeProbe
+        );
+        segmentsArray = wrapWithCache(
+          segmentsArray,
+          this.l0Cache,
+          `${this.node.path}/segments`,
+          () => this._activeProbe
+        );
       }
       this.arrays.vertices = verticesArray;
       this.arrays.segments = segmentsArray;
@@ -204,7 +219,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
       this.registerBounds('widths', widthsArray);
       if (this.l0Cache) {
-        widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`);
+        widthsArray = wrapWithCache(
+          widthsArray,
+          this.l0Cache,
+          `${this.node.path}/widths`,
+          () => this._activeProbe
+        );
       }
       this.arrays.widths = widthsArray;
     } catch {
@@ -215,7 +235,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
       this.registerBounds('colors', colorsArray);
       if (this.l0Cache) {
-        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+        colorsArray = wrapWithCache(
+          colorsArray,
+          this.l0Cache,
+          `${this.node.path}/colors`,
+          () => this._activeProbe
+        );
       }
       this.arrays.colors = colorsArray;
     } catch {
@@ -231,7 +256,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/sharpnesses`
+          `${this.node.path}/sharpnesses`,
+          () => this._activeProbe
         );
       }
       this.arrays.sharpness = sharpnessArray;
@@ -249,7 +275,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         });
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
-          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`);
+          scalarsArray = wrapWithCache(
+            scalarsArray,
+            this.l0Cache,
+            `${this.node.path}/scalars`,
+            () => this._activeProbe
+          );
         }
         this.arrays.scalars = scalarsArray;
       } catch (e: unknown) {
@@ -675,6 +706,24 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.rangeLoader.setVerbose(false);
     }
     return result;
+  }
+
+  /**
+   * Like {@link updateView} but also reports whether the load was served
+   * entirely from cache (see PointsSpatialIndexLoader.updateViewWithResidency).
+   */
+  async updateViewWithResidency(
+    viewState: LinesViewState,
+    session?: UpdateSession
+  ): Promise<{ data: LoadedLinesData; allResident: boolean }> {
+    const probe = new ResidencyAccumulator();
+    this._activeProbe = probe;
+    try {
+      const data = await this.updateView(viewState, session);
+      return { data, allResident: probe.allResident };
+    } finally {
+      this._activeProbe = null;
+    }
   }
 
   /**
