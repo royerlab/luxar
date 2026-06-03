@@ -22,7 +22,18 @@ describe('readUrlParams', () => {
       renderer: null,
       webgpuForceWebGL: false,
       perfTimestamp: false,
+      gpuBudgetMB: null,
     });
+  });
+
+  it('parses gpuBudgetMB, accepting 0 (disable) and rejecting negatives', () => {
+    expect(readUrlParams('?gpuBudgetMB=1536').gpuBudgetMB).toBe(1536);
+    // 0 is a valid value — flows through as the explicit "disable" signal.
+    expect(readUrlParams('?gpuBudgetMB=0').gpuBudgetMB).toBe(0);
+    // Negative / non-numeric → null (auto-size).
+    expect(readUrlParams('?gpuBudgetMB=-5').gpuBudgetMB).toBeNull();
+    expect(readUrlParams('?gpuBudgetMB=abc').gpuBudgetMB).toBeNull();
+    expect(readUrlParams('').gpuBudgetMB).toBeNull();
   });
 
   it('parses and trims valid src and theme strings', () => {
@@ -229,7 +240,7 @@ describe('normalizeDataSourceUrl — MAX_SRC_LENGTH boundary', () => {
 });
 
 // [G7][P5] / [M3][P11] Audit: pre-audit `hasUnsafeSrcCharacter` was only
-// covered for ` `, `\r`, `\n`. The source rejects the full
+// covered for `\0`, `\r`, `\n`. The source rejects the full
 // 0x00..0x1f range plus 0x7f (DEL) plus `<` and `>` — fixed-array
 // iteration means every character class needs at least one direct test
 // or a mutation could narrow the predicate to a single char.

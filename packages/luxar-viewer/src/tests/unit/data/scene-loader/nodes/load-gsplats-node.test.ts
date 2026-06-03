@@ -106,6 +106,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     nodeFactory,
     viewState,
     factoryDeps: {} as never,
+    isDatasetLive: () => true,
+    releaseLazyGSplats: vi.fn(),
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,

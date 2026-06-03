@@ -17,6 +17,18 @@ import * as THREE from 'three';
 
 const loadSceneNodesMock = vi.fn();
 
+// loadLodGroupNode imports loadGSplatsNodeCheap/Expensive directly (not
+// injected like loadSceneNodes), so mock that module to exercise the
+// lazy deferral path without the real gsplats loader machinery.
+const { loadGSplatsNodeCheapMock, loadGSplatsNodeExpensiveMock } = vi.hoisted(() => ({
+  loadGSplatsNodeCheapMock: vi.fn(),
+  loadGSplatsNodeExpensiveMock: vi.fn(),
+}));
+vi.mock('../../../../../data/scene-loader/nodes/load-gsplats-node', () => ({
+  loadGSplatsNodeCheap: loadGSplatsNodeCheapMock,
+  loadGSplatsNodeExpensive: loadGSplatsNodeExpensiveMock,
+}));
+
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
@@ -24,6 +36,18 @@ import type { SceneNode } from '../../../../../data/data-loader-types';
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
+  loadGSplatsNodeCheapMock.mockReset();
+  loadGSplatsNodeExpensiveMock.mockReset();
+  // Default cheap-attach: attach a stub mesh named after the node path
+  // (so getObjectByName / visibility toggles work) and return a
+  // placeholder + dummy loader. Expensive defaults to a no-op resolve.
+  loadGSplatsNodeCheapMock.mockImplementation(async (node: SceneNode, parent: THREE.Object3D) => {
+    const mesh = new THREE.Mesh();
+    mesh.name = node.path;
+    parent.add(mesh);
+    return { placeholder: mesh, loader: {} as never };
+  });
+  loadGSplatsNodeExpensiveMock.mockResolvedValue(undefined);
 });
 
 function makeChildNode(
@@ -47,7 +71,10 @@ function makeChildNode(
   };
 }
 
-function makeLodGroupNode(children: SceneNode[], extraAttrs: Record<string, unknown> = {}): SceneNode {
+function makeLodGroupNode(
+  children: SceneNode[],
+  extraAttrs: Record<string, unknown> = {}
+): SceneNode {
   return {
     path: '/lod',
     type: 'group',
@@ -72,11 +99,13 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
   } as unknown as NodeBuildCtx['nodeFactory'];
 
   return {
-    registry: {} as never,
+    registry: { registerGSplatsLoader: vi.fn() } as never,
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
     factoryDeps: {} as never,
+    isDatasetLive: () => true,
+    releaseLazyGSplats: vi.fn(),
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
@@ -99,13 +128,11 @@ function makeStubLoc(): never {
 }
 
 function attachStubChildren(): void {
-  loadSceneNodesMock.mockImplementation(
-    async (node: SceneNode, parent: THREE.Object3D) => {
-      const mesh = new THREE.Mesh();
-      mesh.name = node.path;
-      parent.add(mesh);
-    }
-  );
+  loadSceneNodesMock.mockImplementation(async (node: SceneNode, parent: THREE.Object3D) => {
+    const mesh = new THREE.Mesh();
+    mesh.name = node.path;
+    parent.add(mesh);
+  });
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -217,6 +244,159 @@ describe('loadLodGroupNode — registry registration', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Lazy loading: only the default level loads eagerly; the rest defer
+// ────────────────────────────────────────────────────────────────────────
+
+describe('loadLodGroupNode — lazy level loading', () => {
+  function makeReg(): LODGroupRegistry {
+    return new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+  }
+
+  it('eager-loads only the default level and defers the other gsplats levels', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0),
+        makeChildNode('/lod/child_1', 100),
+        makeChildNode('/lod/child_2', 500),
+      ],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    // Default level (index 0) goes through the eager recursion; the
+    // other two are cheap-attached and deferred.
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1);
+    expect(loadGSplatsNodeCheapMock).toHaveBeenCalledTimes(2);
+    // No geometry fetched for deferred levels until the selector wants them.
+    expect(loadGSplatsNodeExpensiveMock).not.toHaveBeenCalled();
+
+    const entry = reg.get('/lod')!;
+    expect(entry.children[0].ready).not.toBe(false); // eager → ready
+    expect(entry.children[1].ready).toBe(false);
+    expect(entry.children[2].ready).toBe(false);
+    expect(typeof entry.children[1].ensureLoaded).toBe('function');
+    expect(typeof entry.children[2].ensureLoaded).toBe('function');
+  });
+
+  it('ensureLoaded runs the expensive load once and marks the child ready', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    expect(deferred.ready).toBe(false);
+
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.ready).toBe(true));
+
+    expect(loadGSplatsNodeExpensiveMock).toHaveBeenCalledTimes(1);
+    expect(deferred.loading).toBe(false);
+    expect(deferred.failed).toBeUndefined();
+  });
+
+  it('does not register or mark ready when the dataset is switched mid-load', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    expect(deferred.ready).toBe(false);
+
+    // Simulate a dataset switch completing while the deferred load is in
+    // flight: the expensive load resolves (commit skipped internally) but the
+    // thunk must NOT re-register the loader or mark the geometry-less level
+    // ready.
+    ctx.isDatasetLive = () => false;
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.loading).toBe(false));
+
+    expect(ctx.registry.registerGSplatsLoader).not.toHaveBeenCalled();
+    expect(deferred.ready).toBe(false);
+    expect(deferred.failed).toBeUndefined();
+  });
+
+  it('gives deferred levels a release thunk that frees the buffer and resets readiness', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ready = true; // simulate a completed load
+    deferred.failed = true; // simulate a stale failure flag from a prior cycle
+    deferred.failedTick = 42;
+    expect(typeof deferred.release).toBe('function');
+
+    deferred.release!();
+    expect(vi.mocked(ctx.releaseLazyGSplats)).toHaveBeenCalledWith('/lod/child_1');
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+    expect(deferred.failed).toBe(false);
+    // The failure cooldown is also cleared so a reload starts fresh.
+    expect(deferred.failedTick).toBeUndefined();
+  });
+
+  it('does not give the eager default level a release thunk', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(reg.get('/lod')!.children[0].release).toBeUndefined();
+  });
+
+  it('marks the child failed (not ready) when the deferred load throws', async () => {
+    attachStubChildren();
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(new Error('boom'));
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Fallback behaviour when no registry is wired
 // ────────────────────────────────────────────────────────────────────────
 
@@ -242,6 +422,39 @@ describe('loadLodGroupNode — without a registry', () => {
     expect(lodGroup.children[1].visible).toBe(true);
     expect(lodGroup.children[2].visible).toBe(false);
   });
+
+  it('keeps the eager default active when an earlier child fails to attach', async () => {
+    // child_0 fails to attach → dropped from the registry list, shifting
+    // indices. The eager default (child_1) must remain the active/visible
+    // level, not the index-1 survivor (child_2). Regression: previously the
+    // default level was recomputed from `default_level` over the shortened
+    // list, mis-pointing it after a drop.
+    loadSceneNodesMock.mockImplementation(async (n: SceneNode, parent: THREE.Object3D) => {
+      if (n.path === '/lod/child_0') return; // simulate attach failure
+      const mesh = new THREE.Mesh();
+      mesh.name = n.path;
+      parent.add(mesh);
+    });
+    const ctx = makeCtx(/* no registry → all children eager */);
+
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0),
+        makeChildNode('/lod/child_1', 100),
+        makeChildNode('/lod/child_2', 500),
+      ],
+      { default_level: 1 }
+    );
+
+    const parent = new THREE.Group();
+    const lodGroup = await loadLodGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
+
+    // child_0 dropped → survivors [child_1, child_2]; the eager default
+    // (child_1) sits at index 0 and is the visible one.
+    expect(lodGroup.children.map((c) => c.name)).toEqual(['/lod/child_1', '/lod/child_2']);
+    expect(lodGroup.children[0].visible).toBe(true);
+    expect(lodGroup.children[1].visible).toBe(false);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -255,23 +468,20 @@ describe('loadLodGroupNode — transient visibility', () => {
     // loader-side ``childObject.visible = false`` line, previously-loaded
     // children would still be visible=true here — the user briefly sees
     // every loaded LOD level rendered simultaneously.
-    const visibilitySnapshots: { childPath: string; siblings: Record<string, boolean> }[] =
-      [];
-    loadSceneNodesMock.mockImplementation(
-      async (node: SceneNode, parent: THREE.Object3D) => {
-        // Snapshot sibling state BEFORE attaching this new child, so we
-        // see what the user would have momentarily rendered.
-        const siblings: Record<string, boolean> = {};
-        for (const c of parent.children) {
-          if (c.name) siblings[c.name] = c.visible;
-        }
-        visibilitySnapshots.push({ childPath: node.path, siblings });
-        // Now attach the new child (default visible=true per THREE).
-        const mesh = new THREE.Mesh();
-        mesh.name = node.path;
-        parent.add(mesh);
+    const visibilitySnapshots: { childPath: string; siblings: Record<string, boolean> }[] = [];
+    loadSceneNodesMock.mockImplementation(async (node: SceneNode, parent: THREE.Object3D) => {
+      // Snapshot sibling state BEFORE attaching this new child, so we
+      // see what the user would have momentarily rendered.
+      const siblings: Record<string, boolean> = {};
+      for (const c of parent.children) {
+        if (c.name) siblings[c.name] = c.visible;
       }
-    );
+      visibilitySnapshots.push({ childPath: node.path, siblings });
+      // Now attach the new child (default visible=true per THREE).
+      const mesh = new THREE.Mesh();
+      mesh.name = node.path;
+      parent.add(mesh);
+    });
 
     const ctx = makeCtx(/* no registry — exercises the fallback path */);
     const node = makeLodGroupNode([

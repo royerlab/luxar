@@ -139,6 +139,16 @@ export interface UrlParams {
    * caller; never set on the production viewer URL.
    */
   perfTimestamp: boolean;
+  /**
+   * Override the adaptive GPU-geometry byte budget, in megabytes
+   * (`?gpuBudgetMB=1536`). Pins the single VRAM budget shared by the
+   * buffer pool and LOD-group retention, bypassing the auto-size
+   * heuristic. Useful for large scenes on high-VRAM machines (raise it)
+   * or for testing eviction on constrained ones (lower it). `0` disables
+   * the byte budget (unbounded resident geometry). Null/invalid (missing
+   * or negative) ⇒ auto-size from `navigator.deviceMemory`.
+   */
+  gpuBudgetMB: number | null;
 }
 
 /**
@@ -165,7 +175,20 @@ export function readUrlParams(search?: string): UrlParams {
     renderer: normalizeRendererParam(params.get('renderer')),
     webgpuForceWebGL: params.has('webgpu-force-webgl'),
     perfTimestamp: params.has('perf-timestamp'),
+    gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
   };
+}
+
+/**
+ * Parse a non-negative integer query value; null on missing/invalid/<0.
+ * `0` is a valid value — for `?gpuBudgetMB=0` it flows through to
+ * `initGpuByteBudget` as the explicit "disable the byte budget" signal,
+ * matching the config-level `0` semantics.
+ */
+function parseNonNegativeInt(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /**

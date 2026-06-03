@@ -19,6 +19,7 @@ import {
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
 } from '../loaders/loader-factory';
+import { timeLodStage, timeLodStageSync } from '../../../scene/lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { GSplatsMetadata, GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { NodeBuildCtx } from './build-ctx';
@@ -55,25 +56,42 @@ async function createProgressiveGSplatsLoader(
   return loader;
 }
 
+/** Result of the cheap half of gsplats node loading. */
+export interface GSplatsCheapLoad {
+  /** The empty placeholder mesh, already attached to the parent. */
+  placeholder: THREE.Mesh;
+  /** The constructed loader, already registered for updates. */
+  loader: GSplatsDataLoader;
+}
+
 /**
- * Load a single GSplats node on initial scene construction. Branches
- * on `n_additive_sublods` to pick the progressive vs single-LOD
- * loader. See `load-points-node.ts` for the shared placeholder +
- * commit rationale.
+ * Cheap half of GSplats node loading: construct the loader and attach
+ * an empty placeholder mesh — no array fetch, no GPU commit, and
+ * crucially **no registry registration**. Splitting this from the
+ * expensive half lets the lod_group loader attach every level's
+ * placeholder up front while deferring the costly geometry load to
+ * ``loadGSplatsNodeExpensive`` (per-level lazy loading). Branches on
+ * ``n_additive_sublods`` for progressive vs single-LOD loaders, exactly
+ * as the combined path did.
+ *
+ * The caller registers the loader (``ctx.registry.registerGSplatsLoader``)
+ * — but only once it is actually loaded. Registering an unloaded lazy
+ * level would pull it into the scene-wide ``updateView`` sweep
+ * (``runLoaderUpdates`` over every registered gsplat loader), which would
+ * load+commit every level and defeat the lazy deferral. So registration
+ * is the caller's responsibility: the combined ``loadGSplatsNode`` does
+ * it immediately; the lod_group thunk does it after the load completes.
  */
-export async function loadGSplatsNode(
+export async function loadGSplatsNodeCheap(
   node: SceneNode,
   parentThree: THREE.Object3D,
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
-): Promise<THREE.Mesh | null> {
+): Promise<GSplatsCheapLoad> {
   const attrs = node.attrs as unknown as GSplatsMetadata;
   const nAdditive = attrs.n_additive_sublods ?? 0;
   log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-  log.info(
-    Modules.SCENE_LOADER,
-    `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`
-  );
+  log.info(Modules.SCENE_LOADER, `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`);
   log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
   if (nAdditive > 1) {
     log.info(
@@ -88,9 +106,6 @@ export async function loadGSplatsNode(
       ? await createProgressiveGSplatsLoader(node, nAdditive, ctx)
       : createGSplatsLoader(node, loc, ctx);
 
-  // Store loader for updates (route through registry).
-  ctx.registry.registerGSplatsLoader(node.path, loader);
-
   // Empty placeholder + same-flow commit. See loadPoints/loadLines
   // for the rationale.
   const placeholder = ctx.nodeFactory.createEmptyGSplatsNode(
@@ -101,6 +116,22 @@ export async function loadGSplatsNode(
   );
   parentThree.add(placeholder);
 
+  return { placeholder, loader };
+}
+
+/**
+ * Expensive half of GSplats node loading: fetch the splat arrays via
+ * the loader, process them, and commit geometry into the placeholder
+ * (found by name in the root group). Safe to call after initial scene
+ * load returns (lazy lod_group levels) — it checks ``isDatasetLive()``
+ * before committing so a load still in flight when the user switches
+ * datasets never writes into a disposed/replaced scene.
+ */
+export async function loadGSplatsNodeExpensive(
+  node: SceneNode,
+  ctx: NodeBuildCtx,
+  loader: GSplatsDataLoader
+): Promise<void> {
   try {
     // GSplats path mirrors Points: applyPartialExtendTolerance=true so
     // tolerance overrides + nd_transform inversion both happen up front.
@@ -116,7 +147,13 @@ export async function loadGSplatsNode(
         }
       : derivedGSplats.viewState;
 
-    const data = await loader.loadGSplats(gsplatsViewState);
+    // Debug-only per-stage timing (no-op unless ?debug). Buckets the
+    // three meaningful costs — fetch+decode, CPU process (project+pack),
+    // GPU commit — so navigation hitches can be attributed to a stage
+    // before deciding what (if anything) to move off the main thread.
+    const data = await timeLodStage('lazy:loadGSplats', () =>
+      loader.loadGSplats(gsplatsViewState)
+    );
 
     if (data.splatCount === 0) {
       log.info(
@@ -128,17 +165,48 @@ export async function loadGSplatsNode(
     // Process + commit through the same helpers used by every update
     // and retry. Helpers find the placeholder by name and read its
     // userData for truncate/attrs.
-    const staged = await ctx.processGSplatsData(node.path, data, gsplatsViewState);
-    if (staged) ctx.commitGSplatsGeometry(staged);
+    const staged = await timeLodStage('lazy:process', () =>
+      ctx.processGSplatsData(node.path, data, gsplatsViewState)
+    );
+    if (staged) {
+      // Liveness gate: a deferred (lazy lod_group) load may resolve
+      // after the dataset was switched/disposed; committing then would
+      // write into a stale root group. Drop the commit silently — the
+      // worker results are discarded, matching the abort-discard policy.
+      if (!ctx.isDatasetLive()) return;
+      timeLodStageSync('lazy:commit', () => ctx.commitGSplatsGeometry(staged));
+    }
 
     log.success(
       Modules.SCENE_LOADER,
       `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
     );
-
-    return placeholder;
   } catch (error) {
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
+}
+
+/**
+ * Load a single GSplats node on initial scene construction. Branches
+ * on `n_additive_sublods` to pick the progressive vs single-LOD
+ * loader. See `load-points-node.ts` for the shared placeholder +
+ * commit rationale.
+ *
+ * Composition of the cheap (placeholder + loader) and expensive
+ * (fetch + commit) halves; the non-LOD dispatch path uses this combined
+ * form so its behavior is unchanged.
+ */
+export async function loadGSplatsNode(
+  node: SceneNode,
+  parentThree: THREE.Object3D,
+  loc: zarr.Location<zarr.Readable>,
+  ctx: NodeBuildCtx
+): Promise<THREE.Mesh | null> {
+  const { placeholder, loader } = await loadGSplatsNodeCheap(node, parentThree, loc, ctx);
+  // Register immediately — this node loads eagerly, so it should
+  // participate in subsequent updateView sweeps right away.
+  ctx.registry.registerGSplatsLoader(node.path, loader);
+  await loadGSplatsNodeExpensive(node, ctx, loader);
+  return placeholder;
 }

@@ -491,7 +491,7 @@ describe('GPUBufferPool', () => {
       // default for this specific assertion.
       __setMinInstanceCapacityForTesting(null);
       try {
-        const empty = new GPUBufferPool(20, 300, 5, 0);
+        const empty = new GPUBufferPool(20, 300, 5, () => 0);
 
         const lineGeom = empty.acquireLinesGeometry('zero-lines', 0);
         const lineBuf = (lineGeom.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute)

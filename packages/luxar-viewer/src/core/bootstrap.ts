@@ -20,6 +20,7 @@ import { LuxarApp, type LuxarAppOptions } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
+import { initGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
@@ -97,6 +98,15 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   const patchConsole = opts.patchConsole ?? true;
   const warmCodecs = opts.warmCodecs ?? true;
   const validateConfig = opts.validateConfig ?? true;
+
+  // Size the single GPU-geometry byte budget before any pool / LOD
+  // registry is constructed. Precedence: `?gpuBudgetMB=` URL param >
+  // `config.gpuPoolMaxBytes` (null=auto, 0=disable, N=pin) > auto-size.
+  initGpuByteBudget(
+    urlParams.gpuBudgetMB != null
+      ? urlParams.gpuBudgetMB * 1_000_000
+      : config.dataLoading.performance.gpuPoolMaxBytes
+  );
 
   if (patchConsole) {
     consoleInterceptor.patch();
