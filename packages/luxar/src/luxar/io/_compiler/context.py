@@ -8,7 +8,7 @@ instance. They are built by the ``_make_*_ctx()`` methods on the orchestrator.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 from ...encoding import ArrayEncoder, EncodingMode
 from ...typing_utils.protocols import CompressorProtocol
@@ -24,7 +24,7 @@ class DatasetCtx:
 
     encoder: ArrayEncoder
     encoding_mode: EncodingMode
-    compressor: CompressorProtocol
+    compressor: Optional[CompressorProtocol]
 
 
 @dataclass(frozen=True)

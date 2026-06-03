@@ -113,7 +113,7 @@ def build_points_ordering(
 def write_points_ordering_to_zarr(
     group: zarr.Group,
     ordering_data: Dict[str, Any],
-    compressor: CompressorProtocol,
+    compressor: Optional[CompressorProtocol],
 ) -> None:
     """Write spatial ordering metadata and chunk bounds to Zarr.
 
