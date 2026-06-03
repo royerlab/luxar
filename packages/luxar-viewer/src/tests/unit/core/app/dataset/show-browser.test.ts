@@ -209,7 +209,9 @@ describe('showDatasetBrowser', () => {
       // AND log.error was called with the structured payload.
       expect(mocks.logError).toHaveBeenCalledWith(
         'LUXAR',
-        expect.stringMatching(/loadDataset failed for http:\/\/example\.com\/bad\.zarr.*simulated zarr 404/),
+        expect.stringMatching(
+          /loadDataset failed for http:\/\/example\.com\/bad\.zarr.*simulated zarr 404/
+        ),
         expect.any(Error)
       );
     });

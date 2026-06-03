@@ -76,6 +76,15 @@ export class DatasetBrowser {
    */
   private navigationGeneration = 0;
 
+  /** Entries for the current directory (unfiltered), cached so the search bar can re-filter without re-fetching. */
+  private currentEntries: DirectoryEntry[] = [];
+
+  /** Detection strategy label for the current directory, shown in the status bar. */
+  private currentStrategy = '';
+
+  /** Live filter text from the search bar; matched case-insensitively against entry names. */
+  private filterText = '';
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
@@ -187,10 +196,9 @@ export class DatasetBrowser {
 
     welcomeBanner.innerHTML = `
       <div class="luxar-dataset-browser__banner-content">
-        <div>
-          <strong class="luxar-dataset-browser__banner-title">Luxar</strong> - Interactive Scientific Data Visualization
-          <span class="luxar-dataset-browser__banner-description">•</span>
-          <span class="luxar-dataset-browser__banner-description">Browse for <code class="luxar-dataset-browser__banner-code">.zarr</code> or enter path manually</span>
+        <div class="luxar-dataset-browser__banner-text">
+          <div><strong class="luxar-dataset-browser__banner-title">Luxar</strong> - Interactive Scientific Data Visualization</div>
+          <div class="luxar-dataset-browser__banner-description">Browse for <code class="luxar-dataset-browser__banner-code">.zarr</code> or enter path manually</div>
         </div>
         <div class="luxar-dataset-browser__banner-help">
           <kbd class="luxar-dataset-browser__banner-kbd">H</kbd> Help
@@ -202,6 +210,25 @@ export class DatasetBrowser {
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'luxar-dataset-browser-breadcrumb';
     breadcrumb.className = 'luxar-dataset-browser__breadcrumb';
+
+    // Search / filter bar (filters the current directory listing live).
+    // Hidden whenever there are no entries to filter (loading, error,
+    // empty directory, or the manual-entry fallback) — see setSearchVisible.
+    const search = document.createElement('div');
+    search.id = 'luxar-dataset-browser-search-bar';
+    search.className = 'luxar-dataset-browser__search';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.id = 'luxar-dataset-browser-search';
+    searchInput.className = 'luxar-dataset-browser__search-input';
+    searchInput.placeholder = 'Filter datasets…';
+    searchInput.setAttribute('aria-label', 'Filter datasets in this directory');
+    searchInput.autocomplete = 'off';
+    searchInput.oninput = () => {
+      this.filterText = searchInput.value;
+      this.renderEntries();
+    };
+    search.appendChild(searchInput);
 
     // Content area
     const content = document.createElement('div');
@@ -217,6 +244,7 @@ export class DatasetBrowser {
     panel.appendChild(header);
     panel.appendChild(welcomeBanner);
     panel.appendChild(breadcrumb);
+    panel.appendChild(search);
     panel.appendChild(content);
     panel.appendChild(statusBar);
 
@@ -239,9 +267,11 @@ export class DatasetBrowser {
 
     const myGeneration = ++this.navigationGeneration;
 
-    // Show loading state
+    // Show loading state. Hide the search bar while loading; renderEntries
+    // re-shows it once we have a non-empty listing to filter.
     content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
     statusBar.textContent = 'Fetching directory contents...';
+    this.setSearchVisible(false);
 
     try {
       const result = await this.navigator.navigate(path);
@@ -267,21 +297,12 @@ export class DatasetBrowser {
         return;
       }
 
-      // Display directory contents
-      this.displayEntries(result.entries);
-
-      // Update status
-      const strategyText = {
-        webdav: 'WebDAV',
-        html: 'HTML parsing',
-        index: 'Index file',
-        manual: 'Manual entry',
-      }[result.strategy];
-
-      statusBar.innerHTML = `
-        <span>${result.entries.length} items</span>
-        <span>Detection: ${strategyText}</span>
-      `;
+      // Cache entries + strategy for the search bar, reset any stale
+      // filter from the previous directory, then render.
+      this.currentEntries = result.entries;
+      this.currentStrategy = result.strategy;
+      this.resetFilter();
+      this.renderEntries();
 
       // Handle manual fallback
       if (result.strategy === 'manual' && result.entries.length === 0) {
@@ -356,14 +377,77 @@ export class DatasetBrowser {
   }
 
   /**
-   * Display directory entries.
+   * Clear the search bar and filter state (called on every navigation so
+   * a filter from the previous directory doesn't carry over).
    */
-  private displayEntries(entries: DirectoryEntry[]): void {
+  private resetFilter(): void {
+    this.filterText = '';
+    const searchInput = this.panel.querySelector(
+      '#luxar-dataset-browser-search'
+    ) as HTMLInputElement | null;
+    if (searchInput) searchInput.value = '';
+  }
+
+  /**
+   * Show or hide the search/filter bar. Hidden in states where filtering
+   * is meaningless (loading, error, empty directory, manual-entry fallback)
+   * so it only appears when there's an actual listing to narrow.
+   */
+  private setSearchVisible(visible: boolean): void {
+    const search = this.panel.querySelector(
+      '#luxar-dataset-browser-search-bar'
+    ) as HTMLElement | null;
+    if (search) search.style.display = visible ? '' : 'none';
+  }
+
+  /**
+   * Render the current directory's entries, applying the live search
+   * filter, and refresh the status bar (visible / total counts +
+   * detection strategy). Re-run on navigation and on every keystroke in
+   * the search bar.
+   */
+  private renderEntries(): void {
     const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
+    const statusBar = this.panel.querySelector('#luxar-dataset-browser-status') as HTMLElement;
     content.innerHTML = '';
 
-    if (entries.length === 0) {
+    const total = this.currentEntries.length;
+    const strategyText =
+      {
+        webdav: 'WebDAV',
+        html: 'HTML parsing',
+        index: 'Index file',
+        manual: 'Manual entry',
+      }[this.currentStrategy] ?? this.currentStrategy;
+
+    // Apply the case-insensitive substring filter on entry names.
+    const query = this.filterText.trim().toLowerCase();
+    const entries = query
+      ? this.currentEntries.filter((e) => e.name.toLowerCase().includes(query))
+      : this.currentEntries;
+
+    // Status bar: show "M of N" while filtering, otherwise just the total.
+    const countLabel =
+      query && entries.length !== total
+        ? `${entries.length} of ${total} items`
+        : `${total} item${total === 1 ? '' : 's'}`;
+    statusBar.innerHTML = `
+      <span>${countLabel}</span>
+      <span>Detection: ${strategyText}</span>
+    `;
+
+    // Only offer the filter when there's an actual listing to narrow.
+    // Stays visible in the no-matches case (total > 0) so the user can
+    // edit their query.
+    this.setSearchVisible(total > 0);
+
+    if (total === 0) {
       content.innerHTML = '<div class="luxar-dataset-browser__empty">Empty directory</div>';
+      return;
+    }
+
+    if (entries.length === 0) {
+      content.innerHTML = `<div class="luxar-dataset-browser__empty">No matches for “${escapeHtml(this.filterText.trim())}”</div>`;
       return;
     }
 
