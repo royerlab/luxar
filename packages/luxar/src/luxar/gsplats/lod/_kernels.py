@@ -147,6 +147,11 @@ def truncation_radii_numpy(L: np.ndarray, sigmas: float) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────────────
 
 
+def sqrt_det_from_cholesky(L: torch.Tensor) -> torch.Tensor:
+    """Public alias of :func:`_sqrt_det_from_cholesky` for cross-module reuse."""
+    return _sqrt_det_from_cholesky(L)
+
+
 def _sqrt_det_from_cholesky(L: torch.Tensor) -> torch.Tensor:
     """Per-splat $|\\Sigma|^{1/2} = |\\det L|$ from lower-triangular ``L``.
 

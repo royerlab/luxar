@@ -43,7 +43,7 @@ from luxar.gsplats.lod.additive import (
     MethodName as AdditiveMethodName,
 )
 from luxar.gsplats.lod.substitutive import (
-    MethodName as SubstitutiveMethodName,
+    AutoOrMethod as SubstitutiveMethodName,
 )
 from luxar.gsplats.lod.substitutive import (
     make_substitutive_lod,
@@ -62,7 +62,7 @@ def make_lod_pyramid(
     *,
     compression_factor: int = 4,
     levels: int = 3,
-    substitutive_method: SubstitutiveMethodName = "kmeans_lloyd",
+    substitutive_method: SubstitutiveMethodName = "auto",
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
     device: Union[str, torch.device, None] = "auto",
