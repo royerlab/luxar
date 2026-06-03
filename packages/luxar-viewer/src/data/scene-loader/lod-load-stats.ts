@@ -14,7 +14,7 @@
  * `installDebugInterface`, which also exposes
  * `window.__luxarDebug.getLodLoadStats()` / `resetLodLoadStats()`.
  *
- * @module scene/lod-load-stats
+ * @module data/scene-loader/lod-load-stats
  */
 
 interface StageStat {
