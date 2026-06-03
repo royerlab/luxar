@@ -15,7 +15,7 @@ def write_labels_csr(
     group: zarr.Group,
     labels: Sequence[str],
     n_elements: int,
-    compressor: CompressorProtocol,
+    compressor: Optional[CompressorProtocol],
     sort_order: Optional[np.ndarray] = None,
 ) -> None:
     """Write per-element string labels using CSR-style encoding.
