@@ -18,6 +18,7 @@ from luxar.transforms import (
     rotate_z,
     scale,
     to_list,
+    transform_bounding_box,
     translate,
 )
 
@@ -684,3 +685,63 @@ class TestNodeTransformIntegration:
         recovered2 = read_transform_from_zarr(zarr_list2)
 
         assert np.allclose(original, recovered2, atol=1e-6)
+
+
+class TestTransformBoundingBox:
+    """Test the 8-corner AABB transform helper."""
+
+    def test_identity_leaves_box_unchanged(self) -> None:
+        lo, hi = transform_bounding_box(identity(), [-1, -2, -3], [4, 5, 6])
+        assert lo.tolist() == [-1, -2, -3]
+        assert hi.tolist() == [4, 5, 6]
+
+    def test_translation_shifts_box(self) -> None:
+        lo, hi = transform_bounding_box(
+            translate(3, -2, 1), [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]
+        )
+        assert lo.tolist() == pytest.approx([2.5, -2.5, 0.5])
+        assert hi.tolist() == pytest.approx([3.5, -1.5, 1.5])
+
+    def test_rotation_expands_to_enclose_all_corners(self) -> None:
+        # A 45-degree z-rotation of the unit cube grows the x/y extent to
+        # the half-diagonal (sqrt(2)/2). Transforming only the (min, max)
+        # corner pair would *miss* this — this is the regression guard.
+        half = np.sqrt(2) / 2
+        lo, hi = transform_bounding_box(
+            rotate_z(45), [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]
+        )
+        assert lo.tolist() == pytest.approx([-half, -half, -0.5])
+        assert hi.tolist() == pytest.approx([half, half, 0.5])
+
+    def test_anisotropic_scale(self) -> None:
+        lo, hi = transform_bounding_box(
+            scale(0.5, 0.5, 2.0), [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]
+        )
+        assert lo.tolist() == pytest.approx([-0.25, -0.25, -1.0])
+        assert hi.tolist() == pytest.approx([0.25, 0.25, 1.0])
+
+    def test_accepts_flat_row_major_matrix(self) -> None:
+        flat = translate(1, 0, 0).ravel().tolist()
+        lo, hi = transform_bounding_box(flat, [0, 0, 0], [1, 1, 1])
+        assert lo.tolist() == pytest.approx([1, 0, 0])
+        assert hi.tolist() == pytest.approx([2, 1, 1])
+
+    def test_composed_transform_matches_pointwise(self) -> None:
+        # The enclosing box of the transformed corners must contain every
+        # transformed corner, and equal the per-corner min/max.
+        m = compose(translate(2, -1, 3), rotate_z(30), scale(1.5, 0.8, 1.2))
+        lo_in = np.array([-1.0, -2.0, -0.5])
+        hi_in = np.array([2.0, 1.0, 0.5])
+        corners = np.array(
+            [
+                [x, y, z]
+                for x in (lo_in[0], hi_in[0])
+                for y in (lo_in[1], hi_in[1])
+                for z in (lo_in[2], hi_in[2])
+            ]
+        )
+        homog = np.column_stack([corners, np.ones(8)])
+        pts = (homog @ m.T)[:, :3]
+        lo, hi = transform_bounding_box(m, lo_in, hi_in)
+        assert lo.tolist() == pytest.approx(pts.min(axis=0).tolist())
+        assert hi.tolist() == pytest.approx(pts.max(axis=0).tolist())
