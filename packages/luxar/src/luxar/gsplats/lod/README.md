@@ -149,7 +149,7 @@ make_substitutive_lod(
     *,
     compression_factor: int = 4,        # K
     levels: int = 3,                    # L (coarser levels to produce)
-    method: str = "kmeans_lloyd",       # see "Substitutive methods" below
+    method: str = "auto",               # see "Substitutive methods" below
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
     device: str = "auto",               # auto | cpu | cuda | mps
@@ -167,24 +167,44 @@ v2.0 `.gsplats.zarr` (`splats/substitutive_<s>/additive_0/` per level)
 
 | Method          | Warm start        | Refinement        | Recommended for                                |
 |-----------------|-------------------|-------------------|------------------------------------------------|
-| `kmeans`        | k-means++ on means | none              | ablation only — *worse than amplitude culling on real anisotropic data*      |
-| `kmeans_lloyd`  | k-means++ on means | cost-increment Lloyd | **recommended workhorse**. Beats amplitude culling at every $K$ on supp-doc Experiment C |
-| `greedy`        | Runnalls hierarchical | none           | small/medium $N$ where $\mathcal{O}(N^2)$ is acceptable. Quality-leading at small $K$ |
-| `greedy_lloyd`  | Runnalls hierarchical | cost-increment Lloyd | quality-leaning option for small/medium $N$  |
+| `auto`          | per level         | per level         | **default**. Picks `greedy` for levels ≤ 5000 splats (best quality, fast there) and `kmeans_lloyd` above. Large datasets get fast coarse-level reductions + greedy-quality fine levels |
+| `kmeans`        | Morton chunk      | none              | fast and already high quality — the raw spatially-coherent partition |
+| `kmeans_lloyd`  | Morton chunk      | vectorised cost-increment Lloyd | large-N workhorse. Adds a few dB of PSNR over `kmeans`; beats amplitude culling at every $K$ on supp-doc Experiment C |
+| `greedy`        | Runnalls hierarchical (lazy-heap, incremental) | none           | **quality-leading** at small $N$/$K$ (lowest rel-L² in practice). Now ~$O(Nk\log Nk)$, usable into the tens of thousands |
+| `greedy_lloyd`  | Runnalls hierarchical (lazy-heap, incremental) | vectorised cost-increment Lloyd | quality-leaning option; greedy is often already near-optimal so Lloyd adds little  |
+
+The method names keep their `kmeans` prefix for API stability; the warm
+start is the `O(N log N)` Morton (Z-order) space-filling-curve partition,
+**not** a global k-means++. In the substitutive regime there are
+`M = N/K` bins, so a global k-means++ init is `O(M·N) = O(N²/K)` — it took
+**minutes-to-hours at N ≈ 256K** and was the dominant cost. Morton-sort +
+chunk gives the same `M` spatially-coherent, balanced, empty-bin-free bins
+in `O(N log N)` (sub-second at 256K).
 
 ### Performance
 
-- All warm-start k-means and per-iteration top-k bin-candidate lookups
-  run on PyTorch via `device='auto'` and the
-  `BatchedSpatialHashGrid` from `luxar.utils.spatial_hash` (CUDA / MPS /
-  CPU; conservative fallback on OOM).
-- Lloyd's per-splat sequential update is honest about its cost: the
-  per-iteration work is $\mathcal{O}(N \cdot k \cdot \bar{K}^2)$ with
-  $k$ = candidate bins and $\bar{K} = N/M$ the average bin size. For
-  typical Luxar workloads ($N \approx 10^5{-}10^6$, $K = 4$,
-  $\bar K = 4$), this is fast.
-- Greedy with spatial-hash candidate pruning is still $\mathcal{O}(N^2)$
-  worst case; use only at small/medium $N$ (≤ a few thousand).
+- The warm-start partition and the per-bin merge are **fully vectorised
+  segment reductions** (`torch.Tensor.index_add_` keyed by bin id) — no
+  Python per-splat or per-bin loops. They run on PyTorch via
+  `device='auto'` (CUDA / MPS / CPU).
+- Lloyd refinement is **vectorised and monotone**: each pass reassigns all
+  splats synchronously to the template they best project onto (candidates
+  are the current bins of a splat's Morton-curve neighbours — an
+  `O(N·k)` gather, not a spatial-hash kNN), rebuilds templates, and keeps
+  the pass only if the global projection energy `P = Σ_b ⟨f,Ḡ⟩²/‖Ḡ‖²`
+  does not decrease. So the result is never worse than the warm start.
+- A reduction of **256K splats → 64K builds in ~3–4 s on CPU** (vs.
+  ~1 hr before); the full 6-level ladder builds in ~5 s. Quality is high:
+  a 4× reduction reconstructs at ~46 dB PSNR vs. the full set (Lloyd adds
+  ~3 dB over the raw Morton partition).
+- Greedy uses a **lazy-deletion priority queue** (Runnalls): each candidate
+  pair cost is computed once (batched), stale heap entries are tagged by
+  per-cluster version counters, and after each merge only the new cluster's
+  ~`k` neighbour edges are recomputed (clusters live in fixed slots with an
+  active free-list — no array splicing). Roughly `O(N·k·log(N·k))` vs. the
+  former `O(N²·k)` full re-scan (which took ~57 s at N=200; now ~0.2 s, and
+  ~9 s at N=10K). It is heavier per-merge than the Morton warm start, so
+  `kmeans_lloyd` is still the default workhorse for very large `N`.
 
 ### Out of scope (this round)
 
