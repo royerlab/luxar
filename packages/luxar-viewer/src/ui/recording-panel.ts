@@ -27,7 +27,7 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording-panel/gui-builder';
-import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
+import { buildRecordingGUI, captureLabelForMode } from './recording-panel/ui/gui-construction';
 import { RecordingSession } from './recording-panel/session';
 import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
 import { VideoRecordingStrategy } from './recording-panel/video-recording-strategy';
@@ -67,8 +67,8 @@ export class RecordingPanel {
     imageQuality: 0.92,
     maxDPR: true,
     transparentBackground: false,
-    videoDurationLimit: 0,
-    videoFPS: 60,
+    videoDurationLimit: 60,
+    videoFPS: 30,
     videoCodec: 'h265',
     videoQuality: 'high',
     videoResolution: 0,
@@ -99,6 +99,7 @@ export class RecordingPanel {
   private videoQualityController: Controller | null = null;
   private videoDurationController: Controller | null = null;
   private formatController: Controller | null = null;
+  private captureController: Controller | null = null;
 
   constructor(
     private readonly sceneManager: SceneManager,
@@ -222,14 +223,28 @@ export class RecordingPanel {
   async startVideoRecording(): Promise<void> {
     if (this.session.isRecording) return;
 
-    // Mode dispatch — EXR and turntable-smooth always go offline;
-    // everything else uses the real-time MediaRecorder path.
+    // Mode dispatch. The real-time MediaRecorder path can ONLY produce a
+    // continuous WebM stream — it cannot emit MP4/MKV, image sequences,
+    // or EXR. So the only case it can correctly serve is:
+    //   • Video mode (always WebM), or
+    //   • Turntable mode when frame-by-frame is off AND the format is WebM.
+    // Everything else (any non-WebM turntable format, EXR, or smooth
+    // capture) must go through the deterministic offline loop.
     const fmt = this.options.outputFormat;
-    const isTurntableSmooth = this.mode === 'turntable' && this.options.frameByFrame;
 
-    if (fmt === 'exr' || isTurntableSmooth) {
+    // EXR carries full float precision and can only be produced by the
+    // offline HDR path — never by the real-time MediaRecorder, in any mode.
+    if (fmt === 'exr') {
       return this.offlineCaptureStrategy.run(this.options, this.mode, this.session);
     }
+
+    if (this.mode === 'turntable') {
+      const realtimeEligible = !this.options.frameByFrame && fmt === 'webm';
+      return realtimeEligible
+        ? this.videoRecordingStrategy.run(this.options, this.mode, this.session)
+        : this.offlineCaptureStrategy.run(this.options, this.mode, this.session);
+    }
+
     return this.videoRecordingStrategy.run(this.options, this.mode, this.session);
   }
 
@@ -294,6 +309,7 @@ export class RecordingPanel {
     this.videoDurationController = result.videoDurationController;
     this.syncToggleController = result.syncToggleController;
     this.syncDimensionController = result.syncDimensionController;
+    this.captureController = result.captureController;
     this.imageControllers = result.imageControllers;
     this.videoControllers = result.videoControllers;
     this.turntableControllers = result.turntableControllers;
@@ -309,6 +325,10 @@ export class RecordingPanel {
    */
   private updateControlVisibility(): void {
     const decision = computeControlVisibility(this.mode, this.options);
+
+    // Action-button verb tracks the mode: "Capture" a still in Image
+    // mode, "Record" a clip in Video / Turntable mode.
+    this.captureController?.name(captureLabelForMode(this.mode));
 
     // Filter format-dropdown options by mode. Our GUI uses display
     // labels as option.value (e.g., "PNG" not "png"); map labels →
@@ -328,14 +348,20 @@ export class RecordingPanel {
       this.formatController?.updateDisplay();
     }
 
-    this.formatController?.show();
+    // Format dropdown is hidden when the mode offers a single choice
+    // (Video mode = WebM only), so the one-item dropdown and its silent
+    // WebP→WebM rewrite don't confuse the user.
+    decision.showFormat ? this.formatController?.show() : this.formatController?.hide();
 
     for (const ctrl of this.imageControllers) {
       decision.showImageGroup ? ctrl.show() : ctrl.hide();
     }
-    if (decision.showImageGroup) {
-      if (!decision.showImageQuality) this.qualityController?.hide();
-      if (!decision.showImageTransparent) this.transparentController?.hide();
+    // Image quality is decided independently of the image group: WebP /
+    // JPEG turntable sequences also encode with `imageQuality`, so the
+    // slider must be available in turntable mode too.
+    decision.showImageQuality ? this.qualityController?.show() : this.qualityController?.hide();
+    if (decision.showImageGroup && !decision.showImageTransparent) {
+      this.transparentController?.hide();
     }
 
     for (const ctrl of this.videoControllers) {

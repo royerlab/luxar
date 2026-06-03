@@ -60,15 +60,6 @@ export function isVideoContainerFormat(fmt: OutputFormat): boolean {
   return fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv';
 }
 
-/**
- * Codecs supported by the browser's MediaRecorder API (used in real-
- * time Video mode). Turntable / offline modes use mediabunny which
- * supports all four codecs (h265 / vp9 / h264 / vp8).
- */
-export function getMediaRecorderCodecs(): readonly string[] {
-  return ['vp9', 'vp8'];
-}
-
 /** Mapping of GUI display labels to internal format values. */
 export const FORMAT_LABEL_TO_VALUE: Readonly<Record<string, OutputFormat>> = {
   PNG: 'png',
@@ -104,7 +95,18 @@ export interface ControlVisibilityDecision {
   /** Turntable-only group (rotation speed, axis, …). */
   showTurntableGroup: boolean;
 
-  /** Image quality slider — hidden for png / exr (lossless). */
+  /**
+   * Format dropdown — hidden when the mode offers a single format
+   * (Video mode is WebM-only, so a one-item dropdown is just noise and
+   * its silent WebP→WebM rewrite confuses users).
+   */
+  showFormat: boolean;
+
+  /**
+   * Image quality slider — visible for lossy still/image-sequence
+   * formats (jpeg / webp) in image OR turntable mode. Hidden for the
+   * lossless png / exr.
+   */
   showImageQuality: boolean;
   /** Transparent-BG checkbox — hidden for exr (always has alpha). */
   showImageTransparent: boolean;
@@ -161,14 +163,22 @@ export function computeControlVisibility(
   const isVideoFormat = isVideoContainerFormat(fmt);
   const isImgSeq = isImageSequenceFormat(fmt);
 
-  // Image quality slider visible only in image mode and only for
-  // lossy formats (jpeg / webp). Hidden for png / exr.
-  const showImageQuality = isImage && fmt !== 'png' && fmt !== 'exr';
+  // Format dropdown only worth showing when there's a real choice.
+  const showFormat = validFormats.length > 1;
+
+  // Image quality slider visible for lossy image / image-sequence
+  // formats (jpeg / webp) in either image or turntable mode. Hidden for
+  // the lossless png / exr. Turntable WebP/JPEG sequences encode with
+  // `imageQuality` too (see image-sequence-driver), so they need it.
+  const showImageQuality = (isImage || isTurntable) && (fmt === 'jpeg' || fmt === 'webp');
   // Transparent-BG hidden for exr (always has alpha).
   const showImageTransparent = isImage && fmt !== 'exr';
 
   const showVideoGroup = isVideo || isTurntable;
-  const showVideoCodec = showVideoGroup && isVideoFormat;
+  // Codec only matters on the offline mediabunny path (turntable). The
+  // real-time MediaRecorder used by Video mode always emits WebM and
+  // picks the codec itself, so a codec dropdown there is misleading.
+  const showVideoCodec = isTurntable && isVideoFormat;
   // Video quality irrelevant for image-sequence formats.
   const showVideoQuality = showVideoGroup && !isImgSeq;
   // Turntable computes duration from speed; sync-toggle is irrelevant.
@@ -176,21 +186,17 @@ export function computeControlVisibility(
   const showSyncToggle = isVideo;
   const showSyncDimension = isVideo && options.syncToSlider;
 
-  let visibleVideoCodecs: readonly string[] | null = null;
-  if (showVideoCodec) {
-    if (isVideo) {
-      visibleVideoCodecs = getMediaRecorderCodecs();
-    } else {
-      // Turntable: mediabunny supports all codecs; pass through the
-      // full label-to-value map's value set.
-      visibleVideoCodecs = Object.values(CODEC_LABEL_TO_VALUE);
-    }
-  }
+  // Turntable uses mediabunny, which supports every codec; pass through
+  // the full label-to-value map's value set.
+  const visibleVideoCodecs: readonly string[] | null = showVideoCodec
+    ? Object.values(CODEC_LABEL_TO_VALUE)
+    : null;
 
   return {
     showImageGroup: isImage,
     showVideoGroup,
     showTurntableGroup: isTurntable,
+    showFormat,
     showImageQuality,
     showImageTransparent,
     showVideoCodec,
