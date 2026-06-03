@@ -91,7 +91,7 @@ def write_image_labels_csr(
     group: zarr.Group,
     image_labels: Any,
     n_elements: int,
-    compressor: CompressorProtocol,
+    compressor: Optional[CompressorProtocol],
     sort_order: Optional[np.ndarray] = None,
 ) -> None:
     """Write per-element image labels using CSR-style encoding.

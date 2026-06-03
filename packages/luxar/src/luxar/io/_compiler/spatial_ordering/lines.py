@@ -141,7 +141,7 @@ def build_lines_ordering(
 def write_lines_ordering_to_zarr(
     group: zarr.Group,
     ordering_data: Dict[str, Any],
-    compressor: CompressorProtocol,
+    compressor: Optional[CompressorProtocol],
 ) -> None:
     """Write Lines spatial ordering metadata and dual chunk bounds to Zarr.
 
