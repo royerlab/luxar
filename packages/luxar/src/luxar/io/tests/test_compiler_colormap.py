@@ -130,6 +130,53 @@ class TestColormapPointsCompiler:
             assert "colormap_lut" not in store["pts"]
 
 
+class TestColormapToneMappingWarning:
+    """The compiler warns about ACES hue distortion when a colormap LUT is used."""
+
+    def test_warns_under_default_aces(self) -> None:
+        """A colormap with the default tone-mapping (None → ACES) warns once."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with pytest.warns(UserWarning, match="ACES"):
+                with LuxarZarrCompiler(path) as c:
+                    scene = c.create_scene(dimensions=dims)
+                    positions = np.random.rand(50, 3).astype(np.float32)
+                    scene.add_points("pts", positions, colormap="viridis")
+
+    def test_warns_only_once_for_multiple_nodes(self) -> None:
+        """The warning fires at most once per compile session."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            with pytest.warns(UserWarning) as record:
+                with LuxarZarrCompiler(path) as c:
+                    scene = c.create_scene(dimensions=dims)
+                    positions = np.random.rand(50, 3).astype(np.float32)
+                    scene.add_points("pts1", positions, colormap="viridis")
+                    scene.add_points("pts2", positions, colormap="magma")
+            aces_warnings = [w for w in record if "ACES" in str(w.message)]
+            assert len(aces_warnings) == 1
+
+    def test_no_warning_when_neutral_selected(self) -> None:
+        """When the author pins Neutral tone-mapping, no warning is emitted."""
+        import warnings as _warnings
+
+        from luxar.core.viewer_config import ViewerConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            vc = ViewerConfig(tone_mapping="Neutral")
+            with _warnings.catch_warnings(record=True) as record:
+                _warnings.simplefilter("always")
+                with LuxarZarrCompiler(path) as c:
+                    scene = c.create_scene(dimensions=dims, viewer_config=vc)
+                    positions = np.random.rand(50, 3).astype(np.float32)
+                    scene.add_points("pts", positions, colormap="viridis")
+            assert not [w for w in record if "ACES" in str(w.message)]
+
+
 class TestColormapGSplatsCompiler:
     """Test colormap support when writing gsplats."""
 

@@ -209,6 +209,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
         self.auto_partition_max_elements: Optional[int] = auto_partition_max_elements
 
+        # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
+        # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
+        self._lut_tone_mapping_warned: bool = False
+
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
         self._encoding_mode = encoding_mode
@@ -2188,16 +2192,31 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         walk(store)
 
-    def _expand_bounds_with_nd_transforms(self, store: zarr.Group) -> None:
-        """Expand scene-level position bounds using nD transforms.
+    def _expand_bounds_with_transforms(self, store: zarr.Group) -> None:
+        """Expand scene-level position bounds into world space.
 
-        Walks the zarr tree, composes world nd_transforms for each leaf node,
-        applies them to per-node position bounds, and stores the union of all
-        world-space bounds as the scene-level position_bounds.
+        Walks the zarr tree, composes the world-space transform chain for
+        each leaf node, applies it to the per-node (local) position bounds,
+        and stores the union of all world-space bounds as the scene-level
+        ``position_bounds``.
 
-        Only non-displayed dimensions are affected — displayed dimensions stay
-        in local space (correct for camera auto-framing), while non-displayed
-        dimensions become world-space (correct for slider auto-ranging).
+        Two independent transform families are composed down the hierarchy
+        and applied together:
+
+        - The 4x4 spatial ``transform`` (translate / rotate / scale) moves
+          the **displayed** dimensions (the ones the viewer maps to mesh
+          x/y/z). The matrix is applied to the box by transforming all 8
+          corners (see :func:`transform_bounding_box`), which is correct
+          under rotation — only transforming the (min, max) corner pair
+          would underestimate the rotated extent.
+        - The per-dimension ``nd_transform`` (affine scale/offset) moves the
+          **non-displayed** dimensions (slider axes).
+
+        Getting the spatial 4x4 into the scene bounds is load-bearing for the
+        viewer: per-frame dynamic clipping derives near/far from a bounding
+        sphere built from this metadata. If a node is translated far from the
+        origin but its transform is ignored here, the sphere is too small and
+        that geometry gets clipped as the camera rotates.
 
         Args:
             store: The opened zarr store (in r+ mode)
@@ -2209,43 +2228,90 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             return
 
         from ..core.dimensions import Dimensions
+        from ..core.transforms import (
+            read_transform_from_zarr,
+            transform_bounding_box,
+        )
         from ..validation.nd_transforms import (
             apply_nd_transform_to_bounds,
             compose_nd_transforms,
         )
 
         dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
+        # The 4x4 transform's x/y/z axes map, in order, to the displayed
+        # dimensions — matching how the viewer projects nD positions to the
+        # mesh's x/y/z before applying the node transform.
+        displayed = dimensions.displayed[:3]
+
+        def apply_matrix_to_displayed_dims(
+            bounds: dict[str, list[float]], matrix: "np.ndarray"
+        ) -> dict[str, list[float]]:
+            """Apply a 4x4 world matrix to the displayed dims of ``bounds``."""
+            min_vals = list(bounds["min"])
+            max_vals = list(bounds["max"])
+            # Gather the displayed-dim sub-box into 3D (missing axes -> 0,
+            # mirroring the viewer's zero-padding of < 3 displayed dims).
+            lo3 = [0.0, 0.0, 0.0]
+            hi3 = [0.0, 0.0, 0.0]
+            for axis, dim in enumerate(displayed):
+                if dim < len(min_vals):
+                    lo3[axis] = min_vals[dim]
+                    hi3[axis] = max_vals[dim]
+            new_lo, new_hi = transform_bounding_box(matrix, lo3, hi3)
+            for axis, dim in enumerate(displayed):
+                if dim < len(min_vals):
+                    min_vals[dim] = float(new_lo[axis])
+                    max_vals[dim] = float(new_hi[axis])
+            return {"min": min_vals, "max": max_vals}
 
         # Collect all world-space bounds from leaf nodes
         all_world_bounds: list[dict[str, list[float]]] = []
 
-        def walk(group: zarr.Group, parent_chain: list[dict]) -> None:
-            """Recursively walk zarr tree, composing nd_transforms."""
+        def walk(
+            group: zarr.Group,
+            nd_chain: list[dict],
+            world_matrix: "np.ndarray",
+            has_matrix: bool,
+        ) -> None:
+            """Recursively walk zarr tree, composing both transform families."""
             attrs = dict(group.attrs)
-            chain = list(parent_chain)
+
+            chain = list(nd_chain)
             nd_t = attrs.get("nd_transform", None)
             if nd_t:
                 chain.append(nd_t)
+
+            node_matrix = world_matrix
+            node_has_matrix = has_matrix
+            raw_transform = attrs.get("transform", None)
+            if raw_transform is not None:
+                local_matrix = read_transform_from_zarr(list(raw_transform))
+                # world = ancestors @ this  (child transform applied first).
+                node_matrix = world_matrix @ local_matrix
+                node_has_matrix = True
 
             node_type = attrs.get("type", None)
             if node_type in ("points", "lines", "gsplats"):
                 # Leaf node with geometry
                 local_bounds = attrs.get("position_bounds", None)
                 if local_bounds:
+                    transformed = local_bounds
                     if chain:
                         world_nd_t = compose_nd_transforms(*chain)
                         transformed = apply_nd_transform_to_bounds(
-                            local_bounds, world_nd_t, dimensions
+                            transformed, world_nd_t, dimensions
                         )
-                    else:
-                        transformed = local_bounds
+                    if node_has_matrix:
+                        transformed = apply_matrix_to_displayed_dims(
+                            transformed, node_matrix
+                        )
                     all_world_bounds.append(transformed)
 
             # Recurse into child groups
             for child_name in sorted(group.group_keys()):
-                walk(group[child_name], chain)
+                walk(group[child_name], chain, node_matrix, node_has_matrix)
 
-        walk(store, [])
+        walk(store, [], np.eye(4, dtype=np.float64), False)
 
         # If no leaf nodes found, nothing to do
         if not all_world_bounds:
@@ -2926,6 +2992,34 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if colormap is None:
             return
 
+        # The viewer defaults to ACES filmic tone-mapping, which intentionally
+        # shifts hues for a pleasing HDR look. That hue shift distorts the exact
+        # colors of a colormap LUT, so warn authors who rely on LUTs that they
+        # may want to pin tone_mapping="Neutral" in the scene's viewer_config.
+        # Skip the warning when:
+        #   - the author has already chosen "Neutral", or
+        #   - the colormap is the implicit grayscale default ("gray"), which has
+        #     no hue for ACES to distort and is not a deliberate LUT choice.
+        scene_tone_mapping = None
+        if self._scene is not None and self._scene.viewer_config is not None:
+            scene_tone_mapping = self._scene.viewer_config.tone_mapping
+        is_grayscale_default = isinstance(colormap, str) and colormap == "gray"
+        if (
+            not self._lut_tone_mapping_warned
+            and scene_tone_mapping != "Neutral"
+            and not is_grayscale_default
+        ):
+            warnings.warn(
+                "This scene uses a colormap LUT, but the viewer's default HDR "
+                "tone-mapping is 'ACES', which intentionally shifts hues and can "
+                "distort LUT colors. If exact colormap fidelity matters (e.g. for "
+                "scientific color encoding), set tone_mapping='Neutral' in the "
+                "scene's viewer_config.",
+                UserWarning,
+                stacklevel=3,
+            )
+            self._lut_tone_mapping_warned = True
+
         from ..colormaps import resolve_colormap
         from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
 
@@ -3236,8 +3330,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     f"📦 Scene bounds (local): min={self._scene_bounds['min']}, max={self._scene_bounds['max']}"
                 )
 
-            # Expand bounds with nD transforms (world-space for non-displayed dims)
-            self._expand_bounds_with_nd_transforms(store)
+            # Expand bounds into world space: 4x4 spatial transforms on the
+            # displayed dims + nd_transforms on the non-displayed dims.
+            self._expand_bounds_with_transforms(store)
+            if self._scene_bounds is not None:
+                aprint(
+                    f"🌍 Scene bounds (world): min={self._scene_bounds['min']}, "
+                    f"max={self._scene_bounds['max']}"
+                )
 
             # Validate discrete dimension ranges against actual data
             self._validate_discrete_dimension_ranges(store)
