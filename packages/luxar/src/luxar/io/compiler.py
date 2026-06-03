@@ -44,65 +44,12 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
-from ..typing_utils.constants import SHARPNESS_MAX, TARGET_CHUNK_BYTES
+from ..typing_utils.constants import SHARPNESS_MAX
 from ..typing_utils.protocols import CompressorProtocol
+from ._compiler.chunking import calculate_intelligent_chunks
+from ._compiler.labels.image_labels import normalize_image_label
 
 # Ordering functions will be imported locally where needed to avoid circular imports
-
-
-def _calculate_intelligent_chunks(
-    shape: Tuple[int, ...],
-    target_chunk_bytes: int = TARGET_CHUNK_BYTES,
-    spatial_index_data: Optional[Dict[str, Any]] = None,
-    *,
-    dtype: np.dtype = np.dtype(np.float32),
-) -> Tuple[int, ...]:
-    """Calculate optimal chunk shape for a dataset.
-
-    When spatial ordering data is available, uses chunk_size from ordering.
-
-    The byte-target heuristic depends on dtype itemsize: a uint8 colors
-    array of shape (N, 3) yields different optimal chunks than a float32
-    positions array of the same shape. CC-1-r: previous versions of this
-    helper accepted ``itemsize: int = 4`` which silently under-chunked any
-    non-float32 caller that forgot to thread the parameter through. The
-    ``dtype=`` form makes the contract explicit at every call site.
-
-    Args:
-        shape: Shape of the dataset.
-        target_chunk_bytes: Target chunk payload size in bytes.
-        spatial_index_data: Optional ordering data (with chunk_size).
-        dtype: NumPy dtype of the array being chunked. Defaults to float32
-            for backwards compatibility but every call site should pass the
-            actual array dtype explicitly.
-
-    Returns:
-        Optimized chunk shape.
-    """
-    element_size = max(1, int(dtype.itemsize))
-    target_elements = max(1, int(target_chunk_bytes) // element_size)
-
-    if len(shape) == 1:
-        # 1D array - use spatial index chunk_size if available for alignment
-        if spatial_index_data and "chunk_size" in spatial_index_data:
-            return (min(shape[0], spatial_index_data["chunk_size"]),)
-        return (min(shape[0], target_elements),)
-
-    if len(shape) == 2:
-        # 2D array (e.g., positions) - chunk along first dimension
-        n_points, n_dims = shape
-
-        # If ordering data is available, use its chunk_size
-        if spatial_index_data and "chunk_size" in spatial_index_data:
-            chunk_points = spatial_index_data["chunk_size"]
-            return (chunk_points, n_dims)
-
-        # Fallback to standard byte-based chunking
-        chunk_points = min(n_points, max(1, target_elements // n_dims))
-        return (chunk_points, n_dims)
-
-    # For higher dimensions, use reasonable byte-based defaults
-    return tuple(min(s, target_elements) for s in shape)
 
 
 class LuxarZarrCompiler(ZarrWriterProtocol):
@@ -745,7 +692,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 scalars = scalars[vertex_sort_order]
 
         # Write vertices using ArrayEncoder (COORDINATE)
-        chunks_2d = _calculate_intelligent_chunks(
+        chunks_2d = calculate_intelligent_chunks(
             (n_vertices, n_dims),
             spatial_index_data=ordering_data.get("vertex_ordering")
             if ordering_data
@@ -1103,7 +1050,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         from ..validation.base import validate_colors_for_writing
 
         # Write centers
-        chunks_centers = _calculate_intelligent_chunks(
+        chunks_centers = calculate_intelligent_chunks(
             centers.shape, spatial_index_data=ordering_data
         )
         self._encoder.encode(
@@ -1152,7 +1099,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             chunks_cholesky = None
         else:
             n_elems_chol = None
-            chunks_cholesky = _calculate_intelligent_chunks(
+            chunks_cholesky = calculate_intelligent_chunks(
                 cholesky_factors.shape, spatial_index_data=ordering_data
             )
 
@@ -2357,7 +2304,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             spatial_index_data: Optional spatial index data for chunk optimization
         """
         # Calculate intelligent chunks (aligned with spatial index if available)
-        chunks = _calculate_intelligent_chunks(
+        chunks = calculate_intelligent_chunks(
             positions.shape,
             spatial_index_data=spatial_index_data,
             dtype=positions.dtype,
@@ -2422,7 +2369,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 color_chunks = None
             else:
                 n_elems = None
-                color_chunks = _calculate_intelligent_chunks(
+                color_chunks = calculate_intelligent_chunks(
                     colors.shape,
                     spatial_index_data=spatial_index_data,
                     dtype=colors.dtype,
@@ -2506,7 +2453,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             name: Dataset name in the zarr group (e.g. ``"radii"``,
                 ``"widths"``, ``"amplitudes"``).
             spatial_index_data: Optional spatial-ordering metadata used
-                by ``_calculate_intelligent_chunks`` to pick chunk
+                by ``calculate_intelligent_chunks`` to pick chunk
                 boundaries that line up with the spatial index.
             n_elements: Logical element count; must not be inferred from
                 the positions array because deduplicated positions can be
@@ -2531,7 +2478,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks = None
             else:
                 n_elems = None
-                chunks = _calculate_intelligent_chunks(
+                chunks = calculate_intelligent_chunks(
                     data.shape, spatial_index_data=spatial_index_data
                 )
 
@@ -2593,7 +2540,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks = None
             else:
                 n_elems = None
-                chunks = _calculate_intelligent_chunks(
+                chunks = calculate_intelligent_chunks(
                     data.shape, spatial_index_data=spatial_index_data
                 )
 
@@ -2716,7 +2663,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 chunks = None
             else:
                 n_elems = None
-                chunks = _calculate_intelligent_chunks(
+                chunks = calculate_intelligent_chunks(
                     scalars.shape, spatial_index_data=spatial_index_data
                 )
 
@@ -2813,76 +2760,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     # Image labels (per-element image blobs, CSR-encoded)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _normalize_image_label(item: Any) -> bytes:
-        """Convert a single image label input to encoded bytes.
-
-        Accepts:
-        - ``bytes`` / ``bytearray`` — used as-is (pre-encoded JPEG/WebP/PNG)
-        - ``PIL.Image.Image`` — encoded to WebP (quality 85)
-        - ``numpy.ndarray`` (H, W, C) uint8 — converted to PIL, then WebP
-        - ``pathlib.Path`` / ``str`` — file read as raw bytes
-
-        Returns:
-            Encoded image bytes, or ``b""`` for None / empty inputs.
-        """
-        if item is None:
-            return b""
-        if isinstance(item, (bytes, bytearray)):
-            return bytes(item)
-        if isinstance(item, Path):
-            return item.read_bytes()
-        if isinstance(item, str):
-            return Path(item).read_bytes()
-
-        # PIL Image
-        try:
-            from PIL import Image as PILImage
-
-            if isinstance(item, PILImage.Image):
-                import io
-
-                buf = io.BytesIO()
-                item.save(buf, format="webp", quality=85)
-                return buf.getvalue()
-        except ImportError:
-            raise ImportError(
-                "Pillow is required to encode PIL Image objects as image labels. "
-                "Install it with: pip install Pillow"
-            )
-
-        # numpy array (H, W, C) uint8
-        if isinstance(item, np.ndarray):
-            try:
-                import io
-
-                from PIL import Image as PILImage
-
-                if item.ndim == 2:
-                    pil_img = PILImage.fromarray(item, mode="L")
-                elif item.ndim == 3 and item.shape[2] == 3:
-                    pil_img = PILImage.fromarray(item, mode="RGB")
-                elif item.ndim == 3 and item.shape[2] == 4:
-                    pil_img = PILImage.fromarray(item, mode="RGBA")
-                else:
-                    raise ValueError(
-                        f"Unsupported ndarray shape for image label: {item.shape}. "
-                        f"Expected (H, W), (H, W, 3), or (H, W, 4)."
-                    )
-                buf = io.BytesIO()
-                pil_img.save(buf, format="webp", quality=85)
-                return buf.getvalue()
-            except ImportError:
-                raise ImportError(
-                    "Pillow is required to encode numpy arrays as image labels. "
-                    "Install it with: pip install Pillow"
-                )
-
-        raise TypeError(
-            f"Unsupported image label type: {type(item).__name__}. "
-            f"Expected bytes, PIL.Image, numpy.ndarray, or file path."
-        )
-
     def _write_image_labels_csr(
         self,
         group: zarr.Group,
@@ -2922,7 +2799,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     raise ValueError(
                         f"Image label index {idx} out of range [0, {n_elements})"
                     )
-                normalized[idx] = self._normalize_image_label(item)
+                normalized[idx] = normalize_image_label(item)
             blob_list = normalized
         else:
             if len(image_labels) != n_elements:
@@ -2930,7 +2807,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     f"Image labels length ({len(image_labels)}) must match "
                     f"element count ({n_elements})"
                 )
-            blob_list = [self._normalize_image_label(item) for item in image_labels]
+            blob_list = [normalize_image_label(item) for item in image_labels]
 
         # Apply spatial reordering if present
         if sort_order is not None:
