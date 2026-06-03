@@ -25,19 +25,28 @@ type Op =
   | { kind: 'clear' };
 
 const opArb: fc.Arbitrary<Op> = fc.oneof(
-  { weight: 4, arbitrary: fc.record({
+  {
+    weight: 4,
+    arbitrary: fc.record({
       kind: fc.constant<'set'>('set'),
       key: fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f'),
       size: fc.integer({ min: 1, max: 100 }),
-    }) },
-  { weight: 3, arbitrary: fc.record({
+    }),
+  },
+  {
+    weight: 3,
+    arbitrary: fc.record({
       kind: fc.constant<'get'>('get'),
       key: fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f', 'z' /* miss */),
-    }) },
-  { weight: 1, arbitrary: fc.record({
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
       kind: fc.constant<'delete'>('delete'),
       key: fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f', 'z' /* miss */),
-    }) },
+    }),
+  },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant<'clear'>('clear') }) }
 ) as fc.Arbitrary<Op>;
 
@@ -137,15 +146,21 @@ describe('LRUCache — algebraic invariants over arbitrary operation traces', ()
 
   test('delete() of an absent key is a no-op (does not change size or evict)', () => {
     fc.assert(
-      fc.property(fc.array(fc.tuple(fc.constantFrom('a', 'b', 'c'), fc.integer({ min: 1, max: 50 })), { minLength: 1, maxLength: 10 }), (kvs) => {
-        const cache = new LRUCache<{ size: number }>(1000, (v) => v.size);
-        for (const [k, s] of kvs) cache.set(k, { size: s });
-        const before = cache.size;
-        const deleted = cache.delete('not-present-key');
-        const after = cache.size;
-        expect(deleted).toBe(false);
-        expect(after).toBe(before);
-      }),
+      fc.property(
+        fc.array(fc.tuple(fc.constantFrom('a', 'b', 'c'), fc.integer({ min: 1, max: 50 })), {
+          minLength: 1,
+          maxLength: 10,
+        }),
+        (kvs) => {
+          const cache = new LRUCache<{ size: number }>(1000, (v) => v.size);
+          for (const [k, s] of kvs) cache.set(k, { size: s });
+          const before = cache.size;
+          const deleted = cache.delete('not-present-key');
+          const after = cache.size;
+          expect(deleted).toBe(false);
+          expect(after).toBe(before);
+        }
+      ),
       { numRuns: 50 }
     );
   });

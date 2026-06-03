@@ -5,12 +5,7 @@
 // `project-lines-wasm-parity.test.ts`.
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import {
-  clipSegmentToSlice,
-  lerp,
-  lerpVec3,
-  distance3D,
-} from '../../../../data/lines/projection';
+import { clipSegmentToSlice, lerp, lerpVec3, distance3D } from '../../../../data/lines/projection';
 
 describe('clipSegmentToSlice', () => {
   // Default 3D display setup: display dims [0, 1, 2] (XYZ)
@@ -366,26 +361,34 @@ describe('clipSegmentToSlice (property tests)', () => {
     // When both endpoints lie inside the slice along every hidden dim,
     // no clipping should happen.
     fc.assert(
-      fc.property(coordArb, coordArb, coordArb, coordArb, coordArb, coordArb, (x1, y1, z1, x2, y2, z2) => {
-        const p1 = [x1, y1, z1, 0]; // hidden-dim value = slice center
-        const p2 = [x2, y2, z2, 0];
-        const slicePos = [0, 0, 0, 0];
-        const tolerance = [1e10, 1e10, 1e10, 0.5];
-        const displayDims = [0, 1, 2];
+      fc.property(
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        coordArb,
+        (x1, y1, z1, x2, y2, z2) => {
+          const p1 = [x1, y1, z1, 0]; // hidden-dim value = slice center
+          const p2 = [x2, y2, z2, 0];
+          const slicePos = [0, 0, 0, 0];
+          const tolerance = [1e10, 1e10, 1e10, 0.5];
+          const displayDims = [0, 1, 2];
 
-        const r = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
+          const r = clipSegmentToSlice(p1, p2, slicePos, tolerance, displayDims);
 
-        expect(r.visible).toBe(true);
-        expect(r.t1).toBe(0);
-        expect(r.t2).toBe(1);
-        // The 3D-projected endpoints must equal p1/p2 restricted to display dims.
-        expect(r.p1[0]).toBeCloseTo(x1, 4);
-        expect(r.p1[1]).toBeCloseTo(y1, 4);
-        expect(r.p1[2]).toBeCloseTo(z1, 4);
-        expect(r.p2[0]).toBeCloseTo(x2, 4);
-        expect(r.p2[1]).toBeCloseTo(y2, 4);
-        expect(r.p2[2]).toBeCloseTo(z2, 4);
-      }),
+          expect(r.visible).toBe(true);
+          expect(r.t1).toBe(0);
+          expect(r.t2).toBe(1);
+          // The 3D-projected endpoints must equal p1/p2 restricted to display dims.
+          expect(r.p1[0]).toBeCloseTo(x1, 4);
+          expect(r.p1[1]).toBeCloseTo(y1, 4);
+          expect(r.p1[2]).toBeCloseTo(z1, 4);
+          expect(r.p2[0]).toBeCloseTo(x2, 4);
+          expect(r.p2[1]).toBeCloseTo(y2, 4);
+          expect(r.p2[2]).toBeCloseTo(z2, 4);
+        }
+      ),
       { numRuns: 60 }
     );
   });

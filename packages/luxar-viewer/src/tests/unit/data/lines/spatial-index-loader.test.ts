@@ -574,6 +574,12 @@ describe('LinesSpatialIndexLoader', () => {
         expect(metrics.queries).toBe(1);
         expect(metrics.type).toBe('lines-spatial-index');
         expect(metrics.path).toBe('/test_lines');
+        // Resident memory is populated from the accumulator after a load
+        // (was a perpetual 0 before — never written). Matches the MB→bytes
+        // conversion done in recordLoadMetrics.
+        const accMB = bodyLoader.getAccumulatorStats()?.memoryMB ?? 0;
+        expect(accMB).toBeGreaterThan(0);
+        expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
       });
     });
 

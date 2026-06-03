@@ -93,30 +93,18 @@ describe('LinesBuilder', () => {
   // three independent tests — each opts in to ONE setter and asserts
   // only that setter's contract.
   it('honors withWidths(value) by filling widths with the constant', () => {
-    const data = new LinesBuilder()
-      .withSegments(5)
-      .withDimensions(3)
-      .withWidths(2.5)
-      .build();
+    const data = new LinesBuilder().withSegments(5).withDimensions(3).withWidths(2.5).build();
     expect(data.widths.every((w) => w === 2.5)).toBe(true);
   });
 
   it('honors withColors() by allocating Float32Array of length numSegments * 2 * ndim', () => {
-    const data = new LinesBuilder()
-      .withSegments(5)
-      .withDimensions(3)
-      .withColors()
-      .build();
+    const data = new LinesBuilder().withSegments(5).withDimensions(3).withColors().build();
     expect(data.colors).toBeInstanceOf(Float32Array);
     expect(data.colors!.length).toBe(5 * 2 * 3);
   });
 
   it('honors withSharpness(value) by filling sharpness with the constant (length numSegments * 2)', () => {
-    const data = new LinesBuilder()
-      .withSegments(5)
-      .withDimensions(3)
-      .withSharpness(0.5)
-      .build();
+    const data = new LinesBuilder().withSegments(5).withDimensions(3).withSharpness(0.5).build();
     expect(data.sharpness).toBeInstanceOf(Float32Array);
     expect(data.sharpness!.length).toBe(5 * 2);
     expect(data.sharpness!.every((s) => s === 0.5)).toBe(true);
@@ -303,11 +291,7 @@ describe('GSplatsBuilder', () => {
   // equals the input but is NOT the same instance.
   it('returns a fresh centers Float32Array equal to the input', () => {
     const centers = new Float32Array([0, 0, 0, 1, 1, 1]);
-    const data = new GSplatsBuilder()
-      .withSplats(2)
-      .withDimensions(3)
-      .withCenters(centers)
-      .build();
+    const data = new GSplatsBuilder().withSplats(2).withDimensions(3).withCenters(centers).build();
     expect(data.centers).not.toBe(centers);
     expect(data.centers).toStrictEqual(centers);
   });
@@ -337,11 +321,7 @@ describe('GSplatsBuilder', () => {
 
   it('returns a fresh colors Float32Array equal to the input', () => {
     const colors = new Float32Array([1, 0, 0, 0, 1, 0]);
-    const data = new GSplatsBuilder()
-      .withSplats(2)
-      .withDimensions(3)
-      .withColors(colors)
-      .build();
+    const data = new GSplatsBuilder().withSplats(2).withDimensions(3).withColors(colors).build();
     expect(data.colors).not.toBe(colors);
     expect(data.colors).toStrictEqual(colors);
   });

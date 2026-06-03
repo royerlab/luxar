@@ -59,13 +59,7 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
     //   L_S[2,0] = 0
     //   L_S[2,1] = (0.3 - 0*0.5) / 1 = 0.3
     //   L_S[2,2] = sqrt(1.09 - 0 - 0.09) = sqrt(1) = 1
-    const fullL = packLowerTri([
-      [1],
-      [0, 1],
-      [0.5, 0, 1],
-      [0, 0, 0, 1],
-      [0, 0, 0.3, 0, 1],
-    ]);
+    const fullL = packLowerTri([[1], [0, 1], [0.5, 0, 1], [0, 0, 0, 1], [0, 0, 0.3, 0, 1]]);
     const visibility = new Uint8Array([1]);
     const displayDims = new Uint32Array([0, 2, 4]);
     const output = new Float32Array(6);
@@ -85,13 +79,7 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
     // Pin the audit-flagged regression: a mutant collapsing
     // extract_visible_cholesky_3d to extract_cholesky_submatrix would produce
     // a different result on this correlated 5D input.
-    const fullL = packLowerTri([
-      [1],
-      [0, 1],
-      [0.5, 0, 1],
-      [0, 0, 0, 1],
-      [0, 0, 0.3, 0, 1],
-    ]);
+    const fullL = packLowerTri([[1], [0, 1], [0.5, 0, 1], [0, 0, 0, 1], [0, 0, 0.3, 0, 1]]);
     const visibility = new Uint8Array([1]);
     const displayDims = new Uint32Array([0, 2, 4]);
     const marginalOut = new Float32Array(6);
@@ -118,13 +106,7 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
 
     // Easier discriminator: a fully correlated L where row 2 has multiple
     // non-zero entries.
-    const fullL2 = packLowerTri([
-      [2],
-      [0, 2],
-      [0.5, 0.5, 1],
-      [0, 0, 0, 1],
-      [0.4, 0, 0.6, 0, 1],
-    ]);
+    const fullL2 = packLowerTri([[2], [0, 2], [0.5, 0.5, 1], [0, 0, 0, 1], [0.4, 0, 0.6, 0, 1]]);
     const margOut2 = new Float32Array(6);
     const rawOut2 = new Float32Array(6);
     extract_visible_cholesky_3d(fullL2, visibility, displayDims, 5, 1, margOut2);
@@ -376,7 +358,16 @@ describe('extract_cholesky_submatrix — keepDims boundaries [wasm.md G21]', () 
     // For ndim=4, packed = [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33].
     // packedIndex(3, 3) = 3*4/2 + 3 = 9 → packed[9] = L33.
     const packed = new Float32Array([
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 7.5, // L33 at index 9
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      7.5, // L33 at index 9
     ]);
     const keepDims = new Uint32Array([3]);
     const output = new Float32Array(1);

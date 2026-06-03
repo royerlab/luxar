@@ -70,29 +70,32 @@ describe('effective_radii: calculate_effective_radii', () => {
       expectedVisible: 1,
       expectedReff: Math.sqrt(0.75),
     },
-  ])('Pythagorean hidden-dim slicing: $label', ({ ndim, hiddenCoords, expectedVisible, expectedReff }) => {
-    expect(hiddenCoords.length).toBe(ndim - 3);
-    const positions = new Float32Array([0.0, 0.0, 0.0, ...hiddenCoords]);
-    const radii = new Float32Array([1.0]);
-    const displayDims = new Uint32Array([0, 1, 2]);
-    const slicePos = new Float32Array(ndim); // all zeros
-    const spatialExtend = new Uint8Array(ndim).fill(1);
-    const output = new Float32Array(1);
+  ])(
+    'Pythagorean hidden-dim slicing: $label',
+    ({ ndim, hiddenCoords, expectedVisible, expectedReff }) => {
+      expect(hiddenCoords.length).toBe(ndim - 3);
+      const positions = new Float32Array([0.0, 0.0, 0.0, ...hiddenCoords]);
+      const radii = new Float32Array([1.0]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const slicePos = new Float32Array(ndim); // all zeros
+      const spatialExtend = new Uint8Array(ndim).fill(1);
+      const output = new Float32Array(1);
 
-    const visible = calculate_effective_radii(
-      positions,
-      radii,
-      displayDims,
-      slicePos,
-      spatialExtend,
-      ndim,
-      1,
-      output
-    );
+      const visible = calculate_effective_radii(
+        positions,
+        radii,
+        displayDims,
+        slicePos,
+        spatialExtend,
+        ndim,
+        1,
+        output
+      );
 
-    expect(visible).toBe(expectedVisible);
-    expect(output[0]).toBeCloseTo(expectedReff, 5);
-  });
+      expect(visible).toBe(expectedVisible);
+      expect(output[0]).toBeCloseTo(expectedReff, 5);
+    }
+  );
 
   it('should filter discrete dimension mismatches', () => {
     // 4D: dim 3 is discrete (not spatial)

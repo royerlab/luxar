@@ -16,11 +16,11 @@ debug-console/
 
 Three pure functions, all imported from `../debug-console.ts`:
 
-| Export                       | Purpose                                                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `formatArgs(args)`           | Stringify an arbitrary `unknown[]` console-arg list to a single space-separated display string. Objects pretty-print via `JSON.stringify(_, null, 2)`; falls back to `String(arg)` on circular refs. |
-| `messageMatchesFilter(text, filter)` | Case-insensitive substring matcher for the panel's filter input. Returns `true` when `filter` is empty/whitespace-only. |
-| `formatConsoleTimestamp(date)` | 24-hour `HH:mm:ss.SSS` timestamp via `toLocaleTimeString('en-US', …)`. Takes a `Date` so tests are deterministic. |
+| Export                               | Purpose                                                                                                                                                                                              |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `formatArgs(args)`                   | Stringify an arbitrary `unknown[]` console-arg list to a single space-separated display string. Objects pretty-print via `JSON.stringify(_, null, 2)`; falls back to `String(arg)` on circular refs. |
+| `messageMatchesFilter(text, filter)` | Case-insensitive substring matcher for the panel's filter input. Returns `true` when `filter` is empty/whitespace-only.                                                                              |
+| `formatConsoleTimestamp(date)`       | 24-hour `HH:mm:ss.SSS` timestamp via `toLocaleTimeString('en-US', …)`. Takes a `Date` so tests are deterministic.                                                                                    |
 
 The same `formatArgs` output is used both as the row's visible text and
 as the filter haystack, so the "filter by visible text" promise holds

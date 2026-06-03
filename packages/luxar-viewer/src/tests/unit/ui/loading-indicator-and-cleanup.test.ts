@@ -17,10 +17,7 @@ vi.mock('../../../ui/help-overlay', () => ({
   hideHelpOverlay: vi.fn(),
 }));
 
-import {
-  showLoadingIndicator,
-  hideLoadingIndicator,
-} from '../../../ui/loading-indicator';
+import { showLoadingIndicator, hideLoadingIndicator } from '../../../ui/loading-indicator';
 import { cleanupUI } from '../../../ui/ui-cleanup';
 import { hideHelpOverlay } from '../../../ui/help-overlay';
 

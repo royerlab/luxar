@@ -97,14 +97,32 @@ describe('Public barrel side effects', () => {
   //   - typeof prototype === 'object'  — guards `export const LuxarApp = () => ...`
   //   - prototype.init is a function  — documented lifecycle
   //   - prototype.dispose is a function  — documented lifecycle
-  it.each<{ label: string; check: (mod: typeof import('../../../index')) => unknown; expected: string }>(
-    [
-      { label: 'typeof LuxarApp === function', check: (m) => typeof m.LuxarApp, expected: 'function' },
-      { label: 'typeof LuxarApp.prototype === object', check: (m) => typeof m.LuxarApp.prototype, expected: 'object' },
-      { label: 'typeof LuxarApp.prototype.init === function', check: (m) => typeof m.LuxarApp.prototype.init, expected: 'function' },
-      { label: 'typeof LuxarApp.prototype.dispose === function', check: (m) => typeof m.LuxarApp.prototype.dispose, expected: 'function' },
-    ]
-  )('exposes LuxarApp as a constructor: $label', async ({ check, expected }) => {
+  it.each<{
+    label: string;
+    check: (mod: typeof import('../../../index')) => unknown;
+    expected: string;
+  }>([
+    {
+      label: 'typeof LuxarApp === function',
+      check: (m) => typeof m.LuxarApp,
+      expected: 'function',
+    },
+    {
+      label: 'typeof LuxarApp.prototype === object',
+      check: (m) => typeof m.LuxarApp.prototype,
+      expected: 'object',
+    },
+    {
+      label: 'typeof LuxarApp.prototype.init === function',
+      check: (m) => typeof m.LuxarApp.prototype.init,
+      expected: 'function',
+    },
+    {
+      label: 'typeof LuxarApp.prototype.dispose === function',
+      check: (m) => typeof m.LuxarApp.prototype.dispose,
+      expected: 'function',
+    },
+  ])('exposes LuxarApp as a constructor: $label', async ({ check, expected }) => {
     const mod = await import('../../../index');
     expect(check(mod)).toBe(expected);
   });
@@ -164,10 +182,7 @@ describe('Public barrel side effects', () => {
         expect(built.startsWith('luxar.'), `StorageKeys.${key}('test-scene') prefix`).toBe(true);
       } else {
         expect(typeof value, `StorageKeys.${key} type`).toBe('string');
-        expect(
-          (value as string).startsWith('luxar.'),
-          `StorageKeys.${key} prefix`
-        ).toBe(true);
+        expect((value as string).startsWith('luxar.'), `StorageKeys.${key} prefix`).toBe(true);
       }
     }
   });

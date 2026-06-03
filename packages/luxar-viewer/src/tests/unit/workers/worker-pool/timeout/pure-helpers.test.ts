@@ -114,9 +114,7 @@ describe('withTimeout — pure helper (G6, M3)', () => {
     const onEvict = vi.fn();
     const fakeWorker = { terminate: vi.fn() } as unknown as Worker;
     const never = new Promise<number>(() => {});
-    const raced = withTimeout('slow', never, 50, onEvict, fakeWorker).catch(
-      (e: unknown) => e
-    );
+    const raced = withTimeout('slow', never, 50, onEvict, fakeWorker).catch((e: unknown) => e);
     vi.advanceTimersByTime(60);
     await raced;
     expect(onEvict).toHaveBeenCalledTimes(1);
@@ -131,14 +129,14 @@ describe('withTimeout — pure helper (G6, M3)', () => {
     vi.useFakeTimers();
     const fakeWorker = { terminate: vi.fn() } as unknown as Worker;
     const never = new Promise<number>(() => {});
-    const raced = withTimeout('slow', never, 50, undefined, fakeWorker).catch(
-      (e: unknown) => e
-    );
+    const raced = withTimeout('slow', never, 50, undefined, fakeWorker).catch((e: unknown) => e);
     vi.advanceTimersByTime(60);
     const err = await raced;
     expect(err).toBeInstanceOf(WorkerTimeoutError);
     // No callback present → fakeWorker.terminate untouched.
-    expect((fakeWorker as unknown as { terminate: ReturnType<typeof vi.fn> }).terminate).not.toHaveBeenCalled();
+    expect(
+      (fakeWorker as unknown as { terminate: ReturnType<typeof vi.fn> }).terminate
+    ).not.toHaveBeenCalled();
   });
 
   it('does NOT invoke onTimeoutEvict when worker is omitted but callback is supplied', async () => {

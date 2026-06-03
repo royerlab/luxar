@@ -26,12 +26,14 @@ const finiteFloat = fc.float({
   noNaN: true,
   noDefaultInfinity: true,
 });
-const nonZeroScale = fc.float({
-  min: Math.fround(-100),
-  max: Math.fround(100),
-  noNaN: true,
-  noDefaultInfinity: true,
-}).filter((s) => Math.abs(s) > 1e-3);
+const nonZeroScale = fc
+  .float({
+    min: Math.fround(-100),
+    max: Math.fround(100),
+    noNaN: true,
+    noDefaultInfinity: true,
+  })
+  .filter((s) => Math.abs(s) > 1e-3);
 const positiveTolerance = fc.float({
   min: Math.fround(0.01),
   max: Math.fround(1e3),
@@ -86,20 +88,29 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
 
   test('displayed dimensions are pass-through regardless of any nd_transform attached to them', () => {
     fc.assert(
-      fc.property(finiteFloat, finiteFloat, nonZeroScale, finiteFloat, (worldX, tolX, scale, offset) => {
-        // Attach a transform to X (which is displayed). It should be ignored.
-        const ndTransform: NdTransformMap = { X: { scale, offset }, Time: { scale: 1, offset: 0 } };
-        const result = invertNdTransformForQuery(
-          [worldX, 0, 0, 0],
-          [Math.abs(tolX) + 0.01, 1e10, 1e10, 1],
-          ndTransform,
-          ['X', 'Y', 'Z', 'Time'],
-          [0, 1, 2] // X displayed
-        );
-        // Displayed dim should be untouched.
-        expect(result.slicePosition[0]).toBe(worldX);
-        expect(result.tolerance[0]).toBe(Math.abs(tolX) + 0.01);
-      }),
+      fc.property(
+        finiteFloat,
+        finiteFloat,
+        nonZeroScale,
+        finiteFloat,
+        (worldX, tolX, scale, offset) => {
+          // Attach a transform to X (which is displayed). It should be ignored.
+          const ndTransform: NdTransformMap = {
+            X: { scale, offset },
+            Time: { scale: 1, offset: 0 },
+          };
+          const result = invertNdTransformForQuery(
+            [worldX, 0, 0, 0],
+            [Math.abs(tolX) + 0.01, 1e10, 1e10, 1],
+            ndTransform,
+            ['X', 'Y', 'Z', 'Time'],
+            [0, 1, 2] // X displayed
+          );
+          // Displayed dim should be untouched.
+          expect(result.slicePosition[0]).toBe(worldX);
+          expect(result.tolerance[0]).toBe(Math.abs(tolX) + 0.01);
+        }
+      ),
       { numRuns: 200 }
     );
   });
@@ -124,18 +135,15 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
 
   test('permutation inversion is self-inverse: invert(invert(perm)) === perm', () => {
     fc.assert(
-      fc.property(
-        fc.shuffledSubarray([0, 1, 2, 3], { minLength: 4, maxLength: 4 }),
-        (perm) => {
-          // Build the inverse permutation directly: inverse[perm[i]] = i
-          const inverse = new Array(perm.length).fill(0);
-          for (let i = 0; i < perm.length; i++) inverse[perm[i]] = i;
-          // Inverse of inverse should equal original
-          const doubleInverse = new Array(inverse.length).fill(0);
-          for (let i = 0; i < inverse.length; i++) doubleInverse[inverse[i]] = i;
-          expect(doubleInverse).toEqual([...perm]);
-        }
-      ),
+      fc.property(fc.shuffledSubarray([0, 1, 2, 3], { minLength: 4, maxLength: 4 }), (perm) => {
+        // Build the inverse permutation directly: inverse[perm[i]] = i
+        const inverse = new Array(perm.length).fill(0);
+        for (let i = 0; i < perm.length; i++) inverse[perm[i]] = i;
+        // Inverse of inverse should equal original
+        const doubleInverse = new Array(inverse.length).fill(0);
+        for (let i = 0; i < inverse.length; i++) doubleInverse[inverse[i]] = i;
+        expect(doubleInverse).toEqual([...perm]);
+      }),
       { numRuns: 100 }
     );
   });

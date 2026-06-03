@@ -10,19 +10,19 @@ reused by any range-style UI that needs the same math.
 
 ## Files
 
-| File             | Purpose                                                   |
-| ---------------- | --------------------------------------------------------- |
-| `slider-math.ts` | Framework-free clamp/wrap/fraction helpers (see below).   |
+| File             | Purpose                                                 |
+| ---------------- | ------------------------------------------------------- |
+| `slider-math.ts` | Framework-free clamp/wrap/fraction helpers (see below). |
 
 ## Exports (`slider-math.ts`)
 
-| Function                                                   | Purpose                                                                                                |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `clampWithCyclicWrap(value, min, max, isCyclic)`           | One-step clamp; when `isCyclic`, underflow wraps to `max` and overflow wraps to `min`.                 |
-| `valueToFraction(value, min, max)`                         | Project `value` onto `[0, 1]`. Degenerate range (`min === max`) reports `0.5` so the thumb sits mid.   |
-| `fractionToValue(fraction, min, max)`                      | Inverse of `valueToFraction`. Degenerate range returns `min`.                                          |
-| `fractionToThumbLeft(fraction, containerWidth, thumbWidth)`| Pixel offset for the thumb's left edge; accounts for `thumbWidth` so the right edge doesn't overshoot. |
-| `clampInteger(value, lo, hi)`                              | Integer clamp used for the 0-1000 internal range of `<input type=range>`.                              |
+| Function                                                    | Purpose                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `clampWithCyclicWrap(value, min, max, isCyclic)`            | One-step clamp; when `isCyclic`, underflow wraps to `max` and overflow wraps to `min`.                 |
+| `valueToFraction(value, min, max)`                          | Project `value` onto `[0, 1]`. Degenerate range (`min === max`) reports `0.5` so the thumb sits mid.   |
+| `fractionToValue(fraction, min, max)`                       | Inverse of `valueToFraction`. Degenerate range returns `min`.                                          |
+| `fractionToThumbLeft(fraction, containerWidth, thumbWidth)` | Pixel offset for the thumb's left edge; accounts for `thumbWidth` so the right edge doesn't overshoot. |
+| `clampInteger(value, lo, hi)`                               | Integer clamp used for the 0-1000 internal range of `<input type=range>`.                              |
 
 `clampWithCyclicWrap` is intentionally one-step: it does not normalize
 multi-period overshoot (e.g. `value = max + 5` does not become

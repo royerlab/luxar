@@ -121,9 +121,7 @@ export function initializeDims(
   // `new Array(ndim)` would throw a misleading RangeError far from
   // the actual bug. Catch it here with a clear message.
   if (!Number.isFinite(numPoints) || numPoints < 0 || !Number.isInteger(numPoints)) {
-    throw new Error(
-      `Invalid numPoints: ${numPoints} must be a non-negative integer`
-    );
+    throw new Error(`Invalid numPoints: ${numPoints} must be a non-negative integer`);
   }
 
   // HIGH-5: empty point clouds are legitimate; avoid dividing by zero and

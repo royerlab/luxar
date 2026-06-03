@@ -22,10 +22,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fc from 'fast-check';
 import { BandwidthWindow } from '../../../cache/multi-level-caching-store/bandwidth-window';
 
-type Op =
-  | { kind: 'record'; bytes: number }
-  | { kind: 'advance'; ms: number }
-  | { kind: 'rate' };
+type Op = { kind: 'record'; bytes: number } | { kind: 'advance'; ms: number } | { kind: 'rate' };
 
 const opArb: fc.Arbitrary<Op> = fc.oneof(
   {
@@ -136,27 +133,24 @@ describe('BandwidthWindow [cache.md/H2][P12] property tests', () => {
 
   test('window.length stays bounded (R5 compaction prevents unbounded growth)', () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 50, max: 500 }),
-        (cycles) => {
-          const bw = new BandwidthWindow(WINDOW_MS);
-          // Sustained record-and-prune cycles: record one entry, age it
-          // beyond the window, record another. Without compaction the
-          // internal array would grow to 2*cycles.
-          for (let i = 0; i < cycles; i++) {
-            bw.record(100);
-            vi.advanceTimersByTime(WINDOW_MS + 1);
-          }
-          bw.rate(); // walk start past stale entries
-          bw.record(100); // trigger compaction
-          // Post-compaction the array must hold a small constant number of
-          // entries — definitely not O(cycles). The R5 invariant lets a
-          // few entries linger before the next trim.
-          const len = internals(bw).window.length;
-          expect(len).toBeLessThan(cycles); // strict win over no-compaction
-          expect(len).toBeLessThanOrEqual(100); // tight bound
+      fc.property(fc.integer({ min: 50, max: 500 }), (cycles) => {
+        const bw = new BandwidthWindow(WINDOW_MS);
+        // Sustained record-and-prune cycles: record one entry, age it
+        // beyond the window, record another. Without compaction the
+        // internal array would grow to 2*cycles.
+        for (let i = 0; i < cycles; i++) {
+          bw.record(100);
+          vi.advanceTimersByTime(WINDOW_MS + 1);
         }
-      ),
+        bw.rate(); // walk start past stale entries
+        bw.record(100); // trigger compaction
+        // Post-compaction the array must hold a small constant number of
+        // entries — definitely not O(cycles). The R5 invariant lets a
+        // few entries linger before the next trim.
+        const len = internals(bw).window.length;
+        expect(len).toBeLessThan(cycles); // strict win over no-compaction
+        expect(len).toBeLessThanOrEqual(100); // tight bound
+      }),
       { numRuns: 20 }
     );
   });

@@ -8,8 +8,8 @@ GL is allowed — so this folder stays pure helpers over an
 `HDRCapabilities` snapshot.
 
 | File                      | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hdr-detection.ts`        | `HDRCapabilities` interface + `detectDisplayCapabilities()` (P3 / Rec2020 / dynamic-range / 10-bit `matchMedia` probes), `configureHDRRenderer(renderer, caps)` (logs only — never touches `outputColorSpace` or `toneMapping`; `PostProcessingManager` owns both), `logHDRCapabilities(caps)`, `isHDRDisplay(caps)`, `getOptimalRenderTargetType(caps)` (returns `THREE.HalfFloatType` when float textures are available, else `THREE.UnsignedByteType`).      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hdr-detection.ts`        | `HDRCapabilities` interface + `detectDisplayCapabilities()` (P3 / Rec2020 / dynamic-range / 10-bit `matchMedia` probes), `configureHDRRenderer(renderer, caps)` (logs only — never touches `outputColorSpace` or `toneMapping`; `PostProcessingManager` owns both), `logHDRCapabilities(caps)`, `isHDRDisplay(caps)`, `getOptimalRenderTargetType(caps)` (returns `THREE.HalfFloatType` when float textures are available, else `THREE.UnsignedByteType`).    |
 | `hdr-color-conversion.ts` | `rgbaFloatToI420P10(rgba, width, height)` — converts linear sRGB float RGBA (from WebGL `readPixels`) to BT.2020 PQ YCbCr I420P10 `Uint16Array`. Pipeline: sRGB→BT.2020 linear (3×3 matrix), linear→PQ (SMPTE ST 2084, scene-referred 1.0 = SDR white ≈ 100 nits), RGB→YCbCr (BT.2020 NCL), 10-bit limited-range quantization (Y: 64–940, Cb/Cr: 64–960, centered at 512), 4:2:0 chroma subsampling, planar `Uint16Array` layout (Y plane, U plane, V plane). |
 
 `floatTextures` and `colorDepth` on the snapshot from
@@ -20,7 +20,7 @@ GL-probed values before any consumer reads the snapshot.
 
 The deep-color probe is intentionally belt-and-braces: per CSS Media
 Queries L4 a true 10-bit display should match `(color: 10)`, but some
-shipping browsers report the *total* bit depth instead
+shipping browsers report the _total_ bit depth instead
 (~30 for 10-bpc RGB, ~48 for 16-bpc), so both `(color: 30)` and
 `(color: 48)` are checked.
 

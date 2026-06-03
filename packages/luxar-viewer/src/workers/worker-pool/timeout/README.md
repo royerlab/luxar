@@ -71,7 +71,7 @@ timeout/
   registered a signal.
 - **`pickTimeoutMs` is a pure function over `perf`.** It must not
   read `config` directly — the pool reads `config.dataLoading.
-  performance` once per call and passes it in, so tests can inject
+performance` once per call and passes it in, so tests can inject
   custom budgets without monkey-patching the config module.
 
 ## See Also

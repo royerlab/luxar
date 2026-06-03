@@ -259,8 +259,8 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - ✅ Float32 color buffers for HDR values
 - ✅ 16-bit float (HalfFloatType) render targets
 - ✅ HDR intensity multipliers (configurable)
-- ✅ Neutral tone mapping (default, preserves hue fidelity for scientific data)
-- ✅ Multiple tone mapping operators (Neutral, ACES, AgX, Reinhard, Linear)
+- ✅ ACES filmic tone mapping (default — the most consistent, pleasing HDR look)
+- ✅ Multiple tone mapping operators (ACES, Neutral, AgX, Reinhard, Linear)
 - ✅ Automatic HDR capability detection on startup
 - ✅ Per-node gamma correction
 - ✅ Additive blending for bright emissive materials
@@ -279,7 +279,9 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - Use `dtype=np.float32` for HDR color arrays
 - Keep most colors in [0.0, 3.0] range
 - Reserve values > 3.0 for very bright emissive objects
-- Use Neutral tone mapping for accurate colors, or ACES for cinematic look
+- Keep the default ACES tone mapping for the best overall look; switch to
+  Neutral when you need exact color fidelity (e.g. scientific colormap LUTs,
+  where ACES's hue shift can distort encoded colors)
 - Test on both HDR and SDR displays
 
 ### DON'T:

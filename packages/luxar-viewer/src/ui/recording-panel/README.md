@@ -91,7 +91,10 @@ Two codec paths, kept separate:
 `MediaRecorder`, which only supports WebM (VP9 / VP8).
 `media-utilities.ts::getSupportedMimeType` picks the highest-quality
 WebM mime type the platform supports, or returns `null` to disable
-the option.
+the option. Because the browser chooses the codec itself, the **Codec
+dropdown is turntable-only** — it is hidden in Video mode (where it
+would have no effect), and Video mode also hides the Format dropdown
+since WebM is its only output.
 
 **Offline video (`VideoModeDriver` in `drivers/`)** uses
 [mediabunny](https://www.npmjs.com/package/mediabunny), which

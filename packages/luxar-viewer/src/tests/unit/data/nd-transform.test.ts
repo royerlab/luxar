@@ -426,9 +426,7 @@ describe('computeWorldNdTransform — cycle / shared-reference safety (MED-5)', 
       hasSpatialIndex: false,
       children: [A],
     };
-    expect(() => computeWorldNdTransform(root, '/NonExistent')).toThrow(
-      /malformed scene graph/i
-    );
+    expect(() => computeWorldNdTransform(root, '/NonExistent')).toThrow(/malformed scene graph/i);
   });
 
   it('throws when a node is reachable via two distinct paths (shared reference)', () => {

@@ -50,5 +50,5 @@ worker entry (`data-worker.ts`) guarantees this ordering via Comlink.
   `slicePosition` / `tolerance` arrays consumed here.
 - [../state.ts](../state.ts) — `WasmCtx` definition and `requireWasm`.
 - [../validation.ts](../validation.ts) — boundary checks.
-</content>
-</invoke>
+  </content>
+  </invoke>

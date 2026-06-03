@@ -33,10 +33,12 @@ beforeEach(() => {
   }));
 });
 
-function makePorts(opts: {
-  previous?: unknown;
-  layersPanel?: unknown;
-} = {}) {
+function makePorts(
+  opts: {
+    previous?: unknown;
+    layersPanel?: unknown;
+  } = {}
+) {
   return {
     previous: opts.previous as never,
     layersPanel: opts.layersPanel as never,

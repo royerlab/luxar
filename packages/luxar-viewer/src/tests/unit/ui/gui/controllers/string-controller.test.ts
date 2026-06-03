@@ -190,7 +190,7 @@ describe('StringController', () => {
       // textContent assignment is the safe path — a regression that
       // switched to innerHTML would interpret the markup. We assert by
       // checking innerHTML serializes the entities, not raw '<' / '&'.
-      const payload = '<img src=x onerror=alert(\'xss\')>&\'"';
+      const payload = "<img src=x onerror=alert('xss')>&'\"";
       controller.name(payload);
       const label = controller.domElement.querySelector(
         '.luxar-gui__controller-name'

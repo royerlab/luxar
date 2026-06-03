@@ -10,10 +10,10 @@ Tests mirror the layout under `tests/unit/core/app/<theme>/`.
 
 ## Top-level files
 
-| File           | Role                                                                                                                                                                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File           | Role                                                                                                                                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `factories.ts` | `AppFactories` interface, `defaultFactories`, and `resolveFactories(overrides)`. Optional construction overrides for the heavy subsystems built in `init()` (SceneManager, AnimationController, RenderingControls, RecordingPanel, LayersPanel). Embedders + tests inject pre-built stubs here without subclassing. |
-| `options.ts`   | `LuxarAppOptions` interface — every init-time knob the orchestrator accepts: `canvas`, `src`, `debug`, `loaderConfig`, `updateBrowserUrl`, `wasmPath`, `workerPath`, `openCacheStats`, `factories`, `renderer`, `webgpuForceWebGL`, `perfTimestamp`. Re-exported from `app.ts`.                       |
+| `options.ts`   | `LuxarAppOptions` interface — every init-time knob the orchestrator accepts: `canvas`, `src`, `debug`, `loaderConfig`, `updateBrowserUrl`, `wasmPath`, `workerPath`, `openCacheStats`, `factories`, `renderer`, `webgpuForceWebGL`, `perfTimestamp`. Re-exported from `app.ts`.                                     |
 
 ## Subpackages
 

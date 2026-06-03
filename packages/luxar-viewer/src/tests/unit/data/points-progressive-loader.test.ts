@@ -12,12 +12,37 @@ import * as THREE from 'three';
 import { PointsProgressiveLoader } from '../../../data/points/points-progressive-loader';
 import type { PointsSpatialIndexLoader } from '../../../data/points/points-spatial-index-loader';
 import type { LoadedPointsData, PointsViewState } from '../../../types/points';
+import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  getMetrics: ReturnType<typeof vi.fn>;
+  getActiveQueries: ReturnType<typeof vi.fn>;
+  addEventListener: ReturnType<typeof vi.fn>;
+  removeEventListener: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal LoaderMetrics stub with the fields the aggregator reads. */
+function stubMetrics(over: Partial<Record<string, number>> = {}) {
+  return {
+    type: 'point-spatial-index' as const,
+    path: '/points/additive_x',
+    queries: 0,
+    loads: 0,
+    evictions: 0,
+    errors: 0,
+    pointsLoaded: 0,
+    bytesLoaded: 0,
+    visiblePoints: 0,
+    avgQueryTime: 0,
+    avgLoadTime: 0,
+    memoryUsed: 0,
+    memoryLimit: 0,
+    ...over,
+  };
 }
 
 function makeLodData(
@@ -55,23 +80,28 @@ function makeLodData(
   return result;
 }
 
-function makeSubLoader(initialData: LoadedPointsData): SubLoaderStub {
+function makeSubLoader(
+  initialData: LoadedPointsData,
+  metrics: Record<string, number> = {}
+): SubLoaderStub {
   const updateView = vi.fn().mockResolvedValue(initialData);
   // The progressive loader now calls updateViewWithResidency; delegate to
   // updateView so existing `.updateView` assertions still hold. Default
   // allResident=true so timing-based break tests are unaffected; tests that
   // exercise the residency break override this mock per-case.
-  const updateViewWithResidency = vi.fn(
-    async (vs: PointsViewState, s?: unknown) => ({
-      data: await updateView(vs, s),
-      allResident: true,
-    })
-  );
+  const updateViewWithResidency = vi.fn(async (vs: PointsViewState, s?: unknown) => ({
+    data: await updateView(vs, s),
+    allResident: true,
+  }));
   return {
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
+    getMetrics: vi.fn(() => stubMetrics(metrics)),
+    getActiveQueries: vi.fn(() => []),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   };
 }
 
@@ -189,8 +219,8 @@ describe('PointsProgressiveLoader', () => {
   });
 
   describe('cache-hit timing short-circuit', () => {
-    it('stops loading further LODs when one takes > 15ms', async () => {
-      // Make LOD B slow (~25ms) so LOD C is deferred.
+    it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
+      // Make LOD B slow (over the threshold) so LOD C is deferred.
       let now = 0;
       const performanceNowSpy = vi.spyOn(performance, 'now');
       performanceNowSpy.mockImplementation(() => {
@@ -199,7 +229,7 @@ describe('PointsProgressiveLoader', () => {
       });
 
       lodB.updateView.mockImplementation(async () => {
-        now += 25; // simulated work
+        now += CACHE_HIT_THRESHOLD_MS + 10; // simulated work, over threshold
         return makeLodData(50);
       });
 
@@ -367,6 +397,51 @@ describe('PointsProgressiveLoader', () => {
       await loader.loadPoints(baseViewState);
       loader.dispose();
       expect(loader.loadedLODCount).toBe(0);
+    });
+  });
+
+  describe('LoaderMonitor surface', () => {
+    it('exposes the four monitor methods (so connectLoaderToMonitor wires it)', () => {
+      expect(typeof loader.addEventListener).toBe('function');
+      expect(typeof loader.removeEventListener).toBe('function');
+      expect(typeof loader.getMetrics).toBe('function');
+      expect(typeof loader.getActiveQueries).toBe('function');
+    });
+
+    it('getMetrics aggregates inner-loader metrics under the node path', () => {
+      lodA = makeSubLoader(makeLodData(100), { queries: 2, pointsLoaded: 100, memoryUsed: 10 });
+      lodB = makeSubLoader(makeLodData(50), { queries: 3, pointsLoaded: 50, memoryUsed: 20 });
+      loader = new PointsProgressiveLoader(
+        [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+        2,
+        '/points'
+      );
+
+      const metrics = loader.getMetrics();
+      expect(metrics.path).toBe('/points');
+      expect(metrics.type).toBe('point-spatial-index');
+      expect(metrics.queries).toBe(5); // 2 + 3
+      expect(metrics.pointsLoaded).toBe(150); // 100 + 50
+      expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('addEventListener / removeEventListener fan out to every inner loader', () => {
+      const listener = vi.fn();
+      loader.addEventListener(listener);
+      expect(lodA.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodB.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.addEventListener).toHaveBeenCalledTimes(1);
+
+      loader.removeEventListener(listener);
+      expect(lodA.removeEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.removeEventListener).toHaveBeenCalledTimes(1);
+    });
+
+    it('getActiveQueries merges inner active-query lists', () => {
+      lodA.getActiveQueries.mockReturnValue([{ id: 'a' }]);
+      lodB.getActiveQueries.mockReturnValue([{ id: 'b' }, { id: 'c' }]);
+      lodC.getActiveQueries.mockReturnValue([]);
+      expect(loader.getActiveQueries()).toHaveLength(3);
     });
   });
 });

@@ -7,15 +7,15 @@ styles when the matching `[data-theme=...]` attribute is set on `:root`.
 > Not to be confused with [`src/themes/`](../../themes/README.md) — that is
 > the TypeScript `ThemeManager` (singleton, CSS custom-property injector,
 > SVG glass filter pipeline, four `Theme` objects). The files here are the
-> *pure-CSS* visual overrides those two glass themes need on top of the
+> _pure-CSS_ visual overrides those two glass themes need on top of the
 > custom properties; the `dark` and `light` themes need no override CSS.
 
 ## Files
 
-| File                | Activated when `data-theme=`        | What it does                                                                                            |
-| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `frosted-glass.css` | `frosted-glass`                     | Applies `backdrop-filter: var(--luxar-blur-md) saturate(1.5)` plus `isolation: isolate` to every glass-capable surface. Also fixes native `<option>` colors. |
-| `liquid-glass.css`  | `liquid-glass`                      | Three-layer effect: a real `.luxar-glass-refraction` DOM element behind, `::before` for backdrop blur + `url(#luxar-liquid-refraction)` SVG filter, `::after` for the dark tint and inset shine. Tunes inner controls (GUI inputs, dataset browser items, debug console, layers panel, etc.) to be transparent so the glass shows through. |
+| File                | Activated when `data-theme=` | What it does                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `frosted-glass.css` | `frosted-glass`              | Applies `backdrop-filter: var(--luxar-blur-md) saturate(1.5)` plus `isolation: isolate` to every glass-capable surface. Also fixes native `<option>` colors.                                                                                                                                                                               |
+| `liquid-glass.css`  | `liquid-glass`               | Three-layer effect: a real `.luxar-glass-refraction` DOM element behind, `::before` for backdrop blur + `url(#luxar-liquid-refraction)` SVG filter, `::after` for the dark tint and inset shine. Tunes inner controls (GUI inputs, dataset browser items, debug console, layers panel, etc.) to be transparent so the glass shows through. |
 
 ## Glass-capable surfaces
 

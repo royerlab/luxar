@@ -1,21 +1,26 @@
 /**
  * Direct tests for runLinesRefinement — the progressive Lines LOD
- * refinement loop. Mirrors `data/gsplats/lod-refinement.test.ts` and
- * `data/points/lod-refinement.test.ts`.
+ * refinement loop.
  *
- * Pins the unit semantics: cancellation hand-off when viewStateQueue
- * has pending state, normal completion when no loaders have more LODs,
- * error-handling that doesn't terminate the loop, skip-path handling,
- * and the process+commit two-step that distinguishes Lines from Points.
+ * The shared loop semantics (completion, lock release, cancellation hand-off,
+ * error isolation, skip-path) live in `../_shared/refinement-loop-contract`
+ * and are bound to `runLinesRefinement` below. Only the Lines-specific
+ * behaviour — non-progressive (single-shot) loader handling and the
+ * process+commit two-step that distinguishes Lines from Points — is tested
+ * inline here.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { runLinesRefinement } from '../../../../data/lines/lod-refinement';
+import {
+  runLinesRefinement,
+  type LinesRefinementCtx,
+} from '../../../../data/lines/lod-refinement';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { LinesDataLoader } from '../../../../types/lines';
 import type { ViewState } from '../../../../data/data-loader-types';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
+import { defineRefinementLoopContract } from '../_shared/refinement-loop-contract';
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -23,123 +28,21 @@ const baseViewState: ViewState = {
   tolerance: [0, 0, 0, 1],
 };
 
-function makeLoader(stages: Array<{ hasMoreLODs: boolean }>): LinesDataLoader {
-  let i = 0;
-  const loader: Partial<LinesDataLoader> & { hasMoreLODs?: boolean } = {
-    get hasMoreLODs() {
-      const stage = stages[Math.min(i, stages.length - 1)];
-      return stage.hasMoreLODs;
-    },
-    updateView: vi.fn().mockImplementation(async () => {
-      i++;
-      return null;
-    }),
-  };
-  return loader as LinesDataLoader;
-}
+defineRefinementLoopContract('runLinesRefinement', (w) =>
+  runLinesRefinement({
+    rootGroup: new THREE.Group(),
+    viewStateQueue: w.viewStateQueue,
+    linesLoaders: w.loaders as LinesRefinementCtx['linesLoaders'],
+    deriveNodeViewState: w.deriveNodeViewState as LinesRefinementCtx['deriveNodeViewState'],
+    processLines: w.processSpy as LinesRefinementCtx['processLines'],
+    commitLines: vi.fn(),
+    updateVisibleCountsInMonitor: w.updateVisibleCountsInMonitor,
+    releaseLock: w.releaseLock,
+    retriggerUpdate: w.retriggerUpdate,
+  })
+);
 
-describe('runLinesRefinement', () => {
-  it('returns immediately and releases lock when no loaders have more LODs', async () => {
-    const loader = makeLoader([{ hasMoreLODs: false }]);
-    const linesLoaders = new Map([['/l', loader]]);
-    const releaseLock = vi.fn();
-    const updateVisibleCountsInMonitor = vi.fn();
-
-    await runLinesRefinement({
-      rootGroup: new THREE.Group(),
-      viewStateQueue: new ViewStateQueue(),
-      linesLoaders,
-      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
-      processLines: vi.fn(),
-      commitLines: vi.fn(),
-      updateVisibleCountsInMonitor,
-      releaseLock,
-      retriggerUpdate: vi.fn(),
-    });
-
-    expect(releaseLock).toHaveBeenCalledTimes(1);
-    expect(updateVisibleCountsInMonitor).toHaveBeenCalledTimes(1);
-    expect(loader.updateView).not.toHaveBeenCalled();
-  });
-
-  it('hands off lock to retriggerUpdate when pending view-state is observed', async () => {
-    const queue = new ViewStateQueue();
-    queue.setPending({ slicePosition: [1, 2, 3, 4] });
-
-    const releaseLock = vi.fn();
-    const retriggerUpdate = vi.fn();
-    const loader = makeLoader([{ hasMoreLODs: true }]);
-
-    await runLinesRefinement({
-      rootGroup: new THREE.Group(),
-      viewStateQueue: queue,
-      linesLoaders: new Map([['/l', loader]]),
-      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
-      processLines: vi.fn(),
-      commitLines: vi.fn(),
-      updateVisibleCountsInMonitor: vi.fn(),
-      releaseLock,
-      retriggerUpdate,
-    });
-
-    expect(retriggerUpdate).toHaveBeenCalledTimes(1);
-    expect(retriggerUpdate).toHaveBeenCalledWith({ slicePosition: [1, 2, 3, 4] });
-    expect(releaseLock).not.toHaveBeenCalled();
-  });
-
-  it('catches per-loader errors so other loaders continue refining', async () => {
-    const loaderA: LinesDataLoader = {
-      updateView: vi.fn().mockRejectedValue(new Error('synthetic')),
-    } as unknown as LinesDataLoader;
-    Object.defineProperty(loaderA, 'hasMoreLODs', {
-      get: vi
-        .fn()
-        .mockReturnValueOnce(true)
-        .mockReturnValue(false),
-    });
-
-    await expect(
-      runLinesRefinement({
-        rootGroup: new THREE.Group(),
-        viewStateQueue: new ViewStateQueue(),
-        linesLoaders: new Map([['/a', loaderA]]),
-        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
-        processLines: vi.fn(),
-        commitLines: vi.fn(),
-        updateVisibleCountsInMonitor: vi.fn(),
-        releaseLock: vi.fn(),
-        retriggerUpdate: vi.fn(),
-      })
-    ).resolves.not.toThrow();
-  });
-
-  it('skips loaders whose derived view-state is fully-extended', async () => {
-    let calls = 0;
-    const loader: LinesDataLoader = {
-      get hasMoreLODs() {
-        calls += 1;
-        return calls === 1;
-      },
-      updateView: vi.fn(),
-    } as unknown as LinesDataLoader;
-    const processLines = vi.fn();
-
-    await runLinesRefinement({
-      rootGroup: new THREE.Group(),
-      viewStateQueue: new ViewStateQueue(),
-      linesLoaders: new Map([['/l', loader]]),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
-      processLines,
-      commitLines: vi.fn(),
-      updateVisibleCountsInMonitor: vi.fn(),
-      releaseLock: vi.fn(),
-      retriggerUpdate: vi.fn(),
-    });
-
-    expect(loader.updateView).not.toHaveBeenCalled();
-    expect(processLines).not.toHaveBeenCalled();
-  });
-
+describe('runLinesRefinement — Lines-specific behaviour', () => {
   it('skips loaders that do not expose hasMoreLODs (non-progressive loaders)', async () => {
     const singleShot: LinesDataLoader = {
       updateView: vi.fn(),

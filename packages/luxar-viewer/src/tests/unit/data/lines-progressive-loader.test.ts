@@ -17,12 +17,37 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
+import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  getMetrics: ReturnType<typeof vi.fn>;
+  getActiveQueries: ReturnType<typeof vi.fn>;
+  addEventListener: ReturnType<typeof vi.fn>;
+  removeEventListener: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal LoaderMetrics stub with the fields the aggregator reads. */
+function stubMetrics(over: Partial<Record<string, number>> = {}) {
+  return {
+    type: 'lines-spatial-index' as const,
+    path: '/lines/additive_x',
+    queries: 0,
+    loads: 0,
+    evictions: 0,
+    errors: 0,
+    pointsLoaded: 0,
+    bytesLoaded: 0,
+    visiblePoints: 0,
+    avgQueryTime: 0,
+    avgLoadTime: 0,
+    memoryUsed: 0,
+    memoryLimit: 0,
+    ...over,
+  };
 }
 
 function makeLodData(
@@ -61,7 +86,10 @@ function makeLodData(
   };
 }
 
-function makeSubLoader(initialData: LoadedLinesData): SubLoaderStub {
+function makeSubLoader(
+  initialData: LoadedLinesData,
+  metrics: Record<string, number> = {}
+): SubLoaderStub {
   const updateView = vi.fn().mockResolvedValue(initialData);
   // Progressive loader calls updateViewWithResidency; delegate to updateView
   // (default allResident=true) so existing assertions / timing tests hold.
@@ -74,6 +102,10 @@ function makeSubLoader(initialData: LoadedLinesData): SubLoaderStub {
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
+    getMetrics: vi.fn(() => stubMetrics(metrics)),
+    getActiveQueries: vi.fn(() => []),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   };
 }
 
@@ -193,7 +225,7 @@ describe('LinesProgressiveLoader', () => {
   });
 
   describe('cache-hit timing short-circuit', () => {
-    it('stops loading further LODs when one takes > 15ms', async () => {
+    it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
       let now = 0;
       const performanceNowSpy = vi.spyOn(performance, 'now');
       performanceNowSpy.mockImplementation(() => {
@@ -202,7 +234,7 @@ describe('LinesProgressiveLoader', () => {
       });
 
       lodB.updateView.mockImplementation(async () => {
-        now += 25;
+        now += CACHE_HIT_THRESHOLD_MS + 10; // simulated work, over threshold
         return makeLodData(10, 5);
       });
 
@@ -213,6 +245,29 @@ describe('LinesProgressiveLoader', () => {
       expect(lodC.updateView).not.toHaveBeenCalled();
 
       performanceNowSpy.mockRestore();
+    });
+
+    it('stops loading further LODs after a cache miss (fast but not resident)', async () => {
+      // LOD B is fast (no timing break) but reports a cache miss → the loop
+      // must still stop so the frame renders and refinement continues.
+      lodB.updateViewWithResidency.mockImplementation(async () => ({
+        data: makeLodData(10, 5, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+
+      await loader.loadLines(baseViewState);
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('keeps loading while levels are resident', async () => {
+      // All resident + fast → the loop loads every level in one call.
+      await loader.loadLines(baseViewState);
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalled();
     });
   });
 
@@ -388,6 +443,51 @@ describe('LinesProgressiveLoader', () => {
       await loader.loadLines(baseViewState);
       loader.dispose();
       expect(loader.loadedLODCount).toBe(0);
+    });
+  });
+
+  describe('LoaderMonitor surface', () => {
+    it('exposes the four monitor methods (so connectLoaderToMonitor wires it)', () => {
+      expect(typeof loader.addEventListener).toBe('function');
+      expect(typeof loader.removeEventListener).toBe('function');
+      expect(typeof loader.getMetrics).toBe('function');
+      expect(typeof loader.getActiveQueries).toBe('function');
+    });
+
+    it('getMetrics aggregates inner-loader metrics under the node path', () => {
+      lodA = makeSubLoader(makeLodData(20, 10), { queries: 2, pointsLoaded: 100, memoryUsed: 10 });
+      lodB = makeSubLoader(makeLodData(10, 5), { queries: 3, pointsLoaded: 50, memoryUsed: 20 });
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/lines'
+      );
+
+      const metrics = loader.getMetrics();
+      expect(metrics.path).toBe('/lines');
+      expect(metrics.type).toBe('lines-spatial-index');
+      expect(metrics.queries).toBe(5); // 2 + 3
+      expect(metrics.pointsLoaded).toBe(150); // 100 + 50
+      expect(metrics.memoryUsed).toBe(30); // 10 + 20
+    });
+
+    it('addEventListener / removeEventListener fan out to every inner loader', () => {
+      const listener = vi.fn();
+      loader.addEventListener(listener);
+      expect(lodA.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodB.addEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.addEventListener).toHaveBeenCalledTimes(1);
+
+      loader.removeEventListener(listener);
+      expect(lodA.removeEventListener).toHaveBeenCalledTimes(1);
+      expect(lodC.removeEventListener).toHaveBeenCalledTimes(1);
+    });
+
+    it('getActiveQueries merges inner active-query lists', () => {
+      lodA.getActiveQueries.mockReturnValue([{ id: 'a' }]);
+      lodB.getActiveQueries.mockReturnValue([{ id: 'b' }, { id: 'c' }]);
+      lodC.getActiveQueries.mockReturnValue([]);
+      expect(loader.getActiveQueries()).toHaveLength(3);
     });
   });
 });

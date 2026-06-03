@@ -8,7 +8,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { handleWheel, type FlyWheelCtx } from '../../../../../controls/luxar-fly-controls/input/wheel';
+import {
+  handleWheel,
+  type FlyWheelCtx,
+} from '../../../../../controls/luxar-fly-controls/input/wheel';
 
 function makeCtx(overrides: Partial<FlyWheelCtx> = {}): FlyWheelCtx {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);

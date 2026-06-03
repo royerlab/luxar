@@ -59,7 +59,11 @@ export async function loadLUT(
         );
       } catch (error) {
         if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
-        log.warning(ctx.config.logModule, 'Worker LUT decode failed, falling back to main thread:', error);
+        log.warning(
+          ctx.config.logModule,
+          'Worker LUT decode failed, falling back to main thread:',
+          error
+        );
         decoded = ctx.decoder.decodeLUTIndices(indices, lutMetadata);
       }
     } else {

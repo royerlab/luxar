@@ -72,6 +72,8 @@ The sum-projection branch carries the 3×3 cofactor expansion + `inversesqrt` �
 | `uOpacity`, `uIntensity`, `uOffset`, `uInvGamma` | `float`     | Per-node opacity + GOG chain.                                                                                                   |
 | `uColormapTex`, `uScalarMin`, `uScalarScale`     | conditional | Present only when `defines.USE_COLORMAP` is set; LUT lookup uses `aAmplitude` as the scalar (mirrors the GLSL path).            |
 
+The `LUXAR_GAMMA_ONE` define (set by `updateGamma` when `gamma == 1.0 ± 1e-4`, the default) skips the per-fragment color `pow()` — `pow(x, 1) == x` — and the pre-LUT value `pow()` in colormap mode. Mirrors the Line/Point fast path (`isGammaOne` in `../_shared/uniform-helpers`). The TSL wrapper rebuilds its graph when the define toggles; the GLSL wrapper flips `needsUpdate`.
+
 ## See Also
 
 - `../README.md` — sibling per-geometry material folders (`point/`, `line/`) share this README's vocabulary.

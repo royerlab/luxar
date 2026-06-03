@@ -69,8 +69,7 @@ export async function loadLinesNode(
   log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
   log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
 
-  const nAdditive =
-    (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
+  const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
     log.info(
       Modules.SCENE_LOADER,

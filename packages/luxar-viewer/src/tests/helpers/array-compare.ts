@@ -19,11 +19,7 @@
  * `epsilon = 0` (default) does true equality on each element via `Math.abs`.
  * Pass a positive epsilon for tolerance-based comparison.
  */
-export function arraysEqual(
-  a: ArrayLike<number>,
-  b: ArrayLike<number>,
-  epsilon = 0
-): boolean {
+export function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 0): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (Math.abs(a[i] - b[i]) > epsilon) return false;

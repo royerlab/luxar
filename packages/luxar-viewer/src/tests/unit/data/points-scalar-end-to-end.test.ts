@@ -207,7 +207,7 @@ describe('projectPointsTo3D scalar pass-through', () => {
 
 describe('GPUBufferPool scalar attribute', () => {
   it('detectAttributeTypes omits scalar field when data.scalars is undefined', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0]),
       pointCount: 1,
@@ -227,7 +227,7 @@ describe('GPUBufferPool scalar attribute', () => {
     if (typeof globalThis.Float16Array === 'undefined') {
       return; // Skip on engines without Float16Array (older Node/JSDOM)
     }
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const f16 = new globalThis.Float16Array(2);
     f16[0] = 0.25;
     f16[1] = 0.75;
@@ -262,7 +262,7 @@ describe('GPUBufferPool scalar attribute', () => {
   });
 
   it('binds Float32 `scalar` attribute when scalars present', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       scalars: new Float32Array([0.3, 0.7]),
@@ -292,7 +292,7 @@ describe('GPUBufferPool scalar attribute', () => {
     // the shader sees the same
     // [0, 1] range — see `pointsNormalizationDivisor` in
     // `gpu-buffer-pool.ts`.
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0]),
       scalars: new Uint8Array([128]),
@@ -314,7 +314,7 @@ describe('GPUBufferPool scalar attribute', () => {
   });
 
   it('reuses the same geometry on subsequent acquire when scalar type matches', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const dataA: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0]),
       scalars: new Float32Array([0.5]),
@@ -337,7 +337,7 @@ describe('GPUBufferPool scalar attribute', () => {
   });
 
   it('grows scalar buffer type-preservingly', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const initial: LoadedPointsData = {
       positions: new Float32Array(3 * 10),
       scalars: new Float32Array(10).fill(0.5),
@@ -370,7 +370,7 @@ describe('GPUBufferPool scalar attribute', () => {
   });
 
   it('updatePointsGeometry zero-fills scalar buffer when data.scalars is absent on a reuse', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const withScalars: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0]),
       scalars: new Float32Array([0.7]),

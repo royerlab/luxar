@@ -201,18 +201,18 @@ describe('validateDataLoadingNetwork', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.network.validationTimeoutMs = 3000;
     const result = invokeValidator(validateDataLoadingNetwork, cfg);
-    expect(
-      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
-    ).toEqual([]);
+    expect(result.warnings.filter((w) => w.includes('Very low cache validation timeout'))).toEqual(
+      []
+    );
   });
 
   it('does NOT emit the validation-timeout warning at high values', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.network.validationTimeoutMs = 5000;
     const result = invokeValidator(validateDataLoadingNetwork, cfg);
-    expect(
-      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
-    ).toEqual([]);
+    expect(result.warnings.filter((w) => w.includes('Very low cache validation timeout'))).toEqual(
+      []
+    );
   });
 
   it('error branch (validationTimeoutMs=0) suppresses the warning branch', () => {
@@ -222,8 +222,8 @@ describe('validateDataLoadingNetwork', () => {
     cfg.dataLoading.network.validationTimeoutMs = 0;
     const result = invokeValidator(validateDataLoadingNetwork, cfg);
     expect(result.valid).toBe(false);
-    expect(
-      result.warnings.filter((w) => w.includes('Very low cache validation timeout'))
-    ).toEqual([]);
+    expect(result.warnings.filter((w) => w.includes('Very low cache validation timeout'))).toEqual(
+      []
+    );
   });
 });

@@ -468,9 +468,9 @@ describe('cached-zarr-array', () => {
     it('treats a coalesced concurrent access as a hit', async () => {
       // A slow getChunk so the second call coalesces onto the first's promise.
       let resolveChunk: (c: MockChunk) => void = () => {};
-      const slow = vi.fn().mockImplementation(
-        () => new Promise<MockChunk>((res) => (resolveChunk = res))
-      );
+      const slow = vi
+        .fn()
+        .mockImplementation(() => new Promise<MockChunk>((res) => (resolveChunk = res)));
       const mockArray = createMockZarrArray(slow);
       const probe = new ResidencyAccumulator();
       const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => probe);

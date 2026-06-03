@@ -11,8 +11,8 @@ stage dispatches to via Comlink (`projectPointsTo3D`,
 
 | File         | Geometry | Role                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `points.ts`  | Points   | Extracts 3D positions via `extract_3d_positions`, optionally runs `calculate_effective_radii` (treating `extend_to_all` dims as displayed), filters zero-radius points with `radii_to_visibility_mask` + `compact_by_mask`, computes bounds via `calculate_bounds_3d`. Supports the TransferableAccumulator zero-allocation path via `outputBuffers`.                              |
-| `lines.ts`   | Lines    | Clips segments with `clip_segments_batch` (slicePosition + tolerance + displayDims), interpolates clipped endpoints to 3D via `interpolate_clipped_positions`, then interpolates per-vertex colors / widths / sharpness / scalars with `interpolate_colors_batch` + `interpolate_scalars_batch`, finishes with `calculate_segment_lengths` and `mark_clipped_endpoints`.           |
+| `points.ts`  | Points   | Extracts 3D positions via `extract_3d_positions`, optionally runs `calculate_effective_radii` (treating `extend_to_all` dims as displayed), filters zero-radius points with `radii_to_visibility_mask` + `compact_by_mask`, computes bounds via `calculate_bounds_3d`. Supports the TransferableAccumulator zero-allocation path via `outputBuffers`.                             |
+| `lines.ts`   | Lines    | Clips segments with `clip_segments_batch` (slicePosition + tolerance + displayDims), interpolates clipped endpoints to 3D via `interpolate_clipped_positions`, then interpolates per-vertex colors / widths / sharpness / scalars with `interpolate_colors_batch` + `interpolate_scalars_batch`, finishes with `calculate_segment_lengths` and `mark_clipped_endpoints`.          |
 | `gsplats.ts` | GSplats  | Pre-filters discrete hidden dims (half-step threshold, TS), runs `compute_gsplats_attenuation` over the continuous hidden dims for Mahalanobis-based visibility + attenuation, then `extract_3d_positions` + `compact_by_mask` for centers, `extract_visible_cholesky_3d` for the 3D Cholesky submatrices, and `compact_attenuated_amplitudes` for the per-splat amplitude scale. |
 
 ## Public surface
@@ -26,18 +26,46 @@ typed-array buffers move to the main thread without copying.
 // displayDims + slicePosition are consumed by every kernel; tolerance
 // is read by Points (extend_to_all detection) and Lines (clip bounds)
 // but is required by GSplats only for API parity.
-export async function projectPointsTo3D(ctx, params): Promise<{
-  positions3D; colors; radii; sharpness; visibleCount; bounds;
-  outputBuffers?: PointsOutputBuffers;  // TransferableAccumulator
+export async function projectPointsTo3D(
+  ctx,
+  params
+): Promise<{
+  positions3D;
+  colors;
+  radii;
+  sharpness;
+  visibleCount;
+  bounds;
+  outputBuffers?: PointsOutputBuffers; // TransferableAccumulator
 }>;
-export async function projectLinesTo3D(ctx, params): Promise<{
-  startPositions; endPositions; startColors; endColors;
-  startWidths; endWidths; startSharpness; endSharpness;
-  startScalars; endScalars;   // per-vertex colormap scalars
-  segmentLengths; startClipped; endClipped; visibleSegmentCount;
+export async function projectLinesTo3D(
+  ctx,
+  params
+): Promise<{
+  startPositions;
+  endPositions;
+  startColors;
+  endColors;
+  startWidths;
+  endWidths;
+  startSharpness;
+  endSharpness;
+  startScalars;
+  endScalars; // per-vertex colormap scalars
+  segmentLengths;
+  startClipped;
+  endClipped;
+  visibleSegmentCount;
 }>;
-export async function projectGSplatsTo3D(ctx, params): Promise<{
-  centers3D; choleskyFactors3D; amplitudes; colors; sharpness;
+export async function projectGSplatsTo3D(
+  ctx,
+  params
+): Promise<{
+  centers3D;
+  choleskyFactors3D;
+  amplitudes;
+  colors;
+  sharpness;
   visibleCount;
 }>;
 ```
@@ -78,7 +106,7 @@ export async function projectGSplatsTo3D(ctx, params): Promise<{
 - **No Points process step upstream.** Unlike Lines and GSplats, Points
   has no `data-processor-points.ts` — the spatial-index loader already
   produces 3D-ready buffers, so `projectPointsTo3D` is only invoked by
-  loaders that *do* want async nD compaction (effective-radius +
+  loaders that _do_ want async nD compaction (effective-radius +
   extend-to-all paths). See
   `../../../data/scene-loader/commit/commit-points-geometry.ts` for the
   rationale.

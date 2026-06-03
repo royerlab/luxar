@@ -30,10 +30,18 @@ describe('compact_by_mask — stride > 1 multi-component [wasm.md G8]', () => {
   it('[G8] stride=3 (xyz triples): only visible triples copied to output', () => {
     // 4 points × 3 components; mask hides points 0 and 2.
     const input = new Float32Array([
-      1, 2, 3, // point 0 (hidden)
-      4, 5, 6, // point 1 (visible)
-      7, 8, 9, // point 2 (hidden)
-      10, 11, 12, // point 3 (visible)
+      1,
+      2,
+      3, // point 0 (hidden)
+      4,
+      5,
+      6, // point 1 (visible)
+      7,
+      8,
+      9, // point 2 (hidden)
+      10,
+      11,
+      12, // point 3 (visible)
     ]);
     const mask = new Uint8Array([0, 1, 0, 1]);
     const output = new Float32Array(6).fill(99); // 2 visible × 3 stride
@@ -44,11 +52,7 @@ describe('compact_by_mask — stride > 1 multi-component [wasm.md G8]', () => {
 
   it('[G8] stride=4 (RGBA quads): preserves component ordering, no off-by-one', () => {
     // Catches a mutation that swapped `i * stride` and `outIdx * stride`.
-    const input = new Float32Array([
-      0.1, 0.2, 0.3, 0.4,
-      0.5, 0.6, 0.7, 0.8,
-      0.9, 1.0, 1.1, 1.2,
-    ]);
+    const input = new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]);
     const mask = new Uint8Array([1, 0, 1]);
     const output = new Float32Array(8);
     const n = compact_by_mask(input, mask, 3, 4, output);

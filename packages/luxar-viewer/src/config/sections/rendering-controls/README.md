@@ -8,7 +8,7 @@ Note: `fov`, `near`, and `far` live here (not in `camera/`) because they are use
 
 ## Contents
 
-- `data.ts` — `renderingControlsConfig: RenderingControlsConfig`. Defines `defaults` for every user-adjustable rendering setting. Notable defaults: `fov: 47` (`50mm Normal`), `near: 0.1`, `far: 1000`, `dynamicClippingEnabled: true`, `bloomEnabled: false`, `toneMapping: 'Neutral'`, `controlType: 'orbit'`, and `naturalDrag: isMacPlatform()` (touchpad-friendly LEFT-rotate / RIGHT-pan on macOS; runtime persistence layer overrides this with the user's stored choice).
+- `data.ts` — `renderingControlsConfig: RenderingControlsConfig`. Defines `defaults` for every user-adjustable rendering setting. Notable defaults: `fov: 47` (`50mm Normal`), `near: 0.1`, `far: 1000`, `dynamicClippingEnabled: true`, `bloomEnabled: false`, `toneMapping: 'ACES'`, `controlType: 'orbit'`, and `naturalDrag: isMacPlatform()` (touchpad-friendly LEFT-rotate / RIGHT-pan on macOS; runtime persistence layer overrides this with the user's stored choice).
 - `types.ts` — `RenderingSettings` (the full user-adjustable surface) and `RenderingControlsConfig` (`{ defaults: RenderingSettings }`). `RenderingSettings` also declares optional runtime-injected `fly*` fields populated from `config.controls.fly` to avoid duplication.
 - `validate.ts` — two validators:
   - `validateRendering` rejects non-finite `exposure` / `globalOffset` / `globalGamma` and enforces `exposure ∈ [-5, 5]`, `globalOffset ∈ [-1, 1]`, `globalGamma ∈ [0.1, 10]`.

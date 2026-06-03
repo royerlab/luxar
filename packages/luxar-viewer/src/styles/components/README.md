@@ -14,21 +14,21 @@ chrome. Colors, spacing, radii, and shadows reference the
 
 ## Files
 
-| File                       | UI surface                                                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `colormap-legend.css`      | Bottom-right overlay showing per-layer colormap gradients (`ui/colormap-legend.ts`).                              |
-| `data-loading-monitor.css` | Real-time data-loading performance monitor with multi-state UI (`ui/data-loading-monitor.ts`).                    |
-| `dataset-browser.css`      | Modal panel for navigating and selecting Zarr datasets (`ui/dataset-browser.ts`).                                 |
-| `debug-console.css`        | In-app developer console for viewing intercepted browser console output (`ui/debug-console.ts`).                  |
-| `dimension-sliders.css`    | Napari-inspired slider controls for nD dataset navigation (`ui/dimension-sliders.ts`).                            |
-| `error-dialog.css`         | Styled error messages with guidance plus loading-spinner indicator (`ui/error-overlay.ts`, `ui/loading-indicator.ts`). |
-| `help-overlay.css`         | Keyboard-shortcuts and controls reference panel (`ui/help-overlay.ts`).                                           |
+| File                       | UI surface                                                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `colormap-legend.css`      | Bottom-right overlay showing per-layer colormap gradients (`ui/colormap-legend.ts`).                                      |
+| `data-loading-monitor.css` | Real-time data-loading performance monitor with multi-state UI (`ui/data-loading-monitor.ts`).                            |
+| `dataset-browser.css`      | Modal panel for navigating and selecting Zarr datasets (`ui/dataset-browser.ts`).                                         |
+| `debug-console.css`        | In-app developer console for viewing intercepted browser console output (`ui/debug-console.ts`).                          |
+| `dimension-sliders.css`    | Napari-inspired slider controls for nD dataset navigation (`ui/dimension-sliders.ts`).                                    |
+| `error-dialog.css`         | Styled error messages with guidance plus loading-spinner indicator (`ui/error-overlay.ts`, `ui/loading-indicator.ts`).    |
+| `help-overlay.css`         | Keyboard-shortcuts and controls reference panel (`ui/help-overlay.ts`).                                                   |
 | `layers-panel.css`         | Napari-inspired per-layer controls for visibility, display range, gamma, and blending mode (`ui/layers/layers-panel.ts`). |
-| `overlay-layer.css`        | Screen-space overlay container for text / image / HTML elements painted over the 3D canvas.                       |
-| `recording-panel.css`      | Screenshot and video recording panel, recording indicator, and confirmation dialog (`ui/recording-panel.ts`).     |
-| `resolution-indicator.css` | Subtle badge that appears when adaptive DPR has reduced rendering resolution.                                     |
-| `scale-bar.css`            | Physical-unit scale-bar overlay for microscopy figure generation (bar + label, bottom-left by default).           |
-| `toast.css`                | Brief auto-dismissing notification shown at bottom-center of the viewport (`ui/toast.ts`).                        |
+| `overlay-layer.css`        | Screen-space overlay container for text / image / HTML elements painted over the 3D canvas.                               |
+| `recording-panel.css`      | Screenshot and video recording panel, recording indicator, and confirmation dialog (`ui/recording-panel.ts`).             |
+| `resolution-indicator.css` | Subtle badge that appears when adaptive DPR has reduced rendering resolution.                                             |
+| `scale-bar.css`            | Physical-unit scale-bar overlay for microscopy figure generation (bar + label, bottom-left by default).                   |
+| `toast.css`                | Brief auto-dismissing notification shown at bottom-center of the viewport (`ui/toast.ts`).                                |
 
 ## Conventions
 

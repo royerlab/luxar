@@ -291,10 +291,12 @@ luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level
 # Each coarser substitutive level has ceil(N/K^L) splats that REPLACE the previous
 # level. Output is a single v2.0 .gsplats.zarr (substitutive_<s>/additive_0 cells);
 # loadable with `luxar gsplat info`. The recommended workhorse `kmeans_lloyd`
-# (k-means warm-start + cost-increment Lloyd refinement) beats amplitude culling
-# at every K on real anisotropic 3D data per supp-doc Experiment C. Greedy
-# hierarchical is quality-leaning at small N but ~8x slower.
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr               # K=4, L=3 (default), kmeans_lloyd
+# (O(N log N) Morton-partition warm-start + vectorised cost-increment Lloyd)
+# beats amplitude culling at every K on real anisotropic 3D data per supp-doc
+# Experiment C, and reduces 256K splats in seconds (was ~1hr). Greedy
+# hierarchical (lazy-heap Runnalls, ~O(Nk log Nk)) is quality-leading at
+# small N but heavier per-merge — use kmeans_lloyd for very large N.
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr               # K=4, L=3, method=auto (default)
 luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --K 4 --L 3   # explicit K, L
 luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \
     --method kmeans-lloyd --lloyd-iters 5                                    # tune Lloyd refinement

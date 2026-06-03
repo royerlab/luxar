@@ -822,7 +822,15 @@ describe('compute_nd_visibility_points — NaN/Inf propagation [wasm.md G1]', ()
     const slicePosition = new Float32Array([0, 0, 0]);
     const tolerance = new Float32Array([5, 5, 5]);
     const output = new Uint8Array(1);
-    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
     expect(n).toBe(0);
     expect(output[0]).toBe(0);
   });
@@ -833,7 +841,15 @@ describe('compute_nd_visibility_points — NaN/Inf propagation [wasm.md G1]', ()
     const slicePosition = new Float32Array([0, Number.NaN, 0]);
     const tolerance = new Float32Array([5, 5, 5]);
     const output = new Uint8Array(1);
-    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
     expect(n).toBe(0);
     expect(output[0]).toBe(0);
   });
@@ -844,7 +860,15 @@ describe('compute_nd_visibility_points — NaN/Inf propagation [wasm.md G1]', ()
     const slicePosition = new Float32Array([0, 0, 0]);
     const tolerance = new Float32Array([5, 5, 5]);
     const output = new Uint8Array(1);
-    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 1, output);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      3,
+      1,
+      output
+    );
     expect(n).toBe(0);
     expect(output[0]).toBe(0);
   });
@@ -855,7 +879,15 @@ describe('compute_nd_visibility_points — NaN/Inf propagation [wasm.md G1]', ()
     const slicePosition = new Float32Array([0, 0, 0]);
     const tolerance = new Float32Array([1, 1, 1]);
     const output = new Uint8Array(2);
-    const n = compute_nd_visibility_points(positions, radii, slicePosition, tolerance, 3, 2, output);
+    const n = compute_nd_visibility_points(
+      positions,
+      radii,
+      slicePosition,
+      tolerance,
+      3,
+      2,
+      output
+    );
     expect(n).toBe(1);
     expect(output[0]).toBe(1);
     expect(output[1]).toBe(0);

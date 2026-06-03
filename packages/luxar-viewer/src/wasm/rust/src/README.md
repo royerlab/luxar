@@ -76,7 +76,7 @@ The kernels share a small bag of tricks documented inline:
   pass over the per-point inner loop (see `points.rs`,
   `gsplats_processing.rs::mahalanobis_distance_internal`).
 - **Branchless mask writes** — `output_mask[i] = visible as u8; count +=
-  visible as u32;` instead of an `if/else`.
+visible as u32;` instead of an `if/else`.
 - **Fixed-size lookup arrays** in place of `HashSet<u32>` for `display_dims`
   (see `lines_clipping.rs`, `effective_radii.rs`).
 - **Stride-specialised fast paths** for `stride == 1` and `stride == 3` in

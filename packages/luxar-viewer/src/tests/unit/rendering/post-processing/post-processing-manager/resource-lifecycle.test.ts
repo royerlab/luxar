@@ -144,11 +144,11 @@ describe('resolveToneMappingDefault', () => {
     expect(validValues).toContain(value);
   });
 
-  it("resolves the current config default ('Neutral') to THREE.NeutralToneMapping", () => {
-    // The config default is pinned to 'Neutral' in
+  it("resolves the current config default ('ACES') to THREE.ACESFilmicToneMapping", () => {
+    // The config default is pinned to 'ACES' in
     // src/config/sections/rendering-controls/data.ts. If a future commit
     // changes that default, this test fails so the change becomes deliberate.
-    expect(resolveToneMappingDefault()).toBe(THREE.NeutralToneMapping);
+    expect(resolveToneMappingDefault()).toBe(THREE.ACESFilmicToneMapping);
   });
 });
 

@@ -95,7 +95,14 @@ export class RangeLoader {
     const ctx = { config: this.config, verbose: this._verbose };
     const resolved = await resolveArrayRef(ctx, attrs, zarrStore, logPrefix);
     return resolved
-      ? this.loadRanges(resolved.array, resolved.attrs, ranges, output, totalElements, resolved.elementsPerItem)
+      ? this.loadRanges(
+          resolved.array,
+          resolved.attrs,
+          ranges,
+          output,
+          totalElements,
+          resolved.elementsPerItem
+        )
       : this.loadRanges(array, attrs, ranges, output, totalElements, elementsPerItem);
   }
 

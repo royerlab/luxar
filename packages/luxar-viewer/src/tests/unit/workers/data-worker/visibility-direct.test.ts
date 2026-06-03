@@ -29,15 +29,17 @@ import { NOT_INITIALIZED_MSG } from '../../../../workers/data-worker/state';
 // Minimal WASM-module stub. Each visibility entry point uses ONLY its
 // own visibility primitive; we leave the other slots as `vi.fn()` so
 // the typing satisfies the production `WasmModule` shape.
-function makeWasmStub(opts: {
-  pointsReturn?: number;
-  linesReturn?: number;
-  gsplatsReturn?: number;
-  // Per-call hook so a test can assert mask writes.
-  onPoints?: (...args: unknown[]) => void;
-  onLines?: (...args: unknown[]) => void;
-  onGSplats?: (...args: unknown[]) => void;
-} = {}) {
+function makeWasmStub(
+  opts: {
+    pointsReturn?: number;
+    linesReturn?: number;
+    gsplatsReturn?: number;
+    // Per-call hook so a test can assert mask writes.
+    onPoints?: (...args: unknown[]) => void;
+    onLines?: (...args: unknown[]) => void;
+    onGSplats?: (...args: unknown[]) => void;
+  } = {}
+) {
   return {
     compute_nd_visibility_points: vi.fn((...args: unknown[]) => {
       opts.onPoints?.(...args);

@@ -65,7 +65,11 @@ export async function loadQuantized(
         }
       } catch (error) {
         if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
-        log.warning(ctx.config.logModule, 'Worker decoding failed, falling back to main thread:', error);
+        log.warning(
+          ctx.config.logModule,
+          'Worker decoding failed, falling back to main thread:',
+          error
+        );
         dequantized = ctx.decoder.dequantizeRange(quantizedData, quantMetadata);
       }
     } else {

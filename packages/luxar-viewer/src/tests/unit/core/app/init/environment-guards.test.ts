@@ -29,9 +29,7 @@ describe('assertBrowserEnvironment', () => {
     delete (globalThis as { window?: Window }).window;
     try {
       expect(() => assertBrowserEnvironment()).toThrow(/browser environment/i);
-      expect(() => assertBrowserEnvironment()).toThrow(
-        /window and document must be defined/i
-      );
+      expect(() => assertBrowserEnvironment()).toThrow(/window and document must be defined/i);
     } finally {
       globalThis.window = original;
     }

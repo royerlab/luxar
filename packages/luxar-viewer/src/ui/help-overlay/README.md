@@ -7,9 +7,9 @@ cycling and focus-restore behaviour).
 
 ## Files
 
-| File             | Purpose                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `focus-trap.ts`  | `trapFocus(container)` — Tab/Shift+Tab cycling + focus restoration   |
+| File            | Purpose                                                            |
+| --------------- | ------------------------------------------------------------------ |
+| `focus-trap.ts` | `trapFocus(container)` — Tab/Shift+Tab cycling + focus restoration |
 
 ## `trapFocus(container)`
 

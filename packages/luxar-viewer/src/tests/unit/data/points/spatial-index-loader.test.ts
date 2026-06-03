@@ -507,8 +507,8 @@ describe('PointsSpatialIndexLoader', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      (zarr.get as any).mockImplementation(
-        () => gate.then(() => ({ data: new Float32Array(100) }))
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(100) }))
       );
 
       const loadPromise = loader.loadPoints({
@@ -545,6 +545,12 @@ describe('PointsSpatialIndexLoader', () => {
       expect(metrics.queries).toBe(1);
       expect(metrics.type).toBe('point-spatial-index');
       expect(metrics.path).toBe('/test_points');
+      // Resident memory is populated from the accumulator after a load
+      // (was a perpetual 0 before — never written). Matches the MB→bytes
+      // conversion done in recordLoadMetrics.
+      const accMB = loader.getAccumulatorStats()?.memoryMB ?? 0;
+      expect(accMB).toBeGreaterThan(0);
+      expect(metrics.memoryUsed).toBe(Math.round(accMB * 1024 * 1024));
     });
 
     it('should handle listener errors gracefully', async () => {
