@@ -12,7 +12,7 @@ import {
   setLodLoadStatsEnabled,
   snapshotLodLoadStats,
   resetLodLoadStats,
-} from '../../../scene/lod-load-stats';
+} from '../../../data/scene-loader/lod-load-stats';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { InputHandler } from '../../../input/input-handler';
@@ -201,7 +201,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
 
     // Per-stage timing for lazy LOD level loads (fetch/decode, process,
     // commit, release). Reset before a measurement drive, snapshot after.
-    // See scene/lod-load-stats.ts. Only meaningful under ?debug.
+    // See data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
     getLodLoadStats: () => snapshotLodLoadStats(),
     resetLodLoadStats: () => resetLodLoadStats(),
 

@@ -37,7 +37,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
-import { timeLodStageSync } from '../../../scene/lod-load-stats';
+import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';

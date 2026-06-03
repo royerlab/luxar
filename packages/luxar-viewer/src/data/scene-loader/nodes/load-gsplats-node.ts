@@ -19,7 +19,7 @@ import {
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
 } from '../loaders/loader-factory';
-import { timeLodStage, timeLodStageSync } from '../../../scene/lod-load-stats';
+import { timeLodStage, timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { GSplatsMetadata, GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { NodeBuildCtx } from './build-ctx';
