@@ -132,9 +132,9 @@ export function setupHDRControls(context: SetupContext): SetupResult {
       '• Linear: Simple linear mapping\n' +
       '• Reinhard: Classic tone mapping operator\n' +
       '• Cineon: Film-like response curve\n' +
-      '• ACES: Academy Color Encoding (film industry standard)\n' +
+      '• ACES: Academy Color Encoding, film industry standard (default; shifts hues)\n' +
       '• AgX: Modern filmic mapping with good color preservation\n' +
-      '• Neutral: Minimal color shift tone mapping'
+      '• Neutral: Minimal color shift — best for exact colormap-LUT fidelity'
   );
 
   return {

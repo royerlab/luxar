@@ -10,13 +10,13 @@ import * as THREE from 'three';
 import { MegaShaderMaterial } from '../../../../rendering/post-processing/mega/material';
 
 describe('MegaShaderMaterial', () => {
-  it('disables renderer tone-mapping injection and starts in Neutral mode', () => {
+  it('disables renderer tone-mapping injection and starts in ACES mode', () => {
     const material = new MegaShaderMaterial();
 
     expect(material.toneMapped).toBe(false);
     expect(material.glslVersion).toBe(THREE.GLSL3);
-    expect(material.defines.LUXAR_TONE_MAPPING_MODE).toBe('6');
-    expect(material.getToneMapping()).toBe(THREE.NeutralToneMapping);
+    expect(material.defines.LUXAR_TONE_MAPPING_MODE).toBe('4');
+    expect(material.getToneMapping()).toBe(THREE.ACESFilmicToneMapping);
 
     material.dispose();
   });
