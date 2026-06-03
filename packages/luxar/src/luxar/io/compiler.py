@@ -47,6 +47,7 @@ from ..typing_utils.config import DEFAULT_VERSION
 from ..typing_utils.constants import SHARPNESS_MAX
 from ..typing_utils.protocols import CompressorProtocol
 from ._compiler.chunking import calculate_intelligent_chunks
+from ._compiler.colormap import write_colormap_lut_if_needed
 from ._compiler.context import DatasetCtx
 from ._compiler.datasets.colors import write_colors
 from ._compiler.datasets.positions import write_positions
@@ -2437,82 +2438,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         attrs: Dict[str, Any],
     ) -> None:
-        """Write custom colormap LUT to zarr if colormap is an array.
-
-        If ``attrs["colormap"]`` is a numpy array, resolve it to a (256, 3) uint8
-        LUT, write it as a dataset, and replace the attr value with ``"custom"``.
-        String colormaps are left as-is.
-
-        Args:
-            group: Zarr group to write to
-            attrs: Node attributes dict (modified in-place)
-        """
-        colormap = attrs.get("colormap")
-        if colormap is None:
-            return
-
-        # The viewer defaults to ACES filmic tone-mapping, which intentionally
-        # shifts hues for a pleasing HDR look. That hue shift distorts the exact
-        # colors of a colormap LUT, so warn authors who rely on LUTs that they
-        # may want to pin tone_mapping="Neutral" in the scene's viewer_config.
-        # Skip the warning when:
-        #   - the author has already chosen "Neutral", or
-        #   - the colormap is the implicit grayscale default ("gray"), which has
-        #     no hue for ACES to distort and is not a deliberate LUT choice.
         scene_tone_mapping = None
         if self._scene is not None and self._scene.viewer_config is not None:
             scene_tone_mapping = self._scene.viewer_config.tone_mapping
-        is_grayscale_default = isinstance(colormap, str) and colormap == "gray"
-        if (
-            not self._lut_tone_mapping_warned
-            and scene_tone_mapping != "Neutral"
-            and not is_grayscale_default
-        ):
-            warnings.warn(
-                "This scene uses a colormap LUT, but the viewer's default HDR "
-                "tone-mapping is 'ACES', which intentionally shifts hues and can "
-                "distort LUT colors. If exact colormap fidelity matters (e.g. for "
-                "scientific color encoding), set tone_mapping='Neutral' in the "
-                "scene's viewer_config.",
-                UserWarning,
-                stacklevel=3,
-            )
-            self._lut_tone_mapping_warned = True
-
-        from ..colormaps import resolve_colormap
-        from ..colormaps.builtins import BUILTIN_COLORMAP_NAMES
-
-        if isinstance(colormap, str):
-            if colormap in BUILTIN_COLORMAP_NAMES:
-                # Built-in name — viewer resolves it directly, no LUT needed
-                return
-
-            # Non-built-in name (matplotlib/colorcet) — resolve to LUT and
-            # store as "custom" so the viewer can render it without needing
-            # matplotlib/colorcet at display time.
-            lut = resolve_colormap(colormap)  # Raises ValueError if unknown
-            group.create_dataset(
-                "colormap_lut",
-                data=lut,
-                chunks=(256, 3),
-                dtype=np.uint8,
-            )
-            attrs["colormap"] = "custom"
-            aprint(
-                f"  ✓ Resolved '{colormap}' to LUT and wrote as custom (256x3 uint8)"
-            )
-            return
-
-        # Array colormap — resolve and write as dataset
-        lut = resolve_colormap(colormap)  # (256, 3) uint8
-        group.create_dataset(
-            "colormap_lut",
-            data=lut,
-            chunks=(256, 3),
-            dtype=np.uint8,
+        self._lut_tone_mapping_warned = write_colormap_lut_if_needed(
+            group, attrs, scene_tone_mapping, self._lut_tone_mapping_warned
         )
-        attrs["colormap"] = "custom"
-        aprint("  ✓ Wrote custom colormap LUT (256x3 uint8)")
 
     def _write_spatial_ordering_to_zarr(
         self, group: zarr.Group, ordering_data: Dict[str, Any]
