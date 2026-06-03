@@ -140,6 +140,70 @@ function buildTestTexture(): THREE.DataTexture {
 }
 
 /**
+ * Deterministic 256×1 RGBA colormap LUT for the colormap-parity cases.
+ * A diagonal gradient (R ramps up, B ramps down, G a triangle) so the
+ * sampled colour varies meaningfully with the lookup coordinate `t` —
+ * making gamma-on-value warping observable. Matches the production
+ * colormap texture layout/filtering (`colormap-textures.ts`) so both
+ * backends sample it identically.
+ */
+function buildColormapTexture(): THREE.DataTexture {
+  const n = 256;
+  const data = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    data[o] = i; // R: 0 → 255
+    data[o + 1] = i < 128 ? i * 2 : (255 - i) * 2; // G: triangle peak at mid
+    data[o + 2] = 255 - i; // B: 255 → 0
+    data[o + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, n, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** Point mesh + a per-instance `aScalar` for the colormap-parity case. */
+function buildPointColormapMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = buildPointInstancedMesh(material) as THREE.Mesh;
+  // Mid-range scalar so gamma (pow(t, invGamma)) actually moves the
+  // lookup off the t=0/1 fixed points where pow is the identity.
+  mesh.geometry.setAttribute(
+    'aScalar',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
+  );
+  return mesh;
+}
+
+/**
+ * Line mesh + per-endpoint scalars for the colormap-parity case.
+ *
+ * Under `USE_COLORMAP` the line shader sources colour from the LUT and
+ * omits the `aStartColor`/`aEndColor` `in` declarations entirely (see
+ * `line/shader-glsl.ts`), which keeps the active vertex-attribute count
+ * within `GL_MAX_VERTEX_ATTRIBS` (16) even with the scalar pair added.
+ * We drop the now-unused colour buffers and bind the scalars so the mesh
+ * matches the shader's active attribute set.
+ */
+function buildLineColormapMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = buildLineInstancedMesh(material) as THREE.Mesh;
+  mesh.geometry.deleteAttribute('aStartColor');
+  mesh.geometry.deleteAttribute('aEndColor');
+  mesh.geometry.setAttribute(
+    'aStartScalar',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.2]), 1)
+  );
+  mesh.geometry.setAttribute(
+    'aEndScalar',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.8]), 1)
+  );
+  return mesh;
+}
+
+/**
  * Trivial diagnostic shader: outputs a constant RGB. Used to verify
  * that the harness's two backends produce pixel-identical results
  * for the simplest possible fragment. If this fails, the divergence
@@ -387,6 +451,25 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         useVignette: true,
       }) as unknown as THREE.Material,
   },
+  // Mega + ACES tone-mapping (mode 4) — the PRODUCTION DEFAULT. The other
+  // mega cases pin Linear (mode 1), so without this entry the ACES port
+  // between shader.glsl.ts and shader.tsl.ts (the path users actually see)
+  // is never parity-checked. ACES is non-linear, so this also guards the
+  // RRT/ODT matrix + curve port, not just the mode switch.
+  'mega-aces': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '4' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, { toneMappingMode: 4 }) as unknown as THREE.Material,
+  },
   // Point parity: full PointMaterial sprite + GOG + Gaussian falloff.
   // Uniforms mirror the production PointMaterial constructor; ortho mode
   // keeps `invDistance = 1` so the test is deterministic across cameras.
@@ -415,6 +498,63 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildPointInstancedMesh,
+  },
+  // Point with the gamma==1 fast path enabled. Same geometry as `point`
+  // but invGamma=1 + `gammaOne: true`, so the fragment-stage color pow()
+  // is replaced with an identity. The GLSL counterpart defines
+  // `LUXAR_GAMMA_ONE`. Mirrors `line-gamma-one` (three-geometry symmetry).
+  'point-gamma-one': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, { gammaOne: true }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+  },
+  // Point colormap parity: USE_COLORMAP LUT path. Gamma is applied to the
+  // scalar VALUE before the LUT lookup (vertex stage) and the color GOG is
+  // bypassed. invGamma != 1 with aScalar = 0.5 so the gamma warp is
+  // observable and must match across backends.
+  'point-colormap': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, { useColormap: true }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointColormapMesh,
   },
   // Line parity: instanced quad line with width, sharpness, GOG.
   // Ortho camera so screen-space conversion is deterministic.
@@ -542,6 +682,39 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // Line colormap parity: USE_COLORMAP LUT path with per-endpoint scalars
+  // (0.2 → 0.8). Gamma applied to the value pre-LUT (gammaOne=false here);
+  // color GOG bypassed.
+  'line-colormap': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, { useColormap: true }), {
+        useColormap: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineColormapMesh,
+  },
   // GSplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.
   // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
@@ -571,6 +744,79 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         buildGSplatTSLNodesFromUniforms(uniforms),
         {}
       ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat with the gamma==1 fast path enabled. Same geometry as `gsplat`
+  // but uInvGamma=1 + `gammaOne: true`, so the fragment-stage color pow()
+  // is replaced with an identity. The GLSL counterpart defines
+  // `LUXAR_GAMMA_ONE`. Mirrors `line-gamma-one` (three-geometry symmetry).
+  'gsplat-gamma-one': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        gammaOne: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat colormap parity: USE_COLORMAP LUT path keyed on aAmplitude.
+  // uScalarScale=0.5 maps the amplitude (1.0) to t=0.5 so gamma — applied
+  // to the value pre-LUT — actually shifts the lookup (pow is identity at
+  // t=1). Color GOG bypassed.
+  'gsplat-colormap': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 0.5 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        useColormap: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;

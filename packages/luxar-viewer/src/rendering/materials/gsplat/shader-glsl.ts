@@ -39,8 +39,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
     uniform sampler2D uColormapTex;   // 256x1 LUT texture
-    uniform float uScalarMin;         // Scalar range minimum
+    uniform float uScalarMin;         // Scalar range minimum (display-range window)
     uniform float uScalarScale;       // 1.0 / (max - min)
+    uniform mediump float uInvGamma;  // Gamma applied to the VALUE, pre-LUT
     #endif
 
     // Varyings to fragment - all per-instance varyings use "flat" (no interpolation needed)
@@ -299,9 +300,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Convert screen pixels to NDC (xy only)
         vec2 ndcXY = (screenPos / uResolution) * 2.0 - 1.0;
 
-        // Pass through color — either from vertex attribute or colormap LUT
+        // Pass through color — either from vertex attribute or colormap LUT.
+        // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
+        // operate on the scalar VALUE (here the amplitude) before the LUT
+        // lookup, not on the resulting color. See fragment-shader note.
         #ifdef USE_COLORMAP
         float t = clamp((aAmplitude - uScalarMin) * uScalarScale, 0.0, 1.0);
+        #ifndef LUXAR_GAMMA_ONE
+        t = pow(t, uInvGamma);          // gamma on the value, pre-LUT
+        #endif
         vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
         #else
         vColor = aColor;
@@ -370,14 +377,27 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // Early discard for negligible contribution (raised threshold for performance)
         if (intensity < 1e-4) discard;
 
-        // Per-node GOG (Gain-Offset-Gamma) color adjustment
+        // Per-node GOG (Gain-Offset-Gamma) color adjustment.
+        // Colormap (LUT) mode: gamma + display-range already shaped the
+        // scalar VALUE (amplitude) before the LUT lookup, so the mapped
+        // color passes through untouched. Direct-color mode: GOG on color.
+        #ifdef USE_COLORMAP
+        vec3 adjusted = max(vColor, vec3(0.0));
+        #else
         vec3 adjusted = vColor * uIntensity + uOffset;
         adjusted = max(adjusted, vec3(0.0));
+        #endif
 
         // Early discard for zero-contribution fragments after offset
         if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
 
+        // LUXAR_GAMMA_ONE (gamma == 1.0) skips the per-fragment pow() —
+        // pow(x, 1) == x — same fast path the colormap branch already takes.
+        #if defined(USE_COLORMAP) || defined(LUXAR_GAMMA_ONE)
+        vec3 gammaColor = adjusted;
+        #else
         vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
+        #endif
 
         // HDR color output for linear additive blending
         // With OneFactor blending (additive/luminous/max modes), alpha is ignored,

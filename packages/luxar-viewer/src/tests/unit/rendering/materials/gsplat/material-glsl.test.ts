@@ -122,6 +122,24 @@ describe('GSplatMaterial', () => {
       expect(material.userData.gamma).toBe(2.2);
     });
 
+    it('sets the LUXAR_GAMMA_ONE fast-path define at the default gamma==1', () => {
+      // Default gamma is 1.0 → the constructor compiles in the fast path.
+      expect('LUXAR_GAMMA_ONE' in new GSplatMaterial().defines).toBe(true);
+      // Non-unit gamma → absent (the pow() runs).
+      expect('LUXAR_GAMMA_ONE' in new GSplatMaterial({ gamma: 2.2 }).defines).toBe(false);
+    });
+
+    it('toggles the LUXAR_GAMMA_ONE define across the gamma==1 threshold', () => {
+      const material = new GSplatMaterial({ gamma: 2.2 });
+      expect('LUXAR_GAMMA_ONE' in material.defines).toBe(false);
+
+      material.updateGamma(1.0);
+      expect('LUXAR_GAMMA_ONE' in material.defines).toBe(true);
+
+      material.updateGamma(1.8);
+      expect('LUXAR_GAMMA_ONE' in material.defines).toBe(false);
+    });
+
     it('should accept custom configuration', () => {
       const material = new GSplatMaterial({
         opacity: 0.5,

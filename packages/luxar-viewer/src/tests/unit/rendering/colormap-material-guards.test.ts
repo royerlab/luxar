@@ -162,18 +162,24 @@ describe('Material colormap guards', () => {
       expect(cloned.defines.USE_COLORMAP).toBeUndefined();
     });
 
-    it('vertex shader has #ifdef guard for aStartScalar', () => {
+    it('vertex shader declares aStartScalar only under USE_COLORMAP', () => {
       const mat = new LineMaterial();
       const shader = mat.vertexShader;
-      expect(shader).toContain('#ifdef USE_COLORMAP');
+      // The per-vertex colour attributes are declared when USE_COLORMAP is
+      // NOT defined; the scalar attributes take their place in the #else
+      // (USE_COLORMAP) branch. This keeps the active vertex-attribute count
+      // within GL_MAX_VERTEX_ATTRIBS (16) for colormapped lines.
+      expect(shader).toContain('#ifndef USE_COLORMAP');
 
-      // aStartScalar should only appear inside #ifdef block
+      // aStartScalar must only appear inside the colormap-gated branch
+      // (the #else of #ifndef USE_COLORMAP), never unconditionally.
       const lines = shader.split('\n');
       for (const line of lines) {
         if (line.trim().startsWith('in float aStartScalar')) {
           const idx = lines.indexOf(line);
-          const before = lines.slice(Math.max(0, idx - 5), idx).join('\n');
-          expect(before).toContain('#ifdef USE_COLORMAP');
+          const before = lines.slice(Math.max(0, idx - 6), idx).join('\n');
+          expect(before).toContain('#ifndef USE_COLORMAP');
+          expect(before).toContain('#else');
         }
       }
     });

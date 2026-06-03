@@ -150,6 +150,24 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('mega (ACES tone mapping — the production default) renders identically', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mega-aces');
+    const tslResult = await runTSL(page, 'mega-aces');
+
+    expect(tslResult.pixels.length).toBe(glslPixels.length);
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `Mega+ACES parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
   test('mega with USE_BLOOM matches across backends', async ({ page }) => {
     await bootHarness(page);
 
@@ -207,6 +225,52 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('point-colormap: USE_COLORMAP LUT lookup with gamma applied to the value', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-colormap');
+    const tslResult = await runTSL(page, 'point-colormap');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [32, 30, 28]
+      .map(
+        (xo) =>
+          `  (${xo},32) GLSL=${samplePx(glslPixels, xo, 32)} TSL=${samplePx(tslResult.pixels, xo, 32)}`
+      )
+      .join('\n');
+    expect(
+      diff,
+      `Point-colormap parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(2.0);
+  });
+
+  test('point-gamma-one: LUXAR_GAMMA_ONE fast path matches the slow pow() path', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point-gamma-one');
+    const tslResult = await runTSL(page, 'point-gamma-one');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [32, 30, 28]
+      .map(
+        (xo) =>
+          `  (${xo},32) GLSL=${samplePx(glslPixels, xo, 32)} TSL=${samplePx(tslResult.pixels, xo, 32)}`
+      )
+      .join('\n');
+    expect(
+      diff,
+      `Point-gamma-one parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(2.0);
+  });
+
   test('line: instanced quad line with width / sharpness / GOG', async ({ page }) => {
     await bootHarness(page);
 
@@ -233,6 +297,29 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('line-colormap: USE_COLORMAP LUT with per-endpoint scalars + value gamma', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-colormap');
+    const tslResult = await runTSL(page, 'line-colormap');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [16, 32, 48]
+      .map(
+        (x) =>
+          `  (${x},32) GLSL=${samplePx(glslPixels, x, 32)} TSL=${samplePx(tslResult.pixels, x, 32)}`
+      )
+      .join('\n');
+    expect(
+      diff,
+      `Line-colormap parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(2.0);
+  });
+
   test('gsplat: isotropic splat covariance projection + Mahalanobis fragment', async ({ page }) => {
     await bootHarness(page);
 
@@ -255,6 +342,48 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(
       diff,
       `GSplat parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
+  test('gsplat-colormap: USE_COLORMAP LUT keyed on amplitude + value gamma', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-colormap');
+    const tslResult = await runTSL(page, 'gsplat-colormap');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (28,32) GLSL=${samplePx(glslPixels, 28, 32)} TSL=${samplePx(tslResult.pixels, 28, 32)}`,
+    ].join('\n');
+    // Same looser tolerance as `gsplat` — covariance projection drift.
+    expect(
+      diff,
+      `GSplat-colormap parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
+  test('gsplat-gamma-one: LUXAR_GAMMA_ONE fast path matches the slow pow() path', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-gamma-one');
+    const tslResult = await runTSL(page, 'gsplat-gamma-one');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (28,32) GLSL=${samplePx(glslPixels, 28, 32)} TSL=${samplePx(tslResult.pixels, 28, 32)}`,
+    ].join('\n');
+    // Same looser tolerance as `gsplat` — covariance projection drift.
+    expect(
+      diff,
+      `GSplat-gamma-one parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
     ).toBeLessThan(3.0);
   });
 

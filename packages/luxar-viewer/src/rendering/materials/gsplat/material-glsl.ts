@@ -32,7 +32,7 @@ import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shader-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import { computeRayIntegralFactor } from './math';
 import {
@@ -191,9 +191,12 @@ export class GSplatMaterial
       vertexShader: GSPLAT_VERTEX_SHADER,
       fragmentShader: GSPLAT_FRAGMENT_SHADER,
 
-      // Preprocessor defines — USE_COLORMAP enables LUT lookup from amplitude
+      // Preprocessor defines — USE_COLORMAP enables LUT lookup from amplitude;
+      // LUXAR_GAMMA_ONE skips the per-fragment gamma pow() when gamma == 1.0
+      // (toggled by `updateGamma`).
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+        ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
       },
 
       // GLSL ES 3.0 for flat interpolation and modern syntax
@@ -288,11 +291,26 @@ export class GSplatMaterial
   /**
    * Update gamma correction.
    * Only invGamma is used in shader; gamma value stored in userData for clone()
+   *
+   * When `gamma` crosses the 1.0 threshold (with epsilon), toggle the
+   * `LUXAR_GAMMA_ONE` define so the fragment shader's pow() fast path is
+   * recompiled in/out (mirrors the Line material).
    */
   updateGamma(gamma: number): void {
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+
+    if (!this.defines) this.defines = {};
+    const wantGammaOne = isGammaOne(safeGamma);
+    const hadGammaOne = 'LUXAR_GAMMA_ONE' in this.defines;
+    if (wantGammaOne && !hadGammaOne) {
+      this.defines.LUXAR_GAMMA_ONE = '';
+      this.needsUpdate = true;
+    } else if (!wantGammaOne && hadGammaOne) {
+      delete this.defines.LUXAR_GAMMA_ONE;
+      this.needsUpdate = true;
+    }
   }
 
   /**

@@ -11,7 +11,12 @@
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
-import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
+import {
+  LayerStateManager,
+  computeDisplayRange,
+  type LayerInfo,
+  type SelectionMode,
+} from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
@@ -58,6 +63,54 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
    * factors and uniforms stay in sync.
    */
   applyBlendingMode?(mode: BlendingMode): void;
+}
+
+/**
+ * Whether a material is currently rendering in colormap (LUT) mode —
+ * the `USE_COLORMAP` shader define is the source of truth (set/cleared
+ * by `updateColormapTexture`). In this mode the display range drives the
+ * LUT value window and gamma warps the value pre-lookup, so neither
+ * should be applied to the output color (see the material shaders).
+ *
+ * @internal Exported for unit testing the colormap-vs-direct routing.
+ */
+export function isColormapActive(mat: LuxarMaterial): boolean {
+  const defines = (mat as unknown as { defines?: Record<string, unknown> | null }).defines;
+  return !!defines && 'USE_COLORMAP' in defines;
+}
+
+/**
+ * Push gamma + the display-range adjustment to a leaf material, routed by
+ * whether it renders through a colormap LUT:
+ *
+ * - **Colormap (LUT) mode**: the display range defines the value window
+ *   mapped into the LUT (`uScalarMin`/`uScalarScale`) and gamma warps that
+ *   value before the lookup — both operate on the scalar, not the color.
+ *   The composed display window is recovered from the gain/offset pair and
+ *   pushed via `updateScalarRange`; the color GOG is bypassed in-shader, so
+ *   `intensity`/`offset` are intentionally NOT pushed.
+ * - **Direct-color mode**: GOG operates on the color (`intensity`/`offset`).
+ *
+ * Gamma is pushed in both modes (the shader applies it pre-LUT in colormap
+ * mode, on the color otherwise). Opacity and blending are handled by the
+ * caller. See the material shaders' `USE_COLORMAP` path.
+ *
+ * @internal Exported for unit testing.
+ */
+export function applyColorAdjustments(
+  mat: LuxarMaterial,
+  gamma: number,
+  intensity: number,
+  offset: number
+): void {
+  mat.updateGamma(gamma);
+  if (isColormapActive(mat) && mat.updateScalarRange) {
+    const { min, max } = computeDisplayRange(intensity, offset);
+    mat.updateScalarRange(min, max);
+  } else {
+    mat.updateIntensity(intensity);
+    mat.updateOffset(offset);
+  }
 }
 
 function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
@@ -452,13 +505,11 @@ export class LayersPanel {
     let kindBadge: HTMLSpanElement | null = null;
     if (layer.kind === 'lod' && (layer.lodGroupChildCount ?? 0) > 0) {
       kindBadge = document.createElement('span');
-      kindBadge.className =
-        'luxar-layer-row__badge luxar-layer-row__badge--kind';
+      kindBadge.className = 'luxar-layer-row__badge luxar-layer-row__badge--kind';
       kindBadge.textContent = `${layer.lodGroupChildCount} LODs`;
     } else if (layer.kind === 'partition' && (layer.partCount ?? 0) > 0) {
       kindBadge = document.createElement('span');
-      kindBadge.className =
-        'luxar-layer-row__badge luxar-layer-row__badge--kind';
+      kindBadge.className = 'luxar-layer-row__badge luxar-layer-row__badge--kind';
       if (
         layer.nestedLodGroupPaths &&
         layer.nestedLodGroupPaths.length > 0 &&
@@ -803,9 +854,7 @@ export class LayersPanel {
         const entry = registry?.get(primary.path);
         if (entry) {
           this.lodLevelSelect.value =
-            entry.selectorMode === 'auto'
-              ? 'auto'
-              : String(entry.selectorMode.lockLevel);
+            entry.selectorMode === 'auto' ? 'auto' : String(entry.selectorMode.lockLevel);
           this.lodLevelStatus.textContent = `rendering: ${entry.activeChildIndex}`;
         } else {
           // Registry not yet populated (e.g., scene still loading) —
@@ -826,9 +875,7 @@ export class LayersPanel {
         const entry = registry?.get(firstPath);
         if (entry) {
           this.lodLevelSelect.value =
-            entry.selectorMode === 'auto'
-              ? 'auto'
-              : String(entry.selectorMode.lockLevel);
+            entry.selectorMode === 'auto' ? 'auto' : String(entry.selectorMode.lockLevel);
           this.lodLevelStatus.textContent = `${primary.nestedLodGroupPaths!.length} nested LOD groups`;
         } else {
           this.lodLevelSelect.value = 'auto';
@@ -972,9 +1019,7 @@ export class LayersPanel {
       const eff = this.composeEffective(leaf.path);
       if (!eff) continue;
       mat.updateOpacity(eff.opacity);
-      mat.updateGamma(eff.gamma);
-      mat.updateIntensity(eff.intensity);
-      mat.updateOffset(eff.offset);
+      applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       this.applyBlendingStateToMaterial(mat, eff.blending_mode);
     }
     this.requestRender();
@@ -1032,8 +1077,18 @@ export class LayersPanel {
           continue;
         }
         mat.updateColormapTexture(tex);
-        if (layer.scalarDataRange && mat.updateScalarRange) {
-          mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
+        // The scalar window (value→LUT mapping) is driven by the display
+        // range, not a static attr — recover it from the composed
+        // gain/offset so it matches what `applyComposed` will push. Falls
+        // back to the authored scalar range when no composition exists.
+        if (mat.updateScalarRange) {
+          const eff = this.composeEffective(leaf.path);
+          if (eff) {
+            const { min, max } = computeDisplayRange(eff.intensity, eff.offset);
+            mat.updateScalarRange(min, max);
+          } else if (layer.scalarDataRange) {
+            mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
+          }
         }
       } else {
         mat.updateColormapTexture(null);
@@ -1046,6 +1101,11 @@ export class LayersPanel {
       // scalar-range drags, even when the colormap define hadn't
       // toggled.
     }
+    // Enabling/disabling a colormap flips how display-range + gamma must
+    // be routed (value window vs color GOG). Recompose so each affected
+    // leaf's intensity/offset/scalar-range match its new mode — in
+    // particular, restoring the color GOG when a colormap is turned off.
+    this.applyComposed(layer);
     this.requestRender();
   }
 

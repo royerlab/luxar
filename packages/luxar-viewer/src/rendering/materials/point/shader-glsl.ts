@@ -39,8 +39,9 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     #ifdef USE_COLORMAP
     in float aScalar;                  // Per-point scalar for colormap lookup
     uniform sampler2D uColormapTex;    // 256x1 LUT texture
-    uniform float uScalarMin;          // Scalar range minimum
+    uniform float uScalarMin;          // Scalar range minimum (display-range window)
     uniform float uScalarScale;        // 1.0 / (max - min)
+    uniform mediump float invGamma;    // Gamma applied to the VALUE, pre-LUT (see note below)
     #endif
 
     uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
@@ -56,9 +57,16 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
 
     void main() {
-      // Pass vertex color — either from attribute or colormap LUT
+      // Pass vertex color — either from attribute or colormap LUT.
+      // In colormap mode the display range (uScalarMin/uScalarScale) and
+      // gamma operate on the scalar VALUE before the LUT lookup, not on
+      // the resulting color. Direct-color mode keeps GOG on the color
+      // (fragment shader). See the fragment-shader note.
       #ifdef USE_COLORMAP
       float t = clamp((aScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
+      #ifndef LUXAR_GAMMA_ONE
+      t = pow(t, invGamma);              // gamma on the value, pre-LUT
+      #endif
       vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
       #else
       vColor = aColor;
@@ -153,14 +161,29 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // Simple power function for falloff - modern GPUs optimize pow() well
       mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
 
-      // Per-node GOG (Gain-Offset-Gamma) color adjustment
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment.
+      //
+      // Colormap (LUT) mode: gamma + display-range already shaped the
+      // scalar VALUE before the LUT lookup (vertex shader), so the mapped
+      // color passes through untouched — gamma must NOT warp LUT colors.
+      // Direct-color mode: GOG operates on the color, as intended.
+      #ifdef USE_COLORMAP
+      mediump vec3 adjusted = max(vColor, vec3(0.0));
+      #else
       mediump vec3 adjusted = vColor * uIntensity + uOffset;
       adjusted = max(adjusted, vec3(0.0));
+      #endif
 
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
 
+      // LUXAR_GAMMA_ONE (gamma == 1.0) skips the per-fragment pow() —
+      // pow(x, 1) == x — same fast path the colormap branch already takes.
+      #if defined(USE_COLORMAP) || defined(LUXAR_GAMMA_ONE)
+      mediump vec3 finalColor = adjusted;
+      #else
       mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
+      #endif
 
       // Calculate alpha (intensity) for additive blending
       mediump float alpha = falloff * opacity;
