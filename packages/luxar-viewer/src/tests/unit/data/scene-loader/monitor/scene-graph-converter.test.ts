@@ -112,6 +112,72 @@ describe('convertToSceneGraphNode — type-specific stats', () => {
   });
 });
 
+describe('convertToSceneGraphNode — specialized groups (kind=lod / partition)', () => {
+  it('carries kind + lodGroupChildCount for a kind=lod group', () => {
+    const node = makeNode({
+      path: '/lod',
+      type: 'group',
+      attrs: { kind: 'lod', display_type: 'gsplats' },
+      children: [makeNode({ path: '/lod/a' }), makeNode({ path: '/lod/b' })],
+    });
+    const graph = convertToSceneGraphNode(node);
+    expect(graph.kind).toBe('lod');
+    expect(graph.displayType).toBe('gsplats');
+    expect(graph.lodGroupChildCount).toBe(2);
+    expect(graph.partCount).toBeUndefined();
+    // type stays 'group' so the stats aggregator treats it as a container.
+    expect(graph.type).toBe('group');
+  });
+
+  it('carries kind + partCount for a kind=partition group', () => {
+    const node = makeNode({
+      path: '/part',
+      type: 'group',
+      attrs: { kind: 'partition', display_type: 'points' },
+      children: [
+        makeNode({ path: '/part/0' }),
+        makeNode({ path: '/part/1' }),
+        makeNode({ path: '/part/2' }),
+      ],
+    });
+    const graph = convertToSceneGraphNode(node);
+    expect(graph.kind).toBe('partition');
+    expect(graph.displayType).toBe('points');
+    expect(graph.partCount).toBe(3);
+    expect(graph.lodGroupChildCount).toBeUndefined();
+  });
+
+  it('ignores an unknown kind value', () => {
+    const graph = convertToSceneGraphNode(
+      makeNode({ type: 'group', attrs: { kind: 'something-else' } })
+    );
+    expect(graph.kind).toBeUndefined();
+  });
+
+  it('does not treat a leaf node with a stray kind attr as specialized', () => {
+    // kind only resolves on group nodes (mirrors layer-state.ts).
+    const graph = convertToSceneGraphNode(
+      makeNode({ type: 'points', attrs: { kind: 'lod', n_points: 5 } })
+    );
+    expect(graph.kind).toBeUndefined();
+    expect(graph.pointCount).toBe(5);
+  });
+
+  it('records additiveSublods for an additive-LOD leaf', () => {
+    const graph = convertToSceneGraphNode(
+      makeNode({ type: 'gsplats', attrs: { n_splats: 100, n_additive_sublods: 4 } })
+    );
+    expect(graph.additiveSublods).toBe(4);
+  });
+
+  it('omits additiveSublods when n_additive_sublods <= 1', () => {
+    const graph = convertToSceneGraphNode(
+      makeNode({ type: 'gsplats', attrs: { n_splats: 100, n_additive_sublods: 1 } })
+    );
+    expect(graph.additiveSublods).toBeUndefined();
+  });
+});
+
 describe('convertToSceneGraphNode — recursion', () => {
   it('converts an empty children list to an empty children array', () => {
     expect(convertToSceneGraphNode(makeNode({ children: [] })).children).toEqual([]);

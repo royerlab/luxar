@@ -213,6 +213,9 @@ export interface GlobalStats {
   activeSpatialLoaders: number;
   activeFallbackLoaders: number; // Kept for compatibility but always 0
   totalPoints: number; // Cumulative points loaded (for throughput)
+  // Resident memory across all loaders — sum of each loader's `memoryUsed`
+  // (current accumulator allocation, set in the spatial-index loaders'
+  // recordLoadMetrics). Drives the compact badge's memory figure.
   totalMemory: number;
   // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
@@ -358,6 +361,15 @@ export interface CacheMetrics {
     bytesTransferred: number;
     requestCount: number;
     bandwidth: number;
+    /**
+     * Cumulative bytes delivered to demand callers across all cache
+     * tiers (L1 + L2 + network). Optional — providers predating the
+     * field omit it. Drives the Overview "DATA LOADED" card so it
+     * stays informative on warm/cache-served reloads.
+     */
+    totalBytesServed?: number;
+    /** Count of demand reads served across all tiers. */
+    totalRequestsServed?: number;
   };
   /**
    * Status badges for the cache tab. Derived in the aggregator from
@@ -459,6 +471,31 @@ export interface SceneGraphNode {
   splatCount?: number;
   /** Number of visible splats after nD slicing (for gsplats nodes) */
   visibleSplatCount?: number;
+  /**
+   * Specialized-group discriminant, set when the underlying scene-graph
+   * node is a `kind=lod` (substitutive LOD) or `kind=partition` (BSP)
+   * `Group`. Drives the tree's kind badge + icon. Mirrors `LayerInfo.kind`
+   * in `ui/layers/layer-state.ts`.
+   */
+  kind?: 'lod' | 'partition';
+  /**
+   * Resolved geometry `display_type` (points / lines / gsplats) for a
+   * specialized group — the type the user logically sees the group as.
+   * Absent for plain groups and leaves (use `type` there).
+   */
+  displayType?: 'points' | 'lines' | 'gsplats';
+  /** For `kind=lod` groups: number of substitutive levels (child count). */
+  lodGroupChildCount?: number;
+  /** For `kind=partition` groups: number of BSP parts (child count). */
+  partCount?: number;
+  /**
+   * For additive-LOD leaves (`n_additive_sublods > 1`): the total number of
+   * additive sublods. A structural marker (the `additive_<i>` subgroups are
+   * hidden from the scene graph) so the tree can always render a "LOD x/N"
+   * progress slot; the live `loaded`/`refining` values come from
+   * {@link LODProgressProvider}.
+   */
+  additiveSublods?: number;
   /** Whether this node is currently loading */
   isLoading?: boolean;
   /** Whether this node has a spatial index */
@@ -467,6 +504,59 @@ export interface SceneGraphNode {
   children: SceneGraphNode[];
   /** UI state: whether node is expanded in tree view */
   isExpanded?: boolean;
+}
+
+/**
+ * Discriminates the three LOD/partition loading shapes a scene-graph node
+ * can take, for the live progress surfaced by {@link LODProgressProvider}:
+ *
+ *   - `lod`        : substitutive `kind=lod` group — K mutually-exclusive
+ *                    levels, one rendered at a time (`LODGroupRegistry`).
+ *   - `additive`   : a single node with `n_additive_sublods > 1`,
+ *                    progressively refined by the refinement loop.
+ *   - `partition`  : `kind=partition` BSP group — N disjoint parts, all
+ *                    rendered (per-part frustum culling).
+ */
+export type LODNodeKind = 'lod' | 'additive' | 'partition';
+
+/**
+ * Live, per-node LOD / progressive-refinement / cache-residency state,
+ * polled by the monitor each tick. Keyed by scene-graph path. All fields
+ * beyond `kind` are optional — only the ones relevant to a node's kind are
+ * populated.
+ */
+export interface LODProgressState {
+  kind: LODNodeKind;
+  /** substitutive: total number of levels (child count). */
+  levelCount?: number;
+  /** substitutive: currently active level index (0-based, coarsest-first). */
+  activeLevel?: number;
+  /** substitutive: selector mode — `'auto'` or a locked level label. */
+  selector?: string;
+  /** additive: number of LOD levels loaded so far. */
+  loaded?: number;
+  /** additive: total LOD levels available. */
+  total?: number;
+  /** additive: more LODs pending — refinement loop still running. */
+  refining?: boolean;
+  /**
+   * additive: whether the most recent streamed load was fully
+   * cache-resident (drives a "cached" vs "streaming" indicator). Mirrors
+   * `ResidencyAccumulator.allResident`.
+   */
+  lastAllResident?: boolean;
+  /** partition: number of BSP parts. */
+  partCount?: number;
+}
+
+/**
+ * Provides a snapshot of live LOD / refinement / residency state keyed by
+ * scene-graph path. Injected into the monitor via
+ * `SceneLoaderMonitorPort.setLODProgressProvider` and polled on each tick.
+ * Implemented in the data layer over the loader maps + `LODGroupRegistry`.
+ */
+export interface LODProgressProvider {
+  getLODStates(): Map<string, LODProgressState>;
 }
 
 /**
@@ -534,6 +624,12 @@ export interface CacheStatsProvider {
       bytesTransferred: number;
       requestCount: number;
       bandwidth: number;
+      /**
+       * Cumulative bytes delivered to demand callers across all tiers
+       * (L1 + L2 + network). Optional so provider stubs may omit it.
+       */
+      totalBytesServed?: number;
+      totalRequestsServed?: number;
     };
     /**
      * Per-tier demand-hit counters from the multi-level caching

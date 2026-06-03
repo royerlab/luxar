@@ -1,0 +1,99 @@
+/**
+ * Producer for the monitor's live LOD / progressive-refinement /
+ * cache-residency snapshot.
+ *
+ * Closes over the per-geometry loader maps (for additive progressive
+ * loaders) and the `LODGroupRegistry` (for substitutive `kind=lod`
+ * groups), and on each poll returns a `path → LODProgressState` map the
+ * monitor merges into its scene-graph tree. Lives in the data layer; the
+ * monitor consumes it through `SceneLoaderMonitorPort.setLODProgressProvider`.
+ *
+ * @module data/scene-loader/monitor/lod-progress-provider
+ */
+
+import type { LODProgressProvider, LODProgressState } from '../../../types/data-monitor-types';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
+
+/**
+ * Duck-typed subset of the progressive loaders' public surface
+ * (`{points,lines,gsplats}-progressive-loader.ts`). Non-progressive
+ * (single-LOD) loaders don't expose these getters, so the producer
+ * treats them as plain loaders and skips them.
+ */
+interface ProgressiveLike {
+  readonly totalLODCount?: number;
+  readonly loadedLODCount?: number;
+  readonly hasMoreLODs?: boolean;
+  readonly lastAllResident?: boolean;
+}
+
+export interface LODProgressProviderDeps {
+  /**
+   * The three per-geometry loader maps (points / lines / gsplats),
+   * keyed by scene-graph path. Additive nodes connect a single
+   * progressive loader at the node path.
+   */
+  loaderMaps: ReadonlyArray<ReadonlyMap<string, unknown>>;
+  /** The scene's LOD-group registry (substitutive levels), or null. */
+  lodGroupRegistry: LODGroupRegistry | null;
+  /**
+   * Snapshot of partition groups (`{ path, partCount }`) captured at scene
+   * build. Partition groups are static `THREE.Group`s with no per-frame
+   * selector, so a one-time snapshot is sufficient — they surface in the
+   * monitor's scene-graph summary as `kind:'partition'` states. Empty/omitted
+   * for scenes without partitions.
+   */
+  partitionGroups?: ReadonlyArray<{ path: string; partCount: number }>;
+}
+
+/**
+ * Build a {@link LODProgressProvider} over the given loader maps and LOD
+ * registry. The returned provider is cheap to call each tick — it reads
+ * already-computed getters, never triggers loads.
+ */
+export function createLODProgressProvider(deps: LODProgressProviderDeps): LODProgressProvider {
+  return {
+    getLODStates(): Map<string, LODProgressState> {
+      const out = new Map<string, LODProgressState>();
+
+      // Additive progressive loaders: one per node across all three maps.
+      for (const map of deps.loaderMaps) {
+        for (const [path, loader] of map) {
+          const p = loader as ProgressiveLike;
+          if (typeof p.totalLODCount === 'number' && p.totalLODCount > 1) {
+            out.set(path, {
+              kind: 'additive',
+              loaded: p.loadedLODCount ?? 0,
+              total: p.totalLODCount,
+              refining: p.hasMoreLODs === true,
+              lastAllResident: p.lastAllResident,
+            });
+          }
+        }
+      }
+
+      // Substitutive LOD groups: active level + selector mode from the registry.
+      const reg = deps.lodGroupRegistry;
+      if (reg) {
+        for (const entry of reg.list()) {
+          const selector =
+            entry.selectorMode === 'auto' ? 'auto' : `locked L${entry.selectorMode.lockLevel + 1}`;
+          out.set(entry.path, {
+            kind: 'lod',
+            levelCount: entry.children.length,
+            activeLevel: entry.activeChildIndex,
+            selector,
+          });
+        }
+      }
+
+      // Partition groups: static spatial subdivisions (all parts render at
+      // once). A one-time snapshot of part counts — no per-frame state.
+      for (const part of deps.partitionGroups ?? []) {
+        out.set(part.path, { kind: 'partition', partCount: part.partCount });
+      }
+
+      return out;
+    },
+  };
+}

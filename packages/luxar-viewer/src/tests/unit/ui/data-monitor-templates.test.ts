@@ -23,7 +23,16 @@ import {
   renderMetricCard,
   renderProgressBar,
   renderStatGrid,
+  renderSceneGraphTree,
+  renderSecondaryMetrics,
+  summariseLodStates,
+  lodChipContent,
 } from '../../../ui/data-loading-monitor/templates';
+import type {
+  SceneGraphState,
+  SceneGraphNode,
+  LODProgressState,
+} from '../../../types/data-monitor-types';
 
 describe('getColorClass', () => {
   it('prefixes the semantic name with luxar-color--', () => {
@@ -218,5 +227,138 @@ describe('renderStatGrid', () => {
   it('applies the per-item colorClass when supplied', () => {
     const html = renderStatGrid([{ label: 'a', value: 1, colorClass: 'luxar-color--success' }]);
     expect(html).toContain('luxar-color--success');
+  });
+});
+
+describe('lodChipContent', () => {
+  it('renders the active substitutive level', () => {
+    const node = { kind: 'lod', lodGroupChildCount: 3 } as SceneGraphNode;
+    const state: LODProgressState = {
+      kind: 'lod',
+      levelCount: 3,
+      activeLevel: 1,
+      selector: 'auto',
+    };
+    expect(lodChipContent(node, state)).toEqual({
+      text: 'L2/3',
+      title: 'Active substitutive level 2 of 3',
+    });
+  });
+
+  it('renders additive loaded/total with refining spinner + streaming dot', () => {
+    const node = { additiveSublods: 4 } as SceneGraphNode;
+    const state: LODProgressState = {
+      kind: 'additive',
+      loaded: 2,
+      total: 4,
+      refining: true,
+      lastAllResident: false,
+    };
+    const c = lodChipContent(node, state)!;
+    expect(c.text).toContain('LOD 2/4');
+    expect(c.text).toContain('◌'); // streaming (not all resident)
+    expect(c.text).toContain('⏳'); // refining
+  });
+
+  it('falls back to structural counts before the first provider poll', () => {
+    const node = { kind: 'lod', lodGroupChildCount: 2 } as SceneGraphNode;
+    expect(lodChipContent(node, undefined)).toEqual({
+      text: 'L1/2',
+      title: 'Active substitutive level 1 of 2',
+    });
+  });
+
+  it('returns null for a plain node with no LOD dimension', () => {
+    expect(lodChipContent({ type: 'points' } as SceneGraphNode, undefined)).toBeNull();
+  });
+});
+
+describe('renderSecondaryMetrics — requests served', () => {
+  const memory = { used: 0, limit: 1000 };
+  const querySpeed = { avgTime: 0, perSec: 0 };
+
+  it('surfaces totalRequestsServed in the network detail when present', () => {
+    const html = renderSecondaryMetrics(memory, querySpeed, {
+      bytesTransferred: 100,
+      requestCount: 7,
+      bandwidth: 50,
+      totalBytesServed: 200,
+      totalRequestsServed: 42,
+    });
+    expect(html).toContain('42 reqs');
+  });
+
+  it('falls back to requestCount when totalRequestsServed is undefined', () => {
+    const html = renderSecondaryMetrics(memory, querySpeed, {
+      bytesTransferred: 100,
+      requestCount: 7,
+      bandwidth: 50,
+    });
+    expect(html).toContain('7 reqs');
+  });
+});
+
+describe('summariseLodStates', () => {
+  it('summarises LOD groups, additive nodes, and refinement', () => {
+    const states = new Map<string, LODProgressState>([
+      ['/a', { kind: 'lod', levelCount: 3, activeLevel: 0 }],
+      ['/b', { kind: 'additive', loaded: 1, total: 4, refining: true }],
+    ]);
+    expect(summariseLodStates(states)).toBe('1 LOD group · 1 additive · refining 1');
+  });
+
+  it('returns empty string for no states', () => {
+    expect(summariseLodStates(undefined)).toBe('');
+    expect(summariseLodStates(new Map())).toBe('');
+  });
+});
+
+describe('renderSceneGraphTree — kind badges', () => {
+  function tree(root: SceneGraphNode): SceneGraphState {
+    return {
+      root,
+      totalNodes: 1,
+      pointsNodes: 0,
+      linesNodes: 0,
+      gsplatsNodes: 1,
+      totalPoints: 0,
+      visiblePoints: 0,
+      totalSegments: 0,
+      visibleSegments: 0,
+      totalSplats: 0,
+      visibleSplats: 0,
+    };
+  }
+
+  it('renders a "K LODs" badge + active-level chip for a kind=lod group', () => {
+    const root: SceneGraphNode = {
+      path: '/lod',
+      name: 'lod',
+      type: 'group',
+      kind: 'lod',
+      lodGroupChildCount: 3,
+      children: [],
+    };
+    const lodStates = new Map<string, LODProgressState>([
+      ['/lod', { kind: 'lod', levelCount: 3, activeLevel: 2, selector: 'auto' }],
+    ]);
+    const html = renderSceneGraphTree(tree(root), new Set(['/lod']), lodStates);
+    expect(html).toContain('3 LODs');
+    expect(html).toContain('luxar-scene-graph__badge--kind');
+    expect(html).toContain('data-lod-path="/lod"');
+    expect(html).toContain('L3/3');
+  });
+
+  it('renders an "N parts" badge for a kind=partition group', () => {
+    const root: SceneGraphNode = {
+      path: '/part',
+      name: 'part',
+      type: 'group',
+      kind: 'partition',
+      partCount: 4,
+      children: [],
+    };
+    const html = renderSceneGraphTree(tree(root), new Set(), new Map());
+    expect(html).toContain('4 parts');
   });
 });

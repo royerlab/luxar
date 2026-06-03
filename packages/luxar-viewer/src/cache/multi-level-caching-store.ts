@@ -105,6 +105,16 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private networkBytesTransferred = 0;
   private networkRequestCount = 0;
 
+  // Cumulative bytes delivered to demand callers across ALL tiers
+  // (L1 + L2 + network). Drives the monitor's "data loaded" figure so
+  // it reflects real I/O work even when every chunk is cache-served and
+  // `networkBytesTransferred` legitimately stays 0 (e.g. warm reload of
+  // an OPFS-cached dataset). Prefetch traffic is excluded — those bytes
+  // are already counted under the network totals and are counted here
+  // when a demand read later pulls them from cache.
+  private totalBytesServed = 0;
+  private totalRequestsServed = 0;
+
   // Per-tier demand-hit counters. Each user-demand call to
   // getResult() increments exactly one of l1HitCount / l2HitCount /
   // demandNetworkRequestCount. Prefetch-originated calls
@@ -371,7 +381,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
       this.log(`L1 hit: ${key}`, 'info');
-      if (isDemand) this.l1HitCount++;
+      if (isDemand) {
+        this.l1HitCount++;
+        this.totalBytesServed += l1Hit.byteLength;
+        this.totalRequestsServed++;
+      }
       return ok(l1Hit);
     }
 
@@ -435,6 +449,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (isDemand) {
       if (outcome.source === 'l2') this.l2HitCount++;
       else if (outcome.source === 'network') this.demandNetworkRequestCount++;
+      // Count delivered bytes for any tier that actually returned data
+      // (L2 or network). L1 hits are counted on their fast-path return
+      // above; Missing/Aborted outcomes carry no bytes.
+      if (outcome.result.ok) {
+        this.totalBytesServed += outcome.result.value.byteLength;
+        this.totalRequestsServed++;
+      }
     }
 
     // MED-2: per-key prefetch trigger. Only the originator of the
@@ -671,6 +692,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
         bytesTransferred: this.networkBytesTransferred,
         requestCount: this.networkRequestCount,
         bandwidth,
+        totalBytesServed: this.totalBytesServed,
+        totalRequestsServed: this.totalRequestsServed,
       },
       demand: {
         l1Hits: this.l1HitCount,

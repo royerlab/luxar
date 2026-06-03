@@ -64,8 +64,14 @@ export class LoadingAdvisor {
       this.addHighQueryTimeRecommendation(metrics);
     }
 
-    // Check memory usage
-    if (metrics.memoryUsed / metrics.memoryLimit > this.thresholds.highMemoryUsage) {
+    // Check memory usage. Guard on a positive limit: spatial-index loaders
+    // populate `memoryUsed` (resident accumulator bytes) but have no per-loader
+    // cap, so `memoryLimit` stays 0. Without this guard `used / 0` would be
+    // Infinity and fire a spurious high-memory warning on every load.
+    if (
+      metrics.memoryLimit > 0 &&
+      metrics.memoryUsed / metrics.memoryLimit > this.thresholds.highMemoryUsage
+    ) {
       this.addHighMemoryRecommendation(metrics);
     }
 

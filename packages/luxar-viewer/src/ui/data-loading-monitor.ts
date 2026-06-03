@@ -21,6 +21,8 @@ import type {
   CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
+  LODProgressProvider,
+  LODProgressState,
 } from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
@@ -55,6 +57,8 @@ import {
   renderMemoryContent,
   renderInsightsContent,
   renderSceneGraphTree,
+  summariseLodStates,
+  lodChipContent,
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
   getColorClass,
@@ -143,6 +147,12 @@ export class DataLoadingMonitor {
   // Update profiler reference for hierarchical timing display
   private profiler: UpdateProfiler | null = null;
 
+  // Live LOD / progressive-refinement / cache-residency state provider.
+  // Polled each tick; the snapshot drives the scene-graph tree's kind
+  // badges, "LOD x/N" chips, refining indicator, and header summary.
+  private lodProgressProvider: LODProgressProvider | null = null;
+  private lodStates: Map<string, LODProgressState> = new Map();
+
   // Accumulator providers for dynamic stats retrieval
   private accumulatorProviders: {
     points: { getStats: () => NonNullable<MemoryMetrics['accumulators']['points']> } | null;
@@ -174,6 +184,13 @@ export class DataLoadingMonitor {
 
   // Track expanded nodes in scene graph tree (by path)
   private expandedNodes = new Set<string>(['/']);
+
+  // Memoized path→node index over the current scene-graph tree, rebuilt
+  // only when the root reference changes (a wholesale `setSceneGraph`).
+  // Makes per-frame LOD-chip patching O(1) per chip instead of a full DFS
+  // per chip (previously O(chips × nodes)).
+  private sceneGraphNodeIndex = new Map<string, SceneGraphNode>();
+  private sceneGraphNodeIndexRoot: SceneGraphNode | null = null;
 
   // Flag to force a full DOM rebuild on next update (set by structural changes like
   // tree node toggle, scene graph mutation). Cleared after rebuild.
@@ -347,6 +364,21 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Set the LOD-progress provider for live LOD / refinement / residency
+   * state in the scene-graph tree. Polled each tick. Passing a provider
+   * marks the structure dirty so the tree re-renders with chip slots.
+   */
+  public setLODProgressProvider(provider: LODProgressProvider | null): void {
+    this.lodProgressProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'LOD progress provider connected');
+      this.structureDirty = true;
+    } else {
+      this.lodStates = new Map();
+    }
+  }
+
+  /**
    * Set an accumulator provider for Memory tab stats.
    * @param type - The type of accumulator ('points', 'lines', or 'gsplats')
    * @param provider - The accumulator with a getStats() method
@@ -379,6 +411,8 @@ export class DataLoadingMonitor {
     this.gpuBufferPoolProvider = null;
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
+    this.lodProgressProvider = null;
+    this.lodStates = new Map();
     // Reset to undefined (not 'not-wired') so the next scene's
     // setCacheTelemetryState call lands cleanly. If the next setup
     // doesn't call the setter, the aggregator falls back to
@@ -560,15 +594,36 @@ export class DataLoadingMonitor {
     let totalSegments = node.segmentCount || 0;
     let totalSplats = node.splatCount || 0;
 
-    for (const child of node.children) {
-      const childStats = this.calculateSceneGraphStats(child);
-      totalNodes += childStats.totalNodes;
-      pointsNodes += childStats.pointsNodes;
-      linesNodes += childStats.linesNodes;
-      gsplatsNodes += childStats.gsplatsNodes;
-      totalPoints += childStats.totalPoints;
-      totalSegments += childStats.totalSegments;
-      totalSplats += childStats.totalSplats;
+    const childStats = node.children.map((child) => this.calculateSceneGraphStats(child));
+
+    // Structural counters (node + per-type node counts) always reflect the
+    // real tree — a kind=lod group genuinely contains K child nodes.
+    for (const cs of childStats) {
+      totalNodes += cs.totalNodes;
+      pointsNodes += cs.pointsNodes;
+      linesNodes += cs.linesNodes;
+      gsplatsNodes += cs.gsplatsNodes;
+    }
+
+    // Geometry TOTALS: a substitutive kind=lod group's children are
+    // mutually-exclusive representations of the SAME data at different
+    // resolutions — summing them would inflate the dataset total ~K×. Use
+    // the finest level (the last child; the Python writer guarantees
+    // coarsest→finest order, see load-lod-group-node.ts) so the total
+    // reflects true full-detail size. Partition parts are disjoint and
+    // additive children are skipped from the scene graph, so both keep the
+    // straight sum.
+    if (node.kind === 'lod' && childStats.length > 0) {
+      const finest = childStats[childStats.length - 1];
+      totalPoints += finest.totalPoints;
+      totalSegments += finest.totalSegments;
+      totalSplats += finest.totalSplats;
+    } else {
+      for (const cs of childStats) {
+        totalPoints += cs.totalPoints;
+        totalSegments += cs.totalSegments;
+        totalSplats += cs.totalSplats;
+      }
     }
 
     // Initialize visible counts to totals (will be updated by scene loader)
@@ -635,7 +690,13 @@ export class DataLoadingMonitor {
       this.lastEventCleanup = now;
     }
 
-    // 3. Update UI (this also pulls fresh stats from providers)
+    // 3. Refresh the live LOD / refinement / residency snapshot so the
+    // scene-graph tree's chips and header summary reflect this frame.
+    if (this.lodProgressProvider) {
+      this.lodStates = this.lodProgressProvider.getLODStates();
+    }
+
+    // 4. Update UI (this also pulls fresh stats from providers)
     this.updateUI();
   }
 
@@ -994,7 +1055,7 @@ export class DataLoadingMonitor {
           ${this.buildCompactGeomSummary(stats)}
         </span>
 
-        <span class="luxar-monitor-compact__memory" title="Memory usage">
+        <span class="luxar-monitor-compact__memory" title="Resident memory (points + lines + gsplats)">
           ${templateFormatBytes(stats.totalMemory)}
         </span>
 
@@ -1208,15 +1269,18 @@ export class DataLoadingMonitor {
     this.patchField('memory-used', templateFormatBytes(cacheMetrics.totalCacheMemory));
     this.patchField('query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);
     this.patchField('query-rate', `${stats.queriesPerSecond.toFixed(1)}/sec`);
-    this.patchField(
-      'network-bytes',
-      cacheMetrics.network ? templateFormatBytes(cacheMetrics.network.bytesTransferred) : '0B'
-    );
+    // "DATA LOADED" card: cumulative bytes delivered across all tiers
+    // (L1 + L2 + network), so it stays informative on a warm/cache-served
+    // reload where `bytesTransferred` is legitimately 0. The subtitle
+    // breaks out how much of that came over the network plus live bandwidth.
+    const net = cacheMetrics.network;
+    const dataLoaded = net ? (net.totalBytesServed ?? net.bytesTransferred) : 0;
+    this.patchField('network-bytes', net ? templateFormatBytes(dataLoaded) : '0B');
     this.patchField(
       'network-detail',
-      cacheMetrics.network
-        ? `${cacheMetrics.network.requestCount} req · ${templateFormatBytes(cacheMetrics.network.bandwidth)}/s`
-        : '0 req'
+      net
+        ? `${templateFormatBytes(net.bytesTransferred)} net · ${templateFormatBytes(net.bandwidth)}/s`
+        : '0B net'
     );
 
     // Update secondary metrics memory progress bar
@@ -1250,7 +1314,7 @@ export class DataLoadingMonitor {
     badges.forEach((badge) => {
       const path = (badge as HTMLElement).dataset.nodePath;
       if (!path) return;
-      const node = this.findSceneGraphNode(this.sceneGraphState.root!, path);
+      const node = this.getSceneGraphNodeByPath(path);
       if (!node) return;
 
       let text = '';
@@ -1267,18 +1331,53 @@ export class DataLoadingMonitor {
         badge.textContent = text;
       }
     });
+
+    // Patch live LOD chips (active level / loaded-of-total / refining) in
+    // place — these change every frame without altering tree structure.
+    const lodChips = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__lod[data-lod-path]'
+    );
+    lodChips.forEach((chip) => {
+      const path = (chip as HTMLElement).dataset.lodPath;
+      if (!path) return;
+      const node = this.getSceneGraphNodeByPath(path);
+      if (!node) return;
+      const content = lodChipContent(node, this.lodStates.get(path));
+      if (content) {
+        chip.textContent = content.text;
+        (chip as HTMLElement).title = content.title;
+      }
+    });
+
+    // Refresh the header LOD/partition summary line.
+    const summaryEl = this.contentContainer.querySelector(
+      '[data-field="lod-summary"]'
+    ) as HTMLElement | null;
+    if (summaryEl) {
+      summaryEl.textContent = summariseLodStates(this.lodStates);
+    }
   }
 
   /**
-   * Find a scene graph node by path (depth-first search).
+   * Resolve a scene-graph node by path via a memoized path→node index.
+   * The index is rebuilt only when the tree root reference changes (a
+   * wholesale `setSceneGraph`), so repeated per-frame chip lookups are
+   * O(1) per chip rather than a fresh DFS each.
    */
-  private findSceneGraphNode(root: SceneGraphNode, path: string): SceneGraphNode | null {
-    if (root.path === path) return root;
-    for (const child of root.children) {
-      const found = this.findSceneGraphNode(child, path);
-      if (found) return found;
+  private getSceneGraphNodeByPath(path: string): SceneGraphNode | null {
+    const root = this.sceneGraphState.root;
+    if (!root) return null;
+    if (this.sceneGraphNodeIndexRoot !== root) {
+      this.sceneGraphNodeIndex.clear();
+      const stack: SceneGraphNode[] = [root];
+      while (stack.length > 0) {
+        const node = stack.pop()!;
+        this.sceneGraphNodeIndex.set(node.path, node);
+        for (const child of node.children) stack.push(child);
+      }
+      this.sceneGraphNodeIndexRoot = root;
     }
-    return null;
+    return this.sceneGraphNodeIndex.get(path) ?? null;
   }
 
   /**
@@ -1470,7 +1569,7 @@ export class DataLoadingMonitor {
     if (this.sceneGraphState.root) {
       return content.replace(
         '<div id="loader-list-content"></div>',
-        renderSceneGraphTree(this.sceneGraphState, this.expandedNodes)
+        renderSceneGraphTree(this.sceneGraphState, this.expandedNodes, this.lodStates)
       );
     } else {
       return content.replace(
@@ -1565,6 +1664,11 @@ export class DataLoadingMonitor {
     // three geometry types. Progressive multi-LOD nodes connect as a single
     // loader (their adapter re-paths inner events to the node path), so each
     // node contributes exactly one entry here — no per-LOD double-counting.
+    const isSpatialType = (t: string | undefined): boolean =>
+      t === 'point-spatial-index' ||
+      t === 'lines-spatial-index' ||
+      t === 'gsplats-spatial-index';
+
     for (const metrics of this.metrics.values()) {
       totalPoints += metrics.pointsLoaded;
       totalMemory += metrics.memoryUsed;
@@ -1572,14 +1676,47 @@ export class DataLoadingMonitor {
       totalLoads += metrics.loads;
       totalQueryTime += metrics.avgQueryTime * metrics.queries;
 
-      if (
-        metrics.type === 'point-spatial-index' ||
-        metrics.type === 'lines-spatial-index' ||
-        metrics.type === 'gsplats-spatial-index'
-      ) {
+      if (isSpatialType(metrics.type)) {
         activeSpatial++;
       }
     }
+
+    // Substitutive kind=lod groups connect one loader per leaf level (eager
+    // AND lazy levels are cheap-attached + connected up front, each reporting
+    // a `*-spatial-index` metric), but only one level renders at a time.
+    // Collapse each group's loaders to a single logical layer so the headline
+    // counts don't read K× too high. The excess is derived from the loaders
+    // *actually present under each group path* — not from the LOD level count
+    // — so a level that is itself a multi-leaf subtree (>1 loader per level)
+    // is collapsed correctly rather than under-subtracted. Child loaders are
+    // registered at scene-graph paths nested under the group path. Excess is 0
+    // unless the provider reports kind=lod groups, so plain scenes are
+    // unaffected.
+    //
+    // Two excesses are tracked from matching populations: `lodLoaderExcess`
+    // counts *all* loaders under each group (subtracted from `totalLoaders`,
+    // which counts all loaders), while `lodSpatialExcess` counts only the
+    // spatial-index–typed loaders (subtracted from `activeSpatial`, which is
+    // built from spatial-typed metrics only). Drawing each from its own
+    // population keeps a future non-spatial loader nested under a LOD group
+    // from over-subtracting `activeSpatial`.
+    let lodLoaderExcess = 0;
+    let lodSpatialExcess = 0;
+    for (const [path, s] of this.lodStates) {
+      if (s.kind !== 'lod') continue;
+      let present = 0;
+      let presentSpatial = 0;
+      for (const lp of this.loaders.keys()) {
+        if (lp === path || lp.startsWith(`${path}/`)) {
+          present++;
+          if (isSpatialType(this.metrics.get(lp)?.type)) presentSpatial++;
+        }
+      }
+      if (present > 1) lodLoaderExcess += present - 1;
+      if (presentSpatial > 1) lodSpatialExcess += presentSpatial - 1;
+    }
+    const totalLoaders = Math.max(0, this.loaders.size - lodLoaderExcess);
+    activeSpatial = Math.max(0, activeSpatial - lodSpatialExcess);
 
     // Use cached QPS calculation instead of filtering events again
     this.calculateRates();
@@ -1598,7 +1735,7 @@ export class DataLoadingMonitor {
     const visibleSplats = this.sceneGraphState.visibleSplats;
 
     return {
-      totalLoaders: this.loaders.size,
+      totalLoaders,
       activeSpatialLoaders: activeSpatial,
       activeFallbackLoaders: 0, // No more fallback loaders
       totalPoints,
@@ -1689,7 +1826,13 @@ export class DataLoadingMonitor {
 
   public show(): void {
     if (this.panel) {
-      this.panel.style.display = 'block';
+      // Clear the inline display set by hide() rather than hard-coding
+      // 'block': the size class governs layout (--expanded → flex column,
+      // --compact → default block). Forcing 'block' here overrode
+      // `.luxar-data-monitor--expanded { display: flex }`, which broke the
+      // flex-column scroll contract and let the scene-graph tree spill past
+      // the panel's max-height instead of scrolling inside __content.
+      this.panel.style.display = '';
       this.uiState.isVisible = true;
       // Always update immediately when showing to get fresh metrics
       this.updateUI();

@@ -325,6 +325,47 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
+  describe('cumulative bytes served (totalBytesServed)', () => {
+    // Each mocked chunk is 5 bytes ([1,2,3,4,5]). totalBytesServed must
+    // accumulate across ALL tiers so the monitor's "DATA LOADED" figure
+    // stays truthful on a warm/cache-served reload where networkBytes is 0.
+    it('fresh store reports zero bytes served', () => {
+      const net = store.getStats().network;
+      expect(net.totalBytesServed).toBe(0);
+      expect(net.totalRequestsServed).toBe(0);
+    });
+
+    it('a network-served demand read accumulates delivered bytes', async () => {
+      await store.get('test.chunk'); // L1 miss → L2 miss → network
+      const net = store.getStats().network;
+      expect(net.totalBytesServed).toBe(5);
+      expect(net.totalRequestsServed).toBe(1);
+      // The network-only counter agrees on the first (cold) read.
+      expect(net.bytesTransferred).toBe(5);
+    });
+
+    it('a cache-served (L1 hit) demand read still counts delivered bytes', async () => {
+      await store.get('test.chunk'); // cold: network populates L1
+      await store.get('test.chunk'); // warm: L1 hit, no network
+
+      const net = store.getStats().network;
+      // Two demand reads × 5 bytes delivered, even though only one
+      // network fetch happened — this is the key cache-served case.
+      expect(net.totalBytesServed).toBe(10);
+      expect(net.totalRequestsServed).toBe(2);
+      expect(net.bytesTransferred).toBe(5); // network counter stays flat
+    });
+
+    it('prefetch-originated reads do NOT inflate bytes served', async () => {
+      await store.getResult('test.chunk'); // demand: counts
+      await store.getResult('other.chunk', { suppressPrefetch: true }); // prefetch: excluded
+
+      const net = store.getStats().network;
+      expect(net.totalBytesServed).toBe(5);
+      expect(net.totalRequestsServed).toBe(1);
+    });
+  });
+
   describe('Content Hash Validation', () => {
     // Removed: 'should validate cache on init' was an unfailable
     // expect(stats).toBeDefined() check (cache.md W2). The init-time
@@ -532,9 +573,8 @@ describe('MultiLevelCachingStore', () => {
       // already cover the cancel-on-mismatch contract.
       await store.init();
 
-      const l2Store = (store as any).l2Store as import(
-        '../../../cache/multi-level-caching-store/opfs-store'
-      ).OPFSStore;
+      const l2Store = (store as any)
+        .l2Store as import('../../../cache/multi-level-caching-store/opfs-store').OPFSStore;
       l2Store.setContentHash('old-hash');
       l2Store.setValidationMode('content-hash');
       const setContentHashSpy = vi.spyOn(l2Store, 'setContentHash');
@@ -550,8 +590,7 @@ describe('MultiLevelCachingStore', () => {
           return {
             ok: true,
             async arrayBuffer() {
-              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' }))
-                .buffer;
+              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' })).buffer;
             },
           } as Response;
         }
@@ -1056,12 +1095,7 @@ describe('MultiLevelCachingStore', () => {
       // field (e.g. removed `opfsAvailable`) would now fail.
       const stats = store.getStats();
       expect(Object.keys(stats.health).sort()).toEqual(
-        [
-          'lastValidatedAt',
-          'opfsAvailable',
-          'unvalidatedExternalDataset',
-          'validationMode',
-        ].sort()
+        ['lastValidatedAt', 'opfsAvailable', 'unvalidatedExternalDataset', 'validationMode'].sort()
       );
       expect(['content-hash', 'ttl', 'none']).toContain(stats.health.validationMode);
       expect(

@@ -66,4 +66,43 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(monitor.updateVisibleSegments).toHaveBeenCalledWith(0);
     expect(monitor.updateVisibleSplats).toHaveBeenCalledWith(0);
   });
+
+  it('excludes hidden meshes (inactive substitutive-LOD levels)', () => {
+    // A kind=lod group loads & commits ALL levels (each gets its
+    // visibleSplatCount) but hides all but the active one. Only the
+    // visible level must contribute — summing hidden levels would inflate
+    // the count ~K×.
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+
+    const lodGroup = new THREE.Group();
+    lodGroup.userData.kind = 'lod';
+    const active = meshWith({ nodeType: 'gsplats', visibleSplatCount: 5000 });
+    const hidden1 = meshWith({ nodeType: 'gsplats', visibleSplatCount: 1000 });
+    hidden1.visible = false;
+    const hidden2 = meshWith({ nodeType: 'gsplats', visibleSplatCount: 2000 });
+    hidden2.visible = false;
+    lodGroup.add(active, hidden1, hidden2);
+    root.add(lodGroup);
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    // Only the visible level's 5000 — NOT 5000 + 1000 + 2000 = 8000.
+    expect(monitor.updateVisibleSplats).toHaveBeenCalledWith(5000);
+  });
+
+  it('prunes whole hidden subtrees (toggled-off layer group)', () => {
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+
+    const hiddenLayer = new THREE.Group();
+    hiddenLayer.visible = false; // user toggled the layer off
+    hiddenLayer.add(meshWith({ nodeType: 'points', visiblePointCount: 999 }));
+    root.add(hiddenLayer);
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 42 }));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(42);
+  });
 });
