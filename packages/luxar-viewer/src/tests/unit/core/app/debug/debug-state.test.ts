@@ -406,4 +406,60 @@ describe('computeDebugState', () => {
       expect(state.lineMeshes).toEqual([]);
     });
   });
+
+  describe('LOD / partition group reporting', () => {
+    it('reports a kind=lod group with its active level', () => {
+      const scene = new THREE.Scene();
+      const lod = new THREE.Group();
+      lod.name = '/lod';
+      lod.userData.kind = 'lod';
+      const l0 = new THREE.Group();
+      const l1 = new THREE.Group();
+      const l2 = new THREE.Group();
+      l0.visible = false;
+      l1.visible = true; // active level = index 1
+      l2.visible = false;
+      lod.add(l0, l1, l2);
+      scene.add(lod);
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.lodGroups).toEqual([{ name: '/lod', levelCount: 3, activeLevel: 1 }]);
+      expect(state.partitions).toEqual([]);
+    });
+
+    it('reports activeLevel -1 when no level is visible', () => {
+      const scene = new THREE.Scene();
+      const lod = new THREE.Group();
+      lod.userData.kind = 'lod';
+      const a = new THREE.Group();
+      a.visible = false;
+      lod.add(a);
+      scene.add(lod);
+
+      expect(computeDebugState(makeContext(scene)).lodGroups[0].activeLevel).toBe(-1);
+    });
+
+    it('reports a kind=partition group with part / visible-part counts', () => {
+      const scene = new THREE.Scene();
+      const part = new THREE.Group();
+      part.name = '/parted';
+      part.userData.kind = 'partition';
+      const p0 = new THREE.Group();
+      const p1 = new THREE.Group();
+      const p2 = new THREE.Group();
+      p2.visible = false; // culled
+      part.add(p0, p1, p2);
+      scene.add(part);
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.partitions).toEqual([{ name: '/parted', partCount: 3, visibleParts: 2 }]);
+      expect(state.lodGroups).toEqual([]);
+    });
+
+    it('reports empty arrays when no specialized groups exist', () => {
+      const state = computeDebugState(makeContext(new THREE.Scene()));
+      expect(state.lodGroups).toEqual([]);
+      expect(state.partitions).toEqual([]);
+    });
+  });
 });

@@ -8,6 +8,11 @@ import { createInstancedLinesMesh, isAllSharpnessTwo } from '../../../rendering/
 import { materialManager } from '../../../rendering/material-manager';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
+import {
+  setLodLoadStatsEnabled,
+  snapshotLodLoadStats,
+  resetLodLoadStats,
+} from '../../../scene/lod-load-stats';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { InputHandler } from '../../../input/input-handler';
@@ -46,6 +51,12 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   }
 
   log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
+
+  // Enable lazy-LOD-load per-stage timing under ?debug only. The lazy
+  // ensureLoaded loads run outside any updateView cycle, so the
+  // UpdateProfiler never captures them — this fills that gap for
+  // navigation-cost diagnosis. Snapshot via __luxarDebug.getLodLoadStats().
+  setLodLoadStatsEnabled(true);
 
   // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
   // LuxarApp is instantiated outside the standalone-app entry point
@@ -182,15 +193,17 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
         return { type: spec.type, segmentCount: cfg.segmentCount, mesh };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log.error(
-          Modules.LUXAR,
-          `__luxarDebug.injectSyntheticScene failed: ${message}`,
-          error
-        );
+        log.error(Modules.LUXAR, `__luxarDebug.injectSyntheticScene failed: ${message}`, error);
         showError(`Synthetic-scene injection failed: ${message}`);
         throw error;
       }
     },
+
+    // Per-stage timing for lazy LOD level loads (fetch/decode, process,
+    // commit, release). Reset before a measurement drive, snapshot after.
+    // See scene/lod-load-stats.ts. Only meaningful under ?debug.
+    getLodLoadStats: () => snapshotLodLoadStats(),
+    resetLodLoadStats: () => resetLodLoadStats(),
 
     // Mark that runtime components are now available
     runtimeReady: true,

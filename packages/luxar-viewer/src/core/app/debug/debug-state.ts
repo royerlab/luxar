@@ -58,6 +58,24 @@ export interface GPUPoolDebugStats {
   evictions: number;
 }
 
+/**
+ * Substitutive `kind=lod` group summary. `activeLevel` is the index of
+ * the currently-visible child (the level the registry selected); `-1`
+ * when none is visible.
+ */
+export interface LODGroupDebugInfo {
+  name: string;
+  levelCount: number;
+  activeLevel: number;
+}
+
+/** `kind=partition` BSP group summary. */
+export interface PartitionDebugInfo {
+  name: string;
+  partCount: number;
+  visibleParts: number;
+}
+
 /** Result shape returned by `computeDebugState()`. */
 export interface DebugState {
   totalPoints: number;
@@ -69,6 +87,10 @@ export interface DebugState {
   gsplatMeshes: GSplatMeshInfo[];
   /** Per-mesh line summary. */
   lineMeshes: LineMeshInfo[];
+  /** Substitutive LOD groups (kind=lod) with their active level. */
+  lodGroups: LODGroupDebugInfo[];
+  /** Partition groups (kind=partition) with part / visible-part counts. */
+  partitions: PartitionDebugInfo[];
   /** GPU buffer pool byte stats (undefined when the pool is disabled). */
   gpuPool?: GPUPoolDebugStats;
   dimensions: { ndim: number; displayed: number[]; currentStep: number[] } | null;
@@ -115,8 +137,31 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   const pointClouds: PointCloudInfo[] = [];
   const gsplatMeshes: GSplatMeshInfo[] = [];
   const lineMeshes: LineMeshInfo[] = [];
+  const lodGroups: LODGroupDebugInfo[] = [];
+  const partitions: PartitionDebugInfo[] = [];
 
   ctx.scene.traverse((object) => {
+    // Specialized-group containers carry their kind in userData (set by
+    // load-lod-group-node / load-partition-group-node). Surface their
+    // structure + live active level so debug/E2E can assert on LOD
+    // selection and partitioning without reaching into the registry.
+    const kind = (object.userData as { kind?: string })?.kind;
+    if (kind === 'lod') {
+      const children = object.children;
+      lodGroups.push({
+        name: object.name || 'unnamed',
+        levelCount: children.length,
+        activeLevel: children.findIndex((c) => c.visible),
+      });
+    } else if (kind === 'partition') {
+      const children = object.children;
+      partitions.push({
+        name: object.name || 'unnamed',
+        partCount: children.length,
+        visibleParts: children.reduce((n, c) => n + (c.visible ? 1 : 0), 0),
+      });
+    }
+
     // Points render as THREE.Mesh + InstancedBufferGeometry.
     // `instanceCount` is the source of truth for visible-point count;
     // attribute count can be pooled capacity.
@@ -210,6 +255,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     pointClouds,
     gsplatMeshes,
     lineMeshes,
+    lodGroups,
+    partitions,
     gpuPool,
     dimensions: dimensionsInfo,
     camera: {

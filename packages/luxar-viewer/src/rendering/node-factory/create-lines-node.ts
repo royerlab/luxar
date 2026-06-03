@@ -123,5 +123,18 @@ export function createEmptyLinesNode(
     endClipped: new Uint8Array(0),
     segmentCount: 0,
   };
+  // When the node carries a scalar field + colormap, bind empty scalar
+  // arrays on the placeholder so the colormap clone path in
+  // `createLinesNode` (gated on `'startScalars' in processed`) fires at
+  // material-creation time. Without them the guard sees no scalars, logs
+  // "Colormap suppressed", and nothing ever re-enables the LUT once real
+  // scalars stream in (the commit writes into the existing placeholder
+  // geometry). Gate on the SAME `nodeAttrs` fields the colormap-application
+  // path above reads, so the placeholder matches exactly when colormap will
+  // apply. Mirrors `node-factory.ts::createEmptyPointsNode`.
+  if (nodeAttrs.colormap && nodeAttrs.has_scalars) {
+    emptyConfig.startScalars = new Float32Array(0);
+    emptyConfig.endScalars = new Float32Array(0);
+  }
   return createLinesNode(path, nodeAttrs, attrs, emptyConfig, loader, pickingSystem);
 }

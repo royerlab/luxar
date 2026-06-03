@@ -273,6 +273,19 @@ export class NodeFactory {
         dtypes: {},
       },
     };
+    // When the node carries a scalar field + colormap, bind an empty
+    // `aScalar` on the placeholder geometry so the fail-closed colormap
+    // guard in `createPointsMaterial` (`supportsScalarColormap`) passes at
+    // material-creation time. Without it the guard sees no `aScalar`,
+    // suppresses USE_COLORMAP on the placeholder material, and nothing
+    // ever re-enables it once the real scalars stream in — leaving the
+    // points white. This mirrors the placeholder-first handling of
+    // radii/sharpness (see `syncPointMaterialWithGeometry`); the buffer
+    // pool's attribute types then match between placeholder and real
+    // data (both carry a scalar), avoiding an extra geometry rebuild.
+    if (attrs.has_scalars && attrs.colormap) {
+      emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
+    }
     return this.createPointsNode(path, attrs, emptyData, loader, /* isPlaceholder */ true);
   }
 
