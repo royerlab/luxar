@@ -1,8 +1,10 @@
 """luxar.core.group.lod.points – Additive-LOD helpers for the Points leaf type.
 
-Mirrors the role that ``gsplats/lod/additive.py`` plays for GSplats:
-provides the ordering + ladder-construction primitives that the
-``add_points(..., additive_lod=...)`` convenience kwarg consumes.
+Provides the ordering + ladder-construction primitives that the
+``add_points(..., additive_lod=...)`` convenience kwarg consumes — one
+of three peer implementations of the same additive-LOD pattern, alongside
+``core/group/lod/lines.py`` (per-polyline) and ``gsplats/lod/additive.py``
+(Gaussian-energy ordering).
 
 Three ordering methods, all geometry-agnostic-ish:
 
@@ -392,7 +394,8 @@ def resolve_additive_axis_points(
 ) -> Optional[dict]:
     """Translate the ``additive_lod=`` kwarg value into a normalized dict.
 
-    Vocabulary (mirrors gsplats's :func:`luxar.core.group.lod.gsplats.resolve_additive_axis`
+    Vocabulary (same shape as the GSplats peer
+    :func:`luxar.core.group.lod.gsplats.resolve_additive_axis_gsplats`,
     but with Points semantics):
 
     * ``None``    → no multi-LOD ladder; caller writes a flat node.

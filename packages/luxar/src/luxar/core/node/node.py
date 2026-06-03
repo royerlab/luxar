@@ -260,7 +260,7 @@ class Node:
             default_level: Initial active level index for the
                 manual-override UI (0-based).
             base_pixel_size: Override for the default 10-px LOD-switching
-                threshold (see :data:`luxar.core.group.lod.gsplats.BASE_PIXEL_SIZE`).
+                threshold (see :data:`luxar.core.group.lod.group.BASE_PIXEL_SIZE`).
                 When set, both the explicit-builder children that auto-
                 derive ``min_pixel_size`` AND the ``lod_group=`` convenience
                 path on ``add_gsplats_from_data`` honor this override.

@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, List, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from .lod.gsplats import resolve_display_type
+from .lod.group import resolve_display_type
 
 if TYPE_CHECKING:
     from ..node import Node
@@ -569,7 +569,7 @@ def validate_partition_group(group: "Node") -> None:
     - ``display_type`` is missing or empty;
     - ``max_elements`` is missing or < 1;
     - any child's resolved ``display_type`` (per
-      :func:`luxar.core.group.lod.gsplats.resolve_display_type`) differs from the parent's
+      :func:`luxar.core.group.lod.group.resolve_display_type`) differs from the parent's
       — homogeneity is mandatory for a partition (you can't decompose a single
       logical layer into mixed-type parts).
 

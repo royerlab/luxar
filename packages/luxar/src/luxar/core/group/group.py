@@ -394,8 +394,8 @@ class Group(Node):
         flat layout (arrays at the node path).
 
         ``lod_group`` and ``additive_lod`` control the two LOD axes (see
-        ``luxar.core.group.lod.gsplats.resolve_substitutive_axis`` /
-        ``resolve_additive_axis`` for the full value vocabulary). When
+        ``luxar.core.group.lod.gsplats.resolve_substitutive_axis_gsplats`` /
+        ``resolve_additive_axis_gsplats`` for the full value vocabulary). When
         the resolved data has multiple substitutive levels, this method
         builds a ``kind="lod"`` ``Group`` containing one gsplats child
         per level (in coarsest→finest order, named ``child_<i>``) and

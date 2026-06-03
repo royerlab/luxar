@@ -216,6 +216,47 @@ class TestResolveAdditiveAxisLines:
         spec = resolve_additive_axis_lines(True)
         assert spec is not None
         assert spec["method"] == "random"
+        assert spec["n_lods"] == 4
+
+    def test_dict_overrides(self) -> None:
+        spec = resolve_additive_axis_lines(
+            {"method": "salience", "n_lods": 3, "seed": 42}
+        )
+        assert spec is not None
+        assert spec["method"] == "salience"
+        assert spec["n_lods"] == 3
+        assert spec["seed"] == 42
+
+    def test_recompute_tolerated_for_symmetry(self) -> None:
+        # gsplats has recompute=True semantics; Lines tolerates without action.
+        spec = resolve_additive_axis_lines({"recompute": True})
+        assert spec is not None  # doesn't raise, returns defaults
+
+    def test_unknown_key_raises(self) -> None:
+        with pytest.raises(ValueError, match="unrecognized keys"):
+            resolve_additive_axis_lines({"bogus": 42})
+
+    def test_invalid_method_raises(self) -> None:
+        with pytest.raises(ValueError, match="method must be"):
+            resolve_additive_axis_lines({"method": "bogus"})
+
+    def test_invalid_spec_type_raises(self) -> None:
+        with pytest.raises(TypeError, match="must be None, bool, or dict"):
+            resolve_additive_axis_lines("auto")  # type: ignore[arg-type]
+
+    def test_breakpoints_pass_through(self) -> None:
+        spec = resolve_additive_axis_lines({"breakpoints": [2, 4]})
+        assert spec is not None
+        assert spec["counts"] == [2, 4]
+
+    def test_energy_salience_kind(self) -> None:
+        spec = resolve_additive_axis_lines({"salience_kind": "energy"})
+        assert spec is not None
+        assert spec["salience_kind"] == "energy"
+
+    def test_counts_and_breakpoints_conflict_raises(self) -> None:
+        with pytest.raises(ValueError, match="either 'counts' OR 'breakpoints'"):
+            resolve_additive_axis_lines({"counts": [1, 2], "breakpoints": [3, 4]})
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -12,10 +12,9 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.group.lod.gsplats import (
+from luxar.core.group.lod.group import (
     BASE_PIXEL_SIZE,
     derive_min_pixel_sizes,
-    resolve_substitutive_axis,
 )
 from luxar.core.group.lod.lines import (
     _compute_lines_energy,
@@ -186,43 +185,9 @@ class TestBasePixelSizeKnob:
             with pytest.raises(ValueError, match="base_pixel_size"):
                 scene.add_lod_group("bad", base_pixel_size=0.0)
 
-    def test_resolve_substitutive_axis_passes_through_bps(self):
-        # We don't need a real GSplatData — the dict branch with
-        # n_substitutive=1 falls through to compute, but base_pixel_size
-        # extraction happens before that. Mock minimally.
-        class FakeData:
-            n_substitutive = 1
-            default_substitutive = 0
-
-            def at_substitutive(self, i):
-                return self
-
-        data = FakeData()
-        # With spec=None → no base_pixel_size returned.
-        _, _, bps = resolve_substitutive_axis(data, None)
-        assert bps is None
-
-    def test_resolve_substitutive_axis_dict_base_pixel_size(self):
-        class FakeData:
-            n_substitutive = 2  # stored pyramid; recompute=False path
-
-            def at_substitutive(self, i):
-                return self
-
-        data = FakeData()
-        _, _, bps = resolve_substitutive_axis(data, {"base_pixel_size": 25.0})
-        assert bps == 25.0
-
-    def test_resolve_substitutive_axis_rejects_invalid_bps(self):
-        class FakeData:
-            n_substitutive = 2
-
-            def at_substitutive(self, i):
-                return self
-
-        data = FakeData()
-        with pytest.raises(ValueError, match="base_pixel_size"):
-            resolve_substitutive_axis(data, {"base_pixel_size": 0.0})
+    # Resolver semantics (None/dict/base_pixel_size/min_pixel_sizes/compute) are
+    # covered against real GSplatData in test_gsplats.py::
+    # TestResolveSubstitutiveAxisGsplats.
 
 
 # ────────────────────────────────────────────────────────────────────────

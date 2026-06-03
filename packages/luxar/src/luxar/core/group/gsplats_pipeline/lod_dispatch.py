@@ -47,7 +47,7 @@ def add_gsplats_as_lod_group_impl(
     land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
     (truncation_radius, extend_to_all, colormap) ride into each child.
     """
-    from ..lod.gsplats import derive_min_pixel_sizes
+    from ..lod.group import derive_min_pixel_sizes
 
     # Substitutive convention: index 0 = finest, n-1 = coarsest. The
     # LOD group needs coarsest first.
