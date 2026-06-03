@@ -19,12 +19,12 @@ guarantee zero leaked listeners.
 
 ### API
 
-| Method | Purpose |
-| ------ | ------- |
-| `add(element, event, handler, options?)` | Register a listener on `HTMLElement`, `Window`, or `Document` and store an `EventListenerRecord` (from `../types.ts`). |
-| `remove(element, event, handler)` | Remove a specific listener; looks up the stored record so the original `options` (notably `capture`) are passed to `removeEventListener`. |
-| `removeAll()` | Remove every tracked listener. **Must** be called on dispose. |
-| `count()` | Number of currently-tracked listeners (debugging / tests). |
+| Method                                   | Purpose                                                                                                                                   |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `add(element, event, handler, options?)` | Register a listener on `HTMLElement`, `Window`, or `Document` and store an `EventListenerRecord` (from `../types.ts`).                    |
+| `remove(element, event, handler)`        | Remove a specific listener; looks up the stored record so the original `options` (notably `capture`) are passed to `removeEventListener`. |
+| `removeAll()`                            | Remove every tracked listener. **Must** be called on dispose.                                                                             |
+| `count()`                                | Number of currently-tracked listeners (debugging / tests).                                                                                |
 
 ### Why preserve `options` on removal
 

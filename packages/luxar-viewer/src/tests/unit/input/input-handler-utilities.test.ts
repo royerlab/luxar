@@ -309,9 +309,9 @@ describe('InputHandler Utilities', () => {
         fc.property(
           // ndim in [4, 12]; displayed = the first 3 dims (so non-displayed
           // are [3, ndim)). We pick a startDim from the non-displayed range.
-          fc.integer({ min: 4, max: 12 }).chain((ndim) =>
-            fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))
-          ),
+          fc
+            .integer({ min: 4, max: 12 })
+            .chain((ndim) => fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))),
           ([ndim, startDim]) => {
             const dims = createDims(ndim, [0, 1, 2]);
             const next = getNextDimensionIndex(startDim, 1, dims);
@@ -329,9 +329,9 @@ describe('InputHandler Utilities', () => {
     it('[property] backward then forward returns to start for any non-displayed dim', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 4, max: 12 }).chain((ndim) =>
-            fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))
-          ),
+          fc
+            .integer({ min: 4, max: 12 })
+            .chain((ndim) => fc.tuple(fc.constant(ndim), fc.integer({ min: 3, max: ndim - 1 }))),
           ([ndim, startDim]) => {
             const dims = createDims(ndim, [0, 1, 2]);
             const prev = getNextDimensionIndex(startDim, -1, dims);
@@ -631,9 +631,12 @@ describe('InputHandler Utilities', () => {
         { input: 2.5, expected: '3' }, // Math.round(2.5) = 3
         { input: -0.5, expected: '0' }, // Math.round(-0.5) = 0 (NOT -1)
         { input: -1.5, expected: '-1' }, // Math.round(-1.5) = -1 (NOT -2)
-      ])('[G26] formats $input → "$expected" (JS-style round-half-up, not banker)', ({ input, expected }) => {
-        expect(formatDimensionValue(input, 3, dims)).toBe(expected);
-      });
+      ])(
+        '[G26] formats $input → "$expected" (JS-style round-half-up, not banker)',
+        ({ input, expected }) => {
+          expect(formatDimensionValue(input, 3, dims)).toBe(expected);
+        }
+      );
     });
   });
 });

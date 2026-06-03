@@ -141,9 +141,7 @@ describe('createOrbitControls — three-way distance fallback (M5)', () => {
   });
 
   it('honors config.autoRotate and config.autoRotateSpeed', () => {
-    const c = createOrbitControls(
-      makeCtx({ config: { autoRotate: true, autoRotateSpeed: 3.5 } })
-    );
+    const c = createOrbitControls(makeCtx({ config: { autoRotate: true, autoRotateSpeed: 3.5 } }));
     expect(c.autoRotate).toBe(true);
     expect(c.autoRotateSpeed).toBeCloseTo(3.5, 5);
     c.dispose();
@@ -205,9 +203,7 @@ describe('createOrthoControls — zoom-limit fallback (M5)', () => {
   const m = config.controls.scaleMultipliers;
 
   it('uses storedZoomLimits when provided', () => {
-    const c = createOrthoControls(
-      makeCtx({ storedZoomLimits: { min: 0.5, max: 50 } })
-    );
+    const c = createOrthoControls(makeCtx({ storedZoomLimits: { min: 0.5, max: 50 } }));
     expect(c.minZoom).toBeCloseTo(0.5, 5);
     expect(c.maxZoom).toBeCloseTo(50, 5);
     c.dispose();

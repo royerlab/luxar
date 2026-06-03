@@ -203,9 +203,7 @@ export async function createProgressivePointsLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<PointsDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(
-    node.path === '/' ? '' : node.path.slice(1)
-  );
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
 
   log.query(
     Modules.SCENE_LOADER,
@@ -261,9 +259,7 @@ export async function createProgressiveLinesLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<LinesDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(
-    node.path === '/' ? '' : node.path.slice(1)
-  );
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
 
   log.query(
     Modules.SCENE_LOADER,

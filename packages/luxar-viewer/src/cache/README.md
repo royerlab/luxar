@@ -191,7 +191,8 @@ this origin. Cleared by:
 OPFS storage is sandboxed per origin. Cross-origin pages cannot read
 this cache. Private/incognito browser windows typically expose a
 reduced-quota OPFS that wipes on tab close — the cache degrades to L1
-+ network with no persistence.
+
+- network with no persistence.
 
 ## OPFS availability and quota
 
@@ -408,9 +409,15 @@ data-loading monitor, debug overlay, and cache E2E suite:
     // corruptedEntries, metadataParseFailures, orphanedFilesRemoved
   },
   network: {
-    bytesTransferred: number, // Total bytes fetched from network
-    requestCount: number,     // Total HTTP requests (incl. prefetch)
-    bandwidth: number         // Current bandwidth (bytes/sec, sliding window)
+    bytesTransferred: number,   // Total bytes fetched from network (L3 only)
+    requestCount: number,       // Total HTTP requests (incl. prefetch)
+    bandwidth: number,          // Current bandwidth (bytes/sec, sliding window)
+    totalBytesServed: number,   // Cumulative bytes delivered to demand callers
+                                // across ALL tiers (L1 + L2 + network). Stays
+                                // non-zero on a warm/cache-served reload where
+                                // bytesTransferred is 0 — drives the monitor's
+                                // "DATA LOADED" card.
+    totalRequestsServed: number // Demand reads served across all tiers
   },
   demand: {
     l1Hits: number,           // User-demand L1 hits (excludes prefetch)

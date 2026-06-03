@@ -25,22 +25,18 @@ vi.mock('../../../../scene/scene-manager', () => ({
   SceneManager: vi.fn().mockImplementation(() => ({ kind: 'scene-manager' })),
 }));
 vi.mock('../../../../scene/animation/animation-controller', () => ({
-  AnimationController: vi
-    .fn()
-    .mockImplementation((controls, postProcessing) => ({
-      kind: 'animation-controller',
-      controls,
-      postProcessing,
-    })),
+  AnimationController: vi.fn().mockImplementation((controls, postProcessing) => ({
+    kind: 'animation-controller',
+    controls,
+    postProcessing,
+  })),
 }));
 vi.mock('../../../../ui/rendering-controls', () => ({
-  RenderingControls: vi
-    .fn()
-    .mockImplementation((postProcessing, sceneManager) => ({
-      kind: 'rendering-controls',
-      postProcessing,
-      sceneManager,
-    })),
+  RenderingControls: vi.fn().mockImplementation((postProcessing, sceneManager) => ({
+    kind: 'rendering-controls',
+    postProcessing,
+    sceneManager,
+  })),
 }));
 vi.mock('../../../../ui/recording-panel', () => ({
   RecordingPanel: vi.fn().mockImplementation((sm, ac) => ({
@@ -107,8 +103,12 @@ describe('defaultFactories', () => {
     // pass type-check (both are `unknown` to the factory call) but
     // break the constructor's internal field assignment.
     expect(RenderingControls).toHaveBeenCalledExactlyOnceWith(pp, sm);
-    expect((result as unknown as { postProcessing: unknown; sceneManager: unknown }).postProcessing).toBe(pp);
-    expect((result as unknown as { postProcessing: unknown; sceneManager: unknown }).sceneManager).toBe(sm);
+    expect(
+      (result as unknown as { postProcessing: unknown; sceneManager: unknown }).postProcessing
+    ).toBe(pp);
+    expect(
+      (result as unknown as { postProcessing: unknown; sceneManager: unknown }).sceneManager
+    ).toBe(sm);
   });
 
   it('recordingPanel factory forwards (sceneManager, animationController)', () => {

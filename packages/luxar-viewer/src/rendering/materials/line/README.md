@@ -101,12 +101,14 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## `isGammaOne` / `isNoGOG` cross-export
 
-`material-glsl.ts` defines and exports the threshold predicates
-`isGammaOne` and `isNoGOG`, and `material-tsl.ts` imports them. The
-intent is a single source of truth for the `±1e-4` epsilon — both
-backends decide to flip the `LUXAR_GAMMA_ONE` / `LUXAR_NO_GOG` defines
-at the same numeric boundary so a value that's a fast-path on WebGL2
-is also a fast-path on WebGPU.
+`isGammaOne` now lives in `../_shared/uniform-helpers.ts` (shared by all
+three geometry types — Point/Line/GSplat each gate `LUXAR_GAMMA_ONE` on
+it). `material-glsl.ts` re-exports it alongside the line-local `isNoGOG`,
+and `material-tsl.ts` imports both from `./material-glsl`. The intent is
+a single source of truth for the `±1e-4` epsilon — both backends decide
+to flip the `LUXAR_GAMMA_ONE` / `LUXAR_NO_GOG` defines at the same
+numeric boundary so a value that's a fast-path on WebGL2 is also a
+fast-path on WebGPU.
 
 ## GLSL/TSL parity invariant
 

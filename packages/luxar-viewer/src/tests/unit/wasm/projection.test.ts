@@ -273,11 +273,7 @@ describe('calculate_bounds_3d — NaN / Infinity propagation', () => {
   });
 
   it('lets +Infinity be the max-x and -Infinity be the min-x', () => {
-    const positions = new Float32Array([
-      0, 0, 0,
-      Infinity, 10, 10,
-      -Infinity, -10, -10,
-    ]);
+    const positions = new Float32Array([0, 0, 0, Infinity, 10, 10, -Infinity, -10, -10]);
     const output = new Float32Array(6);
     calculate_bounds_3d(positions, 3, output);
     expect(output[0]).toBe(-Infinity); // min_x

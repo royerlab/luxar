@@ -217,7 +217,10 @@ describe('handleMouseMove — rotated orientation [controls.md G17]', () => {
   // produce a Z-component, not an X-component.
   it('[G17] 90° yaw orientation: strafe-X maps to world-Z (local-X applyQuaternion exercised)', () => {
     // Rotate orientation by 90° about world Y.
-    const orientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const orientation = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI / 2
+    );
     const { ctx, state } = makeCtx({ inertialMode: true, movementSpeed: 1, orientation });
     state.activeMouseAction = 'strafe';
     state.mouseX = 100;
@@ -243,7 +246,10 @@ describe('handleMouseMove — rotated orientation [controls.md G17]', () => {
     //   torquePitch = 0
     //   torqueYaw = -200 * 0.005 * 2.5 = -2.5
     //   angularVelocity += (0,0,-1)*0 + (0,1,0)*(-2.5) = (0,-2.5,0)
-    const orientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const orientation = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI / 2
+    );
     const { ctx, state } = makeCtx({ orientation });
     state.activeMouseAction = 'rotate';
     state.mouseX = 100;
@@ -258,7 +264,10 @@ describe('handleMouseMove — rotated orientation [controls.md G17]', () => {
 
   it('[G17] 180° yaw orientation: strafe-X flips sign vs identity (verifies orientation actually rotates the basis)', () => {
     // 180° yaw: local-X → world-(-1,0,0). With same drag, velocity flips sign vs identity.
-    const orientationFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    const orientationFlip = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI
+    );
     const a = makeCtx({ inertialMode: true, movementSpeed: 2 });
     const b = makeCtx({ inertialMode: true, movementSpeed: 2, orientation: orientationFlip });
     a.state.activeMouseAction = 'strafe';

@@ -357,4 +357,3 @@ describe('lines_clipping: mark_clipped_endpoints', () => {
     expect(endClipped[2]).toBe(0);
   });
 });
-

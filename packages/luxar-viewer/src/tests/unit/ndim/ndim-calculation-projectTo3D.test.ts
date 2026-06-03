@@ -48,7 +48,15 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     // 4 points, 3D: total 12 elements.
     const positions = new Float32Array([0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const ranges: PointRange[] = [{ start: 0, end: 4 }];
-    const result = projectPointsTo3D(positions, null, null, null, viewState3D, ranges, makeContext());
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      viewState3D,
+      ranges,
+      makeContext()
+    );
 
     // Output has exactly 3 components per point.
     expect(result.pointCount).toBe(4);
@@ -62,7 +70,15 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     // 3 points, 4D: total 12 elements. Layout per point: [x, y, z, t].
     const positions = new Float32Array([1, 2, 3, 100, 4, 5, 6, 200, 7, 8, 9, 300]);
     const ranges: PointRange[] = [{ start: 0, end: 3 }];
-    const result = projectPointsTo3D(positions, null, null, null, viewState4D, ranges, makeContext());
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      viewState4D,
+      ranges,
+      makeContext()
+    );
 
     expect(result.pointCount).toBe(3);
     expect(result.positions.length).toBe(3 * 3);
@@ -80,7 +96,15 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
       slicePosition: [0, 0, 0, 0, 0],
       tolerance: [0, 1, 0, 1, 0],
     };
-    const result = projectPointsTo3D(positions, null, null, null, viewState5D, ranges, makeContext());
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      viewState5D,
+      ranges,
+      makeContext()
+    );
 
     expect(result.pointCount).toBe(2);
     expect(result.ndim).toBe(5);
@@ -180,7 +204,15 @@ describe('projectPointsTo3D — corner cases', () => {
       { start: 0, end: 1 },
       { start: 1, end: 2 },
     ];
-    const result = projectPointsTo3D(positions, null, null, null, viewState3D, ranges, makeContext());
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      viewState3D,
+      ranges,
+      makeContext()
+    );
     // pointCount comes from ranges.sum (2), positions array is 2*3 = 6.
     expect(result.pointCount).toBe(2);
     expect(result.positions.length).toBe(6);

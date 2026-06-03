@@ -21,10 +21,7 @@ import type { LoadedPointsData } from '../../data/data-loader-types';
  *   fire once per points node on every scene load and look like errors.
  *   A genuinely-empty *committed* dataset (default `false`) still warns.
  */
-export function validateLoadedPointsData(
-  data: LoadedPointsData,
-  isPlaceholder = false
-): void {
+export function validateLoadedPointsData(data: LoadedPointsData, isPlaceholder = false): void {
   const pointCount = data.positions.length / 3;
 
   // Expected pre-fetch placeholder — stay silent.

@@ -89,10 +89,7 @@ describe('WorkerPool initialization failure handling', () => {
     // catch handler below it walks `pendingWorkers` AFTER the throw, so
     // a defensive sweep / verified invariant in the throw branch is the
     // only guarantee that an in-flight worker cannot escape the guard.
-    const { WorkerPool, workers } = await loadWorkerPoolWithInitializationResults([
-      'fail',
-      'fail',
-    ]);
+    const { WorkerPool, workers } = await loadWorkerPoolWithInitializationResults(['fail', 'fail']);
     const pool = new WorkerPool();
 
     await expect(pool.initialize()).rejects.toThrow('Failed to initialize any data workers');

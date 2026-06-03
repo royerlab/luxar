@@ -188,9 +188,7 @@ describe('NumberController', () => {
     // jsdom's <input type="range"> clamps the value attribute internally to
     // [min, max], so 1000 → 100 even before parseFloat runs. Pin that.
     it('clamps slider values above max via the input event', () => {
-      const slider = controller.domElement.querySelector(
-        '.luxar-gui__slider'
-      ) as HTMLInputElement;
+      const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
       slider.value = '1000'; // valid float, above max=100
       slider.dispatchEvent(new Event('input'));
       expect(object.value).toBe(100);

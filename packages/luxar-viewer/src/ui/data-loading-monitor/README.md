@@ -9,13 +9,13 @@ polling loop, and the hierarchical timing panel.
 
 ## Files
 
-| File              | Role                                                                                                                                                                                                |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `templates.ts`    | HTML-string template functions for every cell, card, progress bar, status badge, tab content, scene-graph tree, and memory section the monitor paints. Also re-exports `MemoryMetrics` and friends. |
-| `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, high memory, low GPU reuse rate, frequent evictions, …).       |
-| `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                      |
-| `polling-loop.ts` | `PollingLoop` — restartable interval timer with tick stats. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                         |
-| `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders.               |
+| File              | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `templates.ts`    | HTML-string template functions for every cell, card, progress bar, status badge, tab content, scene-graph tree, and memory section the monitor paints. Also re-exports `MemoryMetrics` and friends. The scene-graph tree renders LOD/partition kind badges (`K LODs` / `N parts`) and a live LOD chip (`L{i}/{n}` active level, or `LOD {loaded}/{total}` + refining/residency) via `renderKindBadge` / `lodChipContent`; `summariseLodStates` builds the header summary. |
+| `advisor.ts`      | `LoadingAdvisor` — consumes `MonitorEvent`s and rolled-up `LoaderMetrics` / `MemoryMetrics` and emits `Recommendation`s (slow query, high memory, low GPU reuse rate, frequent evictions, …).                                                                                                                                                                                                                                                                             |
+| `event-queue.ts`  | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                                                                                                                                                                                                                                                                                            |
+| `polling-loop.ts` | `PollingLoop` — restartable interval timer with tick stats. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                                                                                                                                                                                                                                                                                               |
+| `timing-panel.ts` | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders.                                                                                                                                                                                                                                                                                     |
 
 `README.md` for this folder; per-subpackage READMEs live under
 `metrics/` and `tabs/`.
@@ -90,6 +90,14 @@ which returns `luxar-color--{success|warning|error|info|muted|dimmed|primary}`.
 - **Thresholds come from `config.dataLoading.monitor.thresholds`** —
   `advisor.ts` never hard-codes magic numbers; tuning happens in the
   unified config.
+- **LOD-progress is polled, not pushed.** The orchestrator refreshes a
+  `path → LODProgressState` snapshot from the injected
+  `LODProgressProvider` each tick (additive `loaded/total/refining`,
+  substitutive `activeLevel/levelCount`), then patches the tree's LOD
+  chips (`data-lod-path`) and header summary in place — no structural
+  rebuild. Dataset totals for substitutive `kind=lod` groups count the
+  finest level only (alternatives, not cumulative); the K level loaders
+  collapse to one logical layer in `getGlobalStats`.
 - **Timing panel expand/collapse state is module-level** on purpose so
   it survives full DOM repaints triggered by tab switches.
 - **All user-supplied strings flow through `utils/escape-html`** before

@@ -75,10 +75,7 @@ export {
   type ToleranceOptions,
 } from './spatial-query/tolerance-computer';
 
-export {
-  fetchChunkBoundsArray,
-  type ChunkBoundsArray,
-} from './chunk-bounds-loader';
+export { fetchChunkBoundsArray, type ChunkBoundsArray } from './chunk-bounds-loader';
 
 // Transferable accumulator (zero-allocation + worker offload)
 export {
@@ -109,27 +106,17 @@ export {
 } from './color-loader';
 
 // Cross-cutting utilities
-export {
-  recordLoadEvent,
-  computeLoadLatency,
-  type LoaderMetricsCounters,
-} from './loader-metrics';
+export { recordLoadEvent, computeLoadLatency, type LoaderMetricsCounters } from './loader-metrics';
 
 export { LoaderEventEmitter } from './monitor-events';
 
 export { OnceInit } from './once-init';
 
-export {
-  warnExtendToAllNoDimensions,
-  announceExtendToAllOnce,
-} from './extend-to-all-preflight';
+export { warnExtendToAllNoDimensions, announceExtendToAllOnce } from './extend-to-all-preflight';
 
 // Picking
 export { LabelLoader } from './picking/label-loader';
 export { ImageLabelLoader } from './picking/image-label-loader';
 
 // Overlays
-export {
-  loadOverlayConfigs,
-  type OverlayConfig,
-} from './overlays/overlay-loader';
+export { loadOverlayConfigs, type OverlayConfig } from './overlays/overlay-loader';

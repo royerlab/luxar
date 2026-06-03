@@ -101,9 +101,7 @@ describe('RangeSlider — construction', () => {
   // = 'Infinity'` and then `.min = 'Infinity'` would leave the input
   // in an inconsistent state.
   it('survives Infinity bounds without throwing and yields finite valueAsNumber reads', () => {
-    expect(() =>
-      makeSlider({ min: 0, max: Infinity, valueLow: 0, valueHigh: 1 })
-    ).not.toThrow();
+    expect(() => makeSlider({ min: 0, max: Infinity, valueLow: 0, valueHigh: 1 })).not.toThrow();
     const { low, high } = getInputs();
     // valueAsNumber must be finite (NaN read would silently propagate).
     expect(Number.isFinite(low.valueAsNumber)).toBe(true);
@@ -111,9 +109,7 @@ describe('RangeSlider — construction', () => {
   });
 
   it('survives -Infinity bounds without throwing and yields finite valueAsNumber reads', () => {
-    expect(() =>
-      makeSlider({ min: -Infinity, max: 1, valueLow: 0, valueHigh: 0.5 })
-    ).not.toThrow();
+    expect(() => makeSlider({ min: -Infinity, max: 1, valueLow: 0, valueHigh: 0.5 })).not.toThrow();
     const { low, high } = getInputs();
     expect(Number.isFinite(low.valueAsNumber)).toBe(true);
     expect(Number.isFinite(high.valueAsNumber)).toBe(true);

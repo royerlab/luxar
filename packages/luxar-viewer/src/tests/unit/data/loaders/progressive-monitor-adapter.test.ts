@@ -127,10 +127,7 @@ describe('ProgressiveMonitorAdapter', () => {
   it('getMetrics aggregates inner metrics under the parent path', () => {
     const a = makeInnerLoader('/p/additive_0', { queries: 2, pointsLoaded: 100 });
     const b = makeInnerLoader('/p/additive_1', { queries: 3, pointsLoaded: 50 });
-    const adapter = new ProgressiveMonitorAdapter(
-      () => [a, b] as unknown as LoaderMonitor[],
-      '/p'
-    );
+    const adapter = new ProgressiveMonitorAdapter(() => [a, b] as unknown as LoaderMonitor[], '/p');
     const m = adapter.getMetrics();
     expect(m.path).toBe('/p');
     expect(m.queries).toBe(5);
@@ -145,10 +142,7 @@ describe('ProgressiveMonitorAdapter', () => {
       { id: 'y', path: '/p/additive_1' } as QueryInfo,
       { id: 'z', path: '/p/additive_1' } as QueryInfo,
     ]);
-    const adapter = new ProgressiveMonitorAdapter(
-      () => [a, b] as unknown as LoaderMonitor[],
-      '/p'
-    );
+    const adapter = new ProgressiveMonitorAdapter(() => [a, b] as unknown as LoaderMonitor[], '/p');
     const queries = adapter.getActiveQueries();
     expect(queries).toHaveLength(3);
     expect(queries.every((q) => q.path === '/p')).toBe(true);

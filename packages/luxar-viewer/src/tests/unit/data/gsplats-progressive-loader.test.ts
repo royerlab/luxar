@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
+import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -212,8 +213,8 @@ describe('GSplatsProgressiveLoader', () => {
   });
 
   describe('cache-hit timing short-circuit', () => {
-    it('stops loading further LODs when one takes > 15ms', async () => {
-      // Make LOD B slow (~25ms) so LOD C is deferred.
+    it(`stops loading further LODs when one takes > ${CACHE_HIT_THRESHOLD_MS}ms`, async () => {
+      // Make LOD B slow (over the threshold) so LOD C is deferred.
       let now = 0;
       const performanceNowSpy = vi.spyOn(performance, 'now');
       // sequence: t0_lodA, t1_lodA, t0_lodB, t1_lodB, t0_lodC, t1_lodC
@@ -222,9 +223,9 @@ describe('GSplatsProgressiveLoader', () => {
         return now;
       });
 
-      // LOD B's updateView "takes" 25ms — toggle the now stride.
+      // LOD B's updateView "takes" longer than the threshold — bump the stride.
       lodB.updateView.mockImplementation(async () => {
-        now += 25; // simulated work
+        now += CACHE_HIT_THRESHOLD_MS + 10; // simulated work, over threshold
         return makeLodData(50);
       });
 
@@ -236,6 +237,29 @@ describe('GSplatsProgressiveLoader', () => {
       expect(lodC.updateView).not.toHaveBeenCalled();
 
       performanceNowSpy.mockRestore();
+    });
+
+    it('stops loading further LODs after a cache miss (fast but not resident)', async () => {
+      // LOD B is fast (no timing break) but reports a cache miss → the loop
+      // must still stop so the frame renders and refinement continues.
+      lodB.updateViewWithResidency.mockImplementation(async () => ({
+        data: makeLodData(50, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
+
+      await loader.loadGSplats(baseViewState);
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('keeps loading while levels are resident', async () => {
+      // All resident + fast → the loop loads every level in one call.
+      await loader.loadGSplats(baseViewState);
+      expect(lodA.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalled();
+      expect(lodC.updateViewWithResidency).toHaveBeenCalled();
     });
   });
 

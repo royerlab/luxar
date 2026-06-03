@@ -68,9 +68,7 @@ export class SceneLoaderManager {
    * camera). Subsequent ``createLoader`` calls forward the factory
    * to each ``SceneLoader`` instance.
    */
-  setLODGroupRegistryFactory(
-    factory: SceneLoaderLODGroupRegistryFactory | null
-  ): void {
+  setLODGroupRegistryFactory(factory: SceneLoaderLODGroupRegistryFactory | null): void {
     this.lodGroupRegistryFactory = factory;
   }
 

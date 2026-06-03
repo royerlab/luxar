@@ -14,10 +14,7 @@ import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { selectLeastBusy } from '../../../../../workers/worker-pool/selection/least-busy';
 import { nextRoundRobin } from '../../../../../workers/worker-pool/selection/round-robin';
-import {
-  computeStats,
-  computeQueueDepth,
-} from '../../../../../workers/worker-pool/stats';
+import { computeStats, computeQueueDepth } from '../../../../../workers/worker-pool/stats';
 import type { WorkerInstance } from '../../../../../workers/worker-pool/types';
 
 // Fake WorkerInstance: helpers only read `.activeQueries`; the api /
@@ -156,9 +153,11 @@ describe('nextRoundRobin (G11, H3)', () => {
   it('[property] nextIndex = (cursor + 1) mod length for valid in-range cursor', () => {
     fc.assert(
       fc.property(
-        fc.integer({ min: 1, max: 32 }).chain((poolSize) =>
-          fc.tuple(fc.constant(poolSize), fc.integer({ min: 0, max: poolSize - 1 }))
-        ),
+        fc
+          .integer({ min: 1, max: 32 })
+          .chain((poolSize) =>
+            fc.tuple(fc.constant(poolSize), fc.integer({ min: 0, max: poolSize - 1 }))
+          ),
         ([poolSize, cursor]) => {
           const workers = Array.from({ length: poolSize }, (_, i) => makeInstance(0, `w${i}`));
           const result = nextRoundRobin(workers, cursor);

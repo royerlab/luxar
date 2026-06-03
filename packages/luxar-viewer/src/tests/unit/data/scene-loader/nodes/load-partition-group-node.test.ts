@@ -71,13 +71,11 @@ function makeStubLoc() {
 /** Make the mock attach a child mesh to ``parentThree`` so the recursion
  *  produces a complete tree shape. */
 function attachStubChildren() {
-  loadSceneNodesMock.mockImplementation(
-    async (child: SceneNode, parentThree: THREE.Object3D) => {
-      const obj = new THREE.Group();
-      obj.name = child.path;
-      parentThree.add(obj);
-    }
-  );
+  loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+    const obj = new THREE.Group();
+    obj.name = child.path;
+    parentThree.add(obj);
+  });
 }
 
 describe('loadPartitionGroupNode', () => {
@@ -90,7 +88,13 @@ describe('loadPartitionGroupNode', () => {
     ]);
 
     const parent = new THREE.Group();
-    const wrapper = await loadPartitionGroupNode(node, parent, makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      parent,
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
 
     expect(wrapper).toBeInstanceOf(THREE.Group);
     expect(wrapper.name).toBe('/partition');
@@ -107,7 +111,13 @@ describe('loadPartitionGroupNode', () => {
       makePartNode('/partition/part_2'),
     ]);
 
-    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
 
     expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
     // Each child mesh attached to the wrapper.
@@ -127,7 +137,13 @@ describe('loadPartitionGroupNode', () => {
       makePartNode('/partition/part_1'),
     ]);
 
-    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
 
     for (const child of wrapper.children) {
       expect(child.visible).toBe(true);
@@ -138,24 +154,24 @@ describe('loadPartitionGroupNode', () => {
     attachStubChildren();
     const ctx = makeCtx();
     const transform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1];
-    const node = makePartitionGroupNode(
-      [makePartNode('/partition/part_0')],
-      { transform }
-    );
+    const node = makePartitionGroupNode([makePartNode('/partition/part_0')], { transform });
 
     await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
-    expect(ctx.nodeFactory.applyTransform).toHaveBeenCalledWith(
-      expect.any(THREE.Group),
-      transform
-    );
+    expect(ctx.nodeFactory.applyTransform).toHaveBeenCalledWith(expect.any(THREE.Group), transform);
   });
 
   it('handles an empty-children Partition group without crashing', async () => {
     const ctx = makeCtx();
     const node = makePartitionGroupNode([]);
 
-    const wrapper = await loadPartitionGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
 
     expect(wrapper.children).toHaveLength(0);
     expect(loadSceneNodesMock).not.toHaveBeenCalled();

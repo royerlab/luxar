@@ -138,9 +138,7 @@ describe('Theme definitions [themes.md/G1-G4][P1]', () => {
 
     it('spacing scale has the 8-px grid keys (0,1,2,3,4,5,6,8,10,12,16,20)', () => {
       const expected = ['0', '1', '2', '3', '4', '5', '6', '8', '10', '12', '16', '20'];
-      const actual = Object.keys(theme.spacing).sort(
-        (a, b) => Number(a) - Number(b)
-      );
+      const actual = Object.keys(theme.spacing).sort((a, b) => Number(a) - Number(b));
       expect(actual).toEqual(expected);
       const spacingRecord = theme.spacing as unknown as Record<string, string>;
       for (const k of expected) {

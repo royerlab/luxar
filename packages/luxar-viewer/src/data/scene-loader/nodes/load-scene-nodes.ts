@@ -61,8 +61,7 @@ export async function loadSceneNodes(
     // simultaneously and THREE's per-mesh frustum culling does the
     // per-part culling. Same error-capture wrapping as above.
     await loadLeafNode(
-      () =>
-        loadPartitionGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
+      () => loadPartitionGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
       node.path
     );
   } else if (node.children) {

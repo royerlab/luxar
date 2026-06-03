@@ -250,10 +250,7 @@ describe('InputContextManager', () => {
       expect(ctrlHandler).toHaveBeenCalledTimes(1);
 
       expect(
-        manager.handleKeyEvent(
-          new KeyboardEvent('keydown', { key: 'Alt', altKey: true }),
-          'down'
-        )
+        manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Alt', altKey: true }), 'down')
       ).toBe(true);
       expect(altHandler).toHaveBeenCalledTimes(1);
     });
@@ -938,9 +935,8 @@ describe('InputContextManager', () => {
       it(`agrees with focus-utils for ${c.name}`, async () => {
         // Import focus-utils canonical helper synchronously via dynamic
         // import to avoid a hoisting hazard with the mocked top-level.
-        const { isTypingInInput } = await import(
-          '../../../../input/input-handler/commands/focus-utils'
-        );
+        const { isTypingInInput } =
+          await import('../../../../input/input-handler/commands/focus-utils');
 
         const el = c.build();
         document.body.appendChild(el);
@@ -1097,9 +1093,11 @@ describe('InputContextManager', () => {
       // directly via cast rather than via a dispatch test: a regression
       // that re-added 'Shift' to NAVIGATION's blockedKeys list would
       // surface here even if dispatch behaviour shifted independently.
-      const configs = (manager as unknown as {
-        contextConfigs: Map<InputContext, { blockedKeys?: string[] }>;
-      }).contextConfigs;
+      const configs = (
+        manager as unknown as {
+          contextConfigs: Map<InputContext, { blockedKeys?: string[] }>;
+        }
+      ).contextConfigs;
       const navConfig = configs.get(InputContext.NAVIGATION);
       const blocked = navConfig?.blockedKeys ?? [];
       expect(blocked).not.toContain('Shift');

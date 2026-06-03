@@ -742,18 +742,22 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (da
 
   test('idempotent at-or-below: ensureCapacity(<= currentCapacity) returns false and does not change capacity', () => {
     fc.assert(
-      fc.property(fc.integer({ min: 100, max: 10000 }), fc.integer({ min: 1, max: 100 }), (initialCap, request) => {
-        const acc = new LoadedPointsDataAccumulator(initialCap, 3, 100000);
-        try {
-          // request <= initialCap (we'll force it within bounds).
-          const safeRequest = Math.min(request, initialCap);
-          const grew = acc.ensureCapacity(safeRequest);
-          expect(grew).toBe(false);
-          expect(acc.getStats().capacity).toBe(initialCap);
-        } finally {
-          acc.dispose();
+      fc.property(
+        fc.integer({ min: 100, max: 10000 }),
+        fc.integer({ min: 1, max: 100 }),
+        (initialCap, request) => {
+          const acc = new LoadedPointsDataAccumulator(initialCap, 3, 100000);
+          try {
+            // request <= initialCap (we'll force it within bounds).
+            const safeRequest = Math.min(request, initialCap);
+            const grew = acc.ensureCapacity(safeRequest);
+            expect(grew).toBe(false);
+            expect(acc.getStats().capacity).toBe(initialCap);
+          } finally {
+            acc.dispose();
+          }
         }
-      }),
+      ),
       { numRuns: 15 }
     );
   });

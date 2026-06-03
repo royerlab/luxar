@@ -6,7 +6,11 @@ import {
   projectGSplats,
   createEmptyGSplatsData,
 } from '../../../../data/gsplats/projection';
-import type { LoadedGSplatsData, GSplatsViewState, GSplatsMetadata } from '../../../../types/gsplats';
+import type {
+  LoadedGSplatsData,
+  GSplatsViewState,
+  GSplatsMetadata,
+} from '../../../../types/gsplats';
 
 describe('projectGSplats3DOnly', () => {
   it('should copy 3D data directly', () => {

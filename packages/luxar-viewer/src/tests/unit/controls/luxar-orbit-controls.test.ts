@@ -563,10 +563,7 @@ describe('LuxarOrbitControls', () => {
       controls.applyOrbitRotation(0.3); // no axis → screen-up
 
       // Compute what world-up rotation would have produced for comparison.
-      const worldUpRot = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        0.3
-      );
+      const worldUpRot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.3);
       const worldUpResult = beforeQuat.clone().premultiply(worldUpRot).normalize();
 
       // The default-axis path must NOT equal the world-up path on a tilted

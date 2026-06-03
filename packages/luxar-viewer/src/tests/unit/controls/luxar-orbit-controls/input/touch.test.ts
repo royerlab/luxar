@@ -10,7 +10,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { handleTouchStart, handleTouchMove } from '../../../../../controls/luxar-orbit-controls/input/touch';
+import {
+  handleTouchStart,
+  handleTouchMove,
+} from '../../../../../controls/luxar-orbit-controls/input/touch';
 import type {
   OrbitInputCtx,
   ControlAction,

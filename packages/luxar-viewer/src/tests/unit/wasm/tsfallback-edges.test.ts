@@ -126,13 +126,20 @@ describe('compute_gsplats_attenuation — numHidden=ndim', () => {
     const ndim = 3;
     // 2 splats, 3D, with identity Cholesky (packed lower-tri, 6 entries each).
     const positions = new Float32Array([
-      0, 0, 0, // splat 0 at slice
-      10, 10, 10, // splat 1 far
+      0,
+      0,
+      0, // splat 0 at slice
+      10,
+      10,
+      10, // splat 1 far
     ]);
     const choleskyEntries = [
       1, // L00
-      0, 1, // L10 L11
-      0, 0, 1, // L20 L21 L22
+      0,
+      1, // L10 L11
+      0,
+      0,
+      1, // L20 L21 L22
     ];
     const cholesky = new Float32Array([...choleskyEntries, ...choleskyEntries]);
     const amplitudes = new Float32Array([1, 1]);

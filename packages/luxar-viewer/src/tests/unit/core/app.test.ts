@@ -319,7 +319,8 @@ describe('LuxarApp', () => {
 
       // RecordingPanel receives panel-state callbacks and (when present)
       // the adaptive-DPR manager.
-      const RecordingPanelMock = (await import('../../../ui/recording-panel')).RecordingPanel as unknown as ReturnType<typeof vi.fn>;
+      const RecordingPanelMock = (await import('../../../ui/recording-panel'))
+        .RecordingPanel as unknown as ReturnType<typeof vi.fn>;
       const lastRecordingPanelInstance = RecordingPanelMock.mock.results.at(-1)?.value;
       if (lastRecordingPanelInstance?.setPanelStateCallbacks) {
         expect(lastRecordingPanelInstance.setPanelStateCallbacks).toHaveBeenCalled();
@@ -1022,9 +1023,7 @@ describe('LuxarApp', () => {
     // message; pin that message so a regression that dropped the guard
     // would re-introduce the cryptic "cannot read property X of undefined".
     it('captureSnapshot() throws a clear message before init()', () => {
-      expect(() => app.captureSnapshot()).toThrow(
-        /captureSnapshot called before init/i
-      );
+      expect(() => app.captureSnapshot()).toThrow(/captureSnapshot called before init/i);
     });
 
     it('restoreSnapshot() throws a clear message before init()', () => {

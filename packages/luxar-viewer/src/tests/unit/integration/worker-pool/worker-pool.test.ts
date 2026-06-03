@@ -35,17 +35,13 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
   // pool, all calls return the same instance.
   it('should distribute getWorker() calls within the configured pool size', async () => {
     const pool = getWorkerPool();
-    const calls = await Promise.all(
-      Array.from({ length: 6 }, () => pool.getWorker())
-    );
+    const calls = await Promise.all(Array.from({ length: 6 }, () => pool.getWorker()));
     const { workerCount } = pool.getStats();
 
     expect(workerCount).toBeGreaterThanOrEqual(1);
     for (const w of calls) {
       expect(w).toBeDefined();
-      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe(
-        'function'
-      );
+      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe('function');
     }
     const distinct = new Set(calls);
     expect(distinct.size).toBeGreaterThanOrEqual(1);
@@ -67,9 +63,7 @@ describe.skipIf(!hasWorkerAPI)('WorkerPool', () => {
 
     for (const w of workers) {
       expect(w).toBeDefined();
-      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe(
-        'function'
-      );
+      expect(typeof (w as { querySpatialIndex?: unknown }).querySpatialIndex).toBe('function');
     }
     const distinct = new Set(workers);
     expect(distinct.size).toBeGreaterThanOrEqual(1);

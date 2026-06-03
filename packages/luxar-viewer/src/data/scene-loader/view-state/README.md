@@ -2,16 +2,17 @@
 
 Everything the SceneLoader does with a view-state value before it
 reaches a loader: deriving the per-node query (with `extend_to_all`
-+ partial-extend + inverse-`nd_transform` folding), predicting the
-next frame for prefetch warming, serializing concurrent
-`updateView` calls through a single-slot queue, and composing the
-hierarchical render attributes the geometry loaders read off each
-node's `attrs`.
+
+- partial-extend + inverse-`nd_transform` folding), predicting the
+  next frame for prefetch warming, serializing concurrent
+  `updateView` calls through a single-slot queue, and composing the
+  hierarchical render attributes the geometry loaders read off each
+  node's `attrs`.
 
 ## Files
 
 | File                        | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `derive-node-view-state.ts` | `deriveNodeViewState(path, attrs, baseViewState, sceneGraph, opts)` — single source of truth for per-node query derivation. Returns `{ skip: 'extend_to_all' }` when the node's `extend_to_all` dims fully cover all non-displayed dims, otherwise the base view state folded with the partial-extend tolerance override (Points + GSplats) and the inverse `nd_transform` for the node's path. Same helper backs initial load, update, and retry — query regions stay aligned. |
 | `extend-tolerance.ts`       | Pure helpers feeding `derive-node-view-state.ts`: the `EXTEND_TO_ALL_TOLERANCE = 1e10` sentinel, `validateExtendDims` (actionable error listing valid dim names), `getOrComputeExtendedTolerance` (cached extended-tolerance arrays keyed by sorted dim-name set), and the `isSceneDimensions` type guard.                                                                                                                                                                      |
 | `effective-attrs.ts`        | `applyEffectiveAttrs(sceneGraph, node)` — returns a node-attrs record with `opacity` / `gamma` / `intensity` / `offset` / `blending_mode` replaced by the values from `attrs-composer.getEffectiveAttrs` (root → leaf composition). Falls back to the raw attrs when no scene graph is available.                                                                                                                                                                               |

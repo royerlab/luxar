@@ -12,7 +12,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { runUpdateStep, type OrbitUpdateCtx } from '../../../../controls/luxar-orbit-controls/update';
+import {
+  runUpdateStep,
+  type OrbitUpdateCtx,
+} from '../../../../controls/luxar-orbit-controls/update';
 
 function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
   ctx: OrbitUpdateCtx;

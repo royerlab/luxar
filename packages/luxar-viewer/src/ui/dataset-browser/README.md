@@ -7,8 +7,8 @@ don't need a DOM or a navigator to test.
 
 ## Contents
 
-| File           | Purpose                                              |
-| -------------- | ---------------------------------------------------- |
+| File           | Purpose                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
 | `url-utils.ts` | `extractBaseUrl(url, origin)` / `extractPath(url)` — pure URL parsing for the browser's initial state |
 
 ## Public surface

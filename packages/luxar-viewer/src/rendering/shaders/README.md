@@ -19,14 +19,14 @@ against the TSL `NodeMaterial` counterparts runs on every PR.
 
 `index.ts` re-exports six constants:
 
-| Symbol                    | Source                                  |
-| ------------------------- | --------------------------------------- |
-| `POINT_VERTEX_SHADER`     | `../materials/point/shader-glsl.ts`     |
-| `POINT_FRAGMENT_SHADER`   | `../materials/point/shader-glsl.ts`     |
-| `LINE_VERTEX_SHADER`      | `../materials/line/shader-glsl.ts`      |
-| `LINE_FRAGMENT_SHADER`    | `../materials/line/shader-glsl.ts`      |
-| `GSPLAT_VERTEX_SHADER`    | `../materials/gsplat/shader-glsl.ts`    |
-| `GSPLAT_FRAGMENT_SHADER`  | `../materials/gsplat/shader-glsl.ts`    |
+| Symbol                   | Source                               |
+| ------------------------ | ------------------------------------ |
+| `POINT_VERTEX_SHADER`    | `../materials/point/shader-glsl.ts`  |
+| `POINT_FRAGMENT_SHADER`  | `../materials/point/shader-glsl.ts`  |
+| `LINE_VERTEX_SHADER`     | `../materials/line/shader-glsl.ts`   |
+| `LINE_FRAGMENT_SHADER`   | `../materials/line/shader-glsl.ts`   |
+| `GSPLAT_VERTEX_SHADER`   | `../materials/gsplat/shader-glsl.ts` |
+| `GSPLAT_FRAGMENT_SHADER` | `../materials/gsplat/shader-glsl.ts` |
 
 These are plain GLSL3 string constants — the same strings that
 `PointMaterial`, `LineMaterial`, and `GSplatMaterial` feed into

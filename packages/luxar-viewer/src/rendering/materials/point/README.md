@@ -108,6 +108,10 @@ The fragment shader runs in this order:
    moves the division out of the per-fragment path. A second discard culls
    sub-1e-4 fragments to skip cost on offset-zeroed pixels. GOG is **per-node**;
    global EOG (exposure) lives in the mega-shader post-processing pass.
+   The `LUXAR_GAMMA_ONE` define (set by `updateGamma` when `gamma == 1.0 ±
+   1e-4`, the default) skips this `pow()` — `pow(x, 1) == x` — and also the
+   pre-LUT value `pow()` in colormap mode. Mirrors the Line/GSplat fast path
+   (`isGammaOne` in `../_shared/uniform-helpers`).
 5. **Alpha** — `alpha = falloff * opacity`.
 6. **Max-mode RGB premultiplication** —
    `#ifdef LUXAR_MAX_RGB_CONTRIBUTION` returns `vec4(finalColor * alpha, alpha)`;

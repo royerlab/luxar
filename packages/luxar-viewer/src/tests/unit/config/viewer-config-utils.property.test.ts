@@ -42,7 +42,9 @@ describe('RENDERING_SETTINGS_MAP — bijection invariants', () => {
   });
 
   test('forward and reverse maps have equal size (no duplicate values or keys)', () => {
-    expect(Object.keys(RENDERING_SETTINGS_MAP).length).toBe(Object.keys(REVERSE_SETTINGS_MAP).length);
+    expect(Object.keys(RENDERING_SETTINGS_MAP).length).toBe(
+      Object.keys(REVERSE_SETTINGS_MAP).length
+    );
   });
 });
 
@@ -54,7 +56,12 @@ describe('renderingSettingsToZarr ↔ extractRenderingOverrides — roundtrip in
   const settingsArb = fc.dictionary(
     fc.constantFrom(...camelKeys),
     fc.oneof(
-      fc.float({ min: Math.fround(-1000), max: Math.fround(1000), noNaN: true, noDefaultInfinity: true }),
+      fc.float({
+        min: Math.fround(-1000),
+        max: Math.fround(1000),
+        noNaN: true,
+        noDefaultInfinity: true,
+      }),
       fc.boolean(),
       fc.constantFrom('low', 'medium', 'high', 'sRGB', 'webgl2')
     ),

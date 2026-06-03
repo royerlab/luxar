@@ -101,8 +101,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         );
       }
     },
-    anyHasMoreLODs: () =>
-      [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true),
+    anyHasMoreLODs: () => [...ctx.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true),
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
