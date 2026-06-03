@@ -184,6 +184,72 @@ describe('DatasetBrowser', () => {
       expect(container.querySelector('#manual-load')).not.toBeNull();
     });
 
+    it('filters entries live via the search bar (case-insensitive substring)', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'alpha.zarr', path: 'alpha.zarr', type: 'zarr' },
+        { name: 'beta.zarr', path: 'beta.zarr', type: 'zarr' },
+        { name: 'gamma_dir', path: 'gamma_dir', type: 'directory' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries, strategy: 'html' }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+
+      const search = container.querySelector('#luxar-dataset-browser-search') as HTMLInputElement;
+      expect(search).not.toBeNull();
+
+      // Search bar is visible when there is a listing to filter.
+      const searchBar = container.querySelector('#luxar-dataset-browser-search-bar') as HTMLElement;
+      expect(searchBar.style.display).not.toBe('none');
+
+      // Typing narrows the list (case-insensitive).
+      search.value = 'BETA';
+      search.dispatchEvent(new Event('input'));
+      const filtered = container.querySelectorAll('.luxar-dataset-browser__file-name');
+      expect(Array.from(filtered).map((el) => el.textContent)).toEqual(['beta.zarr']);
+
+      // Status bar reflects "M of N" while filtering.
+      expect(container.querySelector('#luxar-dataset-browser-status')?.textContent).toContain(
+        '1 of 3 items'
+      );
+
+      // No matches → placeholder, full count restored on clear.
+      search.value = 'zzz';
+      search.dispatchEvent(new Event('input'));
+      expect(container.querySelector('.luxar-dataset-browser__empty')?.textContent).toContain(
+        'No matches'
+      );
+
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+      expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+    });
+
+    it('hides the search bar when there are no entries to filter', async () => {
+      // Empty directory.
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries: [] }));
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+      const searchBar = container.querySelector('#luxar-dataset-browser-search-bar') as HTMLElement;
+      expect(searchBar.style.display).toBe('none');
+    });
+
+    it('hides the search bar in the manual-entry fallback', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ strategy: 'manual', entries: [] })
+      );
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__manual-entry')).not.toBeNull();
+      });
+      const searchBar = container.querySelector('#luxar-dataset-browser-search-bar') as HTMLElement;
+      expect(searchBar.style.display).toBe('none');
+    });
+
     it('updates breadcrumb with path segments', async () => {
       navigateMock.mockResolvedValueOnce(
         defaultNavigateResult({ currentPath: 'data/sub', entries: [] })
