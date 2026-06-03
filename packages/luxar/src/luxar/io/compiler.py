@@ -57,7 +57,8 @@ from ._compiler.datasets.scalars import (
     write_scalars,
     write_sharpness,
 )
-from ._compiler.labels.image_labels import normalize_image_label
+from ._compiler.labels.image_labels import write_image_labels_csr
+from ._compiler.labels.text_labels import write_labels_csr
 
 # Ordering functions will be imported locally where needed to avoid circular imports
 
@@ -2406,6 +2407,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group, scalars, spatial_index_data, n_elements, self._make_dataset_ctx()
         )
 
+    # ------------------------------------------------------------------
+    # Labels (per-element string + image blobs, CSR-encoded) —
+    # bodies live in _compiler/labels/
+    # ------------------------------------------------------------------
+
     def _write_labels_csr(
         self,
         group: zarr.Group,
@@ -2413,76 +2419,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_elements: int,
         sort_order: Optional[np.ndarray] = None,
     ) -> None:
-        """Write per-element string labels using CSR-style encoding.
-
-        Stores two zarr arrays:
-        - ``label_offsets``: uint64 of shape (N+1,) — byte offset of each label
-        - ``label_bytes``: uint8 — concatenated UTF-8 encoded label strings
-
-        Label ``i`` is decoded as ``label_bytes[offsets[i]:offsets[i+1]]``.
-        Empty strings (null labels) have ``offsets[i] == offsets[i+1]``.
-
-        Args:
-            group: Zarr group to write to
-            labels: Sequence of strings, one per element. Length must equal n_elements.
-            n_elements: Expected element count (for validation)
-            sort_order: Optional index array to reorder labels (e.g. from spatial ordering).
-                For points: ``ordering_data["sort_order"]``
-                For lines: ``ordering_data["vertex_sort_indices"]``
-                For gsplats: ``ordering_data["sort_order"]``
-        """
-        if len(labels) != n_elements:
-            raise ValueError(
-                f"Labels length ({len(labels)}) must match element count ({n_elements})"
-            )
-
-        # Apply spatial reordering if present
-        ordered_labels: "Sequence[str]" = labels
-        if sort_order is not None:
-            ordered_labels = [labels[i] for i in sort_order]
-
-        # Build CSR arrays
-        offsets = np.zeros(n_elements + 1, dtype=np.uint64)
-        encoded_parts: list[bytes] = []
-        for i, label in enumerate(ordered_labels):
-            encoded = label.encode("utf-8") if label else b""
-            encoded_parts.append(encoded)
-            offsets[i + 1] = offsets[i] + len(encoded)
-
-        total_bytes = int(offsets[-1])
-        label_bytes = np.zeros(max(total_bytes, 1), dtype=np.uint8)
-        pos = 0
-        for encoded in encoded_parts:
-            if encoded:
-                label_bytes[pos : pos + len(encoded)] = np.frombuffer(
-                    encoded, dtype=np.uint8
-                )
-                pos += len(encoded)
-
-        # Write to zarr
-        group.create_dataset(
-            "label_offsets",
-            data=offsets,
-            chunks=(min(n_elements + 1, 65536),),
-            compressor=self.compressor,
-            overwrite=True,
-        )
-        group.create_dataset(
-            "label_bytes",
-            data=label_bytes,
-            chunks=(min(total_bytes, 65536) if total_bytes > 0 else 1,),
-            compressor=self.compressor,
-            overwrite=True,
-        )
-        group.attrs["has_labels"] = True
-        n_nonempty = sum(1 for lbl in ordered_labels if lbl)
-        aprint(
-            f"  ✓ Wrote labels ({n_nonempty}/{n_elements} non-empty, {total_bytes:,} bytes)"
-        )
-
-    # ------------------------------------------------------------------
-    # Image labels (per-element image blobs, CSR-encoded)
-    # ------------------------------------------------------------------
+        write_labels_csr(group, labels, n_elements, self.compressor, sort_order)
 
     def _write_image_labels_csr(
         self,
@@ -2491,87 +2428,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         n_elements: int,
         sort_order: Optional[np.ndarray] = None,
     ) -> None:
-        """Write per-element image labels using CSR-style encoding.
-
-        Stores two zarr arrays:
-        - ``image_label_offsets``: uint64 of shape (N+1,) — byte offset of each image
-        - ``image_label_bytes``: uint8 — concatenated encoded image blobs
-
-        Image ``i`` is decoded as ``image_label_bytes[offsets[i]:offsets[i+1]]``.
-        Empty entries (no image) have ``offsets[i] == offsets[i+1]``.
-
-        The ``image_label_bytes`` array uses **no compression** (``compressor=None``)
-        because the image blobs are already compressed (JPEG/WebP/PNG). The offsets
-        array uses the scene's default compressor since it is small.
-
-        Args:
-            group: Zarr group to write to.
-            image_labels: Per-element images. Accepted types:
-                - ``List[bytes]``: pre-encoded blobs
-                - ``List[PIL.Image.Image]``: auto-encoded to WebP
-                - ``List[numpy.ndarray]``: (H,W,C) uint8, auto-encoded to WebP
-                - ``List[Path]`` or ``List[str]``: file paths, read as bytes
-                - ``Dict[int, Any]``: sparse — missing indices get empty blobs
-            n_elements: Expected element count (for validation).
-            sort_order: Optional index array to reorder (from spatial ordering).
-        """
-        # Normalize dict (sparse) to list
-        if isinstance(image_labels, dict):
-            normalized: List[bytes] = [b""] * n_elements
-            for idx, item in image_labels.items():
-                if idx < 0 or idx >= n_elements:
-                    raise ValueError(
-                        f"Image label index {idx} out of range [0, {n_elements})"
-                    )
-                normalized[idx] = normalize_image_label(item)
-            blob_list = normalized
-        else:
-            if len(image_labels) != n_elements:
-                raise ValueError(
-                    f"Image labels length ({len(image_labels)}) must match "
-                    f"element count ({n_elements})"
-                )
-            blob_list = [normalize_image_label(item) for item in image_labels]
-
-        # Apply spatial reordering if present
-        if sort_order is not None:
-            blob_list = [blob_list[i] for i in sort_order]
-
-        # Build CSR arrays
-        offsets = np.zeros(n_elements + 1, dtype=np.uint64)
-        for i, blob in enumerate(blob_list):
-            offsets[i + 1] = offsets[i] + len(blob)
-
-        total_bytes = int(offsets[-1])
-        image_bytes = np.zeros(max(total_bytes, 1), dtype=np.uint8)
-        pos = 0
-        for blob in blob_list:
-            if blob:
-                image_bytes[pos : pos + len(blob)] = np.frombuffer(blob, dtype=np.uint8)
-                pos += len(blob)
-
-        # Write offsets (small, compressible)
-        group.create_dataset(
-            "image_label_offsets",
-            data=offsets,
-            chunks=(min(n_elements + 1, 65536),),
-            compressor=self.compressor,
-            overwrite=True,
-        )
-        # Write image bytes — NO compression (already compressed blobs), 1MB chunks
-        group.create_dataset(
-            "image_label_bytes",
-            data=image_bytes,
-            chunks=(min(total_bytes, 1_048_576) if total_bytes > 0 else 1,),
-            compressor=None,
-            overwrite=True,
-        )
-        group.attrs["has_image_labels"] = True
-        n_nonempty = sum(1 for b in blob_list if b)
-        avg_size = total_bytes / n_nonempty if n_nonempty > 0 else 0
-        aprint(
-            f"  ✓ Wrote image labels ({n_nonempty}/{n_elements} non-empty, "
-            f"{total_bytes:,} bytes, avg {avg_size:.0f} bytes/image)"
+        write_image_labels_csr(
+            group, image_labels, n_elements, self.compressor, sort_order
         )
 
     def _write_colormap_lut_if_needed(
