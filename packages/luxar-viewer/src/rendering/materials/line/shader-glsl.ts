@@ -48,9 +48,16 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Instanced attributes (per segment)
     in vec3 aStartPos;
     in vec3 aEndPos;
+    // Per-vertex colours are only read in the non-colormap branch. Under
+    // USE_COLORMAP the colour comes from the LUT, so these attributes are
+    // omitted entirely — a line already carries many instanced attributes,
+    // and declaring two unused vec3 attributes alongside the scalar pair
+    // can push the active-attribute count past GL_MAX_VERTEX_ATTRIBS (16)
+    // once THREE injects position/normal/uv.
+    #ifndef USE_COLORMAP
     in vec3 aStartColor;
     in vec3 aEndColor;
-    #ifdef USE_COLORMAP
+    #else
     in float aStartScalar;
     in float aEndScalar;
     #endif
@@ -76,8 +83,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
     uniform sampler2D uColormapTex;
-    uniform float uScalarMin;
-    uniform float uScalarScale;
+    uniform float uScalarMin;       // display-range window minimum
+    uniform float uScalarScale;     // 1.0 / (max - min)
+    uniform float uInvGamma;        // gamma applied to the VALUE, pre-LUT
     #endif
 
     // Varyings to fragment shader
@@ -143,10 +151,17 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // === Below here only runs when the segment passed the cheap cull. ===
 
-      // Interpolate attributes along segment
+      // Interpolate attributes along segment.
+      // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
+      // operate on the scalar VALUE before the LUT lookup, not on the
+      // resulting color. The gamma fast path (LUXAR_GAMMA_ONE) skips the
+      // pow() when gamma == 1.0.
       #ifdef USE_COLORMAP
       float s = mix(aStartScalar, aEndScalar, t);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
+      #ifndef LUXAR_GAMMA_ONE
+      st = pow(st, uInvGamma);          // gamma on the value, pre-LUT
+      #endif
       vColor = texture(uColormapTex, vec2(st, 0.5)).rgb;
       #else
       vColor = mix(aStartColor, aEndColor, t);
@@ -344,7 +359,13 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // wrapper knows intensity==1 && offset==0 (the default), the
       // mul/add/clamp chain is identity for the common non-negative
       // vColor range; the wrapper stamps LUXAR_NO_GOG to skip it.
-      #ifdef LUXAR_NO_GOG
+      //
+      // Colormap (LUT) mode takes precedence: gamma + display-range
+      // already shaped the scalar VALUE before the LUT lookup (vertex
+      // shader), so the mapped color passes through untouched here.
+      #ifdef USE_COLORMAP
+      vec3 adjusted = max(vColor, vec3(0.0));
+      #elif defined(LUXAR_NO_GOG)
       vec3 adjusted = vColor;
       #else
       vec3 adjusted = vColor * uIntensity + uOffset;
@@ -358,7 +379,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // identity. The wrapper class stamps LUXAR_GAMMA_ONE on the
       // material defines whenever gamma transitions to/from 1.0, so
       // this skips three per-fragment pow() calls in the common case.
-      #ifdef LUXAR_GAMMA_ONE
+      // Colormap mode also skips the color pow() — gamma is on the value.
+      #if defined(USE_COLORMAP) || defined(LUXAR_GAMMA_ONE)
       vec3 gammaColor = adjusted;
       #else
       vec3 gammaColor = pow(adjusted, vec3(uInvGamma));

@@ -23,3 +23,16 @@
 export function clampGamma(gamma: number | undefined): number {
   return Math.max(0.001, gamma ?? 1.0);
 }
+
+/**
+ * Whether `gamma == 1.0` (with ±1e-4 epsilon for float-equality
+ * safety). When true, the fragment shader can skip its per-fragment
+ * `pow(color, 1.0 / gamma)` calls — `pow(x, 1) == x` — by compiling in
+ * the `LUXAR_GAMMA_ONE` define (GLSL) / `gammaOne` config flag (TSL).
+ *
+ * Shared across all three geometry types (Point / Line / GSplat) ×
+ * both backends so the fast-path threshold is identical everywhere.
+ */
+export function isGammaOne(gamma: number): boolean {
+  return Math.abs(gamma - 1.0) < 1e-4;
+}

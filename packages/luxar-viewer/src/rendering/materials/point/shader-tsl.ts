@@ -54,6 +54,13 @@ import type { BlendingMode } from '../../material-manager';
 export interface PointTSLConfig {
   readonly useColormap?: boolean;
   /**
+   * When `true` (gamma == 1.0), the per-fragment / pre-LUT gamma
+   * `pow()` is skipped — `pow(x, 1) == x`. Mirrors the GLSL3
+   * `LUXAR_GAMMA_ONE` define. The material wrapper sets this from the
+   * presence of that define and toggles it on `updateGamma`.
+   */
+  readonly gammaOne?: boolean;
+  /**
    * When undefined, derived from `blendingMode === 'max'`. Explicit
    * config still wins so callers can decouple shader output from
    * framebuffer blending (rare but supported).
@@ -193,10 +200,15 @@ export function pointWebGPUFactory(
   );
   const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
-  // Per-instance colour from LUT or attribute.
+  // Per-instance colour from LUT or attribute. In colormap mode the
+  // display range (uScalarMin/uScalarScale) and gamma operate on the
+  // scalar VALUE before the LUT lookup, not on the resulting color —
+  // mirrors the GLSL3 USE_COLORMAP path.
   let perPointColor: TSLNode;
   if (config.useColormap && aScalar && uColormapTex && uScalarMin && uScalarScale) {
-    const t = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+    const t0 = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+    // gammaOne skips the pre-LUT pow() when gamma == 1.0.
+    const t = config.gammaOne ? t0 : t0.pow(uInvGamma); // gamma on the value, pre-LUT
     perPointColor = uColormapTex.sample(vec2(t, 0.5)).rgb;
   } else {
     perPointColor = aColor;
@@ -254,9 +266,15 @@ export function pointWebGPUFactory(
     const falloff: TSLNode = float(1.0).sub(normalizedR).max(float(0.0)).pow(vSharpness);
 
     // GOG: colour × intensity + offset, clamped, then gamma.
-    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // Colormap mode bypasses color GOG — gamma + display-range shaped the
+    // scalar VALUE pre-LUT (vertex stage), matching the GLSL3 path.
+    const adjusted: TSLNode = config.useColormap
+      ? max(vColor, vec3(0.0))
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
-    const finalColor: TSLNode = adjusted.pow(vec3(uInvGamma));
+    // Colormap mode (gamma applied pre-LUT) OR gammaOne both skip the pow().
+    const finalColor: TSLNode =
+      config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
 
     const alpha: TSLNode = falloff.mul(uOpacity);
 

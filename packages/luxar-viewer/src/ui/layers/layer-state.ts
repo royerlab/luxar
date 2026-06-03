@@ -234,8 +234,7 @@ export class LayerStateManager {
         // colormap applies to descendants via composition just like a
         // plain group.
         const colormap = node.attrs.colormap as string | undefined;
-        const supportsColormap =
-          node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
+        const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange = scalarRange || ampRange;
 
         // Initialize display range from existing intensity/offset if present,
@@ -285,16 +284,12 @@ export class LayerStateManager {
         // Fall back to the node's raw type for plain groups / leaves.
         const displayType = node.attrs.display_type as LayerType | undefined;
         const layerType: LayerType =
-          kind !== undefined && displayType
-            ? displayType
-            : (node.type as LayerType);
+          kind !== undefined && displayType ? displayType : (node.type as LayerType);
 
         // Kind-specific badge counts. lod → "N LODs" + dropdown; partition →
         // "N parts" status chip. Other layers leave both undefined.
-        const lodGroupChildCount =
-          kind === 'lod' ? (node.children?.length ?? 0) : undefined;
-        const partCount =
-          kind === 'partition' ? (node.children?.length ?? 0) : undefined;
+        const lodGroupChildCount = kind === 'lod' ? (node.children?.length ?? 0) : undefined;
+        const partCount = kind === 'partition' ? (node.children?.length ?? 0) : undefined;
 
         // Partition-of-LOD discovery. A kind=partition layer that wraps
         // kind=lod descendants gets a broadcast dropdown over every
