@@ -24,7 +24,7 @@ function makePointsData(
     componentsPerColor?: number;
     radii?: boolean;
     sharpness?: boolean;
-  } = {},
+  } = {}
 ): LoadedPointsData {
   const ndim = opts.ndim ?? 3;
   const componentsPerColor = opts.componentsPerColor ?? 3;
@@ -371,6 +371,29 @@ describe('GPU Buffer Pool Integration Tests', () => {
       const g1 = pool.acquireGSplatsGeometry('/gsplats-reuse', 32);
       const g2 = pool.acquireGSplatsGeometry('/gsplats-reuse', 32);
       expect(g2).toBe(g1);
+    });
+
+    it('releaseGSplatsGeometry under a tight budget reclaims the demoted buffer (registry-demotion path)', () => {
+      // End-to-end mirror of the LOD registry demoting a cold gsplats level:
+      // the registry calls release → ctx.releaseLazyGSplats →
+      // pool.releaseGSplatsGeometry, which moves the buffer active→pooled and
+      // synchronously runs the pool's total-resident byte eviction. Under a
+      // budget that fits one buffer but not two, the demoted (pooled) buffer
+      // is reclaimed the same frame while the active one survives.
+      let budget = 0; // disabled during setup so both buffers allocate
+      const pool = new GPUBufferPool(20, 300, 5, () => budget);
+      pool.acquireGSplatsGeometry('/active', 5000);
+      const oneBuffer = pool.getStats().activeBytes;
+      expect(oneBuffer).toBeGreaterThan(0);
+      pool.acquireGSplatsGeometry('/cold', 5000);
+
+      budget = Math.floor(oneBuffer * 1.5); // fits 1 buffer, not 2
+      pool.releaseGSplatsGeometry('/cold'); // → pooled, triggers evictUnused internally
+
+      const stats = pool.getStats();
+      expect(stats.activeBuffers).toBe(1); // active level retained
+      expect(pool.getResidentBytes()).toBeLessThanOrEqual(budget);
+      pool.dispose();
     });
   });
 });

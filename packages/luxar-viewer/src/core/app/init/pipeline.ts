@@ -16,6 +16,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
+import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -173,11 +174,28 @@ export async function runInitPipeline(
       // registry's existing ``displayDims.length < 2`` early-return
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
+      // Resident-byte budget for loaded LOD geometry = the single,
+      // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
+      // authority). Read dynamically so context-loss backoff applies live.
+      getResidentByteBudget: () => getGpuByteBudget(),
+      // Measured resident VRAM (active + pooled, real capacities) from the
+      // buffer pool — the single accounting truth the registry uses to
+      // decide when to demote cold levels. Routed through the current
+      // default loader (same pattern as the per-frame callback below); a
+      // null pool (pre-construction / pooling disabled) reads as 0 bytes,
+      // so the registry never evicts in that state.
+      getResidentBytes: () => getSceneLoader('default')?.gpuBufferPool?.getResidentBytes() ?? 0,
     });
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
-    loader?.lodGroupRegistry?.evaluatePerFrame();
+    // When a substitutive-LOD group swaps its active level (a camera-move
+    // event with no data reload), refresh the monitor's visible-element
+    // tally so it reflects the level now rendering rather than staying
+    // pinned to the default/coarsest level from the last updateView.
+    if (loader?.lodGroupRegistry?.evaluatePerFrame()) {
+      loader.refreshVisibleCounts();
+    }
   });
 
   // Initialize adaptive DPR manager for dynamic resolution scaling

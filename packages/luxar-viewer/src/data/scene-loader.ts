@@ -69,6 +69,7 @@ import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
+import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
@@ -102,7 +103,10 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
-import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/lifecycle/load-scene';
+import {
+  loadScene as loadSceneHelper,
+  type LoadSceneCtx,
+} from './scene-loader/lifecycle/load-scene';
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
@@ -277,6 +281,17 @@ export class SceneLoader {
    */
   readonly lodGroupRegistry: LODGroupRegistry | null;
 
+  /**
+   * The GPU buffer pool, or null when pooling is disabled or before
+   * `setup()` constructs it. Exposed so the LOD-group registry's
+   * resident-byte query (`getResidentBytes`) can read the single VRAM
+   * truth; tolerant of the pre-construction null (callers treat null as
+   * 0 bytes ⇒ never over budget ⇒ no eviction).
+   */
+  get gpuBufferPool(): GPUBufferPool | null {
+    return this._gpuBufferPool;
+  }
+
   constructor(
     config: LoaderConfig = {},
     id?: string,
@@ -298,17 +313,24 @@ export class SceneLoader {
     // falls back to the standard route for Uint8/Uint16 attributes.
     // Guard against double-init so repeated setup cannot leak a previous pool.
     if (appConfig.dataLoading.performance.useGPUBufferPool && !this._gpuBufferPool) {
+      // Byte budget comes from the adaptive single-VRAM-authority budget
+      // (auto-sized from deviceMemory, context-loss backoff), not the
+      // fixed config value — so the pool and LOD retention share it. Pass
+      // the getter (not a snapshot) so the pool reads the live budget at
+      // eviction time and honors the context-loss backoff.
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
         appConfig.dataLoading.performance.gpuPoolEvictionFrames,
         appConfig.dataLoading.performance.gpuPoolEvictBatchSize,
-        appConfig.dataLoading.performance.gpuPoolMaxBytes
+        () => getGpuByteBudget()
       );
-      const mb = (appConfig.dataLoading.performance.gpuPoolMaxBytes / 1024 / 1024).toFixed(0);
+      // Decimal MB (÷1e6) to match the unit used by gpu-byte-budget.ts's
+      // own log lines, so the two "MB" figures for the same budget agree.
+      const mb = (getGpuByteBudget() / 1_000_000).toFixed(0);
       log.info(
         Modules.GPU_BUFFER_POOL,
         `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
-          `byte budget: ${mb} MB, ` +
+          `byte budget: ${mb} MB (live), ` +
           `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames, ` +
           `batch cap: ${appConfig.dataLoading.performance.gpuPoolEvictBatchSize})`
       );
@@ -402,6 +424,7 @@ export class SceneLoader {
       gpuBufferPool: () => this._gpuBufferPool,
       monitor: () => this.monitor,
       profiler: this.profiler,
+      lodGroupRegistry: this.lodGroupRegistry,
       normalizeURL: (u) => this.normalizeURL(u),
       dispose: () => this.dispose(),
       clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
@@ -750,6 +773,18 @@ export class SceneLoader {
   }
 
   /**
+   * Recompute the monitor's visible-element tally outside the data-load
+   * cycle. Substitutive LOD selection (`LODGroupRegistry.evaluatePerFrame`)
+   * swaps which level renders on camera moves with no reload, so the
+   * per-frame callback calls this after a LOD switch — otherwise the
+   * monitor's "visible" counts stay pinned to the level that was active at
+   * the last `updateView` (e.g. the coarsest default level).
+   */
+  public refreshVisibleCounts(): void {
+    this.updateVisibleCountsInMonitor();
+  }
+
+  /**
    * Process lines data: compute tolerance, project to 3D (async).
    * Returns staged commit data without mutating any mesh geometry.
    *
@@ -823,12 +858,26 @@ export class SceneLoader {
    * mutate state mid-flight. Never passes `this`.
    */
   private makeNodeBuildCtx(): NodeBuildCtx {
+    // Capture the dataset's AbortController by reference at ctx-build
+    // time. `loadScene` aborts + replaces this controller on the next
+    // load and `dispose()` nulls it, so a deferred load created under
+    // this dataset can detect (via identity + aborted flag) that its
+    // dataset is no longer live and skip committing into a stale scene.
+    const ctrl = this._datasetAbortController;
     return {
       registry: this.registry,
       lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
       factoryDeps: this.factoryDeps(),
+      isDatasetLive: () =>
+        this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
+      releaseLazyGSplats: (path) => {
+        // Return the level's GPU buffer to the evictable pool and drop
+        // its loader so the scene-wide updateView sweep won't reload it.
+        this._gpuBufferPool?.releaseGSplatsGeometry(path);
+        this.registry.unregisterGSplatsLoader(path);
+      },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),

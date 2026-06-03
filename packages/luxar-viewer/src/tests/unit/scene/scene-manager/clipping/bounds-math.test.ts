@@ -548,9 +548,7 @@ describe('bounds-math', () => {
         min: { x: -1, y: -1, z: 0 },
         max: { x: 1, y: 1, z: 2 },
       };
-      const perspective = [
-        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2002, 0,
-      ];
+      const perspective = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2002, 0];
       const result = transformBoundingBox(boxOnPlane, perspective);
       // All six floats must be finite — no NaN, no ±Infinity.
       for (const v of [

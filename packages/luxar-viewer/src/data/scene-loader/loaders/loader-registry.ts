@@ -64,6 +64,18 @@ export class LoaderRegistry {
     this.gsplatLoaders.set(path, loader);
   }
 
+  /**
+   * Drop a single gsplats loader so it no longer participates in
+   * scene-wide ``updateView`` sweeps. Used when a lazily-loaded
+   * substitutive LOD level is released back to the buffer pool — leaving
+   * it registered would reload its geometry on the next view update,
+   * defeating the release. The loader object itself is kept alive by the
+   * lod_group's ``ensureLoaded`` closure and re-registered on reload.
+   */
+  unregisterGSplatsLoader(path: string): void {
+    this.gsplatLoaders.delete(path);
+  }
+
   // ---------------------------------------------------------------------------
   // Lookup
   // ---------------------------------------------------------------------------

@@ -61,6 +61,24 @@ export interface NodeBuildCtx {
     path: string,
     loader: DataLoader | LinesDataLoader | GSplatsDataLoader
   ): void;
+  /**
+   * True while the dataset that created this ctx is still the live one.
+   * Returns false once that dataset has been aborted/disposed or
+   * replaced by a later `loadScene`. Deferred loads (e.g. lazily-loaded
+   * lod_group levels triggered after initial load returns) MUST check
+   * this before committing geometry, so a load in flight when the user
+   * switches datasets never writes into a disposed/replaced scene.
+   */
+  isDatasetLive(): boolean;
+  /**
+   * Release a lazily-loaded gsplats level's GPU geometry back to the
+   * evictable buffer pool and unregister its loader. Called when the
+   * lod_group selector swaps away from a substitutive level, so resident
+   * geometry stays bounded to ≈ the visible set rather than accumulating
+   * every level ever shown. The raw chunks remain in the decompressed
+   * cache, so re-selection re-projects cheaply (no network).
+   */
+  releaseLazyGSplats(path: string): void;
 
   // Per-type commit callbacks — each leaf only uses the one for its type.
   updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;

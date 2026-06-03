@@ -79,6 +79,14 @@ export interface WebGLContextRecoveryDeps {
    * renders. Same forwarding pattern as `onContextRestored`.
    */
   triggerChange(): void;
+  /**
+   * Optional hook fired when the context is LOST. Used to shrink the
+   * adaptive GPU byte budget (context loss is a strong out-of-VRAM
+   * signal), so the post-restore scene holds less and doesn't lose the
+   * context again. Forwarded via a callback rather than importing the
+   * budget module here, keeping this concern dependency-free + testable.
+   */
+  onContextLost?(): void;
 }
 
 /**
@@ -154,6 +162,9 @@ export class WebGLContextRecovery {
       notifier.error(
         'Graphics context lost - attempting to restore. This can happen if your GPU driver crashes or the system runs out of video memory. The app will try to recover automatically.'
       );
+      // Shrink the GPU byte budget — loss is a strong OOM signal, so the
+      // restored scene should hold less and avoid losing the context again.
+      this.deps.onContextLost?.();
     };
 
     this.contextRestoredHandler = async (_event: Event) => {
