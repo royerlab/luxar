@@ -91,6 +91,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--luxar-spacing-4);
+}
+
+/* Two-line tagline block: title on line 1, browse hint on line 2. */
+.luxar-dataset-browser__banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-1);
 }
 
 .luxar-dataset-browser__banner-title {
@@ -100,11 +108,11 @@
 
 .luxar-dataset-browser__banner-description {
   opacity: 0.7;
-  margin-left: var(--luxar-spacing-4);
 }
 
 .luxar-dataset-browser__banner-code {
-  background: rgba(0, 0, 0, 0.3);
+  /* Theme-aware: bg-tertiary adapts (dark vs light) instead of a fixed black. */
+  background: var(--luxar-bg-tertiary);
   padding: 1px 4px;
   border-radius: 2px;
   font-size: var(--luxar-text-xs);
@@ -154,6 +162,35 @@
   color: var(--luxar-text-primary);
 }
 
+/* Search / Filter Bar */
+.luxar-dataset-browser__search {
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-10);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-dataset-browser__search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__search-input::placeholder {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-dataset-browser__search-input:focus {
+  outline: none;
+  border-color: var(--luxar-border-focus);
+  background: var(--luxar-interactive-hover);
+}
+
 /* Content Area */
 .luxar-dataset-browser__content {
   flex: 1;
@@ -187,7 +224,11 @@
 }
 
 .luxar-dataset-browser__file-item {
-  padding: var(--luxar-spacing-5) var(--luxar-spacing-6);
+  /* Tight vertical padding keeps rows compact; the icon/name font sizes
+     are unchanged. line-height:1 stops the tall emoji line-box from
+     re-inflating the row height. */
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-6);
+  line-height: 1;
   background: var(--luxar-bg-tertiary);
   border-radius: var(--luxar-radius-sm);
   cursor: pointer;
@@ -212,6 +253,7 @@
 
 .luxar-dataset-browser__file-icon {
   font-size: var(--luxar-text-2xl);
+  line-height: 1;
 }
 
 .luxar-dataset-browser__file-name {
@@ -342,15 +384,8 @@
   background: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme='light'] .luxar-dataset-browser__file-item--zarr {
-  background: rgba(46, 125, 50, 0.1);
-}
-
-[data-theme='light'] .luxar-dataset-browser__file-item--zarr:hover {
-  background: rgba(46, 125, 50, 0.15);
-}
-
-[data-theme='light'] .luxar-dataset-browser__manual-entry-input {
+[data-theme='light'] .luxar-dataset-browser__manual-entry-input,
+[data-theme='light'] .luxar-dataset-browser__search-input {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.2);
 }

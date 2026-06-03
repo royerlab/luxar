@@ -356,15 +356,22 @@
   border-color: rgba(76, 175, 80, 0.25);
 }
 
-/* Manual entry input */
-[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input {
+/* Manual entry + search inputs */
+[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input,
+[data-theme='liquid-glass'] .luxar-dataset-browser__search-input {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input:focus {
+[data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input:focus,
+[data-theme='liquid-glass'] .luxar-dataset-browser__search-input:focus {
   background: rgba(255, 255, 255, 0.1);
   border-color: var(--luxar-success);
+}
+
+/* Search bar divider */
+[data-theme='liquid-glass'] .luxar-dataset-browser__search {
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Status bar */
