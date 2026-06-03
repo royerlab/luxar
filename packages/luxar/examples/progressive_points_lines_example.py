@@ -27,6 +27,7 @@ PR α (#318) — Progressive multi-additive-LOD loading.
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -129,6 +130,23 @@ def main() -> None:
                 method="spatial-uniform",
                 n_lods=4,
             ),
+        )
+
+        add_explainer(
+            scene,
+            title="Progressive Additive LOD",
+            body=(
+                "Each node is written as stacked <code>additive_&lt;i&gt;/</code> "
+                "subgroups; the viewer loads them coarse-to-fine over a few "
+                "<code>requestAnimationFrame</code> ticks, so a sparse first "
+                "paint refines into the full cloud and line bundle."
+            ),
+            observe=[
+                "A coarse first paint refines to full detail over ~3 frames.",
+                "Points fill in by random ordering; lines fill in evenly across the bbox.",
+                "The layers panel shows an 'N additive LODs' badge on each node.",
+            ],
+            observe_label="Look for",
         )
 
         aprint(

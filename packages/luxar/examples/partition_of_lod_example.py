@@ -31,6 +31,7 @@ PR β (#319) — Specialized-group UX polish.
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -50,7 +51,8 @@ def main() -> None:
     output_path = get_examples_output_dir() / "partition_of_lod_example.zarr"
 
     # Auto-partition kicks in when an add_points call exceeds the threshold.
-    # 50k points / 12k cap → ~4 spatial parts.
+    # The default balanced median BSP halves recursively, so 50k points with
+    # a 12k cap → 8 equal parts (50k → 25k → 12.5k ≤ 12k after 3 levels).
     with LuxarZarrCompiler(
         str(output_path), auto_partition_max_elements=12_000
     ) as compiler:
@@ -126,6 +128,24 @@ def main() -> None:
                 min_pixel_size=200.0,
                 partition=False,
             )
+
+        add_explainer(
+            scene,
+            title="Partition Wrapping LOD",
+            body=(
+                "<code>ribbon</code> is auto-partitioned into spatial parts for "
+                "frustum culling; <code>ribbon_lod</code> nests a "
+                "<code>kind=lod</code> ladder under each part, so it carries a "
+                "combined parts × LODs badge and a broadcast level dropdown."
+            ),
+            observe=[
+                "Both layers show an 'N parts' badge in the layers panel.",
+                "ribbon_lod shows a '[2 parts x 2 LODs]' badge plus an Active-level dropdown.",
+                "Switching the dropdown coarsens or refines all parts in lock-step.",
+                "Hovering a point reports the wrapper path, never the inner part.",
+            ],
+            observe_label="Look for",
+        )
 
         aprint(
             "Created two layers:\n"

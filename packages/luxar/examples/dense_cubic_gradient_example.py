@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -171,6 +172,8 @@ Performance notes:
 
         aprint("Creating background star field...")
         n_stars = 500000
+        # Seed so the random star field is reproducible run-to-run.
+        np.random.seed(0)
         star_positions = np.random.uniform(-500, 500, (n_stars, 3)).astype(np.float32)
 
         # Variable star colors and sizes
@@ -200,6 +203,23 @@ Performance notes:
             opacity=0.4,
             gamma=1.0,
             blending_mode="normal",
+        )
+
+        # Explainer card describing the million-point stress test.
+        add_explainer(
+            scene,
+            title="Dense Cubic Gradient",
+            body=(
+                "A 100x100x100 cubic lattice (1,000,000 points) colored by a "
+                "depth gradient, plus a 500,000-point background star field "
+                "for spatial context."
+            ),
+            observe=[
+                "The lattice runs warm (near) to cool (far) along Z.",
+                "Points stay disc-like and crisp at high <code>sharpness</code>.",
+                "Press <code>V</code> to cycle to fly mode, then WASD through the cube.",
+            ],
+            observe_label="Notice",
         )
 
         # Print statistics

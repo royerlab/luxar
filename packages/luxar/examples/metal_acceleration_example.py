@@ -39,7 +39,9 @@ def main():
         # Check if Metal is available
         if is_metal_available():
             aprint("✓ Metal backend available")
-            aprint("  Will use Metal acceleration for substantial speedup (chip-dependent)!")
+            aprint(
+                "  Will use Metal acceleration for substantial speedup (chip-dependent)!"
+            )
         else:
             aprint("✗ Metal backend not available")
             aprint("  Using CPU PyTorch (slower but works everywhere)")
@@ -75,7 +77,9 @@ def main():
 
         # Performance note
         if device == "mps":
-            aprint("\n💡 Note: Metal acceleration provided substantial speedup over CPU!")
+            aprint(
+                "\n💡 Note: Metal acceleration provided substantial speedup over CPU!"
+            )
             aprint("   For even larger volumes (128³+), expect even better speedup.")
         else:
             aprint("\n💡 Note: To enable Metal acceleration:")

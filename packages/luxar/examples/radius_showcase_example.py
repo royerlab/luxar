@@ -23,6 +23,7 @@ When to use these techniques:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -219,6 +220,25 @@ def main():
         create_distance_based_example(scene)
         create_random_sizing_example(scene)
         create_layered_spheres_example(scene)
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="Per-Point Radii",
+            body=(
+                "The per-point <code>radii</code> array drives on-screen size, "
+                "turning scale into a <strong>data dimension</strong>. Four "
+                "showcases use a size gradient, distance-based sizing, random "
+                "variation, and layered concentric spheres."
+            ),
+            observe=[
+                "Spiral points grow smoothly from tiny to large along its length.",
+                "Sphere points enlarge toward the center (inverse distance).",
+                "Cube shows organic random sizes colored small-blue to large-red.",
+                "Nested spheres use a distinct point size per layer.",
+            ],
+            observe_label="Look for",
+        )
 
         # Finalize
 

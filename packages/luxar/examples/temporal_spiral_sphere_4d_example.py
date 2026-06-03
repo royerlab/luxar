@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -289,6 +290,24 @@ def main():
             colors=all_colors,
             radii=all_radii,
             sharpness=all_sharpness,
+        )
+
+        add_explainer(
+            scene,
+            title="Temporal Spiral Sphere",
+            body=(
+                "A dense Fibonacci-spiral sphere animated over a discrete "
+                "<code>t</code> dimension, with per-frame undulating colors, "
+                "pulsating <code>radii</code>, and dynamic <code>sharpness</code>. "
+                "Press <code>4</code> then <code>[</code>/<code>]</code> to step "
+                "through time."
+            ),
+            observe=[
+                "The spiral pattern rotates smoothly across time frames.",
+                "Rainbow color bands flow along the spiral as time advances.",
+                "Point sizes pulse and sharpness bands sweep pole to equator.",
+            ],
+            observe_label="Look for",
         )
 
     # Context manager will call finalize automatically

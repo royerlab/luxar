@@ -130,6 +130,10 @@ See [`TEMPLATE.md`](TEMPLATE.md) for the full template. Highlights:
 
 - File name: `<feature>_example.py`. Output: `<feature>_example.zarr`.
 - Use `get_examples_output_dir()` for the output path.
+- Add one house-style **explainer card** per scene via
+  `from _overlay_style import add_explainer` (title → explanation →
+  "look for" list). It is what tells a viewer what to see and verify; see
+  `TEMPLATE.md` §E.1 for the rules.
 - **snake_case** node names (`rainbow_spiral`, not `RainbowSpiral`).
 - Prefer `parent_group.add_points(...)` over `scene.add_points(..., parent=parent_group)`.
 - Pick **one** color convention per example: float-0-1 OR uint8-0-255, never both.

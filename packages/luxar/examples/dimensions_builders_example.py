@@ -15,9 +15,10 @@ without typing out every ``Dimension(...)`` declaration:
 - ``Dimensions.from_positions(positions)`` — infer dimensionality from
   the positions array shape.
 
-The example writes four small scenes, one per builder, into a single
-zarr archive (one per group) so you can compare their dimension
-structure in one viewer.
+The example prints what each builder produces, then writes one small
+scene using ``default_timeseries`` (the most interesting builder, since
+it adds a navigable time dimension) so you can walk the frames in the
+viewer.
 
 Educational value:
 - Stop typing the same boilerplate ``Dimension(...)`` calls.
@@ -28,6 +29,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -37,7 +39,8 @@ from luxar.utils.paths import get_examples_output_dir
 def show(name: str, dims: Dimensions) -> None:
     """Pretty-print a Dimensions object."""
     summary = ", ".join(
-        f"{d.name}({'displayed' if d.display else 'navigable'})" for d in dims.dimensions
+        f"{d.name}({'displayed' if d.display else 'navigable'})"
+        for d in dims.dimensions
     )
     aprint(f"  {name:30s} → {len(dims)} dims: [{summary}]")
 
@@ -67,9 +70,7 @@ def main() -> None:
     for t in range(8):
         xyz = rng.normal(0.0, 1.0, (n_per_frame, 3)).astype(np.float32)
         # default_timeseries puts t FIRST: dims are (t, x, y, z).
-        positions = np.hstack(
-            [np.full((n_per_frame, 1), t, dtype=np.float32), xyz]
-        )
+        positions = np.hstack([np.full((n_per_frame, 1), t, dtype=np.float32), xyz])
         all_positions.append(positions)
         all_colors.append(
             np.full((n_per_frame, 3), [t / 7.0, 1.0 - t / 7.0, 0.5], dtype=np.float32)
@@ -83,6 +84,21 @@ def main() -> None:
             colors=np.vstack(all_colors),
             radii=0.1,
             sharpness=2.0,
+        )
+
+        add_explainer(
+            scene,
+            title="Dimensions builders",
+            body="This scene was built with <code>Dimensions.default_timeseries()</code>, "
+            "one of the convenience builders that returns a ready-made dimension "
+            "collection. The time dimension <code>t</code> is <strong>navigable</strong> "
+            "rather than displayed.",
+            observe=[
+                "Press <code>1</code>, then <code>[</code>/<code>]</code> to walk the 8 frames.",
+                "Point color shifts red&rarr;green as <code>t</code> advances.",
+                "Each frame shows a fresh cloud of 200 points.",
+            ],
+            observe_label="Look for",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

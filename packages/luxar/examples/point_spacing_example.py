@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -180,6 +181,22 @@ Educational value:
             sharpness=sharpness,
             opacity=1.0,
             blending_mode="additive",
+        )
+
+        add_explainer(
+            scene,
+            title="Radius and spacing",
+            body="Pairs and a grid of spheres placed so they <strong>just "
+            "touch</strong>. For equal radii, spacing <code>= 2 × radius</code>; "
+            "for mixed sizes, spacing <code>= r1 + r2</code>. This verifies "
+            "world-space sizing is correct.",
+            observe=[
+                "Red, green, and blue pairs touch along X, Y, and Z.",
+                "The yellow/magenta pair touches despite different sizes.",
+                "The cyan/orange 3x3 grid tiles without gaps or overlap.",
+                "Contacts hold as you rotate, zoom, or change FOV.",
+            ],
+            observe_label="Verify",
         )
 
         aprint(f"\n✓ Scene created with {len(positions)} spheres")

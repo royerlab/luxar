@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
@@ -263,6 +264,27 @@ def main():
                 transform=transforms.translate(0.2, 0, 0),
                 parent=binary_group,
             )
+
+        add_explainer(
+            scene,
+            title="Hierarchy & Inheritance",
+            body=(
+                "Groups nest into a tree where each child's transform is "
+                "relative to its parent, so <strong>positions accumulate</strong> "
+                "down the hierarchy. Rendering attributes (<code>opacity</code>, "
+                "<code>gamma</code>, <code>blending_mode</code>) also inherit "
+                "unless a child overrides them."
+            ),
+            observe=[
+                "Solar System glows (<code>additive</code>); Sun, Earth+Moon, "
+                "and Mars sit at increasing <code>+X</code> orbits.",
+                "Space Station (rotated, <code>normal</code> blend) sits above "
+                "at <code>+Z</code> with 3 docking rings.",
+                "Galaxy stack is 4 levels deep, far up at <code>+Y</code>.",
+                "Overridden opacity/gamma make some subgroups dimmer/brighter.",
+            ],
+            observe_label="Notice",
+        )
 
         with asection("Educational Summary"):
             # Print educational summary

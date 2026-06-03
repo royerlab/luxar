@@ -20,6 +20,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -60,6 +61,21 @@ def main():
 
             scene.add_points(f"{label}Points", positions, colors, radii=radii)
             aprint(f"Added {label} points with radius {radius}")
+
+        add_explainer(
+            scene,
+            title="Per-point radii",
+            body="Three rows of points, each row a different <code>radii</code> "
+            "value. Radius is in <strong>world-space units</strong>, so on-screen "
+            "size is independent of camera distance and viewport.",
+            observe=[
+                "Top row: large blue points (<code>radii=0.5</code>).",
+                "Middle row: medium green points (<code>radii=0.2</code>).",
+                "Bottom row: small red points (<code>radii=0.05</code>).",
+                "Sizes stay consistent as you zoom in and out.",
+            ],
+            observe_label="Look for",
+        )
 
         aprint("\n✓ Test scene created successfully!")
         aprint("\nExpected result when viewing:")

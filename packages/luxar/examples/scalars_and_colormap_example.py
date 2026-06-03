@@ -21,6 +21,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -78,6 +79,25 @@ def main() -> None:
                 layer=True,
             )
             aprint(f"  Added {name} using colormap='{colormap_name}'")
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="Scalars + Colormap",
+            body=(
+                "Three identical spirals carry the same <code>scalars</code> "
+                "field but use different <code>colormap</code> LUTs. The viewer "
+                "can recolor from a LUT at runtime — <strong>no need</strong> to "
+                "precompute or re-upload per-point colors."
+            ),
+            observe=[
+                "Left spiral uses <code>viridis</code> (blue-green-yellow).",
+                "Center uses <code>turbo</code> (rainbow blue-to-red).",
+                "Right uses <code>inferno</code> (black-purple-orange).",
+                "All three share an identical bottom-to-top scalar ramp.",
+            ],
+            observe_label="Look for",
+        )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")
 

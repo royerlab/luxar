@@ -23,6 +23,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -115,6 +116,26 @@ def main() -> None:
             anchor="bottom-center",
             opacity=0.95,
             hover=True,
+        )
+
+        # Explainer card placed bottom-left so it clears the demo overlays
+        # (text top-left, image top-right, hover tooltip bottom-center).
+        add_explainer(
+            scene,
+            title="Canvas Overlays",
+            body=(
+                "Three overlay kinds layer over the scene: "
+                "<code>add_text</code>, <code>add_image</code> (inline numpy "
+                "array), and a hover-templated <code>add_html</code> tooltip."
+            ),
+            observe=[
+                "A text banner sits in the top-left corner.",
+                "A red-green gradient image sits in the top-right.",
+                "Hovering a point updates the bottom-center tooltip.",
+            ],
+            observe_label="Look for",
+            anchor="bottom-left",
+            position=(0.022, 0.968),
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

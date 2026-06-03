@@ -73,6 +73,12 @@ def _load_example(stem: str):
     path = EXAMPLES_DIR / f"{stem}.py"
     if not path.exists():
         pytest.skip(f"Example missing on disk: {path}")
+    # Examples import the shared explainer-overlay helper with
+    # ``from _overlay_style import add_explainer``. When run as scripts the
+    # examples dir is sys.path[0] automatically; under pytest we import by
+    # file path, so make the helper importable here too.
+    if str(EXAMPLES_DIR) not in sys.path:
+        sys.path.insert(0, str(EXAMPLES_DIR))
     spec = importlib.util.spec_from_file_location(f"_smoke_{stem}", path)
     if spec is None or spec.loader is None:
         pytest.skip(f"Could not load spec for {path}")
@@ -109,9 +115,7 @@ def redirected_examples_dir(tmp_path, monkeypatch):
     # get_examples_output_dir``, which captures the symbol at import
     # time, so a plain ``monkeypatch.setattr`` on the module is not
     # enough — we need to clear cached examples too.
-    cached_modules = [
-        name for name in list(sys.modules) if name.startswith("_smoke_")
-    ]
+    cached_modules = [name for name in list(sys.modules) if name.startswith("_smoke_")]
     for name in cached_modules:
         del sys.modules[name]
     return tmp_path

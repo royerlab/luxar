@@ -22,6 +22,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -108,6 +109,26 @@ def main():
         scene.add_points("TestPoints", positions, colors=colors, radii=radii)
 
         # The scene dimensions are stored and will be used by the viewer
+
+        add_explainer(
+            scene,
+            title="Scene Dimensions",
+            body=(
+                "Scene-level <code>Dimension</code>s define the coordinate "
+                "system, units, ranges, and per-dimension <code>step</code> "
+                "used for keyboard navigation. Here <strong>time</strong> and "
+                "<strong>z</strong> are non-displayed (navigable) while "
+                "<strong>x/y</strong> and <strong>channel</strong> are shown."
+            ),
+            observe=[
+                "Press <code>1</code> then <code>[</code>/<code>]</code>: time "
+                "steps by 0.5 s.",
+                "Press <code>2</code>: z navigates smoothly in 0.1 um steps.",
+                "Points shrink at deeper z values.",
+                "Three colour channels are visible (R, G, B).",
+            ],
+            observe_label="Verify",
+        )
 
         aprint(f"\n✓ Scene created at {scene.get_store_path()}")
         aprint("\n" + "=" * 70)
