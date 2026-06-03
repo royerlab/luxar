@@ -505,6 +505,67 @@ def read_transform_from_zarr(transform_list: list[float]) -> TransformMatrix:
     return validate_transform(matrix)
 
 
+def transform_bounding_box(
+    matrix: Any,
+    lo: Any,
+    hi: Any,
+) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Transform an axis-aligned 3D bounding box by a 4x4 matrix.
+
+    Transforms all **8 corners** of the box and returns the smallest
+    axis-aligned box that encloses the transformed corners. This is the
+    mathematically correct way to transform an AABB under rotation /
+    shear — transforming only the (min, max) corner pair underestimates
+    the rotated extent and is the classic bug that makes peripheral
+    geometry get clipped/culled.
+
+    Mirrors ``transformBoundingBox`` in the TypeScript viewer
+    (``scene/scene-manager/clipping/bounds-math.ts``).
+
+    Args:
+        matrix: 4x4 transformation matrix (row-major, NumPy convention).
+            Accepts a 4x4 array or a flat 16-element row-major array.
+        lo: Lower corner ``[x, y, z]`` of the box.
+        hi: Upper corner ``[x, y, z]`` of the box.
+
+    Returns:
+        Tuple ``(new_lo, new_hi)`` of the enclosing box, each a length-3
+        float64 array.
+
+    Example:
+        >>> m = translate(3, 0, 0)
+        >>> lo, hi = transform_bounding_box(m, [-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])
+        >>> lo.tolist(), hi.tolist()
+        ([2.5, -0.5, -0.5], [3.5, 0.5, 0.5])
+    """
+    mat = np.asarray(matrix, dtype=np.float64).reshape(4, 4)
+    lo_arr = np.asarray(lo, dtype=np.float64)
+    hi_arr = np.asarray(hi, dtype=np.float64)
+
+    # Build the 8 corners (cartesian product of {lo, hi} per axis).
+    corners = np.array(
+        [
+            [x, y, z]
+            for x in (lo_arr[0], hi_arr[0])
+            for y in (lo_arr[1], hi_arr[1])
+            for z in (lo_arr[2], hi_arr[2])
+        ],
+        dtype=np.float64,
+    )
+
+    # Homogeneous transform: (8, 4) @ (4, 4)^T -> (8, 4).
+    homogeneous = np.column_stack([corners, np.ones(8)])
+    transformed = homogeneous @ mat.T
+
+    # Perspective divide (w == 1 for affine transforms). Guard against a
+    # degenerate w so a pathological matrix can't produce NaN/inf bounds.
+    w = transformed[:, 3]
+    w = np.where(np.abs(w) < 1e-12, 1.0, w)
+    points = transformed[:, :3] / w[:, None]
+
+    return points.min(axis=0), points.max(axis=0)
+
+
 # Convenience function aliases
 def translation(*args: Any, **kwargs: Any) -> TransformMatrix:
     """Alias for translate()."""
