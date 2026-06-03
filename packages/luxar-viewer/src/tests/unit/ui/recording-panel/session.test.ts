@@ -269,9 +269,7 @@ describe('RecordingSession', () => {
         // formatting produces a sensible MM:SS value.
         (panel as any).session.recordingStartTime = Date.now();
         (panel as any).session.showRecordingIndicator();
-        const timeEl = document.querySelector(
-          '.luxar-recording-indicator__time'
-        ) as HTMLElement;
+        const timeEl = document.querySelector('.luxar-recording-indicator__time') as HTMLElement;
         expect(timeEl).toBeTruthy();
 
         // Tick once to confirm the interval is alive: the callback

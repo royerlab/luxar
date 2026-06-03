@@ -160,6 +160,59 @@ describe('RecordingPanel', () => {
       expect(offlineSpy).toHaveBeenCalled();
     });
 
+    it('routes a non-WebM turntable format to the offline strategy even when Smooth is off', async () => {
+      // mp4/mkv (and image sequences) can only be produced offline — the
+      // real-time path would silently emit WebM. Smooth off must NOT
+      // downgrade an mp4 turntable to a webm video.
+      (panel as any).mode = 'turntable';
+      (panel as any).options.frameByFrame = false;
+      (panel as any).options.outputFormat = 'mp4';
+
+      const offlineSpy = vi
+        .spyOn((panel as any).offlineCaptureStrategy, 'run')
+        .mockResolvedValue(undefined);
+      const realtimeSpy = vi
+        .spyOn((panel as any).videoRecordingStrategy, 'run')
+        .mockResolvedValue(undefined);
+
+      await panel.startVideoRecording();
+
+      expect(offlineSpy).toHaveBeenCalled();
+      expect(realtimeSpy).not.toHaveBeenCalled();
+    });
+
+    it('routes a PNG-sequence turntable to the offline strategy even when Smooth is off', async () => {
+      (panel as any).mode = 'turntable';
+      (panel as any).options.frameByFrame = false;
+      (panel as any).options.outputFormat = 'png';
+
+      const offlineSpy = vi
+        .spyOn((panel as any).offlineCaptureStrategy, 'run')
+        .mockResolvedValue(undefined);
+
+      await panel.startVideoRecording();
+
+      expect(offlineSpy).toHaveBeenCalled();
+    });
+
+    it('routes a WebM turntable with Smooth off to the real-time strategy', async () => {
+      (panel as any).mode = 'turntable';
+      (panel as any).options.frameByFrame = false;
+      (panel as any).options.outputFormat = 'webm';
+
+      const realtimeSpy = vi
+        .spyOn((panel as any).videoRecordingStrategy, 'run')
+        .mockResolvedValue(undefined);
+      const offlineSpy = vi
+        .spyOn((panel as any).offlineCaptureStrategy, 'run')
+        .mockResolvedValue(undefined);
+
+      await panel.startVideoRecording();
+
+      expect(realtimeSpy).toHaveBeenCalled();
+      expect(offlineSpy).not.toHaveBeenCalled();
+    });
+
     it('stopVideoRecording while isEXRSequenceRecording routes to the offline strategy abort', () => {
       (panel as any).session.isRecording = true;
       (panel as any).session.isEXRSequenceRecording = true;
@@ -344,6 +397,20 @@ describe('RecordingPanel', () => {
       expect((panel as any).qualityController.domElement.style.display).toBe('none');
       expect((panel as any).transparentController.isVisible).toBe(false);
       expect((panel as any).transparentController.domElement.style.display).toBe('none');
+    });
+
+    it('action button reads "Capture" in image mode and "Record" otherwise', () => {
+      (panel as any).mode = 'image';
+      (panel as any).updateControlVisibility();
+      expect((panel as any).captureController.label).toBe('Capture');
+
+      (panel as any).mode = 'video';
+      (panel as any).updateControlVisibility();
+      expect((panel as any).captureController.label).toBe('Record');
+
+      (panel as any).mode = 'turntable';
+      (panel as any).updateControlVisibility();
+      expect((panel as any).captureController.label).toBe('Record');
     });
 
     it('auto-corrects format when switching to Video mode', () => {
