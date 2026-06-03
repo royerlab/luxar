@@ -13,7 +13,6 @@ import {
   getDefaultFormatForMode,
   isImageSequenceFormat,
   isVideoContainerFormat,
-  getMediaRecorderCodecs,
   computeControlVisibility,
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
@@ -78,12 +77,6 @@ describe('isVideoContainerFormat', () => {
   });
 });
 
-describe('getMediaRecorderCodecs', () => {
-  it('lists vp9 and vp8 — the two codecs the browser MediaRecorder supports', () => {
-    expect(getMediaRecorderCodecs()).toEqual(['vp9', 'vp8']);
-  });
-});
-
 describe('FORMAT_LABEL_TO_VALUE', () => {
   it('maps each GUI label to the right internal value', () => {
     expect(FORMAT_LABEL_TO_VALUE.PNG).toBe('png');
@@ -133,12 +126,15 @@ describe('computeControlVisibility', () => {
     expect(d.correctedFormat).toBe('webp');
   });
 
-  it('video mode + webm: shows video group + codec dropdown filtered to MediaRecorder codecs', () => {
+  it('video mode + webm: shows video group but hides codec + format (WebM-only)', () => {
     const d = computeControlVisibility('video', { outputFormat: 'webm', syncToSlider: false });
     expect(d.showVideoGroup).toBe(true);
     expect(d.showImageGroup).toBe(false);
-    expect(d.showVideoCodec).toBe(true);
-    expect(d.visibleVideoCodecs).toEqual(['vp9', 'vp8']);
+    // Real-time MediaRecorder picks the codec itself — no codec dropdown.
+    expect(d.showVideoCodec).toBe(false);
+    expect(d.visibleVideoCodecs).toBeNull();
+    // WebM is the only valid video-mode format, so the dropdown is hidden.
+    expect(d.showFormat).toBe(false);
     expect(d.showVideoDuration).toBe(true);
     expect(d.showSyncToggle).toBe(true);
     expect(d.showSyncDimension).toBe(false); // sync is off
@@ -149,11 +145,13 @@ describe('computeControlVisibility', () => {
     expect(d.showSyncDimension).toBe(true);
   });
 
-  it('turntable mode + mp4: shows video + turntable groups, all codecs visible', () => {
+  it('turntable mode + mp4: shows video + turntable groups, all codecs visible, format shown', () => {
     const d = computeControlVisibility('turntable', { outputFormat: 'mp4', syncToSlider: false });
     expect(d.showVideoGroup).toBe(true);
     expect(d.showTurntableGroup).toBe(true);
     expect(d.showVideoCodec).toBe(true);
+    // Turntable has 7 formats, so the dropdown is a real choice.
+    expect(d.showFormat).toBe(true);
     // Turntable uses mediabunny; all codecs visible.
     expect(d.visibleVideoCodecs).toEqual(['h265', 'vp9', 'h264', 'vp8']);
     // Turntable computes duration from speed; sync irrelevant.
@@ -167,6 +165,28 @@ describe('computeControlVisibility', () => {
     expect(d.showVideoQuality).toBe(false);
     expect(d.showVideoCodec).toBe(false);
     expect(d.visibleVideoCodecs).toBeNull();
+    // png is lossless — no quality slider.
+    expect(d.showImageQuality).toBe(false);
+  });
+
+  it('turntable mode + jpeg/webp (lossy sequence): image quality slider visible', () => {
+    for (const fmt of ['jpeg', 'webp'] as const) {
+      const d = computeControlVisibility('turntable', { outputFormat: fmt, syncToSlider: false });
+      expect(d.showImageQuality).toBe(true);
+      // It's the image-quality control, not the video-bitrate one.
+      expect(d.showVideoQuality).toBe(false);
+    }
+  });
+
+  it('keeps the format dropdown visible when the mode offers multiple formats', () => {
+    // Image (4 formats) and turntable (7) show the dropdown; only video
+    // (WebM-only) hides it — asserted in the video-mode test above.
+    expect(
+      computeControlVisibility('image', { outputFormat: 'png', syncToSlider: false }).showFormat
+    ).toBe(true);
+    expect(
+      computeControlVisibility('turntable', { outputFormat: 'mp4', syncToSlider: false }).showFormat
+    ).toBe(true);
   });
 
   it('valid formats per mode match getValidFormatsForMode', () => {

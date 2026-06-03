@@ -281,7 +281,16 @@ export class RecordingSession {
       } else if (fmt === 'png' || fmt === 'webp' || fmt === 'jpeg') {
         details += `<br>Output: <strong>ZIP of ${fmt.toUpperCase()} frames</strong> + ffmpeg script.`;
       } else if (fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv') {
-        details += `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${options.videoCodec.toUpperCase()}).`;
+        // The real-time MediaRecorder path always emits WebM and picks the
+        // codec itself, so don't advertise `options.videoCodec` there. That
+        // path runs for Video mode and for a non-smooth WebM turntable
+        // (mirrors the dispatch in RecordingPanel.startVideoRecording). The
+        // offline mediabunny path (smooth turntable, or any mp4/mkv) does
+        // honor the codec.
+        const realtimeWebm = fmt === 'webm' && (mode === 'video' || !options.frameByFrame);
+        details += realtimeWebm
+          ? '<br>Output: <strong>WebM video</strong>.'
+          : `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${options.videoCodec.toUpperCase()}).`;
       }
 
       overlay.innerHTML = `
