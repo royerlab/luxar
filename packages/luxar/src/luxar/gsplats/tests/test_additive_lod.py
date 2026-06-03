@@ -308,3 +308,18 @@ def test_make_lod_pyramid_full_matrix() -> None:
             assert lev.parent_method is None
         else:
             assert lev.parent_method == "kmeans_lloyd"
+
+
+def test_make_lod_pyramid_defaults_to_auto_substitutive_method() -> None:
+    """The library default for `substitutive_method` is `auto` (matches
+    `make_substitutive_lod`), not the legacy `kmeans_lloyd`."""
+    import inspect
+
+    from luxar.gsplats.lod import make_lod_pyramid
+
+    assert inspect.signature(make_lod_pyramid).parameters["substitutive_method"].default == "auto"
+
+    # And it runs end-to-end without an explicit method (resolves via `auto`).
+    data = _make_random_gsplat(n=64, ndim=3, seed=21)
+    pyr = make_lod_pyramid(data, compression_factor=4, levels=1, n_additive_lods=2, device="cpu")
+    assert pyr.n_substitutive == 2

@@ -4833,6 +4833,7 @@ def lod_additive(
 
 
 _VALID_SUBSTITUTIVE_METHODS = (
+    "auto",
     "kmeans",
     "kmeans_lloyd",
     "greedy",
@@ -4868,14 +4869,14 @@ def lod_substitutive(
         min=1,
     ),
     method: str = typer.Option(
-        "kmeans_lloyd",
+        "auto",
         "--method",
         "-m",
         help=(
-            "Partition algorithm: kmeans_lloyd (default, recommended), "
-            "kmeans (no Lloyd; warning: worse than amplitude culling on "
-            "real anisotropic data), greedy (quality-leaning, ~8x slower), "
-            "greedy_lloyd."
+            "Partition algorithm. auto (default): greedy for levels <=5000 "
+            "splats (best quality, fast there), kmeans_lloyd above. Also: "
+            "kmeans_lloyd (large-N workhorse), kmeans (no Lloyd), greedy "
+            "(quality-leading at small N), greedy_lloyd."
         ),
     ),
     lloyd_iterations: int = typer.Option(
@@ -4896,7 +4897,12 @@ def lod_substitutive(
         help="PyTorch device: auto | cpu | cuda | mps.",
     ),
     seed: Optional[int] = typer.Option(
-        None, "--seed", help="RNG seed for k-means++ and Lloyd's scan order."
+        None,
+        "--seed",
+        help=(
+            "Accepted for API stability; has no effect. The Morton warm start "
+            "and synchronous Lloyd pass are deterministic."
+        ),
     ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output directory if it exists."
@@ -5091,11 +5097,12 @@ def lod_pyramid(
         min=1,
     ),
     substitutive_method: str = typer.Option(
-        "kmeans_lloyd",
+        "auto",
         "--substitutive-method",
         help=(
             "Substitutive partition algorithm "
-            "(kmeans_lloyd | kmeans | greedy | greedy_lloyd)."
+            "(auto | kmeans_lloyd | kmeans | greedy | greedy_lloyd). "
+            "auto picks greedy for small levels, kmeans_lloyd for large."
         ),
     ),
     additive_method: str = typer.Option(

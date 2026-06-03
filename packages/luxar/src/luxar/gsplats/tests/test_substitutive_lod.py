@@ -485,22 +485,6 @@ class TestApiContract:
 
 
 class TestShapeAwareSeeding:
-    def test_augment_appends_scaled_shape_block(self):
-        """`_augment_with_shape` returns (N, 2D) and weight=0 is a no-op."""
-        import torch
-
-        from luxar.gsplats.lod.substitutive import _augment_with_shape
-
-        data = _make_anisotropic_3d(n=20, seed=3)
-        centres, L, _ = _gsplat_to_torch(data)
-        aug = _augment_with_shape(centres, L, weight=0.5)
-        assert aug.shape == (centres.shape[0], 2 * centres.shape[1])
-        # The leading block is the untouched centres.
-        assert torch.allclose(aug[:, : centres.shape[1]], centres)
-        # weight=0 → centres-only passthrough.
-        none = _augment_with_shape(centres, L, weight=0.0)
-        assert torch.allclose(none, centres)
-
     def test_shape_aware_not_worse_than_centers_only(self):
         """kmeans_lloyd (shape-aware seed) should not regress vs plain kmeans
         on anisotropic data — same non-regression contract as Lloyd."""
@@ -555,3 +539,109 @@ class TestShapeAwareSeeding:
         assert level_1.n_splats >= 1
         assert np.all(level_1.amplitudes > 0)  # no zero-amplitude empties
         assert np.all(np.isfinite(level_1.centers))
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Large-N scaling guard
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestScaling:
+    """Regression guard against an O(N²) blow-up in the warm start / Lloyd.
+
+    The substitutive regime has ``M = N/K`` bins, so a per-bin or per-splat
+    Python loop — or a global k-means++ init (its former warm start) — is
+    ``O(N²/K)`` and was intractable at tens of thousands of splats. The
+    vectorised Morton partition + segment-reduction merge + vectorised Lloyd
+    are ``O(N log N)``; this test would hang for minutes under the old code.
+    """
+
+    def test_scales_to_large_n_quickly(self):
+        import time
+
+        n = 20_000
+        data = _make_anisotropic_3d(n=n, seed=3)
+        t0 = time.perf_counter()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            lloyd_iterations=3,
+            candidate_bins_k=8,
+            device="cpu",
+            seed=0,
+        )
+        elapsed = time.perf_counter() - t0
+        # Counts roughly track ⌈N / K^ℓ⌉ (Morton chunking yields no empty bins;
+        # Lloyd may empty a few, so allow a generous lower bound).
+        counts = [lv.n_splats_total for lv in out.substitutive_levels]
+        assert counts[0] == n
+        assert n // 4 - n // 40 <= counts[1] <= n // 4 + 1
+        assert n // 16 - n // 160 <= counts[2] <= n // 16 + 1
+        level_1 = out.at_substitutive(1)
+        assert np.all(np.isfinite(level_1.centers))
+        assert np.all(level_1.amplitudes >= 0)
+        # Generous wall-clock ceiling: the vectorised path finishes in well
+        # under a second; the former O(N²/K) k-means++ init took minutes at
+        # this N. A 60 s bound catches catastrophic regressions without
+        # being flaky on slow CI.
+        assert elapsed < 60.0, f"reduction too slow ({elapsed:.1f}s) — O(N²) regression?"
+
+    def test_greedy_scales_past_old_quadratic_wall(self):
+        """Greedy's lazy-heap Runnalls is ~O(Nk log Nk), not O(N²).
+
+        The former full-rescan greedy took ~57 s at N=200 / ~212 s at N=400.
+        N=2000 was wholly intractable; the incremental version does it in a
+        couple of seconds. This would hang for many minutes under the old code.
+        """
+        import time
+
+        n = 2_000
+        data = _make_anisotropic_3d(n=n, seed=5)
+        t0 = time.perf_counter()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="greedy",
+            device="cpu",
+            seed=0,
+        )
+        elapsed = time.perf_counter() - t0
+        level_1 = out.at_substitutive(1)
+        # Greedy merges down to exactly ⌈N/K⌉ clusters (no empty bins).
+        assert level_1.n_splats == n // 4
+        assert np.all(np.isfinite(level_1.centers))
+        assert np.all(level_1.amplitudes >= 0)
+        assert elapsed < 60.0, f"greedy too slow ({elapsed:.1f}s) — O(N²) regression?"
+
+
+class TestAutoMethod:
+    """The default ``method="auto"`` resolves per level by input size."""
+
+    def test_auto_is_the_default(self):
+        # No method passed → auto. On a small dataset every level resolves to
+        # greedy, which produces exactly ⌈N/Kᵍ⌉ clusters with no empty bins.
+        data = _make_anisotropic_3d(n=400, seed=2)
+        out = make_substitutive_lod(data, compression_factor=4, levels=2, device="cpu")
+        assert out.n_substitutive == 3
+        # Below the 5000 threshold → greedy at every level.
+        assert out.substitutive_levels[1].parent_method == "greedy"
+        assert out.substitutive_levels[2].parent_method == "greedy"
+
+    def test_auto_switches_method_by_level_size(self):
+        # N=20000: level 1 (>5000 in) → kmeans_lloyd; level 2 (≤5000 in) → greedy.
+        data = _make_anisotropic_3d(n=20_000, seed=4)
+        out = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="auto", device="cpu"
+        )
+        assert out.substitutive_levels[0].parent_method is None  # source level
+        assert out.substitutive_levels[1].parent_method == "kmeans_lloyd"
+        assert out.substitutive_levels[2].parent_method == "greedy"
+
+    def test_auto_is_a_valid_choice(self):
+        # "auto" must not raise the invalid-method error.
+        data = _make_isotropic_3d(n=16, seed=0)
+        out = make_substitutive_lod(data, levels=1, method="auto", device="cpu")
+        assert out.n_substitutive == 2
