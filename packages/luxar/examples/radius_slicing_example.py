@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -137,6 +138,23 @@ def main():
             colors=all_colors,
             radii=all_radii,
             sharpness=sharpness,
+        )
+
+        add_explainer(
+            scene,
+            title="Radius-Based nD Slicing",
+            body=(
+                "Points act as nD hyperspheres: a point is visible only where "
+                "its <code>radii</code> intersects the current slice. Step the "
+                "hidden time dimension with <code>1</code> then <code>[</code>/"
+                "<code>]</code>."
+            ),
+            observe=[
+                "Larger-radius clusters stay visible across more time slices.",
+                "Points shrink as the slice moves off their center.",
+                "The small red cluster (r=0.1) vanishes almost immediately.",
+            ],
+            observe_label="Observe",
         )
 
         # Print detailed instructions

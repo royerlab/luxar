@@ -23,6 +23,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -140,6 +141,23 @@ def main():
             opacity=0.9,
             gamma=1.0,
             blending_mode="normal",
+        )
+
+        add_explainer(
+            scene,
+            title="5D Dimension Sliders",
+            body=(
+                "An animated spiral spanning 11 time frames and 3 channels; "
+                "the hidden <code>W</code> (time) and <code>Channel</code> "
+                "dimensions are driven by the bottom slider UI."
+            ),
+            observe=[
+                "Press <code>4</code> for W, then <code>[</code> / "
+                "<code>]</code>: the spiral rotates and Z oscillates.",
+                "Press <code>5</code> for Channel: colour cycles red, green, "
+                "blue with smaller points per channel.",
+                "Dragging the bottom sliders gives the same navigation.",
+            ],
         )
 
         # Print educational summary

@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -156,6 +157,23 @@ def main():
             colors=colors,
             radii=radii,
             sharpness=np.full(len(positions), 2.0, dtype=np.float32),
+        )
+
+        add_explainer(
+            scene,
+            title="nD Navigation Basics",
+            body=(
+                "A 5D grid where the hidden <code>time</code> and "
+                "<code>depth</code> dimensions act as sliders; the displayed "
+                "slice is a flat grid of coloured points."
+            ),
+            observe=[
+                "Press <code>1</code> for time, then <code>[</code> / "
+                "<code>]</code> to step through patterns.",
+                "Time steps: full grid, checkerboard, diagonals, border, centre cross.",
+                "Press <code>2</code> for depth: deeper layers are dimmer.",
+                "Three coloured groups left-to-right: red, green, blue channels.",
+            ],
         )
 
         # Print summary and instructions

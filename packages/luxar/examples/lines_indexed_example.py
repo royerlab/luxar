@@ -23,6 +23,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -84,6 +85,24 @@ def main() -> None:
             indices=indices,
             line_type="indexed",
             sharpness=1.0,
+        )
+
+        add_explainer(
+            scene,
+            title="Indexed Line Connectivity",
+            body=(
+                "The <code>indexed</code> line type stores each vertex once and "
+                "uses a flat <code>indices</code> array to pair them into "
+                "segments. Here 8 spokes <strong>share a single center "
+                "vertex</strong> (9 vertices total instead of 16)."
+            ),
+            observe=[
+                "8 spokes radiate from one white center to a circle of rim vertices.",
+                "Spokes <strong>taper</strong>: thick at the shared center, thin "
+                "at the rim.",
+                "Each spoke carries a distinct rainbow hue from its rim vertex.",
+            ],
+            observe_label="Look for",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

@@ -32,6 +32,7 @@ Educational value:
 import io
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -157,6 +158,24 @@ def main() -> None:
             hover=True,
             hover_image_size=(0.08, 0.08),
             opacity=0.95,
+        )
+
+        # Explainer card top-left so it clears the bottom-center hover tooltip.
+        add_explainer(
+            scene,
+            title="Hover Labels",
+            body=(
+                "Each point carries a per-point text <code>labels</code> entry; "
+                "the first three also carry a sparse <code>image_labels</code> "
+                "thumbnail. Hovering interpolates both into the HTML overlay."
+            ),
+            observe=[
+                "Hovering any point shows its <code>species_N</code> label.",
+                "Points 0-2 also show a radial-gradient thumbnail.",
+                "Points 3-7 show text only, by design (no thumbnail).",
+            ],
+            observe_label="Verify",
+            anchor="top-left",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

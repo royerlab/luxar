@@ -29,6 +29,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -74,8 +75,10 @@ def main() -> None:
         scan_positions.append(positions)
         # Hue progresses with t.
         scan_colors.append(
-            np.tile([t / (n_timepoints - 1), 1.0 - t / (n_timepoints - 1), 0.4],
-                    (n_per_step, 1)).astype(np.float32)
+            np.tile(
+                [t / (n_timepoints - 1), 1.0 - t / (n_timepoints - 1), 0.4],
+                (n_per_step, 1),
+            ).astype(np.float32)
         )
     scan_positions = np.vstack(scan_positions)
     scan_colors = np.vstack(scan_colors)
@@ -114,6 +117,24 @@ def main() -> None:
             radii=0.3,
             sharpness=4.0,
             extend_to_all=["time"],
+        )
+
+        add_explainer(
+            scene,
+            title="Extend-to-All Visibility",
+            body=(
+                "The scan-line uses <code>extend_to_all=[]</code> so it shows "
+                "only at its own time slice; the axis markers use "
+                "<code>extend_to_all=['time']</code> so they persist across all "
+                "frames. Press <code>4</code> then <code>[</code>/<code>]</code> "
+                "to walk time."
+            ),
+            observe=[
+                "The colored scan-line dots move along X as time advances.",
+                "The red/green/blue axis markers stay fixed at every timepoint.",
+                "Only one scan-line cluster is visible per slice.",
+            ],
+            observe_label="Look for",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

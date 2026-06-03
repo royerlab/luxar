@@ -22,6 +22,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import (
@@ -80,6 +81,25 @@ def main() -> None:
             colors=colors,
             radii=0.04,
             sharpness=2.0,
+        )
+
+        # Explainer overlay: confirm the authored viewer state on load.
+        add_explainer(
+            scene,
+            title="Authored Viewer Config",
+            body=(
+                "The scene ships a <code>ViewerConfig</code> so it opens "
+                "<strong>looking right</strong>: a fixed camera framing the "
+                "<code>blob</code> node, ACES tone mapping, exposure, a dark "
+                "backdrop, and a chosen panel layout. Users can still override."
+            ),
+            observe=[
+                "Camera auto-frames the blob via <code>target_node='blob'</code>.",
+                "Background is dark navy with ACES tone mapping applied.",
+                "Layers and Dimensions panels start closed; scale bar is shown.",
+                "Reloading restores this state unless localStorage overrides it.",
+            ],
+            observe_label="Verify",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

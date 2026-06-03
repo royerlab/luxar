@@ -25,6 +25,7 @@ import argparse
 import time
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -203,6 +204,25 @@ def main():
                 gamma=1.2,
             )
 
+            add_explainer(
+                scene,
+                title="Spatial Index Navigation",
+                body=(
+                    "A 5D clustered point cloud built with a "
+                    "<code>grid_shape</code> spatial index, which reorders "
+                    "points by locality so only relevant chunks load per slice. "
+                    "Press <code>4</code> then <code>[</code>/<code>]</code> "
+                    "for time, <code>5</code> then <code>[</code>/<code>]</code> "
+                    "for channel."
+                ),
+                observe=[
+                    "Distinct clusters appear and disappear as you step through time.",
+                    "Large-radius points stay visible across several adjacent slices.",
+                    "Navigation stays smooth despite the 5D point count.",
+                ],
+                observe_label="Look for",
+            )
+
         build_time = time.time() - start_time
 
     with asection("Performance Results and Statistics"):
@@ -227,8 +247,8 @@ def main():
         aprint("📡 To view this dataset:")
         aprint(f"   luxar serve {output_path}")
         aprint("🎮 Navigation tips:")
-        aprint("   - Use [ ] keys to navigate through time")
-        aprint("   - Press 4 then [ ] to navigate channels")
+        aprint("   - Press 4 then [ ] to navigate through time")
+        aprint("   - Press 5 then [ ] to navigate channels")
         aprint("   - Notice how large-radius points remain visible across slices")
 
         if not args.no_spatial_index:

@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -146,6 +147,25 @@ def main():
             parent=parent_group,
             gamma=1.8,  # Override parent's gamma
             # Inherits: opacity=0.4, blending_mode="additive"
+        )
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="Blending Modes & Inheritance",
+            body=(
+                "Five spheres compare <code>blending_mode</code>, "
+                "<code>opacity</code>, and <code>gamma</code>. A parent group "
+                "shares additive blending with its children, one of which "
+                "<strong>overrides</strong> the inherited gamma."
+            ),
+            observe=[
+                "Top-left red is fully opaque; top-center green is 60% transparent.",
+                "Top-right blue glows where <code>additive</code> samples overlap.",
+                "Bottom yellow inherits the group's settings; cyan overrides gamma.",
+                "Additive cores brighten toward white as points stack.",
+            ],
+            observe_label="Look for",
         )
 
         # Print educational summary

@@ -19,6 +19,7 @@ Educational value:
 import time
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -173,6 +174,24 @@ def main():
 
             creation_time = time.time() - start_time
 
+        add_explainer(
+            scene,
+            title="Large-Scene Stress Benchmark",
+            body=(
+                "<code>100</code> point nodes (<code>1000</code> points each) "
+                "laid out on a 10x10 grid in the XY plane, cycling through many "
+                "blending/opacity/gamma/radius combinations to exercise "
+                "material-combination caching and bulk node creation."
+            ),
+            observe=[
+                "All 100 BenchmarkNode_* clusters appear in the layers panel.",
+                "Clusters tile a regular 10x10 grid (a single XY layer).",
+                "Repeated material combinations are cached and reused.",
+                "Frame rate and memory stay usable while navigating.",
+            ],
+            observe_label="Observe",
+        )
+
     # The context manager finalizes on exit; measure the full block above
     # rather than a no-op interval inside it.
 
@@ -198,7 +217,7 @@ def main():
         aprint(f"- Total nodes: {num_nodes}")
         aprint(f"- Total points: {total_points:,}")
         aprint(f"- Average points per node: {points_per_node}")
-        aprint("- Spatial distribution: 10×10×10 grid layout")
+        aprint("- Spatial distribution: 10×10 grid layout (single XY layer)")
 
         aprint("\nRendering Performance Test:")
         aprint("This scene is designed to stress-test the renderer with:")

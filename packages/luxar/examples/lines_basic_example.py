@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -199,6 +200,28 @@ def main():
             colors=loop_colors,
             sharpness=0.7,
             line_type="loop",
+        )
+
+        add_explainer(
+            scene,
+            title="Line Types & Attributes",
+            body=(
+                "Four line objects show the three connectivity modes of "
+                "<code>add_lines</code> — <code>polyline</code>, "
+                "<code>segments</code>, and <code>loop</code> — plus per-vertex "
+                "<code>colors</code>, <code>widths</code>, and "
+                "<code>sharpness</code>."
+            ),
+            observe=[
+                "Central rainbow <strong>spiral</strong> (polyline) pulses in "
+                "width and edge softness along its length.",
+                "Blue <strong>floor grid</strong> of crisp uniform segments "
+                "sits below.",
+                "Gold <strong>star burst</strong> segments taper thick-to-thin "
+                "from center outward.",
+                "Pink flower <strong>loop</strong> closes back on itself at the top.",
+            ],
+            observe_label="Look for",
         )
 
         aprint("Created scene with 4 lines objects:")

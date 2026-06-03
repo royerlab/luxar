@@ -18,6 +18,7 @@ Educational value:
 from pathlib import Path
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
@@ -123,6 +124,20 @@ def build_scene_manually(output_path: Path):
             add_data_cloud(scene, "Cloud2", [-2, 2, -2])
             add_data_cloud(scene, "Cloud3", [2, -2, -2])
 
+            add_explainer(
+                scene,
+                title="Manual scene build",
+                body="A scene assembled step by step with helper functions: "
+                "colored coordinate axes plus three spherical point clouds, "
+                "each positioned via a translation <code>transform</code>.",
+                observe=[
+                    "Red, green, and blue axes mark X, Y, and Z.",
+                    "Three point clouds sit off-origin at the cube corners.",
+                    "Cloud points use random pastel colors.",
+                ],
+                observe_label="Look for",
+            )
+
             # Context manager will handle finalization
             aprint("✓ Scene built successfully with manual management")
 
@@ -177,6 +192,21 @@ def build_scene_with_structure(output_path: Path):
                     radii=0.04,
                     parent=center_group,
                 )
+
+            add_explainer(
+                scene,
+                title="Structured scene build",
+                body="A scene built with explicit structure: longer axes, six "
+                "data clouds along the axis directions, and a nested "
+                "<code>group</code> of four child point sets that inherit the "
+                "group's <code>opacity</code> and blending.",
+                observe=[
+                    "Six point clouds fan out along +/- X, Y, and Z.",
+                    "A central group holds four golden point sets in a ring.",
+                    "The group's reduced opacity affects all its children.",
+                ],
+                observe_label="Look for",
+            )
 
             # Context manager will handle finalization
             aprint("✓ Scene built successfully with structured approach")

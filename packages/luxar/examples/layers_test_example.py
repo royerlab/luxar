@@ -8,6 +8,7 @@ E2E tests.
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -80,6 +81,22 @@ def main():
             radii=0.1,
             layer=True,
             visible=False,
+        )
+
+        add_explainer(
+            scene,
+            title="Layer Panel",
+            body=(
+                "Two data-node layers, one composite group layer (two non-layer "
+                "children), and one layer created with <code>visible=False</code> "
+                "exercise the viewer's layers panel."
+            ),
+            observe=[
+                "The layers panel lists RedCloud, BlueCloud, CompositeLayer.",
+                "HiddenLayer starts hidden until its eye toggle is clicked.",
+                "Toggling CompositeLayer hides both green and yellow children.",
+            ],
+            observe_label="Verify",
         )
 
     aprint(f"Done: {output_path}")

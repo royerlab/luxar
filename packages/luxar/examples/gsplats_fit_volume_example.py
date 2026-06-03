@@ -23,6 +23,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -56,7 +57,9 @@ def main() -> None:
     aprint(f"Writing fitted-gsplat example to {output_path}")
 
     volume = make_synthetic_volume(size=32, seed=0)
-    aprint(f"Synthetic volume: shape={volume.shape}, range=[{volume.min():.2f}, {volume.max():.2f}]")
+    aprint(
+        f"Synthetic volume: shape={volume.shape}, range=[{volume.min():.2f}, {volume.max():.2f}]"
+    )
 
     # Tiny fit — 50 iterations is enough for 4 isotropic blobs.
     # ``device='cpu'`` keeps the example dependency-free; switch to
@@ -81,6 +84,24 @@ def main() -> None:
             result,
             opacity=1.0,
             blending_mode="additive",
+        )
+
+        add_explainer(
+            scene,
+            title="Splats Fitted From a Volume",
+            body=(
+                "A synthetic 32^3 volume of Gaussian blobs is fit to a sparse "
+                "splat set with <code>fit_gaussian_splats</code>, then dropped "
+                "into the scene via "
+                "<code>add_gsplats_from_data</code> — the same data the "
+                "<code>luxar gsplat fit</code> CLI writes."
+            ),
+            observe=[
+                "Each input blob is reconstructed as one or a few oriented splats.",
+                "Splat shapes/anisotropy follow the underlying blob geometry.",
+                "Far fewer splats than voxels — the representation is sparse.",
+            ],
+            observe_label="Observe",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

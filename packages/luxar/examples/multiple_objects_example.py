@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -151,6 +152,10 @@ def main():
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
+        # Running tally so the summary reports the true point count (the ring
+        # systems use radius-dependent density, so it cannot be known up front).
+        total_points = 0
+
         with asection("Central Spiral Galaxy"):
             # 1. Central spiral galaxy
             aprint("Creating central spiral galaxy...")
@@ -165,6 +170,7 @@ def main():
                 gamma=1.1,
                 blending_mode="additive",
             )
+            total_points += len(galaxy_positions)
             aprint(f"  Added {len(galaxy_positions):,} points in spiral pattern")
 
         with asection("Globular Clusters"):
@@ -191,6 +197,7 @@ def main():
                     gamma=1.2,
                     blending_mode="additive",
                 )
+                total_points += len(cluster_points)
             aprint(
                 f"  Added {len(cluster_positions)} clusters with {len(cluster_points):,} points each"
             )
@@ -233,6 +240,7 @@ def main():
                     gamma=1.0,
                     blending_mode="normal",
                 )
+                total_points += len(nebula_points)
             aprint(f"  Added {len(nebula_data)} nebulae with 3,000 points each")
 
         with asection("Planetary Ring Systems"):
@@ -267,6 +275,7 @@ def main():
                     gamma=0.9,
                     blending_mode="normal",
                 )
+                total_points += len(ring_points)
             aprint(
                 f"  Added {len(ring_systems)} ring systems with variable point densities"
             )
@@ -305,6 +314,7 @@ def main():
                 gamma=1.0,
                 blending_mode="normal",
             )
+            total_points += n_stars
             aprint(f"  Added {n_stars:,} background stars with varied colors and sizes")
 
         with asection("Particle Stream"):
@@ -328,7 +338,24 @@ def main():
                 gamma=1.3,
                 blending_mode="additive",
             )
+            total_points += len(stream_positions)
             aprint(f"  Added {len(stream_positions):,} points in helical trajectory")
+
+        add_explainer(
+            scene,
+            title="Multiple objects in one scene",
+            body="Six kinds of point object composed into a single "
+            "scene, each with its own color, <code>radii</code>, <code>sharpness</code>, "
+            "<code>opacity</code>, and <strong>blending mode</strong> to build visual "
+            "hierarchy and depth.",
+            observe=[
+                "A light-blue spiral galaxy sits at the center.",
+                "Four globular clusters and two ring systems orbit it.",
+                "Red, green, and purple nebulae glow with soft edges.",
+                "A faint star field fills the background; a particle stream trails off.",
+            ],
+            observe_label="Look for",
+        )
 
         with asection("Educational Summary"):
             # Print educational summary
@@ -365,8 +392,8 @@ def main():
             aprint("     - Additive blending for glow")
             aprint("     - Mathematical parametric curve")
 
-            aprint("\nTotal Objects: 6 distinct points objects")
-            aprint("Total Points: ~31,000 points")
+            aprint("\nTotal Objects: 6 distinct kinds of point object")
+            aprint(f"Total Points: {total_points:,} points")
             aprint("Rendering Modes: Normal and additive blending")
             aprint("Point Sizes: 0.01 to 0.06 radius range")
             aprint("Colors: Full spectrum with varied opacity")

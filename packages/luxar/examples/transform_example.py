@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler, transforms
@@ -144,7 +145,7 @@ def main():
 
         # 3. Basic rotation
         aprint("Demonstrating rotation transform...")
-        rotation = transforms.rotate_z(np.pi / 4)  # 45 degrees around Z
+        rotation = transforms.rotate_z(45)  # 45 degrees around Z
         rotated_translation = transforms.translate(0, 3, 0)
         rotated_transform = transforms.compose(rotation, rotated_translation)
 
@@ -194,7 +195,7 @@ def main():
         aprint("Demonstrating complex transform composition...")
         # Rotate around Y, then scale, then translate
         complex_transform = transforms.compose(
-            transforms.rotate_y(np.pi / 6),  # 30 degrees
+            transforms.rotate_y(30),  # 30 degrees
             transforms.scale(1.5, 0.8, 1.2),  # Non-uniform scale
             transforms.translate(0, -3, 0),  # Move down
         )
@@ -221,7 +222,7 @@ def main():
 
         # Create parent group with transform
         parent_transform = transforms.compose(
-            transforms.translate(0, 0, 3), transforms.rotate_z(np.pi / 8)
+            transforms.translate(0, 0, 3), transforms.rotate_z(22.5)
         )
         parent_group = scene.add_group("ParentGroup", transform=parent_transform)
 
@@ -241,7 +242,7 @@ def main():
 
         # Child 2: Local rotation and translation
         child2_transform = transforms.compose(
-            transforms.rotate_x(np.pi / 4), transforms.translate(-1, 1, 0)
+            transforms.rotate_x(45), transforms.translate(-1, 1, 0)
         )
         scene.add_points(
             "Child2",
@@ -261,6 +262,27 @@ def main():
             transform=transforms.identity(),  # No additional transform
             parent=parent_group,
             sharpness=4.0,
+        )
+
+        add_explainer(
+            scene,
+            title="Transform System",
+            body=(
+                "Each cube is the same geometry placed by a different "
+                "transform built with <code>transforms.translate/rotate/"
+                "scale</code> and combined via <code>compose</code>. "
+                "Coloured <strong>RGB axes</strong> mark each object's local "
+                "frame; the back group shows children inheriting a parent "
+                "transform."
+            ),
+            observe=[
+                "Orange cube sits at <code>+X</code>, magenta at "
+                "<code>-X</code> (thin and tall from non-uniform scale).",
+                "Cyan cube is rotated 45 deg about Z at <code>+Y</code>.",
+                "Each cube carries its own tilted red/green/blue axes.",
+                "Back group's yellow/blue children move with the parent.",
+            ],
+            observe_label="Look for",
         )
 
         # Print educational summary
@@ -284,7 +306,7 @@ def main():
 
         aprint("\nTransform Functions Used:")
         aprint("- transforms.translate(x, y, z)")
-        aprint("- transforms.rotate_x/y/z(angle_radians)")
+        aprint("- transforms.rotate_x/y/z(angle_degrees)")
         aprint("- transforms.scale(sx, sy, sz)")
         aprint("- transforms.compose(transform1, transform2, ...)")
         aprint("- transforms.identity() - no transformation")

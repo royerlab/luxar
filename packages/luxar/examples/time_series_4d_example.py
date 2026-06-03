@@ -22,6 +22,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -110,6 +111,23 @@ def main():
             positions,
             colors=colors,
             radii=np.full(len(positions), 0.15, dtype=np.float32),
+        )
+
+        add_explainer(
+            scene,
+            title="4D Time Series",
+            body=(
+                "A rotating spiral defined over a discrete <code>t</code> "
+                "dimension (time + 3D space). Each frame holds its own points "
+                "with a blue-to-red color gradient. Press <code>1</code> then "
+                "<code>[</code>/<code>]</code> to step through time."
+            ),
+            observe=[
+                "Points rotate and the spiral arm advances frame to frame.",
+                "Color shifts from blue (early) to red (late) as time increases.",
+                "Each time slice shows a distinct spiral pose.",
+            ],
+            observe_label="Look for",
         )
 
         aprint(f"✓ Created 4D time series with {len(positions):,} total points")

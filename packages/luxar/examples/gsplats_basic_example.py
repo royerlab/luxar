@@ -28,6 +28,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -123,6 +124,24 @@ def main() -> None:
             colors=colors,
             opacity=1.0,
             blending_mode="additive",
+        )
+
+        add_explainer(
+            scene,
+            title="Hand-Authored Gaussian Splats",
+            body=(
+                "Three splats defined directly by <code>centers</code>, "
+                "<code>amplitudes</code>, <code>colors</code>, and packed "
+                "<code>cholesky_factors</code> — the Cholesky factor of the "
+                "inverse covariance sets each splat's shape and orientation."
+            ),
+            observe=[
+                "Left (red) splat is near-spherical (isotropic Cholesky).",
+                "Centre (green) splat is elongated along Y (anisotropic diagonal).",
+                "Right (blue) splat is tilted in the XY plane (off-diagonal term).",
+                "Additive blending makes overlapping splats brighten.",
+            ],
+            observe_label="Notice",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

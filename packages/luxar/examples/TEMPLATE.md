@@ -57,6 +57,7 @@ Educational value:
 #### C. Imports (Standard Order)
 ```python
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
@@ -66,6 +67,7 @@ from luxar.utils.paths import get_examples_output_dir
 **Import Rules:**
 - Standard library first (`pathlib`, etc.) — usually unneeded
 - Third-party packages (`numpy`, `arbol`)
+- The shared `add_explainer` helper from `_overlay_style` (see §E.1)
 - Luxar imports last; pull `get_examples_output_dir` from `luxar.utils.paths`
 - Alphabetical within each group
 - Only import what you use
@@ -163,6 +165,45 @@ if __name__ == "__main__":
 - Educational inline comments explaining WHY
 - Progress reporting with aprint
 - Final viewing instructions
+
+#### E.1 Explainer Overlay (house style — REQUIRED)
+
+Every example that builds a viewable scene adds **exactly one** explainer card
+per scene via the shared `add_explainer` helper (`_overlay_style.py`). This
+gives the whole gallery a consistent, elegant overlay and tells the viewer what
+the scene demonstrates and what to check. Add it **after** all geometry, while
+the compiler/scene is still open:
+
+```python
+from _overlay_style import add_explainer
+
+add_explainer(
+    scene,
+    title="Per-point Radii",            # concise feature name, Title case, no trailing period
+    body=(                              # 1–2 sentences; <code>…</code> for params/APIs
+        "Each point's on-screen size comes from the per-point "
+        "<code>radii</code> array; three rows sweep small → large."
+    ),
+    observe=[                           # 2–4 short sentences of concrete, checkable things
+        "Sizes increase smoothly from left to right.",
+        "The smallest point is <code>0.1</code> units; the largest <code>1.0</code>.",
+    ],
+    observe_label="Verify",             # one of: "Look for" | "Verify" | "Observe" | "Notice"
+)
+```
+
+**Rules:**
+- The card reads top-to-bottom: **title → explanation → labelled look-for list**.
+- One card per scene. If an example writes several scenes (e.g. `build_example`,
+  `memory_optimization_example`), each scene gets its own tailored card.
+- Default placement is top-left; override `anchor`/`position` only when the
+  default would cover the geometry, or to avoid overlapping another overlay.
+- For nD / time examples, mention keyboard navigation
+  (`Press <code>1</code>–<code>9</code> then <code>[</code>/<code>]</code>`).
+- Only the inline tags the sanitiser allows survive — `<code>`, `<strong>`,
+  `<br>`, lists. The helper handles all styling; never hand-roll overlay CSS.
+- An example that builds **no** scene (e.g. a pure fitting/benchmark script with
+  no `LuxarZarrCompiler`) has nothing to annotate — skip the card.
 
 #### F. Entry Point
 ```python
@@ -377,6 +418,7 @@ Before committing an example, verify:
 - [ ] Includes educational comments explaining key principles
 - [ ] Has viewing instructions
 - [ ] Explains what to look for
+- [ ] Has an `add_explainer` card per scene (title → explanation → look-for list)
 - [ ] Mentions common pitfalls or tips
 
 ### Functionality
@@ -443,6 +485,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -492,6 +535,18 @@ def main():
         )
 
         aprint(f"✓ Added {n_points:,} points")
+
+        # House-style explainer card (title → explanation → look-for list).
+        add_explainer(
+            scene,
+            title="Example Feature",
+            body="One or two sentences on what the scene shows and why.",
+            observe=[
+                "A concrete, checkable thing visible in the viewer.",
+                "Another thing to verify.",
+            ],
+            observe_label="Look for",
+        )
 
     # Viewing instructions
     aprint("\n" + "=" * 60)
