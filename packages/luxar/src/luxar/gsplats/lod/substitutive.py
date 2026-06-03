@@ -109,6 +109,40 @@ def _resolve_method(method: AutoOrMethod, n_in: int) -> MethodName:
     return "greedy" if n_in <= _AUTO_GREEDY_MAX_N else "kmeans_lloyd"
 
 
+def _pack_level(
+    data: GSplatData,
+    *,
+    compression_factor: int,
+    parent_method: Optional[MethodName],
+    level_index: int,
+    stats: dict,
+) -> SubstitutiveLevel:
+    """Wrap one splat set as a single-additive-sub-LOD :class:`SubstitutiveLevel`.
+
+    Substitutive reduction emits exactly one additive sub-LOD per level
+    (``lod_method="none"``); this collapses the identical
+    ``SubstitutiveLevel(additive_sublods=[AdditiveSubLOD(...)])`` packing
+    used for the finest level, the normal reduced levels, and the
+    ``input_too_small`` early-stop level.
+    """
+    return SubstitutiveLevel(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=np.asarray(data.centers, dtype=np.float32),
+                amplitudes=np.asarray(data.amplitudes, dtype=np.float32),
+                cholesky_factors=np.asarray(data.cholesky_factors, dtype=np.float32),
+                colors=(np.asarray(data.colors) if data.colors is not None else None),
+                stats={"lod_method": "none", "lod_level": 0},
+                truncation_radius=data.truncation_radius,
+            )
+        ],
+        compression_factor=compression_factor,
+        parent_method=parent_method,
+        level_index=level_index,
+        stats=stats,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────
@@ -214,17 +248,8 @@ def make_substitutive_lod(
 
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     sub_levels: list[SubstitutiveLevel] = [
-        SubstitutiveLevel(
-            additive_sublods=[
-                AdditiveSubLOD(
-                    centers=np.asarray(src.centers, dtype=np.float32),
-                    amplitudes=np.asarray(src.amplitudes, dtype=np.float32),
-                    cholesky_factors=np.asarray(src.cholesky_factors, dtype=np.float32),
-                    colors=(np.asarray(src.colors) if src.colors is not None else None),
-                    stats={"lod_method": "none", "lod_level": 0},
-                    truncation_radius=src.truncation_radius,
-                )
-            ],
+        _pack_level(
+            src,
             compression_factor=1,
             parent_method=None,
             level_index=0,
@@ -238,23 +263,8 @@ def make_substitutive_lod(
         if N_in <= 1:
             # Cannot reduce further; emit the unchanged dataset and stop.
             sub_levels.append(
-                SubstitutiveLevel(
-                    additive_sublods=[
-                        AdditiveSubLOD(
-                            centers=np.asarray(current.centers, dtype=np.float32),
-                            amplitudes=np.asarray(current.amplitudes, dtype=np.float32),
-                            cholesky_factors=np.asarray(
-                                current.cholesky_factors, dtype=np.float32
-                            ),
-                            colors=(
-                                np.asarray(current.colors)
-                                if current.colors is not None
-                                else None
-                            ),
-                            stats={"lod_method": "none", "lod_level": 0},
-                            truncation_radius=current.truncation_radius,
-                        )
-                    ],
+                _pack_level(
+                    current,
                     compression_factor=K**level_idx,
                     parent_method=_resolve_method(method, N_in),
                     level_index=level_idx,
@@ -293,23 +303,8 @@ def make_substitutive_lod(
                 device=target_device,
             )
         sub_levels.append(
-            SubstitutiveLevel(
-                additive_sublods=[
-                    AdditiveSubLOD(
-                        centers=np.asarray(new_data.centers, dtype=np.float32),
-                        amplitudes=np.asarray(new_data.amplitudes, dtype=np.float32),
-                        cholesky_factors=np.asarray(
-                            new_data.cholesky_factors, dtype=np.float32
-                        ),
-                        colors=(
-                            np.asarray(new_data.colors)
-                            if new_data.colors is not None
-                            else None
-                        ),
-                        stats={"lod_method": "none", "lod_level": 0},
-                        truncation_radius=new_data.truncation_radius,
-                    )
-                ],
+            _pack_level(
+                new_data,
                 compression_factor=K**level_idx,
                 parent_method=level_method,
                 level_index=level_idx,
