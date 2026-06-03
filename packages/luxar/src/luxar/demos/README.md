@@ -517,6 +517,28 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 ---
 
+#### demo_gsplats_lod_tribolium.py - Adaptive Level of Detail on the Tribolium Embryo
+Takes the precomputed Tribolium embryo fit and builds an **adaptive Level of Detail (LOD)** pyramid on it — the embryo is stored at several resolutions, and the viewer shows the simplest one that still looks right at the current zoom. This demo uses *substitutive* LOD (each coarser level *replaces* the finer one with fewer, larger splats), and ships it with per-level debug colors (green→amber→red, finest→coarsest) so the viewer's pixel-size level-switching is visible as you zoom. The scaled-up companion to `examples/gsplats_lod_example.py`.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py`
+
+**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+
+**Demonstrates**: Substitutive LOD via `make_substitutive_lod` (`kmeans_lloyd`), `add_gsplats_from_data(lod_group=True)`, auto level-count from base splat count (#levels scales as log_K(N)), per-level debug coloring, pixel-size LOD selection in the viewer. Options: `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+
+---
+
+#### demo_gsplats_lod_embryo_line.py - Near-Unlimited Scaling with Adaptive Level of Detail
+Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium embryo along a straight line, drops the camera near the middle of the line, and lets you fly down it. **Level of Detail (LOD)** is the idea that makes this scale: each embryo is kept at several resolutions, and the viewer picks — per object, every frame, by projected pixel size — the simplest version that still looks right. Near embryos render fine (green) while distant ones collapse to a few big splats (red), so the detail actually drawn stays roughly bounded by what the screen can resolve, no matter how long the line. All copies share **byte-identical splat arrays** (per-embryo orientation/jitter lives only in scene-graph transforms), so the encoder's `array_ref` deduplication stores the geometry once: 100 embryos cost ~55 MB on disk instead of ~1.3 GB.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py`
+
+**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+
+**Demonstrates**: Per-object pixel-size LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+
+---
+
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
 4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
 
@@ -793,6 +815,8 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_kidney_multichan
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_tribolium_embryo.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py
 
 # --- GSplats: 4D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
