@@ -56,10 +56,7 @@ describe('loadGSplatsChunkIndex', () => {
   });
 
   it('returns null without probing when ordering is "none"', async () => {
-    const result = await loadGSplatsChunkIndex(
-      makeLocation(),
-      makeAttrs({ ordering: 'none' })
-    );
+    const result = await loadGSplatsChunkIndex(makeLocation(), makeAttrs({ ordering: 'none' }));
     expect(result).toBeNull();
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
     expect(infoSpy).toHaveBeenCalled();
@@ -141,34 +138,19 @@ describe('registerGSplatsArrayBounds', () => {
 
   it('is a no-op when prefetcher is null', () => {
     expect(() =>
-      registerGSplatsArrayBounds(
-        null,
-        '/group/sub',
-        'centers',
-        makeArray([100, 3], [50, 3])
-      )
+      registerGSplatsArrayBounds(null, '/group/sub', 'centers', makeArray([100, 3], [50, 3]))
     ).not.toThrow();
   });
 
   it('is a no-op when prefetcher is undefined', () => {
     expect(() =>
-      registerGSplatsArrayBounds(
-        undefined,
-        'group/sub',
-        'centers',
-        makeArray([100, 3], [50, 3])
-      )
+      registerGSplatsArrayBounds(undefined, 'group/sub', 'centers', makeArray([100, 3], [50, 3]))
     ).not.toThrow();
   });
 
   it('strips leading slash from node path before joining with arrayName', () => {
     const { prefetcher, register } = makePrefetcher();
-    registerGSplatsArrayBounds(
-      prefetcher,
-      '/group/sub',
-      'centers',
-      makeArray([100, 3], [50, 3])
-    );
+    registerGSplatsArrayBounds(prefetcher, '/group/sub', 'centers', makeArray([100, 3], [50, 3]));
     expect(register).toHaveBeenCalledWith('group/sub/centers', [100, 3], [50, 3]);
   });
 

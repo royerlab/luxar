@@ -51,7 +51,9 @@ describe('ThemeManager', () => {
       const themes = manager.getAllThemes();
       const ids = themes.map((t) => t.id);
 
-      expect(ids).toEqual(expect.arrayContaining(['dark', 'light', 'frosted-glass', 'liquid-glass']));
+      expect(ids).toEqual(
+        expect.arrayContaining(['dark', 'light', 'frosted-glass', 'liquid-glass'])
+      );
       expect(themes.length).toBeGreaterThanOrEqual(4);
     });
 
@@ -104,7 +106,7 @@ describe('ThemeManager', () => {
       const manager = ThemeManager.getInstance();
       manager.setTheme(themeId);
       const bgColor = getComputedStyle(document.documentElement).getPropertyValue(
-        '--luxar-bg-primary',
+        '--luxar-bg-primary'
       );
       expect(bgColor.trim()).toBe(expectedBg);
     });
@@ -207,7 +209,7 @@ describe('ThemeManager', () => {
 
       // Establish a known-good baseline: 'light' fully applied + persisted.
       manager.setTheme('light');
-      expect(localStorage.getItem('luxar.theme')) .toBe('light');
+      expect(localStorage.getItem('luxar.theme')).toBe('light');
       expect(manager.getCurrentTheme().id).toBe('light');
 
       // Force the next applyTheme to throw. We stub the root element's
@@ -320,8 +322,7 @@ describe('ThemeManager', () => {
       // the new theme's values AND none retain dark values.
       const manager = ThemeManager.getInstance();
       const root = document.documentElement;
-      const getVar = (name: string) =>
-        getComputedStyle(root).getPropertyValue(name).trim();
+      const getVar = (name: string) => getComputedStyle(root).getPropertyValue(name).trim();
 
       manager.setTheme('dark');
       // Sanity: dark values are live before the switch.
@@ -451,19 +452,17 @@ describe('ThemeManager', () => {
       expect(observerSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 'dark' }));
     });
 
-    it.each([
-      ['dark'],
-      ['light'],
-      ['frosted-glass'],
-      ['liquid-glass'],
-    ])('[G7] data-theme attribute round-trips to %s', (id) => {
-      // theme-manager.ts:204-209: setTheme writes the id to data-theme.
-      // Prior test covered only 'light'; the audit flagged the missing
-      // four-theme round-trip.
-      const manager = ThemeManager.getInstance();
-      manager.setTheme(id);
-      expect(document.documentElement.getAttribute('data-theme')).toBe(id);
-    });
+    it.each([['dark'], ['light'], ['frosted-glass'], ['liquid-glass']])(
+      '[G7] data-theme attribute round-trips to %s',
+      (id) => {
+        // theme-manager.ts:204-209: setTheme writes the id to data-theme.
+        // Prior test covered only 'light'; the audit flagged the missing
+        // four-theme round-trip.
+        const manager = ThemeManager.getInstance();
+        manager.setTheme(id);
+        expect(document.documentElement.getAttribute('data-theme')).toBe(id);
+      }
+    );
 
     it('[G9] setTheme notifies observers even when saveTheme silently fails', () => {
       // theme-manager.ts:486-492 wraps setItem in try/catch (swallowed),
@@ -549,67 +548,67 @@ describe('ThemeManager', () => {
         // Typography — font families
         ['--luxar-font-mono', theme.typography.fontFamily.mono],
         ['--luxar-font-display', theme.typography.fontFamily.display],
-      // Typography — font sizes (8)
-      ['--luxar-text-xs', theme.typography.fontSize.xs],
-      ['--luxar-text-sm', theme.typography.fontSize.sm],
-      ['--luxar-text-base', theme.typography.fontSize.base],
-      ['--luxar-text-md', theme.typography.fontSize.md],
-      ['--luxar-text-lg', theme.typography.fontSize.lg],
-      ['--luxar-text-xl', theme.typography.fontSize.xl],
-      ['--luxar-text-2xl', theme.typography.fontSize['2xl']],
-      ['--luxar-text-3xl', theme.typography.fontSize['3xl']],
-      // Typography — font weights (4)
-      ['--luxar-font-normal', String(theme.typography.fontWeight.normal)],
-      ['--luxar-font-medium', String(theme.typography.fontWeight.medium)],
-      ['--luxar-font-semibold', String(theme.typography.fontWeight.semibold)],
-      ['--luxar-font-bold', String(theme.typography.fontWeight.bold)],
-      // Typography — line heights (3)
-      ['--luxar-line-tight', String(theme.typography.lineHeight.tight)],
-      ['--luxar-line-normal', String(theme.typography.lineHeight.normal)],
-      ['--luxar-line-relaxed', String(theme.typography.lineHeight.relaxed)],
-      // Spacing — all 12 keys (existing test only covered '8')
-      ['--luxar-spacing-0', theme.spacing[0]],
-      ['--luxar-spacing-1', theme.spacing[1]],
-      ['--luxar-spacing-2', theme.spacing[2]],
-      ['--luxar-spacing-3', theme.spacing[3]],
-      ['--luxar-spacing-4', theme.spacing[4]],
-      ['--luxar-spacing-5', theme.spacing[5]],
-      ['--luxar-spacing-6', theme.spacing[6]],
-      ['--luxar-spacing-10', theme.spacing[10]],
-      ['--luxar-spacing-12', theme.spacing[12]],
-      ['--luxar-spacing-16', theme.spacing[16]],
-      ['--luxar-spacing-20', theme.spacing[20]],
-      // Effects — border radius (5)
-      ['--luxar-radius-none', theme.effects.borderRadius.none],
-      ['--luxar-radius-sm', theme.effects.borderRadius.sm],
-      ['--luxar-radius-md', theme.effects.borderRadius.md],
-      ['--luxar-radius-lg', theme.effects.borderRadius.lg],
-      ['--luxar-radius-full', theme.effects.borderRadius.full],
-      // Effects — shadow (4)
-      ['--luxar-shadow-sm', theme.effects.shadow.sm],
-      ['--luxar-shadow-md', theme.effects.shadow.md],
-      ['--luxar-shadow-lg', theme.effects.shadow.lg],
-      ['--luxar-shadow-xl', theme.effects.shadow.xl],
-      // Effects — blur (4)
-      ['--luxar-blur-none', theme.effects.blur.none],
-      ['--luxar-blur-sm', theme.effects.blur.sm],
-      ['--luxar-blur-md', theme.effects.blur.md],
-      ['--luxar-blur-lg', theme.effects.blur.lg],
-      // Effects — opacity (4)
-      ['--luxar-opacity-disabled', String(theme.effects.opacity.disabled)],
-      ['--luxar-opacity-secondary', String(theme.effects.opacity.secondary)],
-      ['--luxar-opacity-hover', String(theme.effects.opacity.hover)],
-      ['--luxar-opacity-full', String(theme.effects.opacity.full)],
-      // Effects — transition (3)
-      ['--luxar-transition-fast', theme.effects.transition.fast],
-      ['--luxar-transition-normal', theme.effects.transition.normal],
-      ['--luxar-transition-slow', theme.effects.transition.slow],
-      // zIndex (5)
-      ['--luxar-z-base', String(theme.zIndex.base)],
-      ['--luxar-z-dropdown', String(theme.zIndex.dropdown)],
-      ['--luxar-z-modal', String(theme.zIndex.modal)],
-      ['--luxar-z-popover', String(theme.zIndex.popover)],
-      ['--luxar-z-tooltip', String(theme.zIndex.tooltip)],
+        // Typography — font sizes (8)
+        ['--luxar-text-xs', theme.typography.fontSize.xs],
+        ['--luxar-text-sm', theme.typography.fontSize.sm],
+        ['--luxar-text-base', theme.typography.fontSize.base],
+        ['--luxar-text-md', theme.typography.fontSize.md],
+        ['--luxar-text-lg', theme.typography.fontSize.lg],
+        ['--luxar-text-xl', theme.typography.fontSize.xl],
+        ['--luxar-text-2xl', theme.typography.fontSize['2xl']],
+        ['--luxar-text-3xl', theme.typography.fontSize['3xl']],
+        // Typography — font weights (4)
+        ['--luxar-font-normal', String(theme.typography.fontWeight.normal)],
+        ['--luxar-font-medium', String(theme.typography.fontWeight.medium)],
+        ['--luxar-font-semibold', String(theme.typography.fontWeight.semibold)],
+        ['--luxar-font-bold', String(theme.typography.fontWeight.bold)],
+        // Typography — line heights (3)
+        ['--luxar-line-tight', String(theme.typography.lineHeight.tight)],
+        ['--luxar-line-normal', String(theme.typography.lineHeight.normal)],
+        ['--luxar-line-relaxed', String(theme.typography.lineHeight.relaxed)],
+        // Spacing — all 12 keys (existing test only covered '8')
+        ['--luxar-spacing-0', theme.spacing[0]],
+        ['--luxar-spacing-1', theme.spacing[1]],
+        ['--luxar-spacing-2', theme.spacing[2]],
+        ['--luxar-spacing-3', theme.spacing[3]],
+        ['--luxar-spacing-4', theme.spacing[4]],
+        ['--luxar-spacing-5', theme.spacing[5]],
+        ['--luxar-spacing-6', theme.spacing[6]],
+        ['--luxar-spacing-10', theme.spacing[10]],
+        ['--luxar-spacing-12', theme.spacing[12]],
+        ['--luxar-spacing-16', theme.spacing[16]],
+        ['--luxar-spacing-20', theme.spacing[20]],
+        // Effects — border radius (5)
+        ['--luxar-radius-none', theme.effects.borderRadius.none],
+        ['--luxar-radius-sm', theme.effects.borderRadius.sm],
+        ['--luxar-radius-md', theme.effects.borderRadius.md],
+        ['--luxar-radius-lg', theme.effects.borderRadius.lg],
+        ['--luxar-radius-full', theme.effects.borderRadius.full],
+        // Effects — shadow (4)
+        ['--luxar-shadow-sm', theme.effects.shadow.sm],
+        ['--luxar-shadow-md', theme.effects.shadow.md],
+        ['--luxar-shadow-lg', theme.effects.shadow.lg],
+        ['--luxar-shadow-xl', theme.effects.shadow.xl],
+        // Effects — blur (4)
+        ['--luxar-blur-none', theme.effects.blur.none],
+        ['--luxar-blur-sm', theme.effects.blur.sm],
+        ['--luxar-blur-md', theme.effects.blur.md],
+        ['--luxar-blur-lg', theme.effects.blur.lg],
+        // Effects — opacity (4)
+        ['--luxar-opacity-disabled', String(theme.effects.opacity.disabled)],
+        ['--luxar-opacity-secondary', String(theme.effects.opacity.secondary)],
+        ['--luxar-opacity-hover', String(theme.effects.opacity.hover)],
+        ['--luxar-opacity-full', String(theme.effects.opacity.full)],
+        // Effects — transition (3)
+        ['--luxar-transition-fast', theme.effects.transition.fast],
+        ['--luxar-transition-normal', theme.effects.transition.normal],
+        ['--luxar-transition-slow', theme.effects.transition.slow],
+        // zIndex (5)
+        ['--luxar-z-base', String(theme.zIndex.base)],
+        ['--luxar-z-dropdown', String(theme.zIndex.dropdown)],
+        ['--luxar-z-modal', String(theme.zIndex.modal)],
+        ['--luxar-z-popover', String(theme.zIndex.popover)],
+        ['--luxar-z-tooltip', String(theme.zIndex.tooltip)],
       ];
       return entries.filter((e): e is [string, string] => e[1] !== undefined);
     };
@@ -619,9 +618,7 @@ describe('ThemeManager', () => {
       (cssVar, expected) => {
         const manager = ThemeManager.getInstance();
         manager.setTheme('dark');
-        const actual = getComputedStyle(document.documentElement)
-          .getPropertyValue(cssVar)
-          .trim();
+        const actual = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
         // CSS may collapse whitespace in font-stack strings; normalize.
         const canonical = (s: string) => s.replace(/\s+/g, ' ').trim();
         expect(canonical(actual)).toBe(canonical(expected));
@@ -633,9 +630,7 @@ describe('ThemeManager', () => {
       (cssVar, expected) => {
         const manager = ThemeManager.getInstance();
         manager.setTheme('light');
-        const actual = getComputedStyle(document.documentElement)
-          .getPropertyValue(cssVar)
-          .trim();
+        const actual = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
         const canonical = (s: string) => s.replace(/\s+/g, ' ').trim();
         expect(canonical(actual)).toBe(canonical(expected));
       }

@@ -148,11 +148,29 @@ describe('effective-radius-calculator', () => {
     // failing case names the {hidden-dim distance, radius} pair that
     // regressed (e.g. "per-point effective radius: distance=0.3,
     // radius=0.5 → 0.4 (Pythagorean clip)").
-    it.each<{ pointIndex: number; distance: number; radius: number; expected: number; label: string }>([
+    it.each<{
+      pointIndex: number;
+      distance: number;
+      radius: number;
+      expected: number;
+      label: string;
+    }>([
       { pointIndex: 0, distance: 0.0, radius: 1.0, expected: 1.0, label: 'on slice (no clip)' },
-      { pointIndex: 1, distance: 0.3, radius: 0.5, expected: 0.4, label: 'Pythagorean clip √(0.5²−0.3²)' },
+      {
+        pointIndex: 1,
+        distance: 0.3,
+        radius: 0.5,
+        expected: 0.4,
+        label: 'Pythagorean clip √(0.5²−0.3²)',
+      },
       // [ndim.md/C3][P5] use Float32-appropriate precision (5 digits, ~1e-5).
-      { pointIndex: 2, distance: 0.5, radius: 2.0, expected: Math.sqrt(3.75), label: 'Pythagorean clip √(2²−0.5²)' },
+      {
+        pointIndex: 2,
+        distance: 0.5,
+        radius: 2.0,
+        expected: Math.sqrt(3.75),
+        label: 'Pythagorean clip √(2²−0.5²)',
+      },
     ])(
       'per-point effective radius from a multi-point input: distance=$distance, radius=$radius → $expected ($label)',
       ({ pointIndex, distance, radius, expected }) => {
@@ -160,9 +178,18 @@ describe('effective-radius-calculator', () => {
         // the `calculateEffectiveRadii` contract for "multiple points
         // with mixed radii in one call" is still exercised per row.
         const positions = new Float32Array([
-          0, 0, 0, 0.0, // Point 0: on slice
-          0, 0, 0, 0.3, // Point 1: 0.3 away
-          0, 0, 0, 0.5, // Point 2: 0.5 away
+          0,
+          0,
+          0,
+          0.0, // Point 0: on slice
+          0,
+          0,
+          0,
+          0.3, // Point 1: 0.3 away
+          0,
+          0,
+          0,
+          0.5, // Point 2: 0.5 away
         ]);
         const radii = new Float32Array([1.0, 0.5, 2.0]);
         const viewState: ViewState = {

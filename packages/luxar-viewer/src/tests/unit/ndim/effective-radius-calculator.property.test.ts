@@ -88,7 +88,10 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
           slicePosition: [0, 0, 0],
           tolerance: [1e10, 1e10, 1e10],
         };
-        const config: EffectiveRadiusConfig = { spatialExtendDims: [false, false, false], maxRadius: 1 };
+        const config: EffectiveRadiusConfig = {
+          spatialExtendDims: [false, false, false],
+          maxRadius: 1,
+        };
         const result = calculateEffectiveRadii(positions, radii, viewState, config, 3);
         expect(result).toBeInstanceOf(Float32Array);
         expect(result.length).toBe(n);
@@ -121,8 +124,20 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
           const positionsLarger = new Float32Array([0, 0, 0, larger]);
           const radii = new Float32Array([R]);
 
-          const rEffSmaller = calculateEffectiveRadii(positionsSmaller, radii, viewState, config, 4)[0];
-          const rEffLarger = calculateEffectiveRadii(positionsLarger, radii, viewState, config, 4)[0];
+          const rEffSmaller = calculateEffectiveRadii(
+            positionsSmaller,
+            radii,
+            viewState,
+            config,
+            4
+          )[0];
+          const rEffLarger = calculateEffectiveRadii(
+            positionsLarger,
+            radii,
+            viewState,
+            config,
+            4
+          )[0];
 
           // smaller |D| → larger (or equal) R_eff
           expect(rEffSmaller).toBeGreaterThanOrEqual(rEffLarger - 1e-4);
@@ -142,7 +157,10 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
           slicePosition: [0, 0, 0, 0],
           tolerance: [0, 0, 0, HIDDEN_TOLERANCE],
         };
-        const config: EffectiveRadiusConfig = { spatialExtendDims: [false, false, false, true], maxRadius: R };
+        const config: EffectiveRadiusConfig = {
+          spatialExtendDims: [false, false, false, true],
+          maxRadius: R,
+        };
         const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
         expect(result[0]).toBeCloseTo(R, 5);
       }),
@@ -154,7 +172,12 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
     fc.assert(
       fc.property(
         positiveRadius,
-        fc.float({ min: Math.fround(1), max: Math.fround(10), noNaN: true, noDefaultInfinity: true }),
+        fc.float({
+          min: Math.fround(1),
+          max: Math.fround(10),
+          noNaN: true,
+          noDefaultInfinity: true,
+        }),
         (R, overshootFactor) => {
           // Place the point at distance R*overshootFactor (>= R) in the hidden dim.
           const D = R * overshootFactor;
@@ -165,7 +188,10 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
             slicePosition: [0, 0, 0, 0],
             tolerance: [0, 0, 0, HIDDEN_TOLERANCE],
           };
-          const config: EffectiveRadiusConfig = { spatialExtendDims: [false, false, false, true], maxRadius: R };
+          const config: EffectiveRadiusConfig = {
+            spatialExtendDims: [false, false, false, true],
+            maxRadius: R,
+          };
           const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
           // D >= R → cross-section is 0; the clamp at line 130 ensures non-negative output.
           expect(Number.isFinite(result[0])).toBe(true);
@@ -190,7 +216,10 @@ describe('calculateEffectiveRadii — algebraic invariants', () => {
           slicePosition: [0, 0, 0, slicePos],
           tolerance: [0, 0, 0, 1e10], // extend_to_all sentinel
         };
-        const config: EffectiveRadiusConfig = { spatialExtendDims: [false, false, false, true], maxRadius: R };
+        const config: EffectiveRadiusConfig = {
+          spatialExtendDims: [false, false, false, true],
+          maxRadius: R,
+        };
         const result = calculateEffectiveRadii(positions, radii, viewState, config, 4);
         // With extend_to_all set, the source ignores hidden-dim distance and
         // returns R unchanged.

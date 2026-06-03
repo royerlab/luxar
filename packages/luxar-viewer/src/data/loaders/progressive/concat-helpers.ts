@@ -41,8 +41,7 @@ export function concatRequiredField<A extends ConcatTypedArray, P>(
   perItem = 1
 ): A {
   const total = parts.reduce((s, p) => s + countOf(p), 0);
-  const ctor = (get(parts[0]) as unknown as { constructor: new (n: number) => A })
-    .constructor;
+  const ctor = (get(parts[0]) as unknown as { constructor: new (n: number) => A }).constructor;
   const out = new ctor(total * perItem);
   let offset = 0;
   for (const p of parts) {

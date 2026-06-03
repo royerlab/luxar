@@ -246,7 +246,7 @@ describe('isValidLineType', () => {
     'rejects unknown / case-mismatched %s',
     (t) => {
       expect(isValidLineType(t)).toBe(false);
-    },
+    }
   );
 
   it.each([

@@ -327,7 +327,10 @@ describe('captureViewerState — animation block', () => {
     // [G10] guard: even with an animationManager passed in, if dims === null,
     // the source's `if (animationManager && dims)` short-circuits and
     // animation must remain undefined.
-    const state = buildState([{ isPlaying: true, targetFPS: 30, loopMode: 'loop', direction: 'forward' }], false);
+    const state = buildState(
+      [{ isPlaying: true, targetFPS: 30, loopMode: 'loop', direction: 'forward' }],
+      false
+    );
     expect(state.animation).toBeUndefined();
   });
 });

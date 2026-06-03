@@ -10,7 +10,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { attachListeners, type FlyListenersCtx } from '../../../../controls/luxar-fly-controls/listeners';
+import {
+  attachListeners,
+  type FlyListenersCtx,
+} from '../../../../controls/luxar-fly-controls/listeners';
 
 function makeCtx(overrides: Partial<FlyListenersCtx> = {}): FlyListenersCtx {
   return {

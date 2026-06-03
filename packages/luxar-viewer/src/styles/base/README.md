@@ -21,31 +21,31 @@ bundle.
 
 ## Utility groups (`utilities.css`)
 
-| Group        | Examples                                                          |
-| ------------ | ----------------------------------------------------------------- |
-| Flexbox      | `luxar-flex`, `luxar-flex-col`, `luxar-items-center`              |
-| Justify      | `luxar-justify-start` ... `luxar-justify-around`                  |
-| Gap          | `luxar-gap-0` ... `luxar-gap-12`                                  |
-| Padding      | `luxar-p-0` ... `luxar-p-12`                                      |
-| Margin       | `luxar-m-{0,2,4,6,8}`, `luxar-mb-{0,2,4,6,8,12}`                  |
-| Text color   | `luxar-text-{primary,secondary,muted,disabled,success,warning,error,info}` |
-| Text size    | `luxar-text-{xs,sm,base,md,lg,xl,2xl,3xl}`                        |
-| Text weight  | `luxar-text-{normal,medium,semibold,bold}`                        |
-| Text align   | `luxar-text-{left,center,right}`                                  |
-| Font family  | `luxar-font-base`, `luxar-font-mono`                              |
-| Surface      | `luxar-surface-{primary,secondary,tertiary,elevated}`             |
-| Border       | `luxar-border`, `luxar-border-subtle`, `luxar-border-strong`      |
-| Radius       | `luxar-rounded-{none,sm,md,lg,full}`                              |
-| Shadow       | `luxar-shadow-{sm,md,lg,xl}`                                      |
-| Backdrop     | `luxar-blur-{sm,md,lg}`                                           |
-| Transition   | `luxar-transition`, `luxar-transition-{fast,slow}`                |
-| Display      | `luxar-hidden`, `luxar-block`, `luxar-inline-block`               |
-| Position     | `luxar-relative`, `luxar-absolute`, `luxar-fixed`                 |
-| Overflow     | `luxar-overflow-{hidden,auto,y-auto}`                             |
-| Cursor       | `luxar-cursor-{pointer,default}`                                  |
-| Opacity      | `luxar-opacity-{disabled,secondary,hover,full}`                   |
-| Z-index      | `luxar-z-{base,dropdown,modal,popover,tooltip}`                   |
-| Animation    | `luxar-animate-fade-in` (`@keyframes luxar-fade-in`, 0.15s ease)  |
+| Group       | Examples                                                                   |
+| ----------- | -------------------------------------------------------------------------- |
+| Flexbox     | `luxar-flex`, `luxar-flex-col`, `luxar-items-center`                       |
+| Justify     | `luxar-justify-start` ... `luxar-justify-around`                           |
+| Gap         | `luxar-gap-0` ... `luxar-gap-12`                                           |
+| Padding     | `luxar-p-0` ... `luxar-p-12`                                               |
+| Margin      | `luxar-m-{0,2,4,6,8}`, `luxar-mb-{0,2,4,6,8,12}`                           |
+| Text color  | `luxar-text-{primary,secondary,muted,disabled,success,warning,error,info}` |
+| Text size   | `luxar-text-{xs,sm,base,md,lg,xl,2xl,3xl}`                                 |
+| Text weight | `luxar-text-{normal,medium,semibold,bold}`                                 |
+| Text align  | `luxar-text-{left,center,right}`                                           |
+| Font family | `luxar-font-base`, `luxar-font-mono`                                       |
+| Surface     | `luxar-surface-{primary,secondary,tertiary,elevated}`                      |
+| Border      | `luxar-border`, `luxar-border-subtle`, `luxar-border-strong`               |
+| Radius      | `luxar-rounded-{none,sm,md,lg,full}`                                       |
+| Shadow      | `luxar-shadow-{sm,md,lg,xl}`                                               |
+| Backdrop    | `luxar-blur-{sm,md,lg}`                                                    |
+| Transition  | `luxar-transition`, `luxar-transition-{fast,slow}`                         |
+| Display     | `luxar-hidden`, `luxar-block`, `luxar-inline-block`                        |
+| Position    | `luxar-relative`, `luxar-absolute`, `luxar-fixed`                          |
+| Overflow    | `luxar-overflow-{hidden,auto,y-auto}`                                      |
+| Cursor      | `luxar-cursor-{pointer,default}`                                           |
+| Opacity     | `luxar-opacity-{disabled,secondary,hover,full}`                            |
+| Z-index     | `luxar-z-{base,dropdown,modal,popover,tooltip}`                            |
+| Animation   | `luxar-animate-fade-in` (`@keyframes luxar-fade-in`, 0.15s ease)           |
 
 All values resolve to `--luxar-*` custom properties injected by the
 `ThemeManager` — no hardcoded colors, spacing, or radii.

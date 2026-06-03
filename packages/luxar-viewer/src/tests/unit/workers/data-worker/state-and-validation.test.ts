@@ -73,13 +73,7 @@ describe('validateLineSegmentReferences — direct (H6, P5)', () => {
     // Empty segment list — early return per source line 215. Critical
     // because the inner loop would otherwise dereference segments[0].
     expect(() =>
-      validateLineSegmentReferences(
-        'test',
-        new Uint32Array(0),
-        0,
-        new Float32Array(0),
-        3
-      )
+      validateLineSegmentReferences('test', new Uint32Array(0), 0, new Float32Array(0), 3)
     ).not.toThrow();
   });
 
@@ -285,66 +279,31 @@ describe('validateNDArrays — direct boundary tests (P5)', () => {
 describe('validateProjectionInputs — boundary (P5)', () => {
   it('rejects displayDims with 0 entries', () => {
     expect(() =>
-      validateProjectionInputs(
-        'test',
-        new Float32Array(0),
-        [],
-        new Float32Array(3),
-        3,
-        0
-      )
+      validateProjectionInputs('test', new Float32Array(0), [], new Float32Array(3), 3, 0)
     ).toThrow(/displayDims must have 1–3 entries/);
   });
 
   it('rejects displayDims with > 3 entries', () => {
     expect(() =>
-      validateProjectionInputs(
-        'test',
-        new Float32Array(0),
-        [0, 1, 2, 3],
-        new Float32Array(4),
-        4,
-        0
-      )
+      validateProjectionInputs('test', new Float32Array(0), [0, 1, 2, 3], new Float32Array(4), 4, 0)
     ).toThrow(/displayDims must have 1–3 entries/);
   });
 
   it('rejects displayDims with negative entry', () => {
     expect(() =>
-      validateProjectionInputs(
-        'test',
-        new Float32Array(0),
-        [-1, 1, 2],
-        new Float32Array(3),
-        3,
-        0
-      )
+      validateProjectionInputs('test', new Float32Array(0), [-1, 1, 2], new Float32Array(3), 3, 0)
     ).toThrow(/displayDims\[0\]=-1 out of range/);
   });
 
   it('rejects displayDims with non-integer entry', () => {
     expect(() =>
-      validateProjectionInputs(
-        'test',
-        new Float32Array(0),
-        [0, 1.5, 2],
-        new Float32Array(3),
-        3,
-        0
-      )
+      validateProjectionInputs('test', new Float32Array(0), [0, 1.5, 2], new Float32Array(3), 3, 0)
     ).toThrow(/displayDims\[1\]=1\.5 out of range/);
   });
 
   it('accepts 1-displayDim case (1D projection)', () => {
     expect(() =>
-      validateProjectionInputs(
-        'test',
-        new Float32Array(5),
-        [0],
-        new Float32Array(1),
-        1,
-        5
-      )
+      validateProjectionInputs('test', new Float32Array(5), [0], new Float32Array(1), 1, 5)
     ).not.toThrow();
   });
 });

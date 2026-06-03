@@ -190,10 +190,9 @@ const attrArb: fc.Arbitrary<{
   gamma: fc.option(fc.float({ min: f(0.5), max: f(2), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),
-  intensity: fc.option(
-    fc.float({ min: f(0.1), max: f(4), noNaN: true, noDefaultInfinity: true }),
-    { nil: undefined }
-  ),
+  intensity: fc.option(fc.float({ min: f(0.1), max: f(4), noNaN: true, noDefaultInfinity: true }), {
+    nil: undefined,
+  }),
   offset: fc.option(fc.float({ min: f(-1), max: f(1), noNaN: true, noDefaultInfinity: true }), {
     nil: undefined,
   }),

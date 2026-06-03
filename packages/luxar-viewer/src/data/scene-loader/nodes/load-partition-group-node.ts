@@ -75,10 +75,7 @@ export async function loadPartitionGroupNode(
 
   const sceneChildren = node.children ?? [];
   if (sceneChildren.length === 0) {
-    log.warning(
-      Modules.SCENE_LOADER,
-      `partition-kind group ${node.path} has no children`
-    );
+    log.warning(Modules.SCENE_LOADER, `partition-kind group ${node.path} has no children`);
     return partitionGroup;
   }
 

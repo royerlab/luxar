@@ -437,7 +437,7 @@ describe('ControlsManager', () => {
         controls.dispatchEvent({ type: eventType });
 
         expect(handler).toHaveBeenCalled();
-      },
+      }
     );
 
     it('should detach forwarded listeners from disposed controls when switching modes', () => {

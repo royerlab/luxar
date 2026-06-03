@@ -36,12 +36,12 @@ the matching Rust kernel, and `transfer`s the resulting `Float32Array`.
 
 ## Encoding Correspondence
 
-| File              | Python encoding name(s)                                                            | WASM kernel(s)                                                |
-| ----------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `quantized.ts`    | `rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`, `bounded_scalar_uint16`         | `decode_quantized_u8`, `decode_quantized_u16`                 |
-| `log-scalar.ts`   | `log_scalar_uint8`, `log_scalar_uint16`                                            | `decode_log_scalar_u8`, `decode_log_scalar_u16`               |
-| `lut.ts`          | `lut_uint8`, `lut_uint16` (modes: `row`, `scalar`)                                 | `decode_lut_{scalar,row}_{u8,u16}`                            |
-| `broadcasted.ts`  | `broadcasted`                                                                      | `decode_broadcasted`                                          |
+| File             | Python encoding name(s)                                                    | WASM kernel(s)                                  |
+| ---------------- | -------------------------------------------------------------------------- | ----------------------------------------------- |
+| `quantized.ts`   | `rgb_uint8`, `rgb_uint16`, `bounded_scalar_uint8`, `bounded_scalar_uint16` | `decode_quantized_u8`, `decode_quantized_u16`   |
+| `log-scalar.ts`  | `log_scalar_uint8`, `log_scalar_uint16`                                    | `decode_log_scalar_u8`, `decode_log_scalar_u16` |
+| `lut.ts`         | `lut_uint8`, `lut_uint16` (modes: `row`, `scalar`)                         | `decode_lut_{scalar,row}_{u8,u16}`              |
+| `broadcasted.ts` | `broadcasted`                                                              | `decode_broadcasted`                            |
 
 `array_ref` and direct (`float32`, `float16`, raw `uint*`) encodings are
 handled entirely on the main thread by `ArrayDecoder`; they never reach

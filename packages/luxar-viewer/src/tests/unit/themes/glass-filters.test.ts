@@ -270,9 +270,9 @@ describe('glass-filters', () => {
       cleanup();
 
       // Stub rAF so any post-observer injection would be observable.
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((_cb: FrameRequestCallback) => 1) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation(((_cb: FrameRequestCallback) => 1) as typeof requestAnimationFrame);
 
       const panel = document.createElement('div');
       panel.className = 'luxar-gui';
@@ -297,13 +297,13 @@ describe('glass-filters', () => {
       document.body.appendChild(viewer);
 
       let rafFired = false;
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((cb: FrameRequestCallback) => {
-          rafFired = true;
-          cb(0);
-          return 1;
-        }) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+        cb: FrameRequestCallback
+      ) => {
+        rafFired = true;
+        cb(0);
+        return 1;
+      }) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 
@@ -328,13 +328,13 @@ describe('glass-filters', () => {
       document.body.appendChild(container);
 
       let rafFired = false;
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((cb: FrameRequestCallback) => {
-          rafFired = true;
-          cb(0);
-          return 1;
-        }) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+        cb: FrameRequestCallback
+      ) => {
+        rafFired = true;
+        cb(0);
+        return 1;
+      }) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 
@@ -353,13 +353,13 @@ describe('glass-filters', () => {
 
     it('falls back to document.body when neither .luxar-viewer nor #luxar-container is present', async () => {
       let rafFired = false;
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((cb: FrameRequestCallback) => {
-          rafFired = true;
-          cb(0);
-          return 1;
-        }) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+        cb: FrameRequestCallback
+      ) => {
+        rafFired = true;
+        cb(0);
+        return 1;
+      }) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 
@@ -378,9 +378,9 @@ describe('glass-filters', () => {
 
   describe('[G1k] MutationObserver selector matching', () => {
     it('does NOT trigger refraction injection when an unrelated element is added', async () => {
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((_cb: FrameRequestCallback) => 1) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation(((_cb: FrameRequestCallback) => 1) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 
@@ -399,13 +399,13 @@ describe('glass-filters', () => {
 
     it('triggers refraction injection when a glass-class element is added directly', async () => {
       let rafFired = false;
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((cb: FrameRequestCallback) => {
-          rafFired = true;
-          cb(0);
-          return 1;
-        }) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+        cb: FrameRequestCallback
+      ) => {
+        rafFired = true;
+        cb(0);
+        return 1;
+      }) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 
@@ -426,13 +426,13 @@ describe('glass-filters', () => {
   describe('[G1l] MutationObserver nested match', () => {
     it('triggers refraction injection when a CONTAINER element holds a glass child via querySelector', async () => {
       let rafFired = false;
-      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(
-        ((cb: FrameRequestCallback) => {
-          rafFired = true;
-          cb(0);
-          return 1;
-        }) as typeof requestAnimationFrame
-      );
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
+        cb: FrameRequestCallback
+      ) => {
+        rafFired = true;
+        cb(0);
+        return 1;
+      }) as typeof requestAnimationFrame);
 
       const cleanup = setupGlassRefractionObserver();
 

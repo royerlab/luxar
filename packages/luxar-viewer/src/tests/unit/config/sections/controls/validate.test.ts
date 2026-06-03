@@ -27,16 +27,59 @@ import { cloneConfig, invokeValidator } from '../../_fixtures';
  * cross-checks our list against the validator's behaviour by asserting
  * we exercise as many ranges as the source declares (8).
  */
-type RangeRef = { name: string; set: (cfg: AppConfig, r: { min: number; max: number; default: number }) => void };
+type RangeRef = {
+  name: string;
+  set: (cfg: AppConfig, r: { min: number; max: number; default: number }) => void;
+};
 const RANGE_REFS: RangeRef[] = [
-  { name: 'fly.movement.speed', set: (c, r) => { c.controls.fly.movement.speed = r; } },
-  { name: 'fly.movement.acceleration', set: (c, r) => { c.controls.fly.movement.acceleration = r; } },
-  { name: 'fly.movement.damping', set: (c, r) => { c.controls.fly.movement.damping = r; } },
-  { name: 'fly.rotation.speed', set: (c, r) => { c.controls.fly.rotation.speed = r; } },
-  { name: 'fly.rotation.damping', set: (c, r) => { c.controls.fly.rotation.damping = r; } },
-  { name: 'orbit.autoRotate.speed', set: (c, r) => { c.controls.orbit.autoRotate.speed = r; } },
-  { name: 'orbit.zoom.speed', set: (c, r) => { c.controls.orbit.zoom.speed = r; } },
-  { name: 'orbit.damping.factor', set: (c, r) => { c.controls.orbit.damping.factor = r; } },
+  {
+    name: 'fly.movement.speed',
+    set: (c, r) => {
+      c.controls.fly.movement.speed = r;
+    },
+  },
+  {
+    name: 'fly.movement.acceleration',
+    set: (c, r) => {
+      c.controls.fly.movement.acceleration = r;
+    },
+  },
+  {
+    name: 'fly.movement.damping',
+    set: (c, r) => {
+      c.controls.fly.movement.damping = r;
+    },
+  },
+  {
+    name: 'fly.rotation.speed',
+    set: (c, r) => {
+      c.controls.fly.rotation.speed = r;
+    },
+  },
+  {
+    name: 'fly.rotation.damping',
+    set: (c, r) => {
+      c.controls.fly.rotation.damping = r;
+    },
+  },
+  {
+    name: 'orbit.autoRotate.speed',
+    set: (c, r) => {
+      c.controls.orbit.autoRotate.speed = r;
+    },
+  },
+  {
+    name: 'orbit.zoom.speed',
+    set: (c, r) => {
+      c.controls.orbit.zoom.speed = r;
+    },
+  },
+  {
+    name: 'orbit.damping.factor',
+    set: (c, r) => {
+      c.controls.orbit.damping.factor = r;
+    },
+  },
 ];
 
 describe('validateControls', () => {
@@ -73,7 +116,9 @@ describe('validateControls', () => {
       const result = invokeValidator(validateControls, cfg);
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.stringMatching(new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*default.*outside`))
+        expect.stringMatching(
+          new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*default.*outside`)
+        )
       );
     });
 
@@ -83,7 +128,9 @@ describe('validateControls', () => {
       const result = invokeValidator(validateControls, cfg);
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.stringMatching(new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*default.*outside`))
+        expect.stringMatching(
+          new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*default.*outside`)
+        )
       );
     });
 
@@ -92,19 +139,10 @@ describe('validateControls', () => {
     // exercised this path.
     it.each(['min', 'max', 'default'] as const)('errors when %s is NaN (non-finite)', (field) => {
       const cfg = cloneConfig();
-      const r = { min: 0, max: 1, default: 0.5, [field]: NaN } as { min: number; max: number; default: number };
-      set(cfg, r);
-      const result = invokeValidator(validateControls, cfg);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringMatching(new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*non-finite`))
-      );
-    });
-
-    it.each(['min', 'max', 'default'] as const)('errors when %s is +Infinity (non-finite)', (field) => {
-      const cfg = cloneConfig();
-      const r = { min: 0, max: 1, default: 0.5, [field]: Number.POSITIVE_INFINITY } as {
-        min: number; max: number; default: number;
+      const r = { min: 0, max: 1, default: 0.5, [field]: NaN } as {
+        min: number;
+        max: number;
+        default: number;
       };
       set(cfg, r);
       const result = invokeValidator(validateControls, cfg);
@@ -113,6 +151,24 @@ describe('validateControls', () => {
         expect.stringMatching(new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*non-finite`))
       );
     });
+
+    it.each(['min', 'max', 'default'] as const)(
+      'errors when %s is +Infinity (non-finite)',
+      (field) => {
+        const cfg = cloneConfig();
+        const r = { min: 0, max: 1, default: 0.5, [field]: Number.POSITIVE_INFINITY } as {
+          min: number;
+          max: number;
+          default: number;
+        };
+        set(cfg, r);
+        const result = invokeValidator(validateControls, cfg);
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContainEqual(
+          expect.stringMatching(new RegExp(`controls\\.${name.replace(/\./g, '\\.')}.*non-finite`))
+        );
+      }
+    );
 
     it('errors when -Infinity violates non-finite guard', () => {
       // -Infinity on `min` would otherwise pass `min < max` numerically;

@@ -250,19 +250,16 @@ export async function loadScene(
   src: string,
   config?: LoaderConfig,
   loaderId?: string
-): Promise<THREE.Group>
+): Promise<THREE.Group>;
 
-export async function updateView(
-  viewState: Partial<ViewState>,
-  loaderId?: string
-): Promise<void>
+export async function updateView(viewState: Partial<ViewState>, loaderId?: string): Promise<void>;
 
 // Update scene when navigating dimensions
 export async function updateSceneForDimensions(
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string
-): Promise<void>
+): Promise<void>;
 ```
 
 ### 2. Chunk-Based Spatial Index
@@ -1075,15 +1072,15 @@ helpers. See `scene-loader/` for details — there is no single
 
 ### Points Spatial Index Loader (points/points-spatial-index-loader.ts)
 
-| Class/Method                                                                                             | Description                                                                          |
-| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `PointsSpatialIndexLoader`                                                                               | Loader using chunk-based spatial indexing                                            |
-| `constructor(zarrLocation, node, refRegistry?, zarrStore?, profiler?, l0Cache?, prefetcher?)`            | Create loader; cache/profiler/prefetcher are injected by `loader-factory`.           |
-| `initialize()`                                                                                           | Async — load the `chunk_bounds` array and prepare the spatial index.                 |
-| `loadPoints(viewState, session?)`                                                                        | Load points for the given view state; returns a `LoadedPointsData` payload.          |
-| `updateView(viewState, session?)`                                                                        | Re-query the spatial index for a new view state.                                     |
-| `prefetchChunks(viewState)`                                                                              | Background-fetch adjacent chunks predicted to be visible next.                       |
-| `dispose()`                                                                                              | Release the accumulator and other resources owned by this loader.                    |
+| Class/Method                                                                                  | Description                                                                 |
+| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `PointsSpatialIndexLoader`                                                                    | Loader using chunk-based spatial indexing                                   |
+| `constructor(zarrLocation, node, refRegistry?, zarrStore?, profiler?, l0Cache?, prefetcher?)` | Create loader; cache/profiler/prefetcher are injected by `loader-factory`.  |
+| `initialize()`                                                                                | Async — load the `chunk_bounds` array and prepare the spatial index.        |
+| `loadPoints(viewState, session?)`                                                             | Load points for the given view state; returns a `LoadedPointsData` payload. |
+| `updateView(viewState, session?)`                                                             | Re-query the spatial index for a new view state.                            |
+| `prefetchChunks(viewState)`                                                                   | Background-fetch adjacent chunks predicted to be visible next.              |
+| `dispose()`                                                                                   | Release the accumulator and other resources owned by this loader.           |
 
 Cache statistics are aggregated by the parent `SceneLoader` via the
 `loader-metrics.ts` event bus — per-loader cache APIs were removed in

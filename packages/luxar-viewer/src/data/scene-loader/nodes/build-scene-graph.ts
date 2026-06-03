@@ -144,11 +144,7 @@ export async function buildSceneGraph(
     // spurious child nodes in the monitor UI; mark the subtree
     // internal so subsequent iterations skip it. Symmetric across
     // all three leaf types.
-    if (
-      node.type === 'gsplats' ||
-      node.type === 'points' ||
-      node.type === 'lines'
-    ) {
+    if (node.type === 'gsplats' || node.type === 'points' || node.type === 'lines') {
       internalSubtreePrefixes.push(`${entry.path}/`);
     }
   }

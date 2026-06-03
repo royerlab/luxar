@@ -77,8 +77,7 @@ export async function loadPointsNode(
   // Progressive multi-additive-LOD Points: walks `additive_<i>/` subgroups
   // and wraps them in a `PointsProgressiveLoader`. Single-LOD nodes
   // (no `n_additive_sublods` attr) take the standard path below.
-  const nAdditive =
-    (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
+  const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
     log.info(
       Modules.SCENE_LOADER,

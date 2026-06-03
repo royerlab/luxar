@@ -161,13 +161,17 @@ describe('mergeRanges — algebraic invariants (data.md H2)', () => {
 
   test('permutation invariance: shuffling the input does not change the result', () => {
     fc.assert(
-      fc.property(rangesArb, fc.func(fc.integer({ min: 0, max: 1000 })) as fc.Arbitrary<() => number>, (rs, hash) => {
-        const a = mergeRanges(rs);
-        // Stable shuffle via random comparator backed by `hash`.
-        const shuffled = [...rs].sort(() => hash() - hash());
-        const b = mergeRanges(shuffled);
-        expect(b).toEqual(a);
-      })
+      fc.property(
+        rangesArb,
+        fc.func(fc.integer({ min: 0, max: 1000 })) as fc.Arbitrary<() => number>,
+        (rs, hash) => {
+          const a = mergeRanges(rs);
+          // Stable shuffle via random comparator backed by `hash`.
+          const shuffled = [...rs].sort(() => hash() - hash());
+          const b = mergeRanges(shuffled);
+          expect(b).toEqual(a);
+        }
+      )
     );
   });
 

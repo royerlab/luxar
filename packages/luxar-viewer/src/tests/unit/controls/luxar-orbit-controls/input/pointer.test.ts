@@ -244,9 +244,8 @@ describe('handlePointerDown — non-touch path', () => {
   it('captures the pointer and adds to ctx.pointers array', () => {
     const { ctx } = makeBaseCtx();
     const captureSpy = vi.fn();
-    (
-      ctx.domElement as unknown as { setPointerCapture: (id: number) => void }
-    ).setPointerCapture = captureSpy;
+    (ctx.domElement as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture =
+      captureSpy;
     // also stub the matching addEventListener calls the helper makes
     // (already supported by jsdom).
 
@@ -428,7 +427,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
       clientY: 200,
     });
     // Add the pointer to the array so the index loop is exercised.
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 })
+    );
     ctx.pointerPositions.set(0, new THREE.Vector2(100, 100));
 
     handlePointerMove(ctx, evt);
@@ -443,7 +444,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     const { ctx, state } = makeBaseCtx();
     state.action = 'pan';
     ctx.panStart.set(100, 200);
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 })
+    );
     ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
 
     handlePointerMove(
@@ -463,7 +466,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     const { ctx, state } = makeBaseCtx();
     state.action = 'zoom';
     ctx.dollyStart.set(100, 100);
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 })
+    );
     ctx.pointerPositions.set(0, new THREE.Vector2(100, 100));
 
     handlePointerMove(
@@ -482,7 +487,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     const { ctx, state } = makeBaseCtx();
     state.action = 'zoom';
     ctx.dollyStart.set(100, 200);
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 })
+    );
     ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
 
     handlePointerMove(
@@ -499,7 +506,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     state.action = 'zoom';
     state.zoomDelta = 5; // sentinel
     ctx.dollyStart.set(100, 200);
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 200 })
+    );
     ctx.pointerPositions.set(0, new THREE.Vector2(100, 200));
 
     handlePointerMove(
@@ -513,7 +522,9 @@ describe('handlePointerMove — rotate/pan/zoom branches [controls.md G18]', () 
     const { ctx, state } = makeBaseCtx();
     state.action = 'none';
     const startPos = new THREE.Vector2(100, 100);
-    ctx.pointers.push(makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 }));
+    ctx.pointers.push(
+      makePointerEvent('pointerdown', { pointerId: 0, clientX: 100, clientY: 100 })
+    );
     ctx.pointerPositions.set(0, startPos);
 
     handlePointerMove(

@@ -46,8 +46,6 @@ describe('connectLoaderToMonitor', () => {
   });
 
   it('is a silent no-op when the monitor is null', () => {
-    expect(() =>
-      connectLoaderToMonitor('/x', fullSurfaceLoader(), null)
-    ).not.toThrow();
+    expect(() => connectLoaderToMonitor('/x', fullSurfaceLoader(), null)).not.toThrow();
   });
 });

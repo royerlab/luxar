@@ -84,8 +84,8 @@ describe('initScaleBar', () => {
     expect(args.camera).toEqual({ id: 'camera' });
     expect(args.controls).toEqual({ id: 'controls' });
     expect(args.canvas).toBe(
-      (ports.sceneManager as unknown as { renderer: { domElement: HTMLCanvasElement } })
-        .renderer.domElement
+      (ports.sceneManager as unknown as { renderer: { domElement: HTMLCanvasElement } }).renderer
+        .domElement
     );
     expect(args.targetWidthPx).toBe(100);
     expect(args.position).toBe('bottom-right');
@@ -153,9 +153,11 @@ describe('initScaleBar', () => {
         update: vi.fn(),
       };
       const ports = makePorts({ previous });
-      (ports.animationController as unknown as {
-        removePerFrameCallback: ReturnType<typeof vi.fn>;
-      }).removePerFrameCallback.mockImplementation(() => order.push('removeCallback'));
+      (
+        ports.animationController as unknown as {
+          removePerFrameCallback: ReturnType<typeof vi.fn>;
+        }
+      ).removePerFrameCallback.mockImplementation(() => order.push('removeCallback'));
 
       initScaleBar(ports);
 

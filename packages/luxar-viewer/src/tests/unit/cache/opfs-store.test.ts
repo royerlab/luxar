@@ -1091,4 +1091,3 @@ describe('OPFSStore', () => {
 // The real getBucket has dedicated coverage in
 // tests/unit/cache/opfs-store/buckets.test.ts which imports the production
 // symbol. See delme/test-audit-luxar-viewer.src/cache.md (C1).
-

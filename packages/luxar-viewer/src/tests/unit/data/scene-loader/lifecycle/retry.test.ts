@@ -29,7 +29,11 @@ import {
   type RetryCtx,
 } from '../../../../../data/scene-loader/lifecycle/retry';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
-import type { DataLoader, LoadedPointsData, ViewState } from '../../../../../data/data-loader-types';
+import type {
+  DataLoader,
+  LoadedPointsData,
+  ViewState,
+} from '../../../../../data/data-loader-types';
 import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
 import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../../types/gsplats';
 

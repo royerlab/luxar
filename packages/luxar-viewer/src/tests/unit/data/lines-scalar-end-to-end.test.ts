@@ -242,7 +242,7 @@ describe('projectLinesTo3D scalar interpolation', () => {
 
 describe('GPU pool updateLinesGeometry scalar attribute', () => {
   it('does NOT create scalar attributes when data has no scalars', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const g = pool.acquireLinesGeometry('l1', 4);
     const processed: ProcessedLinesData = {
       startPositions: new Float32Array(12),
@@ -264,7 +264,7 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
   });
 
   it('lazily creates aStartScalar/aEndScalar on first scalar commit', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const g = pool.acquireLinesGeometry('l2', 2);
     const processed: ProcessedLinesData = {
       startPositions: new Float32Array(6),
@@ -295,7 +295,7 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
   });
 
   it('growLinesGeometry preserves scalar attribute contents on resize', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     // Acquire a small capacity, write scalars, then grow.
     const g = pool.acquireLinesGeometry('l-grow', 2);
     const small: ProcessedLinesData = {
@@ -348,7 +348,7 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
   });
 
   it('reuses scalar attributes on subsequent commits', () => {
-    const pool = new GPUBufferPool(20, 300, 5, 0);
+    const pool = new GPUBufferPool(20, 300, 5, () => 0);
     const g = pool.acquireLinesGeometry('l3', 1);
     const make = (s: number, e: number): ProcessedLinesData => ({
       startPositions: new Float32Array(3),

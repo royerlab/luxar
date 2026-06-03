@@ -46,7 +46,7 @@ describe('Accumulator Public API', () => {
           colors: new Uint8Array(3),
           radii: new Float32Array(1),
           sharpness: new Float32Array(1),
-        }),
+        })
       ).not.toThrow();
     });
 
@@ -278,7 +278,7 @@ describe('Accumulator Public API', () => {
           widths: new Float32Array(3),
           colors: new Uint8Array(3 * 3),
           sharpness: new Float32Array(3),
-        }),
+        })
       ).not.toThrow();
     });
 
@@ -350,7 +350,7 @@ describe('Accumulator Public API', () => {
           amplitudes: new Float32Array(1),
           choleskyFactors: new Float32Array(6),
           colors: new Uint8Array(3),
-        }),
+        })
       ).not.toThrow();
     });
 

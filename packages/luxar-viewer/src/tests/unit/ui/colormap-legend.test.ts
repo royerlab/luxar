@@ -100,8 +100,7 @@ function makeLayerState(initialLayers: LayerInfo[] = []) {
       mgr.initFromSceneGraph(toSceneGraph(next));
       (mgr as unknown as { notify: () => void }).notify();
     },
-    callbackCount: (): number =>
-      (mgr as unknown as { listeners: Set<unknown> }).listeners.size,
+    callbackCount: (): number => (mgr as unknown as { listeners: Set<unknown> }).listeners.size,
   });
 }
 
@@ -274,7 +273,9 @@ describe('ColormapLegend', () => {
       const entries = el.querySelectorAll('.luxar-colormap-legend__entry');
       expect(entries.length).toBe(1);
 
-      const canvas = entries[0].querySelector<HTMLCanvasElement>('.luxar-colormap-legend__gradient');
+      const canvas = entries[0].querySelector<HTMLCanvasElement>(
+        '.luxar-colormap-legend__gradient'
+      );
       expect(canvas).toBeTruthy();
       expect(canvas?.width).toBe(120);
       expect(canvas?.height).toBe(12);

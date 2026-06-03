@@ -76,8 +76,15 @@ class Panel {
 import { notifier, setNotifierBackend } from '../utils/cross-layer/notifier';
 
 // UI bootstrap (once)
-setNotifierBackend({ showError, showToast, showHelpOverlay, hideHelpOverlay,
-  showLoadingIndicator, hideLoadingIndicator, clearError });
+setNotifierBackend({
+  showError,
+  showToast,
+  showHelpOverlay,
+  hideHelpOverlay,
+  showLoadingIndicator,
+  hideLoadingIndicator,
+  clearError,
+});
 
 // Lower layers — does not import ui/ directly
 notifier.toast('Recording saved', 3000);

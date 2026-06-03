@@ -85,9 +85,7 @@ describe('escapeHtml', () => {
       // MED-32 fix: source now escapes `'` to `&#39;` for
       // defense-in-depth against single-quoted-attribute injection.
       expect(escapeHtml("can't")).toBe('can&#39;t');
-      expect(escapeHtml("it's a 'quoted' value")).toBe(
-        'it&#39;s a &#39;quoted&#39; value'
-      );
+      expect(escapeHtml("it's a 'quoted' value")).toBe('it&#39;s a &#39;quoted&#39; value');
     });
   });
 
@@ -98,8 +96,7 @@ describe('escapeHtml', () => {
       // Each special char appears in the input the right number of times;
       // the output substitutes each occurrence with its entity. Count the
       // entity substrings to pin the "exactly once each" invariant.
-      const count = (s: string, sub: string) =>
-        s.split(sub).length - 1;
+      const count = (s: string, sub: string) => s.split(sub).length - 1;
       // Input has: 2 `<`, 2 `>`, 2 `"`, 1 `&` ⇒ output entities:
       expect(count(out, '&lt;')).toBe(2);
       expect(count(out, '&gt;')).toBe(2);
@@ -175,9 +172,7 @@ describe('escapeHtml', () => {
       // Isolated ampersand invariant: when the input contains only `&` and
       // non-special chars, every `&` becomes exactly one `&amp;`. This pins
       // the first-escape-ampersand-rule across arbitrary inputs.
-      const safeNonSpecial = fc.constantFrom(
-        ...'abcdefghijklmnopqrstuvwxyz0123456789 '.split('')
-      );
+      const safeNonSpecial = fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz0123456789 '.split(''));
       fc.assert(
         fc.property(
           fc.array(fc.oneof(fc.constant('&'), safeNonSpecial), { maxLength: 32 }),

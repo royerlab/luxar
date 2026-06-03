@@ -131,7 +131,9 @@ describe('initializeDims', () => {
   });
 
   it('throws for Infinity numPoints', () => {
-    expect(() => initializeDims(Number.POSITIVE_INFINITY, 9)).toThrow(/Invalid numPoints: Infinity/);
+    expect(() => initializeDims(Number.POSITIVE_INFINITY, 9)).toThrow(
+      /Invalid numPoints: Infinity/
+    );
   });
 
   it('respects display flags when metadata is complete', () => {

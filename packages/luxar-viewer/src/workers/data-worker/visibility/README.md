@@ -42,11 +42,11 @@ Every kernel:
 
 ## Geometry-specific notes
 
-| Kernel    | Semantics                                                          | Extra inputs vs. points              |
-| --------- | ------------------------------------------------------------------ | ------------------------------------ |
-| `points`  | Per-point hypersphere of radius `radii[i]` intersects slice.       | `radii: Float32Array`                |
-| `lines`   | Segment is visible iff EITHER endpoint is visible.                 | `segments: Uint32Array`, `widths`    |
-| `gsplats` | Ellipsoid extent derived from packed lower-triangular Cholesky factors (`ndim*(ndim+1)/2` entries per splat) intersects slice. | `choleskyFactors: Float32Array` |
+| Kernel    | Semantics                                                                                                                      | Extra inputs vs. points           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| `points`  | Per-point hypersphere of radius `radii[i]` intersects slice.                                                                   | `radii: Float32Array`             |
+| `lines`   | Segment is visible iff EITHER endpoint is visible.                                                                             | `segments: Uint32Array`, `widths` |
+| `gsplats` | Ellipsoid extent derived from packed lower-triangular Cholesky factors (`ndim*(ndim+1)/2` entries per splat) intersects slice. | `choleskyFactors: Float32Array`   |
 
 ## Dependencies
 

@@ -81,9 +81,7 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
     showHelpOverlay();
     vi.advanceTimersByTime(150); // Listener installed for overlay-1.
 
-    const closeBtn = document.querySelector(
-      'button[title="Close (Escape)"]'
-    ) as HTMLButtonElement;
+    const closeBtn = document.querySelector('button[title="Close (Escape)"]') as HTMLButtonElement;
     // Audit W3 fix: pin tag + title so a wrong-target query won't pass.
     expect(closeBtn?.tagName).toBe('BUTTON');
     expect(closeBtn?.getAttribute('title')).toBe('Close (Escape)');

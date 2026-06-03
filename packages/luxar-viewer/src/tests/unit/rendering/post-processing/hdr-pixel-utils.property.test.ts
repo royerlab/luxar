@@ -107,8 +107,22 @@ describe('flipPixelsVerticallyRGBA — involution invariant', () => {
     const w = 2;
     const h = 2;
     const pixels = new Uint8Array([
-      255, 0, 0, 255,  255, 0, 0, 255, // row 0: red
-      0, 0, 255, 255,  0, 0, 255, 255, // row 1: blue
+      255,
+      0,
+      0,
+      255,
+      255,
+      0,
+      0,
+      255, // row 0: red
+      0,
+      0,
+      255,
+      255,
+      0,
+      0,
+      255,
+      255, // row 1: blue
     ]);
     const flipped = flipPixelsVerticallyRGBA(pixels, w, h);
     // After flip: row 0 should be blue, row 1 should be red.

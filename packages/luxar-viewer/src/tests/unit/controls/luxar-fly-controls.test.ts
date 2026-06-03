@@ -647,23 +647,20 @@ describe('LuxarFlyControls', () => {
       { delta: 0.016, label: '60fps' },
       { delta: 0.032, label: '30fps' },
       { delta: 0.008, label: '120fps' },
-    ])(
-      'damping applies frame-rate-independent decay $label (delta=$delta)',
-      ({ delta }) => {
-        const freshControls = new LuxarFlyControls(camera, domElement);
-        freshControls.damping = 0.9;
-        (freshControls as any).velocity.set(10, 0, 0);
+    ])('damping applies frame-rate-independent decay $label (delta=$delta)', ({ delta }) => {
+      const freshControls = new LuxarFlyControls(camera, domElement);
+      freshControls.damping = 0.9;
+      (freshControls as any).velocity.set(10, 0, 0);
 
-        freshControls.update(delta);
+      freshControls.update(delta);
 
-        // v_new = v_old * damping^(delta*60)
-        const expectedDecay = Math.pow(0.9, delta * 60);
-        const actualVelocity = (freshControls as any).velocity.x;
+      // v_new = v_old * damping^(delta*60)
+      const expectedDecay = Math.pow(0.9, delta * 60);
+      const actualVelocity = (freshControls as any).velocity.x;
 
-        expect(actualVelocity).toBeCloseTo(10 * expectedDecay, 1);
-        freshControls.dispose();
-      },
-    );
+      expect(actualVelocity).toBeCloseTo(10 * expectedDecay, 1);
+      freshControls.dispose();
+    });
   });
 
   describe('state management', () => {
