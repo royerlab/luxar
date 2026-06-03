@@ -5,7 +5,7 @@ This example demonstrates:
 - Creating high-density points (200,000) on a sphere surface
 - Using spherical spiral (Fibonacci-like) for even distribution
 - Calculating proper point spacing to avoid gaps
-- High sharpness for crisp rendering
+- Soft-edged spheres (sharpness 1.0)
 - Smooth rainbow gradient flowing along the spiral
 
 Educational value:
@@ -22,6 +22,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -117,7 +118,7 @@ def main():
     aprint("This example creates a high-density sphere with:")
     aprint("- 200,000 points in a spherical spiral pattern")
     aprint("- Points spaced approximately one radius apart")
-    aprint("- High sharpness for crisp rendering")
+    aprint("- Soft-edged spheres (sharpness 1.0)")
     aprint("- Smooth rainbow gradient along the spiral")
 
     # Parameters
@@ -144,7 +145,7 @@ def main():
         # Create uniform radii array
         radii = np.full(n_points, point_radius, dtype=np.float32)
 
-        # Use high sharpness for crisp points
+        # Soft-edged spheres (low sharpness)
         sharpness = np.full(n_points, 1.0, dtype=np.float32)
 
         # Add points to scene
@@ -161,8 +162,25 @@ def main():
         aprint(f"  Sphere radius: {sphere_radius} units")
         aprint(f"  Point radius: {point_radius:.4f} units")
         aprint(f"  Average spacing: ~{2 * point_radius:.4f} units")
-        aprint("  Sharpness: 8.0 (high - crisp edges)")
+        aprint("  Sharpness: 1.0 (soft-edged spheres)")
         aprint("  Colors: Full rainbow spectrum")
+
+        # Explainer card describing the dense-sphere stress test.
+        add_explainer(
+            scene,
+            title="Rainbow Sphere Spiral",
+            body=(
+                "200,000 points placed on a sphere via a golden-angle "
+                "(Fibonacci) spiral for near-uniform coverage, colored by a "
+                "smooth rainbow gradient running along the spiral."
+            ),
+            observe=[
+                "Coverage is even, with no clustering at the poles.",
+                "The rainbow flows continuously along the spiral.",
+                "Per-point radii keep neighbors roughly one radius apart.",
+            ],
+            observe_label="Notice",
+        )
 
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS")
@@ -177,7 +195,7 @@ def main():
         aprint("\n3. Visual features:")
         aprint("   - Spherical spiral ensures perfect distribution")
         aprint("   - Rainbow flows continuously along the spiral")
-        aprint("   - High sharpness creates crisp, well-defined points")
+        aprint("   - Sharpness 1.0 yields soft-edged spheres")
         aprint("   - No overlapping due to calculated spacing")
         aprint("=" * 60)
 

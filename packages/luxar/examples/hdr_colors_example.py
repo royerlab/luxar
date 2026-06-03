@@ -28,6 +28,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import (
@@ -68,10 +69,16 @@ def main() -> None:
     aprint(f"Writing HDR-colors example to {output_path}")
 
     rng = np.random.default_rng(seed=0)
-    sdr_positions, sdr_colors = make_star_cluster(2_000, x_offset=-3.0, intensity_peak=1.0, rng=rng)
-    hdr_positions, hdr_colors = make_star_cluster(2_000, x_offset=3.0, intensity_peak=5.0, rng=rng)
+    sdr_positions, sdr_colors = make_star_cluster(
+        2_000, x_offset=-3.0, intensity_peak=1.0, rng=rng
+    )
+    hdr_positions, hdr_colors = make_star_cluster(
+        2_000, x_offset=3.0, intensity_peak=5.0, rng=rng
+    )
     aprint(f"SDR cluster: max color = {sdr_colors.max():.2f}")
-    aprint(f"HDR cluster: max color = {hdr_colors.max():.2f}  (>1.0 → HDR auto-detected)")
+    aprint(
+        f"HDR cluster: max color = {hdr_colors.max():.2f}  (>1.0 → HDR auto-detected)"
+    )
 
     # ACES tone-mapping prevents the HDR cores from clipping straight
     # to white; it compresses the bright end into displayable range.
@@ -105,6 +112,25 @@ def main() -> None:
             sharpness=1.0,
             blending_mode="additive",
             layer=True,
+        )
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="HDR Colors",
+            body=(
+                "Two identical <code>additive</code> star clusters differ only "
+                "in peak brightness: the left stays in SDR [0,1], the right "
+                "peaks ~5x white as <strong>HDR</strong> (values &gt;1.0 are "
+                "stored as float32). ACES tone mapping keeps cores from clipping."
+            ),
+            observe=[
+                "Right (HDR) cluster cores render visibly hotter than the left.",
+                "Dim peripheries of both clusters look essentially identical.",
+                "HDR cores roll off via ACES instead of flat white clipping.",
+                "Console logs HDR auto-detection for the right cluster.",
+            ],
+            observe_label="Notice",
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

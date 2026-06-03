@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -168,6 +169,25 @@ def main():
                 aprint("  ERROR: Blending mode validation failed!")
             except ValueError as e:
                 aprint(f"  ✓ Blending mode validation working: {e}")
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="Point Rendering Attributes",
+            body=(
+                "Four point grids contrast <code>opacity</code>, "
+                "<code>gamma</code>, and <code>blending_mode</code>. The script "
+                "also mutates attributes at runtime and exercises validation, "
+                "showing these are <strong>live, checked</strong> properties."
+            ),
+            observe=[
+                "Bottom-left red uses default attributes as the baseline.",
+                "Top-left green is visibly semi-transparent at 60% opacity.",
+                "Bottom-right blue is brighter from its higher <code>gamma</code>.",
+                "Console shows validation rejecting out-of-range values.",
+            ],
+            observe_label="Verify",
+        )
 
         with asection("Educational Summary"):
             # Print educational summary

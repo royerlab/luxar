@@ -29,11 +29,55 @@ import os
 from pathlib import Path
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_examples_output_dir
+
+# Per-mode explainer content: each scene notes the encoding-mode trade-off.
+_MODE_EXPLAINERS = {
+    EncodingMode.PRECISION: {
+        "title": "Encoding: PRECISION",
+        "body": (
+            "<code>EncodingMode.PRECISION</code> stores every array as "
+            "<code>float32</code> with no quantization — the largest file, "
+            "but bit-exact data. Use it when scientific accuracy is critical."
+        ),
+        "observe": [
+            "This is the size baseline the other modes are compared against.",
+            "Colors and radii match the source data exactly.",
+            "No quantization banding appears anywhere in the cloud.",
+        ],
+    },
+    EncodingMode.MEMORY: {
+        "title": "Encoding: MEMORY",
+        "body": (
+            "<code>EncodingMode.MEMORY</code> applies aggressive quantization "
+            "(uint8/uint16/float16) for the smallest file and least bandwidth, "
+            "at the cost of small quantization errors. Best for web delivery."
+        ),
+        "observe": [
+            "The store is markedly smaller than the PRECISION baseline.",
+            "Geometry looks the same; tiny color/radius rounding may appear.",
+            "Ideal for streaming large clouds over the network.",
+        ],
+    },
+    EncodingMode.AUTO: {
+        "title": "Encoding: AUTO",
+        "body": (
+            "<code>EncodingMode.AUTO</code> inspects the data and picks an "
+            "encoding per array, balancing precision against size. It is the "
+            "recommended default for most scenes."
+        ),
+        "observe": [
+            "File size lands between the PRECISION and MEMORY extremes.",
+            "Lossless broadcasting and LUT optimizations still apply.",
+            "Visual quality is close to PRECISION with smaller storage.",
+        ],
+    },
+}
 
 
 def create_test_data(n_points: int = 100000):
@@ -116,6 +160,15 @@ def create_dataset_with_encoding_mode(
             sharpness=sharpness,
             opacity=0.9,
             gamma=1.2,
+        )
+
+        spec = _MODE_EXPLAINERS[encoding_mode]
+        add_explainer(
+            scene,
+            title=spec["title"],
+            body=spec["body"],
+            observe=spec["observe"],
+            observe_label="Look for",
         )
 
     # Report file size

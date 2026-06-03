@@ -24,6 +24,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -82,6 +83,40 @@ def main() -> None:
             colors=colors,
             radii=0.10,
             sharpness=2.0,
+        )
+
+        # Per-species colour legend (bottom-left), each line tinted to match
+        # its cluster. Because 'species' is a *sliced* (non-displayed)
+        # dimension, only one category is on screen at a time — so a
+        # persistent legend naming the arbitrary colour→species mapping
+        # (orange=cat, blue=dog, green=bird) confirms which label is showing.
+        for species_idx, name in enumerate(species_names):
+            r, g, b = (int(round(c * 255)) for c in palette[species_idx])
+            scene.add_text(
+                f"● {name}",
+                position=(0.02, 0.82 + 0.05 * species_idx),
+                font_size=0.024,
+                font="mono",
+                color=f"rgb({r},{g},{b})",
+                stroke_color="black",
+                stroke_width=0.0018,
+            )
+
+        add_explainer(
+            scene,
+            title="Categorical Dimensions",
+            body=(
+                "A non-displayed <code>species</code> dimension declared with "
+                "<code>categories=['cat','dog','bird']</code>; slicing it "
+                "shows only the points in that category."
+            ),
+            observe=[
+                "Press <code>4</code> for species, then <code>[</code> / "
+                "<code>]</code> to step.",
+                "The slider shows names (cat, dog, bird), not integers.",
+                "Each label reveals a differently-coloured cluster: orange, "
+                "blue, green.",
+            ],
         )
 
     aprint(f"Done. View with: luxar serve {output_path} --viewer")

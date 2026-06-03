@@ -23,6 +23,7 @@ Key principles:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -203,6 +204,23 @@ def main():
             "Reference5D",
             positions_ref,
             colors=colors_ref,
+        )
+
+        add_explainer(
+            scene,
+            title="High-Dimensional Points",
+            body=(
+                "A 5D point cloud (<code>time</code>, x, y, z, "
+                "<code>channel</code>) where only x/y/z are displayed and the "
+                "other two dimensions are sliced via the keyboard."
+            ),
+            observe=[
+                "Press <code>1</code> for time, then <code>[</code> / "
+                "<code>]</code>: the spiral evolves and brightens.",
+                "Press <code>5</code> for channel: red, green, blue subsets appear.",
+                "Grey reference points sit offset near (30, 30) at discrete "
+                "time/channel values.",
+            ],
         )
 
         aprint(f"✓ 5D nD scene created at {output_path}")

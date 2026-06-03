@@ -42,6 +42,7 @@ PR δ (#321) — LOD refinements + energy breakpoints.
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -92,9 +93,7 @@ def main() -> None:
     with LuxarZarrCompiler(str(output_path)) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-        positions, colors, radii = make_constellation(
-            n_dim=8000, n_bright=30
-        )
+        positions, colors, radii = make_constellation(n_dim=8000, n_bright=30)
 
         # === 1. Energy-ordered Points ===
         # salience_kind='energy' sorts by luminance × radius^3, so the
@@ -153,6 +152,24 @@ def main() -> None:
             colors=colors,
             radii=radii,
             min_pixel_size=120.0,
+        )
+
+        add_explainer(
+            scene,
+            title="Energy-Ordered LOD Breakpoints",
+            body=(
+                "<code>salience_kind='energy'</code> orders elements by "
+                "luminance x radius^3, and <code>counts='energy:...'</code> cuts "
+                "LOD levels at cumulative-energy fractions, so bright, large "
+                "splats land in the coarsest level first."
+            ),
+            observe=[
+                "On 'energy_ordered' the bright coloured stars paint first, then dust fills in.",
+                "'size_ordered' paints largest-first regardless of colour.",
+                "'custom_lod' reports type 'points' (display_type back-fill).",
+                "Higher base_pixel_size on custom_lod keeps the coarse subset visible longer.",
+            ],
+            observe_label="Look for",
         )
 
         aprint(

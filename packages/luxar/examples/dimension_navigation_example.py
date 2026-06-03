@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -256,6 +257,39 @@ def main():
             sharpness=np.full(
                 len(positions), 3.0, dtype=np.float32
             ),  # Sharp edges for clarity
+        )
+
+        # Per-frame colour legend (bottom-left): the frame dimension is
+        # *sliced* so only one shape shows at a time — this persistent legend
+        # names the full shape+colour sequence so you know what each step
+        # reveals. Each line is tinted to match its frame's points.
+        for frame_idx, (name, _shape, color) in enumerate(shape_configs):
+            r, g, b = (int(round(c * 255)) for c in color)
+            scene.add_text(
+                f"● frame {frame_idx}: {name.lower()}",
+                position=(0.02, 0.72 + 0.05 * frame_idx),
+                font_size=0.022,
+                font="mono",
+                color=f"rgb({r},{g},{b})",
+                stroke_color="black",
+                stroke_width=0.0018,
+            )
+
+        add_explainer(
+            scene,
+            title="Dimension Navigation",
+            body=(
+                "The hidden discrete <code>frame</code> dimension selects one "
+                "of five distinct shapes; stepping it swaps the whole shape "
+                "and its colour at once."
+            ),
+            observe=[
+                "Press <code>1</code> for frame, then <code>[</code> / "
+                "<code>]</code> to step.",
+                "Sequence: red circle, green square, blue triangle, gold "
+                "star, magenta cross.",
+                "Exactly one shape is visible per frame.",
+            ],
         )
 
         # Print instructions

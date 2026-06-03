@@ -9,6 +9,7 @@ This minimal example demonstrates:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -48,6 +49,21 @@ def main():
             np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # Position at (1, 0, 0)
             colors=[1.0, 0.0, 0.0],  # Red color
             radii=0.2,  # Larger radius
+        )
+
+        add_explainer(
+            scene,
+            title="Single point scene",
+            body="The minimal Luxar scene: a default white point at the origin "
+            "and a second point given an explicit color and <code>radii</code>. "
+            "Only a <strong>name</strong> and <strong>positions</strong> are "
+            "required; everything else falls back to defaults.",
+            observe=[
+                "A white point sits at the origin <code>(0, 0, 0)</code>.",
+                "A red point sits to its side at <code>(1, 0, 0)</code>.",
+                "The red point is visibly larger (<code>radii=0.2</code>).",
+            ],
+            observe_label="Look for",
         )
 
     aprint("\n" + "=" * 60)

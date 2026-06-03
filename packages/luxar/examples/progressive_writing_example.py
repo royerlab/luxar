@@ -21,6 +21,7 @@ Key principle:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions
@@ -128,6 +129,23 @@ def main():
                 num_points=total_points,
                 streaming=True,
             )
+
+        add_explainer(
+            scene,
+            title="Progressive Writing",
+            body=(
+                "This scene is built without holding all points in RAM: "
+                "<code>write_points()</code> streams clouds straight to disk, "
+                "and <code>create_resizable_dataset()</code> appends batches "
+                "to a growable array. Use this for datasets larger than memory."
+            ),
+            observe=[
+                "Two point clouds (cloud1, cloud2) plus a streamed cloud render together.",
+                "cloud2 sits offset in Z and uses additive HDR blending.",
+                "The streamed cloud's batches spread out as per-batch scale grows.",
+            ],
+            observe_label="Look for",
+        )
 
         with asection("Scene Completion and Viewing Instructions"):
             aprint(

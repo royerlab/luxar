@@ -17,6 +17,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 import luxar
@@ -198,6 +199,23 @@ def main():
             blending_mode="normal",
             # Explicitly extend axis markers to all time points and channels
             extend_to_all=["Time", "Channel"],
+        )
+
+        add_explainer(
+            scene,
+            title="Dense 5D Grid",
+            body=(
+                "A regular 10×10×10 grid replicated across 10 timepoints and "
+                "3 channels; the hidden <code>Time</code> and "
+                "<code>Channel</code> dimensions are navigated as sliders."
+            ),
+            observe=[
+                "Press <code>4</code> for Time, then <code>[</code> / "
+                "<code>]</code>: the grid rotates 10° per frame.",
+                "Press <code>5</code> for Channel: colour switches red, green, blue.",
+                "Point sizes oscillate with time.",
+                "The R/G/B axis markers stay visible at every time and channel.",
+            ],
         )
 
     aprint(f"✓ 5D scene created at {scene_path}")

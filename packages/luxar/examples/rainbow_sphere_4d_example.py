@@ -16,6 +16,7 @@ Educational value:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -179,6 +180,23 @@ def main():
             colors=colors,
             radii=radii,
             sharpness=sharpness,
+        )
+
+        add_explainer(
+            scene,
+            title="4D Spatial Hypersphere",
+            body=(
+                "Points lie on a true 4D sphere (X, Y, Z, W all spatial); the "
+                "non-displayed <code>W</code> axis is sliced to reveal 3D "
+                "cross-sections. Press <code>4</code> then <code>[</code>/"
+                "<code>]</code> to step through W."
+            ),
+            observe=[
+                "The visible 3D sphere grows toward W=0 and shrinks toward the edges.",
+                "No points appear near W=-10 or W=+10 (outside the hypersphere).",
+                "Colors form a smooth 4D rainbow that shifts with W.",
+            ],
+            observe_label="Look for",
         )
 
         # Finalize scene

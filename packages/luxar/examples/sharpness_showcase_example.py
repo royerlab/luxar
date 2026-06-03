@@ -2,7 +2,7 @@
 """Sharpness Showcase Example - Comprehensive demonstration of edge sharpness control.
 
 This example demonstrates:
-- Sharpness gradient: smooth transition from soft (0.5) to sharp (10.0)
+- Sharpness gradient: smooth transition from soft (0.5) to sharp (15.0)
 - Fixed comparison: side-by-side points with different sharpness values
 - Mixed cloud: varying sharpness within one point set
 - Sharpness wave: sinusoidal patterns creating visual rhythm
@@ -27,6 +27,7 @@ When to use:
 """
 
 import numpy as np
+from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
@@ -250,6 +251,25 @@ def main():
         create_sharpness_comparison_example(scene)
         create_mixed_sharpness_example(scene)
         create_sharpness_wave_example(scene)
+
+        # Explainer overlay describing what to look for in the viewer.
+        add_explainer(
+            scene,
+            title="Per-Point Sharpness",
+            body=(
+                "The <code>sharpness</code> attribute controls edge falloff, "
+                "from soft glowing blobs to crisp star-like points. Four "
+                "showcases sweep it as a gradient, fixed rows, a mixed cloud, "
+                "and a sinusoidal wave."
+            ),
+            observe=[
+                "Top gradient runs soft (left) to sharp (right) at fixed radius.",
+                "Right-side rows step through fixed values 0.5 to 15.0.",
+                "Mixed cloud interleaves soft, medium, and sharp points.",
+                "Wave shows sharpness rising and falling with the surface.",
+            ],
+            observe_label="Observe",
+        )
 
         # Finalize
 
