@@ -17,6 +17,22 @@ This module is a **pure post-process**. Fitting (single-pass or
 progressive) returns a single flattened `GSplatData`; an LOD hierarchy
 is built only on demand.
 
+### Module layout
+
+| File | Role |
+|------|------|
+| `additive.py` | additive axis: ordering + ladder (`make_additive_lod`, `compute_additive_order`) |
+| `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `_reduce_one_level`, `_pack_level`) |
+| `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
+| `_kernels.py` | shared closed-form Gaussian-mixture math (numpy + torch) |
+| `_substitutive/` | private support subpackage for `substitutive.py`: `warm_start.py` (Morton partition), `kmeans_lloyd.py` (cost-increment Lloyd), `greedy.py` (Runnalls lazy-heap merge) |
+
+The public import paths (`luxar.gsplats.lod`, `lod.additive`,
+`lod.substitutive`, `lod._kernels`) are unchanged; the three substitutive
+algorithms are grouped under `_substitutive/` (leading underscore because
+a module `substitutive.py` and a package `substitutive/` cannot coexist
+in CPython).
+
 > **Upstream step**: use `luxar gsplat cal` to pick a principled splat
 > budget K\* before fitting. The canonical end-to-end pipeline is
 > **`cal` → `fit --seeds K*` → `lod additive` (or `lod substitutive`)**.
