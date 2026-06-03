@@ -7,9 +7,7 @@ memory constraints.
 
 from __future__ import annotations
 
-import json
 import tempfile
-import warnings
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -25,7 +23,6 @@ from typing import (
 )
 
 import numpy as np
-import xxhash
 
 if TYPE_CHECKING:
     from ..core.scene import Scene
@@ -63,6 +60,12 @@ from ._compiler.datasets.scalars import (
     write_scalars,
     write_sharpness,
 )
+from ._compiler.finalize.hashing import compute_content_hashes
+from ._compiler.finalize.lod_backfill import (
+    finalize_lod_display_types,
+    finalize_lod_position_bounds,
+)
+from ._compiler.finalize.validation import validate_discrete_dimension_ranges
 from ._compiler.gsplat_assembly import (
     apply_gsplat_group_attrs,
     apply_gsplat_spatial_ordering,
@@ -1609,204 +1612,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _update_scene_bounds(self, node_bounds: Dict[str, List[float]]) -> None:
         self._scene_bounds = update_scene_bounds(self._scene_bounds, node_bounds)
 
+    # ------------------------------------------------------------------
+    # Finalize-time tree passes — bodies live in _compiler/finalize/
+    # ------------------------------------------------------------------
+
     def _validate_discrete_dimension_ranges(self, store: zarr.Group) -> None:
-        """Validate that discrete dimension ranges align with actual data.
-
-        For discrete dimensions (like time frames), the declared range should
-        correspond to actual data positions. If range.min < data_min or
-        range.max > data_max, the viewer may initialize to a position with no data.
-
-        This validation helps catch cases where:
-        - Range starts at 0 but data starts at frame 1
-        - Range extends beyond actual data extent
-
-        Args:
-            store: The opened zarr store to read dimensions from
-        """
-        # Check if we have the necessary data
-        if self._scene_bounds is None:
-            return
-        if "scene_dimensions" not in store.attrs:
-            return
-
-        # Read dimensions from the store
-        from ..core.dimensions import Dimensions
-
-        scene_dims_dict = store.attrs["scene_dimensions"]
-        dimensions = Dimensions.from_dict(scene_dims_dict)
-        dims = dimensions.dimensions
-        ndim = len(dims)
-
-        # Only check dimensions that we have bounds for
-        bounds_ndim = len(self._scene_bounds["min"])
-        check_ndim = min(ndim, bounds_ndim)
-
-        for i in range(check_ndim):
-            dim = dims[i]
-
-            # Only validate discrete, non-displayed dimensions with defined ranges
-            if not dim.discrete or dim.display or dim.range is None:
-                continue
-
-            declared_min, declared_max = dim.range
-            data_min = self._scene_bounds["min"][i]
-            data_max = self._scene_bounds["max"][i]
-
-            # Check for range/data misalignment
-            tolerance = (dim.step / 2) if dim.step else 0.5
-
-            if declared_min < data_min - tolerance:
-                warnings.warn(
-                    f"Dimension '{dim.name}' has range starting at {declared_min}, "
-                    f"but actual data starts at {data_min:.4f}. "
-                    f"The viewer will initialize at {declared_min} where no data exists. "
-                    f"Consider setting range=({data_min}, {declared_max}) to match data extent.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-
-            if declared_max > data_max + tolerance:
-                warnings.warn(
-                    f"Dimension '{dim.name}' has range ending at {declared_max}, "
-                    f"but actual data ends at {data_max:.4f}. "
-                    f"Navigation beyond {data_max} will show no data. "
-                    f"Consider setting range=({declared_min}, {data_max}) to match data extent.",
-                    UserWarning,
-                    stacklevel=3,
-                )
+        validate_discrete_dimension_ranges(store, self._scene_bounds)
 
     def _finalize_lod_position_bounds(self, store: zarr.Group) -> None:
-        """Back-fill missing ``position_bounds`` on kind=lod groups.
-
-        Walks the zarr tree post-order and, for every group whose attrs
-        declare ``kind == 'lod'`` without a ``position_bounds``, computes
-        the union of its children's ``position_bounds`` (recursing into
-        nested ``kind="lod"`` / ``kind="partition"`` wrappers and plain
-        groups). The convenience-builder path
-        (``_add_gsplats_as_lod_group``) leaves the parent without bounds
-        because each leaf carries its own; ``kind="partition"`` wrappers
-        already persist their union at write time
-        (``add_*_partition_wrapper_impl``); only ``kind="lod"`` wrappers
-        were left without aggregate bounds, so the viewer's
-        ``loadLodGroupNode`` saw empty bounds for a nested LOD-of-LOD
-        construction and skipped that level in projection.
-
-        **Never overwrites** an authored ``position_bounds`` — only
-        fills missing values. Children with empty / mismatched bounds
-        are skipped in the union (same convention as the viewer's
-        registry projection).
-        """
-
-        def union(
-            a: Optional[Dict[str, List[float]]], b: Optional[Dict[str, List[float]]]
-        ) -> Optional[Dict[str, List[float]]]:
-            if a is None:
-                return b
-            if b is None:
-                return a
-            a_min, a_max = a["min"], a["max"]
-            b_min, b_max = b["min"], b["max"]
-            if len(a_min) != len(b_min) or len(a_min) != len(a_max):
-                # Mismatched dimensionality — skip b. Same defensive
-                # fallback as the viewer's registry.
-                return a
-            return {
-                "min": [min(a_min[i], b_min[i]) for i in range(len(a_min))],
-                "max": [max(a_max[i], b_max[i]) for i in range(len(a_max))],
-            }
-
-        def resolve(group: "zarr.Group") -> Optional[Dict[str, List[float]]]:
-            """Return the position_bounds of a group (leaf or wrapper).
-
-            Returns None when the group has no leaves with bounds (e.g.
-            empty group or all-mismatched children) so callers can skip.
-            """
-            attrs = dict(group.attrs)
-            authored = attrs.get("position_bounds")
-            if isinstance(authored, dict) and "min" in authored and "max" in authored:
-                return {
-                    "min": list(authored["min"]),
-                    "max": list(authored["max"]),
-                }
-            # No authored bounds → recurse into children (groups only;
-            # zarr arrays don't have descendants).
-            acc: Optional[Dict[str, List[float]]] = None
-            for child_name in group.keys():
-                child = group[child_name]
-                if not hasattr(child, "keys"):
-                    continue
-                acc = union(acc, resolve(child))
-            return acc
-
-        def walk(group: "zarr.Group") -> None:
-            attrs = dict(group.attrs)
-            if attrs.get("kind") == "lod" and "position_bounds" not in attrs:
-                aggregated = resolve(group)
-                if aggregated is not None:
-                    group.attrs["position_bounds"] = aggregated
-                    aprint(
-                        f"  📐 Back-filled position_bounds on "
-                        f"kind=lod group {group.path or '/'}"
-                    )
-            for child_name in group.keys():
-                child = group[child_name]
-                if hasattr(child, "keys"):
-                    walk(child)
-
-        walk(store)
+        finalize_lod_position_bounds(store)
 
     def _finalize_lod_display_types(self, store: zarr.Group) -> None:
-        """Back-fill missing ``display_type`` on kind=lod groups.
-
-        Walks the zarr tree and, for every group whose attrs declare
-        ``kind == 'lod'`` without a ``display_type``, resolves one from
-        the **finest** child's own type (recursing through nested
-        kind=lod / kind=partition groups). The convenience-builder path
-        (``_add_gsplats_as_lod_group``) already sets ``display_type``
-        explicitly; this hook serves explicit-builder constructions
-        where the user wrote ``add_lod_group(...)`` + a mix of leaf
-        types and never set the parent's ``display_type`` themselves.
-
-        **Never overwrites** an authored ``display_type`` — only fills
-        missing values.
-        """
-
-        def resolve(group: "zarr.Group") -> str:
-            """Return the display_type of a group (leaf or wrapper)."""
-            attrs = dict(group.attrs)
-            t = attrs.get("type")
-            if t in ("points", "lines", "gsplats"):
-                return str(t)  # leaf
-            kind = attrs.get("kind")
-            if kind in ("lod", "partition") and "display_type" in attrs:
-                return str(attrs["display_type"])
-            # Plain group or kind=lod / kind=partition without display_type
-            # → recurse into children. Children of an lod_group are
-            # stored in coarsest→finest order, so the finest is the
-            # last one — that's the one to read.
-            child_names = sorted(group.keys())
-            if not child_names:
-                return ""  # nothing to resolve
-            finest_child = group[child_names[-1]]
-            return resolve(finest_child)
-
-        def walk(group: "zarr.Group") -> None:
-            attrs = dict(group.attrs)
-            if attrs.get("kind") == "lod" and "display_type" not in attrs:
-                resolved = resolve(group)
-                if resolved:
-                    group.attrs["display_type"] = resolved
-                    aprint(
-                        f"  📐 Back-filled display_type={resolved!r} on "
-                        f"kind=lod group {group.path or '/'}"
-                    )
-            for child_name in group.keys():
-                child = group[child_name]
-                # Only recurse into groups (not arrays).
-                if hasattr(child, "keys"):
-                    walk(child)
-
-        walk(store)
+        finalize_lod_display_types(store)
 
     def _expand_bounds_with_transforms(self, store: zarr.Group) -> None:
         self._scene_bounds = expand_bounds_with_transforms(store, self._scene_bounds)
@@ -2011,50 +1828,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         write_lines_ordering_to_zarr(group, ordering_data, self.compressor)
 
     def _compute_content_hashes(self, store: zarr.Group) -> str:
-        """
-        Compute content hashes for all nodes using post-order traversal.
-
-        Called during finalize() after all nodes have been written.
-        Uses xxhash64 for speed.
-
-        Args:
-            store: Root zarr group
-
-        Returns:
-            Root content hash
-        """
-
-        def compute_hash_recursive(group_path: str) -> str:
-            """Recursively compute hash for a group and its children."""
-            group = store[group_path] if group_path else store
-
-            hasher = xxhash.xxh64()
-
-            # 1. Hash this node's own datasets (positions, colors, etc.)
-            for dataset_name in sorted(group.array_keys()):
-                dataset = group[dataset_name]
-                hasher.update(dataset[:].tobytes())
-
-            # 2. Hash metadata (excluding content_hash to avoid recursion)
-            attrs = {k: v for k, v in dict(group.attrs).items() if k != "content_hash"}
-            hasher.update(json.dumps(attrs, sort_keys=True, default=str).encode())
-
-            # 3. Hash child groups (recursively, sorted for determinism)
-            for child_name in sorted(group.group_keys()):
-                child_path = f"{group_path}/{child_name}" if group_path else child_name
-                child_hash = compute_hash_recursive(child_path)
-                hasher.update(child_hash.encode())
-
-            # Store hash in this node's attrs
-            content_hash = hasher.hexdigest()
-            group.attrs["content_hash"] = content_hash
-
-            return content_hash
-
-        # Start from root (empty path)
-        root_hash = compute_hash_recursive("")
-        aprint(f"Scene content hash: {root_hash[:16]}...")
-        return root_hash
+        return compute_content_hashes(store)
 
     def finalize(self) -> None:
         """Finalize the Zarr store with metadata consolidation."""
