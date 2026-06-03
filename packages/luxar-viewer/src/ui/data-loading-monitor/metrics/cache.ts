@@ -156,6 +156,8 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       bytesTransferred: stats.network.bytesTransferred,
       requestCount: stats.network.requestCount,
       bandwidth: stats.network.bandwidth,
+      totalBytesServed: stats.network.totalBytesServed,
+      totalRequestsServed: stats.network.totalRequestsServed,
     };
 
     // Per-tier demand counters (optional — providers without the

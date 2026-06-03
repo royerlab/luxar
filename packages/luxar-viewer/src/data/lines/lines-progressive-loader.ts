@@ -12,11 +12,7 @@
  * @module data/lines/lines-progressive-loader
  */
 
-import type {
-  LinesDataLoader,
-  LinesViewState,
-  LoadedLinesData,
-} from '../../types/lines';
+import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
 import type { ScalarArray } from '../../types/points';
 import type { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
@@ -26,13 +22,9 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
-import {
-  concatOptionalField,
-  concatRequiredField,
-} from '../loaders/progressive/concat-helpers';
+import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
+import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
 import { log, Modules, LogEmoji } from '../../utils/log';
-
-const CACHE_HIT_THRESHOLD_MS = 15;
 
 function viewStatesEqual(a: LinesViewState, b: LinesViewState): boolean {
   if (a.displayDims.length !== b.displayDims.length) return false;
@@ -103,8 +95,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     }
   }
   const firstWithSharpness = parts.find((p) => p.sharpness !== null);
-  let sharpness: Float32Array | null =
-    firstWithSharpness?.sharpness ? new Float32Array(totalVertices) : null;
+  let sharpness: Float32Array | null = firstWithSharpness?.sharpness
+    ? new Float32Array(totalVertices)
+    : null;
 
   let vertexOffset = 0;
   let segmentOffset = 0;
@@ -116,8 +109,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     if (colors && part.colors) {
       colors.set(part.colors, vertexOffset * 3);
     } else if (colors && !part.colors) {
-      const fill =
-        colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
+      const fill = colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
       for (let i = 0; i < part.vertexCount * 3; i++) {
         colors[vertexOffset * 3 + i] = fill;
       }
@@ -156,6 +148,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
+  private _lastAllResident = true;
 
   constructor(lodLoaders: LinesSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -175,17 +168,19 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return this.nLods;
   }
 
-  async loadLines(
-    viewState: LinesViewState,
-    session?: UpdateSession
-  ): Promise<LoadedLinesData> {
+  /**
+   * Whether the most recently streamed LOD level was fully cache-resident.
+   * Drives the monitor's residency indicator. Defaults to `true`.
+   */
+  get lastAllResident(): boolean {
+    return this._lastAllResident;
+  }
+
+  async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
     return this.updateView(viewState, session);
   }
 
-  async updateView(
-    viewState: LinesViewState,
-    session?: UpdateSession
-  ): Promise<LoadedLinesData> {
+  async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
       this.lastViewState = {
@@ -200,11 +195,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const { data: lodData, allResident } =
-        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
+      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
+        viewState,
+        session
+      );
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
         log.custom(

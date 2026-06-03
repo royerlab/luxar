@@ -1,10 +1,18 @@
 /**
  * Aggregate per-mesh `visiblePointCount` / `visibleSegmentCount` /
- * `visibleSplatCount` userData across the scene graph and report the
- * totals to the data-loading monitor. Called once per update cycle after
- * points/lines/gsplats commits so the monitor's HUD shows the
- * post-clipping (and post-progressive-refinement) visible counts rather
- * than the raw loaded counts.
+ * `visibleSplatCount` userData (points + lines + gsplats, symmetrically)
+ * across the scene graph and report the totals to the data-loading
+ * monitor. Called once per update cycle after the points/lines/gsplats
+ * commits so the monitor's HUD shows the post-clipping (and
+ * post-progressive-refinement) visible counts rather than the raw loaded
+ * counts.
+ *
+ * Only meshes that are actually rendered are counted: the walk skips any
+ * subtree whose root is `visible === false`. This excludes the inactive
+ * levels of a substitutive `kind=lod` group (the registry hides all but
+ * the active child) — without the skip every loaded level's userData would
+ * be summed, inflating the visible count ~K×. It also excludes layers the
+ * user has toggled off.
  */
 
 import * as THREE from 'three';
@@ -28,7 +36,12 @@ export function updateVisibleCountsInMonitor(
   let totalVisibleSegments = 0;
   let totalVisibleSplats = 0;
 
-  rootGroup.traverse((object) => {
+  // Manual recursion rather than THREE's `traverse`, which visits every
+  // descendant regardless of visibility. Pruning at `visible === false`
+  // boundaries means hidden subtrees (inactive LOD levels, toggled-off
+  // layers) contribute nothing to the visible tally.
+  const visit = (object: THREE.Object3D): void => {
+    if (!object.visible) return;
     if (object instanceof THREE.Mesh) {
       if (isPointsUserData(object.userData)) {
         totalVisiblePoints += object.userData.visiblePointCount ?? 0;
@@ -38,7 +51,11 @@ export function updateVisibleCountsInMonitor(
         totalVisibleSplats += object.userData.visibleSplatCount ?? 0;
       }
     }
-  });
+    for (const child of object.children) visit(child);
+  };
+  // The root group's own visibility shouldn't gate the whole scene
+  // (callers pass the scene root); descend straight into its children.
+  for (const child of rootGroup.children) visit(child);
 
   monitor.updateVisiblePoints(totalVisiblePoints);
   monitor.updateVisibleSegments(totalVisibleSegments);

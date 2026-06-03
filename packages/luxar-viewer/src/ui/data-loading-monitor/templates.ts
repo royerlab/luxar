@@ -17,6 +17,7 @@ import type {
   CacheStatusBadge,
   SceneGraphNode,
   SceneGraphState,
+  LODProgressState,
 } from '../../types/data-monitor-types';
 import { escapeHtml } from '../../utils/escape-html';
 
@@ -166,9 +167,23 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
 export function renderSecondaryMetrics(
   memory: { used: number; limit: number },
   querySpeed: { avgTime: number; perSec: number },
-  network: { bytesTransferred: number; requestCount: number; bandwidth: number } | undefined
+  network:
+    | {
+        bytesTransferred: number;
+        requestCount: number;
+        bandwidth: number;
+        totalBytesServed?: number;
+        totalRequestsServed?: number;
+      }
+    | undefined
 ): string {
   const memoryPercent = memory.limit > 0 ? (memory.used / memory.limit) * 100 : 0;
+  // Cumulative bytes delivered across all tiers (L1 + L2 + network).
+  // Falls back to network bytes for providers predating the field.
+  const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
+  // Demand reads served across all tiers; falls back to the network request
+  // count for providers predating the field (mirrors the bytes fallback).
+  const requestsServed = network ? (network.totalRequestsServed ?? network.requestCount) : 0;
 
   return `
     <div class="luxar-secondary-metrics">
@@ -191,12 +206,12 @@ export function renderSecondaryMetrics(
       </div>
 
       <div class="luxar-secondary-metrics__item">
-        <span class="luxar-secondary-metrics__label" title="Bytes transferred over the network, with request count and current bandwidth">NETWORK I/O</span>
+        <span class="luxar-secondary-metrics__label" title="Total data delivered to the renderer across all cache tiers (memory + disk + network). The subtitle breaks out how much came over the network and the current bandwidth.">DATA LOADED</span>
         <div class="luxar-secondary-metrics__value" data-field="network-bytes">
-          ${network ? formatBytes(network.bytesTransferred) : '0B'}
+          ${network ? formatBytes(dataLoaded) : '0B'}
         </div>
         <div class="luxar-secondary-metrics__subtitle" data-field="network-detail">
-          ${network ? `${network.requestCount} req · ${formatBytes(network.bandwidth)}/s` : '0 req'}
+          ${network ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s · ${requestsServed.toLocaleString()} reqs` : '0B net'}
         </div>
       </div>
     </div>
@@ -1170,12 +1185,88 @@ function getNodeTypeColorClass(type: string): string {
 }
 
 /**
+ * Pick the tree icon for a node. Specialized groups (`kind=lod` /
+ * `kind=partition`) get their own glyph so they read distinctly from
+ * plain containers; everything else falls back to its geometry type.
+ */
+function getSceneGraphIcon(node: SceneGraphNode): string {
+  if (node.kind === 'lod') return '🎚️';
+  if (node.kind === 'partition') return '🧩';
+  return getNodeTypeIcon(node.type);
+}
+
+/**
+ * Render the kind badge (`K LODs` / `N parts`) for a specialized group.
+ * Mirrors the Layers-panel `--kind` badge so the two panels read
+ * consistently. Returns `''` for non-specialized nodes.
+ */
+function renderKindBadge(node: SceneGraphNode): string {
+  if (node.kind === 'lod' && (node.lodGroupChildCount ?? 0) > 0) {
+    const title = `Substitutive LOD group · ${node.lodGroupChildCount} levels (one rendered at a time)`;
+    return `<span class="luxar-scene-graph__badge luxar-scene-graph__badge--kind" title="${escapeHtml(title)}">${node.lodGroupChildCount} LODs</span>`;
+  }
+  if (node.kind === 'partition' && (node.partCount ?? 0) > 0) {
+    const title = `Partition group · ${node.partCount} BSP parts (per-part frustum culling)`;
+    return `<span class="luxar-scene-graph__badge luxar-scene-graph__badge--kind" title="${escapeHtml(title)}">${node.partCount} parts</span>`;
+  }
+  return '';
+}
+
+/**
+ * Render the live LOD-progress chip for a node, driven by the
+ * {@link LODProgressState} snapshot:
+ *   - substitutive (`kind=lod`): "L{active+1}/{count}" active-level chip.
+ *   - additive (`additiveSublods`): "LOD {loaded}/{total}" with a ⏳ while
+ *     refinement is in progress and a residency dot (● cached / ◌ streaming).
+ * Renders a structural slot even before the first provider poll so the
+ * incremental patcher (`updateSceneGraphLodChips`) can fill it in-place.
+ * Returns `''` for nodes with no LOD dimension.
+ */
+export function lodChipContent(
+  node: SceneGraphNode,
+  state: LODProgressState | undefined
+): { text: string; title: string } | null {
+  if (node.kind === 'lod') {
+    const count = state?.levelCount ?? node.lodGroupChildCount ?? 0;
+    if (count <= 0) return null;
+    const active = (state?.activeLevel ?? 0) + 1;
+    const sel = state?.selector && state.selector !== 'auto' ? ` (${state.selector})` : '';
+    return {
+      text: `L${active}/${count}`,
+      title: `Active substitutive level ${active} of ${count}${sel}`,
+    };
+  }
+
+  if (node.additiveSublods && node.additiveSublods > 1) {
+    const total = state?.total ?? node.additiveSublods;
+    const loaded = state?.loaded ?? 0;
+    const refining = state?.refining === true;
+    const residency =
+      state?.lastAllResident === false ? ' ◌' : state?.lastAllResident === true ? ' ●' : '';
+    const spinner = refining ? ' ⏳' : '';
+    const title = refining
+      ? `Additive LOD refining — ${loaded}/${total} levels loaded${state?.lastAllResident === false ? ' (streaming from network)' : ' (cache-resident)'}`
+      : `Additive LOD — ${loaded}/${total} levels loaded`;
+    return { text: `LOD ${loaded}/${total}${residency}${spinner}`, title };
+  }
+
+  return null;
+}
+
+function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined): string {
+  const content = lodChipContent(node, state);
+  if (!content) return '';
+  return `<span class="luxar-scene-graph__lod" data-lod-path="${escapeHtml(node.path)}" title="${escapeHtml(content.title)}">${escapeHtml(content.text)}</span>`;
+}
+
+/**
  * Render a single scene graph tree node
  */
 function renderSceneGraphNode(
   node: SceneGraphNode,
   expandedNodes: Set<string>,
-  depth: number = 0
+  depth: number = 0,
+  lodStates?: Map<string, LODProgressState>
 ): string {
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedNodes.has(node.path);
@@ -1215,7 +1306,17 @@ function renderSceneGraphNode(
     gsplats: 'Gaussian splats layer',
     mesh: 'Mesh geometry',
   };
-  const nodeTooltip = `${nodeTypeDescriptions[node.type] || node.type}${node.hasSpatialIndex ? ' (indexed)' : ''}`;
+  const kindDescriptions: Partial<Record<string, string>> = {
+    lod: 'Substitutive LOD group (one level rendered at a time)',
+    partition: 'Partition group (disjoint BSP parts)',
+  };
+  const baseDesc = node.kind
+    ? kindDescriptions[node.kind] || node.kind
+    : nodeTypeDescriptions[node.type] || node.type;
+  const nodeTooltip = `${baseDesc}${node.hasSpatialIndex ? ' (indexed)' : ''}`;
+
+  const kindBadge = renderKindBadge(node);
+  const lodChip = renderLodChip(node, lodStates?.get(node.path));
 
   // Expand/collapse toggle
   const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
@@ -1237,8 +1338,8 @@ function renderSceneGraphNode(
         >${toggleIcon}</span>
 
         <!-- Icon & Name -->
-        <span class="luxar-scene-graph__icon">${getNodeTypeIcon(node.type)}</span>
-        <span class="luxar-scene-graph__name ${getNodeTypeColorClass(node.type)}">
+        <span class="luxar-scene-graph__icon">${getSceneGraphIcon(node)}</span>
+        <span class="luxar-scene-graph__name ${getNodeTypeColorClass(node.displayType ?? node.type)}">
           ${escapeHtml(node.name)}
         </span>
 
@@ -1249,6 +1350,12 @@ function renderSceneGraphNode(
             : ''
         }
 
+        <!-- Kind badge (K LODs / N parts) -->
+        ${kindBadge}
+
+        <!-- Live LOD-progress chip -->
+        ${lodChip}
+
         <!-- Loading indicator -->
         ${node.isLoading ? '<span class="luxar-scene-graph__loading" title="Loading data...">⏳</span>' : ''}
       </div>
@@ -1257,7 +1364,7 @@ function renderSceneGraphNode(
       ${
         isExpanded && hasChildren
           ? node.children
-              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1))
+              .map((child) => renderSceneGraphNode(child, expandedNodes, depth + 1, lodStates))
               .join('')
           : ''
       }
@@ -1268,7 +1375,11 @@ function renderSceneGraphNode(
 /**
  * Render scene graph tree component
  */
-export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<string>): string {
+export function renderSceneGraphTree(
+  state: SceneGraphState,
+  expandedNodes: Set<string>,
+  lodStates?: Map<string, LODProgressState>
+): string {
   if (!state.root) {
     return `
       <div class="luxar-scene-graph__empty">
@@ -1286,15 +1397,47 @@ export function renderSceneGraphTree(state: SceneGraphState, expandedNodes: Set<
     .filter(Boolean)
     .join(', ');
 
+  // Summarise LOD/partition activity across the scene so the user sees it
+  // without expanding the tree: how many substitutive-LOD groups, how many
+  // additive nodes still refining.
+  const lodSummary = summariseLodStates(lodStates);
+
   return `
     <div class="luxar-scene-graph">
       <div class="luxar-scene-graph__header">
         <h4 class="luxar-scene-graph__title" title="Hierarchy of scene nodes (groups, points, lines, gsplats) with per-node element counts">SCENE GRAPH</h4>
         ${headerStats ? `<span class="luxar-scene-graph__stats">${headerStats}</span>` : ''}
       </div>
+      ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary">${lodSummary}</div>` : ''}
       <div class="luxar-scene-graph__container">
-        ${renderSceneGraphNode(state.root, expandedNodes)}
+        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates)}
       </div>
     </div>
   `;
+}
+
+/**
+ * One-line summary of LOD/partition activity for the scene-graph header,
+ * e.g. "2 LOD groups · 1 additive · refining 1". Returns `''` when no
+ * LOD/partition state is present.
+ */
+export function summariseLodStates(lodStates?: Map<string, LODProgressState>): string {
+  if (!lodStates || lodStates.size === 0) return '';
+  let lod = 0;
+  let additive = 0;
+  let partition = 0;
+  let refining = 0;
+  for (const s of lodStates.values()) {
+    if (s.kind === 'lod') lod++;
+    else if (s.kind === 'additive') {
+      additive++;
+      if (s.refining) refining++;
+    } else if (s.kind === 'partition') partition++;
+  }
+  const parts: string[] = [];
+  if (lod > 0) parts.push(`${lod} LOD group${lod !== 1 ? 's' : ''}`);
+  if (additive > 0) parts.push(`${additive} additive`);
+  if (partition > 0) parts.push(`${partition} partition${partition !== 1 ? 's' : ''}`);
+  if (refining > 0) parts.push(`refining ${refining}`);
+  return parts.join(' · ');
 }

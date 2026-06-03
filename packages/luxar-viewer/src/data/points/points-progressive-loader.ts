@@ -11,8 +11,9 @@
  * - On each `updateView()` call, loads LODs sequentially starting from
  *   LOD 0.
  * - Stops at the first LOD whose load exceeds the cache-hit threshold
- *   (15 ms — shared `CACHE_HIT_THRESHOLD_MS` with gsplats for cross-
- *   type symmetry).
+ *   (the shared `CACHE_HIT_THRESHOLD_MS` in
+ *   `loaders/progressive/constants` — one threshold across all geometry
+ *   types).
  * - After returning, fires a prefetch for the next unloaded LOD so the
  *   refinement loop hits a warm cache on the next call.
  *
@@ -39,14 +40,9 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
-import {
-  concatOptionalField,
-  concatRequiredField,
-} from '../loaders/progressive/concat-helpers';
+import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
+import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
 import { log, Modules, LogEmoji } from '../../utils/log';
-
-/** Shared cache-hit threshold; matches `gsplats-progressive-loader`. */
-const CACHE_HIT_THRESHOLD_MS = 15;
 
 /** Element-wise viewstate equality (query-affecting fields only). */
 function viewStatesEqual(a: PointsViewState, b: PointsViewState): boolean {
@@ -143,6 +139,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
+  private _lastAllResident = true;
 
   constructor(lodLoaders: PointsSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -163,17 +160,19 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     return this.nLods;
   }
 
-  async loadPoints(
-    viewState: PointsViewState,
-    session?: UpdateSession
-  ): Promise<LoadedPointsData> {
+  /**
+   * Whether the most recently streamed LOD level was fully cache-resident.
+   * Drives the monitor's residency indicator. Defaults to `true`.
+   */
+  get lastAllResident(): boolean {
+    return this._lastAllResident;
+  }
+
+  async loadPoints(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     return this.updateView(viewState, session);
   }
 
-  async updateView(
-    viewState: PointsViewState,
-    session?: UpdateSession
-  ): Promise<LoadedPointsData> {
+  async updateView(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
       this.lastViewState = {
@@ -188,11 +187,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const { data: lodData, allResident } =
-        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
+      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
+        viewState,
+        session
+      );
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
         log.custom(
@@ -221,10 +223,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       this._initialLoadDone = true;
     }
 
-    const totalPoints = this.loadedLODs.reduce(
-      (s, d) => s + d.positions.length / 3,
-      0
-    );
+    const totalPoints = this.loadedLODs.reduce((s, d) => s + d.positions.length / 3, 0);
     if (this.loadedLODs.length < this.nLods) {
       log.info(
         Modules.SPATIAL_INDEX_LOADER,

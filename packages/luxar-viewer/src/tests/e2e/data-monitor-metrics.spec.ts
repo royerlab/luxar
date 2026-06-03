@@ -53,13 +53,15 @@ test.describe('Data Loading Monitor Metrics', () => {
 
     // Scene point count should be positive and match state roughly
     expect(scenePointCount).toBeGreaterThan(0);
-    // State totalPoints and scene count should agree within 2x. Both are
-    // single-frame reads of the same scene; large divergence indicates a
-    // real reporting bug.
+    // State totalPoints and scene count should agree closely. Both are
+    // single-frame reads of the same (non-LOD) scene, so they should match
+    // within loading-timing jitter. Substitutive-LOD double-counting (which
+    // would push these apart by a ~K× factor) is covered by the unit suite
+    // and by lod-group.spec.ts; here a tight band catches gross divergence.
     if (state.totalPoints > 0 && scenePointCount > 0) {
       const ratio = scenePointCount / state.totalPoints;
-      expect(ratio).toBeGreaterThan(0.5);
-      expect(ratio).toBeLessThan(2);
+      expect(ratio).toBeGreaterThan(0.8);
+      expect(ratio).toBeLessThan(1.25);
     }
   });
 
@@ -141,12 +143,14 @@ test.describe('Data Loading Monitor Metrics', () => {
 
     expect(scenePointCount).toBeGreaterThan(0);
 
-    // The scene point count and state totalPoints should roughly match
-    // (timing differences during async loading can cause small discrepancies)
+    // The scene point count and state totalPoints should match closely for
+    // this non-LOD dataset (small async-loading jitter only). A loose band
+    // previously let multiplicative reporting bugs slip through; LOD-specific
+    // divergence is covered by the unit suite + lod-group.spec.ts.
     if (scenePointCount > 0 && state.totalPoints > 0) {
       const ratio = scenePointCount / state.totalPoints;
-      expect(ratio).toBeGreaterThan(0.5);
-      expect(ratio).toBeLessThan(2.0);
+      expect(ratio).toBeGreaterThan(0.8);
+      expect(ratio).toBeLessThan(1.25);
     }
   });
 });

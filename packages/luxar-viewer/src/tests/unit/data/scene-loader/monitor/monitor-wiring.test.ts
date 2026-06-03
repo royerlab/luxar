@@ -38,6 +38,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     ),
     setProfiler: vi.fn(() => callOrder.push('setProfiler')),
     setCacheTelemetryState: vi.fn(() => callOrder.push('setCacheTelemetryState')),
+    setLODProgressProvider: vi.fn(() => callOrder.push('setLODProgressProvider')),
     setSceneGraph: vi.fn(() => callOrder.push('setSceneGraph')),
     forceUpdate: vi.fn(() => callOrder.push('forceUpdate')),
     updateVisiblePoints: vi.fn(),
@@ -71,6 +72,7 @@ function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfte
     loaders: new Map(),
     linesLoaders: new Map(),
     gsplatLoaders: new Map(),
+    lodGroupRegistry: null,
     sceneGraph: makeSceneGraph(),
     updateVisibleCounts: vi.fn(),
   };

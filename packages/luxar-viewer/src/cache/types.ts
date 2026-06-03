@@ -95,7 +95,23 @@ export interface MultiLevelCacheStats {
     metadataParseFailures?: number;
     orphanedFilesRemoved?: number;
   };
-  network: { bytesTransferred: number; requestCount: number; bandwidth: number };
+  network: {
+    /** Bytes fetched over the network (L3) — excludes cache-served bytes. */
+    bytesTransferred: number;
+    /** Count of actual network fetches (L3). */
+    requestCount: number;
+    /** Current network bandwidth (bytes/sec, ~10s sliding window). */
+    bandwidth: number;
+    /**
+     * Cumulative bytes delivered to demand callers across ALL tiers
+     * (L1 + L2 + network). Unlike `bytesTransferred`, this stays
+     * non-zero on a warm/cache-served reload, so the monitor's
+     * "data loaded" figure reflects real I/O even with zero network.
+     */
+    totalBytesServed: number;
+    /** Count of demand reads served across all tiers. */
+    totalRequestsServed: number;
+  };
   /**
    * Per-tier demand-hit counters (user demand only — prefetch traffic
    * is excluded). Each user-demand `getResult` call increments exactly

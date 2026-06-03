@@ -44,6 +44,7 @@ import type { UpdateProfiler } from '../../../profiling/update-profiler';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { loadOverlayConfigs } from '../../loaders';
@@ -72,6 +73,8 @@ export interface LoadSceneCtx {
   monitor: () => SceneLoaderMonitorPort | null;
   /** Profiler reference. */
   profiler: UpdateProfiler | null;
+  /** LOD-group registry for the live LOD-progress provider (substitutive levels). */
+  lodGroupRegistry: LODGroupRegistry | null;
 
   // Lifecycle callbacks the orchestrator owns:
   normalizeURL(url: string): string;
@@ -256,6 +259,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     loaders: ctx.loaders,
     linesLoaders: ctx.linesLoaders,
     gsplatLoaders: ctx.gsplatLoaders,
+    lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
   });
@@ -267,8 +271,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // only emit LOD 0 on the initial load — the refinement loop drains
   // their remaining LODs frame-by-frame. Symmetric across Points /
   // Lines / GSplats.
-  const hasMore = (loader: unknown) =>
-    (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
+  const hasMore = (loader: unknown) => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
   const gsplatsNeed = [...ctx.gsplatLoaders.values()].some(hasMore);
   const pointsNeed = [...ctx.loaders.values()].some(hasMore);
   const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);

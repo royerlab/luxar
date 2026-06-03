@@ -25,6 +25,7 @@ import type {
   SceneGraphNode,
   GPUPoolStats,
   AccumulatorStats,
+  LODProgressProvider,
 } from '../types/data-monitor-types';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 
@@ -73,6 +74,12 @@ export interface SceneLoaderMonitorPort {
     provider: AccumulatorProviderPort | null
   ): void;
   setProfiler(profiler: UpdateProfiler | null): void;
+  /**
+   * Inject the live LOD / progressive-refinement / cache-residency state
+   * provider. Polled each tick to drive the scene-graph tree's kind
+   * badges, "LOD x/N" chips, refining indicator, and header summary.
+   */
+  setLODProgressProvider(provider: LODProgressProvider | null): void;
   /**
    * Push the cache telemetry state resolved by `cache-setup.ts` so the
    * UI shows the right disabled-reason. Without this, the aggregator

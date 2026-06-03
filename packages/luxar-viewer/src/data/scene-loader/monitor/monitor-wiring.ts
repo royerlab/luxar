@@ -24,12 +24,14 @@ import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../profiling/update-profiler';
+import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
 } from '../../stats/aggregator';
 import { convertToSceneGraphNode } from './scene-graph-converter';
+import { createLODProgressProvider } from './lod-progress-provider';
 
 export interface WireMonitorAfterLoadParams {
   /** The monitor port (no-op if undefined). */
@@ -52,6 +54,11 @@ export interface WireMonitorAfterLoadParams {
   loaders: Map<string, DataLoader>;
   linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
+  /**
+   * The scene's LOD-group registry — drives the live substitutive-LOD
+   * state (active level / selector mode) in the LOD-progress provider.
+   */
+  lodGroupRegistry: LODGroupRegistry | null;
   /** The scene-graph SceneNode the loader just built. */
   sceneGraph: SceneNode;
   /**
@@ -79,6 +86,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     loaders,
     linesLoaders,
     gsplatLoaders,
+    lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts,
   } = params;
@@ -120,6 +128,18 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     monitor.setProfiler(profiler);
   }
 
+  // Scene-Graph tab — live LOD / progressive-refinement / residency state.
+  // Reads the progressive loaders (additive) + LOD-group registry
+  // (substitutive) each tick. Always wired (even with no LOD content) so
+  // the provider lights up as soon as a refinement starts.
+  monitor.setLODProgressProvider(
+    createLODProgressProvider({
+      loaderMaps: [loaders, linesLoaders, gsplatLoaders],
+      lodGroupRegistry,
+      partitionGroups: collectPartitionGroups(sceneGraph),
+    })
+  );
+
   // Scene-Graph tab — initial snapshot.
   const sceneGraphRoot: SceneGraphNode = convertToSceneGraphNode(sceneGraph);
   monitor.setSceneGraph(sceneGraphRoot);
@@ -128,4 +148,26 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
   updateVisibleCounts();
 
   monitor.forceUpdate();
+}
+
+/**
+ * Walk a `SceneNode` tree and collect partition groups (`type === 'group'`
+ * with `attrs.kind === 'partition'`) as `{ path, partCount }`. Partition
+ * groups are static spatial subdivisions with no per-frame state, so a
+ * one-time snapshot feeds the LOD-progress provider's `kind:'partition'`
+ * states. Mirrors the discriminant used by `scene-graph-converter.ts`.
+ */
+function collectPartitionGroups(root: SceneNode): Array<{ path: string; partCount: number }> {
+  const out: Array<{ path: string; partCount: number }> = [];
+  const visit = (node: SceneNode): void => {
+    if (
+      node.type === 'group' &&
+      (node.attrs as Record<string, unknown>).kind === 'partition'
+    ) {
+      out.push({ path: node.path, partCount: node.children?.length ?? 0 });
+    }
+    node.children?.forEach(visit);
+  };
+  visit(root);
+  return out;
 }
