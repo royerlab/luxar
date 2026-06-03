@@ -400,39 +400,39 @@ class TestChunkBoundsZarrAlignment:
             # Should NOT have chunk_bounds
             assert "chunk_bounds" not in g
 
-    # -- Unit test for _calculate_intelligent_chunks -------------------------
+    # -- Unit test for calculate_intelligent_chunks -------------------------
 
-    def test_calculate_intelligent_chunks_1d_uses_spatial_data(self) -> None:
-        """_calculate_intelligent_chunks must use spatial chunk_size for 1D arrays."""
-        from luxar.io.compiler import _calculate_intelligent_chunks
+    def testcalculate_intelligent_chunks_1d_uses_spatial_data(self) -> None:
+        """calculate_intelligent_chunks must use spatial chunk_size for 1D arrays."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         spatial = {"chunk_size": 512}
 
         # Without spatial data: uses byte-based default (64 KiB / float32)
-        result = _calculate_intelligent_chunks((10000,))
+        result = calculate_intelligent_chunks((10000,))
         assert result == (10000,)
 
         # With spatial data: uses chunk_size
-        result = _calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
         assert result == (512,)
 
         # Small array clamped to actual size
-        result = _calculate_intelligent_chunks((100,), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks((100,), spatial_index_data=spatial)
         assert result == (100,)
 
-    def test_calculate_intelligent_chunks_2d_uses_spatial_data(self) -> None:
-        """_calculate_intelligent_chunks must use spatial chunk_size for 2D arrays."""
-        from luxar.io.compiler import _calculate_intelligent_chunks
+    def testcalculate_intelligent_chunks_2d_uses_spatial_data(self) -> None:
+        """calculate_intelligent_chunks must use spatial chunk_size for 2D arrays."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         spatial = {"chunk_size": 1024}
 
         # Without spatial data: uses byte-based default (64 KiB / float32 / 4 dims)
-        result = _calculate_intelligent_chunks((5000, 4))
+        result = calculate_intelligent_chunks((5000, 4))
         assert result[1] == 4
         assert result[0] == min(5000, (65536 // 4) // 4)
 
         # With spatial data: uses chunk_size
-        result = _calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
+        result = calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
         assert result == (1024, 4)
 
     # [Python-R6 / io-MAJOR] Dtype awareness — the byte-target heuristic
@@ -440,15 +440,15 @@ class TestChunkBoundsZarrAlignment:
     # many elements per chunk as a float32 array of the same byte target
     # (1 byte vs 4 bytes per element). A regression that hard-coded
     # itemsize=4 would silently under-chunk uint8 colors / uint16 LUTs.
-    def test_calculate_intelligent_chunks_scales_with_dtype_itemsize(self) -> None:
-        from luxar.io.compiler import _calculate_intelligent_chunks
+    def testcalculate_intelligent_chunks_scales_with_dtype_itemsize(self) -> None:
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         # Float32: 65536 / 4 = 16384 elements per chunk
-        f32 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.float32))
+        f32 = calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.float32))
         # Uint8: 65536 / 1 = 65536 elements per chunk (4x more)
-        u8 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint8))
+        u8 = calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint8))
         # Uint16: 65536 / 2 = 32768 elements per chunk (2x more than f32)
-        u16 = _calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint16))
+        u16 = calculate_intelligent_chunks((100_000,), dtype=np.dtype(np.uint16))
 
         assert f32 == (16384,)
         assert u8 == (65536,)
@@ -458,28 +458,28 @@ class TestChunkBoundsZarrAlignment:
         assert u8[0] == 4 * f32[0]
         assert u16[0] == 2 * f32[0]
 
-    def test_calculate_intelligent_chunks_clamps_small_arrays(self) -> None:
+    def testcalculate_intelligent_chunks_clamps_small_arrays(self) -> None:
         """If the dataset is smaller than the byte-target derived chunk,
         the chunk shape matches the dataset shape exactly. A regression
         that returned a chunk LARGER than the array would crash zarr."""
-        from luxar.io.compiler import _calculate_intelligent_chunks
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         # 50 elements * 4 bytes = 200 bytes << 64 KiB target.
-        result = _calculate_intelligent_chunks((50,), dtype=np.dtype(np.float32))
+        result = calculate_intelligent_chunks((50,), dtype=np.dtype(np.float32))
         assert result == (50,)  # clamped to actual array size
 
         # 2D: shape smaller than target → match shape exactly.
-        result = _calculate_intelligent_chunks((50, 4), dtype=np.dtype(np.float32))
+        result = calculate_intelligent_chunks((50, 4), dtype=np.dtype(np.float32))
         assert result == (50, 4)
 
-    def test_calculate_intelligent_chunks_handles_4d_shape(self) -> None:
+    def testcalculate_intelligent_chunks_handles_4d_shape(self) -> None:
         """4D+ shapes use byte-based defaults per-dimension. Pin the
         contract: every dim is clamped to min(shape_dim, target_elements)."""
-        from luxar.io.compiler import _calculate_intelligent_chunks
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         # 4D shape with large dims; expect every chunk dim equal to
         # min(shape_dim, target_elements=16384 for float32).
-        result = _calculate_intelligent_chunks(
+        result = calculate_intelligent_chunks(
             (1000, 200, 100, 50), dtype=np.dtype(np.float32)
         )
         assert len(result) == 4
@@ -884,7 +884,7 @@ class TestCalculateIntelligentChunksDtype:
     """
 
     def test_chunk_size_scales_with_dtype_itemsize(self) -> None:
-        from luxar.io.compiler import _calculate_intelligent_chunks
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
         from luxar.typing_utils.constants import (
             MAX_CHUNK_BYTES,
             MIN_CHUNK_BYTES,
@@ -895,7 +895,7 @@ class TestCalculateIntelligentChunksDtype:
 
         for dtype_str in ("uint8", "uint16", "float32", "float64"):
             dtype = np.dtype(dtype_str)
-            chunks = _calculate_intelligent_chunks(shape, dtype=dtype)
+            chunks = calculate_intelligent_chunks(shape, dtype=dtype)
             chunk_rows = chunks[0]
             chunk_bytes = chunk_rows * shape[1] * dtype.itemsize
 
@@ -911,14 +911,14 @@ class TestCalculateIntelligentChunksDtype:
             )
 
     def test_default_dtype_is_float32(self) -> None:
-        from luxar.io.compiler import _calculate_intelligent_chunks
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
 
         # Without an explicit dtype, behaviour matches the explicit float32
         # default. This pins the default contract so a future signature
         # change is caught.
         shape = (10_000, 3)
-        implicit = _calculate_intelligent_chunks(shape)
-        explicit = _calculate_intelligent_chunks(shape, dtype=np.dtype(np.float32))
+        implicit = calculate_intelligent_chunks(shape)
+        explicit = calculate_intelligent_chunks(shape, dtype=np.dtype(np.float32))
         assert implicit == explicit
 
 
