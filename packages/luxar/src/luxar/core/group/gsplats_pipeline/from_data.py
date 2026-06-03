@@ -42,8 +42,8 @@ def add_gsplats_from_data_impl(
     from luxar.gsplats.gsplat_data import GSplatData
 
     from ..lod.gsplats import (
-        resolve_additive_axis,
-        resolve_substitutive_axis,
+        resolve_additive_axis_gsplats,
+        resolve_substitutive_axis_gsplats,
     )
 
     if not isinstance(result, GSplatData):
@@ -55,10 +55,10 @@ def add_gsplats_from_data_impl(
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
-    result, explicit_min_pixel_sizes, base_pixel_size = resolve_substitutive_axis(
+    result, explicit_min_pixel_sizes, base_pixel_size = resolve_substitutive_axis_gsplats(
         result, lod_group
     )
-    result = resolve_additive_axis(result, additive_lod)
+    result = resolve_additive_axis_gsplats(result, additive_lod)
 
     # Multi-substitutive → kind=lod Group with one gsplats child per level
     if result.n_substitutive > 1:
