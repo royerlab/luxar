@@ -27,8 +27,11 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     msaaSamples: 4, // MSAA sample count (2, 4, 8)
     ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
     ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
-    // Tone mapping (Neutral preserves hue fidelity for scientific data)
-    toneMapping: 'Neutral' as const,
+    // Tone mapping (ACES gives the most consistent, pleasing HDR look).
+    // Note: ACES intentionally shifts hues, which can distort color LUTs;
+    // the Python compiler warns when a colormap LUT is used so authors can
+    // switch to Neutral if exact hue fidelity matters.
+    toneMapping: 'ACES' as const,
     vignetteEnabled: false, // Vignette disabled by default
     vignetteDarkness: 0.5, // Vignette darkness (0-1)
     vignetteOffset: 0.5, // Vignette offset from center (0-1)

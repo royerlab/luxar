@@ -147,7 +147,7 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
       uBloomIntensity: { value: cfg.bloom?.intensity ?? 0.25 },
     };
 
-    this.toneMappingMode = toneMappingToMode(cfg.toneMapping ?? THREE.NeutralToneMapping);
+    this.toneMappingMode = toneMappingToMode(cfg.toneMapping ?? THREE.ACESFilmicToneMapping);
 
     // Initial toggle state from the config — same behaviour as the
     // GLSL wrapper's constructor.
