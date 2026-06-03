@@ -128,6 +128,20 @@ declare global {
         bounds?: number;
         seed?: number;
       }) => Promise<{ type: 'lines'; segmentCount: number; mesh: THREE.Mesh }>;
+
+      /**
+       * Per-stage timing snapshot for lazy LOD level loads
+       * (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` /
+       * `lazy:release`), keyed by stage → {count, totalMs, avgMs, maxMs}.
+       * Fills the gap left by the UpdateProfiler, which does not see
+       * loads triggered by the per-frame LOD selector. Debug-only.
+       */
+      getLodLoadStats?: () => Record<
+        string,
+        { count: number; totalMs: number; avgMs: number; maxMs: number }
+      >;
+      /** Clear the lazy-LOD-load timing accumulator (debug-only). */
+      resetLodLoadStats?: () => void;
     };
   }
 }
