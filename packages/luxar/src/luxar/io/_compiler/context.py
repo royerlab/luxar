@@ -28,19 +28,11 @@ class DatasetCtx:
 
 
 @dataclass(frozen=True)
-class GsplatCtx:
-    """Encoder config + spatial-ordering config for gsplat assembly."""
-
-    encoder: ArrayEncoder
-    encoding_mode: EncodingMode
-    compressor: CompressorProtocol
-    enable_spatial_index: bool
-    ordering_method: Literal["morton", "hilbert"]
-
-
-@dataclass(frozen=True)
 class OrderingCtx:
-    """Spatial-ordering configuration for the points/lines ordering glue."""
+    """Spatial-ordering configuration.
+
+    Shared by gsplat spatial ordering and the points/lines ordering glue.
+    """
 
     enable_spatial_index: bool
     ordering_method: Literal["morton", "hilbert"]
