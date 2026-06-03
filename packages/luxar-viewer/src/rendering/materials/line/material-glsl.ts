@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -32,16 +32,6 @@ import {
 } from '../../blending-state';
 
 /**
- * Gamma == 1.0 (with ±1e-4 epsilon for float-equality safety) lets
- * the fragment shader skip three per-fragment pow() calls. Shared by
- * both `LineMaterial` and `LineTSLMaterial` so the threshold is
- * identical across the two backends.
- */
-function isGammaOne(gamma: number): boolean {
-  return Math.abs(gamma - 1.0) < 1e-4;
-}
-
-/**
  * Intensity == 1 && offset == 0 (with ±1e-4 epsilon) lets the
  * fragment shader skip the GOG `vColor * uIntensity + uOffset` chain
  * and its `max(..., vec3(0))` clamp.
@@ -49,6 +39,9 @@ function isGammaOne(gamma: number): boolean {
 function isNoGOG(intensity: number, offset: number): boolean {
   return Math.abs(intensity - 1.0) < 1e-4 && Math.abs(offset) < 1e-4;
 }
+// `isGammaOne` now lives in `../_shared/uniform-helpers` (shared across
+// all three geometry types). Re-exported here so `material-tsl.ts` and
+// existing importers keep their `./material-glsl` import path.
 export { isGammaOne, isNoGOG };
 
 /**

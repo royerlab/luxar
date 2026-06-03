@@ -35,7 +35,7 @@ import { gsplatWebGPUFactory, type GSplatTSLNodes } from './shader-tsl';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import { computeRayIntegralFactor } from './math';
 import {
@@ -128,6 +128,10 @@ export class GSplatTSLMaterial
     this.uniforms = this.buildUniformProxies();
 
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
+    // LUXAR_GAMMA_ONE mirrors the GLSL define; it drives the `gammaOne`
+    // factory flag in `rebuildGraph` so the gamma pow() is skipped at
+    // gamma == 1.0. Toggled by `updateGamma`.
+    if (isGammaOne(gammaValue)) this.defines.LUXAR_GAMMA_ONE = '';
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
@@ -211,6 +215,7 @@ export class GSplatTSLMaterial
       this.tslNodes as GSplatTSLNodes,
       {
         useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
+        gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -257,6 +262,20 @@ export class GSplatTSLMaterial
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+
+    // Toggle `LUXAR_GAMMA_ONE` define when crossing the threshold and
+    // rebuild the TSL graph so the factory picks the new fast-path
+    // branch (mirrors the Line material).
+    if (!this.defines) this.defines = {};
+    const wantGammaOne = isGammaOne(safeGamma);
+    const hadGammaOne = 'LUXAR_GAMMA_ONE' in this.defines;
+    if (wantGammaOne && !hadGammaOne) {
+      this.defines.LUXAR_GAMMA_ONE = '';
+      this.rebuildGraph();
+    } else if (!wantGammaOne && hadGammaOne) {
+      delete this.defines.LUXAR_GAMMA_ONE;
+      this.rebuildGraph();
+    }
   }
 
   updateIntensity(intensity: number): void {

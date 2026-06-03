@@ -226,6 +226,22 @@ describe('PointMaterial', () => {
       expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 1.8, 5);
     });
 
+    it('toggles the LUXAR_GAMMA_ONE fast-path define across the gamma==1 threshold', () => {
+      const material = new PointMaterial();
+
+      // Non-unit gamma → fast-path define absent (the pow() runs).
+      material.updateGamma(2.2);
+      expect('LUXAR_GAMMA_ONE' in (material.defines ?? {})).toBe(false);
+
+      // gamma == 1.0 → define present so the shader skips the pow().
+      material.updateGamma(1.0);
+      expect('LUXAR_GAMMA_ONE' in (material.defines ?? {})).toBe(true);
+
+      // Back to non-unit → define removed again.
+      material.updateGamma(1.8);
+      expect('LUXAR_GAMMA_ONE' in (material.defines ?? {})).toBe(false);
+    });
+
     it('should clone material with current values', () => {
       const original = new PointMaterial({
         opacity: 0.5,

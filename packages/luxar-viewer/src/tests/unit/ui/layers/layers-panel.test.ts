@@ -69,7 +69,12 @@ vi.mock('../../../../data/scene-loader-manager', () => ({
   },
 }));
 
-import { LayersPanel } from '../../../../ui/layers/layers-panel';
+import {
+  LayersPanel,
+  isColormapActive,
+  applyColorAdjustments,
+  type LuxarMaterial,
+} from '../../../../ui/layers/layers-panel';
 
 function makeAnimationController(): AnimationController {
   return {
@@ -301,15 +306,11 @@ describe('LayersPanel.dispose', () => {
 function findActiveLevelSelect(container: HTMLElement): HTMLSelectElement | null {
   // Three selects share the class; find the one whose sibling label
   // text is "Active level".
-  const groups = Array.from(
-    container.querySelectorAll('.luxar-layers-panel__control-group')
-  );
+  const groups = Array.from(container.querySelectorAll('.luxar-layers-panel__control-group'));
   for (const group of groups) {
     const label = group.querySelector('.luxar-layers-panel__control-label');
     if (label?.textContent === 'Active level') {
-      return group.querySelector(
-        '.luxar-layers-panel__select'
-      ) as HTMLSelectElement | null;
+      return group.querySelector('.luxar-layers-panel__select') as HTMLSelectElement | null;
     }
   }
   return null;
@@ -421,5 +422,96 @@ describe('LayersPanel — LOD active-level dropdown', () => {
 
     expect(setSelectorModeMock).toHaveBeenCalled();
     expect(animationController.startAnimation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Display-range / gamma routing: colormap (LUT) vs direct-color.
+//
+// Regression guard for the gamma-on-value fix. When a leaf renders through
+// a colormap LUT, the display range must drive the scalar window
+// (`updateScalarRange`) and the color GOG (`updateIntensity`/`updateOffset`)
+// must be bypassed — gamma is applied to the value pre-LUT in the shader.
+// In direct-color mode the GOG drives intensity/offset as before. Gamma is
+// pushed in both modes.
+// ---------------------------------------------------------------------------
+
+/** A LuxarMaterial stub that records the update calls + carries `defines`. */
+function makeRecordingMaterial(defines: Record<string, string> | null): {
+  mat: LuxarMaterial;
+  calls: {
+    gamma: number[];
+    intensity: number[];
+    offset: number[];
+    scalarRange: Array<[number, number]>;
+    opacity: number[];
+  };
+} {
+  const calls = {
+    gamma: [] as number[],
+    intensity: [] as number[],
+    offset: [] as number[],
+    scalarRange: [] as Array<[number, number]>,
+    opacity: [] as number[],
+  };
+  const mat = {
+    defines,
+    updateGamma: (v: number) => calls.gamma.push(v),
+    updateIntensity: (v: number) => calls.intensity.push(v),
+    updateOffset: (v: number) => calls.offset.push(v),
+    updateOpacity: (v: number) => calls.opacity.push(v),
+    updateScalarRange: (min: number, max: number) => calls.scalarRange.push([min, max]),
+  } as unknown as LuxarMaterial;
+  return { mat, calls };
+}
+
+describe('isColormapActive', () => {
+  it('is true only when the USE_COLORMAP define is present', () => {
+    expect(isColormapActive(makeRecordingMaterial({ USE_COLORMAP: '' }).mat)).toBe(true);
+    expect(isColormapActive(makeRecordingMaterial({}).mat)).toBe(false);
+    expect(isColormapActive(makeRecordingMaterial(null).mat)).toBe(false);
+  });
+});
+
+describe('applyColorAdjustments — colormap vs direct routing', () => {
+  it('colormap mode: display range drives the scalar window; color GOG is bypassed', () => {
+    const { mat, calls } = makeRecordingMaterial({ USE_COLORMAP: '' });
+    // intensity/offset encode display range [0.5, 2.5]:
+    //   computeDisplayRange(0.5, -0.25) → { min: 0.5, max: 2.5 }
+    applyColorAdjustments(mat, 2.2, 0.5, -0.25);
+
+    expect(calls.gamma).toEqual([2.2]); // gamma still pushed (applied pre-LUT)
+    expect(calls.scalarRange).toEqual([[0.5, 2.5]]);
+    // Color GOG NOT touched in colormap mode.
+    expect(calls.intensity).toEqual([]);
+    expect(calls.offset).toEqual([]);
+  });
+
+  it('direct-color mode: GOG drives intensity/offset; scalar range untouched', () => {
+    const { mat, calls } = makeRecordingMaterial({}); // no USE_COLORMAP
+    applyColorAdjustments(mat, 2.2, 0.5, -0.25);
+
+    expect(calls.gamma).toEqual([2.2]);
+    expect(calls.intensity).toEqual([0.5]);
+    expect(calls.offset).toEqual([-0.25]);
+    expect(calls.scalarRange).toEqual([]);
+  });
+
+  it('colormap define but no updateScalarRange support → falls back to color GOG', () => {
+    const { calls } = makeRecordingMaterial({ USE_COLORMAP: '' });
+    // Material that advertises colormap but cannot accept a scalar range
+    // (updateScalarRange is optional on LuxarMaterial).
+    const mat = {
+      defines: { USE_COLORMAP: '' },
+      updateGamma: (v: number) => calls.gamma.push(v),
+      updateIntensity: (v: number) => calls.intensity.push(v),
+      updateOffset: (v: number) => calls.offset.push(v),
+      updateOpacity: (v: number) => calls.opacity.push(v),
+    } as unknown as LuxarMaterial;
+
+    applyColorAdjustments(mat, 1.0, 2.0, 0.0);
+    expect(calls.intensity).toEqual([2.0]);
+    expect(calls.offset).toEqual([0.0]);
+    expect(calls.scalarRange).toEqual([]);
   });
 });

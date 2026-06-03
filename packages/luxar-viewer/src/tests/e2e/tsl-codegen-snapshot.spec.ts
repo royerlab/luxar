@@ -122,8 +122,10 @@ const SHADERS = [
   'line-sharpness-two',
   'point',
   'point-pick',
+  'point-gamma-one',
   'gsplat',
   'gsplat-pick',
+  'gsplat-gamma-one',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

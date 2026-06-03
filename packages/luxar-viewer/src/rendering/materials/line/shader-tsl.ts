@@ -151,8 +151,17 @@ export function lineWebGPUFactory(
   // Per-instance — endpoint pairs.
   const aStartPos: TSLNode = attribute<'vec3'>('aStartPos', 'vec3');
   const aEndPos: TSLNode = attribute<'vec3'>('aEndPos', 'vec3');
-  const aStartColor: TSLNode = attribute<'vec3'>('aStartColor', 'vec3');
-  const aEndColor: TSLNode = attribute<'vec3'>('aEndColor', 'vec3');
+  // Per-vertex colours are only read in the non-colormap branch. Under
+  // colormap mode the colour comes from the LUT, so these attributes are
+  // omitted entirely — parity with the GLSL backend, which gates them under
+  // `#ifndef USE_COLORMAP` to keep the active-attribute count within
+  // GL_MAX_VERTEX_ATTRIBS (16) alongside the scalar pair.
+  const aStartColor: TSLNode | null = config.useColormap
+    ? null
+    : attribute<'vec3'>('aStartColor', 'vec3');
+  const aEndColor: TSLNode | null = config.useColormap
+    ? null
+    : attribute<'vec3'>('aEndColor', 'vec3');
   const aStartWidth: TSLNode = attribute<'float'>('aStartWidth', 'float');
   const aEndWidth: TSLNode = attribute<'float'>('aEndWidth', 'float');
   const aStartSharpness: TSLNode = attribute<'float'>('aStartSharpness', 'float');
@@ -210,21 +219,23 @@ export function lineWebGPUFactory(
   // aQuadCorner.x ∈ {-1, +1} by construction.
   const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
 
-  // Per-endpoint colour or LUT lookup.
+  // Per-endpoint colour or LUT lookup. Branch on `config.useColormap` so
+  // the attribute sets are mutually exclusive (scalars XOR colours),
+  // matching the GLSL `#ifndef USE_COLORMAP` split. Non-null assertions are
+  // safe: under colormap the scalar attributes are bound (same gate) and the
+  // colormap uniforms are validated by the throw above; otherwise the colour
+  // attributes are bound.
   let perPointColor: TSLNode;
-  if (
-    config.useColormap &&
-    aStartScalar &&
-    aEndScalar &&
-    uColormapTex &&
-    uScalarMin &&
-    uScalarScale
-  ) {
-    const s: TSLNode = mix(aStartScalar, aEndScalar, t);
-    const st: TSLNode = clamp(s.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
-    perPointColor = uColormapTex.sample(vec2(st, 0.5)).rgb;
+  if (config.useColormap) {
+    // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
+    // operate on the scalar VALUE before the LUT lookup, not on the
+    // resulting color. gammaOne skips the pow() when gamma == 1.0.
+    const s: TSLNode = mix(aStartScalar!, aEndScalar!, t);
+    const st0: TSLNode = clamp(s.sub(uScalarMin!).mul(uScalarScale!), 0.0, 1.0);
+    const st: TSLNode = config.gammaOne ? st0 : st0.pow(uInvGamma);
+    perPointColor = uColormapTex!.sample(vec2(st, 0.5)).rgb;
   } else {
-    perPointColor = mix(aStartColor, aEndColor, t);
+    perPointColor = mix(aStartColor!, aEndColor!, t);
   }
 
   // Sanitised widths / sharpness, interpolated.
@@ -391,14 +402,21 @@ export function lineWebGPUFactory(
 
     // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
     // the mul/add/clamp chain is identity for non-negative vColor.
-    const adjusted: TSLNode = config.noGOG
-      ? vColor
-      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // Colormap (LUT) mode takes precedence: gamma + display-range already
+    // shaped the scalar VALUE pre-LUT (vertex stage), so color passes
+    // through untouched — matches the GLSL3 USE_COLORMAP path.
+    const adjusted: TSLNode = config.useColormap
+      ? max(vColor, vec3(0.0))
+      : config.noGOG
+        ? vColor
+        : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
     // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
     // identity. JS-level branch so the generated WGSL/GLSL omits the
-    // pow entirely when not needed.
-    const gammaColor: TSLNode = config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
+    // pow entirely when not needed. Colormap mode also skips it (gamma
+    // is applied to the value, not the color).
+    const gammaColor: TSLNode =
+      config.useColormap || config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
 
     const alpha: TSLNode = intensity.mul(uOpacity);
     if (premultiplyRGB) {
