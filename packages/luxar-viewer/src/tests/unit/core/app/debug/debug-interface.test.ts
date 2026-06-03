@@ -126,12 +126,8 @@ describe('installDebugInterface', () => {
       expect(window.__luxarDebug).toBeDefined();
       const dbg = window.__luxarDebug!;
       // scene + camera are real THREE objects — identity checks.
-      expect(dbg.scene).toBe(
-        (ports.sceneManager as unknown as { scene: THREE.Scene }).scene
-      );
-      expect(dbg.camera).toBe(
-        (ports.sceneManager as unknown as { camera: THREE.Camera }).camera
-      );
+      expect(dbg.scene).toBe((ports.sceneManager as unknown as { scene: THREE.Scene }).scene);
+      expect(dbg.camera).toBe((ports.sceneManager as unknown as { camera: THREE.Camera }).camera);
       expect(dbg.renderer).toEqual({ id: 'renderer' });
       expect(dbg.controls).toEqual({ id: 'controls' });
       expect(dbg.postProcessing).toEqual({ id: 'pp' });
@@ -307,9 +303,9 @@ describe('installDebugInterface', () => {
       expect(typeof dbg.injectSyntheticScene).toBe('function');
 
       // Awaiting callers must see the rejection re-thrown.
-      await expect(
-        dbg.injectSyntheticScene!({ type: 'lines', count: 5 })
-      ).rejects.toThrow(/simulated bundle-load failure/);
+      await expect(dbg.injectSyntheticScene!({ type: 'lines', count: 5 })).rejects.toThrow(
+        /simulated bundle-load failure/
+      );
 
       // AND the rejection must have been surfaced via the user-facing
       // error overlay so silent-await callers (typical debug-URL flow)

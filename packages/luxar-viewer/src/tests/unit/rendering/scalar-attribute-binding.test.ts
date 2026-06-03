@@ -7,13 +7,15 @@
  * binding, that guard would always trip. These tests demonstrate the
  * unblocking path.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
-import type { LoadedPointsData } from '../../../data/data-loader-types';
+import type { LoadedPointsData, DataLoader } from '../../../data/data-loader-types';
+import type { PointsMetadata } from '../../../types/points';
+import type { LinesMetadata, LinesDataLoader } from '../../../types/lines';
 
 describe('scalar attribute binding', () => {
   describe('Points', () => {
@@ -58,6 +60,49 @@ describe('scalar attribute binding', () => {
       // Colormap guard fails closed when scalar data is absent.
       expect(supportsScalarColormap('points', geometry)).toBe(false);
     });
+
+    // Regression: the placeholder-first loading pattern created the
+    // material before scalars streamed in, so the colormap guard tripped
+    // on the empty placeholder geometry, USE_COLORMAP was suppressed, and
+    // the colormap was never re-enabled once the real scalars arrived —
+    // leaving scalar+colormap points rendering white. createEmptyPointsNode
+    // now pre-binds an empty `aScalar` when the node declares
+    // has_scalars + colormap, so the guard passes and the material is built
+    // colormap-enabled up front.
+    it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
+      const factory = new NodeFactory();
+      const attrs = {
+        n_points: 3,
+        has_scalars: true,
+        colormap: 'viridis',
+        scalar_data_range: [0, 1],
+      } as unknown as PointsMetadata;
+      const loader = { dispose: vi.fn() } as unknown as DataLoader;
+
+      const placeholder = factory.createEmptyPointsNode('/spiral', attrs, loader);
+
+      // Empty `aScalar` is bound so the fail-closed guard passes even
+      // though the placeholder carries zero points.
+      expect(placeholder.geometry.hasAttribute('aScalar')).toBe(true);
+      expect(supportsScalarColormap('points', placeholder.geometry)).toBe(true);
+
+      // The material is colormap-enabled from the start (no suppression).
+      const material = placeholder.material as THREE.Material;
+      expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
+    });
+
+    it('placeholder does NOT bind aScalar when no colormap is declared', () => {
+      const factory = new NodeFactory();
+      const attrs = {
+        n_points: 3,
+        has_scalars: true,
+        // colormap absent — nothing to map scalars through
+      } as unknown as PointsMetadata;
+      const loader = { dispose: vi.fn() } as unknown as DataLoader;
+
+      const placeholder = factory.createEmptyPointsNode('/spiral', attrs, loader);
+      expect(placeholder.geometry.hasAttribute('aScalar')).toBe(false);
+    });
   });
 
   describe('Lines', () => {
@@ -84,6 +129,63 @@ describe('scalar attribute binding', () => {
       expect(geometry.hasAttribute('aStartScalar')).toBe(true);
       expect(geometry.hasAttribute('aEndScalar')).toBe(true);
       expect(supportsScalarColormap('lines', geometry)).toBe(true);
+    });
+
+    // Regression (mirrors the Points placeholder case above): the lines
+    // placeholder omitted scalar arrays, so the colormap guard tripped on
+    // the empty placeholder, logged "Colormap suppressed", and the LUT was
+    // never re-enabled once real scalars streamed in (commit writes into the
+    // existing placeholder geometry) — leaving colormapped lines white.
+    // createEmptyLinesNode now pre-binds empty start/end scalars when the
+    // node declares colormap + has_scalars.
+    it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
+      const factory = new NodeFactory();
+      const nodeAttrs = { has_scalars: true, colormap: 'viridis', scalar_data_range: [0, 1] };
+      const attrs = {
+        type: 'lines',
+        n_vertices: 0,
+        n_segments: 0,
+        ndim: 3,
+        max_width: 1.0,
+        has_colors: false,
+        has_sharpness: false,
+        has_scalars: true,
+        colormap: 'viridis',
+        scalar_data_range: [0, 1],
+      } as unknown as LinesMetadata;
+      const loader = { dispose: vi.fn() } as unknown as LinesDataLoader;
+
+      const placeholder = factory.createEmptyLinesNode('/streamlines', nodeAttrs, attrs, loader);
+
+      // Empty start/end scalars are bound so the fail-closed guard passes
+      // even though the placeholder carries zero segments.
+      expect(placeholder.geometry.hasAttribute('aStartScalar')).toBe(true);
+      expect(placeholder.geometry.hasAttribute('aEndScalar')).toBe(true);
+      expect(supportsScalarColormap('lines', placeholder.geometry)).toBe(true);
+
+      // The material is colormap-enabled from the start (no suppression).
+      const material = placeholder.material as THREE.Material;
+      expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
+    });
+
+    it('placeholder does NOT bind scalars when no colormap is declared', () => {
+      const factory = new NodeFactory();
+      const nodeAttrs = { has_scalars: true };
+      const attrs = {
+        type: 'lines',
+        n_vertices: 0,
+        n_segments: 0,
+        ndim: 3,
+        max_width: 1.0,
+        has_colors: false,
+        has_sharpness: false,
+        has_scalars: true,
+      } as unknown as LinesMetadata;
+      const loader = { dispose: vi.fn() } as unknown as LinesDataLoader;
+
+      const placeholder = factory.createEmptyLinesNode('/streamlines', nodeAttrs, attrs, loader);
+      expect(placeholder.geometry.hasAttribute('aStartScalar')).toBe(false);
+      expect(placeholder.geometry.hasAttribute('aEndScalar')).toBe(false);
     });
 
     it('does NOT bind scalar attributes when only one side is supplied (fail-closed)', () => {
