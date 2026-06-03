@@ -53,12 +53,20 @@ export interface DataLoadingPerformanceConfig {
    */
   gpuPoolEvictBatchSize: number;
   /**
-   * byte-budget for the GPU buffer pool. When `pooledBytes` exceeds
-   * this value, `evictUnused()` disposes pooled buffers (largest first)
-   * until under budget — independent of the count cap. `0` disables
-   * the byte-budget pass (count-only behavior). Default ~512 MB.
+   * Single GPU-geometry byte budget shared by the buffer pool (pooled-
+   * buffer eviction) and the LOD-group registry (resident-level
+   * eviction). When usage exceeds it, the largest/coldest buffers are
+   * disposed until back under budget.
+   *
+   * - `null` (default): **auto-size** from `navigator.deviceMemory`
+   *   (clamped to [512 MB, 2 GB]) — see `rendering/gpu-byte-budget.ts`.
+   * - `0`: disable byte-budget eviction entirely (count-only / unbounded
+   *   resident geometry).
+   * - a positive number: pin the budget to exactly that many bytes.
+   *
+   * The `?gpuBudgetMB=` URL param overrides this at runtime.
    */
-  gpuPoolMaxBytes: number;
+  gpuPoolMaxBytes: number | null;
 
   /**
    * Maximum number of cached materials per type (point, line, gsplat).

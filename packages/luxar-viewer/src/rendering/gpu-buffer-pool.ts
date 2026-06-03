@@ -101,12 +101,15 @@ export class GPUBufferPool {
    */
   private evictBatchSize: number;
   /**
-   * pooled-byte budget. When `pooledBytes` exceeds this value,
-   * `evictUnused()` evicts pooled buffers (largest first) until under
-   * budget — independent of the count-based cap above. `0` disables
-   * the byte budget, restoring count-only behavior.
+   * Live byte-budget getter (the single VRAM authority shared with LOD
+   * retention). The byte-eviction pass targets TOTAL resident bytes
+   * (active + pooled) against this value: pooled buffers are disposed
+   * (largest-first) only while active + pooled exceeds the budget, and
+   * retained for reuse otherwise. Read live (not snapshotted) so the
+   * WebGL-context-loss budget backoff applies immediately. Returns `0`
+   * to disable byte-budget eviction (count-only behavior).
    */
-  private maxPoolBytes: number;
+  private getByteBudget: () => number;
 
   /** @internal — shared mutable stats; adapters bump fields here. */
   stats = {
@@ -152,12 +155,12 @@ export class GPUBufferPool {
     maxPoolSize: number = 20,
     evictionFrames: number = 300,
     evictBatchSize: number = 5,
-    maxPoolBytes: number = 512_000_000
+    getByteBudget: () => number = () => 512_000_000
   ) {
     this.maxPoolSize = maxPoolSize;
     this.evictionFrames = evictionFrames;
     this.evictBatchSize = Math.max(1, evictBatchSize);
-    this.maxPoolBytes = Math.max(0, maxPoolBytes);
+    this.getByteBudget = getByteBudget;
     this.points = new PointsBufferAdapter(this);
     this.lines = new LinesBufferAdapter(this);
     this.gsplats = new GSplatsBufferAdapter(this);
@@ -377,13 +380,15 @@ export class GPUBufferPool {
     this.typeStats.lines.evictions += linesEvicted;
     this.typeStats.gsplats.evictions += gsplatsEvicted;
 
-    // byte-budget pass. Independent of the count-based budget above.
-    // Disposes pooled buffers (largest-first) until `pooledBytes` is
-    // under `maxPoolBytes`. Without this, a single 760 MB Lines buffer
-    // would sit in the pool indefinitely so long as the buffer count
-    // stayed under `gpuPoolMaxSize`.
-    if (this.maxPoolBytes > 0) {
-      const byteEvicted = this._evictUntilUnderByteBudget();
+    // Byte-budget pass. Independent of the count-based budget above.
+    // Targets TOTAL resident bytes (active + pooled) against the live
+    // budget, disposing pooled buffers (largest-first) so the total stays
+    // under budget. Active (in-use) buffers are never disposed here; the
+    // LOD registry demotes cold active levels to pooled, where this pass
+    // then reclaims them. `0` disables the pass (count-only behavior).
+    const budget = this.getByteBudget();
+    if (budget > 0) {
+      const byteEvicted = this._evictUntilUnderByteBudget(budget);
       evicted += byteEvicted;
       this.stats.evictions += byteEvicted;
     }
@@ -395,14 +400,21 @@ export class GPUBufferPool {
     return evicted;
   }
 
-  private _evictUntilUnderByteBudget(): number {
+  private _evictUntilUnderByteBudget(budget: number): number {
+    if (budget <= 0) return 0; // disabled — never dispose on bytes
+    // The pooled-disposal target is the budget MINUS bytes held by active
+    // (in-use) buffers, which cannot be disposed. Pooled buffers are then
+    // disposed largest-first until active + pooled <= budget. If active
+    // alone already exceeds the budget, the target floors at 0 and every
+    // pooled buffer is reclaimed (the only safe action — active stays).
+    const pooledTarget = Math.max(0, budget - this.sumActiveBytes());
     const sentinel = { emitted: this.largePoolWarningEmitted };
     const evicted = evictUntilUnderByteBudget(
       {
         pointBuffers: this.points.pointBuffers,
         lineBuffers: this.lines.lineBuffers,
         gsplatBuffers: this.gsplats.gsplatBuffers,
-        maxPoolBytes: this.maxPoolBytes,
+        maxPoolBytes: pooledTarget,
         maxPoolSize: this.maxPoolSize,
         typeEvictionCounters: this.typeStats,
       },
@@ -410,6 +422,41 @@ export class GPUBufferPool {
     );
     this.largePoolWarningEmitted = sentinel.emitted;
     return evicted;
+  }
+
+  /** Sum of bytes held by active (in-use) buffers. Uses cached per-geometry estimates. */
+  private sumActiveBytes(): number {
+    let total = 0;
+    for (const buffer of this.activeBuffers.values()) {
+      total += estimateGeometryBytes(buffer.geometry);
+    }
+    return total;
+  }
+
+  /** Sum of bytes held by pooled (released, retained-for-reuse) buffers. */
+  private sumPooledBytes(): number {
+    let total = 0;
+    const add = (pool: Map<number, PooledBuffer[]>): void => {
+      for (const arr of pool.values()) {
+        for (const b of arr) total += estimateGeometryBytes(b.geometry);
+      }
+    };
+    add(this.points.pointBuffers);
+    add(this.lines.lineBuffers);
+    add(this.gsplats.gsplatBuffers);
+    return total;
+  }
+
+  /**
+   * Total resident VRAM bytes (active + pooled), using real per-geometry
+   * capacities. The single source of truth for budget enforcement: the
+   * LOD registry queries it to decide when to demote cold levels, and the
+   * pool's own byte-eviction pass keeps it under the live budget. Cheaper
+   * than {@link getStats} (no per-type breakdown), so it is safe to call
+   * once per frame.
+   */
+  getResidentBytes(): number {
+    return this.sumActiveBytes() + this.sumPooledBytes();
   }
 
   /**

@@ -2,8 +2,14 @@
  * Byte-budget evictor for GPUBufferPool.
  *
  * Disposes pooled buffers (largest-first across all three type pools)
- * until `pooledBytes < maxPoolBytes`.
- * Does NOT touch active buffers.
+ * until `pooledBytes <= ctx.maxPoolBytes`. Does NOT touch active buffers
+ * (they are in use and cannot be disposed).
+ *
+ * NOTE: `ctx.maxPoolBytes` is the *pooled-disposal target*, which the
+ * caller sets to `liveBudget - activeBytes` so that TOTAL resident bytes
+ * (active + pooled) stay under the single VRAM budget. When active bytes
+ * already meet/exceed the budget the caller passes 0 here, so every pooled
+ * buffer is reclaimed.
  *
  * @module rendering/gpu-buffer-pool/byte-budget-evictor
  */

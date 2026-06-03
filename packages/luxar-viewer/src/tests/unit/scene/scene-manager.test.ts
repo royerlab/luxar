@@ -626,6 +626,36 @@ describe('SceneManager', () => {
       expect(spies.autoFrameCamera).toHaveBeenCalledWith(true);
     });
 
+    it('establishes scene-scale distance limits BEFORE applying the author camera (regression: a far establishing-shot camera must not be clamped to the orbit default maxDistance)', async () => {
+      // Give the scene non-trivial metadata bounds so the scale step fires.
+      const internals = sceneManager as unknown as {
+        getSceneBoundsFromMetadata(): unknown;
+      };
+      vi.spyOn(internals, 'getSceneBoundsFromMetadata').mockReturnValue({
+        min: { x: -100000, y: -100, z: -100 },
+        max: { x: 100000, y: 100, z: 100 },
+      });
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: { camera: { position: [-27622, 813, 5231], target: [103584, 0, 0] } },
+      });
+      const setSceneScale = (
+        sceneManager as unknown as { controls: { setSceneScale: ReturnType<typeof vi.fn> } }
+      ).controls.setSceneScale;
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // setSceneScale must run, and run BEFORE applyZarrViewerConfig. Otherwise
+      // the orbit controls still hold their small default maxDistance when the
+      // author camera is applied, so reinitialize()+update() clamps a wide
+      // establishing-shot distance down to the default and snaps the camera in
+      // toward the target (the embryo-line demo regression).
+      expect(setSceneScale).toHaveBeenCalled();
+      expect(setSceneScale.mock.invocationCallOrder[0]).toBeLessThan(
+        spies.applyZarrViewerConfig.mock.invocationCallOrder[0]
+      );
+    });
+
     it('error path: skips autoFrame/autoAdjust + reports through notifier + rethrows', async () => {
       const spies = installSpies();
       const error = new Error('synthetic load failure');
@@ -994,7 +1024,6 @@ describe('SceneManager', () => {
       // bindings already attached by ControlsManager.
       expect(sceneManager.renderer.domElement).toBe(beforeDom);
     });
-
   });
 
   describe('position bounds from metadata', () => {

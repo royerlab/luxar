@@ -91,6 +91,7 @@ const EMPTY_PARAMS: UrlParams = {
   renderer: null,
   webgpuForceWebGL: false,
   perfTimestamp: false,
+  gpuBudgetMB: null,
 };
 
 describe('bootstrapStandalone', () => {
@@ -169,9 +170,7 @@ describe('bootstrapStandalone', () => {
 
       // Warning was logged: the message includes the bad theme id and
       // mentions falling back to default.
-      const warningMsg = warnSpy.mock.calls
-        .map((args) => String(args[1] ?? ''))
-        .join('\n');
+      const warningMsg = warnSpy.mock.calls.map((args) => String(args[1] ?? '')).join('\n');
       expect(warningMsg).toMatch(/invalid theme/i);
       expect(warningMsg).toMatch(/invalid/);
       expect(warningMsg).toMatch(/using default/i);

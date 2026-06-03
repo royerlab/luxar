@@ -19,7 +19,7 @@ import type { PostProcessingManager } from '../rendering/post-processing/post-pr
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
-import { BoundingBox } from './scene-manager/clipping/bounds-math';
+import { BoundingBox, getBoundingBoxDiagonal } from './scene-manager/clipping/bounds-math';
 import {
   SceneBoundsCache,
   computeBoundsFromMetadata,
@@ -55,6 +55,7 @@ import {
   setControlType as cameraModeSetControlType,
 } from './scene-manager/camera/camera-mode';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
+import { reduceGpuByteBudgetForContextLoss } from '../rendering/gpu-byte-budget';
 import {
   createWebGLRenderer,
   createWebGPURenderer,
@@ -467,6 +468,7 @@ export class SceneManager extends THREE.EventDispatcher<{
           this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx()),
         onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
         triggerChange: () => this.dispatchEvent({ type: 'change' }),
+        onContextLost: () => reduceGpuByteBudgetForContextLoss(),
       });
       this.contextRecovery.attach();
       return;
@@ -624,6 +626,20 @@ export class SceneManager extends THREE.EventDispatcher<{
       // NOTE: Material parameters were already updated BEFORE loadScene() above
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
+
+      // Establish scale-aware orbit distance limits from scene bounds BEFORE
+      // applying the author's camera. The orbit controls start with a small
+      // default maxDistance (config.controls.orbit.zoom.maxDistance); a
+      // viewer_config that places the camera far from its target (a wide
+      // establishing shot) would otherwise have that distance clamped to the
+      // default max by reinitialize()+update(), snapping the camera near the
+      // target. setSceneScale only sets the distance limits (it never moves
+      // the camera) and is idempotent, so the later autoAdjustClippingPlanes()
+      // call — which sets the same scale — is a no-op for it.
+      const metaBoundsForScale = this.getSceneBoundsFromMetadata();
+      if (metaBoundsForScale) {
+        this.controls.setSceneScale(getBoundingBoxDiagonal(metaBoundsForScale));
+      }
 
       // Apply viewer config from zarr (camera position, background color).
       // The helper returns whether an explicit camera position was applied;

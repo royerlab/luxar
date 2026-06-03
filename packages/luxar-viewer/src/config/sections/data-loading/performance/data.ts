@@ -46,13 +46,13 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   gpuPoolMaxSize: 20,
   gpuPoolEvictionFrames: 300,
   gpuPoolEvictBatchSize: 5,
-  // byte-budget eviction. Pooled buffers above this many bytes
-  // are evicted (largest-first) regardless of count budget. Without
-  // this, a 10M-element Lines buffer (~760 MB at 1.5× overallocation)
-  // counts the same as a 1K-point buffer (~32 KB) in
-  // `gpuPoolMaxSize`, so a single dataset switch can briefly hold
-  // gigabytes. `0` disables byte-budget (count-only).
-  gpuPoolMaxBytes: 512_000_000, // 512 MB
+  // Single GPU-geometry byte budget (pool + LOD retention). `null`
+  // auto-sizes from device memory (see rendering/gpu-byte-budget.ts);
+  // `0` disables byte-budget eviction; a positive number pins it.
+  // Without a budget, a 10M-element Lines buffer (~760 MB at 1.5×
+  // overallocation) or a stack of retained LOD levels can briefly hold
+  // gigabytes. Overridable at runtime via `?gpuBudgetMB=`.
+  gpuPoolMaxBytes: null, // auto-size from navigator.deviceMemory
 
   // Debugging
   enablePerformanceMonitoring: false,
