@@ -274,6 +274,53 @@ describe('Data Monitor Integration', () => {
       expect(monitor.getGlobalStats().totalLoaders).toBe(0);
     });
 
+    it('collapses a substitutive kind=lod group to one logical loader', () => {
+      const manager = DataMonitorManager.getInstance();
+      SceneLoaderManager.getInstance().createLoader('lod-scene', { enableMonitor: true });
+      const monitor = manager.getMonitor('lod-scene-monitor');
+      if (!monitor) throw new Error('Monitor should exist');
+
+      const makeLoader = (path: string): LoaderMonitor => ({
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getMetrics: vi.fn(() => ({
+          type: 'gsplats-spatial-index' as const,
+          path,
+          queries: 0,
+          loads: 0,
+          evictions: 0,
+          errors: 0,
+          pointsLoaded: 0,
+          bytesLoaded: 0,
+          visiblePoints: 0,
+          avgQueryTime: 0,
+          avgLoadTime: 0,
+          memoryUsed: 0,
+          memoryLimit: 500 * 1024 * 1024,
+        })),
+        getActiveQueries: vi.fn(() => []),
+      });
+
+      // A kind=lod group connects one loader per level (here 3).
+      monitor.connectLoader('/lod/l0', makeLoader('/lod/l0'));
+      monitor.connectLoader('/lod/l1', makeLoader('/lod/l1'));
+      monitor.connectLoader('/lod/l2', makeLoader('/lod/l2'));
+
+      // Before the LOD-progress snapshot is known, all three count (fallback).
+      expect(monitor.getGlobalStats().totalLoaders).toBe(3);
+
+      // Seed the snapshot the polling tick would populate from the provider:
+      // the group at /lod has 3 substitutive levels.
+      (monitor as unknown as { lodStates: Map<string, unknown> }).lodStates = new Map([
+        ['/lod', { kind: 'lod', levelCount: 3, activeLevel: 0 }],
+      ]);
+
+      // Now the K=3 level loaders collapse to one logical layer.
+      const stats = monitor.getGlobalStats();
+      expect(stats.totalLoaders).toBe(1);
+      expect(stats.activeSpatialLoaders).toBe(1);
+    });
+
     it('disconnectAllLoaders also nulls scene-bound providers (no stale closures)', () => {
       const manager = DataMonitorManager.getInstance();
       SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });

@@ -28,14 +28,8 @@ import type {
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
+import { CACHE_HIT_THRESHOLD_MS } from '../loaders/progressive/constants';
 import { log, Modules, LogEmoji } from '../../utils/log';
-
-/**
- * Time threshold (ms) for considering a LOD load "fast" (likely a cache hit).
- * If a LOD loads faster than this, the loader continues to the next LOD.
- * If slower, it stops and lets the refinement loop pick up the rest.
- */
-const CACHE_HIT_THRESHOLD_MS = 15;
 
 /**
  * Compare two GSplatsViewState objects for query-affecting equality.
@@ -148,6 +142,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private nLods: number;
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
+  private _lastAllResident = true;
 
   constructor(lodLoaders: GSplatsSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -170,6 +165,16 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   /** Total number of LOD levels. */
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  /**
+   * Whether the most recently streamed LOD level was fully cache-resident
+   * (no chunk fetched from the network). Drives the monitor's
+   * cached-vs-streaming residency indicator. Defaults to `true` before any
+   * load.
+   */
+  get lastAllResident(): boolean {
+    return this._lastAllResident;
   }
 
   /**
@@ -211,11 +216,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
     for (let level = startLevel; level < this.nLods; level++) {
       const t0 = performance.now();
-      const { data: lodData, allResident } =
-        await this.lodLoaders[level].updateViewWithResidency(viewState, session);
+      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
+        viewState,
+        session
+      );
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
         log.custom(

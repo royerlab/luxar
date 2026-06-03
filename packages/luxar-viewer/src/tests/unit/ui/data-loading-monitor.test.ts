@@ -50,14 +50,16 @@ describe('DataLoadingMonitor', () => {
         maxEvents: 500,
       });
       // Config bag must store every option we asked for.
-      const cfg = (customMonitor as unknown as {
-        config: {
-          position: string;
-          theme: string;
-          defaultView: string;
-          maxEvents: number;
-        };
-      }).config;
+      const cfg = (
+        customMonitor as unknown as {
+          config: {
+            position: string;
+            theme: string;
+            defaultView: string;
+            maxEvents: number;
+          };
+        }
+      ).config;
       expect(cfg.position).toBe('top-left');
       expect(cfg.theme).toBe('light');
       expect(cfg.defaultView).toBe('detailed');
@@ -229,6 +231,26 @@ describe('DataLoadingMonitor', () => {
       monitor.collapse();
       expect(monitor.isExpanded()).toBe(false);
     });
+
+    // Regression: show() must NOT hard-code inline `display: block`. Doing so
+    // overrode `.luxar-data-monitor--expanded { display: flex }`, breaking the
+    // flex-column scroll contract so a long scene-graph tree spilled past the
+    // panel's max-height instead of scrolling inside __content. show() should
+    // clear the inline display set by hide() and let the size class govern.
+    it('show() clears inline display so the CSS size class governs layout', () => {
+      const panel = container.querySelector('.luxar-data-monitor') as HTMLElement;
+      expect(panel).toBeTruthy();
+
+      monitor.hide();
+      expect(panel.style.display).toBe('none');
+
+      monitor.show();
+      monitor.expand();
+      // Inline display is cleared (not 'block'), letting --expanded's
+      // `display: flex` take effect.
+      expect(panel.style.display).toBe('');
+      expect(panel.classList.contains('luxar-data-monitor--expanded')).toBe(true);
+    });
   });
 
   describe('event delegation', () => {
@@ -308,7 +330,106 @@ describe('DataLoadingMonitor', () => {
       // L0 cache removed - cache hits should now be 0
       expect(globalStats.totalCacheHits).toBe(0);
       expect(globalStats.totalPointsLoaded).toBe(20000);
+      // Resident memory aggregates each loader's memoryUsed (2 × 1MB). This is
+      // the figure the compact badge renders.
       expect(globalStats.totalMemoryUsed).toBe(2 * 1024 * 1024);
+      expect(globalStats.totalMemory).toBe(2 * 1024 * 1024);
+    });
+  });
+
+  describe('LOD loader-count collapse (Fix 4)', () => {
+    const spatialLoader = (path: string): LoaderMonitor => ({
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getMetrics: vi.fn(
+        (): LoaderMetrics => ({
+          type: 'gsplats-spatial-index',
+          path,
+          queries: 0,
+          loads: 0,
+          evictions: 0,
+          errors: 0,
+          pointsLoaded: 0,
+          bytesLoaded: 0,
+          visiblePoints: 0,
+          avgQueryTime: 0,
+          avgLoadTime: 0,
+          memoryUsed: 0,
+          memoryLimit: 0,
+        })
+      ),
+      getActiveQueries: vi.fn(() => []),
+    });
+
+    it('collapses a kind=lod group by its actual present loaders, even for multi-leaf levels', () => {
+      // A substitutive LOD group at /lod with 3 levels, but the finest
+      // level is itself a 2-leaf subtree → 4 loaders nested under /lod. Plus
+      // one unrelated plain loader. The headline must count the group as ONE
+      // logical layer (excess = present − 1 = 3), not (levelCount − 1 = 2)
+      // which would leave the count high.
+      monitor.connectLoader('/lod/l0', spatialLoader('/lod/l0'));
+      monitor.connectLoader('/lod/l1', spatialLoader('/lod/l1'));
+      monitor.connectLoader('/lod/l2/a', spatialLoader('/lod/l2/a'));
+      monitor.connectLoader('/lod/l2/b', spatialLoader('/lod/l2/b'));
+      monitor.connectLoader('/points', spatialLoader('/points'));
+
+      // Provider reports the group with levelCount=3 (the OLD basis).
+      (monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }).lodStates =
+        new Map([['/lod', { kind: 'lod', levelCount: 3 }]]);
+
+      const stats = monitor.getGlobalStats();
+      // 5 loaders − (4 present under /lod − 1) = 2 logical layers.
+      expect(stats.totalLoaders).toBe(2);
+      expect(stats.activeSpatialLoaders).toBe(2);
+    });
+
+    it('does not over-subtract activeSpatial when a non-spatial loader nests under a LOD group', () => {
+      // Defensive: today LoaderType is spatial-index only, but a future
+      // non-spatial loader nested under a kind=lod path must be subtracted
+      // from totalLoaders (all loaders) WITHOUT being subtracted from
+      // activeSpatial (spatial-typed only). The two excesses are drawn from
+      // matching populations so activeSpatial isn't driven below its true
+      // spatial count. Forced via a type cast since the union can't yet
+      // express a non-spatial loader.
+      const nonSpatialLoader = (path: string): LoaderMonitor => ({
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getMetrics: vi.fn(
+          (): LoaderMetrics => ({
+            type: 'gsplats-chunk-index' as unknown as LoaderMetrics['type'],
+            path,
+            queries: 0,
+            loads: 0,
+            evictions: 0,
+            errors: 0,
+            pointsLoaded: 0,
+            bytesLoaded: 0,
+            visiblePoints: 0,
+            avgQueryTime: 0,
+            avgLoadTime: 0,
+            memoryUsed: 0,
+            memoryLimit: 0,
+          })
+        ),
+        getActiveQueries: vi.fn(() => []),
+      });
+
+      // /lod has 2 spatial level loaders + 1 non-spatial nested loader = 3
+      // present (2 spatial). Plus an unrelated plain spatial loader.
+      monitor.connectLoader('/lod/l0', spatialLoader('/lod/l0'));
+      monitor.connectLoader('/lod/l1', spatialLoader('/lod/l1'));
+      monitor.connectLoader('/lod/aux', nonSpatialLoader('/lod/aux'));
+      monitor.connectLoader('/points', spatialLoader('/points'));
+
+      (monitor as unknown as { lodStates: Map<string, { kind: string; levelCount: number }> }).lodStates =
+        new Map([['/lod', { kind: 'lod', levelCount: 2 }]]);
+
+      const stats = monitor.getGlobalStats();
+      // totalLoaders: 4 − (3 present − 1) = 2.
+      expect(stats.totalLoaders).toBe(2);
+      // activeSpatial: 3 spatial loaders − (2 spatial present under /lod − 1)
+      // = 2. The non-spatial loader is NOT subtracted from activeSpatial.
+      expect(stats.activeSpatialLoaders).toBe(2);
     });
   });
 
@@ -887,6 +1008,97 @@ describe('DataLoadingMonitor', () => {
       expect(state.totalNodes).toBe(4); // Scene + points1 + group1 + points2
       expect(state.pointsNodes).toBe(2); // points1 + points2
       expect(state.totalPoints).toBe(1500); // 1000 + 500
+    });
+
+    it('does NOT sum substitutive kind=lod levels — counts the finest only', () => {
+      // A kind=lod group's children are mutually-exclusive representations
+      // of the same data at different resolutions. Summing them would
+      // inflate the dataset total ~K×. The aggregator must take the finest
+      // (last, coarsest→finest order) level instead.
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/lod_splats',
+            name: 'lod_splats',
+            type: 'group' as const,
+            kind: 'lod' as const,
+            lodGroupChildCount: 3,
+            children: [
+              {
+                path: '/lod_splats/l0',
+                name: 'l0',
+                type: 'gsplats' as const,
+                splatCount: 1_000,
+                children: [],
+              },
+              {
+                path: '/lod_splats/l1',
+                name: 'l1',
+                type: 'gsplats' as const,
+                splatCount: 4_000,
+                children: [],
+              },
+              {
+                path: '/lod_splats/l2',
+                name: 'l2',
+                type: 'gsplats' as const,
+                splatCount: 20_000,
+                children: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+      const state = monitor.getSceneGraph();
+
+      // Finest level (20_000), NOT 1_000 + 4_000 + 20_000 = 25_000.
+      expect(state.totalSplats).toBe(20_000);
+      // Structural counts still reflect the real tree (all 3 levels).
+      expect(state.gsplatsNodes).toBe(3);
+      expect(state.totalNodes).toBe(5); // Scene + lod group + 3 levels
+    });
+
+    it('DOES sum partition parts — disjoint BSP parts add up', () => {
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/parted',
+            name: 'parted',
+            type: 'group' as const,
+            kind: 'partition' as const,
+            partCount: 2,
+            children: [
+              {
+                path: '/parted/p0',
+                name: 'p0',
+                type: 'points' as const,
+                pointCount: 600,
+                children: [],
+              },
+              {
+                path: '/parted/p1',
+                name: 'p1',
+                type: 'points' as const,
+                pointCount: 400,
+                children: [],
+              },
+            ],
+          },
+        ],
+      };
+
+      monitor.setSceneGraph(sceneGraph);
+      const state = monitor.getSceneGraph();
+
+      expect(state.totalPoints).toBe(1000); // 600 + 400 (disjoint parts)
     });
 
     it('should track expanded nodes', () => {

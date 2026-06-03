@@ -976,6 +976,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     recordLoadEvent(this.metrics, items, bytes, loadTime);
 
+    // Resident memory = current accumulator allocation (MB → bytes). Assignment
+    // (not +=): memoryUsed is a live footprint that grows/shrinks with the pool,
+    // unlike the cumulative bytesLoaded counter updated above.
+    this.metrics.memoryUsed = Math.round((this.getAccumulatorStats()?.memoryMB ?? 0) * 1024 * 1024);
+
     this.emitEvent({
       type: 'load',
       loader: 'lines-spatial-index',

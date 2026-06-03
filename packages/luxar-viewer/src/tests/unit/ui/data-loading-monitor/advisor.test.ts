@@ -114,6 +114,18 @@ describe('LoadingAdvisor', () => {
       expect(rec?.severity).toBe('error');
     });
 
+    it('does NOT emit high-memory when memoryLimit is 0 (no per-loader cap)', () => {
+      // Spatial-index loaders populate memoryUsed (resident bytes) but leave
+      // memoryLimit at 0. Without the limit>0 guard, memoryUsed/0 = Infinity
+      // would fire a spurious warning on every load.
+      advisor.analyzeMetrics({
+        ...baseMetrics,
+        memoryUsed: 64 * 1024 * 1024,
+        memoryLimit: 0,
+      });
+      expect(advisor.getRecommendations().find((r) => r.id === 'high-memory')).toBeUndefined();
+    });
+
     it('emits low-efficiency when spatial index efficiency is below threshold', () => {
       advisor.analyzeMetrics({
         ...baseMetrics,

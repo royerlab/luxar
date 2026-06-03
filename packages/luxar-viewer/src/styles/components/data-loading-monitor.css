@@ -78,7 +78,12 @@
 .luxar-monitor-detailed {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* Fill the panel's (max-height-capped) flex column and allow shrinking
+     below content size — `min-height: 0` defeats the flex `min-height: auto`
+     default so the inner __content can become a bounded scroll region
+     instead of growing and spilling past the panel's bottom. */
+  flex: 1;
+  min-height: 0;
 }
 
 /* ========== Header ========== */
@@ -161,6 +166,10 @@
 
 .luxar-data-monitor__content {
   flex: 1;
+  /* `min-height: 0` lets this flex child shrink below its content height so
+     `overflow-y: auto` actually scrolls (e.g. a long scene-graph tree)
+     rather than expanding the panel past its max-height. */
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -813,6 +822,29 @@
   padding: 1px var(--luxar-spacing-2);
   border-radius: var(--luxar-radius-full);
   margin-left: var(--luxar-spacing-2);
+}
+
+/* Kind badge (K LODs / N parts) — mirrors the Layers-panel --kind chip. */
+.luxar-scene-graph__badge--kind {
+  background: rgba(120, 170, 255, 0.18);
+  color: var(--luxar-text-secondary, #9cc2ff);
+  text-transform: none;
+}
+
+/* Live LOD-progress chip (active level / loaded-of-total + refining/residency). */
+.luxar-scene-graph__lod {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+  margin-left: var(--luxar-spacing-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* One-line LOD/partition activity summary in the scene-graph header. */
+.luxar-scene-graph__lod-summary {
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-disabled);
+  padding: 0 var(--luxar-spacing-2) var(--luxar-spacing-1);
 }
 
 .luxar-scene-graph__loading {

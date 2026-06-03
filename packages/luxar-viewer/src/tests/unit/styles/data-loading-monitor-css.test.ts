@@ -40,7 +40,9 @@ describe('data-loading-monitor.css cache layout rules', () => {
     // `minmax(0, 1fr)` track shape that drives the equal-width layout.
     const body = ruleBody(css, '.luxar-cache-section__metrics--cols-3');
     expect(body).not.toBe('');
-    expect(body).toMatch(/grid-template-columns:\s*repeat\(\s*4\s*,\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*\)/);
+    expect(body).toMatch(
+      /grid-template-columns:\s*repeat\(\s*4\s*,\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*\)/
+    );
   });
 
   it('cols-3 last child spans 2 columns to fill the row', () => {
@@ -57,7 +59,9 @@ describe('data-loading-monitor.css cache layout rules', () => {
     // max-content / auto / specific-px regressions.
     const body = ruleBody(css, '.luxar-cache-section__metrics--cols-4');
     expect(body).not.toBe('');
-    expect(body).toMatch(/grid-template-columns:\s*repeat\(\s*4\s*,\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*\)/);
+    expect(body).toMatch(
+      /grid-template-columns:\s*repeat\(\s*4\s*,\s*minmax\(\s*0\s*,\s*1fr\s*\)\s*\)/
+    );
   });
 
   // styles.md O4 / Phase E20: previously one `it` bundled 3 CSS-property
