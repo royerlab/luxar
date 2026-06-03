@@ -1084,8 +1084,10 @@ gsplats/
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod
-│   ├── substitutive.py             # make_substitutive_lod (k-means + Lloyd / hierarchical greedy)
-│   └── _kernels.py                 # Shared L² / Gram / merge kernels
+│   ├── substitutive.py             # make_substitutive_lod orchestrator (+ _reduce_one_level, _pack_level)
+│   ├── pyramid.py                  # make_lod_pyramid (substitutive × additive)
+│   ├── _kernels.py                 # Shared L² / Gram / merge kernels
+│   └── _substitutive/              # substitutive algorithms: warm_start / kmeans_lloyd / greedy
 │
 ├── seeds/                         # Seed generation subpackage
 │   ├── generate.py                # Unified entry point (generate_seeds)
