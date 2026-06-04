@@ -70,6 +70,21 @@ class TestComputeAdditiveOrderPoints:
         # Coarsest LOD should have ≤ 8 elements (2x2x2 = 8 buckets).
         assert counts[0] <= 8
 
+    def test_spatial_uniform_deep_levels_no_overflow(self) -> None:
+        """L1: many levels over coincident data must not overflow int64
+        (res*res exceeded C long at level >= 31)."""
+        from luxar.core.group.lod.spatial_uniform import stratified_grid_order
+
+        pos = np.zeros((40, 3), dtype=np.float32)  # all coincident
+        perm, counts = stratified_grid_order(pos, n_lods=64)
+        assert sorted(perm.tolist()) == list(range(40))  # valid permutation
+        assert sum(counts) == 40
+        # And through the public additive-LOD entry point.
+        perm2, counts2 = compute_additive_order_points(
+            pos, method="spatial-uniform", n_lods=64
+        )
+        assert sorted(perm2.tolist()) == list(range(40))
+
     def test_unknown_method_raises(self) -> None:
         pos = np.zeros((10, 3), dtype=np.float32)
         with pytest.raises(ValueError, match="method must be"):
