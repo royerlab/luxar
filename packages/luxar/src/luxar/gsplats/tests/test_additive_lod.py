@@ -175,6 +175,24 @@ def test_make_additive_lod_explicit_counts_partial() -> None:
     assert sizes == [5, 5, 10]
 
 
+def test_make_additive_lod_builds_gram_once(monkeypatch) -> None:
+    """M1: greedy + energy breakpoints must build the sparse Gram once, not
+    twice (it is the dominant cost)."""
+    import luxar.gsplats.lod.additive as additive_mod
+
+    calls = {"n": 0}
+    real = additive_mod._build_sparse_gram
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(additive_mod, "_build_sparse_gram", _counting)
+    data = _make_random_gsplat(n=40, ndim=2, seed=9)
+    make_additive_lod(data, breakpoints=[0.5, 0.9, 1.0], method="greedy")
+    assert calls["n"] == 1
+
+
 def test_make_additive_lod_energy_fractions() -> None:
     data = _make_random_gsplat(n=40, ndim=2, seed=9)
     fracs = [0.5, 0.9, 1.0]
