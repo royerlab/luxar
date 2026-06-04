@@ -90,7 +90,12 @@ def stratified_grid_order(
     cursor = 0
 
     for level in range(n_lods):
-        res = 1 << (level + 1)  # 2^(level+1): 2, 4, 8, 16, ...
+        # 2^(level+1): 2, 4, 8, 16, ... Clamp the exponent so ``res * res``
+        # (the flat-bucket-id multiplier below) stays within int64: at
+        # level >= 31, res*res would overflow C long and raise OverflowError.
+        # A finer grid gives no extra discrimination once elements share the
+        # finest cell, so capping is behaviour-neutral.
+        res = 1 << min(level + 1, 31)
         # Compute integer bucket index along each axis. Clamp to
         # [0, res-1] so the inclusive max edge maps inside the grid.
         normalized = (pos - mins) / extents  # in [0, 1]
