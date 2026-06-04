@@ -229,7 +229,19 @@ def _read_substitutive_directory(input_path: Path) -> GSplatData:
         )
     compression_factor = int(manifest.get("compression_factor", 4))
     method = manifest.get("method", "kmeans_lloyd")
-    levels_data = manifest.get("levels_data", [])
+    # Sort by the declared level index, NOT manifest list order: the v2.0
+    # invariant is substitutive_levels[0] == finest (default_substitutive=0).
+    # A manifest that lists levels in any other order would otherwise land the
+    # coarsest level at index 0, so the default view returns the wrong splats.
+    levels_data = sorted(
+        manifest.get("levels_data", []), key=lambda e: int(e["level"])
+    )
+    declared_levels = [int(e["level"]) for e in levels_data]
+    if declared_levels != list(range(len(levels_data))):
+        raise ValueError(
+            "substitutive manifest levels must form a contiguous 0..N-1 range "
+            f"(finest=0); got {declared_levels}"
+        )
 
     substitutive_levels: List[SubstitutiveLevel] = []
     for level_entry in levels_data:
