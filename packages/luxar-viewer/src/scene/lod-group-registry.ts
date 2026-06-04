@@ -256,9 +256,15 @@ export function projectBoxDiagonalPx(
  * The "natural" pick is the finest child whose ``minPixelSize`` is
  * less than or equal to ``diagonalPx``. Hysteresis only resists
  * dropping back to a coarser level: when downgrading from index
- * ``currentIdx``, the metric must fall below
- * ``thresholds[currentIdx] * (1 - 0.1)``; otherwise we stay on the
- * current level even though the natural pick is coarser.
+ * ``currentIdx``, the metric must fall below the current threshold by
+ * a margin that is ``hysteresisRatio`` (default 10%) of the GAP to the
+ * adjacent coarser threshold — i.e. below
+ * ``thresholds[currentIdx] - hysteresisRatio * (thresholds[currentIdx] -
+ * thresholds[currentIdx - 1])``; otherwise we stay on the current level
+ * even though the natural pick is coarser. (At the bottom level
+ * ``thresholds[currentIdx - 1]`` is effectively 0, reducing the margin to
+ * ``hysteresisRatio * thresholds[currentIdx]`` — the old isolated-threshold
+ * form.) Upgrades to a finer level are immediate (no hysteresis).
  *
  * Exported for unit testing.
  */
