@@ -41,6 +41,41 @@ def _merge_lod_colors(
         return merged
 
 
+def _concat_additive_levels(
+    views: "list[GSplatData]",
+) -> "list[AdditiveSubLOD]":
+    """Concatenate the additive ladders of several views into one ladder.
+
+    Each view is treated through its default substitutive level. Ragged
+    additive counts are handled (a view that lacks level ``k`` simply does
+    not contribute to it). Arrays are kept float32 so a mixed-precision
+    input cannot silently promote the merged result to float64.
+    """
+    max_lods = max(v.n_additive_sublods for v in views)
+    merged: "list[AdditiveSubLOD]" = []
+    for level in range(max_lods):
+        level_lods = [
+            v.additive_sublod(level) for v in views if level < v.n_additive_sublods
+        ]
+        merged.append(
+            AdditiveSubLOD(
+                centers=np.concatenate(
+                    [lod.centers for lod in level_lods], axis=0
+                ).astype(np.float32, copy=False),
+                amplitudes=np.concatenate(
+                    [lod.amplitudes for lod in level_lods]
+                ).astype(np.float32, copy=False),
+                cholesky_factors=np.concatenate(
+                    [lod.cholesky_factors for lod in level_lods], axis=0
+                ).astype(np.float32, copy=False),
+                colors=_merge_lod_colors(level_lods),
+                stats={"lod_level": level, "n_sources": len(level_lods)},
+                truncation_radius=level_lods[0].truncation_radius,
+            )
+        )
+    return merged
+
+
 class _SplatArrayMixin:
     """Shared computed properties for splat array containers.
 
@@ -877,16 +912,26 @@ class GSplatData(_SplatArrayMixin):
     def concatenate(cls, datasets: list["GSplatData"]) -> "GSplatData":
         """Concatenate multiple GSplatData objects into one.
 
-        All datasets must have the same dimensionality.
+        All datasets must share the same dimensionality, truncation radius,
+        and number of substitutive levels. The full 2-D LOD matrix is
+        preserved: merging is done per ``(substitutive, additive)`` cell, so
+        concatenating pyramids yields a pyramid (no level is silently
+        dropped). To merge across a mismatched substitutive hierarchy,
+        ``flattened()`` the inputs first.
 
         Colors: if all have colors, concatenate; if all None, None;
         if mixed, fill missing with white (1,1,1).
 
         Args:
-            datasets: List of GSplatData (same ndim required).
+            datasets: List of GSplatData (same ndim, truncation_radius, and
+                n_substitutive required).
 
         Returns:
-            New GSplatData with all splats concatenated.
+            New GSplatData with all splats concatenated per LOD cell.
+
+        Raises:
+            ValueError: On empty input list, or mismatched ndim /
+                truncation_radius / n_substitutive across datasets.
         """
         if len(datasets) == 0:
             raise ValueError("At least one GSplatData is required")
@@ -894,10 +939,26 @@ class GSplatData(_SplatArrayMixin):
         # Filter out empty datasets to avoid shape mismatch in np.concatenate
         non_empty = [d for d in datasets if d.n_splats > 0]
         if len(non_empty) == 0:
-            return datasets[0]  # All empty: return first as-is
+            # All empty: return a fresh empty instance (never alias an input,
+            # per the immutability contract).
+            from luxar.gsplats.utils.trils import tril_size
+
+            d0 = datasets[0]
+            d = d0.ndim
+            return cls(
+                centers=np.empty((0, d), dtype=np.float32),
+                amplitudes=np.empty(0, dtype=np.float32),
+                cholesky_factors=np.empty(
+                    (0, tril_size(d) if d > 0 else 0), dtype=np.float32
+                ),
+                colors=None,
+                stats=dict(d0.stats),
+                truncation_radius=d0.truncation_radius,
+            )
 
         ndim = non_empty[0].ndim
         tr = non_empty[0].truncation_radius
+        n_sub = non_empty[0].n_substitutive
         for i, ds in enumerate(non_empty[1:], start=1):
             if ds.ndim != ndim:
                 raise ValueError(
@@ -910,6 +971,13 @@ class GSplatData(_SplatArrayMixin):
                     f"dataset {i} has {ds.truncation_radius}. "
                     f"Cannot concatenate datasets fitted with different truncation radii."
                 )
+            if ds.n_substitutive != n_sub:
+                raise ValueError(
+                    f"Substitutive-level count mismatch: dataset 0 has "
+                    f"{n_sub}, dataset {i} has {ds.n_substitutive}. "
+                    f"concatenate() requires a uniform substitutive hierarchy; "
+                    f"flatten() the inputs first to merge mismatched pyramids."
+                )
 
         merged_stats: Dict[str, Any] = {
             "concatenated_from": len(datasets),
@@ -919,49 +987,42 @@ class GSplatData(_SplatArrayMixin):
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
 
-        # Multi-LOD path: per-LOD concatenation
-        max_lods = max(d.n_additive_sublods for d in non_empty)
-        if max_lods > 1:
-            merged_lods = []
-            for level in range(max_lods):
-                level_lods = [
-                    d.additive_sublod(level)
-                    for d in non_empty
-                    if level < d.n_additive_sublods
-                ]
-                centers = np.concatenate([lod.centers for lod in level_lods], axis=0)
-                amplitudes = np.concatenate([lod.amplitudes for lod in level_lods])
-                cholesky = np.concatenate(
-                    [lod.cholesky_factors for lod in level_lods], axis=0
-                )
-                colors = _merge_lod_colors(level_lods)
-                merged_lods.append(
-                    AdditiveSubLOD(
-                        centers=centers,
-                        amplitudes=amplitudes,
-                        cholesky_factors=cholesky,
-                        colors=colors,
-                        stats={"lod_level": level, "n_sources": len(level_lods)},
-                        truncation_radius=level_lods[0].truncation_radius,
+        # Multi-substitutive path: merge per (substitutive, additive) cell so
+        # the full pyramid survives.
+        if n_sub > 1:
+            template = non_empty[0].substitutive_levels
+            sub_levels: List[SubstitutiveLevel] = []
+            for s in range(n_sub):
+                views_s = [d.at_substitutive(s) for d in non_empty]
+                ref = template[s]
+                sub_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=_concat_additive_levels(views_s),
+                        compression_factor=ref.compression_factor,
+                        parent_method=ref.parent_method,
+                        level_index=ref.level_index,
+                        stats={**ref.stats, "n_sources": len(non_empty)},
                     )
                 )
+            return cls.from_substitutive_levels(
+                sub_levels,
+                stats=merged_stats,
+                default_substitutive=non_empty[0].default_substitutive,
+            )
+
+        # Single substitutive level: merge its additive ladder.
+        merged_lods = _concat_additive_levels(non_empty)
+        if len(merged_lods) > 1:
             return cls(additive_sublods=merged_lods, stats=merged_stats)
 
-        # Single-LOD fast path (unchanged)
-        all_centers = np.concatenate([d.centers for d in non_empty], axis=0)
-        all_amplitudes = np.concatenate([d.amplitudes for d in non_empty])
-        all_cholesky = np.concatenate([d.cholesky_factors for d in non_empty], axis=0)
-        # Use flattened LODs for color merging in single-LOD path
-        all_single_lods = [d.additive_sublod(0) for d in non_empty]
-        all_colors = _merge_lod_colors(all_single_lods)
-
+        only = merged_lods[0]
         return cls(
-            centers=all_centers,
-            amplitudes=all_amplitudes,
-            cholesky_factors=all_cholesky,
-            colors=all_colors,
+            centers=only.centers,
+            amplitudes=only.amplitudes,
+            cholesky_factors=only.cholesky_factors,
+            colors=only.colors,
             stats=merged_stats,
-            truncation_radius=non_empty[0].truncation_radius,
+            truncation_radius=only.truncation_radius,
         )
 
     @classmethod
