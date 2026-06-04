@@ -64,6 +64,7 @@ class ArrayEncoder:
         color_mode: Optional[Literal["sdr", "hdr"]] = None,
         chunks: Optional[tuple] = None,
         compressor: Optional[Any] = None,
+        deduplicate: bool = True,
     ) -> None:
         """Encode array or scalar and write to zarr group.
 
@@ -181,24 +182,33 @@ class ArrayEncoder:
             )
             return
 
-        # Priority 2: Array Reference
-        match = self._registry.check(data, array_path)
-        if match.is_duplicate:
-            if match.target_path is None:
-                raise ValueError(
-                    "Duplicate array match missing target path in registry."
+        # Priority 2: Array Reference (content-dedup across the store).
+        #
+        # Callers pass deduplicate=False for arrays whose consumer cannot
+        # resolve an `array_ref` — notably the line vertices/segments arrays,
+        # which the lines spatial-index loader reads as raw chunked zarr and
+        # never ref-resolves (and whose target would carry a different node's
+        # chunk ordering anyway). Deduping a byte-identical such array (e.g.
+        # two identical-shape components in a partitioned indexed line graph)
+        # would otherwise make the referrer load as empty, dropping geometry.
+        if deduplicate:
+            match = self._registry.check(data, array_path)
+            if match.is_duplicate:
+                if match.target_path is None:
+                    raise ValueError(
+                        "Duplicate array match missing target path in registry."
+                    )
+                self._encode_array_ref(
+                    zarr_group,
+                    name,
+                    match.target_path,
+                    match.hash,
+                    data.shape,
+                    data.dtype,
+                    chunks,
+                    compressor,
                 )
-            self._encode_array_ref(
-                zarr_group,
-                name,
-                match.target_path,
-                match.hash,
-                data.shape,
-                data.dtype,
-                chunks,
-                compressor,
-            )
-            return
+                return
 
         # Priority 3: LUT Encoding (skip in PRECISION mode)
         if mode != EncodingMode.PRECISION:
