@@ -431,37 +431,3 @@ def bin_residual_energy_torch(
         torch.zeros_like(proj),
     )
     return torch.clamp(bin_norm_sq - proj, min=0.0)
-
-
-def merge_bin_to_representative_torch(
-    centres: torch.Tensor,
-    L: torch.Tensor,
-    amps: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Single-call bin merge: moment match + L²-optimal amplitude.
-
-    Returns ``(mu_bar, Sigma_bar, a_bar_star, residual_energy)``,
-    everything needed downstream to assemble the representative splat
-    and account its contribution to the partition cost.
-
-    For an empty bin the representative is a zero-amplitude unit
-    Gaussian and residual is zero.
-    """
-    K = centres.shape[0]
-    D = centres.shape[1]
-    if K == 0:
-        return (
-            torch.zeros(D, dtype=centres.dtype, device=centres.device),
-            torch.eye(D, dtype=centres.dtype, device=centres.device),
-            torch.zeros((), dtype=centres.dtype, device=centres.device),
-            torch.zeros((), dtype=centres.dtype, device=centres.device),
-        )
-    mu_bar, Sigma_bar, _ = kwise_moment_match_torch(centres, L, amps)
-    template_inner = bin_inner_product_with_template_torch(
-        centres, L, amps, mu_bar, Sigma_bar
-    )
-    template_norm_sq = template_squared_norm_torch(Sigma_bar)
-    a_bar_star = l2_optimal_amplitude_torch(template_inner, template_norm_sq)
-    bin_norm_sq = bin_squared_norm_torch(centres, L, amps)
-    residual = bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
-    return mu_bar, Sigma_bar, a_bar_star, residual
