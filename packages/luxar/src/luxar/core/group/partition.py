@@ -42,6 +42,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Union
 
 import numpy as np
+from arbol import aprint
 from numpy.typing import NDArray
 
 from .lod.group import resolve_display_type
@@ -62,6 +63,26 @@ PartitionSpec = Union[None, bool, dict]
 #: a single tile is still a comfortable WebGL batch, small enough that
 #: partitioning is worth it for the 10M+ node sizes the feature targets.
 DEFAULT_MAX_ELEMENTS: int = 1_000_000
+
+
+def warn_if_oversized_single_part(
+    n_parts: int, part_size: int, max_elements: int, name: str
+) -> None:
+    """Warn when the BSP could not split below ``max_elements``.
+
+    All three splitters return a single oversized part on fully-coincident
+    (or single-atomic-polyline) input. Each adder's ``len(parts) > 1`` gate
+    then falls through to a plain single-leaf write with no indication the
+    cap was violated; this surfaces that case (shared across points / lines /
+    gsplats per the three-geometry symmetry rule). Degraded-but-correct
+    render, not data loss.
+    """
+    if n_parts == 1 and part_size > max_elements:
+        aprint(
+            f"  ⚠️  partition could not split '{name}' below "
+            f"max_elements={max_elements:,}: {part_size:,} coincident/atomic "
+            f"elements written as one oversized part."
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────
