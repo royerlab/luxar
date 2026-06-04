@@ -71,6 +71,12 @@ export interface ProgressiveRefinementCtx<TLoader> {
    * Omitted by callers that have no separate disposal signal.
    */
   isActive?(): boolean;
+  /**
+   * Optional handler for an error thrown inside the per-pass loop body
+   * (outside the per-loader processing, which the caller's closure already
+   * guards). Called just before the loop breaks; typically logs.
+   */
+  onError?(error: unknown): void;
 }
 
 /**
@@ -112,16 +118,25 @@ export async function runProgressiveRefinement<TLoader>(
         return;
       }
 
-      // One refinement pass: each loader processes one more LOD.
-      for (const [path, loader] of ctx.loaders) {
-        await ctx.processLoader(path, loader);
+      // One refinement pass: each loader processes one more LOD. The whole
+      // pass body is guarded so a throw from the monitor/visibility helpers
+      // (e.g. walking a half-disposed scene) is logged and stops the loop
+      // rather than escaping as an unhandled promise rejection — the loop is
+      // kicked fire-and-forget.
+      try {
+        for (const [path, loader] of ctx.loaders) {
+          await ctx.processLoader(path, loader);
+        }
+
+        // Aggregate counts once per pass.
+        ctx.updateVisibleCountsInMonitor();
+
+        // Exit when all loaders have finished their ladders.
+        if (!ctx.anyHasMoreLODs()) break;
+      } catch (error) {
+        ctx.onError?.(error);
+        break;
       }
-
-      // Aggregate counts once per pass.
-      ctx.updateVisibleCountsInMonitor();
-
-      // Exit when all loaders have finished their ladders.
-      if (!ctx.anyHasMoreLODs()) break;
     }
   } finally {
     if (!lockHandedOff) {

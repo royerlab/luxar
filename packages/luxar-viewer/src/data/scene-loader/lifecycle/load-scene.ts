@@ -97,7 +97,7 @@ export interface LoadSceneCtx {
   /** Stats helper used by the post-load monitor wiring. */
   updateVisibleCountsInMonitor(): void;
   /** Kick the GSplats LOD refinement loop after initial load. */
-  scheduleGSplatsRefinement(): void;
+  scheduleGSplatsRefinement(): Promise<void>;
 
   // Resource-write setters — orchestrator nulls/sets its own fields.
   setDatasetAbortController(controller: AbortController | null): void;
@@ -288,7 +288,14 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     // the lock when its loop completes; the SceneLoader's
     // `scheduleProgressiveRefinement` orchestrates the three.
     ctx.setUpdateInProgress(true);
-    ctx.scheduleGSplatsRefinement();
+    // Fire-and-forget: catch so an error escaping the refinement loop is
+    // logged rather than surfacing as an unhandled promise rejection.
+    ctx.scheduleGSplatsRefinement().catch((error) => {
+      log.error(
+        Modules.SCENE_LOADER,
+        `GSplats refinement scheduling failed: ${(error as Error).message}`
+      );
+    });
   }
 
   return rootGroup;

@@ -82,5 +82,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
+    onError: (error) =>
+      log.error(Modules.SCENE_LOADER, `Points refinement loop error: ${(error as Error).message}`),
   });
 }
