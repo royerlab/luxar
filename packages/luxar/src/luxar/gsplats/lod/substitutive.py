@@ -128,10 +128,13 @@ def _pack_level(
     return SubstitutiveLevel(
         additive_sublods=[
             AdditiveSubLOD(
-                centers=np.asarray(data.centers, dtype=np.float32),
-                amplitudes=np.asarray(data.amplitudes, dtype=np.float32),
-                cholesky_factors=np.asarray(data.cholesky_factors, dtype=np.float32),
-                colors=(np.asarray(data.colors) if data.colors is not None else None),
+                # np.array (copy) not np.asarray: ``data`` may be a flattened()
+                # view whose arrays are read-only; a packed level must own
+                # writable arrays.
+                centers=np.array(data.centers, dtype=np.float32),
+                amplitudes=np.array(data.amplitudes, dtype=np.float32),
+                cholesky_factors=np.array(data.cholesky_factors, dtype=np.float32),
+                colors=(np.array(data.colors) if data.colors is not None else None),
                 stats={"lod_method": "none", "lod_level": 0},
                 truncation_radius=data.truncation_radius,
             )
@@ -341,7 +344,10 @@ def _reduce_one_level(
 ) -> GSplatData:
     """Run one application of the partition-and-merge operator $\\mathcal{R}_K$."""
     D = data.ndim
-    centres_t = torch.from_numpy(np.asarray(data.centers, dtype=np.float32)).to(
+    # np.array (copy) not np.asarray: ``data`` may be a flattened() view with
+    # read-only arrays, which torch.from_numpy rejects (non-writable). The
+    # copy is immediately recast to float64 on-device, so it is near-free.
+    centres_t = torch.from_numpy(np.array(data.centers, dtype=np.float32)).to(
         device=device, dtype=torch.float64
     )
     L_t = torch.from_numpy(
@@ -349,11 +355,11 @@ def _reduce_one_level(
             np.float64
         )
     ).to(device=device)
-    amps_t = torch.from_numpy(np.asarray(data.amplitudes, dtype=np.float32)).to(
+    amps_t = torch.from_numpy(np.array(data.amplitudes, dtype=np.float32)).to(
         device=device, dtype=torch.float64
     )
     if data.colors is not None:
-        colors_t: Optional[torch.Tensor] = torch.from_numpy(np.asarray(data.colors)).to(
+        colors_t: Optional[torch.Tensor] = torch.from_numpy(np.array(data.colors)).to(
             device=device
         )
     else:
