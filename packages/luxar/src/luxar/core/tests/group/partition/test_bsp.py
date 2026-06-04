@@ -135,6 +135,18 @@ class TestAddPointsPartition:
         assert store["pts"].attrs["type"] == "points"
         assert type(node).__name__ == "Points"
 
+    def test_oversized_coincident_part_warns(self, tmp_path, capsys) -> None:
+        """L2: coincident data that can't be split below the cap is written as
+        one oversized part WITH a warning (was silent)."""
+        pos = np.zeros((300, 3), dtype=np.float32)  # all coincident
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_points("pts", pos, partition=dict(max_elements=120))
+        # Single oversized leaf (no wrapper), but the cap violation is surfaced.
+        assert type(node).__name__ == "Points"
+        out = capsys.readouterr().out
+        assert "oversized" in out and "max_elements" in out
+
     def test_over_cap_creates_partition_wrapper(self, tmp_path) -> None:
         """``partition=dict(max_elements=N)`` over the cap produces a wrapper Group."""
         rng = np.random.RandomState(2)
