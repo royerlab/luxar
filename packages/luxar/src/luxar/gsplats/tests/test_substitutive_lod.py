@@ -71,15 +71,17 @@ def _empty_3d() -> GSplatData:
 def _gsplat_to_torch(
     data: GSplatData,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    centres = torch.from_numpy(np.asarray(data.centers, dtype=np.float32)).to(
+    # np.array (copy): ``data`` may be a flattened()/at_substitutive() view
+    # whose arrays are read-only, which torch.from_numpy rejects.
+    centres = torch.from_numpy(np.array(data.centers, dtype=np.float32)).to(
         torch.float64
     )
     L = torch.from_numpy(
         unpack_tril(
-            np.asarray(data.cholesky_factors, dtype=np.float32), data.ndim
+            np.array(data.cholesky_factors, dtype=np.float32), data.ndim
         ).astype(np.float64)
     )
-    amps = torch.from_numpy(np.asarray(data.amplitudes, dtype=np.float32)).to(
+    amps = torch.from_numpy(np.array(data.amplitudes, dtype=np.float32)).to(
         torch.float64
     )
     return centres, L, amps

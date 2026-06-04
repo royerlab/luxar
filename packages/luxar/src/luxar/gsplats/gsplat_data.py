@@ -41,6 +41,32 @@ def _merge_lod_colors(
         return merged
 
 
+def _readonly(arr: "Optional[np.ndarray]") -> "Optional[np.ndarray]":
+    """Return a zero-copy, non-writable view of ``arr`` (or None).
+
+    The returned view shares ``arr``'s buffer but cannot be written through,
+    so a caller mutating it raises instead of silently corrupting the source.
+    Marking the *view* read-only leaves the original array writable.
+    """
+    if arr is None:
+        return None
+    view = arr.view()
+    view.flags.writeable = False
+    return view
+
+
+def _readonly_sublod(lod: "AdditiveSubLOD") -> "AdditiveSubLOD":
+    """Rebuild ``lod`` with read-only (zero-copy) array views."""
+    return AdditiveSubLOD(
+        centers=_readonly(lod.centers),
+        amplitudes=_readonly(lod.amplitudes),
+        cholesky_factors=_readonly(lod.cholesky_factors),
+        colors=_readonly(lod.colors),
+        stats=lod.stats,
+        truncation_radius=lod.truncation_radius,
+    )
+
+
 def _concat_additive_levels(
     views: "list[GSplatData]",
 ) -> "list[AdditiveSubLOD]":
@@ -491,28 +517,46 @@ class GSplatData(_SplatArrayMixin):
     def additive_prefix(self, level: int) -> "GSplatData":
         """Return a new GSplatData with LODs 0 through ``level`` (inclusive).
 
+        The returned object's arrays are read-only zero-copy views of this
+        one's (the class is conceptually immutable); mutating them raises
+        rather than silently corrupting the source.
+
         Args:
-            level: Maximum LOD level to include.
+            level: Maximum LOD level to include (``0 <= level < n_additive_sublods``).
 
         Returns:
             New GSplatData with ``level + 1`` LODs.
+
+        Raises:
+            IndexError: If ``level`` is out of range.
         """
+        n = self.n_additive_sublods
+        if not 0 <= level < n:
+            raise IndexError(
+                f"additive level {level} out of range [0, {n})"
+            )
         return GSplatData(
-            additive_sublods=self.additive_sublods[: level + 1],
+            additive_sublods=[
+                _readonly_sublod(lod) for lod in self.additive_sublods[: level + 1]
+            ],
             stats=dict(self.stats),
         )
 
     def flattened(self) -> "GSplatData":
         """Collapse all LODs into a single LOD.
 
+        The returned object's arrays are read-only zero-copy views of this
+        one's, honouring the immutability contract: mutating them raises
+        rather than silently corrupting the source.
+
         Returns:
             New GSplatData with ``n_additive_sublods == 1`` containing all splats.
         """
         single = AdditiveSubLOD(
-            centers=self.centers,
-            amplitudes=self.amplitudes,
-            cholesky_factors=self.cholesky_factors,
-            colors=self.colors,
+            centers=_readonly(self.centers),
+            amplitudes=_readonly(self.amplitudes),
+            cholesky_factors=_readonly(self.cholesky_factors),
+            colors=_readonly(self.colors),
             stats=dict(self.stats),
             truncation_radius=self.truncation_radius,
         )
@@ -602,8 +646,18 @@ class GSplatData(_SplatArrayMixin):
             raise IndexError(
                 f"substitutive level {level} out of range [0, {self.n_substitutive})"
             )
+        src_level = self.substitutive_levels[level]
+        ro_level = SubstitutiveLevel(
+            additive_sublods=[
+                _readonly_sublod(lod) for lod in src_level.additive_sublods
+            ],
+            compression_factor=src_level.compression_factor,
+            parent_method=src_level.parent_method,
+            level_index=src_level.level_index,
+            stats=src_level.stats,
+        )
         return GSplatData(
-            substitutive_levels=[self.substitutive_levels[level]],
+            substitutive_levels=[ro_level],
             stats=dict(self.stats),
         )
 
