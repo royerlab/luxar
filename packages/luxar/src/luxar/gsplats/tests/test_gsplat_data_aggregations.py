@@ -553,6 +553,70 @@ class TestConcatenate:
         result = GSplatData.concatenate([gs])
         assert result.n_splats == 5
 
+    @staticmethod
+    def _make_2sub_pyramid(seed: int = 0) -> GSplatData:
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
+
+        rng = np.random.RandomState(seed)
+
+        def _lod(n: int) -> AdditiveSubLOD:
+            return AdditiveSubLOD(
+                centers=rng.rand(n, 3).astype(np.float32),
+                amplitudes=rng.rand(n).astype(np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                ),
+            )
+
+        fine = SubstitutiveLevel(additive_sublods=[_lod(8)], compression_factor=1)
+        coarse = SubstitutiveLevel(
+            additive_sublods=[_lod(2)],
+            compression_factor=4,
+            parent_method="greedy",
+            level_index=1,
+        )
+        return GSplatData.from_substitutive_levels([fine, coarse])
+
+    def test_preserves_substitutive_levels(self):
+        """H3: concatenating pyramids preserves all substitutive levels."""
+        p = self._make_2sub_pyramid(seed=1)
+        assert p.n_substitutive == 2
+        result = GSplatData.concatenate([p, self._make_2sub_pyramid(seed=2)])
+        assert result.n_substitutive == 2
+        assert result.at_substitutive(0).n_splats == 16  # 8 + 8 fine
+        assert result.at_substitutive(1).n_splats == 4  # 2 + 2 coarse
+
+    def test_substitutive_count_mismatch_raises(self):
+        """H3: mismatched n_substitutive is rejected, not silently dropped."""
+        pyramid = self._make_2sub_pyramid()
+        flat = _make_3d_gsplat(n=5)  # n_substitutive == 1
+        with pytest.raises(ValueError, match="Substitutive-level count mismatch"):
+            GSplatData.concatenate([pyramid, flat])
+
+    def test_float32_dtype_guard(self):
+        """H3: mixed float precision must not promote the result to float64."""
+        gs32 = _make_3d_gsplat(n=2, seed=1)
+        gs64 = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float64),
+            amplitudes=np.ones(2, dtype=np.float64),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float64), (2, 1)
+            ),
+        )
+        result = GSplatData.concatenate([gs32, gs64])
+        assert result.centers.dtype == np.float32
+        assert result.amplitudes.dtype == np.float32
+        assert result.cholesky_factors.dtype == np.float32
+
+    def test_all_empty_returns_fresh_instance(self):
+        """H3: all-empty input returns a new object, not an aliased input."""
+        e1 = _make_empty_gsplat(ndim=3)
+        e2 = _make_empty_gsplat(ndim=3)
+        result = GSplatData.concatenate([e1, e2])
+        assert result is not e1 and result is not e2
+        assert result.n_splats == 0
+        assert result.ndim == 3
+
 
 # ── Partition ───────────────────────────────────────────────
 
