@@ -51,9 +51,9 @@ from ._compiler.bounds import (
 from ._compiler.chunking import calculate_intelligent_chunks
 from ._compiler.colormap import write_colormap_lut_if_needed
 from ._compiler.context import DatasetCtx, OrderingCtx
-from ._compiler.datasets.colors import write_colors
-from ._compiler.datasets.positions import write_positions
-from ._compiler.datasets.scalars import (
+from ._compiler.dataset_writers.colors import write_colors
+from ._compiler.dataset_writers.positions import write_positions
+from ._compiler.dataset_writers.scalars import (
     write_bounded_scalar,
     write_positive_scalar,
     write_radii,
