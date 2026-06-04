@@ -2928,13 +2928,31 @@ def migrate_format_command(
     appropriate substitutive × additive shape.
     """
     try:
+        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.migrate import migrate_format
 
         with asection(f"Migrating {input_path.name} → v2.0"):
             detected = migrate_format(input_path, output_path, overwrite=overwrite)
             aprint(f"Detected legacy format: {detected}")
+
+            # Post-write read-back: confirm the output is a loadable v2.0 file
+            # rather than reporting success blind.
+            import zarr
+
+            verify = GSplatData.load(output_path, include_stats=False)
+            out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
+            fmt = out_attrs.get("format_version")
+            if fmt != "2.0":
+                aprint(
+                    f"❌ Migration produced format_version={fmt!r}, expected '2.0'"
+                )
+                raise typer.Exit(1)
             if not quiet:
-                aprint(f"Wrote v2.0 file to {output_path}")
+                aprint(
+                    f"✓ Verified v2.0 output: {verify.n_splats:,} splats, "
+                    f"{verify.n_substitutive} substitutive level(s) → "
+                    f"{output_path}"
+                )
     except typer.Exit:
         raise
     except FileNotFoundError as exc:
