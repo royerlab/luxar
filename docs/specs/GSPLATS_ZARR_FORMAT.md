@@ -100,8 +100,7 @@ fitted.gsplats.zarr/
 │
 ├── splats/                                 # Splat container (always a substitutive_<s> hierarchy)
 │   ├── .zattrs                             # type: "gsplats", n_substitutive,
-│   │                                       # default_substitutive, truncation_radius,
-│   │                                       # n_additive_sublods_default, center_bounds, …
+│   │                                       # default_substitutive, truncation_radius, …
 │   │
 │   ├── substitutive_0/                     # Finest substitutive level (= the original/finest)
 │   │   ├── .zattrs                         # n_additive_sublods, compression_factor=1,
@@ -147,21 +146,24 @@ fitted.gsplats.zarr/
 **Note**: Core per-cell splat metadata (`n_splats`, `ndim`, `ordering`, …) lives
 on each `splats/substitutive_<s>/additive_<a>/.zattrs`. The outer
 `splats/.zattrs` carries pyramid-wide attributes (`n_substitutive`,
-`default_substitutive`, `truncation_radius`, `n_additive_sublods_default`).
+`default_substitutive`, `truncation_radius`).
 
-### Splats Group Attributes (Single Source of Truth)
+### Per-Cell Splat Attributes (`substitutive_<s>/additive_<a>/.zattrs`)
+
+These attributes are written on each leaf cell group (not on the outer
+`splats/.zattrs`):
 
 ```json
 {
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "truncation_radius": 3.0,      // Gaussian truncation in sigmas (default 3.0 if absent)
-  "ordering": "morton",           // "morton", "hilbert", or "none"
-  "morton_min": [0.0, 0.0, 0.0],  // Bounds for Morton normalization (all dimensions)
-  "morton_max": [256.0, 256.0, 128.0],
-  "morton_bits_per_dim": 21,      // Bits per dimension in Morton code
-  "chunk_size": 2048,             // Elements per chunk
+  "truncation_radius": 3.0,        // Gaussian truncation in sigmas (default 3.0 if absent)
+  "ordering": "morton",            // "morton", "hilbert", or "none"
+  "ordering_min": [0.0, 0.0, 0.0], // Bounds for ordering-curve normalization (all dimensions)
+  "ordering_max": [256.0, 256.0, 128.0],
+  "ordering_bits_per_dim": 21,     // Bits per dimension in the ordering code
+  "chunk_size": 2048,              // Elements per chunk
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
@@ -260,10 +262,12 @@ chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
 chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
 ```
 
-**Ordering Metadata** (stored in `splats/.zattrs`):
+**Ordering Metadata** (stored per cell in `substitutive_<s>/additive_<a>/.zattrs`):
 - `ordering`: "morton", "hilbert", or "none"
-- `morton_min`, `morton_max`: Coordinate bounds for normalization
-- `morton_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
+- `ordering_min`, `ordering_max`: Coordinate bounds for normalization
+- `ordering_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
+
+  (Legacy files may carry `morton_*` keys; readers accept those as a fallback.)
 
 **Spatial Index Array**:
 - `chunk_bounds`: (num_chunks, d, 2) float32 array
@@ -748,11 +752,11 @@ level's additive ladder is written into the scene.
     `splats/substitutive_<s>/additive_<a>/`. The four canonical pyramid shapes
     `[1, 1]`, `[1, M]`, `[N, 1]`, `[N, M_i]` all live in a single self-describing
     file (the pre-v2.0 substitutive directory + manifest.json layout is retired).
-  - Root attrs surface `n_substitutive` and `default_substitutive`; the splats
-    group surfaces `n_additive_sublods_default`. Per-substitutive-level attrs
-    (`compression_factor`, `parent_method`, `level_index`, `n_additive_sublods`)
-    live on the `substitutive_<s>/` groups; per-cell attrs (`n_splats`, `ndim`,
-    `ordering`, `lod_stats`, …) live on the leaf `additive_<a>/` groups.
+  - Root attrs surface `n_substitutive` and `default_substitutive`. Per-
+    substitutive-level attrs (`compression_factor`, `parent_method`,
+    `level_index`, `n_additive_sublods`) live on the `substitutive_<s>/`
+    groups; per-cell attrs (`n_splats`, `ndim`, `ordering`, `lod_stats`, …)
+    live on the leaf `additive_<a>/` groups.
   - Python: `GSplatLOD` renamed to `AdditiveSubLOD`; new `SubstitutiveLevel`
     dataclass; `GSplatData` refactored around `substitutive_levels`. Scene
     embedding writes the same layout (`splats/substitutive_0/additive_<i>/`).
