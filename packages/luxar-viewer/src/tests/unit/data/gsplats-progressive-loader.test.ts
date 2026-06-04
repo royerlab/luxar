@@ -146,6 +146,15 @@ describe('GSplatsProgressiveLoader', () => {
       await loader.loadGSplats(baseViewState);
       expect(loader.hasMoreLODs).toBe(false);
     });
+
+    it('hasMoreLODs is false after dispose (M6)', () => {
+      // Fresh loader reports work to do; once disposed it must report none,
+      // so a refinement loop holding a stale reference stops instead of
+      // indexing into the cleared lodLoaders.
+      expect(loader.hasMoreLODs).toBe(true);
+      loader.dispose();
+      expect(loader.hasMoreLODs).toBe(false);
+    });
   });
 
   describe('view-state change handling', () => {

@@ -108,5 +108,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
+    onError: (error) =>
+      log.error(Modules.SCENE_LOADER, `GSplats refinement loop error: ${(error as Error).message}`),
   });
 }
