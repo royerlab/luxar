@@ -1,4 +1,4 @@
-"""Direct unit tests for the dataset serializers in luxar.io._compiler.datasets."""
+"""Direct unit tests for the dataset serializers in luxar.io._compiler.dataset_writers."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import zarr
 
 from luxar.encoding import ArrayEncoder, EncodingMode
 from luxar.io._compiler.context import DatasetCtx
-from luxar.io._compiler.datasets.colors import write_colors
-from luxar.io._compiler.datasets.positions import write_positions
-from luxar.io._compiler.datasets.scalars import (
+from luxar.io._compiler.dataset_writers.colors import write_colors
+from luxar.io._compiler.dataset_writers.positions import write_positions
+from luxar.io._compiler.dataset_writers.scalars import (
     write_bounded_scalar,
     write_positive_scalar,
     write_radii,
