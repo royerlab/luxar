@@ -182,6 +182,11 @@ export class SceneLoader {
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
   private _updateVersion = 0; // For logging/debugging
+  // Set true in dispose(); progressive-refinement loops poll this (via the
+  // ctx isActive callback) so they abort promptly when this loader is torn
+  // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
+  // against a dead dataset.
+  private _disposed = false;
   private _sceneGraph: SceneNode | null = null;
 
   /**
@@ -734,8 +739,9 @@ export class SceneLoader {
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
+      isActive: () => !this._disposed,
     });
-    if (cancelled) return;
+    if (cancelled || this._disposed) return;
 
     await runPointsRefinement({
       rootGroup: this.rootGroup,
@@ -747,8 +753,9 @@ export class SceneLoader {
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: noopReleaseLock,
       retriggerUpdate: onCancel,
+      isActive: () => !this._disposed,
     });
-    if (cancelled) return;
+    if (cancelled || this._disposed) return;
 
     await runLinesRefinement({
       rootGroup: this.rootGroup,
@@ -761,6 +768,7 @@ export class SceneLoader {
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: finalReleaseLock,
       retriggerUpdate: onCancel,
+      isActive: () => !this._disposed,
     });
   }
 
@@ -870,8 +878,7 @@ export class SceneLoader {
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
       factoryDeps: this.factoryDeps(),
-      isDatasetLive: () =>
-        this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
+      isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
         // Return the level's GPU buffer to the evictable pool and drop
         // its loader so the scene-wide updateView sweep won't reload it.
@@ -1138,6 +1145,9 @@ export class SceneLoader {
    * which is the right scope for that lifecycle.
    */
   async dispose(): Promise<void> {
+    // Signal any in-flight progressive-refinement loop to abort before we
+    // start nulling the fields it reads.
+    this._disposed = true;
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
       registry: this.registry,

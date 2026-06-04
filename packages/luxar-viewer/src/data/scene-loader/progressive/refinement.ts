@@ -63,6 +63,14 @@ export interface ProgressiveRefinementCtx<TLoader> {
    * update at the next rAF boundary.
    */
   retriggerUpdate(pendingState: Partial<ViewState>): void;
+  /**
+   * Optional liveness check. Returns false once the owning SceneLoader
+   * has been disposed (e.g. a dataset switch tore it down while this loop
+   * was mid-flight). When provided and false, the loop aborts immediately
+   * instead of continuing to fetch/decode/prefetch against a dead dataset.
+   * Omitted by callers that have no separate disposal signal.
+   */
+  isActive?(): boolean;
 }
 
 /**
@@ -87,6 +95,13 @@ export async function runProgressiveRefinement<TLoader>(
           resolve();
         }
       });
+
+      // Abort if the owning SceneLoader was disposed (e.g. a dataset
+      // switch) while this loop was mid-flight — stop touching the dead
+      // dataset rather than burning fetch/decode/prefetch cycles on it.
+      if (ctx.isActive && !ctx.isActive()) {
+        return;
+      }
 
       // Cancellation check: did the user navigate while we were
       // mid-refinement? If so, hand the lock to the new update.

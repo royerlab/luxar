@@ -38,12 +38,15 @@ export interface LinesRefinementCtx {
   updateVisibleCountsInMonitor(): void;
   releaseLock(): void;
   retriggerUpdate(pendingState: Partial<ViewState>): void;
+  /** Liveness check; false once the owning SceneLoader was disposed. */
+  isActive?(): boolean;
 }
 
 export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void> {
   await runProgressiveRefinement({
     loaders: ctx.linesLoaders,
     viewStateQueue: ctx.viewStateQueue,
+    isActive: ctx.isActive,
     processLoader: async (path, loader) => {
       const progressiveLoader = loader as LinesDataLoader & {
         hasMoreLODs?: boolean;
