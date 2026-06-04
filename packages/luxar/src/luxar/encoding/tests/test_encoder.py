@@ -221,6 +221,37 @@ class TestArrayReferences:
             enc = arr2.attrs["encoding"]
             assert enc["name"] != "array_ref"
 
+    def test_deduplicate_false_forces_materialization(self):
+        """deduplicate=False keeps a byte-identical array materialised instead
+        of turning it into an array_ref. Used for line vertices/segments,
+        whose spatial-index loader cannot resolve refs (a ref would load as
+        empty geometry)."""
+        seg = np.array([0, 1, 1, 2, 2, 3, 3, 0], dtype=np.uint32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(seg, group, "seg1", SemanticType.INDEX, deduplicate=False)
+            encoder.encode(
+                seg.copy(), group, "seg2", SemanticType.INDEX, deduplicate=False
+            )
+
+            arr2 = group["seg2"]
+            assert arr2.attrs["encoding"]["name"] != "array_ref"
+            # Materialised: the data is present, not an empty placeholder.
+            assert np.array_equal(np.asarray(arr2), seg)
+
+    def test_deduplicate_true_default_still_refs(self):
+        """The default (deduplicate=True) still dedups byte-identical arrays —
+        the optimization is preserved for ref-resolving consumers (e.g.
+        points positions, handled by the points loader)."""
+        data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "a1", SemanticType.POSITIVE_SCALAR)
+            encoder.encode(data.copy(), group, "a2", SemanticType.POSITIVE_SCALAR)
+            assert group["a2"].attrs["encoding"]["name"] == "array_ref"
+
 
 class TestCoordinateEncoding:
     """Test COORDINATE semantic type encoding."""

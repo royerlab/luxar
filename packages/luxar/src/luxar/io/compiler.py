@@ -740,6 +740,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             mode=self._encoding_mode,
             chunks=chunks_2d,
             compressor=self.compressor,
+            # The lines spatial-index loader reads vertices/segments as raw
+            # chunked zarr and does not resolve array_ref, so dedup of these
+            # structural arrays would silently drop geometry for a byte-
+            # identical sibling (e.g. two identical components in a partition).
+            deduplicate=False,
         )
 
         # Write segments array (always, not just for indexed type)
@@ -754,6 +759,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             mode=self._encoding_mode,
             chunks=(segment_chunk_size, 2),
             compressor=self.compressor,
+            deduplicate=False,  # see vertices note above
         )
         aprint(f"  ✓ Wrote segments ({n_segments:,} pairs)")
 
