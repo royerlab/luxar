@@ -69,7 +69,14 @@ export function queueNext(ctx: QueueNextCtx): void {
       Modules.SCENE_LOADER,
       'Scheduling GSplats LOD refinement (hasMoreLODs=true after update)'
     );
-    ctx.scheduleGSplatsRefinement();
+    // Fire-and-forget: catch so an error escaping the refinement loop is
+    // logged rather than surfacing as an unhandled promise rejection.
+    ctx.scheduleGSplatsRefinement().catch((error) => {
+      log.error(
+        Modules.SCENE_LOADER,
+        `GSplats refinement scheduling failed: ${(error as Error).message}`
+      );
+    });
   } else {
     // No pending update, no refinement needed - release the lock now
     ctx.setUpdateInProgress(false);

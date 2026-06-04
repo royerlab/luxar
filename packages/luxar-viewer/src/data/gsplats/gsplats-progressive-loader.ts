@@ -143,6 +143,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private monitor: ProgressiveMonitorAdapter;
   private _initialLoadDone = false;
   private _lastAllResident = true;
+  private _disposed = false;
 
   constructor(lodLoaders: GSplatsSpatialIndexLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
@@ -154,6 +155,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * Whether there are more LOD levels to load for the current view state.
    */
   get hasMoreLODs(): boolean {
+    // A disposed loader has work-state cleared; report no further work so a
+    // refinement loop holding a stale reference stops instead of indexing
+    // into the now-empty lodLoaders.
+    if (this._disposed) return false;
     return this.loadedLODs.length < this.nLods;
   }
 
@@ -319,6 +324,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * Clean up all LOD loaders.
    */
   dispose(): void {
+    this._disposed = true;
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }

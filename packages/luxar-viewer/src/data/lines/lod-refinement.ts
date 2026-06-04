@@ -83,5 +83,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
+    onError: (error) =>
+      log.error(Modules.SCENE_LOADER, `Lines refinement loop error: ${(error as Error).message}`),
   });
 }

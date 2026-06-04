@@ -117,6 +117,32 @@ describe('runProgressiveRefinement', () => {
     expect(retrigger).not.toHaveBeenCalled();
   });
 
+  it('reports a loop-body throw via onError and breaks (no unhandled rejection)', async () => {
+    const onError = vi.fn();
+    const loader: FakeLoader = { hasMoreLODs: true, loadedLevels: 0 };
+    const loaders = new Map([['/a', loader]]);
+
+    let passes = 0;
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      processLoader: async () => {
+        passes++;
+      },
+      // Would loop forever if the throw were not caught + broken on.
+      anyHasMoreLODs: () => true,
+      updateVisibleCountsInMonitor: () => {
+        throw new Error('monitor boom');
+      },
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      onError,
+    });
+
+    expect(passes).toBe(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels on pending view state and hands off to retriggerUpdate', async () => {
     const releaseLock = vi.fn();
     const retrigger = vi.fn();
