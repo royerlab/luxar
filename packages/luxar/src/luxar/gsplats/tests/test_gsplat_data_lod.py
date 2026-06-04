@@ -805,3 +805,66 @@ class TestGSplatData2DAccessors:
         # n_splats = concatenation of default substitutive level's additive ladder
         # = 4 + 4 = 8 (not 8 + 2 = 10 — the coarse level is alternative)
         assert data.n_splats == 8
+
+
+class TestImmutableViews:
+    """M5/L3: view methods return read-only zero-copy instances and
+    additive_prefix bounds-checks its argument."""
+
+    def test_flattened_is_readonly_and_does_not_corrupt_source(self):
+        d = _make_3d_gsplat(n=6)
+        original = d.amplitudes.copy()
+        f = d.flattened()
+        with pytest.raises(ValueError, match="read-only|read only"):
+            f.amplitudes[0] = 999.0
+        # Source remains intact and writable.
+        assert np.array_equal(d.amplitudes, original)
+        d.amplitudes[0] = 1.0  # source still mutable
+
+    def test_additive_prefix_is_readonly(self):
+        lods = [
+            AdditiveSubLOD(
+                centers=np.zeros((n, 3), dtype=np.float32),
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                ),
+            )
+            for n in (3, 4)
+        ]
+        d = GSplatData.from_additive_sublods(lods)
+        prefix = d.additive_prefix(0)
+        with pytest.raises(ValueError, match="read-only|read only"):
+            prefix.cell(0, 0).centers[0, 0] = 5.0
+
+    def test_additive_prefix_out_of_range_raises_clearly(self):
+        d = _make_3d_gsplat(n=4)  # single additive level
+        with pytest.raises(IndexError, match="additive level"):
+            d.additive_prefix(-1)
+        with pytest.raises(IndexError, match="additive level"):
+            d.additive_prefix(5)
+
+    def test_at_substitutive_is_readonly(self):
+        d = _make_3d_gsplat(n=5)
+        view = d.at_substitutive(0)
+        with pytest.raises(ValueError, match="read-only|read only"):
+            view.centers[0, 0] = 7.0
+
+    def test_lod_builders_tolerate_readonly_views(self):
+        """make_substitutive_lod consumes flattened() internally; it must not
+        emit a torch non-writable warning nor fail on the read-only arrays."""
+        import warnings
+
+        from luxar.gsplats.lod.substitutive import make_substitutive_lod
+
+        d = _make_3d_gsplat(n=24)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            out = make_substitutive_lod(
+                d, compression_factor=2, levels=1, device="cpu"
+            )
+        assert out.n_substitutive == 2
+        assert not any("writable" in str(w.message).lower() for w in caught)
+        # The stored level arrays are normal writable arrays (cell() returns
+        # the backing AdditiveSubLOD, not a read-only view).
+        assert out.cell(0, 0).centers.flags.writeable
