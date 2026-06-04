@@ -91,6 +91,32 @@ describe('runProgressiveRefinement', () => {
     expect(retrigger).not.toHaveBeenCalled();
   });
 
+  it('aborts when isActive() returns false (disposed mid-flight)', async () => {
+    const retrigger = vi.fn();
+    const loader: FakeLoader = { hasMoreLODs: true, loadedLevels: 0 };
+    const loaders = new Map([['/a', loader]]);
+
+    let active = true;
+    let processed = 0;
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      isActive: () => active,
+      processLoader: async () => {
+        processed++;
+        active = false; // owner disposed after the first pass
+      },
+      // Would loop forever if the isActive abort did not fire.
+      anyHasMoreLODs: () => true,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: retrigger,
+    });
+
+    expect(processed).toBe(1); // aborted before a second pass
+    expect(retrigger).not.toHaveBeenCalled();
+  });
+
   it('cancels on pending view state and hands off to retriggerUpdate', async () => {
     const releaseLock = vi.fn();
     const retrigger = vi.fn();

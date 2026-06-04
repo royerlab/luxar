@@ -38,12 +38,15 @@ export interface PointsRefinementCtx {
   updateVisibleCountsInMonitor(): void;
   releaseLock(): void;
   retriggerUpdate(pendingState: Partial<ViewState>): void;
+  /** Liveness check; false once the owning SceneLoader was disposed. */
+  isActive?(): boolean;
 }
 
 export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<void> {
   await runProgressiveRefinement({
     loaders: ctx.pointsLoaders,
     viewStateQueue: ctx.viewStateQueue,
+    isActive: ctx.isActive,
     processLoader: async (path, loader) => {
       // Only progressive loaders expose `hasMoreLODs`; single-shot
       // PointsSpatialIndexLoader doesn't have it, so skip on absence.

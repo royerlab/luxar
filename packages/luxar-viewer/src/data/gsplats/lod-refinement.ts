@@ -67,6 +67,8 @@ export interface GSplatsRefinementCtx {
    * boundary so the cancelled paint resolves first).
    */
   retriggerUpdate(pendingState: Partial<ViewState>): void;
+  /** Liveness check; false once the owning SceneLoader was disposed. */
+  isActive?(): boolean;
 }
 
 /**
@@ -78,6 +80,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
   await runProgressiveRefinement({
     loaders: ctx.gsplatLoaders,
     viewStateQueue: ctx.viewStateQueue,
+    isActive: ctx.isActive,
     processLoader: async (path, loader) => {
       if (loader.hasMoreLODs !== true) return;
       try {
