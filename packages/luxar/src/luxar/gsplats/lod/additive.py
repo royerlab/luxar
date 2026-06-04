@@ -369,14 +369,25 @@ def compute_additive_order(
 
     # Spectral and greedy need the Gram matrix.
     gram_csr = _build_sparse_gram(data, sigmas=truncation_sigmas)
+    return _order_from_gram(gram_csr, method, max_n_dense)
+
+
+def _order_from_gram(
+    gram_csr: sparse.csr_matrix, method: MethodName, max_n_dense: int
+) -> np.ndarray:
+    """Spectral / greedy ordering from a prebuilt sparse Gram.
+
+    Split out so callers that already hold the Gram (e.g.
+    :func:`make_additive_lod` resolving energy-fraction breakpoints) can
+    reuse it instead of rebuilding the most expensive structure twice.
+    """
     if method == "spectral":
         return _spectral_order(gram_csr)
     if method == "greedy":
-        if N <= max_n_dense:
+        if gram_csr.shape[0] <= max_n_dense:
             return _dense_greedy(gram_csr.toarray())
         return _lazy_greedy(gram_csr)
-
-    raise AssertionError(f"unhandled method {method!r}")  # pragma: no cover
+    raise AssertionError(f"unhandled gram method {method!r}")  # pragma: no cover
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -568,18 +579,31 @@ def make_additive_lod(
         cuts = [0]
         kind = "equal-count"
     else:
-        order = compute_additive_order(
-            target_view,
-            method=method,
-            truncation_sigmas=truncation_sigmas,
-            max_n_dense=max_n_dense,
-            seed=seed,
+        # Build the (expensive) sparse Gram at most once: greedy/spectral need
+        # it for the ordering, and energy-fraction breakpoints need it again
+        # for the residual-energy curve. Reuse the same matrix across both.
+        needs_gram = method in ("greedy", "spectral")
+        gram_csr = (
+            _build_sparse_gram(target_view, sigmas=truncation_sigmas)
+            if needs_gram
+            else None
         )
+        if gram_csr is not None:
+            order = _order_from_gram(gram_csr, method, max_n_dense)
+        else:
+            order = compute_additive_order(
+                target_view,
+                method=method,
+                truncation_sigmas=truncation_sigmas,
+                max_n_dense=max_n_dense,
+                seed=seed,
+            )
 
         cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
 
         if kind == "energy-fractions":
-            gram_csr = _build_sparse_gram(target_view, sigmas=truncation_sigmas)
+            if gram_csr is None:  # score method + energy breakpoints
+                gram_csr = _build_sparse_gram(target_view, sigmas=truncation_sigmas)
             cuts = _energy_fraction_cuts(
                 [float(x) for x in cuts_or_fracs], gram_csr, order
             )
