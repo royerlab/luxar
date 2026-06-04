@@ -97,6 +97,12 @@ class ArrayEncoder:
             color_mode: "sdr" or "hdr" for COLOR semantic type (required for float)
             chunks: Optional chunk shape for zarr dataset
             compressor: Optional compressor for zarr dataset
+            deduplicate: When True (default), a byte-identical array already
+                         written elsewhere is stored as a lightweight
+                         ``array_ref``. Pass False for arrays whose reader
+                         cannot resolve refs (e.g. line vertices/segments,
+                         read as raw chunked zarr) so they are always
+                         materialised.
 
         Raises:
             ValueError: If scalar input lacks n_elements
