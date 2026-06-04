@@ -90,6 +90,7 @@ def add_lines_impl(
                 median_bsp_polylines,
                 midpoint_bsp_polylines,
                 sah_bsp_partition,
+                warn_if_oversized_single_part,
             )
 
             if partition is True:
@@ -154,6 +155,14 @@ def add_lines_impl(
                     vert_arr, polyline_indices, max_elements
                 )
 
+            warn_if_oversized_single_part(
+                len(polyline_parts),
+                sum(int(polyline_indices[p].size) for p in polyline_parts[0])
+                if polyline_parts
+                else 0,
+                max_elements,
+                name,
+            )
             if len(polyline_parts) > 1:
                 return add_lines_partition_wrapper_impl(
                     group,

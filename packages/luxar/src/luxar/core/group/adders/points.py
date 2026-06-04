@@ -94,6 +94,7 @@ def add_points_impl(
                 median_bsp_partition,
                 midpoint_bsp_partition,
                 sah_bsp_partition,
+                warn_if_oversized_single_part,
             )
 
             if partition is True:
@@ -129,6 +130,9 @@ def add_points_impl(
                 parts = midpoint_bsp_partition(pos_arr, max_elements)
             else:
                 parts = median_bsp_partition(pos_arr, max_elements)
+            warn_if_oversized_single_part(
+                len(parts), int(parts[0].size) if parts else 0, max_elements, name
+            )
             if len(parts) > 1:
                 return add_points_partition_wrapper_impl(
                     group,
