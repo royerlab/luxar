@@ -20,8 +20,8 @@ from ...encoding import SemanticType
 from .chunking import calculate_intelligent_chunks
 from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
-from .datasets.colors import write_colors
-from .datasets.scalars import write_positive_scalar
+from .dataset_writers.colors import write_colors
+from .dataset_writers.scalars import write_positive_scalar
 
 
 def validate_gsplat_inputs(
