@@ -602,6 +602,49 @@ class TestPartition:
         assert parts[0].colors is not None
         assert np.allclose(parts[0].colors[0], [1, 0, 0])
 
+    def test_multilevel_input_warns_and_flattens(self):
+        """H1: partitioning a multi-LOD dataset flattens it with a warning,
+        rather than silently dropping levels / cutting across the ladder."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+        def _lod(n: int, seed: int) -> AdditiveSubLOD:
+            rng = np.random.RandomState(seed)
+            return AdditiveSubLOD(
+                centers=rng.rand(n, 3).astype(np.float32),
+                amplitudes=rng.rand(n).astype(np.float32),
+                cholesky_factors=np.tile(
+                    np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+                ),
+            )
+
+        gs = GSplatData.from_additive_sublods([_lod(3, 1), _lod(4, 2)])
+        assert gs.n_additive_sublods == 2
+        with pytest.warns(UserWarning, match="flattens LOD structure"):
+            parts = gs.partition(2)
+        # Every output part is single-level, and no splat is lost.
+        assert all(p.n_additive_sublods == 1 for p in parts)
+        assert sum(p.n_splats for p in parts) == 7
+
+    def test_rejects_unsorted_split_points(self):
+        """M3: unsorted split points would silently overlap via np.split."""
+        gs = _make_3d_gsplat(n=10)
+        with pytest.raises(ValueError, match="strictly increasing"):
+            gs.partition([7, 3])
+
+    def test_rejects_out_of_range_split_points(self):
+        """M3/L4: split points outside (0, n_splats) are rejected up front."""
+        gs = _make_3d_gsplat(n=10)
+        with pytest.raises(ValueError, match="within"):
+            gs.partition([3, 100])
+        with pytest.raises(ValueError, match="within"):
+            gs.partition([0, 5])
+
+    def test_rejects_nonpositive_count(self):
+        """L4: partition(0) gives a clear domain error, not a raw numpy one."""
+        gs = _make_3d_gsplat(n=10)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            gs.partition(0)
+
 
 # ── Embed dimension ─────────────────────────────────────
 
