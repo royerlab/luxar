@@ -227,6 +227,39 @@ class TestAddLinesPartition:
                     image_labels=["foo"],
                 )
 
+    def test_partition_forwards_additive_lod(self, tmp_path):
+        """M2: partition + additive_lod composes (parity with add_points) —
+        each spatial part builds its own additive LOD ladder instead of the
+        ladder being silently dropped."""
+        v, w = self._segments_data(300, seed=7)  # 600 vertices
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "lines",
+                vertices=v,
+                widths=w,
+                line_type="segments",
+                partition=dict(max_elements=120),
+                additive_lod=dict(method="random", n_lods=3),
+            )
+            assert node.attrs.get("kind") == "partition"
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        # Lines additive-LOD is a single node carrying n_additive_sublods > 1
+        # (with additive_<i>/ subgroups), not a kind=lod group.
+        found_ladder: list = []
+
+        def walk(g):
+            for k in g.keys():
+                ch = g[k]
+                if int(ch.attrs.get("n_additive_sublods", 1)) > 1:
+                    found_ladder.append(ch.path)
+                if hasattr(ch, "keys"):
+                    walk(ch)
+
+        walk(store["lines"])
+        assert found_ladder, "no per-part additive ladder — additive_lod was dropped"
+
 
 # ────────────────────────────────────────────────────────────────────────
 # identify_polylines smoke check (the BSP feeds on this helper)
