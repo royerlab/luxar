@@ -172,6 +172,7 @@ def add_lines_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     max_elements=max_elements,
+                    additive_lod=additive_lod,
                     **attrs,
                 )
             # 1 part → fall through to single-leaf write.
@@ -322,6 +323,7 @@ def add_lines_partition_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     max_elements: int,
+    additive_lod: Any = None,
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one Lines child per BSP part.
@@ -468,6 +470,10 @@ def add_lines_partition_wrapper_impl(
             dim_order=None,
             fill=None,
             partition=None,
+            # Inner LOD ladder per spatial part — each part decides its own
+            # ladder independently (partition-of-additive-LOD composition,
+            # mirroring add_points). Dropped silently before this fix.
+            additive_lod=additive_lod,
             **leaf_attrs,
         )
 
