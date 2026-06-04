@@ -225,6 +225,17 @@ def _cost_increment_lloyd_vectorized(
         cand = assignments[nbr_splats]  # (N, 2w+1)
         new_assign = _score_and_pick(centres, Sigma, amps, mu_bar, Sigma_bar, cand)
         P_new, mu_bar_new, Sigma_bar_new = projection_energy(new_assign)
+        # Accept only a strict improvement (monotone refinement). The relative
+        # 1e-9 margin is calibrated for the deterministic float64 CPU path
+        # (the supported/verified path — see make_substitutive_lod, which
+        # forces CPU+float64). NOTE: ``projection_energy`` is built from
+        # ``index_add_`` segment reductions, which PyTorch documents as
+        # NON-deterministic on CUDA (atomic adds). On a CUDA device a genuine
+        # improvement smaller than the atomic-add noise floor could therefore
+        # be rejected here, stopping iteration early; the only consequence is a
+        # marginally coarser refinement at the noise floor (never a wrong or
+        # NaN result). For bit-exact CUDA behaviour, run with
+        # ``torch.use_deterministic_algorithms(True)`` set by the caller.
         if P_new > best_P + abs(best_P) * 1e-9:
             best_P = P_new
             assignments = new_assign
