@@ -822,6 +822,60 @@ class TestTruncationRadiusRoundtrip:
             assert g2.additive_sublods[0].truncation_radius == 2.5
             assert g2.additive_sublods[1].truncation_radius == 2.5
 
+    def test_per_level_truncation_radius_roundtrip(self):
+        """M4: differing per-level truncation_radius must not collapse to the
+        finest level's value on load."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+        lods = [
+            AdditiveSubLOD(
+                centers=np.random.randn(n, 3).astype(np.float32),
+                amplitudes=np.random.rand(n).astype(np.float32),
+                cholesky_factors=np.random.randn(n, 6).astype(np.float32),
+                truncation_radius=tr,
+            )
+            for n, tr in [(30, 2.5), (50, 4.0)]
+        ]
+        g = GSplatData(additive_sublods=lods)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            g2 = GSplatData.load(path)
+            assert g2.additive_sublods[0].truncation_radius == 2.5
+            assert g2.additive_sublods[1].truncation_radius == 4.0
+
+    def test_level_stats_read_without_include_stats(self):
+        """L10: per-level stats (n_splats_total) are available on a default
+        load, not only when include_stats=True."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
+
+        def _lod(n: int) -> AdditiveSubLOD:
+            return AdditiveSubLOD(
+                centers=np.random.randn(n, 3).astype(np.float32),
+                amplitudes=np.random.rand(n).astype(np.float32),
+                cholesky_factors=np.random.randn(n, 6).astype(np.float32),
+            )
+
+        levels = [
+            SubstitutiveLevel(
+                additive_sublods=[_lod(8)],
+                compression_factor=1,
+                stats={"n_splats_total": 8},
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[_lod(2)],
+                compression_factor=4,
+                level_index=1,
+                stats={"n_splats_total": 2},
+            ),
+        ]
+        g = GSplatData.from_substitutive_levels(levels)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "test.gsplats.zarr"
+            g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            g2 = GSplatData.load(path)  # default: include_stats not set
+            assert g2.substitutive_levels[1].stats.get("n_splats_total") == 2
+
     def test_truncation_radius_in_zarr_metadata(self):
         """truncation_radius is written to zarr splats group attrs."""
         splats = create_test_splats_3d(50)
