@@ -41,18 +41,21 @@ def _merge_lod_colors(
         return merged
 
 
-def _readonly(arr: "Optional[np.ndarray]") -> "Optional[np.ndarray]":
-    """Return a zero-copy, non-writable view of ``arr`` (or None).
+def _readonly(arr: np.ndarray) -> np.ndarray:
+    """Return a zero-copy, non-writable view of ``arr``.
 
     The returned view shares ``arr``'s buffer but cannot be written through,
     so a caller mutating it raises instead of silently corrupting the source.
     Marking the *view* read-only leaves the original array writable.
     """
-    if arr is None:
-        return None
-    view = arr.view()
+    view: np.ndarray = arr.view()
     view.flags.writeable = False
     return view
+
+
+def _readonly_opt(arr: "Optional[np.ndarray]") -> "Optional[np.ndarray]":
+    """Read-only view of an optional array (passes ``None`` through)."""
+    return None if arr is None else _readonly(arr)
 
 
 def _readonly_sublod(lod: "AdditiveSubLOD") -> "AdditiveSubLOD":
@@ -61,7 +64,7 @@ def _readonly_sublod(lod: "AdditiveSubLOD") -> "AdditiveSubLOD":
         centers=_readonly(lod.centers),
         amplitudes=_readonly(lod.amplitudes),
         cholesky_factors=_readonly(lod.cholesky_factors),
-        colors=_readonly(lod.colors),
+        colors=_readonly_opt(lod.colors),
         stats=lod.stats,
         truncation_radius=lod.truncation_radius,
     )
@@ -556,7 +559,7 @@ class GSplatData(_SplatArrayMixin):
             centers=_readonly(self.centers),
             amplitudes=_readonly(self.amplitudes),
             cholesky_factors=_readonly(self.cholesky_factors),
-            colors=_readonly(self.colors),
+            colors=_readonly_opt(self.colors),
             stats=dict(self.stats),
             truncation_radius=self.truncation_radius,
         )
