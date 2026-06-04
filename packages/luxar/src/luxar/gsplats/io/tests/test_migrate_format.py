@@ -261,6 +261,37 @@ class TestReadLegacyRoots:
         with pytest.raises(FileNotFoundError, match="level_1.gsplats.zarr"):
             _read_substitutive_directory(d)
 
+    def test_read_substitutive_directory_scrambled_manifest_order(
+        self, tmp_path: Path
+    ) -> None:
+        """H4: a manifest that lists levels out of order must still produce a
+        finest-first hierarchy (substitutive_levels[0] == compression 1)."""
+        d = tmp_path / "pyr"
+        _make_substitutive_dir(d, level_sizes=[16, 4, 1])
+        # Rewrite the manifest with levels_data scrambled: [coarsest, finest, mid].
+        manifest = json.loads((d / "manifest.json").read_text())
+        ld = {int(e["level"]): e for e in manifest["levels_data"]}
+        manifest["levels_data"] = [ld[2], ld[0], ld[1]]
+        (d / "manifest.json").write_text(json.dumps(manifest))
+
+        data = _read_substitutive_directory(d)
+        # Finest (level 0, 16 splats, compression 1) is at index 0.
+        assert [s.n_splats_total for s in data.substitutive_levels] == [16, 4, 1]
+        assert [s.compression_factor for s in data.substitutive_levels] == [1, 4, 16]
+        assert data.n_splats == 16  # default substitutive view = finest
+
+    def test_read_substitutive_directory_noncontiguous_levels_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """H4: non-contiguous level indices are rejected, not mis-ordered."""
+        d = tmp_path / "pyr"
+        _make_substitutive_dir(d, level_sizes=[16, 4])
+        manifest = json.loads((d / "manifest.json").read_text())
+        manifest["levels_data"][1]["level"] = 5  # gap: levels {0, 5}
+        (d / "manifest.json").write_text(json.dumps(manifest))
+        with pytest.raises(ValueError, match="contiguous"):
+            _read_substitutive_directory(d)
+
 
 # ---------------------------------------------------------------------------
 # End-to-end migrate_format
