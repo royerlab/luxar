@@ -239,3 +239,97 @@ class TestIdentifyPolylinesForPartition:
         assert len(polys) == 5
         for p in polys:
             assert p.size == 2
+
+
+# ────────────────────────────────────────────────────────────────────────
+# indexed line_type topology preservation across partition (H2)
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestIndexedPartitionTopology:
+    """H2: partitioning an indexed graph must preserve the exact edge set
+    (no dropped/fabricated edges) and must not crash on odd-sized
+    components."""
+
+    # Three spatially separated connected components with DISTINCT local
+    # topologies: a 4-cycle, a 4-path, and a triangle (odd-sized — the case
+    # that used to crash). Distinct shapes keep each part's segment array
+    # byte-unique, isolating this test to the partition-remap fix.
+    _VERTS = np.array(
+        [
+            [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],  # comp A (4-cycle)
+            [100, 100, 100], [101, 100, 100], [101, 101, 100], [100, 101, 100],  # B
+            [200, 0, 0], [201, 0, 0], [200, 1, 0],  # comp C (triangle)
+        ],
+        dtype=np.float32,
+    )
+    _EDGES = np.array(
+        [
+            [0, 1], [1, 2], [2, 3], [3, 0],  # A: 4-cycle (4 edges)
+            [4, 5], [5, 6], [6, 7],  # B: 4-path (3 edges)
+            [8, 9], [9, 10], [10, 8],  # C: triangle (3 edges, odd component)
+        ],
+        dtype=np.intp,
+    )
+
+    def _collect_leaf_segment_arrays(self, store_path) -> list:
+        """Return each written lines-leaf's (n_vertices, segments-array)."""
+        store = zarr.open(str(store_path), mode="r")
+        leaves: list = []
+
+        def collect(g):
+            for k in g.keys():
+                child = g[k]
+                t = child.attrs.get("type")
+                if t == "lines":
+                    seg = np.asarray(child["segments"]).reshape(-1, 2)
+                    leaves.append((int(child["vertices"].shape[0]), seg))
+                elif t == "group":
+                    collect(child)
+
+        collect(store["graph"])
+        return leaves
+
+    def test_indexed_partition_preserves_all_edges(self, tmp_path):
+        widths = np.full(self._VERTS.shape[0], 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "graph",
+                vertices=self._VERTS,
+                widths=widths,
+                indices=self._EDGES.reshape(-1),  # add_lines wants flat (2E,)
+                line_type="indexed",
+                partition=dict(max_elements=4),
+            )
+            assert node.attrs.get("kind") == "partition"  # actually split
+
+        leaves = self._collect_leaf_segment_arrays(tmp_path / "t.zarr")
+        assert len(leaves) >= 2  # genuinely partitioned
+        # No edge dropped or fabricated: total segment count is preserved.
+        total_segments = sum(seg.shape[0] for _, seg in leaves)
+        assert total_segments == self._EDGES.shape[0]  # 11
+        # Every part's edges reference only that part's own vertices (a
+        # fabricated cross-part edge would index out of range).
+        for n_v, seg in leaves:
+            if seg.size:
+                assert int(seg.max()) < n_v
+
+    def test_indexed_partition_odd_component_does_not_crash(self, tmp_path):
+        # The triangle (component C) alone is an odd-sized component; force it
+        # into its own part. This used to raise "Indexed requires at least 2
+        # indices" mid-write.
+        verts = self._VERTS[8:].copy()  # the 3 triangle vertices
+        edges = np.array([0, 1, 1, 2, 2, 0], dtype=np.intp)  # flat (2E,)
+        widths = np.full(3, 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            # Single component → can't split below cap → single leaf, no crash.
+            scene.add_lines(
+                "graph",
+                vertices=verts,
+                widths=widths,
+                indices=edges,
+                line_type="indexed",
+                partition=dict(max_elements=2),
+            )

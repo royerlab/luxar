@@ -326,15 +326,16 @@ def add_lines_partition_wrapper_impl(
 ) -> "Group":
     """Build a kind=partition wrapper Group with one Lines child per BSP part.
 
-    Polylines are atomic — each polyline lands in exactly one part.
-    For the ``segments`` / ``indexed`` line types, the resulting
-    per-part data is re-emitted with ``line_type='segments'``: the
-    original segment topology is preserved by walking pairs within
-    each component the BSP grouped together. For ``polyline`` /
-    ``loop`` types (where the input is a single polyline), the BSP
-    only ever produces one part — the user is already at the single-
-    polyline granularity and there's nothing to partition. We refuse the
-    partition in that case with a clear error.
+    Polylines / connected components are atomic — each lands in exactly
+    one part. ``segments`` parts are re-emitted as ``segments`` (their
+    consecutive member pairs are the segments). ``indexed`` parts are
+    re-emitted as ``indexed`` with the original edges remapped to
+    part-local vertex indices, so the exact graph topology is preserved
+    (no edge is dropped or fabricated, and odd-sized components no longer
+    crash). For ``polyline`` / ``loop`` types (where the input is a single
+    polyline), the BSP only ever produces one part — the user is already at
+    the single-polyline granularity and there's nothing to partition. We
+    refuse the partition in that case with a clear error.
     """
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -356,10 +357,30 @@ def add_lines_partition_wrapper_impl(
         f"(max_elements={max_elements:,}, sizes={part_sizes})"
     )
 
+    # For ``indexed`` inputs, bucket the ORIGINAL edges by part up front.
+    # Each connected component (hence each edge) lands wholly in one part,
+    # so the exact graph topology is preserved by remapping real edges into
+    # part-local indices below — never by re-pairing sorted union-find
+    # members (which fabricated/dropped edges and crashed on odd-sized
+    # components).
+    part_edges: List[List[tuple[int, int]]] = [[] for _ in polyline_parts]
+    if line_type == "indexed" and indices is not None and len(indices) > 0:
+        vertex_to_part = np.full(n_vertices, -1, dtype=np.int64)
+        for part_i, polyline_ids in enumerate(polyline_parts):
+            for p in polyline_ids:
+                vertex_to_part[polyline_indices[p]] = part_i
+        # ``indices`` is the flat (2E,) edge list; view it as (E, 2).
+        for edge in np.asarray(indices, dtype=np.int64).reshape(-1, 2):
+            a, b = int(edge[0]), int(edge[1])
+            pa = int(vertex_to_part[a])
+            if pa >= 0 and int(vertex_to_part[b]) == pa:
+                part_edges[pa].append((a, b))
+
     # The new line_type per part is either:
     # - ``polyline`` / ``loop`` with one polyline ⇒ keep as-is.
-    # - ``segments`` / ``indexed`` ⇒ re-emit as ``segments`` with the
-    #   pairs from the polylines that landed in this part.
+    # - ``segments`` ⇒ re-emit as ``segments`` (consecutive member pairs).
+    # - ``indexed`` ⇒ re-emit as ``indexed`` with the part's real edges
+    #   remapped to part-local vertex indices.
     for i, polyline_ids in enumerate(polyline_parts):
         # Collect vertices for this part, preserving original order.
         vertex_index_list: List[np.ndarray] = []
@@ -370,18 +391,10 @@ def add_lines_partition_wrapper_impl(
             if members.size == 0:
                 continue
             vertex_index_list.append(members)
-            # For segments / indexed, re-emit each pair after
-            # remapping into the part-local vertex indexing (which
-            # follows the concatenation order).
-            if line_type in ("segments", "indexed"):
-                # Walk in pairs along the polyline's original member
-                # ordering. For ``segments`` this is just (0,1),
-                # (2,3), ... For ``indexed`` connected components,
-                # consecutive members aren't necessarily a segment;
-                # we approximate by linking consecutive members,
-                # which is exact for ``segments`` (the only case the
-                # partition path actually decomposes — see polyline /
-                # loop guard below).
+            # ``segments`` members are stored pairwise, so consecutive
+            # pairs (0,1),(2,3),... ARE the segments. (``indexed`` edges
+            # are remapped from the original edge list below instead.)
+            if line_type == "segments":
                 for k in range(0, members.size - 1, 2):
                     new_segments.append([cursor + k, cursor + k + 1])
             cursor += int(members.size)
@@ -391,6 +404,11 @@ def add_lines_partition_wrapper_impl(
         part_vertex_idx = np.concatenate(vertex_index_list)
         part_vertices = vert_arr[part_vertex_idx]
         part_n = int(part_vertex_idx.size)
+
+        # Remap this part's original edges to part-local vertex indices.
+        if line_type == "indexed":
+            local_of = {int(g): loc for loc, g in enumerate(part_vertex_idx)}
+            new_segments = [[local_of[a], local_of[b]] for (a, b) in part_edges[i]]
 
         # Slice per-vertex parameters into this part.
         part_widths = (
@@ -405,9 +423,9 @@ def add_lines_partition_wrapper_impl(
 
         # Choose the per-part line_type. ``polyline`` / ``loop`` with
         # one polyline = one part, so the original type is preserved.
-        # For ``segments`` we emit segments. For ``indexed`` (rare
-        # — typically pre-merged graphs) we also emit segments with
-        # the reconstructed indices below.
+        # ``segments`` emits segments. ``indexed`` emits the part's
+        # remapped real edges (or degrades to empty segments if the part
+        # happens to contain only isolated, edgeless vertices).
         if line_type in ("polyline", "loop"):
             part_line_type = line_type
             part_indices = None
@@ -416,8 +434,9 @@ def add_lines_partition_wrapper_impl(
             part_indices = None
         else:  # indexed
             part_line_type = "indexed"
+            # add_lines expects a flat (2M,) index list for indexed lines.
             part_indices = (
-                np.asarray(new_segments, dtype=np.intp).reshape(-1, 2)
+                np.asarray(new_segments, dtype=np.intp).reshape(-1)
                 if new_segments
                 else None
             )
