@@ -205,11 +205,12 @@ def load_gsplats(
                 None if parent_method_raw in ("", None) else str(parent_method_raw)
             )
             level_index = int(sub_group.attrs.get("level_index", s))
-            level_stats: Dict[str, Any] = {}
-            if include_stats:
-                ls_raw = sub_group.attrs.get("level_stats", {})
-                if isinstance(ls_raw, dict):
-                    level_stats = dict(ls_raw)
+            # level_stats (e.g. n_splats_total) is small and cheap; read it
+            # unconditionally so the default load doesn't silently drop it.
+            ls_raw = sub_group.attrs.get("level_stats", {})
+            level_stats: Dict[str, Any] = (
+                dict(ls_raw) if isinstance(ls_raw, dict) else {}
+            )
 
             additive_sublods = []
             for a in range(n_additive_sublods):
@@ -230,6 +231,12 @@ def load_gsplats(
                     lod_stats["n_splats"] = add_group.attrs.get("n_splats")
                     lod_stats["ndim"] = add_group.attrs.get("ndim")
                     lod_stats["ordering"] = add_group.attrs.get("ordering", "none")
+                # Per-cell truncation_radius (the writer persists one per
+                # additive group); fall back to the top-level scalar for
+                # legacy files that only stored it once.
+                add_truncation_radius = float(
+                    add_group.attrs.get("truncation_radius", truncation_radius)
+                )
                 additive_sublods.append(
                     AdditiveSubLOD(
                         centers=add_centers,
@@ -237,7 +244,7 @@ def load_gsplats(
                         cholesky_factors=add_cholesky,
                         colors=add_colors,
                         stats=lod_stats,
-                        truncation_radius=truncation_radius,
+                        truncation_radius=add_truncation_radius,
                     )
                 )
 
