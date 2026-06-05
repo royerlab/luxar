@@ -117,8 +117,7 @@ playwright-report/
 *.png-snapshots/
 pnpm-debug.log*
 *.pot
-# Pre-commit
-.pre-commit-config.yaml
+# Pre-commit: .pre-commit-config.yaml is tracked (it defines the shared hooks).
 *.prof
 # Profiling
 # Project statistics (generated report)
@@ -129,7 +128,7 @@ __pycache__/
 .pytest_cache/
 # Python
 .Python
-.python-version
+# .python-version is tracked (pins the dev Python version for pyenv/CI).
 .ruff_cache/
 sdist/
 *.seed

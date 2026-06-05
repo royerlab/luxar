@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,7 +7,8 @@ name = "luxar"
 dynamic = ["version"]
 description = "High-performance nD scene compiler for arbitrary-sized scientific visualization with points, lines, surfaces, volumes and more."
 readme = "README.md"
-license = { text = "BSD-3-Clause" }
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 authors = [
     { name = "Loic Royer", email = "loic.royer@czbiohub.org" }
 ]
@@ -32,7 +33,6 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -44,7 +44,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0",
+    "numpy>=2.0,<3.0",
     "zarr>=2.16,<3.0",
     "typer>=0.12,<1.0",
     "fastapi>=0.111,<1.0",
@@ -67,28 +67,29 @@ Repository = "https://github.com/royerlab/luxar.git"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+# Upper bounds are intentional. IMPORTANT: the prebuilt CUDA extension
+# (cuda_splatting_backend*.so) is compiled against a specific torch ABI — after
+# any torch upgrade you MUST rebuild it with `make build-cuda`, or imports will
+# fail with an ABI/symbol mismatch. The `<3.0` torch cap guards against a silent
+# major-version jump that would break the prebuilt .so.
 gsplats = [
-    "scipy>=1.9.0",
-    "torch>=2.2.0"
+    "scipy>=1.9.0,<2.0",
+    "torch>=2.2.0,<3.0"
+]
+# `test` extends `gsplats`; `dev` extends `test`. This keeps scipy/torch (and
+# their bounds) defined in exactly one place — no hand-copied drift.
+test = [
+    "luxar[gsplats]",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0"
 ]
 dev = [
+    "luxar[test]",
     "ruff>=0.1.0",
     "mypy>=1.5.0",
     "types-PyYAML>=6.0.12",
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
     "pre-commit>=3.3.0",
-    "bandit[toml]>=1.7.5",
-    # GSplats dependencies
-    "scipy>=1.9.0",
-    "torch>=2.2.0"
-]
-test = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    # GSplats dependencies
-    "scipy>=1.9.0",
-    "torch>=2.2.0"
+    "bandit[toml]>=1.7.5"
 ]
 io = [
     "tifffile>=2023.1.0",
@@ -100,7 +101,7 @@ demos = [
     "networkx>=3.0",
     "umap-learn>=0.5.0",
     "scikit-image>=0.19.0",
-    "scipy>=1.15.0",
+    "scipy>=1.15.0,<2.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
     "sentence-transformers>=2.2.0",
@@ -149,6 +150,11 @@ exclude = [
 [tool.hatch.build.targets.wheel.force-include]
 "packages/luxar-viewer/dist" = "luxar/_viewer_dist"
 
+# NOTE: wheels are the supported distribution artifact. The sdist does NOT
+# contain the prebuilt viewer dist (force-included into the wheel above), so a
+# source-only `pip install` (no wheel) produces a degraded package — the bundled
+# web viewer and `luxar export --native` launchers will be missing. Always
+# publish/install wheels for end users; the sdist is for provenance only.
 [tool.hatch.build.targets.sdist]
 packages = ["packages/luxar/src/luxar"]
 include = [
@@ -167,20 +173,15 @@ exclude = [
 
 # Development environments
 [tool.hatch.envs.default]
+# Inherit the dev toolchain + gsplats (scipy/torch with their version caps) from
+# the project's optional-dependency groups so versions live in ONE place.
+# `dev` → `test` → `gsplats`, so this pulls pytest/cov/ruff/mypy/pre-commit/
+# bandit + scipy/torch transitively.
+features = ["dev"]
 dependencies = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-    "types-PyYAML>=6.0.12",
-    "pre-commit>=3.3.0",
-    "bandit[toml]>=1.7.5",
-    # GSplats dependencies
-    "scipy>=1.9.0",
-    "torch>=2.2.0",
-    # Apple Silicon optimization
+    # Apple Silicon optimization (not a project optional-dependency)
     "mlx>=0.29.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    # Demo dependencies
+    # Demo / figure deps used by examples (a subset of the `demos` group)
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
@@ -227,12 +228,9 @@ serve = "python -m http.server 8000 --directory docs/_build/html"
 
 # Test matrix for multiple Python versions
 [tool.hatch.envs.test]
+# Inherit pytest/cov + gsplats (scipy/torch with caps) from the `test` extra.
+features = ["test"]
 dependencies = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    # GSplats dependencies
-    "scipy>=1.9.0",
-    "torch>=2.2.0",
     # Image-overlay encoding (test_overlays.py::TestAddImage). Pillow is
     # otherwise only in the default env, so the image tests fail across the
     # test matrix without it.
