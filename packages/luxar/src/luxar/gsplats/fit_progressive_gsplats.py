@@ -14,8 +14,8 @@ to build them.
 Optimised per-pass configuration
 ---------------------------------
 Pass 0 and residual passes (1+) use different loss, penalty, and optimizer
-settings.  Tuned via two rounds of systematic autoresearch iteration (73+
-experiments) across 3 diverse microscopy datasets.  Key findings:
+settings.  Empirically tuned across 3 diverse microscopy datasets.  Key
+findings:
 
 **Pass 0 (dense volume)**:
   Uses the single-pass optimized defaults (L1 loss, symmetric penalty,

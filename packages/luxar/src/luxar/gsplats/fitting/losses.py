@@ -1,8 +1,8 @@
 """
 Loss function creation for Gaussian splat fitting.
 
-Speed optimisations (validated via autoresearch, 38 experiments)
-----------------------------------------------------------------
+Speed optimisations (empirically validated)
+--------------------------------------------
 1. **Poisson deviance dedup** (−4.9%): The per-element deviance
    ``Pc - Vc + xlogy(Vc, Vc/Pc)`` is computed once and reused for both
    the base loss and the asymmetric over-prediction penalty.  Previously

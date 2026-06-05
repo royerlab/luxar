@@ -177,7 +177,7 @@ cuda/
 │   ├── test_cuda_nd.py                    # nD (4D-8D) tests
 │   ├── test_cuda_fp16.py                  # FP16 mode tests
 │   ├── test_cuda_performance.py           # Performance benchmarks
-│   └── test_cuda_review_fixes.py          # Regression tests
+│   └── test_cuda_kernel_safety.py         # Kernel safety/numerical-invariant regression tests
 ├── OPTIMIZATION_REPORT.md                 # CUDA optimization results
 └── README.md                              # This file
 ```
