@@ -272,10 +272,13 @@ describe('RecordingSession', () => {
         const timeEl = document.querySelector('.luxar-recording-indicator__time') as HTMLElement;
         expect(timeEl).toBeTruthy();
 
-        // Tick once to confirm the interval is alive: the callback
-        // overwrites textContent every second.
+        // [P2] Pin the exact MM:SS formatting, not just "!= 00:00". After 1s
+        // the label reads 00:01; after a full minute it must roll over to
+        // 01:05 — catching a broken padStart or minutes/seconds calculation.
         vi.advanceTimersByTime(1100);
-        expect(timeEl.textContent).not.toBe('00:00'); // Updated from initial.
+        expect(timeEl.textContent).toBe('00:01');
+        vi.advanceTimersByTime(64000); // ~65.1s total elapsed
+        expect(timeEl.textContent).toBe('01:05');
 
         (panel as any).session.hideRecordingIndicator();
 

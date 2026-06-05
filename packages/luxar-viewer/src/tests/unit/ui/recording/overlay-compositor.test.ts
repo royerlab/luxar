@@ -12,6 +12,7 @@ import {
   compositeOverlays,
   compositeTextOverlay,
   compositeImageOverlay,
+  compositeHtmlOverlay,
 } from '../../../../ui/recording-panel/overlay-compositor';
 import type { OverlayManager } from '../../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../../data/loaders';
@@ -158,6 +159,26 @@ describe('compositeOverlays', () => {
     );
     expect(fake.globalCompositeOperation).toBe('multiply');
   });
+
+  it('falls back to source-over for an unknown blend_mode', () => {
+    // [P11/M3] BLEND_MODE_TO_COMPOSITE[unknown] is undefined → the `?? 'source-over'`
+    // fallback applies. Seed a non-default sentinel so we can distinguish
+    // "assignment skipped" (stays sentinel) from "fallback dropped" (undefined).
+    const canvas = makeCanvas();
+    const fake = makeFakeCtx();
+    fake.globalCompositeOperation = 'multiply';
+    const overlay = {
+      el: makeTextOverlay('X'),
+      config: makeConfig({ blend_mode: 'unknown-mode' }),
+    };
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([overlay]),
+      makeCanvas()
+    );
+    expect(fake.globalCompositeOperation).toBe('source-over');
+  });
 });
 
 describe('compositeTextOverlay', () => {
@@ -204,6 +225,14 @@ describe('compositeTextOverlay', () => {
     expect(fake.fillText.mock.invocationCallOrder[0]).toBeGreaterThan(
       fake.strokeText.mock.invocationCallOrder[0]
     );
+
+    // [P2/W5] Pin the text content AND the anchor-adjusted draw position, not
+    // just "fillText was called". With measureText→50, fontSize=0.03×600=18,
+    // textHeight=21.6, anchor 'center' → dx=-25, dy=-10.8; xIn/yIn=100,100.
+    const [text, drawX, drawY] = fake.fillText.mock.calls[0];
+    expect(text).toBe('Hi');
+    expect(drawX).toBeCloseTo(75, 5);
+    expect(drawY).toBeCloseTo(89.2, 5);
   });
 
   it('skips background and stroke when not configured', () => {
@@ -258,6 +287,10 @@ describe('compositeImageOverlay', () => {
     const args = fake.drawImage.mock.calls[0];
     expect(args[3]).toBe(200);
     expect(args[4]).toBe(200);
+    // [P2/W6] Also pin the anchor-adjusted position: anchor 'center' →
+    // dx=-100, dy=-100 at 200×200; xIn/yIn=100,100 → drawn at (0, 0).
+    expect(args[1]).toBe(0);
+    expect(args[2]).toBe(0);
   });
 
   it('falls back to natural image dimensions when size is not configured', () => {
@@ -275,5 +308,104 @@ describe('compositeImageOverlay', () => {
     const args = fake.drawImage.mock.calls[0];
     expect(args[3]).toBe(100);
     expect(args[4]).toBe(50);
+    // [P2/W6] Natural dims 100×50, anchor 'center' → dx=-50, dy=-25;
+    // xIn/yIn=0 → drawn at (-50, -25).
+    expect(args[1]).toBe(-50);
+    expect(args[2]).toBe(-25);
+  });
+});
+
+describe('compositeHtmlOverlay', () => {
+  function rect(overrides: Partial<DOMRect>): DOMRect {
+    return {
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+      ...overrides,
+    } as DOMRect;
+  }
+
+  it('returns early without drawing when the GL canvas has zero width', () => {
+    // [P5/G1] Guard at overlay-compositor.ts:167.
+    const fake = makeFakeCtx();
+    const el = document.createElement('div');
+    el.classList.add('luxar-overlay--html');
+    const glCanvas = makeCanvas(800, 600);
+    vi.spyOn(glCanvas, 'getBoundingClientRect').mockReturnValue(rect({ width: 0, height: 600 }));
+    compositeHtmlOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el as HTMLDivElement,
+      glCanvas
+    );
+    expect(fake.drawImage).not.toHaveBeenCalled();
+  });
+
+  it('returns early without drawing when the GL canvas has zero height', () => {
+    const fake = makeFakeCtx();
+    const el = document.createElement('div');
+    el.classList.add('luxar-overlay--html');
+    const glCanvas = makeCanvas(800, 600);
+    vi.spyOn(glCanvas, 'getBoundingClientRect').mockReturnValue(rect({ width: 800, height: 0 }));
+    compositeHtmlOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el as HTMLDivElement,
+      glCanvas
+    );
+    expect(fake.drawImage).not.toHaveBeenCalled();
+  });
+
+  it('scales the element position + size by the canvas/glRect ratio and draws', () => {
+    // [P5/G1] The whole rasterization path was uncovered (lines 160-222).
+    // scaleX = ctx.canvas.width/glRect.width = 1600/800 = 2 (same for Y);
+    // x = (200-0)*2 = 400, y = (150-0)*2 = 300, drawW = 100*2 = 200, drawH = 200.
+    const fake = makeFakeCtx(1600, 1200);
+    const el = document.createElement('div');
+    el.classList.add('luxar-overlay--html');
+    el.textContent = 'overlay';
+    const glCanvas = makeCanvas(800, 600);
+    vi.spyOn(glCanvas, 'getBoundingClientRect').mockReturnValue(
+      rect({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 })
+    );
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(
+      rect({
+        left: 200,
+        top: 150,
+        width: 100,
+        height: 100,
+        right: 300,
+        bottom: 250,
+        x: 200,
+        y: 150,
+      })
+    );
+
+    // Force the synchronous draw branch — jsdom's Image never reports
+    // complete from a data URL, so stub a decoded Image.
+    const ImageOrig = globalThis.Image;
+    class FakeImage {
+      complete = true;
+      naturalWidth = 1;
+      set src(_v: string) {}
+      decode(): Promise<void> {
+        return Promise.resolve();
+      }
+    }
+    (globalThis as unknown as { Image: unknown }).Image = FakeImage;
+    try {
+      compositeHtmlOverlay(
+        fake as unknown as CanvasRenderingContext2D,
+        el as HTMLDivElement,
+        glCanvas
+      );
+      expect(fake.drawImage).toHaveBeenCalledWith(expect.anything(), 400, 300, 200, 200);
+    } finally {
+      (globalThis as unknown as { Image: unknown }).Image = ImageOrig;
+    }
   });
 });

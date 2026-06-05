@@ -16,6 +16,11 @@ import {
   findPositionBoundsInScene,
 } from '../../../../../scene/scene-manager/clipping/scene-bounds-cache';
 import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
+import {
+  boundingBoxToSphere,
+  getBoundingBoxCenter,
+  getBoundingBoxDiagonal,
+} from '../../../../../scene/scene-manager/clipping/bounds-math';
 
 function makeSceneWithBounds(min: number[], max: number[]): THREE.Scene {
   const scene = new THREE.Scene();
@@ -48,13 +53,19 @@ describe('SceneBoundsCache', () => {
     expect(bounds!.min).toEqual({ x: 0, y: 0, z: 0 });
     expect(bounds!.max).toEqual({ x: 10, y: 20, z: 30 });
 
+    // G10: the cached sphere must be exactly boundingBoxToSphere(bounds) —
+    // same center and half-diagonal radius — not merely "some positive radius".
     const sphere = cache.getSphere();
     expect(sphere).not.toBeNull();
     expect(sphere!.radius).toBeGreaterThan(0);
+    const expectedCenter = getBoundingBoxCenter(bounds!);
+    expect(sphere!.center).toEqual(expectedCenter);
+    expect(sphere!.radius).toBeCloseTo(boundingBoxToSphere(bounds!).radius, 12);
 
-    // Near-cull is ~0.1% of the diagonal length.
-    const diagonal = Math.sqrt(10 ** 2 + 20 ** 2 + 30 ** 2);
-    expect(cache.getNearCull()).toBeCloseTo(diagonal * 0.001, 5);
+    // M7: near-cull is EXACTLY 0.1% of the bounds diagonal (pin the 0.001
+    // constant tightly so a multiplier mutation is killed).
+    const diagonal = getBoundingBoxDiagonal(bounds!);
+    expect(cache.getNearCull()).toBeCloseTo(diagonal * 0.001, 10);
   });
 
   it('is idempotent on repeated ensure() calls (no recompute)', () => {
@@ -88,6 +99,13 @@ describe('SceneBoundsCache', () => {
     scene.userData.positionBounds = { min: [0, 0, 0], max: [5, 5, 5] };
     cache.ensure(scene);
     expect(cache.getBounds()!.max.x).toBe(5);
+
+    // G10: the derived sphere AND near-cull must also recompute from the new
+    // bounds — not just the bounds box. A mutant that recomputed bounds but
+    // left a stale sphere/near-cull would survive without these checks.
+    const newBounds = cache.getBounds()!;
+    expect(cache.getSphere()!.radius).toBeCloseTo(boundingBoxToSphere(newBounds).radius, 12);
+    expect(cache.getNearCull()).toBeCloseTo(getBoundingBoxDiagonal(newBounds) * 0.001, 10);
   });
 
   it('leaves cache empty when scene has no positionBounds metadata', () => {

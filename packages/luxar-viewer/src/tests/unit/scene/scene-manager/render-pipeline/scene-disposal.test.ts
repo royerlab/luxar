@@ -65,9 +65,24 @@ describe('disposeObjectTree', () => {
     expect(materialDispose).toHaveBeenCalledTimes(1);
   });
 
-  it('does not throw on plain Group / Object3D (no geometry to dispose)', () => {
+  it('does not throw on an empty plain Group (no geometry to dispose)', () => {
     const group = new THREE.Group();
     expect(() => disposeObjectTree(group)).not.toThrow();
+  });
+
+  // W1: a Group has no geometry of its own, but its CHILDREN must still be
+  // disposed and detached. "doesn't throw" alone would survive a mutant that
+  // skipped the children walk for non-renderable roots.
+  it('disposes and detaches a renderable child held by a plain Group', () => {
+    const group = new THREE.Group();
+    const { mesh, geometryDispose, materialDispose } = makeMesh();
+    group.add(mesh);
+
+    disposeObjectTree(group);
+
+    expect(geometryDispose).toHaveBeenCalledTimes(1);
+    expect(materialDispose).toHaveBeenCalledTimes(1);
+    expect(group.children.length).toBe(0);
   });
 
   it('walks descendants depth-first and removes them from their parent', () => {
@@ -85,6 +100,31 @@ describe('disposeObjectTree', () => {
     // Children removed from their parents during the walk.
     expect(root.children.length).toBe(0);
     expect(parent.children.length).toBe(0);
+  });
+
+  // G5: pin the traversal ORDER. The source disposes an object's OWN
+  // geometry/material first, then recurses into its children — i.e. pre-order
+  // depth-first (ancestor before descendant). A BFS or post-order mutant would
+  // reorder these.
+  it('disposes an ancestor before its descendant (pre-order depth-first)', () => {
+    const order: string[] = [];
+    const tag = (m: THREE.Mesh, name: string) => {
+      vi.spyOn(m.geometry, 'dispose').mockImplementation(() => {
+        order.push(name);
+      });
+      return m;
+    };
+    // root(Group) → a(Mesh) → b(Mesh grandchild)
+    const a = tag(makeMesh().mesh, 'a');
+    const b = tag(makeMesh().mesh, 'b');
+    a.add(b);
+    const root = new THREE.Group();
+    root.add(a);
+
+    disposeObjectTree(root);
+
+    // 'a' (the ancestor mesh) disposes before its child 'b'.
+    expect(order).toEqual(['a', 'b']);
   });
 });
 

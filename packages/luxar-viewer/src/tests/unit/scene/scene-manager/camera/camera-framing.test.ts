@@ -20,6 +20,9 @@ import * as THREE from 'three';
 import {
   computeSceneBoundingBox,
   fitCameraToBounds,
+  centerCameraOnScene,
+  centerOnOrigin,
+  autoFrameCamera,
   ZOOM_RANGE_FACTOR,
 } from '../../../../../scene/scene-manager/camera/camera-framing';
 import type { ControlsManager } from '../../../../../controls/controls-manager';
@@ -263,6 +266,22 @@ describe('fitCameraToBounds', () => {
     expect(setDistanceLimits).not.toHaveBeenCalled(); // ortho path uses zoom, not distance
   });
 
+  // G2: degenerate-but-nonzero geometry. A flat slab (zero Y extent) still has
+  // a positive diagonal, so the perspective path must frame it (return > 0,
+  // set scene scale) rather than short-circuit like the zero-extent case.
+  it('perspective: frames a flat slab (zero Y extent, positive diagonal)', () => {
+    const { controls, setSceneScale } = makeControls();
+    const diagonal = fitCameraToBounds(
+      perspectiveCamera,
+      controls,
+      makeBounds([0, 0, 0], [10, 0, 10]),
+      { lookAtTarget: new THREE.Vector3(5, 0, 5) }
+    );
+    expect(diagonal).toBeCloseTo(Math.sqrt(200), 6); // sqrt(10^2 + 0 + 10^2)
+    expect(setSceneScale).toHaveBeenCalledTimes(1);
+    expect(Number.isFinite(perspectiveCamera.position.z)).toBe(true);
+  });
+
   it('preserveControlsTarget=true suppresses controls.setTarget but still reinitializes', () => {
     const { controls, setTarget, reinitialize } = makeControls();
     fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [1, 1, 1]), {
@@ -286,5 +305,134 @@ describe('fitCameraToBounds', () => {
     expect(setSceneScale).not.toHaveBeenCalled();
     expect(setZoomLimits).not.toHaveBeenCalled();
     expect(setDistanceLimits).not.toHaveBeenCalled();
+  });
+});
+
+// Helper: a Points mesh with a stamped bounding box at a chosen world box.
+function makePointsMesh(min: [number, number, number], max: [number, number, number]): THREE.Mesh {
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0]), 3)
+  );
+  geometry.instanceCount = 1;
+  geometry.boundingBox = new THREE.Box3(
+    new THREE.Vector3(min[0], min[1], min[2]),
+    new THREE.Vector3(max[0], max[1], max[2])
+  );
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.userData.nodeType = 'points';
+  return mesh;
+}
+
+// O1: centerCameraOnScene was an exported public entry point with no unit
+// coverage. It computes bounds from loaded geometry, frames the camera, and
+// returns the bounding-box center (null when empty).
+describe('centerCameraOnScene', () => {
+  it('returns null and does not frame when the scene has no visible geometry', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const { controls, setSceneScale } = makeControls();
+
+    const result = centerCameraOnScene(scene, camera, controls);
+
+    expect(result).toBeNull();
+    expect(setSceneScale).not.toHaveBeenCalled();
+  });
+
+  it('frames loaded geometry and returns the bounding-box center', () => {
+    const scene = new THREE.Scene();
+    scene.add(makePointsMesh([0, 0, 0], [10, 20, 30]));
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const { controls, setSceneScale, setTarget, saveState } = makeControls();
+
+    const center = centerCameraOnScene(scene, camera, controls);
+
+    expect(center).not.toBeNull();
+    // Center of [0,0,0]–[10,20,30] is (5, 10, 15).
+    expect(center!.x).toBeCloseTo(5, 6);
+    expect(center!.y).toBeCloseTo(10, 6);
+    expect(center!.z).toBeCloseTo(15, 6);
+    expect(setSceneScale).toHaveBeenCalledTimes(1);
+    expect(setTarget).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+});
+
+// O1: autoFrameCamera — the main auto-frame entry on scene load — was
+// untested. Cover the null-bounds, zero-extent, framed, and preserveTarget
+// branches.
+describe('autoFrameCamera', () => {
+  it('reports not-framed with null center when bounds are missing', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const { controls, setSceneScale } = makeControls();
+
+    const result = autoFrameCamera(camera, controls, null);
+
+    expect(result).toEqual({ framed: false, center: null });
+    expect(setSceneScale).not.toHaveBeenCalled();
+  });
+
+  it('reports not-framed when bounds have zero extent', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const { controls } = makeControls();
+
+    const result = autoFrameCamera(camera, controls, makeBounds([5, 5, 5], [5, 5, 5]));
+
+    expect(result.framed).toBe(false);
+    expect(result.center).toBeNull();
+  });
+
+  it('frames the camera and returns the bounding-box center for valid bounds', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const { controls, setSceneScale, setTarget } = makeControls();
+
+    const result = autoFrameCamera(camera, controls, makeBounds([0, 0, 0], [4, 8, 12]));
+
+    expect(result.framed).toBe(true);
+    expect(result.center).not.toBeNull();
+    expect(result.center!.x).toBeCloseTo(2, 6);
+    expect(result.center!.y).toBeCloseTo(4, 6);
+    expect(result.center!.z).toBeCloseTo(6, 6);
+    expect(setSceneScale).toHaveBeenCalledTimes(1);
+    expect(setTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserveTarget=true keeps the existing controls target (no setTarget call)', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    const focus = new THREE.Vector3(99, 99, 99);
+    const { controls, setTarget, reinitialize } = makeControls(focus);
+
+    const result = autoFrameCamera(camera, controls, makeBounds([0, 0, 0], [4, 4, 4]), true);
+
+    expect(result.framed).toBe(true);
+    // With preserveTarget the controls target is NOT overwritten...
+    expect(setTarget).not.toHaveBeenCalled();
+    // ...but the orbit state is still reinitialized to the new pose.
+    expect(reinitialize).toHaveBeenCalledTimes(1);
+  });
+});
+
+// O1: centerOnOrigin resets camera + target to the origin at the current
+// distance, and saves state. Previously untested.
+describe('centerOnOrigin', () => {
+  it('moves the camera to (0,0,currentDistance), targets the origin, and saves state', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(30, 40, 0); // distance 50 from focus target (origin)
+    const { controls, setTarget, update, saveState } = makeControls(new THREE.Vector3(0, 0, 0));
+
+    centerOnOrigin(camera, controls);
+
+    // Distance from the previous target (origin) was 50.
+    expect(camera.position.x).toBe(0);
+    expect(camera.position.y).toBe(0);
+    expect(camera.position.z).toBeCloseTo(50, 6);
+    expect(setTarget).toHaveBeenCalledTimes(1);
+    const targetArg = setTarget.mock.calls[0][0] as THREE.Vector3;
+    expect(targetArg.x).toBe(0);
+    expect(targetArg.y).toBe(0);
+    expect(targetArg.z).toBe(0);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalledTimes(1);
   });
 });

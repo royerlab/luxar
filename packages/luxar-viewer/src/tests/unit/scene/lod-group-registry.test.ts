@@ -81,6 +81,21 @@ describe('pickChildWithHysteresis', () => {
     // downgrade to 0 (well below 500 * 0.9).
     expect(pickChildWithHysteresis(thresholds, 2, 50)).toBe(0);
   });
+
+  // C2: pin the downgrade band edge EXACTLY. margin = 0.1*(100-0) = 10, so the
+  // boundary is 90: `diagonalPx < 90` downgrades, `>= 90` stays. A mutant that
+  // changed `<` to `<=` (or the ratio) would shift this edge.
+  it('treats the downgrade boundary as exclusive (exactly 90 stays on level 1)', () => {
+    expect(pickChildWithHysteresis(thresholds, 1, 90)).toBe(1); // 90 not < 90 → stay
+    expect(pickChildWithHysteresis(thresholds, 1, 89.999)).toBe(0); // just below → down
+  });
+
+  // M1: pin the upgrade boundary edge. The natural pick uses `threshold <=
+  // diagonalPx`, so exactly 100 upgrades to level 1 and 99.999 stays at 0.
+  it('treats the upgrade threshold as inclusive (exactly 100 reaches level 1)', () => {
+    expect(pickChildWithHysteresis(thresholds, 0, 100)).toBe(1);
+    expect(pickChildWithHysteresis(thresholds, 0, 99.999)).toBe(0);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -143,6 +158,18 @@ describe('projectBoxDiagonalPx', () => {
     });
     // Doubling both width and height should double the diagonal.
     expect(large).toBeCloseTo(small * 2, 5);
+  });
+
+  // M2: symmetric scaling alone can't distinguish hypot(w,h) from a buggy
+  // w+h (both double when w,h double). Use an ASYMMETRIC viewport where the
+  // two formulas diverge: for a full-NDC box, hypot(800,600)=1000 but
+  // 800+600=1400. (The unit-box test above already pins 1000; this makes the
+  // diagonal-not-sum contract explicit alongside the scaling test.)
+  it('uses the Euclidean diagonal, not the width+height sum (asymmetric viewport)', () => {
+    const box: BoundingBox = { min: { x: -1, y: -1, z: 0 }, max: { x: 1, y: 1, z: 0 } };
+    const diagonal = projectBoxDiagonalPx(box, identityCamera(), { width: 800, height: 600 });
+    expect(diagonal).toBeCloseTo(1000, 1); // hypot, not 1400 (sum)
+    expect(diagonal).not.toBeCloseTo(1400, 0);
   });
 });
 
@@ -716,8 +743,14 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
   it('eviction: among off-screen groups, demotes the furthest from the camera first', () => {
     const relNear = vi.fn();
     const relFar = vi.fn();
-    const nearChildren = [readyLevel(0, { tick: 10 }), readyLevel(100, { release: relNear, tick: 5 })];
-    const farChildren = [readyLevel(0, { tick: 10 }), readyLevel(100, { release: relFar, tick: 5 })];
+    const nearChildren = [
+      readyLevel(0, { tick: 10 }),
+      readyLevel(100, { release: relNear, tick: 5 }),
+    ];
+    const farChildren = [
+      readyLevel(0, { tick: 10 }),
+      readyLevel(100, { release: relFar, tick: 5 }),
+    ];
     const all = [...nearChildren, ...farChildren];
     const reg = registryWith(cameraLookingDownNegZ(), 350, residentModel(all));
     reg.register(placeAt(makeEntry(nearChildren, 0, '/near'), 50, 0, -5)); // off-screen, nearer

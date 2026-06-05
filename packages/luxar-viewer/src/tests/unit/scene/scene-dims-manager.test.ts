@@ -36,6 +36,12 @@ describe('SceneDimsManager', () => {
       const dims = manager.getDims();
       expect(dims).not.toBeNull();
       expect(dims!.ndim).toBe(5);
+      // W1: a truthy `dims` is not enough — pin the full shape so a mutant that
+      // returns true but builds a malformed state object is killed.
+      expect(dims!.currentStep).toHaveLength(5);
+      expect(dims!.displayed).toEqual([0, 1, 2]);
+      expect(dims!.metadata).toHaveLength(5);
+      expect(dims!.metadata!.map((m) => m.name)).toEqual(['x', 'y', 'z', 'time', 'channel']);
     });
 
     it('should return false when no nD objects in scene', () => {
@@ -84,9 +90,14 @@ describe('SceneDimsManager', () => {
     });
 
     it('should update dimension value', () => {
+      const before = [...manager.getDims()!.currentStep];
       manager.setDimensionValue(3, 5.5);
-      const dims = manager.getDims();
-      expect(dims!.currentStep[3]).toBe(5.5);
+      const after = manager.getDims()!.currentStep;
+      expect(after[3]).toBe(5.5);
+      // M3: only the targeted dimension may change — a mutant that writes the
+      // wrong index or mutates a sibling element is caught.
+      const changedIndices = after.map((v, i) => (v !== before[i] ? i : -1)).filter((i) => i >= 0);
+      expect(changedIndices).toEqual([3]);
     });
 
     it('should clamp values to dimension range', () => {
@@ -96,12 +107,43 @@ describe('SceneDimsManager', () => {
 
       manager.setDimensionValue(3, -5); // Below min
       expect(manager.getDims()!.currentStep[3]).toBe(0); // Clamped to min
+
+      // M4: a value strictly inside [min, max] must pass through UNCHANGED.
+      // Without this, a mutant clamp that always returns `min` (or `max`)
+      // would survive the two out-of-range cases above.
+      manager.setDimensionValue(3, 4); // 4 ∈ [0, 10]
+      expect(manager.getDims()!.currentStep[3]).toBe(4);
     });
 
     it('should quantize discrete dimensions', () => {
       manager.setDimensionValue(4, 1.7); // Channel is discrete
       const dims = manager.getDims();
       expect(dims!.currentStep[4]).toBe(2); // Rounded to nearest step
+    });
+
+    // M5: the discrete quantizer is Math.round(value/step)*step. With an
+    // integer step (1) and value 1.7, both round and ceil give 2, so the
+    // earlier test cannot distinguish them. Use a fractional step where
+    // round ≠ ceil ≠ floor to pin the rounding rule precisely.
+    it('quantizes discrete dimensions with Math.round (not floor/ceil) for fractional steps', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 'g', unit: '', range: [0, 10], step: 0.3, display: false, discrete: true },
+        ],
+      };
+      const m = new SceneDimsManager();
+      m.initFromScene(scene);
+      // value 1.0, step 0.3 → 1/0.3 = 3.333 → round=3 → 3*0.3 = 0.9.
+      // (floor would give 0.9 too, but ceil would give 4*0.3=1.2 → distinct.)
+      m.setDimensionValue(3, 1.0);
+      expect(m.getDims()!.currentStep[3]).toBeCloseTo(0.9, 10);
+      // value 1.4, step 0.3 → 1.4/0.3 = 4.667 → round=5 → 1.5 (floor=1.2, ceil=1.5).
+      m.setDimensionValue(3, 1.4);
+      expect(m.getDims()!.currentStep[3]).toBeCloseTo(1.5, 10);
     });
 
     it('should ignore invalid dimension indices', () => {
@@ -112,6 +154,22 @@ describe('SceneDimsManager', () => {
       manager.setDimensionValue(10, 5);
 
       expect(manager.getDims()!.currentStep).toEqual(originalValues);
+    });
+
+    // G1: boundary indices — the first (0) and last (ndim-1) valid dimensions
+    // must be writable, and the just-out-of-range index (ndim) must be ignored.
+    it('accepts the first and last valid dimension indices and rejects ndim', () => {
+      // dim 0 is displayed (range [0,100]); dim 4 is the last (channel, discrete).
+      manager.setDimensionValue(0, 42);
+      expect(manager.getDims()!.currentStep[0]).toBe(42);
+
+      const ndim = manager.getDims()!.ndim; // 5
+      manager.setDimensionValue(ndim - 1, 2); // last dim
+      expect(manager.getDims()!.currentStep[ndim - 1]).toBe(2);
+
+      const before = [...manager.getDims()!.currentStep];
+      manager.setDimensionValue(ndim, 7); // exactly out of range → ignored
+      expect(manager.getDims()!.currentStep).toEqual(before);
     });
 
     it('should handle continuous dimensions with step sizes', () => {
@@ -172,8 +230,11 @@ describe('SceneDimsManager', () => {
 
       manager.setDimensionValue(3, 5);
 
-      expect(listener1).toHaveBeenCalled();
-      expect(listener2).toHaveBeenCalled();
+      // M7: pin the exact call count (once each) — `toHaveBeenCalled()` alone
+      // would survive a mutant that fired a listener twice or registered it
+      // under a deduping bug.
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
     });
 
     it('should remove listeners', () => {
@@ -181,9 +242,38 @@ describe('SceneDimsManager', () => {
       manager.addListener(listener);
       manager.removeListener(listener);
 
+      // M8: call twice after removal. A no-op removeListener would let the
+      // listener fire; asserting zero across two updates makes that survive
+      // only if removal genuinely unregistered the callback.
       manager.setDimensionValue(3, 5);
+      manager.setDimensionValue(3, 6);
 
       expect(listener).not.toHaveBeenCalled();
+
+      // Re-adding the same callback after removal must work again.
+      manager.addListener(listener);
+      manager.setDimensionValue(3, 7);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    // G10: notifyListeners wraps each callback in try/catch — a throwing
+    // listener must not prevent the others from running.
+    it('continues notifying remaining listeners when one listener throws', () => {
+      const order: string[] = [];
+      const throwing = vi.fn(() => {
+        order.push('throwing');
+        throw new Error('boom');
+      });
+      const survivor = vi.fn(() => {
+        order.push('survivor');
+      });
+      manager.addListener(throwing);
+      manager.addListener(survivor);
+
+      expect(() => manager.setDimensionValue(3, 5)).not.toThrow();
+      expect(throwing).toHaveBeenCalledTimes(1);
+      expect(survivor).toHaveBeenCalledTimes(1);
+      expect(order).toContain('survivor');
     });
 
     it('still notifies listeners even when setDimensionValue is given the current value', () => {
@@ -235,6 +325,53 @@ describe('SceneDimsManager', () => {
 
       expect(dims!.displayed).toHaveLength(3); // Max 3 displayed
       expect(dims!.displayed).toEqual([0, 1, 2]);
+    });
+
+    // M9: the previous tests all had display=true on the first dimensions, so
+    // a mutant that pushes the first three indices while IGNORING the display
+    // flag would survive. Use a non-contiguous flag pattern [F,T,F,T,T] so the
+    // displayed list must be exactly the flagged indices.
+    it('selects displayed dimensions by the display flag, not by position', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'd0', unit: '', range: [0, 1], step: 1, display: false },
+          { name: 'd1', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'd2', unit: '', range: [0, 1], step: 1, display: false },
+          { name: 'd3', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'd4', unit: '', range: [0, 1], step: 1, display: true },
+        ],
+      };
+      const m = new SceneDimsManager();
+      m.initFromScene(scene);
+      expect(m.getDims()!.displayed).toEqual([1, 3, 4]);
+    });
+
+    // G4: negative ranges must clamp/center correctly (the helpers must not
+    // assume min >= 0). A continuous non-displayed dim over [-100, -20]
+    // initializes at the center (-60); clamping respects the negative bounds.
+    it('handles negative dimension ranges for clamping and centering', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'w', unit: '', range: [-100, -20], step: 1, display: false, discrete: false },
+        ],
+      };
+      const m = new SceneDimsManager();
+      m.initFromScene(scene);
+      // Continuous non-displayed dim starts at center of [-100, -20] = -60.
+      expect(m.getDims()!.currentStep[3]).toBe(-60);
+      // Clamp below min and above max within the negative range.
+      m.setDimensionValue(3, -200);
+      expect(m.getDims()!.currentStep[3]).toBe(-100);
+      m.setDimensionValue(3, 0);
+      expect(m.getDims()!.currentStep[3]).toBe(-20);
+      // A value inside the range passes through.
+      m.setDimensionValue(3, -50);
+      expect(m.getDims()!.currentStep[3]).toBe(-50);
     });
 
     it('should handle high-dimensional data', () => {
@@ -414,6 +551,37 @@ describe('SceneDimsManager', () => {
       manager.initFromScene(newScene);
       const secondDims = manager.getDims();
       expect(secondDims!.ndim).toBe(2);
+    });
+  });
+
+  describe('getDimensionNames / getDimensionUnits', () => {
+    // G8: the name/unit getters return fallbacks for missing metadata. These
+    // were previously untested.
+    it('returns empty arrays before initialization', () => {
+      const m = new SceneDimsManager();
+      expect(m.getDimensionNames()).toEqual([]);
+      expect(m.getDimensionUnits()).toEqual([]);
+    });
+
+    it('returns the metadata names and units when present', () => {
+      manager.initFromScene(mockScene);
+      expect(manager.getDimensionNames()).toEqual(['x', 'y', 'z', 'time', 'channel']);
+      expect(manager.getDimensionUnits()).toEqual(['μm', 'μm', 'μm', 's', '']);
+    });
+
+    it('falls back to "Dim i" names and "" units when metadata fields are empty', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: '', unit: '', range: [0, 1], step: 1, display: true },
+          { name: '', unit: '', range: [0, 1], step: 1, display: true },
+        ],
+      };
+      const m = new SceneDimsManager();
+      m.initFromScene(scene);
+      // Empty name → "Dim i" fallback; empty unit stays "".
+      expect(m.getDimensionNames()).toEqual(['Dim 0', 'Dim 1']);
+      expect(m.getDimensionUnits()).toEqual(['', '']);
     });
   });
 

@@ -262,6 +262,76 @@ describe('DimensionAnimationManager', () => {
       expect(newValue).toBe(initialValue); // Should not have updated
     });
 
+    // W2: a single skip doesn't prove the throttle is monotonic. Fire several
+    // sub-threshold frames in a row (all must skip), then one past the
+    // threshold (must advance). A mutant that let "some" early frames through
+    // would be caught.
+    it('keeps skipping across consecutive sub-threshold frames, then advances past the threshold', () => {
+      manager.play(3, { targetFPS: 10 }); // 100ms frame time
+      const initialValue = sceneDimsManager.getDims()!.currentStep[3];
+
+      // Three consecutive frames each < 100ms apart → all skipped.
+      for (const dt of [30, 30, 30]) {
+        mockTime += dt; // cumulative 30, 60, 90 ms — all below 100ms
+        perFrameCallback?.();
+        expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(initialValue);
+      }
+
+      // Cross the 100ms threshold → advances.
+      mockTime += 20; // now 110ms since last update
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBeGreaterThan(initialValue);
+    });
+
+    // W3: the discrete path (step != null) is exercised throughout; the
+    // CONTINUOUS path (step === null) was not. Its signature is that the
+    // per-frame increment scales with 1/targetFPS (a fixed wall-clock traverse
+    // time), whereas the discrete path steps by a fixed `step` regardless of
+    // FPS. Build two self-contained managers at FPS 10 vs 20 over a continuous
+    // dimension and verify the 20-FPS increment is half the 10-FPS increment.
+    const continuousIncrement = (targetFPS: number): number => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
+          // Continuous: discrete=false → calculateNextValue uses step=null.
+          { name: 'w', unit: '', range: [0, 100], display: false, discrete: false },
+        ],
+      };
+      const dims = new SceneDimsManager();
+      dims.initFromScene(scene);
+      const controller = new AnimationController(
+        {} as ControlsManager,
+        {} as PostProcessingManager
+      );
+      const captured: { fn: (() => void) | null } = { fn: null };
+      vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
+      vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
+        (_id: string, callback: () => void) => {
+          captured.fn = callback;
+        }
+      );
+      const localManager = new DimensionAnimationManager(dims, controller);
+      const start = dims.getDims()!.currentStep[3];
+      localManager.play(3, { targetFPS, direction: 'forward' });
+      mockTime += 1000; // far past any frame-time threshold
+      captured.fn?.();
+      const delta = dims.getDims()!.currentStep[3] - start;
+      localManager.dispose();
+      return delta;
+    };
+
+    it('advances a continuous dimension by an increment that scales with 1/targetFPS', () => {
+      const at10 = continuousIncrement(10);
+      const at20 = continuousIncrement(20);
+      expect(at10).toBeGreaterThan(0); // forward advance
+      expect(Number.isFinite(at10)).toBe(true);
+      // Continuous increment ∝ 1000/targetFPS ⇒ doubling FPS halves the step.
+      expect(at20).toBeCloseTo(at10 / 2, 6);
+    });
+
     it('should handle loop mode: loop', () => {
       manager.play(3, { targetFPS: 10, loopMode: 'loop' });
 
@@ -426,17 +496,31 @@ describe('DimensionAnimationManager', () => {
   });
 
   describe('error handling', () => {
-    it('play() with out-of-range dimIndex eagerly creates state and returns true; isAnimating agrees', () => {
-      // Pins current behaviour: play() does not validate dimIndex bounds
-      // — it creates state and returns true. If a future fix adds bounds
-      // validation, this test should be updated to assert (false, no
-      // callback registration). Pinning the exact boolean (not just
-      // typeof) is required so a future bounds-check that returns false
-      // is caught by this test failing.
-      // OOS: bounds validation on dimIndex is a production-code concern.
+    it('play() rejects an out-of-range dimIndex: returns false, no state, no registration', () => {
+      // play() validates dimIndex up front (ndim = 5 here). An index >= ndim
+      // is rejected: it must NOT create animation state, register a per-frame
+      // callback, start the loop, or dispatch a `play` event.
+      const playListener = vi.fn();
+      manager.addEventListener('play', playListener);
+
       const result = manager.play(99);
-      expect(result).toBe(true);
-      expect(manager.isAnimating(99)).toBe(true);
+
+      expect(result).toBe(false);
+      expect(manager.isAnimating(99)).toBe(false);
+      expect(mockAnimationController.addPerFrameCallback).not.toHaveBeenCalled();
+      expect(mockAnimationController.startAnimation).not.toHaveBeenCalled();
+      expect(playListener).not.toHaveBeenCalled();
+    });
+
+    it('play() rejects a negative dimIndex (which would otherwise slip past the per-frame guard)', () => {
+      // A negative index is always invalid. Critically, the per-frame guard
+      // only checks `dimIndex >= ndim`, so a negative index would otherwise
+      // create a phantom animation that runs forever without advancing.
+      const result = manager.play(-1);
+
+      expect(result).toBe(false);
+      expect(manager.isAnimating(-1)).toBe(false);
+      expect(mockAnimationController.addPerFrameCallback).not.toHaveBeenCalled();
     });
 
     it('should pause animation on dimension value error', () => {

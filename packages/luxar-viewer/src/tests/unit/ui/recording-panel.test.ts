@@ -25,6 +25,7 @@ import {
   generateFfmpegScript,
   getSupportedMimeType,
 } from '../../../ui/recording-panel/media-utilities';
+import { log, Modules } from '../../../utils/log';
 
 // jsdom polyfill — required by createMockSceneManager.
 if (typeof globalThis.ImageData === 'undefined') {
@@ -133,18 +134,25 @@ describe('RecordingPanel', () => {
 
   describe('EXR sequence dispatch', () => {
     it('initializes session recording flags to false on construction (no in-flight recording)', () => {
-      // [ui.md/W3][P2] Previously asserted only one private boolean. Reading
-      // private state remains brittle (OOS — promote to public observer),
-      // but we can at least pin all three session flags together so a
-      // mutation that flips one default is caught.
+      // [P2] Pin all three session flags together so a mutation that flips
+      // one default is caught. (Reading private state remains brittle —
+      // OOS: promote to a public observer.)
       const session = (panel as any).session;
       expect(session.isEXRSequenceRecording).toBe(false);
       expect(session.isRecording).toBe(false);
       expect(session.isOfflineCaptureActive).toBe(false);
-      // Sanity: stopVideoRecording on a fresh panel is a no-op (the
-      // early-return at line 237 of recording-panel.ts) — exercises the
-      // public surface that the private flags actually drive.
+    });
+
+    it('stopVideoRecording on a fresh panel is a no-op that touches no strategy', () => {
+      // [P4] Split from the init test: this is a distinct behavior — the
+      // not-recording guard at recording-panel.ts:252 returns before any
+      // strategy is reached. A mutation that drops the guard would call
+      // abort() on a strategy with no recording in flight.
+      const offlineAbort = vi.spyOn((panel as any).offlineCaptureStrategy, 'abort');
+      const videoAbort = vi.spyOn((panel as any).videoRecordingStrategy, 'abort');
       expect(() => panel.stopVideoRecording()).not.toThrow();
+      expect(offlineAbort).not.toHaveBeenCalled();
+      expect(videoAbort).not.toHaveBeenCalled();
     });
 
     it('routes EXR format in any mode to the offline-capture strategy', async () => {
@@ -157,7 +165,15 @@ describe('RecordingPanel', () => {
 
       await panel.startVideoRecording();
 
-      expect(offlineSpy).toHaveBeenCalled();
+      // [P2] Pin the exact args, not just "was called": the coordinator
+      // must hand the strategy its own options, the current mode, and the
+      // shared session — a mutation that swaps any of these survives a
+      // bare toHaveBeenCalled().
+      expect(offlineSpy).toHaveBeenCalledWith(
+        (panel as any).options,
+        'video',
+        (panel as any).session
+      );
     });
 
     it('routes a non-WebM turntable format to the offline strategy even when Smooth is off', async () => {
@@ -177,7 +193,11 @@ describe('RecordingPanel', () => {
 
       await panel.startVideoRecording();
 
-      expect(offlineSpy).toHaveBeenCalled();
+      expect(offlineSpy).toHaveBeenCalledWith(
+        (panel as any).options,
+        'turntable',
+        (panel as any).session
+      );
       expect(realtimeSpy).not.toHaveBeenCalled();
     });
 
@@ -192,7 +212,37 @@ describe('RecordingPanel', () => {
 
       await panel.startVideoRecording();
 
-      expect(offlineSpy).toHaveBeenCalled();
+      expect(offlineSpy).toHaveBeenCalledWith(
+        (panel as any).options,
+        'turntable',
+        (panel as any).session
+      );
+    });
+
+    it('routes an EXR turntable to the offline strategy regardless of Smooth/frameByFrame', async () => {
+      // [P5] EXR always routes offline (recording-panel.ts:237) — the EXR
+      // check precedes the turntable branch, so even a turntable that would
+      // otherwise be realtime-eligible (frameByFrame off + webm) must NOT
+      // reach the real-time strategy when the format is EXR.
+      (panel as any).mode = 'turntable';
+      (panel as any).options.frameByFrame = false;
+      (panel as any).options.outputFormat = 'exr';
+
+      const offlineSpy = vi
+        .spyOn((panel as any).offlineCaptureStrategy, 'run')
+        .mockResolvedValue(undefined);
+      const realtimeSpy = vi
+        .spyOn((panel as any).videoRecordingStrategy, 'run')
+        .mockResolvedValue(undefined);
+
+      await panel.startVideoRecording();
+
+      expect(offlineSpy).toHaveBeenCalledWith(
+        (panel as any).options,
+        'turntable',
+        (panel as any).session
+      );
+      expect(realtimeSpy).not.toHaveBeenCalled();
     });
 
     it('routes a WebM turntable with Smooth off to the real-time strategy', async () => {
@@ -209,7 +259,11 @@ describe('RecordingPanel', () => {
 
       await panel.startVideoRecording();
 
-      expect(realtimeSpy).toHaveBeenCalled();
+      expect(realtimeSpy).toHaveBeenCalledWith(
+        (panel as any).options,
+        'turntable',
+        (panel as any).session
+      );
       expect(offlineSpy).not.toHaveBeenCalled();
     });
 
@@ -217,10 +271,57 @@ describe('RecordingPanel', () => {
       (panel as any).session.isRecording = true;
       (panel as any).session.isEXRSequenceRecording = true;
       const abortSpy = vi.spyOn((panel as any).offlineCaptureStrategy, 'abort');
+      const videoAbortSpy = vi.spyOn((panel as any).videoRecordingStrategy, 'abort');
 
       panel.stopVideoRecording();
 
+      // [P2] Offline/EXR captures abort via the offline strategy ONLY — the
+      // real-time strategy must not be touched (recording-panel.ts:254-256).
       expect(abortSpy).toHaveBeenCalled();
+      expect(videoAbortSpy).not.toHaveBeenCalled();
+    });
+
+    it('stopVideoRecording for a real-time clip aborts the video strategy and logs elapsed time', () => {
+      // [P2/C5] Not offline/EXR → the real-time branch at
+      // recording-panel.ts:259-261 reads session.recordingStartTime to
+      // compute the elapsed seconds. A strategy that forgets to set it, or
+      // a broken `/1000`, would surface as NaN in the log message — pin the
+      // numeric format so that regression is caught.
+      const session = (panel as any).session;
+      session.isRecording = true;
+      session.isOfflineCaptureActive = false;
+      session.isEXRSequenceRecording = false;
+      session.recordingStartTime = Date.now() - 2000; // ~2.0s elapsed
+
+      const abortSpy = vi
+        .spyOn((panel as any).videoRecordingStrategy, 'abort')
+        .mockImplementation(() => {});
+      panel.stopVideoRecording();
+
+      expect(abortSpy).toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith(
+        Modules.RECORDING,
+        expect.stringMatching(/Stopping video recording after \d+\.\d+s/)
+      );
+    });
+
+    it('stopVideoRecording logs "unknown duration" when no start time was stamped', () => {
+      // Defensive guard: if isRecording is true but recordingStartTime was
+      // never set (still 0), the old code logged `Date.now() - 0` as a
+      // ~1.7-billion-second elapsed. The guard now reports a clear message.
+      const session = (panel as any).session;
+      session.isRecording = true;
+      session.isOfflineCaptureActive = false;
+      session.isEXRSequenceRecording = false;
+      session.recordingStartTime = 0;
+
+      vi.spyOn((panel as any).videoRecordingStrategy, 'abort').mockImplementation(() => {});
+      panel.stopVideoRecording();
+
+      expect(log.info).toHaveBeenCalledWith(
+        Modules.RECORDING,
+        'Stopping video recording after unknown duration...'
+      );
     });
   });
 

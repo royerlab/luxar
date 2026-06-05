@@ -1,6 +1,6 @@
 /**
  * GSplat material TSL factory — NodeMaterial counterpart to the
- * GLSL3 shaders in `shaders/gsplat-shaders.ts`.
+ * GLSL3 shaders in `shader-glsl.ts`.
  *
  * Renders each Gaussian splat as an oriented quad in screen space.
  * Per-vertex `aQuadCorner` (±1) scaled by the 2D covariance eigen-
@@ -395,7 +395,7 @@ export function gsplatWebGPUFactory(
 
   // Final clipPos — with rejects routing to behind-camera (z = -2).
   // Mirror the GLSL `invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)`
-  // guard at gsplat-shaders.ts:183-186 so NaN/Inf upstream values can't
+  // guard at shader-glsl.ts:183-186 so NaN/Inf upstream values can't
   // propagate through the Cholesky / eigendecomposition and produce
   // garbage splats or backend-specific shader behaviour.
   const invalidAmp: TSLNode = invalidFloatTSL(aAmplitude);

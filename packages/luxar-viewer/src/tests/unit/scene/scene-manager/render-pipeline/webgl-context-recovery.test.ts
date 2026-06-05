@@ -149,21 +149,32 @@ describe('WebGLContextRecovery', () => {
   });
 
   it('skips post-processing rebuild when getPostProcessing returns null', async () => {
+    // W5: keep a real rebuild spy but make the getter return null, so we can
+    // assert the pp rebuild is genuinely NOT called (not merely absent).
+    const ppRebuild = vi.fn();
     const { deps, canvas } = makeDeps({ getPostProcessing: () => null });
     new WebGLContextRecovery(deps).attach();
     canvas.dispatchEvent(new Event('webglcontextrestored'));
     await new Promise((r) => setTimeout(r, 0));
     // material manager + scene rebuild still happen — only the pp call is skipped.
     expect(materialManager.rebuildAfterContextRestore).toHaveBeenCalledTimes(1);
+    expect(ppRebuild).not.toHaveBeenCalled();
   });
 
-  it('dispose unbinds both listeners (no further state changes after dispose)', () => {
-    const { deps, canvas } = makeDeps();
+  it('dispose unbinds BOTH listeners (lost and restored)', async () => {
+    const { deps, canvas, resetState } = makeDeps();
     const recovery = new WebGLContextRecovery(deps);
     recovery.attach();
     recovery.dispose();
+
+    // Lost handler unbound → flag stays false.
     canvas.dispatchEvent(new Event('webglcontextlost'));
     expect(recovery.getIsContextLost()).toBe(false);
+
+    // W2: restored handler unbound → its rebuild side-effects never run.
+    canvas.dispatchEvent(new Event('webglcontextrestored'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resetState).not.toHaveBeenCalled();
   });
 
   it('dispose is idempotent', () => {

@@ -88,7 +88,7 @@ export function pointPickWebGPUFactory(
   const uNodeId = nodes.uNodeId;
   const uResolution = nodes.uResolution;
 
-  // Per-instance sanitisation — mirrors visual point.tsl.ts:158-162
+  // Per-instance sanitisation — mirrors visual shader-tsl.ts
   // and the GLSL picking shader after the parity-fix update. A NaN/Inf
   // sharpness or negative radius would otherwise let the pick
   // footprint diverge from the visible footprint.
@@ -110,7 +110,7 @@ export function pointPickWebGPUFactory(
   // Picking footprint: × 0.8 vs the visual material
   // (keep the 0.8 in sync with shaders.ts). Guard the
   // sharpness-compensation expression against Inf/NaN the same way
-  // point.tsl.ts:188-191 does — degenerate sharpness must not poison
+  // shader-tsl.ts does — degenerate sharpness must not poison
   // the quad expansion.
   const sharpnessCompRaw: TSLNode = float(1.0).div(
     float(1.0).sub(pow(float(0.01), float(1.0).div(max(normalizedSharpness, float(0.01)))))

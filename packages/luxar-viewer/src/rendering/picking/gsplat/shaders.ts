@@ -61,7 +61,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         );
     }
 
-    // Parity with visual gsplat-shaders.ts invalidCov2D — reject Σ_2D
+    // Parity with visual shader-glsl.ts invalidCov2D — reject Σ_2D
     // entries that are NaN/Inf so a degenerate splat can't poison the
     // eigendecomposition and produce undefined pick geometry.
     bool invalidCov2D(mat2 S) {
@@ -143,7 +143,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         Sigma2D[0][1] = Sigma2D[1][0];
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
 
-        // Visual-shader parity (gsplat-shaders.ts) + TSL-side parity
+        // Visual-shader parity (shader-glsl.ts) + TSL-side parity
         // (gsplat-pick.tsl.ts): reject splats with NaN/Inf Σ_2D or
         // amplitude so picking and rendering agree on which elements
         // are pickable across WebGL and WebGPU backends.

@@ -7,6 +7,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
+import {
+  boundingBoxToSphere,
+  calculateClippingPlanesFromSphere,
+} from '../../../scene/scene-manager/clipping/bounds-math';
 
 // Mock THREE.WebGLRenderer to avoid WebGL context issues
 vi.mock('three', async () => {
@@ -428,8 +432,16 @@ describe('SceneManager', () => {
       expect(sceneManager.renderer).toBeInstanceOf(THREE.WebGLRenderer);
       expect(sceneManager.scene).toBeInstanceOf(THREE.Scene);
       expect(sceneManager.camera).toBeInstanceOf(THREE.Camera);
+      // W1 (controls/postProcessing): `toBeDefined()` would survive a mutant
+      // that assigned an empty object `{}`. ControlsManager and
+      // PostProcessingManager aren't trivially instanceof-checkable here
+      // without extra imports, so pin their characteristic methods instead.
       expect(sceneManager.controls).toBeDefined();
+      expect(typeof sceneManager.controls.setControlType).toBe('function');
+      expect(typeof sceneManager.controls.dispose).toBe('function');
       expect(sceneManager.postProcessing).toBeDefined();
+      expect(typeof sceneManager.postProcessing.setCamera).toBe('function');
+      expect(typeof sceneManager.postProcessing.dispose).toBe('function');
     });
 
     it('should setup scene with correct properties', async () => {
@@ -484,11 +496,16 @@ describe('SceneManager', () => {
       // Add some objects to the scene
       const existingObject = new THREE.Mesh();
       sceneManager.scene.add(existingObject);
+      expect(sceneManager.scene.children).toContain(existingObject);
 
       await sceneManager.loadSceneData('http://example.com/data.zarr');
 
-      // Check that scene was cleared (the mock returns a new group)
       expect(mockLoadScene).toHaveBeenCalled();
+      // W2: don't just assert loadScene fired — verify the pre-existing
+      // (non-light, non-background) object was actually removed. A mutant that
+      // deleted the clear step would leave it attached and survive the
+      // call-only assertion.
+      expect(sceneManager.scene.children).not.toContain(existingObject);
     });
 
     it('should handle loading errors gracefully', async () => {
@@ -762,13 +779,25 @@ describe('SceneManager', () => {
       await sceneManager.init({ canvas: mockCanvas as any });
     });
 
-    it('should update size when canvas dimensions change', () => {
-      mockCanvas.width = 1920;
-      mockCanvas.height = 1080;
+    it('updates the camera aspect ratio to match the new viewport dimensions', () => {
+      // C1 (scene.md): the previous version mutated `mockCanvas.width/height`,
+      // which updateSize() never reads (it resizes from window dimensions via
+      // the orchestrator), and then asserted the aspect equalled 800/600 — a
+      // value that coincidentally matched the 4:3 init aspect, so the test
+      // passed vacuously. Drive the real resize path with an explicit, DISTINCT
+      // (16:9) viewport and assert the aspect actually changes to match.
+      const internals = sceneManager as unknown as {
+        resizer: { resizeNow: (w: number, h: number, ctx: unknown) => void };
+        makeResizeCtx: () => unknown;
+      };
+      const before = (sceneManager.camera as THREE.PerspectiveCamera).aspect;
+      expect(before).toBeCloseTo(4 / 3, 5); // jsdom init viewport is 1024x768
 
-      sceneManager.updateSize();
+      internals.resizer.resizeNow(1600, 900, internals.makeResizeCtx());
 
-      expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600, 5);
+      const after = (sceneManager.camera as THREE.PerspectiveCamera).aspect;
+      expect(after).toBeCloseTo(1600 / 900, 5); // 16:9, distinct from 4:3
+      expect(after).not.toBeCloseTo(before, 2);
     });
 
     it('preserves manual/adaptive DPR override across window resize', () => {
@@ -968,17 +997,23 @@ describe('SceneManager', () => {
       expect(updateSizeSpy).toHaveBeenCalled();
     });
 
-    it('should handle scene with no objects gracefully', () => {
+    it('centering on an empty scene is a no-op that preserves the camera pose', () => {
       // Clear scene
       while (sceneManager.scene.children.length > 0) {
         sceneManager.scene.remove(sceneManager.scene.children[0]);
       }
 
-      // Should not throw when centering on empty scene
-      expect(() => sceneManager.centerCameraOnScene()).not.toThrow();
+      const posBefore = sceneManager.camera.position.clone();
 
-      // Toggle centering should work even with empty scene
+      // W4: "doesn't throw" alone would survive a mutant that moved the camera
+      // to NaN/origin on an empty scene. centerCameraOnScene finds no geometry,
+      // so it must leave the camera pose untouched.
+      expect(() => sceneManager.centerCameraOnScene()).not.toThrow();
+      expect(sceneManager.camera.position.equals(posBefore)).toBe(true);
+
+      // Toggle centering should also be a safe no-op with an empty scene.
       expect(() => sceneManager.toggleCentering()).not.toThrow();
+      expect(Number.isFinite(sceneManager.camera.position.x)).toBe(true);
     });
 
     it('updateSize keeps camera aspect equal to viewport aspect', () => {
@@ -1084,6 +1119,17 @@ describe('SceneManager', () => {
       // Camera should be updated
       expect(sceneManager.camera.near).toBe(result.near);
       expect(sceneManager.camera.far).toBe(result.far);
+
+      // G8: pin that near/far are DERIVED from the bounds + camera position
+      // via the sphere formula — not arbitrary positive values. Compute the
+      // expectation from the same [-5,5] bounds and the camera's actual pose.
+      const cam = sceneManager.camera.position;
+      const expected = calculateClippingPlanesFromSphere(
+        boundingBoxToSphere({ min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } }),
+        { x: cam.x, y: cam.y, z: cam.z }
+      );
+      expect(result.near).toBeCloseTo(expected.near, 4);
+      expect(result.far).toBeCloseTo(expected.far, 4);
     });
 
     it('should fall back to geometry bounds when metadata not available', () => {
