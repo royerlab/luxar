@@ -145,6 +145,65 @@ describe('VideoRecordingStrategy', () => {
       expect(mockMediaRecorder.stop).not.toHaveBeenCalled();
     });
 
+    // [P2/B-C3] The video-mode slider-sync branch (video-recording-strategy.ts:204)
+    // was never exercised — a regression that drops the `mode === 'video' &&
+    // syncToSlider` guard would go unnoticed. Drive the real run() flow.
+    it('starts slider sync when in video mode with syncToSlider enabled', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+
+      (panel as any).mode = 'video';
+      (panel as any).options.syncToSlider = true;
+      (panel as any).options.syncDimensionIndex = 3;
+      (panel as any).session.animationManager = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        play: vi.fn(),
+      };
+      const sliderSyncSpy = vi
+        .spyOn((panel as any).session, 'startSliderSync')
+        .mockImplementation(() => {});
+
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Sync is wired with the configured dimension index and an abort callback.
+      expect(sliderSyncSpy).toHaveBeenCalledWith(3, expect.any(Function));
+
+      mockMediaRecorder.onstop();
+      await recordingPromise;
+    });
+
+    // [P2/W4 + P11/M4] The successful onstop path: blob download, "Video saved"
+    // toast, AND removal of BOTH per-frame callbacks. Deleting either
+    // removePerFrameCallback line (video-recording-strategy.ts:178-179) would
+    // leak stale callbacks into the next recording — pin both here.
+    it('on successful onstop: downloads the webm, toasts, and removes both per-frame callbacks', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+      const downloadBlobSpy = vi.spyOn(panel as any, 'downloadBlob');
+      vi.mocked(showToast).mockClear();
+
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+      // A captured chunk so the finalized blob has content.
+      (panel as any).videoRecordingStrategy.recordedChunks = [new Blob(['frame-data'])];
+
+      panel.stopVideoRecording();
+      mockMediaRecorder.onstop();
+      await recordingPromise;
+
+      expect(downloadBlobSpy).toHaveBeenCalledWith(
+        expect.any(Blob),
+        expect.stringMatching(/\.webm$/)
+      );
+      expect(showToast).toHaveBeenCalledWith('Video saved');
+      expect(mockAnimController.removePerFrameCallback).toHaveBeenCalledWith('recording-keepalive');
+      expect(mockAnimController.removePerFrameCallback).toHaveBeenCalledWith('recording-turntable');
+    });
+
     // [ui.md/C2 / Phase F2c] Drives the duration-timer-cleanup path via
     // the real production code: setting `options.videoDurationLimit > 0`
     // causes VideoRecordingStrategy.run() to install a real durationTimer
@@ -308,6 +367,28 @@ describe('VideoRecordingStrategy', () => {
         expect.any(Function),
         { continuous: true }
       );
+    });
+
+    // [P2/W1] The previous test only checked the callback was registered.
+    // Invoke the registered callback and verify it actually drives the orbit
+    // rotation — a no-op callback body would otherwise pass the registration
+    // assertion while rotating nothing.
+    it('drives applyOrbitRotation on the orbit controls when a frame ticks', () => {
+      const session = (panel as any).session;
+      const controls = mockSceneManager.controls.getControls();
+      (panel as any).videoRecordingStrategy.startTurntableRotationForTests(
+        (panel as any).options,
+        session
+      );
+
+      const registration = mockAnimController.addPerFrameCallback.mock.calls.find(
+        (c: unknown[]) => c[0] === 'recording-turntable'
+      );
+      expect(registration).toBeDefined();
+      const frameCallback = registration[1] as () => void;
+
+      frameCallback();
+      expect(controls.applyOrbitRotation).toHaveBeenCalled();
     });
   });
 });

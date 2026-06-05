@@ -195,4 +195,32 @@ describe('renderFrameToCanvas', () => {
       HTMLCanvasElement.prototype.getContext = origGetContext;
     }
   });
+
+  it('composites overlays when includeOverlays is true and a manager is present', async () => {
+    // [P5/G2] The includeOverlays=true branch (screenshot-exporter.ts:60-62)
+    // was never exercised — only the false path had a test.
+    const imgData = { width: 10, height: 10, data: new Uint8ClampedArray(10 * 10 * 4) };
+    const postProcessing = {
+      renderToImageData: vi.fn(async () => imgData as unknown as ImageData),
+    };
+    const overlayManager = {
+      getVisibleOverlays: vi.fn(() => []),
+    } as unknown as OverlayManager;
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      putImageData: vi.fn(),
+    })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+
+    try {
+      await renderFrameToCanvas(
+        postProcessing,
+        true,
+        overlayManager,
+        document.createElement('canvas')
+      );
+      expect(overlayManager.getVisibleOverlays).toHaveBeenCalledTimes(1);
+    } finally {
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+    }
+  });
 });
