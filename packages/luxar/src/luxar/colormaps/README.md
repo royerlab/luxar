@@ -54,7 +54,7 @@ When `colormap` is set, `colors` must not be provided (mutually exclusive).
 ## Resolution Order
 
 1. Built-in colormaps (instant, no dependencies)
-2. Matplotlib (`matplotlib.pyplot.get_cmap`) — if installed
+2. Matplotlib (`matplotlib.colormaps[name]`, falling back to `pyplot.get_cmap`) — if installed
 3. Colorcet (`colorcet.palette`) — if installed
 4. `ValueError` with helpful message
 

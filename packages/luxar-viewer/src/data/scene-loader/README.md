@@ -5,7 +5,9 @@ stays in the parent `data/` folder; every helper that implements one
 of its lifecycle steps lives here. Nothing in this folder is
 re-exported through `data/index.ts` — the parent orchestrator is the
 only consumer of the top-level files of each subfolder, with a small
-number of exceptions noted in each cluster's README.
+number of exceptions noted in each cluster's README (the
+`progressive/` loop is driven from the per-geometry `lod-refinement.ts`
+modules, and `lod-load-stats.ts` is read by the debug interface).
 
 The SceneLoader has three external entry points:
 
@@ -20,10 +22,19 @@ The SceneLoader has three external entry points:
 
 ## Layout
 
-This folder is split into nine subpackages — five thematic clusters
-plus the four pre-existing per-step folders. There are no `.ts` files
-directly under `scene-loader/`: every helper lives in one of the
-subfolders below, named for its concern.
+This folder is split into ten subpackages — thematic clusters plus the
+pre-existing per-step folders — named for their concern. Two `.ts`
+files sit directly under `scene-loader/`:
+
+- **`lod-load-stats.ts`** — debug-only per-stage timing accumulator for
+  lazy LOD level loads (fetch/decode, projection+pack, GPU commit,
+  release). These loads run outside any `updateView` cycle, so the
+  `UpdateProfiler` / data-loading-monitor never sees them; this fills
+  the gap. Disabled by default (zero cost), enabled under `?debug` by
+  `installDebugInterface`, which also exposes
+  `window.__luxarDebug.getLodLoadStats()` / `resetLodLoadStats()`.
+
+The subfolders:
 
 | Subpackage                             | Concern                                                                                                                                                                                                                           |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -36,6 +47,7 @@ subfolders below, named for its concern.
 | [nodes](./nodes/README.md)             | Initial-load helpers that walk the zarr scene graph and attach matching THREE.js objects, with empty placeholders before the first fetch and per-leaf error isolation.                                                            |
 | [process](./process/README.md)         | Async nD→3D projection step for Lines and GSplats (worker preferred, main-thread fallback). Returns `Staged*Commit` payloads without mutating geometry.                                                                           |
 | [update-view](./update-view/README.md) | Orchestration helpers extracted from `scene-loader.ts::updateView`: per-type ctx construction, atomic Stage 2 commit, and the `finally`-phase dispatcher that chooses between rAF re-entry, GSplats refinement, and lock release. |
+| progressive (`refinement.ts`)          | The generic progressive-LOD refinement loop (`runProgressiveRefinement`) shared by all three leaf types via their `data/{points,lines,gsplats}/lod-refinement.ts` wrappers: per-frame rAF yield, view-state-queue cancellation handoff, per-loader processing, and lock release when no LODs remain. No README. |
 
 ## Cross-cluster invariants
 

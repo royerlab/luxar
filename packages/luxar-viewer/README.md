@@ -490,22 +490,23 @@ Built-in performance monitoring in `src/ui/performance-monitor.ts` wraps [stats.
 
 ```typescript
 // PerformanceMonitor wraps stats.js for FPS, frame time, and memory tracking
-const monitor = new PerformanceMonitor();
-monitor.begin();    // Call at the start of each frame
-// ... rendering work ...
-monitor.end();      // Call at the end of each frame
+const monitor = new PerformanceMonitor();   // no args; injects its own DOM panel
 
-// Visibility control
-monitor.show();     // Show the stats panel
-monitor.hide();     // Hide the stats panel
+// Visibility control — measurement is driven by the animation loop's
+// `frame-start` / `frame-end` events on the event bus. The monitor only
+// subscribes while visible, so stats.js incurs no cost when hidden.
+monitor.show();     // Show the stats panel (subscribes to frame timing)
+monitor.hide();     // Hide the stats panel (unsubscribes)
 monitor.toggle();   // Toggle visibility
+monitor.cyclePanels();  // Rotate FPS -> frame time -> memory
+monitor.visible;    // boolean getter for current visibility
 ```
 
 - **Real-time FPS**: Continuously updated frame rate display (panel 0)
 - **Frame timing**: Milliseconds per frame (panel 1)
 - **Memory usage**: JavaScript heap size monitoring (panel 2)
 - **Panel cycling**: `cyclePanels()` rotates through FPS, frame time, and memory views
-- **Idle optimization**: Only measures when visible to avoid overhead
+- **Idle optimization**: Only subscribes to frame timing while visible to avoid overhead
 
 ## 🎯 Performance Tips
 

@@ -33,12 +33,14 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, cull, fit, convert, render, merge, filter, partition, slice, compare, transform, denoise, napari, benchmark, batch plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch` group: plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess; and the `lod` group: additive/substitutive/pyramid)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
 - `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`
 - `network_simulation.py` - Network simulation middleware and profile definitions
+- `_launchers/` - Go-compiled launcher binaries (populated by `make build-launchers`; ride along in wheel builds)
+- `_launcher_assets/` - Bundle icons (`luxar-logo.png`, `AppIcon.icns`) used by `native_app.py`
 
 ## Available Commands
 
@@ -126,6 +128,18 @@ See `packages/luxar-launcher/README.md` for the launcher source itself.
 
 ### GSplat Processing Commands
 
+#### `luxar gsplat info`
+Print dataset statistics for a `.gsplats.zarr` (splat count, dimensions, bounds, LOD structure).
+```bash
+luxar gsplat info splats.gsplats.zarr
+```
+
+#### `luxar gsplat view`
+Convert a `.gsplats.zarr` to a Luxar scene on the fly and open it in the web viewer.
+```bash
+luxar gsplat view splats.gsplats.zarr
+```
+
 #### `luxar gsplat fit`
 Fit Gaussian splats to a volume with preset or YAML config.
 ```bash
@@ -197,6 +211,48 @@ Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE).
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
+```
+
+#### `luxar gsplat cal`
+Calibrate the splat count `K` via blind-spot cross-validation. Sweeps `K`, identifies the held-out PSNR peak (`K*`) using the manuscript's Noise2Self protocol (5% donut-median masking), and reports the noise floor. Defaults to the `n2s` fit preset so the held-out curve has enough optimiser budget to reach the overfit regime.
+```bash
+luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster sweep
+luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
+luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
+luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomial K spacing
+```
+
+**Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
+
+#### `luxar gsplat migrate-format`
+Convert a legacy `.gsplats.zarr` layout to format v2.0. Three input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), and a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`). All migrate to a single v2.0 `.gsplats.zarr`.
+```bash
+luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr   # single file
+luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr             # substitutive directory
+```
+
+**Options**: `--overwrite`, `--quiet/-q`.
+
+#### `luxar gsplat lod`
+Build LOD (level-of-detail) representations from a pre-fitted `.gsplats.zarr`. Three subcommands produce the dimensions of the v2.0 substitutive × additive LOD matrix.
+
+```bash
+# Additive ladder (post-fit ordering; coarser levels are subsets of finer ones)
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                # 4 equal-count levels
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+    --breakpoints energy:0.5,0.9,0.99,1.0                                  # cumulative energy fractions
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
+
+# Substitutive hierarchy (synthesised representative splats that REPLACE the finer level)
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr            # K=4, L=3, method=auto
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method kmeans-lloyd --lloyd-iters 5
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning, small N
+
+# Full 2-D pyramid (substitutive × additive) in one shot
+luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
+    --substitutive K=4,L=3 --additive 4
 ```
 
 #### Tiled Fitting

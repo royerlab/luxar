@@ -9,10 +9,11 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 - **`decode_task_id()`** — Map a flat `SLURM_ARRAY_TASK_ID` back to `(timepoint, channel, tile_index)`.
 - **`generate_fit_sbatch()`** — Generate the main sbatch array job script for fitting, with support for sequential or parallel task packing, preemptible requeue, on-the-fly denoising, and preprocessed denoised input.
 - **`generate_calibrate_sbatch()`** / **`generate_denoise_sbatch()`** / **`generate_merge_sbatch()`** — Generate sbatch scripts for NLM calibration, denoise preprocessing, and post-fit merge jobs.
-- **`capture_environment()`** — Snapshot the current conda/venv, loaded modules, CUDA build info, and curated env vars for reproducible Slurm jobs.
+- **`capture_environment()`** / **`CapturedEnv`** — Snapshot the current conda/venv, loaded modules (including those recorded in `cuda_build_info.json`), CUDA build info, and curated env vars for reproducible Slurm jobs.
 - **`generate_env_preamble()`** — Convert a `CapturedEnv` into a shell preamble for sbatch scripts.
-- **`estimate_tile_wall_seconds()`** — Log-interpolate GPU profile throughput tables to estimate per-tile wall time (with safety margin).
-- **`check_batch_status()`** — Aggregate job status from output files and `sacct` queries.
+- **`get_slurm_scheduler_info()`** / **`is_slurm_mps_available()`** / **`detect_preemptible_gpu_partition()`** / **`validate_partition_access()`** — `scontrol`/`sinfo`-backed cluster introspection used at plan time to tune array packing and preemptible submission.
+- **`estimate_tile_wall_seconds()`** / **`estimate_slurm_time_limit()`** — Log-interpolate GPU profile throughput tables to estimate per-tile wall time (with safety margin), then round up to a Slurm `--time` string.
+- **`check_batch_status()`** / **`format_status_report()`** — Aggregate job status (`BatchStatus`) from output files and `sacct` queries, and render a human-readable report.
 - **`merge_batch_results()`** — 3-level fan-in merge: tiles per (T,C), timepoints per channel, then channels with optional color assignment.
 
 ## Module Structure

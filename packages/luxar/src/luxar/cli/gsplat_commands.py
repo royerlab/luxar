@@ -2943,9 +2943,7 @@ def migrate_format_command(
             out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
             fmt = out_attrs.get("format_version")
             if fmt != "2.0":
-                aprint(
-                    f"❌ Migration produced format_version={fmt!r}, expected '2.0'"
-                )
+                aprint(f"❌ Migration produced format_version={fmt!r}, expected '2.0'")
                 raise typer.Exit(1)
             if not quiet:
                 aprint(

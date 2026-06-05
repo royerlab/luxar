@@ -290,17 +290,32 @@ class TestIndexedPartitionTopology:
     # byte-unique, isolating this test to the partition-remap fix.
     _VERTS = np.array(
         [
-            [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],  # comp A (4-cycle)
-            [100, 100, 100], [101, 100, 100], [101, 101, 100], [100, 101, 100],  # B
-            [200, 0, 0], [201, 0, 0], [200, 1, 0],  # comp C (triangle)
+            [0, 0, 0],
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 1, 0],  # comp A (4-cycle)
+            [100, 100, 100],
+            [101, 100, 100],
+            [101, 101, 100],
+            [100, 101, 100],  # B
+            [200, 0, 0],
+            [201, 0, 0],
+            [200, 1, 0],  # comp C (triangle)
         ],
         dtype=np.float32,
     )
     _EDGES = np.array(
         [
-            [0, 1], [1, 2], [2, 3], [3, 0],  # A: 4-cycle (4 edges)
-            [4, 5], [5, 6], [6, 7],  # B: 4-path (3 edges)
-            [8, 9], [9, 10], [10, 8],  # C: triangle (3 edges, odd component)
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 0],  # A: 4-cycle (4 edges)
+            [4, 5],
+            [5, 6],
+            [6, 7],  # B: 4-path (3 edges)
+            [8, 9],
+            [9, 10],
+            [10, 8],  # C: triangle (3 edges, odd component)
         ],
         dtype=np.intp,
     )

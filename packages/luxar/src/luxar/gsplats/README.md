@@ -756,7 +756,7 @@ luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
 ```
 
-See `lod/README.md` for algorithm details (greedy vs self-energy vs mass vs amplitude ordering, breakpoint specs, performance notes), and `lod/SPECIFICATIONS.md` for mathematical derivations and complexity analyses.
+See `lod/README.md` for algorithm details (greedy vs self-energy vs mass vs amplitude ordering, breakpoint specs, performance notes, and the mathematical derivations / complexity analyses).
 
 ## Rendering
 
@@ -1135,7 +1135,8 @@ gsplats/
 ├── io/                            # I/O subpackage
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
-│   └── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
+│   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / substitutive-dir layouts → v2.0
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management
@@ -1159,7 +1160,8 @@ gsplats/
 │   └── decompose.py               # Scale-space decomposition
 │
 ├── utils/
-│   └── trils.py                   # Triangular matrix packing/unpacking
+│   ├── trils.py                   # Triangular matrix packing/unpacking
+│   └── device.py                  # PyTorch device-selection helpers (CUDA > MPS > CPU)
 │
 ├── demos/                         # Interactive demonstrations
 │   ├── demo_basic_fitting.py      # Simple API introduction

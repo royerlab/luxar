@@ -27,6 +27,7 @@ scene/
 │   └── viewport/                   # dpr-policy, resize-orchestrator
 ├── animation/                      # animation-controller, dimension-animation-manager
 ├── scene-dims-manager.ts           # nD dimension coordination
+├── lod-group-registry.ts           # Per-frame LOD-group selector + VRAM-budget LRU
 ├── synthetic-scene.ts              # Synthetic perf-bench scene generators (lines)
 └── README.md                       # This documentation
 ```
@@ -299,6 +300,62 @@ animManager.stop(3); // Also removes state
 - **Bounce**: Reverse direction at boundaries (ping-pong)
 
 **FPS Presets:** 1, 2, 5, 10, 15, 30, 60 Hz
+
+### 5. LOD Group Registry
+
+The `LODGroupRegistry` is the per-frame selector for `lod_group`
+scene-graph nodes. For each registered group it picks which child
+(level of detail) renders, kicks deferred geometry loads for lazy
+levels, and bounds resident VRAM with an LRU eviction pass.
+
+**Per-frame algorithm** (one entry):
+
+1. Fold each child's nD `positionBounds` into a cached local-space
+   `BoundingBox`, mapping nD axes onto X/Y/Z via the current
+   `displayDims`.
+2. Lift that box to world space through the group's `matrixWorld`
+   (`transformBoundingBox`).
+3. **Off-screen gate**: if the world box is entirely outside the
+   camera frustum, hold the group at its coarsest *ready* level
+   instead of loading a fine level the renderer would frustum-cull.
+4. Otherwise, project the 8 world corners to NDC and measure the
+   diagonal of the screen-space AABB in pixels
+   (`projectBoxDiagonalPx`).
+5. Pick the finest child whose `minPixelSize` threshold is satisfied,
+   with 10% asymmetric, spacing-aware hysteresis on the downgrade
+   direction to suppress threshold-edge flicker
+   (`pickChildWithHysteresis`).
+6. Swap visibility atomically when the desired child differs; lazy
+   targets that are not yet committed kick `ensureLoaded()` and swap
+   on a later frame once `ready` flips true.
+
+**Selector modes:**
+
+```typescript
+// Auto (view-driven) — the default after register()
+registry.setSelectorMode(path, 'auto');
+
+// Lock to a specific level (0-based, coarsest→finest).
+// Out-of-range lockLevel is clamped into [0, n-1] with a warning.
+registry.setSelectorMode(path, { lockLevel: 2 });
+```
+
+**Retention + VRAM budget:** swaps never `release()` outgoing
+geometry — retention keeps loaded levels resident so swapping back is
+a sub-millisecond visibility toggle. Memory is bounded once per frame
+by `enforceResidentByteBudget`, which (only when the GPU pool's live
+resident byte total exceeds the shared budget) demotes evictable
+levels — off-screen first, then furthest-from-camera, then
+coldest-`lastVisibleTick`. The visible level of each group and eager
+fallback levels (no `release` thunk) are never evicted.
+
+**Wiring:** the SceneLoader instantiates one registry per scene and
+hooks `evaluatePerFrame()` into `AnimationController` alongside the
+dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
+the camera, viewport size, `displayDims`, and the optional resident
+byte budget / measurement — omitting the budget accessors yields pure
+retention (the unit-test default). `projectBoxDiagonalPx` and
+`pickChildWithHysteresis` are exported as pure functions for testing.
 
 ---
 
@@ -882,6 +939,11 @@ _For implementation details, see the source files in this directory._
 - `scene-dims-manager.ts` — Singleton dimension state across all nD
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
+- `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
+  child selector (screen-space-diagonal pick + frustum off-screen gate
+  + asymmetric hysteresis), lazy-load gating, and shared-VRAM-budget
+  LRU eviction. Exports pure helpers `projectBoxDiagonalPx` and
+  `pickChildWithHysteresis` for unit testing.
 - `synthetic-scene.ts` — Mulberry32-seeded synthetic line-segment
   scene generator (`generateSyntheticLines`) used by the perf bench
   and the `__luxarDebug.injectSyntheticScene` debug API.

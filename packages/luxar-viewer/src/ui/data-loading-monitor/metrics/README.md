@@ -39,9 +39,13 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
 // for the rolling per-second fields.
 ```
 
-`cache.ts` also re-exports `CacheTelemetryState` from
-`types/data-monitor-types` so existing consumers can import it from
-the same module that owns the aggregation.
+`cache.ts` also exports two small input-shape interfaces —
+`CacheRatesSnapshot` (the subset of the rolling rates the aggregator
+reads: `queriesPerSec` / `loadsPerSec` / `hitsPerSec` / `missesPerSec`
+/ `bandwidth`) and `L0Provider` (`{ getStats(), clear?() }`, the port
+for the in-memory decompressed-chunk cache) — and re-exports
+`CacheTelemetryState` from `types/data-monitor-types` so existing
+consumers can import it from the same module that owns the aggregation.
 
 ## Contracts and invariants
 

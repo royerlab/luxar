@@ -26,6 +26,7 @@ rendering/
 ├── material-manager.ts                 # Material creation, caching, and global camera updates
 ├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
+├── gpu-byte-budget.ts                  # Single adaptive VRAM budget (pool + LOD registry share it)
 ├── adaptive-dpr-manager.ts             # Adaptive resolution
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
 ├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
@@ -72,6 +73,7 @@ rendering/
 │       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
 │
 ├── picking/                            # GPU picking materials + orchestration
+│   ├── index.ts                        # Picking barrel
 │   ├── picking-system.ts               # Orchestrator
 │   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
 │   ├── line/     { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
@@ -87,6 +89,7 @@ rendering/
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
 │   ├── {points,lines,gsplats}-adapter.ts
 │   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
+│   ├── capacity.ts                     # chooseCapacity (1.5× growth, min-instance floor)
 │   ├── geometry-bytes.ts               # estimateGeometryBytes + cached size invalidation
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │

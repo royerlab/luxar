@@ -1,6 +1,6 @@
 # luxar.gsplats.io
 
-I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format.
+I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (currently **format v2.0** — a 2-D substitutive × additive LOD matrix).
 
 ## Purpose
 
@@ -10,6 +10,9 @@ This package provides functions to save and load fitted Gaussian splat results w
 - **Chunk-based spatial indexing** for efficient queries
 - **Provenance tracking** for reproducibility
 - **Fitter-agnostic metadata** allowing different fitting implementations
+- **2-D LOD layout** (substitutive levels × additive sub-LODs); the trivial
+  single-splat-set case is the 1×1 corner of that matrix
+- **Legacy migration** (v1.0 / v1.1 / pre-v2.0 substitutive directory → v2.0)
 
 ## Main Functions
 
@@ -30,11 +33,16 @@ save_gsplats(
     ordering="hilbert",           # "morton", "hilbert", or "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
     color_mode="sdr",             # Required if colors are float32
+    positive_scalar_encoding="linear",  # "linear" or "log" for amplitudes
     fitting_info={"time_seconds": 45.3, "iterations": 850},
+    fitting_config=None,          # Fitter-specific config (optional)
+    provenance_info=None,         # Image lineage metadata (optional)
     description="DAPI nuclei fitting",
+    float16_allowed=False,        # Enable float16 quantization (off for compatibility)
     compress=None,                # "zip" or "tar.gz" for compressed archive
+    compressor=DEFAULT_COMP,      # Blosc compressor (default: zstd level 3)
     zip_deflate=False,            # Use DEFLATE compression for outer zip
-    compressor=None,              # Custom Blosc compressor (default: zstd level 3)
+    truncation_radius=3.0,        # Gaussian truncation radius (std devs)
 )
 ```
 
@@ -64,9 +72,15 @@ print(format_gsplats_info(info))
 # Output:
 # GSplats: 10,000 splats, 3D
 # Ordering: hilbert (resolution=65536)
-# Size: 1.2 MB (compression ratio: 3.2x)
-# Fitting time: 45.3s, 850 iterations (converged)
+# Size: 1.2 MB (3.8 MB uncompressed, 3.2x compression)
+# Fitting: 45.3s, 850 iterations (converged)
 ```
+
+`inspect_gsplats_zarr()` surfaces the **default substitutive cell**
+(`/splats/substitutive_<default>/additive_0`) for the legacy single-set
+fields (`n_splats`, `ndim`, `ordering`, `chunk_size`, `amplitude_range`,
+`center_bounds`), plus `n_substitutive`, `default_substitutive`, and
+`n_additive_sublods_default` so multi-LOD datasets are visible at a glance.
 
 ### Convenience Methods
 
@@ -142,10 +156,13 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 | Array | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `float16` (half precision) |
-| `amplitudes` | POSITIVE_SCALAR | `log_scalar_uint8` (log scale) |
-| `cholesky_factors` | CHOLESKY | `float16` (~0.1% error) |
+| `centers` | COORDINATE | `float16` (half precision; requires `float16_allowed=True`) |
+| `amplitudes` | POSITIVE_SCALAR | `log_scalar_uint8` (log scale via `positive_scalar_encoding="log"`) |
+| `cholesky_factors` | CHOLESKY | `float16` (~0.1% error; requires `float16_allowed=True`) |
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR) |
+
+**`float16_allowed`** defaults to `False` for cross-tool compatibility, so
+`float16` encodings are only emitted when it is explicitly enabled.
 
 **Encoding modes**:
 - `AUTO`: Analyzes data and selects encoding (may quantize)
@@ -160,45 +177,75 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 
 ## File Format
 
-### Zarr Structure
+### Zarr Structure (format v2.0)
+
+The on-disk layout is a 2-D LOD matrix: `n_substitutive` substitutive
+levels, each holding `n_additive_sublods` additive sub-LODs. The actual
+splat arrays live in the `substitutive_<s>/additive_<a>/` leaf groups. The
+trivial single-splat-set case is `[1, 1]` (one substitutive level, one
+additive sub-LOD at index 0), which is what `save_gsplats()` writes.
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs                      # Format metadata
-├── .zmetadata                   # Consolidated metadata
+├── .zattrs                          # Root format metadata + LOD shape
+├── .zmetadata                       # Consolidated metadata
 │
-├── splats/                      # Core splat data
-│   ├── centers                  # (N, d) spatially ordered
-│   ├── amplitudes               # (N,) or (1,) spatially ordered
-│   ├── cholesky_factors         # (N, k) spatially ordered
-│   ├── colors                   # (N, 3) or (1, 3) (optional)
-│   ├── chunk_bounds             # (num_chunks, d, 2)
-│   └── .zattrs                  # n_splats, ndim, ordering, ranges
+├── splats/                          # Splat data root
+│   ├── .zattrs                      # type, n_substitutive,
+│   │                                #   default_substitutive, truncation_radius
+│   └── substitutive_0/              # ... up to substitutive_<N-1>
+│       ├── .zattrs                  # n_additive_sublods, compression_factor,
+│       │                            #   parent_method, level_index, level_stats
+│       └── additive_0/              # ... up to additive_<M-1>
+│           ├── centers              # (N, d) spatially ordered
+│           ├── amplitudes           # (N,) or (1,) spatially ordered
+│           ├── cholesky_factors     # (N, k) spatially ordered
+│           ├── colors               # (N, 3) or (1, 3) (optional)
+│           ├── chunk_bounds         # (num_chunks, d, 2)
+│           └── .zattrs              # n_splats, ndim, ordering, ranges,
+│                                    #   truncation_radius, lod_stats
 │
-├── fitting/                     # Optimization info (optional)
-│   ├── .zattrs                  # time_seconds, iterations, converged
-│   └── config/.zattrs           # Fitter-specific parameters
+├── fitting/                         # Optimization info (optional)
+│   ├── .zattrs                      # time_seconds, iterations, converged
+│   └── config/.zattrs               # Fitter-specific parameters
 │
-└── provenance/                  # Image lineage (optional)
-    └── .zattrs                  # source_file, shape, normalization
+└── provenance/                      # Image lineage (optional)
+    └── .zattrs                      # source_file, shape, normalization
 ```
 
 ### Root Attributes
 
 ```json
 {
-  "format_version": "1.0",
+  "format_version": "2.0",
   "format_type": "gsplats_zarr",
   "timestamp": "2025-01-15T14:30:00Z",
   "luxar_gsplats_version": "0.1.0",
+  "n_substitutive": 1,
+  "default_substitutive": 0,
   "description": "DAPI nuclei fitting"
 }
 ```
 
-### Splats Group Attributes
+`luxar_gsplats_version` reflects the installed package version (`"unknown"`
+if it cannot be resolved). `description` is only written when supplied.
+
+### Splats Group Attributes (`/splats`)
 
 ```json
 {
+  "type": "gsplats",
+  "n_substitutive": 1,
+  "default_substitutive": 0,
+  "truncation_radius": 3.0
+}
+```
+
+### Additive Cell Attributes (`/splats/substitutive_<s>/additive_<a>`)
+
+```json
+{
+  "type": "gsplats",
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
@@ -211,7 +258,8 @@ fitted.gsplats.zarr/
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
-  }
+  },
+  "truncation_radius": 3.0
 }
 ```
 
@@ -319,16 +367,48 @@ print(f"Ordering: {info['ordering']}")
 print(f"Compression: {info['compression_ratio']}x")
 ```
 
+### Migrate a Legacy Dataset to v2.0
+
+```python
+from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
+
+# Detect the legacy shape: "v1.0", "v1.1", "substitutive_dir", or "v2.0"
+print(detect_legacy_format("legacy.gsplats.zarr"))
+
+# Convert in place to a new v2.0 file (returns the detected source format)
+migrate_format("legacy.gsplats.zarr", "v2.gsplats.zarr", overwrite=True)
+```
+
+Migration mappings:
+- **v1.0** (flat `/splats`) → v2.0 shape `[1, 1]`
+- **v1.1** (`/splats/lod_<i>/`) → v2.0 shape `[1, M]`
+- **Substitutive directory** (`level_<i>.gsplats.zarr` + `manifest.json`) →
+  v2.0 shape `[N, 1]`
+
+Migrated arrays are written with `ordering="none"` so the rewrap is a pure
+byte-equivalent re-pack; fitting/provenance groups are spliced back onto the
+output. The CLI entry point is `luxar gsplat migrate-format`.
+
 ## Architecture
 
 ### Code Organization
 
-- **`save_gsplats.py`**: Save function with validation and encoding
-- **`load_gsplats.py`**: Load function with automatic decoding
+- **`save_gsplats.py`**: Save function with validation and encoding. Writes
+  the v2.0 nested `substitutive_<s>/additive_<a>/` layout; the inner
+  `_save_splat_arrays_to_group()` helper is shared with the multi-LOD save
+  path in `GSplatData.save()`.
+- **`load_gsplats.py`**: Load function with automatic decoding. Reads the
+  v2.0 layout into `SubstitutiveLevel` / `AdditiveSubLOD` objects and raises
+  on any `format_version` other than `"2.0"`.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
+  (`inspect_gsplats_zarr`, `format_gsplats_info`).
+- **`migrate.py`**: Legacy-format migration (`migrate_format`,
+  `detect_legacy_format`). Converts v1.0 / v1.1 `.gsplats.zarr` and pre-v2.0
+  substitutive directories to v2.0. Carries the embedded v1.x reader logic so
+  the live loader stays v2.0-only.
 - **`tests/`**: Comprehensive tests
 
-**Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience.
+**Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience. `migrate.py` is not re-exported from the package `__init__`; it backs the `luxar gsplat migrate-format` CLI command.
 
 ### Dependencies
 
@@ -364,7 +444,7 @@ The package includes comprehensive tests covering:
 - Round-trip accuracy
 - Error validation
 
-**Format compliance tests**:
+**Format compliance tests** (`test_format.py`):
 - Root attributes
 - Splats group structure
 - Array shapes
@@ -372,6 +452,10 @@ The package includes comprehensive tests covering:
 - Ordering metadata
 - Fitting/provenance groups
 - Chunk bounds format
+
+**Migration tests** (`test_migrate_format.py`):
+- Legacy-format detection (v1.0, v1.1, substitutive directory)
+- Round-trip migration to v2.0 layout
 
 Run tests:
 ```bash
@@ -397,6 +481,7 @@ Compression gains from:
 
 ## Related Documentation
 
+- **Format spec (v2.0)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (2-D substitutive × additive LOD layout)
 - **Encoding system**: `../../encoding/README.md` (semantic types, quantization)
 - **Scene embedding**: `../../core/README.md` (GSplats in scene graph)
 - **Parent package**: `../README.md` (Gaussian splatting algorithms)

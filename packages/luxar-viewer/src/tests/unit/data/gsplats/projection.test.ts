@@ -806,6 +806,232 @@ describe('discrete dimension handling', () => {
   });
 });
 
+// ============================================================================
+// [P5] BOUNDARY / edge-case coverage: degenerate covariance, sign guards,
+// discrete fence-post, and Uint16 color normalization. Each assertion was
+// verified against the REAL projectGSplatsTo3D / projectGSplats3DOnly behavior
+// (the epsilon-clamp path in computeMarginalCholesky / mahalanobisDistanceReuse,
+// the `attenuatedAmplitude >= minAmplitude` filter at 1e-6, the strict `>`
+// discrete-step comparison, and the 1/65535 Uint16 normFactor).
+// ============================================================================
+
+describe('boundary / degenerate inputs', () => {
+  it('clamps NaN cholesky diagonal via the epsilon path — output amplitudes stay finite', () => {
+    // 4D splat, hidden dim 3. The full Cholesky has a NaN in the hidden-dim
+    // diagonal (L33). computeMarginalCholesky reconstructs Σ_h from L; the
+    // NaN makes `sum > CHOLESKY_EPSILON` false (NaN comparisons are false),
+    // so the diagonal is clamped to sqrt(CHOLESKY_EPSILON). The Mahalanobis
+    // distance then uses `diag > 1e-10 ? ... : 0`, again NaN-safe.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 0.1]),
+      amplitudes: new Float32Array([1.0]),
+      // identity spatial, NaN in L33 (hidden-dim diagonal)
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, NaN]),
+      colors: null,
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    // Whatever survives the filter must carry FINITE amplitudes (no NaN leak).
+    for (let i = 0; i < result.amplitudes.length; i++) {
+      expect(Number.isFinite(result.amplitudes[i])).toBe(true);
+    }
+    // 3D Cholesky factors (display dims) must also be finite.
+    for (let i = 0; i < result.choleskyFactors3D.length; i++) {
+      expect(Number.isFinite(result.choleskyFactors3D[i])).toBe(true);
+    }
+  });
+
+  it('NaN in the HIDDEN-dim diagonal keeps the surviving amplitude finite (epsilon path)', () => {
+    // Sibling of the prior NaN test, but the NaN lives only in the hidden-dim
+    // diagonal L33 used for attenuation. The marginal Σ_h reconstruction +
+    // mahalanobisDistanceReuse both gate on `diag > EPSILON / 1e-10` (false
+    // for NaN), so the attenuation — and any surviving amplitude — is finite.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 0]), // on slice in hidden dim
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, NaN]),
+      colors: null,
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1, 1, 1, 1],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    for (let i = 0; i < result.amplitudes.length; i++) {
+      expect(Number.isFinite(result.amplitudes[i])).toBe(true);
+    }
+  });
+
+  it('filters out a splat with negative input amplitude (attenuatedAmplitude < minAmplitude)', () => {
+    // The only amplitude guard is `attenuatedAmplitude >= minAmplitude`
+    // (minAmplitude = 1e-6). A negative amplitude × positive attenuation is
+    // negative, hence < 1e-6, hence dropped. Pair it with a positive splat
+    // to confirm only the positive one survives.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      amplitudes: new Float32Array([-2.0, 0.5]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
+      colors: null,
+      splatCount: 2,
+      ndim: 3,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [1, 1, 1],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1); // negative-amplitude splat dropped
+    expect(result.centers3D[0]).toBe(1); // surviving splat is the second
+    expect(result.amplitudes[0]).toBeCloseTo(0.5, 5);
+  });
+
+  it('keeps Mahalanobis attenuation finite for a near-singular (near-zero diagonal) covariance', () => {
+    // Hidden-dim diagonal L33 is below CHOLESKY_EPSILON. The reconstructed
+    // marginal Σ_h ≈ L33² ≈ 0; the Crout step clamps to sqrt(EPSILON), and
+    // mahalanobisDistanceReuse uses `diag > 1e-10 ? val/diag : 0`, so the
+    // distance — and therefore the attenuation/amplitude — stays finite.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 0.0]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1e-12]),
+      colors: null,
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0], // diff in hidden dim = 0 → mahal = 0
+      tolerance: [1, 1, 1, 1],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    // On-slice (diff 0): attenuation 1.0, fully finite.
+    expect(result.splatCount).toBe(1);
+    expect(Number.isFinite(result.amplitudes[0])).toBe(true);
+    expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
+  });
+
+  it('discrete fence-post: |diff| == step*0.5 EXACTLY is KEPT (comparison is strict >)', () => {
+    // The discrete check drops a splat only when `absDiff > step * 0.5`.
+    // At exactly step*0.5 the strict `>` is false, so the splat is KEPT.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 23.5]), // 0.5 past slice center
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
+      colors: null,
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 23.0], // |23.5 - 23.0| = 0.5 == step*0.5
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1.0 },
+      ],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1); // on the threshold → kept (strict >)
+    expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
+  });
+
+  it('discrete fence-post: just past step*0.5 (0.5 + epsilon) is DROPPED', () => {
+    // Sibling of the previous test: nudging just past the threshold flips
+    // the strict `>` to true and drops the splat. Pins the boundary on both
+    // sides so a `>` → `>=` mutation is caught.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0, 23.5001]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 0, 0, 0, 0.3]),
+      colors: null,
+      splatCount: 1,
+      ndim: 4,
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 23.0], // |23.5001 - 23| = 0.5001 > 0.5
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1.0 },
+      ],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(0); // past threshold → dropped
+  });
+
+  it('normalizes Uint16 colors so 65535 maps to ~1.0 (1/65535 normFactor)', () => {
+    // Exercises the nD path (projectGSplatsTo3D) Uint16 normFactor branch.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
+      // R=65535 (full), G=0, B=32768 (~half)
+      colors: new Uint16Array([65535, 0, 32768]),
+      splatCount: 1,
+      ndim: 3,
+    };
+    // Force the general nD path (non-standard display order) so the inlined
+    // Uint16 normFactor in projectGSplatsTo3D is exercised.
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [1, 1, 1],
+    };
+
+    const result = projectGSplatsTo3D(loaded, viewState);
+
+    expect(result.splatCount).toBe(1);
+    expect(result.colors[0]).toBeCloseTo(1.0, 5); // 65535 / 65535
+    expect(result.colors[1]).toBeCloseTo(0.0, 5);
+    expect(result.colors[2]).toBeCloseTo(0.5, 4); // 32768 / 65535 ≈ 0.50001
+  });
+
+  it('normalizes Uint16 colors in the optimized 3D-only path (65535 → ~1.0)', () => {
+    // projectGSplats3DOnly has its own Uint16 branch (1/65535). Pin it too.
+    const loaded: LoadedGSplatsData = {
+      positions: new Float32Array([0, 0, 0]),
+      amplitudes: new Float32Array([1.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
+      colors: new Uint16Array([65535, 0, 32768]),
+      splatCount: 1,
+      ndim: 3,
+    };
+
+    const result = projectGSplats3DOnly(loaded);
+
+    expect(result.colors[0]).toBeCloseTo(1.0, 5);
+    expect(result.colors[1]).toBeCloseTo(0.0, 5);
+    expect(result.colors[2]).toBeCloseTo(0.5, 4);
+  });
+});
+
 describe('createEmptyGSplatsData', () => {
   function makeAttrs(overrides: Partial<GSplatsMetadata> = {}): GSplatsMetadata {
     return {
@@ -936,7 +1162,8 @@ describe('projectGSplatsTo3D (property tests)', () => {
           }
         }
       ),
-      { numRuns: 60 }
+      // Fixed seed for reproducible CI / bisect (P6: stochastic tests must be deterministic).
+      { numRuns: 60, seed: 0x5eed }
     );
   });
 });

@@ -281,6 +281,62 @@ describe('projectLinesTo3D', () => {
   });
 });
 
+// ============================================================================
+// [P5] BOUNDARY: orphaned scalars. `projectLinesTo3D` recomputes
+// `vertexCount = floor(positions.length / ndim)`. When scalars are present
+// but `scalars.length !== vertexCount` the scalar branch is suppressed
+// (fail-closed) — the output omits startScalars/endScalars entirely. With an
+// empty positions buffer vertexCount === 0, so any non-empty scalar array is
+// an orphan and gets dropped; segmentCount is 0.
+// ============================================================================
+
+describe('projectLinesTo3D — orphaned scalars (vertexCount 0)', () => {
+  it('suppresses scalars and emits segmentCount 0 when scalars exist but there are no vertices', () => {
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array(0), // vertexCount → 0
+      segments: new Uint32Array(0),
+      widths: new Float32Array(0),
+      colors: null,
+      sharpness: null,
+      // 3 orphaned scalars with zero vertices — length mismatch (3 !== 0).
+      scalars: new Float32Array([0.1, 0.5, 0.9]),
+      segmentCount: 0,
+      vertexCount: 0,
+      ndim: 3,
+    };
+
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+
+    // Scalar projection suppressed: the optional fields are omitted (undefined).
+    expect(result.startScalars).toBeUndefined();
+    expect(result.endScalars).toBeUndefined();
+    expect(result.segmentCount).toBe(0);
+  });
+
+  it('suppresses scalars when count mismatches a non-empty vertex set (1 scalar for 2 vertices)', () => {
+    // Sibling case with real vertices to confirm the suppression is driven by
+    // the length check, not just the empty buffer. 2 vertices, 1 scalar.
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([0, 0, 0, 10, 10, 10]), // 2 vertices
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.2]),
+      colors: null,
+      sharpness: null,
+      scalars: new Float32Array([0.5]), // 1 scalar for 2 vertices → mismatch
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+
+    expect(result.startScalars).toBeUndefined();
+    expect(result.endScalars).toBeUndefined();
+    // The segment itself still renders (only the scalar branch is dropped).
+    expect(result.segmentCount).toBe(1);
+  });
+});
+
 describe('createEmptyLinesData', () => {
   function makeAttrs(overrides: Partial<LinesMetadata> = {}): LinesMetadata {
     return {

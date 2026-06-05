@@ -168,6 +168,22 @@ describe('queueNext — no pending + no refinement needed', () => {
     expect(ctx.spies.updateView).not.toHaveBeenCalled();
   });
 
+  it('treats hasMoreLODs === undefined as NOT needing refinement (strict === true)', () => {
+    // The guard is `l.hasMoreLODs === true`, so an undefined value (e.g.
+    // a loader that never set the flag) must NOT schedule refinement —
+    // the lock is released instead.
+    const loaderWithUndefined = {} as unknown as GSplatsDataLoader; // hasMoreLODs absent → undefined
+    const ctx = makeCtx({
+      gsplatLoaders: new Map<string, GSplatsDataLoader>([['/g0', loaderWithUndefined]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).not.toHaveBeenCalled();
+    expect(ctx.spies.setUpdateInProgress).toHaveBeenCalledWith(false);
+    expect(ctx.spies.updateView).not.toHaveBeenCalled();
+  });
+
   it('releases the lock when the gsplatLoaders map is empty', () => {
     const ctx = makeCtx({ gsplatLoaders: new Map() });
 

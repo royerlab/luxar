@@ -26,20 +26,25 @@ Tracks recently relocated splats using a cooldown mechanism to prevent immediate
 - `advance_step()` - Advance to next dynamic ops step
 - `get_statistics()` - Get relocation statistics
 
-### Key Functions
+### Public Functions (re-exported from `__init__.py`)
 
-- `apply_dynamic_operations()` - Main entry point: orchestrates the full relocation pipeline
-- `_find_residual_peaks()` - Find strongest residual peaks with NMS (global or tiled mode)
-- `_calculate_splat_importance()` - Compute importance = amplitude x prod(diag(L))
-- `_select_weak_splats()` - Select weak splats safe to relocate (low importance + low residual + off cooldown)
+- `apply_dynamic_operations()` - Main entry point: orchestrates the full relocation pipeline (in `operations.py`)
+- `_find_residual_peaks()` - Find strongest residual peaks with NMS (global or tiled mode; in `peak_finding.py`)
+- `_calculate_splat_importance()` - Compute importance = amplitude x prod(diag(L)) (in `operations.py`)
+- `_select_weak_splats()` - Select weak splats safe to relocate (low importance + low residual + off cooldown; in `operations.py`)
 
-### Internal Functions (exported for testing)
+### Internal Functions (module-level, imported directly from their module in tests)
 
+In `peak_finding.py`:
 - `_find_residual_peaks_global()` - Global peak finding (all regions compete)
 - `_find_residual_peaks_tiled()` - Tiled peak finding for spatial fairness
+- `_find_peaks_in_tile()` - Find up to `k_max` peaks within a single tile via NMS
 - `_separable_nd_max_pool()` - Efficient nD max pooling via separable 1D passes
+
+In `operations.py`:
 - `_compute_peak_coverage_batch()` - Vectorized coverage check for all peaks
 - `_match_weak_splats_to_peaks_batch()` - Vectorized peak-splat matching
+- `_match_weak_to_peaks_direct()` - Direct pairing: weakest splat -> highest-error peak
 - `_relocate_splats_batch()` - Batched relocation with optimizer state reset
 - `_reset_optimizer_state_batch()` - Zero out Adam momentum/variance for relocated splats
 
@@ -198,6 +203,8 @@ dynamic_ops/
 ├── operations.py       # RecentlyRelocatedTracker, apply_dynamic_operations, relocation logic
 ├── README.md           # This file
 └── tests/
+    ├── __init__.py
+    ├── README.md
     ├── test_dynamic_ops.py         # Config, peak finding, importance, relocation tests
     └── test_relocation_tracker.py  # Cooldown mechanism tests
 ```

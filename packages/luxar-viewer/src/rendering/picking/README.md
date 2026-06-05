@@ -56,7 +56,7 @@ Each geometry has one GLSL wrapper and one TSL wrapper, both implementing the sh
 | Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, parabolic profile) |
 | GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs 3σ visual), max-proj   |
 
-All three fragment shaders write `vec4(uNodeId, gl_InstanceID, brightness, 1.0)` and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
+All three fragment shaders write `vec4(vNodeId, vElementId, brightness, 1.0)` — where `vNodeId` is the `uNodeId` uniform and `vElementId = float(gl_InstanceID)`, both carried as `flat` varyings — and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
 
 `LinePickingMaterial` and `LinePickingTSLMaterial` both honour the `LUXAR_SHARPNESS_TWO` define (set by the line node-factory after inspecting per-vertex sharpness arrays) — the GLSL path recompiles on `needsUpdate`; the TSL path rebuilds its node graph via `linePickWebGPUFactory`.
 

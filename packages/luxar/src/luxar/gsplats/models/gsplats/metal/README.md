@@ -186,7 +186,11 @@ hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/test_initializat
 xcrun --find metal
 python -c "import torch; print(torch.backends.mps.is_available())"
 python -c "from luxar.gsplats.models.gsplats.metal import is_metal_available; print(is_metal_available())"
+python -c "from luxar.gsplats.models.gsplats.metal import get_metal_status; print(get_metal_status())"
 ```
+
+`get_metal_status()` returns a human-readable explanation of the current backend
+state (off-macOS, MPS-interop failure, build failure, or loaded).
 
 If `xcrun --find metal` fails, switch to the full Xcode installation:
 

@@ -365,6 +365,44 @@ class TestLinesEnergy:
         # Tube volume is identical (1 × 1 = 1). Brighter polyline wins.
         assert energy[0] > energy[1]
 
+    def test_compute_lines_energy_zero_length_segment(self):
+        """B9-M1/[P5]: a segment with coincident endpoints has zero length →
+        zero tube volume → zero energy, while a normal segment scores
+        positively. Exercises the degenerate seg-length branch."""
+        v = np.array(
+            [[0, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],  # seg 0 is zero-length
+            dtype=np.float32,
+        )
+        polylines = [
+            np.array([0, 1], dtype=np.intp),
+            np.array([2, 3], dtype=np.intp),
+        ]
+        widths = np.ones(4, dtype=np.float32)
+        energy = _compute_lines_energy(v, polylines, widths, None, None)
+        assert energy[0] == 0.0  # zero-length segment contributes no energy
+        assert energy[1] > 0.0
+
+    def test_compute_lines_energy_falls_back_to_scalars(self):
+        """B9-M2/[P5]: with no colors but per-vertex scalars present, mean
+        luminance is taken from the scalars (the elif branch), so a
+        high-scalar polyline outscores a low-scalar one of identical
+        geometry. Mirrors ``test_compute_lines_energy_with_colors``."""
+        v = np.array(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
+            dtype=np.float32,
+        )
+        polylines = [
+            np.array([0, 1], dtype=np.intp),
+            np.array([2, 3], dtype=np.intp),
+        ]
+        # widths=None too: exercises the default unit-width path alongside the
+        # scalars-luminance fallback.
+        scalars = np.array([1.0, 1.0, 0.1, 0.1], dtype=np.float32)
+        energy = _compute_lines_energy(v, polylines, None, None, scalars)
+        # Identical tube volume; the high-scalar polyline wins on luminance.
+        assert energy[0] > energy[1]
+        np.testing.assert_allclose(energy, [1.0, 0.1], rtol=1e-5)
+
     def test_make_additive_lod_lines_with_energy_breakpoints(self):
         rng = np.random.RandomState(0)
         n_segments = 40

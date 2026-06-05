@@ -1693,4 +1693,88 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(result[result.length - 1]).toBeCloseTo(100, 6);
     });
   });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // [P5] Additional boundary cases (single-element, negative bounds, log-space):
+  //   • single-element broadcast / quantized / LUT decode
+  //   • dequantization with a negative lower bound (min<0)
+  //   • log-space quantization at the index 0 and max_int boundaries
+  // ════════════════════════════════════════════════════════════════════════
+
+  describe('single-element decode (boundary)', () => {
+    it('broadcasts a single value to exactly one element', async () => {
+      // expectedElements=1 against a real broadcast fixture → result length 1
+      // (k=1 radii), equal to the single uniform value (0.5 from test data).
+      const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = await decoder.decode(array, attrs, 1);
+      expect(decoded.length).toBe(1);
+      expect(decoded[0]).toBeCloseTo(0.5, 5);
+    });
+
+    it('dequantizes a single-element quantized array', () => {
+      // One uint8 sample at the upper bound → one float at bounds[1].
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = decoder.dequantizeRange(new Uint8Array([255]), {
+        bounds: [0, 4],
+        dtype: 'uint8',
+        isLogSpace: false,
+      });
+      expect(result.length).toBe(1);
+      expect(result[0]).toBeCloseTo(4, 6);
+    });
+
+    it('decodes a single LUT scalar index', () => {
+      // One index into a one-entry scalar LUT → exactly one decoded value.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const decoded = decoder.decodeLUTIndices(new Float32Array([0]), {
+        lut: [42],
+        lutMode: 'scalar',
+        k: 1,
+      });
+      expect(decoded.length).toBe(1);
+      expect(decoded[0]).toBe(42);
+    });
+  });
+
+  describe('dequantizeRange — negative lower bound (boundary)', () => {
+    it('maps 0 → min (-1), max_int → max (1), midpoint → 0 across [-1, 1]', () => {
+      // Bounds with min<0: the affine map min + (i/max_int)*(max-min) must
+      // still hit -1 at 0, +1 at 255, and ~0 at the midpoint code.
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const result = decoder.dequantizeRange(new Uint8Array([0, 127, 128, 255]), {
+        bounds: [-1, 1],
+        dtype: 'uint8',
+        isLogSpace: false,
+      });
+      expect(result.length).toBe(4);
+      expect(result[0]).toBeCloseTo(-1, 6); // 0 → min
+      expect(result[3]).toBeCloseTo(1, 6); // 255 → max
+      // 127/255 ≈ 0.498 → ~-0.004; 128/255 ≈ 0.502 → ~0.004. The true
+      // midpoint of [0,255] is 127.5, so codes 127 and 128 straddle 0.
+      expect(result[1]).toBeCloseTo(0, 2);
+      expect(result[2]).toBeCloseTo(0, 2);
+    });
+  });
+
+  describe('decodeLogScalar via dequantizeRange — log-space boundaries', () => {
+    it('maps index 0 → ~0 and max_int → ~1000 (expm1 inverse of log1p)', () => {
+      // Log-space stores log1p(value)/max_log → uint. Decoding applies
+      // expm1(normalized * max_log). With max_log = ln(1001) ≈ 6.908755,
+      // code 0 → expm1(0) = 0 and code 255 → expm1(max_log) = 1000.
+      // (log1p(1000) = ln(1001), so the inverse round-trips to 1000.)
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      const maxLog = Math.log1p(1000); // ≈ 6.908755
+      const result = decoder.dequantizeRange(new Uint8Array([0, 255]), {
+        // dequantizeRange treats bounds[1] as max_log for log-space.
+        bounds: [0, maxLog],
+        dtype: 'uint8',
+        isLogSpace: true,
+      });
+      expect(result.length).toBe(2);
+      expect(result[0]).toBeCloseTo(0, 3); // expm1(0) = 0
+      // Log-space loses precision; check to ~2-3 sig digits relative to 1000.
+      expect(result[1]).toBeCloseTo(1000, 2);
+    });
+  });
 });

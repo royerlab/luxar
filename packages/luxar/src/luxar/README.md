@@ -28,8 +28,13 @@ Core Luxar Python package and public API exports.
 See `__init__.py` for the full public API. Primary classes:
 
 - `LuxarZarrCompiler` -- progressive Zarr writer (context manager)
-- `Scene`, `Group`, `Points`, `Lines`, `GSplats` -- scene graph nodes
+- `LuxarScene` -- reader for compiled Luxar Zarr archives
+- `Node`, `Scene`, `Group`, `Points`, `Lines`, `GSplats` -- scene graph nodes
+- `Overlay` -- screen-space text/image/HTML annotation descriptor
 - `Dimensions`, `Dimension` -- nD coordinate system definitions
 - `ViewerConfig`, `CameraConfig`, `UIConfig` -- viewer configuration
 - `transforms` -- 4x4 matrix utilities (translate, rotate, scale, compose, etc.)
+- `validate_nd_transform`, `compose_nd_transforms`, `apply_nd_transform_to_bounds` -- nD per-dimension transform helpers
 - `GSplatData`, `fit_gaussian_splats` -- Gaussian splatting (optional, requires torch)
+
+Run the CLI as a module with `python -m luxar` (`__main__.py` dispatches to `luxar.cli.app`); top-level `config.py`, `dimensions.py`, and `transforms.py` are thin compatibility re-exports.

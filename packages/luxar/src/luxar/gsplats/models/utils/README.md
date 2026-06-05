@@ -15,7 +15,9 @@ Numerically stable inverse of the softplus function using `expm1`. Used to initi
 
 ### `solve_lower_triangular(L, B)` (`lt_solver.py`)
 
-Cross-version compatible solver for lower triangular systems `L @ X = B`. Prefers `torch.linalg.solve_triangular` (PyTorch 1.9+) with fallback to `torch.triangular_solve` for older versions.
+Solver for lower triangular systems `L @ X = B` via `torch.linalg.solve_triangular(L, B, upper=False)`. Accepts unbatched `(d, d)` / `(d, P)` or batched `(N, d, d)` / `(N, d, P)` tensors. Upper-triangular elements of `L` are ignored. Commonly used for the Cholesky-parameterized covariance in the model layer (solved via forward substitution).
+
+**Apple Silicon note**: MPS has roughly 10x overhead versus CPU for this operation (PyTorch 2.5), so CPU is preferred on Apple Silicon — see the device-selection logic in the parent `gsplats` package.
 
 ## Usage
 

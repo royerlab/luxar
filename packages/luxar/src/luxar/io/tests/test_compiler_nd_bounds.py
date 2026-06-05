@@ -250,12 +250,7 @@ class TestSpatialTransformBoundsExpansion:
     def _unit_cube() -> np.ndarray:
         """8 corners of the [-0.5, 0.5]^3 cube."""
         return np.array(
-            [
-                [x, y, z]
-                for x in (-0.5, 0.5)
-                for y in (-0.5, 0.5)
-                for z in (-0.5, 0.5)
-            ],
+            [[x, y, z] for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)],
             dtype=np.float32,
         )
 

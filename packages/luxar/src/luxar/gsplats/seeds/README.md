@@ -454,6 +454,14 @@ seeds = seed_from_edges(
 
 ## Implementation Details
 
+### Amplitude Scaling
+
+All methods sample seed amplitudes from the input volume and scale them by
+`SEED_AMPLITUDE_SCALE = 0.9` (defined in `utils.py`). Starting seeds slightly
+below the target intensity avoids initial over-prediction when splats overlap,
+which would otherwise trigger the asymmetric over-prediction penalty and risk
+divergence. The optimizer raises amplitudes as needed during fitting.
+
 ### Peak Detection Algorithm
 
 The decomposition method uses `local_maxima()` for peak detection:
@@ -493,10 +501,23 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_edges.py -v
 hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seeds.py -v
 ```
 
+## Module Layout
+
+| File | Contents |
+|------|----------|
+| `generate.py` | `generate_seeds()` unified entry point and `_auto_combine()` (edges + grid) |
+| `multiscale_decomposition.py` | `seed_from_decomposition()` |
+| `grid.py` | `seed_from_grid()` |
+| `edges.py` | `seed_from_edges()`, plus shared `_compute_nd_sobel_magnitude()` and `_sample_amplitudes()` helpers |
+| `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling) |
+| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.utils.spatial_hash` |
+| `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/blur/max-pool/grid-sample) shared by the CPU/GPU dispatch paths |
+
 ## References
 
 - **Main API**: See `fit_gsplats.py` for integration with fitting pipeline
 - **Decomposition**: See `multiscale/decompose.py` for multi-scale decomposition details
+- **Performance**: See `SEEDING_PERFORMANCE_ISSUE.md` for the superlinear scaling of edge detection at high seed counts
 - **Tests**: See `tests/` for usage examples and validation
 
 ## Version History

@@ -33,6 +33,21 @@ describe('computeLoadLatency', () => {
     // The helper does no clamping — it just subtracts.
     expect(computeLoadLatency(200, 100)).toBe(-100);
   });
+
+  // [P5] non-finite boundary inputs.
+  it('returns Infinity when now is Infinity (truthy start, plain subtraction)', () => {
+    // queryStart=100 is truthy, so the helper subtracts: Infinity - 100 = Infinity.
+    expect(computeLoadLatency(100, Infinity)).toBe(Infinity);
+  });
+
+  it('returns 0 when queryStart is NaN (NaN is falsy → fallback branch)', () => {
+    // ADAPTED from the finding's guess: NaN is falsy, so `!queryStartMs` is
+    // true and the helper short-circuits to 0 — it never reaches the
+    // subtraction, so the result is 0, NOT NaN. This matches the real
+    // `start || Date.now()` falsy-fallback semantics documented in source.
+    expect(computeLoadLatency(NaN, 1000)).toBe(0);
+    expect(Number.isNaN(computeLoadLatency(NaN, 1000))).toBe(false);
+  });
 });
 
 describe('recordLoadEvent', () => {

@@ -18,10 +18,12 @@ import {
   createEmptyPointsData,
   projectPointsTo3D,
   type ProjectionContext,
+  type ProjectionTargetBuffers,
 } from '../../../../data/points/projection';
 import type { ViewState, PointRange } from '../../../../data/data-loader-types';
-import type { PointsMetadata } from '../../../../types/points';
+import type { PointsMetadata, EffectiveRadiusConfig } from '../../../../types/points';
 import type { PointsChunkIndex } from '../../../../data/points/chunk-index-loader';
+import { LoadedPointsDataAccumulator } from '../../../../data/accumulators/points';
 
 function makeAttrs(overrides: Partial<PointsMetadata> = {}): PointsMetadata {
   return {
@@ -367,6 +369,192 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
     );
     expect(result.metadata.loadedPoints).toBe(3);
     expect(result.pointCount).toBe(3);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// [P5] BOUNDARY: Uint8 radius normalization (÷255) before effective-radius use.
+//
+// Verified against the REAL source: the `/255` normalization (projection.ts
+// ~L241-262) only runs when `finalRadii instanceof Uint8Array`, which in turn
+// only happens on the targetBuffers branch where BOTH the input radii AND the
+// accumulator radii buffer are Uint8Array. The normalized radii are NOT
+// surfaced verbatim in `result.radii` (the Uint8 accumulator buffer is what
+// getData() returns), so we pin the normalization via its observable
+// CONSEQUENCE: with a hidden-dim distance large vs the *normalized* radius the
+// point's effective radius (√(R²−D²)) clamps to 0 and the point is filtered
+// out — which only happens if R was scaled 255→1.0 first. Without the ÷255
+// the un-normalized R=255 would dwarf D=100 and the point would survive.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('Uint8 radius normalization (÷255) before effective-radius use', () => {
+  function makeErConfig(overrides: Partial<EffectiveRadiusConfig> = {}): EffectiveRadiusConfig {
+    return {
+      // dims 0..2 displayed (in-plane); dim 3 is a non-displayed SPATIAL dim
+      // so shouldApplyEffectiveRadius() returns true and the Pythagorean path runs.
+      spatialExtendDims: [true, true, true, true],
+      maxRadius: 255,
+      ...overrides,
+    };
+  }
+
+  it('normalizes Uint8 radius so √(R²−D²) clamps to 0 and the far point is filtered out', () => {
+    // 1 point at dim3 = 100 (far in the hidden spatial dim), Uint8 radius 255.
+    // Normalized radius = 1.0; D = 100 → R_eff = √(1 − 10000) < 0 → 0 → filtered.
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 1);
+    // Pin radius buffer type to Uint8 by filling once with a Uint8 radius.
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0]),
+      radii: new Uint8Array([255]),
+    });
+
+    const targetBuffers: ProjectionTargetBuffers = {
+      positions3D: accumulator.getPositionBuffer(),
+      colors: accumulator.getColorBuffer(),
+      radii: accumulator.getRadiiBuffer(),
+      sharpness: accumulator.getSharpnessBuffer(),
+    };
+    expect(accumulator.getRadiiBuffer()).toBeInstanceOf(Uint8Array);
+
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 100]), // 1 point × 4 dims; dim3 = 100
+      null,
+      new Uint8Array([255]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0], // slice at dim3 = 0 → distance 100
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 1 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: makeErConfig(), accumulator }),
+      targetBuffers
+    );
+
+    // Normalized R=1.0 ≪ D=100 → effective radius 0 → point filtered out.
+    // (The all-filtered path returns createEmptyPointsData, whose metadata
+    // does not carry usedEffectiveRadius — pointCount 0 is the observable.)
+    expect(result.pointCount).toBe(0);
+  });
+
+  it('on-slice Uint8 radius (D=0) yields effective radius ≈ normalized R (1.0), point kept', () => {
+    // Same setup but the point sits ON the slice (dim3 = 0). D = 0 →
+    // R_eff = √(R²) = R = 1.0 (the normalized radius). The point survives.
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 1);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0]),
+      radii: new Uint8Array([255]),
+    });
+    const targetBuffers: ProjectionTargetBuffers = {
+      positions3D: accumulator.getPositionBuffer(),
+      colors: accumulator.getColorBuffer(),
+      radii: accumulator.getRadiiBuffer(),
+      sharpness: accumulator.getSharpnessBuffer(),
+    };
+
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 0]), // dim3 = 0 → on slice
+      null,
+      new Uint8Array([255]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 1 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: makeErConfig(), accumulator }),
+      targetBuffers
+    );
+
+    // Point survives (accumulator path returns getData(), so metadata does
+    // not carry usedEffectiveRadius — pointCount 1 is the observable).
+    expect(result.pointCount).toBe(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// [P5] BOUNDARY: multi-range projection. `projectPointsTo3D` derives the point
+// COUNT from `Σ(range.end − range.start)` and reads positions as a contiguous
+// `totalPoints × ndim` buffer (it does NOT index into positions by range
+// bounds). Pin that the per-range count sum drives the output point count and
+// that positions are projected in buffer order.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('multi-range projection', () => {
+  it('sums non-contiguous range lengths into the total count and projects all positions', () => {
+    // ranges [0,2) + [5,7) → totalPoints = 2 + 2 = 4. Positions buffer holds
+    // exactly 4 points × 3 dims, projected in order.
+    const positions = new Float32Array([
+      0,
+      0,
+      0, // pt 0
+      1,
+      1,
+      1, // pt 1
+      2,
+      2,
+      2, // pt 2
+      3,
+      3,
+      3, // pt 3
+    ]);
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      makeViewState({ displayDims: [0, 1, 2] }),
+      [
+        { start: 0, end: 2 },
+        { start: 5, end: 7 },
+      ] as PointRange[],
+      makeCtx()
+    );
+
+    expect(result.pointCount).toBe(4);
+    expect(Array.from(result.positions)).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]);
+  });
+
+  it('multi-range with non-standard displayDims projects each range point correctly', () => {
+    // 4 points × 4 dims; display dims [3, 0, 1] (out-of-order). totalPoints = 4.
+    const positions = new Float32Array([
+      10,
+      11,
+      12,
+      13, // pt 0 → (13, 10, 11)
+      20,
+      21,
+      22,
+      23, // pt 1 → (23, 20, 21)
+      30,
+      31,
+      32,
+      33, // pt 2 → (33, 30, 31)
+      40,
+      41,
+      42,
+      43, // pt 3 → (43, 40, 41)
+    ]);
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      makeViewState({
+        displayDims: [3, 0, 1],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [
+        { start: 0, end: 1 },
+        { start: 10, end: 13 },
+      ] as PointRange[], // lengths 1 + 3 = 4
+      makeCtx()
+    );
+
+    expect(result.pointCount).toBe(4);
+    expect(Array.from(result.positions)).toEqual([13, 10, 11, 23, 20, 21, 33, 30, 31, 43, 40, 41]);
   });
 });
 

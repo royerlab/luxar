@@ -61,6 +61,11 @@ class TestPoissonDiskOrder:
         r = diag / 2.0
         sel = pos[level_0]
         # All pairwise distances ≥ r among accepted samples.
+        # The 0.99 slack (1%) absorbs float32 round-off in the distance
+        # computation: positions are stored float32, so ‖sᵢ−sⱼ‖ carries up
+        # to ~1e-6 relative error — far below 1%, but the looser bound keeps
+        # the assertion robust across platforms without admitting a genuine
+        # min-distance violation.
         for i in range(len(sel)):
             for j in range(i + 1, len(sel)):
                 d = float(np.linalg.norm(sel[i] - sel[j]))

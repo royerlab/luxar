@@ -106,5 +106,9 @@ the slice position is wrong or the dataset URL is stale.
 
 - `../scripts/README.md` — build / lint / perf-diff scripts.
 - Parent `../README.md` — "AI-Assisted Debugging" section.
-- `../src/core/debug-state.ts` — defines what `window.__luxarDebug`
-  exposes.
+- `../src/core/app/debug/debug-interface.ts` — assembles the
+  `window.__luxarDebug` object (`scene`, `camera`, `renderer`,
+  `controls`, `sceneDimsManager`, `getState()`, `renderOnce()`).
+- `../src/core/app/debug/debug-state.ts` — the pure scene-walking
+  computer behind `__luxarDebug.getState()` (point / gsplat / line
+  counts + camera + dim reporting).

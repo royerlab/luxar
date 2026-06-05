@@ -90,6 +90,15 @@ class TestSahBspPartition:
         # Complete cover.
         collected = np.concatenate(parts)
         assert sorted(collected.tolist()) == list(range(300))
+        # B12/[P2]: prove the split actually happened on the LONG axis (X),
+        # not accidentally on the thin Y/Z. Every part's X-extent must be
+        # strictly narrower than the full X-extent — a split on Y or Z would
+        # leave at least one part spanning (nearly) the whole X range.
+        full_x_extent = float(pos[:, 0].max() - pos[:, 0].min())
+        part_x_extents = [float(pos[p][:, 0].max() - pos[p][:, 0].min()) for p in parts]
+        assert max(part_x_extents) < full_x_extent, (
+            "no part narrowed the X range — SAH split on the wrong axis"
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -113,7 +122,9 @@ class TestSahRuleEndToEnd:
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="partition rule"):
-                scene.add_points("pts", pos, partition=dict(max_elements=50, rule="bogus"))
+                scene.add_points(
+                    "pts", pos, partition=dict(max_elements=50, rule="bogus")
+                )
 
     def test_add_gsplats_sah_rule(self, tmp_path):
         rng = np.random.RandomState(0)

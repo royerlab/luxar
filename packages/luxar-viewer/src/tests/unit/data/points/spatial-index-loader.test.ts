@@ -231,13 +231,15 @@ describe('PointsSpatialIndexLoader', () => {
       const result = await testLoader.loadPoints(viewState);
 
       // Audit W6 fix: toBeFalsy() also matches 0, empty string, false —
-      // none of which are valid sentinels for "attribute absent". Pin
-      // the exact sentinels the loader produces (null OR undefined) by
-      // accepting both, but rejecting other falsy values.
-      expect(result.positions).toBeDefined();
-      expect(result.colors == null).toBe(true);
-      expect(result.radii == null).toBe(true);
-      expect(result.sharpness == null).toBe(true);
+      // none of which are valid sentinels for "attribute absent". Pin the
+      // exact sentinels the loader produces. On this load-all fallback
+      // path the loader leaves missing optional attributes `undefined`
+      // (the spatial-index path uses `null`); accept either nullish value
+      // but reject any other falsy value.
+      expect(result.positions).toBeInstanceOf(Float32Array);
+      expect([null, undefined]).toContain(result.colors);
+      expect([null, undefined]).toContain(result.radii);
+      expect([null, undefined]).toContain(result.sharpness);
 
       testLoader.dispose();
     });
@@ -453,8 +455,13 @@ describe('PointsSpatialIndexLoader', () => {
 
       const result = await loader.loadPoints(viewState);
 
-      // Third dimension should be filled with zeros
+      // Third dimension should be filled with zeros.
+      // [P2] Strengthen: pin the typed-array contract and that every
+      // emitted coordinate is finite (the zero-filled 3rd dim must not
+      // introduce NaN/Inf), in addition to the XYZ-block multiple-of-3.
+      expect(result.positions).toBeInstanceOf(Float32Array);
       expect(result.positions.length % 3).toBe(0);
+      expect(result.positions.every((v) => Number.isFinite(v))).toBe(true);
     });
   });
 

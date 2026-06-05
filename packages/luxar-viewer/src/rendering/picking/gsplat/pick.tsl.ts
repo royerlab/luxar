@@ -1,6 +1,6 @@
 /**
  * GSplat picking material TSL factory — NodeMaterial counterpart to
- * `GSPLAT_PICK_SOURCE` in `picking-shaders.ts`.
+ * `GSPLAT_PICK_SOURCE` in `shaders.ts`.
  *
  * Same 3D→2D covariance projection pipeline as `gsplat.tsl`, but the
  * fragment outputs picking data:
@@ -146,7 +146,7 @@ export function gsplatPickWebGPUFactory(
     .select(coverageFadeRaw.toVar(), float(1.0));
   const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
   // Use min(depthFade, coverageFade) for amplitude so picking matches
-  // GLSL picking (picking-shaders.ts:424) and visual TSL/GLSL gsplat
+  // GLSL picking (shaders.ts) and visual TSL/GLSL gsplat
   // (gsplat.tsl.ts:235, gsplat-shaders.ts:145). Multiplication was
   // strictly less than the visual path and made splats near coverage
   // limits harder to pick than they appear.
@@ -245,7 +245,7 @@ export function gsplatPickWebGPUFactory(
   const ndcZ: TSLNode = centerClip.z.div(centerClip.w);
 
   // Parity with the GLSL `invalidCov2D || isInvalidFloat(aAmplitude)`
-  // guard in picking-shaders.ts (GSPLAT_PICK_VERTEX_SHADER) and the
+  // guard in shaders.ts (GSPLAT_PICK_VERTEX_SHADER) and the
   // visual `invalidCov2D || invalidFloat(aAmplitude)` guard in
   // gsplat-shaders.ts. Without this, NaN/Inf upstream values
   // propagate through Cholesky / eigendecomposition and can make a

@@ -19,15 +19,27 @@ const pointsCtorArgs: unknown[][] = [];
 const linesCtorArgs: unknown[][] = [];
 const gsplatsCtorArgs: unknown[][] = [];
 const progressiveCtorArgs: unknown[][] = [];
+const pointsProgressiveCtorArgs: unknown[][] = [];
+const linesProgressiveCtorArgs: unknown[][] = [];
 
 vi.mock('../../../../../data/points/points-spatial-index-loader', () => ({
   PointsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     pointsCtorArgs.push(args);
   }),
 }));
+vi.mock('../../../../../data/points/points-progressive-loader', () => ({
+  PointsProgressiveLoader: vi.fn(function (...args: unknown[]) {
+    pointsProgressiveCtorArgs.push(args);
+  }),
+}));
 vi.mock('../../../../../data/lines/lines-spatial-index-loader', () => ({
   LinesSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     linesCtorArgs.push(args);
+  }),
+}));
+vi.mock('../../../../../data/lines/lines-progressive-loader', () => ({
+  LinesProgressiveLoader: vi.fn(function (...args: unknown[]) {
+    linesProgressiveCtorArgs.push(args);
   }),
 }));
 vi.mock('../../../../../data/gsplats/gsplats-spatial-index-loader', () => ({
@@ -69,6 +81,8 @@ import {
   createLinesLoader,
   createGSplatsLoader,
   createProgressiveGSplatsLoader,
+  createProgressivePointsLoader,
+  createProgressiveLinesLoader,
   type LoaderFactoryDeps,
 } from '../../../../../data/scene-loader/loaders/loader-factory';
 import type { SceneNode } from '../../../../../data/data-loader-types';
@@ -98,6 +112,8 @@ beforeEach(() => {
   linesCtorArgs.length = 0;
   gsplatsCtorArgs.length = 0;
   progressiveCtorArgs.length = 0;
+  pointsProgressiveCtorArgs.length = 0;
+  linesProgressiveCtorArgs.length = 0;
   zarrOpenMock.mockClear();
 });
 
@@ -188,5 +204,115 @@ describe('createProgressiveGSplatsLoader', () => {
     expect(lodNode.attrs.extend_to_all).toEqual(['t']);
     // Plus the per-additive-sub-LOD raw zarr attrs (foo from our mock).
     expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
+  });
+});
+
+// Symmetry mirror of the gsplats progressive tests for Points + Lines.
+// All three factories share the same shape: open N additive_<i>
+// subgroups, build one spatial-index loader per sub-LOD, then wrap them
+// in the geometry's progressive loader with (loaders, nAdditive, path).
+describe('createProgressivePointsLoader', () => {
+  it('opens N additive sub-LOD subgroups and constructs N PointsSpatialIndexLoaders', async () => {
+    const node = makeNode('/p', 'points');
+    const parentEffectiveAttrs = {
+      opacity: 0.5,
+      gamma: 1.2,
+      intensity: 0.8,
+      offset: 0.0,
+      blending_mode: 'add',
+    } as SceneNode['attrs'];
+
+    await createProgressivePointsLoader(node, 3, parentEffectiveAttrs, makeDeps());
+
+    expect(zarrOpenMock).toHaveBeenCalledTimes(3);
+    expect(pointsCtorArgs).toHaveLength(3);
+    expect(pointsProgressiveCtorArgs).toHaveLength(1);
+    // Progressive wrapper args: (lodLoaders, nAdditive, node.path).
+    expect(pointsProgressiveCtorArgs[0][1]).toBe(3);
+    expect(pointsProgressiveCtorArgs[0][2]).toBe('/p');
+  });
+
+  it('synthesizes additive sub-LOD nodes that inherit parent effective rendering attrs', async () => {
+    const node = makeNode('/p', 'points');
+    node.attrs = { extend_to_all: ['t'] };
+    const parentEffectiveAttrs = {
+      opacity: 0.7,
+      gamma: 1.5,
+      intensity: 1.1,
+      offset: 0.05,
+      blending_mode: 'normal',
+    } as SceneNode['attrs'];
+
+    await createProgressivePointsLoader(node, 1, parentEffectiveAttrs, makeDeps());
+
+    // Constructor signature: (loc, node, registry, store, profiler?, l0?, prefetcher?)
+    const lodNode = pointsCtorArgs[0][1] as SceneNode;
+    expect(lodNode.path).toBe('/p/additive_0');
+    expect(lodNode.type).toBe('points');
+    expect(lodNode.attrs.opacity).toBe(0.7);
+    expect(lodNode.attrs.gamma).toBe(1.5);
+    expect(lodNode.attrs.intensity).toBe(1.1);
+    expect(lodNode.attrs.offset).toBe(0.05);
+    expect(lodNode.attrs.blending_mode).toBe('normal');
+    expect(lodNode.attrs.extend_to_all).toEqual(['t']);
+    expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
+    // Registry + store threaded through to each sub-LOD loader.
+    const deps = makeDeps();
+    pointsCtorArgs.length = 0;
+    await createProgressivePointsLoader(node, 1, parentEffectiveAttrs, deps);
+    expect(pointsCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
+    expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);
+  });
+});
+
+describe('createProgressiveLinesLoader', () => {
+  it('opens N additive sub-LOD subgroups and constructs N LinesSpatialIndexLoaders', async () => {
+    const node = makeNode('/l', 'lines');
+    const parentEffectiveAttrs = {
+      opacity: 0.5,
+      gamma: 1.2,
+      intensity: 0.8,
+      offset: 0.0,
+      blending_mode: 'add',
+    } as SceneNode['attrs'];
+
+    await createProgressiveLinesLoader(node, 3, parentEffectiveAttrs, makeDeps());
+
+    expect(zarrOpenMock).toHaveBeenCalledTimes(3);
+    expect(linesCtorArgs).toHaveLength(3);
+    expect(linesProgressiveCtorArgs).toHaveLength(1);
+    // Progressive wrapper args: (lodLoaders, nAdditive, node.path).
+    expect(linesProgressiveCtorArgs[0][1]).toBe(3);
+    expect(linesProgressiveCtorArgs[0][2]).toBe('/l');
+  });
+
+  it('synthesizes additive sub-LOD nodes that inherit parent effective rendering attrs', async () => {
+    const node = makeNode('/l', 'lines');
+    node.attrs = { extend_to_all: ['t'] };
+    const parentEffectiveAttrs = {
+      opacity: 0.7,
+      gamma: 1.5,
+      intensity: 1.1,
+      offset: 0.05,
+      blending_mode: 'normal',
+    } as SceneNode['attrs'];
+
+    await createProgressiveLinesLoader(node, 1, parentEffectiveAttrs, makeDeps());
+
+    const lodNode = linesCtorArgs[0][1] as SceneNode;
+    expect(lodNode.path).toBe('/l/additive_0');
+    expect(lodNode.type).toBe('lines');
+    expect(lodNode.attrs.opacity).toBe(0.7);
+    expect(lodNode.attrs.gamma).toBe(1.5);
+    expect(lodNode.attrs.intensity).toBe(1.1);
+    expect(lodNode.attrs.offset).toBe(0.05);
+    expect(lodNode.attrs.blending_mode).toBe('normal');
+    expect(lodNode.attrs.extend_to_all).toEqual(['t']);
+    expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
+    const deps = makeDeps();
+    linesCtorArgs.length = 0;
+    await createProgressiveLinesLoader(node, 1, parentEffectiveAttrs, deps);
+    expect(linesCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
+    expect(linesCtorArgs[0][3]).toBe(deps.zarrStore);
   });
 });
