@@ -1,7 +1,7 @@
 /**
  * GLSL3 picking shader source for points + `ShaderSource` record.
  *
- * Mirrors the visual point shader in `rendering/shaders/point-shaders.ts`
+ * Mirrors the visual point shader in `rendering/materials/point/shader-glsl.ts`
  * with three picking-specific additions:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
  *     into the RGBA32F pick buffer as `(nodeId, elementId, brightness, 1)`.
@@ -52,7 +52,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vElementId;
 
     void main() {
-      // Mirror visual point shader sanitization (point-shaders.ts:69)
+      // Mirror visual point shader sanitization (shader-glsl.ts)
       // so a NaN/Inf sharpness or negative radius can't cause the pick
       // footprint to diverge from the visible footprint.
       float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
@@ -79,7 +79,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       float pointSize = basePointSize * sharpnessCompensation * 0.8;
       pointSize = max(1.0, min(pointSize, maxPointSize));
 
-      // Instanced quad expansion (matches point-shaders.ts approach).
+      // Instanced quad expansion (matches shader-glsl.ts approach).
       vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w;
       gl_Position = projCenter + vec4(offsetClip, 0.0, 0.0);
 

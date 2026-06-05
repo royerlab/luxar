@@ -51,7 +51,7 @@ export function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode 
  * backends, so we approximate via the finite-range test that
  * `sanitizePositive` already uses: any value outside (-1e30, 1e30) is
  * treated as non-finite. The same pattern is used by the visual
- * point.tsl.ts sharpness-compensation guard.
+ * point/shader-tsl.ts sharpness-compensation guard.
  */
 export function invalidFloatTSL(value: TSLNode): TSLNode {
   return value.lessThan(1e30).and(value.greaterThan(-1e30)).not();

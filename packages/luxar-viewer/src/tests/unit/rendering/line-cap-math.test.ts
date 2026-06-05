@@ -19,7 +19,7 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * Mirror of the fragment-shader cap formula in `line-shaders.ts`.
+ * Mirror of the fragment-shader cap formula in `materials/line/shader-glsl.ts`.
  * Returns the cap factor at parametric position `t ∈ [0,1]`.
  */
 function capFactor(

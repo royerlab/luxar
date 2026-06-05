@@ -147,7 +147,7 @@ export function gsplatPickWebGPUFactory(
   const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
   // Use min(depthFade, coverageFade) for amplitude so picking matches
   // GLSL picking (shaders.ts) and visual TSL/GLSL gsplat
-  // (gsplat.tsl.ts:235, gsplat-shaders.ts:145). Multiplication was
+  // (shader-tsl.ts, shader-glsl.ts). Multiplication was
   // strictly less than the visual path and made splats near coverage
   // limits harder to pick than they appear.
   const nearFade: TSLNode = min(depthFade, coverageFade);
@@ -247,7 +247,7 @@ export function gsplatPickWebGPUFactory(
   // Parity with the GLSL `invalidCov2D || isInvalidFloat(aAmplitude)`
   // guard in shaders.ts (GSPLAT_PICK_VERTEX_SHADER) and the
   // visual `invalidCov2D || invalidFloat(aAmplitude)` guard in
-  // gsplat-shaders.ts. Without this, NaN/Inf upstream values
+  // shader-glsl.ts. Without this, NaN/Inf upstream values
   // propagate through Cholesky / eigendecomposition and can make a
   // splat unpickable in unpredictable ways.
   const invalidAmp: TSLNode = invalidFloatTSL(aAmplitude);
