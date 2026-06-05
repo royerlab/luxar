@@ -124,7 +124,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         rawPixelWidth = width * uOrthoLineScale;
       } else {
         // View-space depth: drops a sqrt, more projection-correct.
-        // Visual-shader parity — see line-shaders.ts.
+        // Visual-shader parity — see shader-glsl.ts.
         float dist = max(-mvPos.z, nearCull);
         rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
@@ -198,7 +198,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // Full width — lines are already narrow, no need for tighter truncation
       if (p >= 1.0) discard;
 
-      // Sharpness fast path — visual-shader parity. See line-shaders.ts.
+      // Sharpness fast path — visual-shader parity. See shader-glsl.ts.
       float oneMinusPSq = max(1.0 - p * p, 0.0);
       #ifdef LUXAR_SHARPNESS_TWO
       float perpFalloff = oneMinusPSq * oneMinusPSq;

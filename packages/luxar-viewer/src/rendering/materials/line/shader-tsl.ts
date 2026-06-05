@@ -1,6 +1,6 @@
 /**
  * Line material TSL factory — NodeMaterial counterpart to the GLSL3
- * shaders in `shaders/line-shaders.ts`.
+ * shaders in `shader-glsl.ts`.
  *
  * Renders each line segment as a screen-space-thick instanced quad.
  * Per-vertex `aQuadCorner` (±1) determines:
@@ -440,7 +440,7 @@ export function lineWebGPUFactory(
 /**
  * Build a `LineTSLNodes` set from a plain `IUniform` record. Used by
  * the test harness and the `LINE_SOURCE` ShaderSource factory in
- * `shaders/line-shaders.ts` — callers that don't own persistent
+ * `shader-glsl.ts` — callers that don't own persistent
  * wrapper-side `UniformNode`s. Mirrors
  * `buildLinePickTSLNodesFromUniforms`.
  *
