@@ -3,7 +3,7 @@ CUDA Backend for Gaussian Splatting.
 
 This module provides GPU-accelerated Gaussian splatting for NVIDIA GPUs
 using custom CUDA kernels. It supports 2D-8D volumetric rendering with
-tile-based rasterization and optimized gradient computation.
+splat-centric rasterization and optimized gradient computation.
 
 When the CUDA backend is not compiled, it falls back to the PyTorch
 reference implementation transparently.

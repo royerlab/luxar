@@ -232,7 +232,11 @@ dependencies = [
     "pytest-cov>=4.1.0",
     # GSplats dependencies
     "scipy>=1.9.0",
-    "torch>=2.2.0"
+    "torch>=2.2.0",
+    # Image-overlay encoding (test_overlays.py::TestAddImage). Pillow is
+    # otherwise only in the default env, so the image tests fail across the
+    # test matrix without it.
+    "Pillow>=9.0.0"
 ]
 
 [[tool.hatch.envs.test.matrix]]

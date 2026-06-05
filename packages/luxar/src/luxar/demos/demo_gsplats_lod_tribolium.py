@@ -124,6 +124,7 @@ def auto_levels(n_base: int, k: int = COMPRESSION_FACTOR) -> int:
         levels += 1
     return max(1, levels)
 
+
 # Color ramp anchors (finest → coarsest), RGB floats in [0, 1].
 # Coarse → warm/red so a coarse level (few big splats, seen zoomed out)
 # reads as "alarm"; fine → green. Matches gsplats_lod_example.py.
@@ -220,9 +221,7 @@ def build_lod_ladder(base: GSplatData) -> GSplatData:
     """Center, scale, and build the substitutive LOD ladder from base splats."""
     # Center at intensity-weighted centroid + dim the amplitudes, BEFORE building
     # the ladder so every synthesized level inherits consistent coords/intensity.
-    base = base.translate(
-        -base.centers.T @ base.amplitudes / base.amplitudes.sum()
-    )
+    base = base.translate(-base.centers.T @ base.amplitudes / base.amplitudes.sum())
     base = base.scale_intensity(0.1)
 
     n_base = len(base.amplitudes)
@@ -234,7 +233,9 @@ def build_lod_ladder(base: GSplatData) -> GSplatData:
     ):
         aprint(f"Base splats: {n_base:,}")
         if LEVELS is None:
-            aprint(f"Auto levels: {n_levels} (coarsest ≈ {n_base // COMPRESSION_FACTOR**n_levels} splats)")
+            aprint(
+                f"Auto levels: {n_levels} (coarsest ≈ {n_base // COMPRESSION_FACTOR**n_levels} splats)"
+            )
         aprint(f"Device: {device}")
         ladder = make_substitutive_lod(
             base,
@@ -273,7 +274,9 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            scene.attrs["title"] = "GSplats: Adaptive Level of Detail — Tribolium Embryo"
+            scene.attrs["title"] = (
+                "GSplats: Adaptive Level of Detail — Tribolium Embryo"
+            )
             scene.attrs["description"] = """
 Adaptive Level of Detail — Tribolium castaneum Embryo (Light-Sheet)
 ===================================================================
