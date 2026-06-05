@@ -22,6 +22,14 @@ describe('OnceInit', () => {
 
     expect(initFn).toHaveBeenCalledTimes(1);
     expect(o.isInitialized).toBe(true);
+
+    // Once initialized, a LATER ensure() with a DIFFERENT fn is a no-op:
+    // the cached (resolved) promise is reused, so the new fn never runs and
+    // the original fn is not called again.
+    const differentFn = vi.fn().mockResolvedValue(undefined);
+    await o.ensure(differentFn);
+    expect(initFn).toHaveBeenCalledTimes(1);
+    expect(differentFn).not.toHaveBeenCalled();
   });
 
   it('shares the in-flight promise across concurrent callers', async () => {

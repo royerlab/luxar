@@ -70,6 +70,12 @@ describe('invalidateRenderObjectFor', () => {
     ).toBeUndefined();
   });
 
+  // NOTE: null/undefined `mesh.material` is not tested — `THREE.Mesh.material`
+  // is typed `Material | Material[]` (never null), and every call site
+  // (commit-{points,lines,gsplats}-geometry) passes a NodeFactory-built mesh
+  // that always has a real material. A null material is a type-impossible
+  // state, so there is no behavioral contract to pin here.
+
   it('dispatches "dispose" on every entry when the mesh uses a material array', () => {
     const m1 = new THREE.MeshBasicMaterial();
     const m2 = new THREE.MeshBasicMaterial();

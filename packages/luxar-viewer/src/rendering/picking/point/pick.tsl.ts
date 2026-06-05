@@ -1,6 +1,6 @@
 /**
  * Point picking material TSL factory — NodeMaterial counterpart to
- * the GLSL3 picking shader in `picking-shaders.ts::POINT_PICK_SOURCE`.
+ * the GLSL3 picking shader in `shaders.ts::POINT_PICK_SOURCE`.
  *
  * Renders one tight sprite per point with output:
  *   - R: nodeId (set as uniform)

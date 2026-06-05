@@ -68,8 +68,20 @@ describe('commitPointsGeometry', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');
     root.add(points);
-    commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory);
+    const oldGeom = points.geometry;
+    const disposeSpy = vi.spyOn(oldGeom, 'dispose');
+    // C8[P2][P11]: a mutant dropping the GPU geometry rebuild would still pass
+    // the userData write below. The pool-disabled path with pointCount=0 vs an
+    // existing 0-count geometry takes the dispose+recreate branch (the in-place
+    // branch requires pointCount > 0). Pin the actual dispatch AND assert no crash.
+    expect(() =>
+      commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory)
+    ).not.toThrow();
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(0);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
+    // The rebuilt geometry replaces the old slot.
+    expect(points.geometry).not.toBe(oldGeom);
   });
 
   it('uses GPU buffer pool when supplied', () => {

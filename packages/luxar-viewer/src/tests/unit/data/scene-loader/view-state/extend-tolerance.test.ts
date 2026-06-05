@@ -121,6 +121,31 @@ describe('getOrComputeExtendedTolerance', () => {
     expect(result).not.toBe(base);
     expect(result).toEqual(base);
   });
+
+  it('passes through a NaN baseTolerance value at a non-extended index', () => {
+    // dim 'time' (index 0) gets extended; index 1 holds NaN and must
+    // survive the copy untouched (no normalization / coercion).
+    const result = getOrComputeExtendedTolerance([0.1, NaN, 0.1], ['time'], dims, new Map());
+    expect(result[0]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    expect(Number.isNaN(result[1])).toBe(true);
+    expect(result[2]).toBe(0.1);
+  });
+
+  it('passes through an Infinity baseTolerance value at a non-extended index', () => {
+    const result = getOrComputeExtendedTolerance([0.1, Infinity, 0.1], ['time'], dims, new Map());
+    expect(result[0]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    expect(result[1]).toBe(Infinity);
+    expect(result[2]).toBe(0.1);
+  });
+
+  it('preserves a negative baseTolerance value (no clamping)', () => {
+    const result = getOrComputeExtendedTolerance([-5, 0.1, 0.1], ['time'], dims, new Map());
+    // Index 0 is the extended dim, so it becomes EXTEND_TO_ALL regardless.
+    expect(result[0]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    // A negative at a NON-extended index is preserved as-is.
+    const noExtend = getOrComputeExtendedTolerance([-5, 0.1, 0.1], [], dims, new Map());
+    expect(noExtend[0]).toBe(-5);
+  });
 });
 
 describe('isSceneDimensions', () => {

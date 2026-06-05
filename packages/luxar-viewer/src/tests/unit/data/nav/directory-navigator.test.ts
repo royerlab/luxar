@@ -52,6 +52,31 @@ describe('DirectoryNavigator', () => {
       expect(result.entries).toEqual([]);
     });
 
+    // BOUNDARY [P5]: a 404 on the `.zgroup` HEAD probe must NOT be treated as
+    // a zarr store — `checkIfZarr` returns `response.ok`, so the navigator
+    // falls through to the next strategy (here, all fail → 'manual').
+    it('should NOT classify a 404 .zgroup probe as a zarr store', async () => {
+      // .zgroup HEAD → 404
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+      // WebDAV fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // HTML (JSON attempt) fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // HTML fetch fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // Index file fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+
+      const result = await navigator.navigate('not-a-zarr');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:8000/not-a-zarr.zgroup',
+        expect.objectContaining({ method: 'HEAD' })
+      );
+      expect(result.isZarr).toBe(false);
+      expect(result.strategy).toBe('manual');
+    });
+
     it('should handle non-zarr directories', async () => {
       // Mock failed HEAD request for .zgroup
       mockFetch.mockResolvedValueOnce({
@@ -115,6 +140,52 @@ describe('DirectoryNavigator', () => {
   });
 
   describe('HTML Directory Listing', () => {
+    // BOUNDARY [P5]: the suite previously only tested the FAILURE path for
+    // HTML. This exercises the real DOMParser-backed happy path: an
+    // nginx-style `<pre><a href="...">` listing. jsdom provides DOMParser,
+    // so the source's `doc.querySelectorAll('pre a')` branch runs for real.
+    it('should parse an nginx-style <pre><a href> HTML directory listing', async () => {
+      // Zarr check fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // WebDAV fails
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      // JSON attempt: ok but non-JSON content-type → falls through to HTML
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'text/html' },
+      });
+      // HTML fetch returns an nginx-style autoindex page
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          `<html><head><title>Index of /listing/</title></head><body>
+<h1>Index of /listing/</h1><pre>
+<a href="../">../</a>
+<a href="data.zarr/">data.zarr/</a>           01-Jan-2024 12:00       -
+<a href="subdir/">subdir/</a>                 01-Jan-2024 12:00       -
+<a href="readme.txt">readme.txt</a>           01-Jan-2024 12:00     100
+</pre></body></html>`,
+      });
+
+      const result = await navigator.navigate('listing');
+
+      expect(result.strategy).toBe('html');
+      // The ".." parent link is filtered out by the source.
+      expect(result.entries).toHaveLength(3);
+
+      const byName = Object.fromEntries(result.entries.map((e) => [e.name, e]));
+      // Trailing-slash dir whose name ends with .zarr → classified as 'zarr'.
+      expect(byName['data.zarr']).toEqual({
+        name: 'data.zarr',
+        path: 'listing/data.zarr',
+        type: 'zarr',
+      });
+      // Trailing-slash dir → 'directory'.
+      expect(byName['subdir'].type).toBe('directory');
+      // No trailing slash → 'file'.
+      expect(byName['readme.txt'].type).toBe('file');
+    });
+
     it('should handle HTML parsing fallback', async () => {
       // Zarr check fails
       mockFetch.mockResolvedValueOnce({ ok: false });

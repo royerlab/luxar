@@ -50,26 +50,27 @@ export function runAtomicCommit(
   gsplatsStaged: AtomicCommitInput<StagedGSplatsCommit>[],
   ctx: AtomicCommitCtx
 ): void {
-  // Advance GPU buffer pool frame counter once per update cycle
-  // (not per-acquire) so eviction timing reflects actual frames
-  if (ctx.gpuBufferPool) {
-    ctx.gpuBufferPool.beginFrame();
-  }
-
   // Commits run inside each per-node session so the GPU-upload step
   // ("Update Buffers") shows up under Points/Lines/GSplats in the
   // Performance tab. Always end the session afterwards — including
   // the staged === null case (loader failed or marked skipped) so
   // every opened session is closed exactly once.
   //
-  // Belt-and-braces: if a commit throws synchronously, the
-  // remaining iterations and the later geometry-type loops never
-  // run, leaving their sessions un-ended. The outer `finally`
-  // sweeps every staged session afterwards. `SessionImpl.end()`
-  // is idempotent (no-ops on already-ended sessions), so this is
-  // safe to overlay on the per-iteration end() calls that record
-  // accurate per-node timings on the happy path.
+  // Belt-and-braces: if a commit (or beginFrame) throws synchronously,
+  // the remaining iterations and the later geometry-type loops never
+  // run, leaving their sessions un-ended. The outer `finally` sweeps
+  // every staged session afterwards. `SessionImpl.end()` is idempotent
+  // (no-ops on already-ended sessions), so this is safe to overlay on
+  // the per-iteration end() calls that record accurate per-node timings
+  // on the happy path. beginFrame() is inside the try so a future
+  // throwing implementation can't leak the already-opened sessions.
   try {
+    // Advance GPU buffer pool frame counter once per update cycle
+    // (not per-acquire) so eviction timing reflects actual frames.
+    if (ctx.gpuBufferPool) {
+      ctx.gpuBufferPool.beginFrame();
+    }
+
     for (const { staged, session } of pointsStaged) {
       try {
         if (staged) ctx.updatePointsGeometry(staged.path, staged.data, session);
