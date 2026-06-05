@@ -23,7 +23,7 @@ spatial-index/
 - `slicePosition: Float32Array` — current nD slice center.
 - `tolerance: Float32Array` — per-dimension half-extent of the query
   hyperbox (effectively infinite on displayed dims; geometry-aware on
-  hidden dims — see `data/loaders/tolerance-computer.ts`).
+  hidden dims — see `data/loaders/spatial-query/tolerance-computer.ts`).
 - `numChunks: number`, `ndim: number`.
 
 Returns a `Uint32Array` of matching chunk indices (a subarray view into
@@ -50,5 +50,3 @@ worker entry (`data-worker.ts`) guarantees this ordering via Comlink.
   `slicePosition` / `tolerance` arrays consumed here.
 - [../state.ts](../state.ts) — `WasmCtx` definition and `requireWasm`.
 - [../validation.ts](../validation.ts) — boundary checks.
-  </content>
-  </invoke>

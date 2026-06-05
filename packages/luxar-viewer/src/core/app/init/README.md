@@ -38,29 +38,38 @@ runInitPipeline(ports, partial)
 ├── 6. PerformanceMonitor     subscribes to controller's per-frame bus
 ├── 7. DebugConsole
 ├── 8. Per-frame callback     'dynamic-clipping' → updateDynamicClippingPlanes
-├── 9. AdaptiveDPRManager     wired to sceneManager + controller
-├── 10. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
+├── 9. LOD-group wiring        SceneLoaderManager.setLODGroupRegistryFactory
+│                              (→ new LODGroupRegistry closing over live
+│                              sceneManager: camera, viewport, displayDims via
+│                              sceneDimsManager, byte budget via
+│                              getGpuByteBudget, resident bytes via
+│                              getSceneLoader('default').gpuBufferPool); then a
+│                              'lod-group-selector' per-frame callback that
+│                              calls evaluatePerFrame() on the current default
+│                              loader and refreshVisibleCounts() on a swap
+├── 10. AdaptiveDPRManager    wired to sceneManager + controller
+├── 11. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
 │                              on DPR change callback
-├── 11. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
+├── 12. WebGL/WebGPU loss     webgl-context-restored → NodeFactory
 │      listeners              .rebuildAfterContextRestore on loaded scene;
 │                              webgpu-device-lost → notifier.error
 │                              ("reload to continue"). Both tracked via
 │                              ports.events for dispose.
-├── 12. SceneLoaderManager    setMonitorFactory(monitorId → DataMonitor
+├── 13. SceneLoaderManager    setMonitorFactory(monitorId → DataMonitor
 │      monitor injection      Manager.getInstance() lookup/create) so
 │                              data/ never imports ui/
-├── 13. InputHandler          new + init(); DimensionSliders factory
+├── 14. InputHandler          new + init(); DimensionSliders factory
 │                              injected so input/ never imports ui/
-├── 14. RenderingControls     factories.renderingControls; cross-link
+├── 15. RenderingControls     factories.renderingControls; cross-link
 │                              ↔ AnimationController, AdaptiveDPRManager,
 │                              InputHandler
-├── 15. RecordingPanel        factories.recordingPanel; setPanelState
+├── 16. RecordingPanel        factories.recordingPanel; setPanelState
 │                              Callbacks(ports.get/restorePanelVisibility);
 │                              setAdaptiveDPRManager; setRecordingPanel
 │                              on input handler
-├── 16. LayersPanel           factories.layersPanel(document.body, ctrl);
+├── 17. LayersPanel           factories.layersPanel(document.body, ctrl);
 │                              setLayersPanel on input handler
-└── 17. animationController.startAnimation()   render background first,
+└── 18. animationController.startAnimation()   render background first,
                                                before any dataset load
 ```
 

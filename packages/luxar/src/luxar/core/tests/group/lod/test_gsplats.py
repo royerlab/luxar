@@ -8,7 +8,7 @@ Covers ``resolve_substitutive_axis_gsplats`` (the ``lod_group=`` kwarg) and
 The geometry-agnostic kind=lod ``Group`` machinery (builder, validation,
 ``derive_min_pixel_sizes``, display-type resolution) is exercised in
 ``test_lod_group.py``. End-to-end ``add_gsplats_from_data(lod_group=...)``
-round-trips live in ``luxar.core.tests.test_group``.
+round-trips live in ``luxar.core.tests.group.test_group``.
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ def flat() -> GSplatData:
 @pytest.fixture(scope="module")
 def pyramid() -> GSplatData:
     """A multi-substitutive pyramid (n_substitutive > 1) for stored-path tests."""
-    return make_substitutive_lod(_make_random_gsplat(n=64, seed=1), levels=2, device="cpu")
+    return make_substitutive_lod(
+        _make_random_gsplat(n=64, seed=1), levels=2, device="cpu"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -92,7 +94,9 @@ class TestResolveSubstitutiveAxisGsplats:
             )
 
     def test_dict_base_pixel_size(self, pyramid) -> None:
-        _, _, bps = resolve_substitutive_axis_gsplats(pyramid, {"base_pixel_size": 25.0})
+        _, _, bps = resolve_substitutive_axis_gsplats(
+            pyramid, {"base_pixel_size": 25.0}
+        )
         assert bps == 25.0
 
     def test_dict_base_pixel_size_non_positive_raises(self, pyramid) -> None:
@@ -153,3 +157,12 @@ class TestResolveAdditiveAxisGsplats:
     def test_invalid_spec_type_raises(self, flat) -> None:
         with pytest.raises(TypeError, match="None, bool, or dict"):
             resolve_additive_axis_gsplats(flat, 1.5)  # type: ignore[arg-type]
+
+    def test_spatial_method_rejected(self, flat) -> None:
+        """B8-G3/[P8]: documents the deliberate cross-geometry asymmetry —
+        unlike Points/Lines (which order additive LODs spatially and accept
+        ``method='poisson-disk'``/``'spatial-uniform'``), the GSplats additive
+        ladder is energy/greedy-based. A spatial method name is forwarded to
+        ``make_additive_lod`` and rejected, rather than silently ignored."""
+        with pytest.raises(ValueError, match="method must be one of"):
+            resolve_additive_axis_gsplats(flat, {"method": "poisson-disk"})

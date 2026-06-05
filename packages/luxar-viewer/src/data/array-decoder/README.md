@@ -94,7 +94,7 @@ spatial-index loaders, and `RangeLoader`) don't import the full
 
 ## Range-Loader Hooks
 
-The `loaders/range-loader.ts` path needs to decode a _slice_ of a
+The `loaders/spatial-query/range-loader.ts` path needs to decode a _slice_ of a
 quantized or LUT array without loading the whole thing. Three static /
 instance helpers on `ArrayDecoder` support that:
 
@@ -124,7 +124,7 @@ part of the public `data/` API.
 
 ## See Also
 
-- [../loaders/README.md](../loaders/README.md) — `range-loader.ts`
-  consumes the range-decode helpers above.
+- [../loaders/README.md](../loaders/README.md) —
+  `spatial-query/range-loader.ts` consumes the range-decode helpers above.
 - `packages/luxar/src/luxar/encoding/README.md` — Python encoder spec
   that this module mirrors.

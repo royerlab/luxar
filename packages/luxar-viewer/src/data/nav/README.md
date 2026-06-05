@@ -83,7 +83,7 @@ Each probe is wrapped in a 10-second `AbortController`
 - `data/index.ts` — re-exports the class and types.
 - `ui/dataset-browser.ts` — constructs one navigator per browser
   session, driven by the URL bar and breadcrumb controls.
-- `tests/unit/architecture/directory-navigator.test.ts` and
+- `tests/unit/data/nav/directory-navigator.test.ts` and
   `tests/unit/ui/dataset-browser.test.ts` — unit coverage, mock
   `fetch` per strategy.
 

@@ -4,18 +4,42 @@ Napari-inspired per-layer control panel for Luxar scenes.
 
 ## Overview
 
-The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Each layer provides:
+The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
 
 - **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
 - **Display range** [min, max] — maps to shader intensity/offset uniforms
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, normal, max, opaque, luminous)
-- **Colormap** (for gsplats and scalar-backed points/lines)
+- **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
+- **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
 Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
+
+### Specialized groups (LOD / partition)
+
+`group` nodes carrying a `kind` attr of `'lod'` or `'partition'` are surfaced
+specially (see `LayerKind` in `layer-state.ts`):
+
+- They render under their resolved `display_type` attr (one of `points` /
+  `lines` / `gsplats`), never as `group`.
+- A `kind=lod` layer gets a **`N LODs`** badge and an inline **Active level**
+  dropdown. Selecting a level calls `LODGroupRegistry.setSelectorMode(path, …)`
+  with either `'auto'` or `{ lockLevel: i }`; the status span shows the
+  currently-rendering child index (`rendering: i`).
+- A `kind=partition` layer gets a **`N parts`** badge. When it wraps nested
+  `lod_group` descendants, the badge combines counts as **`N parts × M LODs`**
+  (M = max child count across the nested ladders) and the Active-level dropdown
+  broadcasts the chosen mode to every nested `lod_group` path (clamped per-group
+  by `setSelectorMode` on ragged ladders).
+
+The LOD registry is looked up lazily via
+`SceneLoaderManager.getInstance().getDefaultLoader()?.lodGroupRegistry` so the
+panel doesn't import `scene/` directly (respecting the data → ui layer
+direction). Locking a level wakes the animation loop (`requestRender`) so the
+new active level paints even when the camera and slice are idle.
 
 ## Usage
 
@@ -41,7 +65,7 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 - **Arrow Up / Arrow Down** move the keyboard focus through rows (and select on simple navigation)
 - **Enter / Space** select the focused row (honouring Ctrl/Cmd/Shift modifiers)
 - The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
-- Controls below the list apply to all selected layers
+- Controls below the list (display range, gamma, opacity, blend, colormap) apply to all selected layers; the colormap and **Active level** controls auto-hide when the primary selected layer doesn't support them
 
 ## Architecture
 

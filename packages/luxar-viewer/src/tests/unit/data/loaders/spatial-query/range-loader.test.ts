@@ -480,6 +480,30 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     expect(output[2]).toBeCloseTo(1.0, 5);
   });
 
+  it('dequantizes a non-symmetric interior uint8 value (64) with bounds [0, 1]', async () => {
+    // Non-symmetric interior point: kills an inverted dequant formula
+    // (1 - normalized), which would yield 191/255 instead of 64/255.
+    setMockData(new Uint8Array([64]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
+    };
+    const output = new Float32Array(1);
+    const ranges: LoadRange[] = [{ start: 0, end: 1 }];
+    const array = mockZarrArray('uint8', [1]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 1, 1);
+
+    expect(written).toBe(1);
+    expect(output[0]).toBeCloseTo(64 / 255, 5);
+    // Guard against an inverted formula: 64/255 ≈ 0.251, 1 - 64/255 ≈ 0.749.
+    expect(output[0]).not.toBeCloseTo(1 - 64 / 255, 5);
+  });
+
   it('dequantizes uint8 data with arbitrary bounds [2.0, 10.0]', async () => {
     // uint8 0   => 2.0 + (0/255) * 8.0 = 2.0
     // uint8 128 => 2.0 + (128/255) * 8.0 ~= 6.016
@@ -501,8 +525,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
 
     expect(written).toBe(3);
     expect(output[0]).toBeCloseTo(2.0, 5);
-    expect(output[1]).toBeCloseTo(2.0 + (128 / 255) * 8.0, 3);
+    expect(output[1]).toBeCloseTo(2.0 + (128 / 255) * 8.0, 4);
     expect(output[2]).toBeCloseTo(10.0, 5);
+    // Asymmetric interior: distinguishes min + (max-min)*n from a flipped/biased map.
+    expect(output[1]).toBeGreaterThan(6.0);
+    expect(output[1]).toBeLessThan(6.05);
   });
 
   it('dequantizes uint16 data with bounds [0, 1]', async () => {
@@ -529,20 +556,24 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
   });
 
   it('dequantizes with min/max format (not bounds)', async () => {
-    setMockData(new Uint8Array([0, 255]));
+    // Include an asymmetric interior sample (64) to kill a hardcoded-range
+    // mutant: with min=-5, max=5 the interior maps to -5 + (64/255)*10 ≈ -2.49,
+    // which would be wrong for any other (min,max) pair.
+    setMockData(new Uint8Array([0, 64, 255]));
 
     const attrs: ArrayMetadata = {
       encoding: { name: 'bounded_scalar_uint8', min: -5.0, max: 5.0, original_dtype: 'float32' },
     };
-    const output = new Float32Array(2);
-    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
-    const array = mockZarrArray('uint8', [2]);
+    const output = new Float32Array(3);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
 
-    const written = await loader.loadRanges(array, attrs, ranges, output, 2, 1);
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
 
-    expect(written).toBe(2);
+    expect(written).toBe(3);
     expect(output[0]).toBeCloseTo(-5.0, 5);
-    expect(output[1]).toBeCloseTo(5.0, 5);
+    expect(output[1]).toBeCloseTo(-5.0 + (64 / 255) * 10.0, 4);
+    expect(output[2]).toBeCloseTo(5.0, 5);
   });
 
   it('dequantizes 2D quantized data (e.g. rgb colors [N, 3])', async () => {
@@ -574,22 +605,24 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     const maxLog = 3.5;
     // uint8 0 => expm1(0) = 0
     // uint8 255 => expm1(3.5) = e^3.5 - 1
+    // uint8 64 => expm1((64/255) * 3.5)  (asymmetric interior)
     // uint8 128 => expm1((128/255) * 3.5)
-    setMockData(new Uint8Array([0, 128, 255]));
+    setMockData(new Uint8Array([0, 64, 128, 255]));
 
     const attrs: ArrayMetadata = {
       encoding: { name: 'log_scalar_uint8', max_log: maxLog, original_dtype: 'float32' },
     };
-    const output = new Float32Array(3);
-    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
-    const array = mockZarrArray('uint8', [3]);
+    const output = new Float32Array(4);
+    const ranges: LoadRange[] = [{ start: 0, end: 4 }];
+    const array = mockZarrArray('uint8', [4]);
 
-    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 1);
+    const written = await loader.loadRanges(array, attrs, ranges, output, 4, 1);
 
-    expect(written).toBe(3);
+    expect(written).toBe(4);
     expect(output[0]).toBeCloseTo(0.0, 5);
-    expect(output[1]).toBeCloseTo(Math.expm1((128 / 255) * maxLog), 3);
-    expect(output[2]).toBeCloseTo(Math.expm1(maxLog), 3);
+    expect(output[1]).toBeCloseTo(Math.expm1((64 / 255) * maxLog), 4);
+    expect(output[2]).toBeCloseTo(Math.expm1((128 / 255) * maxLog), 4);
+    expect(output[3]).toBeCloseTo(Math.expm1(maxLog), 3);
   });
 
   it('dequantizes log_scalar_uint16', async () => {
@@ -681,6 +714,46 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     expect(Array.from(output.subarray(3, 6))).toEqual([0.0, 1.0, 0.0]);
     // Element 2: red [1, 0, 0]
     expect(Array.from(output.subarray(6, 9))).toEqual([1.0, 0.0, 0.0]);
+    // Per-channel pinning: index 0 must hit row 0 (red, channel 0 = 1) and
+    // index 1 must hit row 1 (green, channel 1 = 1). A reversed-index lookup
+    // (idx -> lut[len-1-idx]) would swap these, so assert the discriminating
+    // channels are NOT cross-wired.
+    expect(output[0]).toBe(1.0); // elem 0, red channel ON
+    expect(output[1]).toBe(0.0); // elem 0, green channel OFF
+    expect(output[3]).toBe(0.0); // elem 1, red channel OFF
+    expect(output[4]).toBe(1.0); // elem 1, green channel ON
+  });
+
+  it('decodes LUT row mode with a non-palindromic index sequence (kills reversed-index lookup)', async () => {
+    // Three distinct rows and indices [2, 0, 1] (not symmetric): a reversed
+    // lookup (idx -> lut[2 - idx]) would map to rows [0, 2, 1], producing a
+    // different output, so this pins forward index ordering.
+    setMockData(new Uint8Array([2, 0, 1]));
+
+    const attrs: ArrayMetadata = {
+      encoding: {
+        name: 'lut_uint8',
+        original_dtype: 'float32',
+        lut: [
+          [1.0, 0.0, 0.0], // row 0
+          [0.0, 1.0, 0.0], // row 1
+          [0.0, 0.0, 1.0], // row 2
+        ],
+        lut_mode: 'row',
+        original_shape: [3, 3],
+      },
+    };
+    const output = new Float32Array(9);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+    const array = mockZarrArray('uint8', [3]);
+
+    const written = await loader.loadRanges(array, attrs, ranges, output, 3, 3);
+
+    expect(written).toBe(9);
+    // index 2 -> row 2, index 0 -> row 0, index 1 -> row 1
+    expect(Array.from(output.subarray(0, 3))).toEqual([0.0, 0.0, 1.0]);
+    expect(Array.from(output.subarray(3, 6))).toEqual([1.0, 0.0, 0.0]);
+    expect(Array.from(output.subarray(6, 9))).toEqual([0.0, 1.0, 0.0]);
   });
 
   it('decodes LUT scalar mode', async () => {

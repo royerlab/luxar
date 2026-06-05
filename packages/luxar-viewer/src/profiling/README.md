@@ -75,14 +75,21 @@ try {
 
 ## Session Model
 
-The profiler tracks a single ambient context — the root session created by
-`beginUpdate()`. `time()`, `begin()`, `timeWithMeta()`, and `skip()` all
-attach their entries as direct children of that root. **`time()` does NOT
-push/pop the context**, so a nested `profiler.time('Inner', …)` inside
-`profiler.time('Outer', …)` registers `Inner` as a _sibling_ of `Outer`,
-not a child (pinned by `update-profiler.test.ts`).
+The profiler tracks a single ambient context, `currentSessionContext`,
+seeded with the root session by `beginUpdate()`. `begin()`,
+`timeWithMeta()`, and `skip()` attach their entries as children of
+whatever the current context is. **`time()` saves and restores the
+context around its callback** — it sets the current context to its own
+session before running `fn`, then restores the previous context after.
+So a nested `profiler.time('Inner', …)` inside
+`profiler.time('Outer', …)` registers `Inner` as a _child_ of `Outer`
+(pinned by `update-profiler.test.ts`'s "nested time() builds a
+parent/child hierarchy via currentSessionContext push/pop"). For async
+callbacks `time()` restores the context immediately after `fn` returns
+the promise, so sibling synchronous code at the caller's level does not
+see the in-flight session as parent.
 
-To build a true hierarchy, pass a session explicitly and call
+To build a top-level subtree explicitly, pass a session around and call
 `session.begin(childName)`:
 
 ```typescript
@@ -104,11 +111,13 @@ concurrent top-level operations do not corrupt one another).
 ## Timing Hierarchy
 
 A typical scene update produces this structure (each per-loader subtree
-is built by handlers receiving the `timeTopLevel` session):
+is built by `run-loader-updates.ts`, which opens one `beginTopLevel`
+session per node and keeps it alive across the atomic commit so the
+per-node child entries nest under it):
 
 ```
 Total Update                              [root]
-+-- Points (/scene/nuclei)                [per-loader, timeTopLevel]
++-- Points (/scene/nuclei)                [per-loader, beginTopLevel]
 |   +-- Spatial Query                     [child of Points session]
 |   +-- Load Arrays
 |   +-- Project to 3D
@@ -173,7 +182,13 @@ positionally into every `SceneLoader` it constructs:
 this.profiler = new UpdateProfiler();
 
 // Per loader
-const loader = new SceneLoader(config, id, this.profiler, this.monitorFactory);
+const loader = new SceneLoader(
+  config,
+  id,
+  this.profiler,
+  this.monitorFactory,
+  this.lodGroupRegistryFactory
+);
 ```
 
 Consumers reach the profiler via `SceneLoaderManager.getInstance().getProfiler()`.

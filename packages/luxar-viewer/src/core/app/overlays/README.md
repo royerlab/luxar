@@ -20,8 +20,8 @@ Every helper takes a `Ports` interface (explicit dependencies, no globals) and r
 
 1. `disposeOverlays({ manager, onDisposed })` — clear the previous dataset's `OverlayManager` up front so a second `loadDataset()` call doesn't leak annotations. The helper calls `manager.dispose()` and then the `onDisposed` callback, which the orchestrator uses to clear its own field reference.
 2. `initScaleBar({ previous, sceneManager, animationController, inputHandler })` — reads `sceneManager.camera` / `.controls` / `.renderer.domElement`, constructs the bar with `config.ui.scaleBar.targetWidthPx` + `position`, and registers a per-frame callback under the key `'scale-bar'` on the `AnimationController` so the bar tracks live camera changes. The previous instance's callback is removed via `removePerFrameCallback('scale-bar')` before disposal.
-3. `initOverlays({ disposePrevious, sceneManager, inputHandler, recordingPanel })` — looks up the `LuxarScene` group in `sceneManager.scene.children`, pulls `overlayConfigs` + `zarrBaseUrl` from its `userData`, and asynchronously calls `manager.loadOverlays(overlayConfigs, zarrBaseUrl)` when both are present.
-4. `initColormapLegend({ previous, layersPanel, inputHandler })` — built after the `LayersPanel` exists so the legend can subscribe to `layersPanel.layerState`. Returns `undefined` when no `LayersPanel` is set.
+3. `initColormapLegend({ previous, layersPanel, inputHandler })` — built after the `LayersPanel` exists so the legend can subscribe to `layersPanel.layerState`. Returns `undefined` when no `LayersPanel` is set.
+4. `initOverlays({ disposePrevious, sceneManager, inputHandler, recordingPanel })` — looks up the `LuxarScene` group in `sceneManager.scene.children`, pulls `overlayConfigs` + `zarrBaseUrl` from its `userData`, and asynchronously calls `manager.loadOverlays(overlayConfigs, zarrBaseUrl)` when both are present.
 
 Each helper is **idempotent**: a `previous` / `disposePrevious` port disposes the prior instance before constructing the new one, so reloading a dataset (or calling the helper twice) is safe. `initOverlays` is defensive about this even though `loadDataset()` already calls `disposeOverlays()` first.
 
@@ -57,6 +57,6 @@ Each helper accepts a small `Ports` interface (e.g. `InitScaleBarPorts`, `Dispos
 
 - [`../dataset/load-dataset.ts`](../dataset/load-dataset.ts) — orchestrator that calls these helpers in sequence
 - [`../picking/pick-result-handler.ts`](../picking/pick-result-handler.ts) — feeds hover content into the `OverlayManager` built here
-- [`../../../ui/overlay-manager/README.md`](../../../ui/overlay-manager) — annotation overlay implementation
-- [`../../../ui/scale-bar/README.md`](../../../ui/scale-bar) — scale-bar widget
-- [`../../../ui/colormap-legend/README.md`](../../../ui/colormap-legend) — colormap-legend widget
+- [`../../../ui/overlay-manager.ts`](../../../ui/overlay-manager.ts) — annotation overlay implementation
+- [`../../../ui/scale-bar.ts`](../../../ui/scale-bar.ts) — scale-bar widget
+- [`../../../ui/colormap-legend.ts`](../../../ui/colormap-legend.ts) — colormap-legend widget

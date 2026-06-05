@@ -15,7 +15,7 @@ These cover the type-neutral machinery shared by Points, Lines, and GSplats:
 The GSplats-specific axis resolvers (``resolve_*_axis_gsplats``) are exercised
 in ``test_gsplats.py``; their Points/Lines peers in ``test_points.py`` /
 ``test_lines.py``. End-to-end ``add_gsplats_from_data(lod_group=/additive_lod=)``
-round-trips live in ``luxar.core.tests.test_group`` (the broader ``Group``
+round-trips live in ``luxar.core.tests.group.test_group`` (the broader ``Group``
 suite), not here.
 """
 

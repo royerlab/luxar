@@ -48,11 +48,20 @@ const rtType = getOptimalRenderTargetType(caps); // HalfFloatType | UnsignedByte
 const i420p10 = rgbaFloatToI420P10(floatRGBA, width, height);
 ```
 
-Consumers: `hdr-detection.ts` is used at app bootstrap and by the
-post-processing host to pick the render-target type;
-`hdr-color-conversion.ts` is used by the WebCodecs HDR video capture
-path in `rendering/post-processing/post-processing-manager/capture.ts`.
+Consumers: `hdr-detection.ts` is consumed by
+`rendering/renderer-capabilities.ts` (which calls
+`detectDisplayCapabilities()` and then overwrites the float-texture /
+color-depth fields with real GL probes) and by
+`scene/scene-manager/render-pipeline/renderer-setup.ts` (which calls
+`getOptimalRenderTargetType()` to pick the render-target type).
+`hdr-color-conversion.ts` provides the linear-sRGB → I420P10 helper for
+the 10-bit WebCodecs HDR video-capture path; it is currently a
+standalone, unwired helper — no module imports `rgbaFloatToI420P10`
+today (the live HDR capture path in
+`rendering/post-processing/post-processing-manager/capture.ts` produces
+EXR / ImageData, not WebCodecs I420P10 frames).
 
 See also the adjacent `rendering/post-processing/hdr/` package for the
-backend-aware pixel readback (`readPixelsCompactAsync`) that feeds
-`rgbaFloatToI420P10`.
+backend-aware pixel readback (`readPixelsCompactAsync` in
+`pixel-utils.ts`) that would feed `rgbaFloatToI420P10` once the
+WebCodecs capture path is wired up.

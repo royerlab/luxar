@@ -28,9 +28,7 @@ def validate_gsplat_inputs(
     centers: NDArray[np.float32],
     amplitudes: Union[NDArray[np.float32], float],
     cholesky_factors: NDArray[np.float32],
-    colors: Optional[
-        Union[NDArray[np.float32], List[float], Tuple[float, ...]]
-    ] = None,
+    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],

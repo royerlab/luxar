@@ -229,6 +229,54 @@ describe('clipSegmentToSlice', () => {
       expect(result.t2).toBeLessThan(1);
     });
 
+    // [P5] BOUNDARY: zero-length segment (p1 === p2 in all dims). Each hidden
+    // dim sees v1 === v2, so for an in-slice point both are IN → `continue`;
+    // dv === 0 never reaches the intersection branch. The result is the
+    // degenerate "full segment" with t1=0, t2=1 and visible=true.
+    it('zero-length segment fully inside the slice stays visible with t1=0, t2=1', () => {
+      const p1 = [3, 4, 5, 5]; // dim3 = 5 == slicePos4D[3], inside tolerance
+      const p2 = [3, 4, 5, 5]; // identical point
+
+      const result = clipSegmentToSlice(p1, p2, slicePos4D, tolerance4D, displayDims4D);
+
+      expect(result.visible).toBe(true);
+      expect(result.t1).toBe(0);
+      expect(result.t2).toBe(1);
+      // 3D-projected endpoints both equal the (degenerate) point.
+      expect(result.p1).toEqual([3, 4, 5]);
+      expect(result.p2).toEqual([3, 4, 5]);
+    });
+
+    // [P5] BOUNDARY: zero-length segment OUTSIDE the slice. Both endpoints are
+    // on the same side (Case E) → invisible, regardless of dv being zero.
+    it('zero-length segment outside the slice is invisible (Case E, both same side)', () => {
+      const p1 = [0, 0, 0, 100]; // dim3 = 100, far above 5.5
+      const p2 = [0, 0, 0, 100];
+
+      const result = clipSegmentToSlice(p1, p2, slicePos4D, tolerance4D, displayDims4D);
+
+      expect(result.visible).toBe(false);
+    });
+
+    // [P5] BOUNDARY: near-parallel segment with |dv| just BELOW the 1e-10
+    // threshold. The parallel-handling branch (`if (Math.abs(dv) < 1e-10)
+    // continue;`) skips the intersection math. Both endpoints are inside the
+    // slice (dim3 ≈ 5), so the segment renders un-clipped (t1=0, t2=1).
+    it('near-parallel segment (|dv| < 1e-10) takes the parallel branch — no clipping', () => {
+      const dv = 1e-11; // strictly below the 1e-10 threshold
+      const p1 = [0, 0, 0, 5];
+      const p2 = [10, 10, 10, 5 + dv]; // dim3 barely changes; both within ±0.5
+
+      const result = clipSegmentToSlice(p1, p2, slicePos4D, tolerance4D, displayDims4D);
+
+      expect(result.visible).toBe(true);
+      expect(result.t1).toBe(0);
+      expect(result.t2).toBe(1);
+      // Display dims un-clipped → full projected segment.
+      expect(result.p1).toEqual([0, 0, 0]);
+      expect(result.p2).toEqual([10, 10, 10]);
+    });
+
     it('should treat missing tolerance entries as zero', () => {
       const displayDims = [0, 1, 2];
       const slicePos = [0, 0, 0, 0];
@@ -353,7 +401,7 @@ describe('clipSegmentToSlice (property tests)', () => {
           }
         }
       ),
-      { numRuns: 60 }
+      { numRuns: 60, seed: 0x5eed }
     );
   });
 
@@ -389,7 +437,7 @@ describe('clipSegmentToSlice (property tests)', () => {
           expect(r.p2[2]).toBeCloseTo(z2, 4);
         }
       ),
-      { numRuns: 60 }
+      { numRuns: 60, seed: 0x5eed }
     );
   });
 
@@ -427,7 +475,7 @@ describe('clipSegmentToSlice (property tests)', () => {
           }
         }
       ),
-      { numRuns: 80 }
+      { numRuns: 80, seed: 0x5eed }
     );
   });
 });

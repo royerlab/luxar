@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { kind, label, loadAndStage } from '../../../../data/lines/handler';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
-import type { LinesDataLoader } from '../../../../types/lines';
+import type { LinesDataLoader, LinesMetadata, LoadedLinesData } from '../../../../types/lines';
 import type { UpdateSession } from '../../../../profiling/update-profiler';
 
 function makeSession(): UpdateSession {
@@ -94,5 +94,77 @@ describe('lines handler', () => {
     });
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(loader.updateView).toHaveBeenCalledWith(viewState, expect.anything());
+  });
+
+  // data.md G2 symmetry [P8]: Points has a "returns the staged commit on a
+  // successful load" test; Lines lacked one. Add the parallel coverage.
+  // Unlike Points (which returns `{ path, data }` verbatim from the loader),
+  // the Lines handler runs the loaded data through `processLinesData`, so the
+  // staged commit shape is `{ path, processed: ProcessedLinesData }`. We feed
+  // a real lines mesh + a one-segment LoadedLinesData and pin that shape.
+  it('returns the staged commit (path + processed lines) on a successful load', async () => {
+    const viewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    };
+
+    // One fully-visible 3D segment (both endpoints, displayDims = all dims,
+    // so nothing is clipped away → the projector emits exactly 1 segment).
+    const loadedData: LoadedLinesData = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([1, 1]),
+      colors: null,
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+
+    const loader: LinesDataLoader = {
+      loadLines: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(loadedData),
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader;
+
+    // The handler resolves the node by name off the rootGroup and reads its
+    // lines userData; processLinesData bails to null without a valid mesh.
+    const attrs: LinesMetadata = {
+      type: 'lines',
+      n_vertices: 2,
+      n_segments: 1,
+      ndim: 3,
+      original_line_type: 'segments',
+      max_width: 1,
+      has_colors: false,
+      has_sharpness: false,
+      ordering: 'none',
+    };
+    const mesh = new THREE.Mesh();
+    mesh.name = '/l';
+    mesh.userData = { nodeType: 'lines', loader, attrs, maxWidth: 1 };
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const staged = await loadAndStage('/l', loader, makeSession(), {
+      rootGroup,
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure: vi.fn(),
+      currentVersion: 5,
+      updateVersion: 5,
+      deriveNodeViewState: () => ({ skip: false, viewState }),
+    });
+
+    expect(loader.updateView).toHaveBeenCalledTimes(1);
+    expect(staged).not.toBeNull();
+    expect(staged?.path).toBe('/l');
+    // Staged shape is { path, processed } (NOT { path, data } like Points).
+    expect(staged?.processed).toBeDefined();
+    expect(staged?.processed.segmentCount).toBe(1);
+    expect(staged?.processed.startPositions).toBeInstanceOf(Float32Array);
+    expect(staged?.processed.endPositions).toBeInstanceOf(Float32Array);
+    expect(staged?.processed.startPositions.length).toBe(3); // 1 segment × xyz
+    expect(staged?.processed.endPositions.length).toBe(3);
   });
 });

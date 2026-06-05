@@ -72,6 +72,10 @@ export function computeWorldNdTransform(sceneGraph: SceneNode, targetPath: strin
   has no meaning and that dimension is omitted from the composition.
 - **Backtracking walk.** `computeWorldNdTransform` does a DFS with
   push/pop on subtree exit so sibling transforms never leak.
+- **Cycle guard.** `computeWorldNdTransform` tracks visited
+  `SceneNode`s and **throws** if the same node is encountered twice
+  (cycle or shared subtree), rather than double-composing a transform
+  or recursing forever.
 
 ## Caller
 

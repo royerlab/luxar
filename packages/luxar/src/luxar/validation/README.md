@@ -60,8 +60,18 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_physical_unit()`: Validate physical unit strings
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
 - `validate_gamma()`: Validate gamma values (0.1-10.0)
-- `validate_blending_mode()`: Validate blending mode strings
+- `validate_intensity()`: Validate intensity values (INTENSITY_MIN-INTENSITY_MAX)
+- `validate_offset()`: Validate offset values (OFFSET_MIN-OFFSET_MAX)
+- `validate_layer()`: Coerce a layer flag to bool
+- `validate_visible()`: Coerce a visibility flag to bool
+- `validate_blending_mode()`: Validate blending mode strings (`normal`, `additive`, `max`, `opaque`, `luminous`)
+- `validate_colormap()`: Validate a colormap name (resolved via `colormaps.registry`) or LUT array (N, 3)
 - `validate_category_indices()`: Validate category index arrays
+
+Note: of the above, only `validate_blending_mode` and `validate_category_indices`
+are re-exported at the package level. The others (`validate_intensity`,
+`validate_offset`, `validate_layer`, `validate_visible`, `validate_colormap`)
+are imported directly from `luxar.validation.types`.
 
 **Type Guards:**
 - `is_position_array()`: Check if object is valid position array
@@ -101,8 +111,12 @@ Provides detailed validation functions specifically for write-time validation, w
 **Features:**
 - Detailed error messages with suggestions
 - Shape validation
-- Type coercion where safe
+- Finiteness checks (rejects NaN / ±Inf via `_validate_numeric_finite_values`)
 - Range checking with warnings
+
+**Note:** these validators deliberately do NOT dtype-convert. `validate_positions_for_writing`
+accepts any numeric dtype and returns `(n_points, n_dims)` — callers needing
+float32 storage must convert afterwards (e.g. via `ensure_float32`).
 
 ### `nd_transforms.py`
 Validation and composition for nD transforms on non-displayed dimensions.
@@ -138,6 +152,32 @@ Validation for n-dimensional data and dimensional coverage.
 - nD slicing validation
 - Dimensional consistency checks
 - Broadcasting helpers for nD data
+
+### `overlays.py`
+Validation for overlay parameters (image, text, and HTML overlays).
+
+**Purpose:**
+Validates the inputs used by the overlay system: normalized screen positions,
+anchors, fonts, blend modes, transitions, text alignment, image formats,
+visible ranges, image inputs, and HTML content. Not re-exported at the package
+level — import directly from `luxar.validation.overlays`.
+
+**Key Functions:**
+- `validate_position()`: Validate a normalized `(x, y)` screen position in `[0, 1]`
+- `validate_anchor()`: Validate an anchor against the 3x3 grid (`VALID_ANCHORS`)
+- `validate_font()`: Accept a preset (`sans`/`serif`/`mono`) or any CSS font-family string
+- `validate_blend_mode()`: Validate against `VALID_BLEND_MODES` (`normal`, `multiply`, `screen`, `overlay`, `additive`, `difference`)
+- `validate_transition()`: Validate `none` or `fade` (`VALID_TRANSITIONS`)
+- `validate_text_align()`: Validate `left`/`center`/`right`/`justify` (`VALID_TEXT_ALIGNS`)
+- `validate_image_format()`: Validate `png`/`jpeg`/`webp` (`VALID_IMAGE_FORMATS`)
+- `validate_visible_range()`: Validate a dim-name → value or `(min, max)` dict against scene dimension names
+- `validate_image_input()`: Convert path/bytes/numpy/PIL/imageio input to `(encoded_bytes, format)`
+- `sanitize_html()`: Strip disallowed tags/attributes to a safe allowlist subset
+
+**Note:** the overlay `blend_mode` set is distinct from the geometry
+blending modes validated by `types.validate_blending_mode` — overlays use CSS
+compositing modes (`multiply`, `screen`, ...), not the geometry modes
+(`additive`, `max`, `opaque`, `luminous`).
 
 ## Categorical Dimension Validation
 
@@ -535,7 +575,9 @@ def validate_categorical_positions(positions, dimensions):
 - `MAX_CATEGORY_LABEL_LENGTH = 1024` - Maximum length per label
 - `OPACITY_MIN = 0.0`, `OPACITY_MAX = 1.0` - Opacity range
 - `GAMMA_MIN = 0.1`, `GAMMA_MAX = 10.0` - Gamma range
-- `SHARPNESS_MAX = 31.0` - Maximum typical sharpness value
+- `INTENSITY_MIN`, `INTENSITY_MAX` - Intensity range (used by `validate_intensity`)
+- `OFFSET_MIN`, `OFFSET_MAX` - Offset range (used by `validate_offset`)
+- `SHARPNESS_MIN`, `SHARPNESS_MAX = 31.0` - Sharpness range (full range enforced by `base.validate_sharpness_for_writing`)
 
 ## Dependencies
 
@@ -545,17 +587,22 @@ Internal:
 
 External:
 - `numpy`: Array operations and validation
+- `PIL` (Pillow) / `imageio`: optional, only for `overlays.validate_image_input` /
+  `_numpy_to_bytes` (imported lazily; raises a clear error if missing)
 - Standard library only otherwise
 
 ## Testing
 
 Tests are located in `validation/tests/`:
 - `test_types_validation.py` - Type validation tests (includes categorical dimension tests)
-- `test_validation_nd.py` - nD validation tests
+- `test_base_validation.py` - Write-time validation tests (`base.py`)
+- `test_validation_nd.py` - nD dimensional coverage tests (`nd.py`)
 - `test_nd_transforms.py` - nD transform validation and composition tests
 - `test_points_validation.py` - Points-specific validation tests
+- `test_lines_validation.py` - Lines-specific validation tests
+- `test_gsplats_validation.py` - GSplats-specific validation tests
 - `test_colormap_validation.py` - Colormap validation tests
-- `test_validation_module.py` - Module-level integration tests
+- `test_overlay_validation.py` - Overlay parameter validation tests (`overlays.py`)
 
 Run tests:
 ```bash
@@ -567,4 +614,4 @@ hatch run pytest packages/luxar/src/luxar/validation/tests/
 - [core/README.md](../core/README.md) - Core data structures (Dimension, Dimensions)
 - [typing_utils/README.md](../typing_utils/README.md) - Type system and constants
 - [encoding/README.md](../encoding/README.md) - Data encoding and semantic types
-- [Main README](../../../../README.md) - Project overview
+- [Main README](../../../../../README.md) - Project overview

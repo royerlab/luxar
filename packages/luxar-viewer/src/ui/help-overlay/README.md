@@ -27,9 +27,11 @@ release();
   (`a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])`).
 - Asynchronously focuses the first focusable element via
   `setTimeout(..., 0)` so it runs after the caller has finished mounting
-  DOM.
-- Returns a cleanup function that removes the listener and restores
-  focus to the previously-focused element.
+  DOM. The timer id is captured so it can be cancelled on cleanup.
+- Returns a cleanup function that cancels any still-pending focus timer,
+  removes the listener, and restores focus to the previously-focused
+  element. Cancelling the timer prevents a leaked tick when the trap is
+  released before the next event loop turn (audit G17).
 
 The trap is a no-op when the container has no focusable children
 (neither the initial focus call nor the Tab interception fire), so

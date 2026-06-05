@@ -76,8 +76,11 @@ caller-supplied accumulator (`out`)** instead of returning fresh
 
 ## See also
 
-- `../../luxar-orbit-controls.ts` — orchestrator that imports these
-  helpers from its per-frame `update()` step.
-- `../input/` — sibling DOM-event handlers that produce the NDC and
-  pointer-delta inputs consumed here.
+- `../../luxar-orbit-controls.ts` — orchestrator that imports
+  `applyPan` (accumulating into `this.panDelta`).
+- `../input/pointer.ts`, `../input/touch.ts` — sibling DOM-event
+  handlers that produce the NDC and pointer-delta inputs, and call
+  `computeArcballRotation` / `computeZoomScale` directly.
+- `../update.ts` — per-frame update step that applies the accumulated
+  zoom delta via `applyZoomScale`.
 - `../../README.md` — package overview and control-scheme tables.

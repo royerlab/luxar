@@ -51,6 +51,16 @@ describe('ViewStateQueue — pending state slot', () => {
     const taken = queue.takePending();
     expect(taken?.slicePosition).toEqual([9, 9, 9, 9]);
   });
+
+  it('re-entrancy: takePending called twice with one queued state — only the first returns it', () => {
+    const state = { slicePosition: [5, 6, 7, 8] };
+    queue.setPending(state);
+    // First take consumes the slot.
+    expect(queue.takePending()).toBe(state);
+    // Second take sees an empty slot.
+    expect(queue.takePending()).toBeNull();
+    expect(queue.hasPending()).toBe(false);
+  });
 });
 
 describe('ViewStateQueue.drain', () => {
@@ -83,6 +93,22 @@ describe('ViewStateQueue.drain', () => {
     expect(queue.hasPending()).toBe(true);
     queue.drain(trigger);
     expect(queue.hasPending()).toBe(false);
+  });
+
+  it('re-entrancy: drain called twice with one queued state — only the first fires the trigger', async () => {
+    const trigger = vi.fn().mockResolvedValue(undefined);
+    const state = { slicePosition: [1, 2, 3, 4] };
+    queue.setPending(state);
+
+    // First drain consumes the slot (synchronously clears it).
+    queue.drain(trigger);
+    // Second drain sees an empty slot → no-op (doesn't schedule a second fire).
+    queue.drain(trigger);
+
+    await Promise.resolve();
+    // Only the first drain's microtask fired the trigger.
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(trigger).toHaveBeenCalledWith(state);
   });
 
   it('swallows trigger rejection (logs warning) without throwing', async () => {

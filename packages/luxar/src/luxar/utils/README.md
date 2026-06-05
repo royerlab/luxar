@@ -1,6 +1,6 @@
 # Utils Package
 
-The `utils` package provides utility functions for common operations in Luxar, including array manipulation and demo data generation.
+The `utils` package provides utility functions for common operations in Luxar, including array manipulation, atomic directory copies, robust downloads, spatial hashing, vector-field helpers, and demo data generation.
 
 ## Quick Start
 
@@ -53,11 +53,36 @@ Array manipulation utilities.
 - Automatic type conversion with validation
 - Shape validation with helpful error messages
 
+### `atomic_copy.py`
+Atomic directory-tree copy. Writes to a sibling temp dir and `os.replace`s on
+success, so the destination either exists in full or not at all. Used by
+`Scene.to_zarr` and the CLI `luxar export` to keep `.zarr` exports atomic.
+
+**Key Functions:**
+- `atomic_copytree(src, dst)`: Copy `src` to `dst` atomically. `dst` must not already exist (the caller clears it for overwrite, matching `shutil.copytree`). Cleans up the temp dir and re-raises on failure.
+
 ### `download.py`
 Robust download utilities with retry logic, resume capability, and progress tracking.
 
 **Key Functions:**
-- `robust_download()`: Download a file from a URL with automatic retry on failure, partial download resume, and integrity verification
+- `robust_download()`: Download a file from a URL with automatic retry (exponential backoff), partial download resume via HTTP Range requests, progress tracking with ETA, and file-size verification
+- `verify_file_checksum()`: Verify a file's integrity against an expected MD5 and/or SHA256 hash
+- `download_with_checksum()`: Combine `robust_download()` with checksum verification, deleting the file if the checksum fails
+
+### `fields.py`
+Shared 3D vector-field helpers for flow-field demos (the PPI flow-field demo
+and the zebrahub RNA-velocity-streamlines demo). Deliberately demo-agnostic —
+each demo keeps its own binning, smoothing, caching, and seeding policy.
+
+**Key Class:**
+- `FlowField`: Frozen dataclass — a cubic vector field on a regular grid (`vectors` `(n,n,n,3)`, `grid_min`/`grid_max`, `spacing`, `cache_key`)
+
+**Key Functions:**
+- `cubic_bounds()`: Symmetric cubic AABB around a point cloud, with fractional padding
+- `trilinear_vector()`: Trilinearly sample a `FlowField` at world points (NaN rows for out-of-bounds)
+- `unit_flow()`: Direction-only sample (NaN where the field is zero or out-of-bounds)
+- `rk4_step()`: Vectorized 4-stage Runge-Kutta advection step (NaN-fills streamlines that leave the domain)
+- `add_reference_cube_to_scene()`: Add the field's cubic domain as a 12-edge wire cube (Lines geometry) to a Luxar scene
 
 ### `paths.py`
 Path utilities for Luxar dataset generation.
@@ -255,9 +280,13 @@ def process_optional(data, processor, default=None):
 
 Internal:
 - `io.compiler`: For demo scene creation
-- `typing_utils`: Type definitions and constants
-- `core`: Scene graph components
+- `typing_utils`: Type definitions, aliases, and dataset-size config
+- `core.dimensions`: Scene dimension definitions (demos)
+- `gsplats`: `GSplatData` loading and torch-device resolution (demos)
 
 External:
 - `numpy`: Array operations
-- `arbol`: Progress display in demos
+- `arbol`: Progress display in demos and downloads
+- `torch`: PyTorch backend for `BatchedSpatialHashGrid` (GPU k-NN / radius queries)
+- `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)
+- `Pillow (PIL)`: Legend image rendering in `_umap_utils.py`

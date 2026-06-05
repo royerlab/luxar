@@ -133,7 +133,8 @@ If WASM is not built, `initWasm()` logs a warning with build instructions and fa
 
 ```
 wasm/
-├── index.ts              — Loader (initWasm, isWasmSupported, getFallback)
+├── index.ts              — Loader (initWasm, isWasmSupported, getFallback,
+│                           setWasmJsUrl, isWasmFallback)
 ├── types.ts              — WasmModule interface (unified API)
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
@@ -147,16 +148,16 @@ wasm/
 │   ├── effective-radii.ts — Radius calculations
 │   └── projection.ts     — nD → 3D projection
 └── rust/                 — Rust source (parallel to TypeScript)
-    ├── README.md         — Detailed Rust/WASM build docs
     ├── Cargo.toml
     └── src/              — Mirror of TypeScript modules in Rust
+        └── README.md     — Detailed Rust/WASM build docs
 ```
 
 ## Subpackages
 
-- [`rust/`](./rust/README.md) — Rust source compiled to WASM. Implements
+- [`rust/`](./rust/src/README.md) — Rust source compiled to WASM. Implements
   the kernels for Points, Lines, GSplats, projection, and line clipping.
-  See its README for the full Rust/WASM build pipeline.
+  See `rust/src/README.md` for the full Rust/WASM build pipeline.
 - [`typescript/`](./typescript/README.md) — Pure TypeScript fallback
   matching the Rust kernels function-for-function. Used when WASM fails
   to load or for environments without WebAssembly support.

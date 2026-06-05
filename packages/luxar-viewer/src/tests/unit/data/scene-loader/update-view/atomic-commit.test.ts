@@ -235,6 +235,47 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
   });
 });
 
+describe('runAtomicCommit — gpuBufferPool.beginFrame throws', () => {
+  it('propagates the throw but still ends every opened session (beginFrame is inside the try/finally)', () => {
+    // SOURCE ORDERING: `ctx.gpuBufferPool.beginFrame()` runs as the first
+    // statement INSIDE the outer try/finally that sweeps sessions. So a
+    // throw out of beginFrame propagates to the caller, but the
+    // session-sweeping finally still runs first — every already-opened
+    // session is end()ed exactly once, never leaked. (Commits never run
+    // because the throw happens before the loops; markPickingDirty never
+    // runs because it sits after the try/finally.)
+    const points = makePointsStaged(2);
+    const lines = makeLinesStaged(1);
+    const gsplats = makeGSplatsStaged(1);
+    const beginFrame = vi.fn(() => {
+      throw new Error('beginFrame boom');
+    });
+    const ctx = makeCtx({
+      gpuBufferPool: { beginFrame } as unknown as AtomicCommitCtx['gpuBufferPool'],
+    });
+
+    expect(() => runAtomicCommit(points, lines, gsplats, ctx)).toThrow('beginFrame boom');
+
+    // No commits ran (the throw preceded the per-type loops).
+    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
+    // Every opened session ended exactly once via the outer finally —
+    // no leak despite the early throw.
+    for (const p of points) {
+      expect((p.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    }
+    for (const l of lines) {
+      expect((l.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    }
+    for (const g of gsplats) {
+      expect((g.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    }
+    // Pick cache not invalidated (markPickingDirty sits after the try/finally).
+    expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
+  });
+});
+
 describe('runAtomicCommit — session.end idempotency contract', () => {
   it('the helper relies on session.end being safe to call twice (no test-side throw)', () => {
     // Build a session whose end() throws if called twice — would fail

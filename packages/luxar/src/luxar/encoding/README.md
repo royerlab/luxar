@@ -205,8 +205,19 @@ encoder.encode(
 ```
 
 **Methods:**
-- `encode(data, zarr_group, name, semantic_type, mode, ...)` - Encode and write array or scalar
+- `encode(data, zarr_group, name, semantic_type, mode=AUTO, n_elements=None, bounds=None, positive_scalar_encoding="linear", custom_encoder=None, color_mode=None, chunks=None, compressor=None, deduplicate=True)` - Encode and write array or scalar
 - `reset()` - Clear internal registry (call between scenes)
+
+**Key keyword arguments:**
+- `n_elements` - Broadcast target count. Required for scalar/tuple/list input; optional for arrays (opts into broadcast/uniform validation when given).
+- `bounds` - `(min, max)` for BOUNDED_SCALAR (auto-detected if omitted).
+- `positive_scalar_encoding` - `"linear"` (default) or `"log"` for POSITIVE_SCALAR.
+- `custom_encoder` - Explicit encoder name, required when `mode=CUSTOM`.
+- `color_mode` - `"sdr"` or `"hdr"`, required for float COLOR arrays.
+- `chunks` / `compressor` - Optional zarr dataset chunk shape and compressor.
+- `deduplicate` - When `True` (default), a byte-identical array already written elsewhere is stored as a lightweight `array_ref`. Pass `False` for arrays whose reader cannot resolve refs (e.g. line vertices/segments, read as raw chunked zarr) so they are always materialised.
+
+The constructor accepts `float16_allowed` (see [Compatibility Control](#compatibility-control)).
 
 **Encoding Priority Order:**
 1. **Broadcasting** - If scalar input OR all values are identical (stores only 1 value)
@@ -422,6 +433,11 @@ for i in range(10):
 # First instance stored normally
 # Subsequent 9 instances stored as references
 ```
+
+**Opting out:** Pass `deduplicate=False` to force a full materialised write even
+when a duplicate exists. This is required for arrays whose reader reads raw
+chunked zarr and cannot follow `array_ref` indirection (e.g. line vertices and
+segments in the viewer).
 
 **Decoding:**
 ```python
@@ -807,7 +823,7 @@ When AUTO mode selects a lower-precision dtype, it ensures:
 - [io/README.md](../io/README.md) - I/O operations
 - [validation/README.md](../validation/README.md) - Validation utilities
 - [typing_utils/README.md](../typing_utils/README.md) - Type system
-- [Main README](../../../../README.md) - Project overview
+- [Main README](../../../../../README.md) - Project overview
 
 ## Compatibility Control
 

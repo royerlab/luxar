@@ -199,6 +199,19 @@ class TestMakeAdditiveLodLines:
         levels = make_additive_lod_lines(verts, line_type="segments")
         assert levels == []
 
+    def test_fewer_polylines_than_n_lods(self) -> None:
+        """B8-G1/[P8]: symmetric with ``test_points.py::
+        test_fewer_elements_than_n_lods`` — when there are fewer polylines
+        than ``n_lods``, emit only the non-empty levels (no zero-length
+        levels) while still covering every polyline."""
+        verts = np.random.RandomState(0).rand(4, 3).astype(np.float32)  # 2 segments
+        widths = np.ones(4, dtype=np.float32)
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", widths=widths, method="random", n_lods=4
+        )
+        assert sum(len(L) for L in levels) == 2  # both polylines covered
+        assert all(len(L) > 0 for L in levels)  # empty levels dropped
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Resolver
@@ -290,6 +303,32 @@ class TestAddLinesAdditiveLod:
         assert grp.attrs["n_additive_sublods"] == 4
         subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
         assert len(subgroups) == 4
+
+    def test_explicit_n_lods_is_honored(self, tmp_path) -> None:
+        """B8-G2/[P8]: symmetric with ``test_points.py::
+        test_dict_with_explicit_n_lods`` — an explicit ``n_lods`` (≠ the
+        default 4) must flow end-to-end to the on-disk sub-LOD count, proving
+        it is honored rather than hardcoded."""
+        output = tmp_path / "t.zarr"
+        rng = np.random.RandomState(3)
+        vertices = rng.rand(40, 3).astype(np.float32)
+        widths = np.ones(40, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                vertices,
+                widths=widths,
+                line_type="segments",
+                additive_lod=dict(n_lods=3, method="random"),
+            )
+
+        store = zarr.open(str(output), mode="r")
+        grp = store["ln"]
+        assert grp.attrs["n_additive_sublods"] == 3
+        subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
+        assert len(subgroups) == 3
 
     def test_polyline_single_falls_through_to_single_shot(self, tmp_path) -> None:
         """Single-polyline + additive_lod=True → warning + single-shot write."""

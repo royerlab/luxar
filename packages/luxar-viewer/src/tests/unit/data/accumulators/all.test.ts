@@ -16,7 +16,7 @@ describe('LoadedPointsDataAccumulator', () => {
     accumulator = new LoadedPointsDataAccumulator(1000, 3, 10000);
   });
 
-  it('should initialize with correct capacity', () => {
+  it('should initialize with the given capacity and zero growth events', () => {
     const stats = accumulator.getStats();
     expect(stats.capacity).toBe(1000);
     expect(stats.allocations).toBe(1);
@@ -133,13 +133,11 @@ describe('LoadedPointsDataAccumulator', () => {
     expect(data.metadata.usedSpatialIndex).toBe(true);
   });
 
-  // MED-9 (production-bug worklist): `updateMetadata({ bounds })` used
-  // to silently drop the `bounds` argument with no signal to the caller.
-  // Now it warns so callers know their update was ignored. We can't
-  // easily intercept `log.warning` here without mocking, but we can
-  // pin the behavioral contract: bounds is ignored and `getData()` still
-  // computes fresh bounds from positions.
-  it('updateMetadata ignores `bounds` — bounds are always computed from positions (MED-9)', () => {
+  // `updateMetadata({ bounds })` silently drops the `bounds` argument
+  // (it only warns). We can't easily intercept `log.warning` here without
+  // mocking, but we can pin the behavioral contract: bounds is ignored and
+  // `getData()` still computes fresh bounds from positions.
+  it('updateMetadata: bounds parameter is ignored; bounds always recomputed from positions', () => {
     accumulator.fill(0, {
       positions: new Float32Array([1, 2, 3, 4, 5, 6]), // two points
     });
@@ -156,13 +154,11 @@ describe('LoadedPointsDataAccumulator', () => {
     expect(data.metadata.bounds.min.x).not.toBe(-999);
   });
 
-  // MED-10 (production-bug worklist): `filledCount` previously divided
-  // `colors.length / 3` unconditionally when positions were absent. If
-  // a future format ever uses 4-channel colors (or if a fill carries a
-  // 1-per-point attribute like radii without positions or colors), the
-  // count was wrong and `usedCount` advanced incorrectly. The fix
-  // prefers 1-per-point sources (radii/sharpness/scalars) over colors.
-  it('fill without positions uses radii length for usedCount (MED-10)', () => {
+  // `fill()` without positions prefers 1-per-point sources
+  // (radii/sharpness/scalars) over `colors.length / 3` when advancing
+  // usedCount. This keeps the live prefix correct even when a fill carries
+  // a 1-per-point attribute like radii without positions or colors.
+  it('fill without positions uses radii length to advance usedCount', () => {
     // First fill establishes types. Then a no-position fill with radii
     // must advance usedCount by the radii length, not divide colors/3.
     accumulator.fill(0, {
@@ -204,6 +200,52 @@ describe('LoadedPointsDataAccumulator', () => {
 
     const stats = accumulator.getStats();
     expect(stats.capacity).toBe(0);
+  });
+
+  // --- Boundary cases ---
+
+  it('ensureCapacity(0) is a no-op returning false with unchanged capacity', () => {
+    const grew = accumulator.ensureCapacity(0);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(1000);
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('ensureCapacity(negative) is a no-op returning false with unchanged capacity', () => {
+    const grew = accumulator.ensureCapacity(-50);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(1000);
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('getData(0) returns empty positions (length 0)', () => {
+    const data = accumulator.getData(0);
+    expect(data.positions.length).toBe(0);
+    expect(data.pointCount).toBe(0);
+  });
+
+  it('getData(capacity + 1) throws the capacity-exceeded guard', () => {
+    expect(() => accumulator.getData(1001)).toThrow(
+      'Cannot get 1001 points from accumulator with capacity 1000'
+    );
+  });
+
+  it('fill with zero-length positions is a no-op (capacity unchanged)', () => {
+    accumulator.fill(0, { positions: new Float32Array(0) });
+    expect(accumulator.getStats().capacity).toBe(1000);
+    // usedCount stays 0 → growth still copies nothing; capacity stays put
+    // and no growth event is recorded.
+    expect(accumulator.getStats().growthEvents).toBe(0);
+    const data = accumulator.getData(0);
+    expect(data.positions.length).toBe(0);
+  });
+
+  it('zero-copy: getData positions share the same ArrayBuffer as the position buffer', () => {
+    accumulator.fill(0, { positions: new Float32Array([1, 2, 3, 4, 5, 6]) });
+    const data = accumulator.getData(2);
+    // The returned subarray must be a view into the accumulator's buffer,
+    // not a copy — same underlying ArrayBuffer object.
+    expect(data.positions.buffer).toBe(accumulator.getPositionBuffer().buffer);
   });
 });
 
@@ -354,6 +396,43 @@ describe('LinesDataAccumulator', () => {
     const stats = accumulator.getStats();
     expect(stats.capacity).toBe(0);
   });
+
+  // --- Boundary cases (parallel to Points / GSplats) ---
+
+  it('ensureCapacity(0) is a no-op returning false with unchanged segment capacity', () => {
+    const grew = accumulator.ensureCapacity(0);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(500); // segment capacity
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('ensureCapacity(negative) is a no-op returning false with unchanged segment capacity', () => {
+    const grew = accumulator.ensureCapacity(-50);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(500);
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('fill with zero-length arrays is a no-op (capacities unchanged)', () => {
+    accumulator.fill(0, 0, {
+      positions: new Float32Array(0),
+      segments: new Uint32Array(0),
+      widths: new Float32Array(0),
+    });
+    const stats = accumulator.getStats();
+    expect(stats.capacity).toBe(500); // segment capacity
+    expect(stats.growthEvents).toBe(0);
+  });
+
+  it('zero-copy: getData positions share the same ArrayBuffer as the vertex buffer', () => {
+    accumulator.fill(0, 0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.1]),
+    });
+    const data = accumulator.getData(1, 2);
+    expect(data.positions.buffer).toBe(accumulator.getVertexBuffer().buffer);
+  });
 });
 
 describe('GSplatsDataAccumulator', () => {
@@ -452,6 +531,74 @@ describe('GSplatsDataAccumulator', () => {
 
     const stats = accumulator.getStats();
     expect(stats.capacity).toBe(0);
+  });
+
+  // --- Boundary cases (parallel to Points / Lines) ---
+
+  it('ensureCapacity(0) is a no-op returning false with unchanged capacity', () => {
+    const grew = accumulator.ensureCapacity(0);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(1000);
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('ensureCapacity(negative) is a no-op returning false with unchanged capacity', () => {
+    const grew = accumulator.ensureCapacity(-50);
+    expect(grew).toBe(false);
+    expect(accumulator.getStats().capacity).toBe(1000);
+    expect(accumulator.getStats().growthEvents).toBe(0);
+  });
+
+  it('fill with zero-length arrays is a no-op (capacity unchanged)', () => {
+    accumulator.fill(0, {
+      positions: new Float32Array(0),
+      amplitudes: new Float32Array(0),
+      choleskyFactors: new Float32Array(0),
+    });
+    const stats = accumulator.getStats();
+    expect(stats.capacity).toBe(1000);
+    expect(stats.growthEvents).toBe(0);
+  });
+
+  it('zero-copy: getData positions share the same ArrayBuffer as the center buffer', () => {
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      amplitudes: new Float32Array([1.0, 2.0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
+    });
+    const data = accumulator.getData(2);
+    expect(data.positions.buffer).toBe(accumulator.getCenterBuffer().buffer);
+    // Cholesky subarray is likewise a view into the accumulator buffer.
+    expect(data.choleskyFactors.buffer).toBe(accumulator.getCholeskyBuffer().buffer);
+  });
+
+  // Cholesky factor sizing: choleskySize === ndim*(ndim+1)/2 and the
+  // backing buffer is sized capacity*choleskySize. Verified across a span
+  // of dimensionalities (1D/2D in addition to the 3D/4D cases above, plus 5D).
+  describe('cholesky factor sizing across dimensions', () => {
+    for (const ndim of [1, 2, 5]) {
+      it(`ndim=${ndim}: choleskySize === ndim*(ndim+1)/2 and buffer is capacity*choleskySize`, () => {
+        const cap = 100;
+        const expectedCholeskySize = (ndim * (ndim + 1)) / 2;
+        const acc = new GSplatsDataAccumulator(cap, ndim);
+        try {
+          // Buffer length reflects capacity * choleskySize.
+          expect(acc.getCholeskyBuffer().length).toBe(cap * expectedCholeskySize);
+          // getData() returns choleskyFactors of length count * choleskySize.
+          const cf = new Float32Array(expectedCholeskySize);
+          acc.fill(0, {
+            positions: new Float32Array(ndim),
+            amplitudes: new Float32Array([1.0]),
+            choleskyFactors: cf,
+          });
+          const data = acc.getData(1);
+          expect(data.choleskyFactors.length).toBe(expectedCholeskySize);
+          expect(data.choleskyFactors.length).toBe((ndim * (ndim + 1)) / 2);
+        } finally {
+          acc.dispose();
+        }
+      });
+    }
   });
 });
 
@@ -695,13 +842,13 @@ describe('accumulator growth uses usedCount subarray copy', () => {
   });
 });
 
-// [data.md/H5][P12] ensureCapacity — algebraic invariants under arbitrary
-// growth requests. Pins:
+// ensureCapacity — algebraic invariants under arbitrary growth requests.
+// Pins:
 //   * post-condition: capacity >= n on success
 //   * monotone growth: capacity never shrinks
 //   * idempotent at-or-below: ensureCapacity(<= currentCapacity) is a no-op
 //   * prefix preservation: filled prefix survives any number of growths
-describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (data.md H5)', () => {
+describe('LoadedPointsDataAccumulator — ensureCapacity property invariants', () => {
   test('capacity >= n after ensureCapacity(n) for any reasonable n', () => {
     fc.assert(
       fc.property(fc.integer({ min: 1, max: 50000 }), (n) => {
@@ -713,7 +860,7 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (da
           acc.dispose();
         }
       }),
-      { numRuns: 25 }
+      { numRuns: 25, seed: 0x5eed }
     );
   });
 
@@ -736,7 +883,7 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (da
           }
         }
       ),
-      { numRuns: 15 }
+      { numRuns: 15, seed: 0x5eed }
     );
   });
 
@@ -758,7 +905,39 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (da
           }
         }
       ),
-      { numRuns: 15 }
+      { numRuns: 15, seed: 0x5eed }
+    );
+  });
+
+  test('growth monotonicity: for an increasing target sequence, capacity is non-decreasing and always >= the requested target', () => {
+    fc.assert(
+      fc.property(
+        // A set of distinct positive targets; sorting ascending gives an
+        // increasing request sequence.
+        fc.uniqueArray(fc.integer({ min: 1, max: 100000 }), {
+          minLength: 1,
+          maxLength: 12,
+        }),
+        (rawTargets) => {
+          const targets = [...rawTargets].sort((a, b) => a - b);
+          const acc = new LoadedPointsDataAccumulator(50, 3, 1000000);
+          try {
+            let prevCap = acc.getStats().capacity;
+            for (const target of targets) {
+              acc.ensureCapacity(target);
+              const cap = acc.getStats().capacity;
+              // Non-decreasing capacity across the increasing sequence.
+              expect(cap).toBeGreaterThanOrEqual(prevCap);
+              // Always satisfies the request.
+              expect(cap).toBeGreaterThanOrEqual(target);
+              prevCap = cap;
+            }
+          } finally {
+            acc.dispose();
+          }
+        }
+      ),
+      { numRuns: 100, seed: 0x5eed }
     );
   });
 
@@ -785,7 +964,7 @@ describe('LoadedPointsDataAccumulator — ensureCapacity property invariants (da
           }
         }
       ),
-      { numRuns: 12 }
+      { numRuns: 12, seed: 0x5eed }
     );
   });
 });

@@ -10,6 +10,7 @@ TypeScript type definitions for high-dimensional data visualization in Luxar. Th
 - [Dimension Metadata](#dimension-metadata)
 - [SimpleDims Interface](#simpledims-interface)
 - [Utility Functions](#utility-functions)
+- [Specialized Group Types](#specialized-group-types)
 - [Zarr Types](#zarr-types)
 - [Animation Types](#animation-types)
 - [Data-Loading Monitor Types](#data-loading-monitor-types)
@@ -428,6 +429,36 @@ console.log(CHOLESKY_SIZES); // { '2D': 3, '3D': 6, '4D': 10 }
 
 See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query-builder.ts`.
 
+## Specialized Group Types
+
+Two `Group` node variants carry a `kind` discriminant and dedicated metadata/guards so the viewer can treat a single logical layer specially. Both are authored on a group's `.zattrs` and inherit the standard compositing attrs (`opacity`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`, `visible`), `transform`, `nd_transform`, and `extend_to_all`.
+
+### LOD Groups (`lod-group.ts`)
+
+A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime based on the projected bbox diagonal in pixels and each child's `min_pixel_size` threshold. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
+
+```typescript
+import { isLODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
+
+if (isLODGroupMetadata(attrs)) {
+  // attrs.selector is 'pixel_size'; attrs.display_type is the user-facing label;
+  // attrs.default_level seeds the manual-override widget (0-based, coarsest-first).
+}
+```
+
+- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'pixel_size', display_type?, default_level?, ... }`.
+- **`ChildMinPixelSize`** -- the per-child `min_pixel_size` threshold (a `number`), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
+- **`LODGroupSelectorMode`** -- runtime selector state: `'auto'` (view-driven, the default) or `{ lockLevel: number }` (user-locked child index, 0-based coarsest→finest).
+
+### Partition Groups (`partition-group.ts`)
+
+A `Group` whose `kind === 'partition'` is a compile-time decomposition of one large geometry node (10M+ elements) into multiple smaller children for per-child frustum culling and per-child LOD. Unlike `kind === 'lod'`, **all children render simultaneously** (no per-frame selector), and all must resolve to the same `display_type` (homogeneity is mandatory).
+
+- **`PartitionGroupMetadata`** -- `{ type: 'group', kind: 'partition', display_type, max_elements, position_bounds?, ... }`. `position_bounds` is the union of the children's bounds so picking / framing / the scene-bounds cache can treat the layer as one entity.
+- **`isPartitionGroupMetadata(attrs)`** -- type guard matching the `{ type: 'group', kind: 'partition' }` shape.
+
+Neither module is re-exported from `index.ts`; import directly from `../types/lod-group` / `../types/partition-group`.
+
 ## Zarr Types
 
 Type definitions in `zarr.ts` for Zarr store attributes and scene graph metadata. These provide proper typing for Zarr `.zattrs` data, eliminating `as any` assertions.
@@ -528,6 +559,7 @@ Notable members on `window.__luxarDebug`:
 - `workers` -- `getQueueDepth()`, `getStats()` for worker-pool diagnostics.
 - `lastExportedState` -- last viewer state exported via the keyboard shortcut handler.
 - `injectSyntheticScene(spec)` -- debug/perf-bench-only synthetic line scene injection (not present in production bundles).
+- `getLodLoadStats()` / `resetLodLoadStats()` -- per-stage timing snapshot (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` / `lazy:release`) for lazy LOD level loads triggered by the per-frame selector, which the UpdateProfiler does not see. Debug-only.
 
 Return shapes for the helpers are intentionally dynamic and typed as `unknown` so callers must narrow before reading.
 
@@ -775,6 +807,8 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
+- `lod-group.ts` -- `LODGroupMetadata`, `ChildMinPixelSize`, `LODGroupSelectorMode`, and the `isLODGroupMetadata` guard (the `kind === 'lod'` specialized group).
+- `partition-group.ts` -- `PartitionGroupMetadata` and the `isPartitionGroupMetadata` guard (the `kind === 'partition'` specialized group).
 - `animation.ts` -- `LoopMode`, `AnimationDirection`, `DimensionAnimationState`, `DimensionAnimationEvents`.
 - `data-monitor-types.ts` -- Data-loading monitor contracts (`MonitorEvent`, `LoaderMetrics`, `CacheMetrics`, `CacheTelemetryState`, `CacheStatusBadge`, `CacheStatsProvider`, `SceneGraphNode`, `MemoryMetrics`, `GPUPoolStats`, ...).
 - `float16array.d.ts` -- Ambient `Float16Array` typing.

@@ -233,9 +233,7 @@ def _read_substitutive_directory(input_path: Path) -> GSplatData:
     # invariant is substitutive_levels[0] == finest (default_substitutive=0).
     # A manifest that lists levels in any other order would otherwise land the
     # coarsest level at index 0, so the default view returns the wrong splats.
-    levels_data = sorted(
-        manifest.get("levels_data", []), key=lambda e: int(e["level"])
-    )
+    levels_data = sorted(manifest.get("levels_data", []), key=lambda e: int(e["level"]))
     declared_levels = [int(e["level"]) for e in levels_data]
     if declared_levels != list(range(len(levels_data))):
         raise ValueError(

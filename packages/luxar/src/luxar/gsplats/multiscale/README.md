@@ -470,6 +470,8 @@ decompose_image(
   - `'best_iteration'`: Iteration where best result was achieved
   - `'actual_iters'`: Actual number of iterations run (may be less than n_iters if converged early)
   - `'energy_distribution'`: Energy fraction per scale
+  - `'maxima_per_scale'`: Local-maxima count per scale (for downstream seed distribution; always >= 1)
+  - `'scales'`: Scale factors actually used (after filtering scales too large for the image)
   - `'history'`: Per-iteration statistics
   - `'time_seconds'`: Total optimization time
   - `'interpolation'`: Interpolation mode used ('nearest', 'linear', or 'cubic')

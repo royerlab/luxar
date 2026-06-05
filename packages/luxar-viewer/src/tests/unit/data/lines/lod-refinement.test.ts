@@ -12,10 +12,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import {
-  runLinesRefinement,
-  type LinesRefinementCtx,
-} from '../../../../data/lines/lod-refinement';
+import { runLinesRefinement, type LinesRefinementCtx } from '../../../../data/lines/lod-refinement';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { LinesDataLoader } from '../../../../types/lines';
 import type { ViewState } from '../../../../data/data-loader-types';

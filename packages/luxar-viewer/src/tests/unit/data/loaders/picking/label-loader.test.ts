@@ -112,6 +112,18 @@ describe('LabelLoader.getLabel — fetch + cache', () => {
     // open + get were each called exactly twice (offsets+bytes, ONCE).
     expect(mockOpen).toHaveBeenCalledTimes(2);
     expect(mockGet).toHaveBeenCalledTimes(2);
+
+    // A DIFFERENT node path is cached independently: it triggers its own
+    // fetch (two more open/get) and returns its own labels, not the first
+    // node's cached value.
+    programOneLoad(['x', 'y']);
+    expect(await loader.getLabel('/Lines', 0)).toBe('x');
+    expect(await loader.getLabel('/Lines', 1)).toBe('y');
+    expect(mockOpen).toHaveBeenCalledTimes(4);
+    expect(mockGet).toHaveBeenCalledTimes(4);
+    // And the original node is still served from cache (no further fetches).
+    expect(await loader.getLabel('/Points', 0)).toBe('a');
+    expect(mockOpen).toHaveBeenCalledTimes(4);
   });
 
   it('returns null for empty labels (offsets[i] === offsets[i+1])', async () => {

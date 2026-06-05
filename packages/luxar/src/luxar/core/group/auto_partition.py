@@ -18,9 +18,7 @@ if TYPE_CHECKING:
     from ..scene import Scene
 
 
-def resolve_auto_partition(
-    scene: "Scene", n_elements: int, user_partition: Any
-) -> Any:
+def resolve_auto_partition(scene: "Scene", n_elements: int, user_partition: Any) -> Any:
     """Resolve the effective ``partition=`` for a leaf-adder call.
 
     Opt-in compiler-level auto-partition: when
@@ -47,9 +45,7 @@ def resolve_auto_partition(
     if user_partition is not None:
         return user_partition
     writer = scene._writer
-    threshold = (
-        getattr(writer, "auto_partition_max_elements", None) if writer else None
-    )
+    threshold = getattr(writer, "auto_partition_max_elements", None) if writer else None
     if threshold is None:
         return user_partition
     if n_elements <= int(threshold):

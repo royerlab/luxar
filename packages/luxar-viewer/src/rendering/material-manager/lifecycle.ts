@@ -33,7 +33,7 @@ type AnyGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
  * skips registry / cache cleanup when it is present, so the material
  * continues to receive global camera updates and stays cached.
  *
- * Used by `data/scene-loader/invalidate-render-object.ts`, which is
+ * Used by `data/scene-loader/commit/invalidate-render-object.ts`, which is
  * fired when the GPU buffer pool rebuilds a geometry's underlying
  * `InstancedInterleavedBuffer` and the mesh's cached `RenderObject`
  * needs to drop its stale `vertexBuffers` set. Exported so the

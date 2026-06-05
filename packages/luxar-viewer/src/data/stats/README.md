@@ -14,7 +14,7 @@ maps without spinning up WebGL or a zarr store.
 
 | File             | Role                                                                                                                                                                                                                                                                                          |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/gsplats meshes, total instance counts, and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks).          |
+| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/lines/gsplats meshes, total instance counts (points instances, line segments, splats), and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks).          |
 | `aggregator.ts`  | Sums `AccumulatorStats` across a `Map<path, loader>` of spatial-index loaders. One per-geometry public wrapper (`getAggregatedPointsAccumulatorStats`, `...Lines...`, `...GSplats...`) calls a shared private `aggregateStats` over any iterable of loaders exposing `getAccumulatorStats()`. |
 
 ## Public surface
@@ -24,6 +24,8 @@ maps without spinning up WebGL or a zarr store.
 export interface SceneStats {
   pointsObjects: number;
   totalPoints: number;
+  linesObjects: number;
+  totalSegments: number;
   gsplatsObjects: number;
   totalGSplats: number;
   spatialIndexed: number;
@@ -58,13 +60,20 @@ export function getAggregatedGSplatsAccumulatorStats(
      instance count is not directly readable.
   3. `geometry.getAttribute('aCenter').count` — last-resort total
      capacity.
+- **`nodeType === 'lines'`** — increments `linesObjects`. Like Points,
+  Lines are instanced quad meshes (one instance per segment), so the
+  per-mesh segment count is read from:
+  1. `geometry.instanceCount` (when the geometry is an
+     `InstancedBufferGeometry`) — the source of truth for visible
+     segments.
+  2. `userData.visibleSegmentCount` — fallback for tests that
+     synthesize Lines meshes without setting the instance count.
+  Both feed `totalSegments`. (There is no `aCenter` last-resort branch
+  for lines.)
 - **`nodeType === 'gsplats'`** — increments `gsplatsObjects` and adds
   `userData.visibleSplatCount` (default `0`) to `totalGSplats`.
-- For either kind, `userData.attrs?.has_spatial_index` truthy
+- For all three kinds, `userData.attrs?.has_spatial_index` truthy
   increments `spatialIndexed`.
-
-Lines meshes are intentionally not counted by this helper — the
-monitor surfaces lines stats through the accumulator path instead.
 
 ## How aggregation works
 
@@ -93,11 +102,11 @@ monitor wire one provider per geometry kind in
   without `getAccumulatorStats` and `null` stats. Neither helper
   throws on shape mismatches — the monitor stays robust during async
   load transitions.
-- **Single source of truth for visible counts.** When a points mesh
-  is `InstancedBufferGeometry`, `instanceCount` overrides any
-  `userData.visiblePointCount`. Producers that need to report a
-  different visible count must set the instance count on the geometry,
-  not the userData.
+- **Single source of truth for visible counts.** When a points or
+  lines mesh is `InstancedBufferGeometry`, `instanceCount` overrides
+  any `userData.visiblePointCount` / `userData.visibleSegmentCount`.
+  Producers that need to report a different visible count must set the
+  instance count on the geometry, not the userData.
 
 ## Callers
 

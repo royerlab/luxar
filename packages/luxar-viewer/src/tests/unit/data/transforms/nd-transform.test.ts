@@ -6,8 +6,8 @@ import {
   invertNdTransformForQuery,
   composeNdTransforms,
   computeWorldNdTransform,
-} from '../../../data/transforms/nd-transform';
-import type { NdTransformMap } from '../../../types/zarr';
+} from '../../../../data/transforms/nd-transform';
+import type { NdTransformMap } from '../../../../types/zarr';
 
 describe('invertNdTransformForQuery', () => {
   it('should inverse affine transform on slice position', () => {
@@ -96,6 +96,44 @@ describe('invertNdTransformForQuery', () => {
     );
     expect(result.slicePosition).toEqual([0, 0, 0, 50]);
     expect(result.tolerance).toEqual([1e10, 1e10, 1e10, 5]);
+  });
+
+  // BOUNDARY [P5]: three non-displayed dims set simultaneously — affine,
+  // categorical permutation, and a second affine — each inverted
+  // independently by the per-dimension loop.
+  it('inverts mixed affine + permutation + affine dims independently in one query', () => {
+    const ndTransform: NdTransformMap = {
+      // affine: effective = 2*raw + 10 → raw = (eff-10)/2
+      Time: { scale: 2.0, offset: 10.0 },
+      // permutation: perm[0]=2,[1]=0,[2]=1 → inverse maps world 2→local 0
+      Channel: { permutation: [2, 0, 1] },
+      // affine: effective = -4*raw + 100 → raw = (eff-100)/(-4)
+      Depth: { scale: -4.0, offset: 100.0 },
+    };
+    // Dim order: X, Y, Z displayed; Time, Channel, Depth hidden.
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 50, 2, 60], // world: time=50, channel=2, depth=60
+      [1e10, 1e10, 1e10, 8, 0.5, 12], // tolerance per dim
+      ndTransform,
+      ['X', 'Y', 'Z', 'Time', 'Channel', 'Depth'],
+      [0, 1, 2]
+    );
+
+    // Time affine: (50 - 10) / 2 = 20; tol = 8 / |2| = 4
+    expect(result.slicePosition[3]).toBeCloseTo(20.0, 5);
+    expect(result.tolerance[3]).toBeCloseTo(4.0, 5);
+
+    // Channel permutation: world 2 → local 0; tolerance unchanged
+    expect(result.slicePosition[4]).toBe(0);
+    expect(result.tolerance[4]).toBe(0.5);
+
+    // Depth affine: (60 - 100) / (-4) = 10; tol = 12 / |-4| = 3
+    expect(result.slicePosition[5]).toBeCloseTo(10.0, 5);
+    expect(result.tolerance[5]).toBeCloseTo(3.0, 5);
+
+    // Displayed dims untouched.
+    expect(result.slicePosition[0]).toBe(0);
+    expect(result.tolerance[0]).toBe(1e10);
   });
 
   it('should skip scale=0 (cannot invert)', () => {

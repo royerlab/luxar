@@ -358,14 +358,9 @@ def _numpy_to_bytes(arr: np.ndarray, fmt: str) -> bytes:
             "Install with: pip install Pillow"
         )
 
-    if arr.ndim == 2:
-        # Grayscale
-        mode = "L"
-    elif arr.ndim == 3 and arr.shape[2] == 3:
-        mode = "RGB"
-    elif arr.ndim == 3 and arr.shape[2] == 4:
-        mode = "RGBA"
-    else:
+    # Supported layouts: (H, W) grayscale, (H, W, 3) RGB, (H, W, 4) RGBA.
+    # PIL infers the mode from the (uint8) array shape, so we only validate.
+    if not (arr.ndim == 2 or (arr.ndim == 3 and arr.shape[2] in (3, 4))):
         raise ValueError(
             f"Cannot convert numpy array with shape {arr.shape} to image. "
             f"Expected (H, W), (H, W, 3), or (H, W, 4)."
@@ -377,7 +372,9 @@ def _numpy_to_bytes(arr: np.ndarray, fmt: str) -> bytes:
         else:
             arr = arr.astype(np.uint8)
 
-    pil_img = PILImage.fromarray(arr, mode=mode)
+    # No mode= : it is deprecated (removed in Pillow 13) and PIL infers the
+    # same L / RGB / RGBA mode from the validated uint8 shape.
+    pil_img = PILImage.fromarray(arr)
     return _pil_to_bytes(pil_img, fmt)
 
 

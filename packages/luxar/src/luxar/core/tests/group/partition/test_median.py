@@ -13,6 +13,7 @@ Covers:
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar.core.group.partition import (
     median_bsp_partition,
@@ -71,6 +72,36 @@ class TestMedianBspPartition:
         assert len(parts) == 1
         assert parts[0].size == 500
 
+    def test_median_at_axis_min_triggers_stable_bisection(self) -> None:
+        """B1/[P5]: when a majority of elements sit at the longest axis's
+        minimum, ``np.median`` returns that minimum and ``coords < median``
+        empties the left side. The fallback (partition.py:254-258) must then
+        re-sort by the axis and bisect by COUNT so recursion still makes
+        progress (otherwise the recursion would never shrink below the cap).
+
+        4 of 6 points sit at X=0, the rest at X=10 → median(X)=0 → the ``<``
+        test selects nothing on the left, exercising the count-bisection
+        fallback rather than the geometric split.
+        """
+        pos = np.array(
+            [
+                [0, 0, 0.0],
+                [0, 0, 0.1],
+                [0, 0, 0.2],
+                [0, 0, 0.3],
+                [10, 0, 0],
+                [10, 0, 0.1],
+            ],
+            dtype=np.float32,
+        )
+        assert float(np.median(pos[:, 0])) == 0.0  # precondition for the branch
+        parts = median_bsp_partition(pos, max_elements=2)
+        # The fallback made progress: every part honors the cap...
+        assert all(p.size <= 2 for p in parts)
+        # ...and the cover is still complete and duplicate-free.
+        all_idx = np.sort(np.concatenate(parts))
+        np.testing.assert_array_equal(all_idx, np.arange(6))
+
     def test_validation(self) -> None:
         with pytest.raises(ValueError):
             median_bsp_partition(np.zeros((10,), dtype=np.float32), max_elements=5)
@@ -108,6 +139,31 @@ class TestMedianBspPolylines:
         flat = sorted(p for part in parts for p in part)
         assert flat == list(range(40))
 
+    def test_empty_polyline_member_is_skipped_but_covered(self) -> None:
+        """B10/[P5]: a zero-vertex polyline (empty member array) must skip the
+        centroid computation (partition.py:406-407 ``continue``) yet still
+        appear in the cover so no polyline index is silently dropped."""
+        rng = np.random.default_rng(0)
+        vertices = rng.random((60, 3)).astype(np.float32)
+        polys = [
+            np.array([], dtype=np.intp),  # empty polyline → exercises the skip
+            np.arange(0, 30, dtype=np.intp),
+            np.arange(30, 60, dtype=np.intp),
+        ]
+        parts = median_bsp_polylines(vertices, polys, max_elements=30)
+        flat = sorted(p for part in parts for p in part)
+        assert flat == [0, 1, 2]  # the empty polyline (index 0) is still covered
+
+    def test_total_verts_at_cap_is_not_partitioned(self) -> None:
+        """B10/[P5]: at-cap equality boundary — two polylines whose vertex
+        counts sum to exactly ``max_elements`` satisfy ``total_verts <=
+        max_elements`` (partition.py:415) and stay in a single part."""
+        vertices = np.random.RandomState(1).rand(100, 3).astype(np.float32)
+        polys = [np.arange(0, 50, dtype=np.intp), np.arange(50, 100, dtype=np.intp)]
+        parts = median_bsp_polylines(vertices, polys, max_elements=100)
+        assert len(parts) == 1
+        assert sorted(parts[0]) == [0, 1]
+
 
 # ────────────────────────────────────────────────────────────────────────
 # rule='median' is the default — end to end
@@ -131,3 +187,46 @@ class TestMedianDefaultEndToEnd:
                 "pts", pos, partition=dict(max_elements=120, rule="median")
             )
         assert node.attrs.get("kind") == "partition"
+
+    def test_add_gsplats_default_is_median(self, tmp_path) -> None:
+        """B3/[P8]: ``add_gsplats(partition=dict(max_elements=N))`` without an
+        explicit ``rule`` must default to median, symmetrically with
+        ``add_points`` (the points equivalent lives in
+        ``test_sah.py::test_median_is_default_rule``).
+
+        Compares the on-disk leaf splat counts against the
+        ``median_bsp_partition`` baseline — proves the default rule is median
+        and NOT the old midpoint baseline.
+        """
+        rng = np.random.RandomState(11)
+        c = rng.uniform(-10, 10, (300, 3)).astype(np.float32)
+        a = rng.uniform(0.1, 1.0, 300).astype(np.float32)
+        ch = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (300, 1))
+        baseline = sorted(
+            int(p.size) for p in median_bsp_partition(c, max_elements=120)
+        )
+
+        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_gsplats(
+                "splats",
+                centers=c,
+                amplitudes=a,
+                cholesky_factors=ch,
+                partition=dict(max_elements=120),
+            )
+        assert node.attrs.get("kind") == "partition"
+
+        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+
+        def collect(g, out):
+            for k in g.keys():
+                child = g[k]
+                if child.attrs.get("type") == "gsplats":
+                    out.append(int(child.attrs["n_splats"]))
+                else:
+                    collect(child, out)
+            return out
+
+        sizes = sorted(collect(store["splats"], []))
+        assert sizes == baseline

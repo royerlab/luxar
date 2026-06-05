@@ -16,6 +16,8 @@ gpu-buffer-pool/
 │                              (rebuildInterleavedBuffer, writePooledAttribute)
 ├── geometry-bytes.ts        # Cached per-geometry byte estimate
 │                              (estimateGeometryBytes, invalidateCachedByteSize)
+├── capacity.ts              # Buffer-capacity sizing primitive
+│                              (chooseCapacity, __setMinInstanceCapacityForTesting)
 ├── points-adapter.ts        # PointsBufferAdapter — acquire/release/update for points
 ├── lines-adapter.ts         # LinesBufferAdapter   — acquire/release/update for lines
 └── gsplats-adapter.ts       # GSplatsBufferAdapter — acquire/release/update for gsplats
@@ -49,6 +51,10 @@ Both points (`aScalar`) and lines (`aStartScalar` / `aEndScalar`) lazily add the
 
 - `rebuildInterleavedBuffer(geometry, newCapacity, newSpecs)` — allocates a new `InstancedInterleavedBuffer`, deinterlaces from the old strided layout into the new one (carrying as many instances as fit), binds the new views, deletes attributes the new spec-set drops, and clears the `_maxInstanceCount` cache that r184 stashes on `InstancedBufferGeometry`.
 - `writePooledAttribute(geometry, name, src, count)` — strided write of a packed source array into the interleaved buffer at the right offset. Adapters call this from `updateGeometry` instead of poking each attribute view individually.
+
+### Capacity sizing
+
+`capacity.ts::chooseCapacity(requested)` is the single sizing primitive every adapter calls on each allocate / grow: it rounds up to `requested × 1.5` (headroom so the next update rarely re-grows) but never below a `DEFAULT_MIN_INSTANCE_CAPACITY` floor of 256 instances. Living in this leaf module lets the three adapters import it without a cycle against the parent `gpu-buffer-pool.ts` barrel (which re-exports `chooseCapacity` and the `__setMinInstanceCapacityForTesting` test hook). `__setMinInstanceCapacityForTesting(value | null)` lowers the floor so unit tests can exercise the grow paths at small instance counts.
 
 ### Eviction policy
 

@@ -27,7 +27,12 @@ describe('TransferableAccumulator', () => {
 
       expect(buffers).not.toBeNull();
       expect(buffers!.positions).toBeInstanceOf(Float32Array);
+      // capacity (1024) * elementsPerItem (3 for nD positions) — pins the
+      // full allocation, not just the type.
       expect(buffers!.positions.length).toBe(1024 * 3);
+      // Optional buffers are NOT allocated until enableBuffer() is called.
+      expect(buffers!.colors).toBeUndefined();
+      expect(buffers!.radii).toBeUndefined();
     });
 
     it('should track statistics', () => {

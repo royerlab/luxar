@@ -161,9 +161,7 @@ def _greedy_partition(
         )
         for c, a, b in zip(costs, a_idx.tolist(), b_idx.tolist()):
             lo, hi = (a, b) if a < b else (b, a)
-            heapq.heappush(
-                heap, (float(c), lo, hi, int(version[lo]), int(version[hi]))
-            )
+            heapq.heappush(heap, (float(c), lo, hi, int(version[lo]), int(version[hi])))
             adj[lo].add(hi)
             adj[hi].add(lo)
 

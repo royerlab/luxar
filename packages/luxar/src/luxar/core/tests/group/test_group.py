@@ -6,6 +6,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
+from luxar.core.group.lod.group import BASE_PIXEL_SIZE, derive_min_pixel_sizes
 from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
 from luxar.io.compiler import LuxarZarrCompiler
@@ -27,11 +28,17 @@ class TestGroupAddData:
             assert pts.n_elements == 2
             assert pts.parent == group
 
-        # Verify zarr hierarchy
+        # Verify zarr hierarchy AND that the positions round-tripped to disk
+        # (B11/[P2]: type+count alone don't prove the data was written).
         store = zarr.open(str(output_path), mode="r")
         assert "grp" in store
         assert "pts" in store["grp"]
-        assert store["grp"]["pts"].attrs.get("type") == "points"
+        node = store["grp"]["pts"]
+        assert node.attrs.get("type") == "points"
+        assert node.attrs["n_points"] == 2
+        stored = node["positions"][:]
+        assert stored.shape == (2, 3)
+        np.testing.assert_allclose(stored, positions)
 
     def test_group_add_lines(self, tmp_path) -> None:
         """Test group.add_lines() writes data under group path."""
@@ -47,6 +54,13 @@ class TestGroupAddData:
 
         store = zarr.open(str(output_path), mode="r")
         assert "lines" in store["grp"]
+        # B11/[P2]: verify the vertices actually round-tripped, not just presence.
+        node = store["grp"]["lines"]
+        assert node.attrs.get("type") == "lines"
+        assert node.attrs["n_vertices"] == 2
+        verts = node["vertices"][:]
+        assert verts.shape == (2, 3)
+        np.testing.assert_allclose(verts, vertices)
 
     def test_group_add_gsplats(self, tmp_path) -> None:
         """Test group.add_gsplats() writes data under group path."""
@@ -64,7 +78,16 @@ class TestGroupAddData:
 
         store = zarr.open(str(output_path), mode="r")
         assert "splats" in store["grp"]
-        assert store["grp"]["splats"].attrs.get("type") == "gsplats"
+        node = store["grp"]["splats"]
+        assert node.attrs.get("type") == "gsplats"
+        # B11/[P2]: verify centers round-tripped and the per-splat arrays are
+        # present with the right count (was: only type + n_splats).
+        assert node.attrs["n_splats"] == 1
+        ctrs = node["centers"][:]
+        assert ctrs.shape == (1, 3)
+        np.testing.assert_allclose(ctrs, centers)
+        assert node["amplitudes"].shape[0] == 1
+        assert "cholesky_factors" in node
 
     def test_nested_groups(self, tmp_path) -> None:
         """Test nested groups: group.add_group('sub').add_points(...)."""
@@ -226,10 +249,14 @@ class TestMultiLODGSplats:
 
         store = zarr.open(str(output_path), mode="r")
         grp = store["splats"]
-        lod0_stats = grp["additive_0"].attrs.get("lod_stats", {})
-        assert lod0_stats.get("pass_index") == 0
-        lod1_stats = grp["additive_1"].attrs.get("lod_stats", {})
-        assert lod1_stats.get("pass_index") == 1
+        # B11/[P2]: assert the stats dict + key are actually present, so a
+        # missing lod_stats can't pass via ``.get(...)`` returning a default.
+        lod0_stats = grp["additive_0"].attrs["lod_stats"]
+        assert "pass_index" in lod0_stats
+        assert lod0_stats["pass_index"] == 0
+        lod1_stats = grp["additive_1"].attrs["lod_stats"]
+        assert "pass_index" in lod1_stats
+        assert lod1_stats["pass_index"] == 1
 
     def test_single_lod_uses_flat_layout(self, tmp_path) -> None:
         """Single-LOD GSplatData uses flat layout (no additive subgroups)."""
@@ -519,9 +546,13 @@ class TestLodGroupAxis:
         # Coarsest first → child_0 has fewer splats than child_1.
         assert grp["child_0"].attrs["n_splats"] == 2
         assert grp["child_1"].attrs["n_splats"] == 8
-        # Monotonic min_pixel_size, coarsest = 0.
+        # Monotonic min_pixel_size, coarsest = 0. B11/[P7]: pin the finer
+        # level to the documented derivation (BASE * sqrt(8/2) = 2*BASE)
+        # instead of a loose ``> 0`` that any positive value would satisfy.
         assert grp["child_0"].attrs["min_pixel_size"] == 0.0
-        assert grp["child_1"].attrs["min_pixel_size"] > 0.0
+        expected_mps = derive_min_pixel_sizes([2, 8])[1]
+        assert expected_mps == pytest.approx(2.0 * BASE_PIXEL_SIZE)
+        assert grp["child_1"].attrs["min_pixel_size"] == pytest.approx(expected_mps)
 
     def test_false_collapses_to_finest(self, tmp_path) -> None:
         """``False`` keeps only the finest substitutive level (index 0)."""

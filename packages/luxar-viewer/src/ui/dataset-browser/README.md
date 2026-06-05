@@ -34,8 +34,8 @@ its breadcrumb when re-opened on an already-loaded dataset. Returns
 
 - `../dataset-browser.ts` — imports both functions and wraps them in
   private methods of the same name that bind `this.origin`.
-- `src/tests/unit/ui/dataset-url-utils.test.ts` — unit coverage for
-  both helpers across the documented cases (empty, trailing-slash,
+- `src/tests/unit/ui/dataset-browser/url-utils.test.ts` — unit coverage
+  for both helpers across the documented cases (empty, trailing-slash,
   no-`.zarr`, parse failure).
 
 ## See also

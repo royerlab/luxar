@@ -170,6 +170,45 @@ describe('processGSplatsData', () => {
     expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 
+  // Worker is used iff: useWebWorkers && splatCount > 1000 && ndim > 3.
+  // These cases pin the exact boundary on both axes.
+  it.each([
+    { splatCount: 1000, ndim: 4, expectWorker: false, label: '[1000, 4] → main thread' },
+    { splatCount: 1001, ndim: 4, expectWorker: true, label: '[1001, 4] → worker' },
+    { splatCount: 2000, ndim: 3, expectWorker: false, label: '[2000, 3] → main thread' },
+    { splatCount: 2000, ndim: 4, expectWorker: true, label: '[2000, 4] → worker' },
+  ])('threshold boundary $label', async ({ splatCount, ndim, expectWorker }) => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    const projectGSplatsTo3D = vi.fn(async () => ({
+      centers3D: new Float32Array(),
+      choleskyFactors3D: new Float32Array(),
+      amplitudes: new Float32Array(),
+      colors: new Float32Array(),
+      visibleCount: 0,
+    }));
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
+    });
+
+    // ndim=3 needs a length-3 slicePosition so the projection inputs are
+    // self-consistent; the worker-path cases use the default 4D viewState.
+    const viewState =
+      ndim === 3 ? { ...makeViewState(), slicePosition: [0, 0, 0] } : makeViewState();
+
+    const result = await processGSplatsData('/g', makeData(splatCount, ndim), viewState, root, 1);
+    expect(result).not.toBeNull();
+
+    if (expectWorker) {
+      expect(projectGSplatsTo3D).toHaveBeenCalledTimes(1);
+      expect(mockProcessGSplats).not.toHaveBeenCalled();
+    } else {
+      expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+      expect(mockGetWorkerPool).not.toHaveBeenCalled();
+    }
+  });
+
   it('packs cholesky factors after projection', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
