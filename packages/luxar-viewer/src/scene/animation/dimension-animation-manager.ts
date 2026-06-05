@@ -372,6 +372,20 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    */
   play(dimIndex: number, options?: PlayOptions): boolean {
     try {
+      // Validate the dimension index up front. Without this, play() would
+      // create phantom animation state for an invalid index: a negative index
+      // slips past the per-frame `dimIndex >= ndim` guard entirely (so the
+      // animation runs forever advancing nothing — setDimensionValue rejects
+      // the out-of-bounds write), and an out-of-range index dispatches a
+      // spurious `play` event before the next frame pauses it. Reject negatives
+      // always; reject `>= ndim` only when dims are known, preserving the
+      // pre-init path (where the per-frame guard self-corrects once dims load).
+      const dims = this.sceneDimsManager.getDims();
+      if (dimIndex < 0 || (dims !== null && dimIndex >= dims.ndim)) {
+        log.warning(Modules.ANIMATION, `play(): ignoring invalid dimension index ${dimIndex}`);
+        return false;
+      }
+
       // Get or create state
       let state = this.animationStates.get(dimIndex);
 

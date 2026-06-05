@@ -119,6 +119,42 @@ describe('swapToOrthographic', () => {
     expect(ortho.right).toBeCloseTo(expectedHalfWidth, 3);
     expect(ortho.left).toBeCloseTo(-expectedHalfWidth, 3);
   });
+
+  // G4: the swap to ortho deliberately RESETS to a clean front view rather
+  // than preserving the perspective orientation (documented behaviour). Pin
+  // the resulting pose: positioned at focusTarget + (0,0,distance), up = +Y.
+  // Use a tilted perspective camera so a mutant that copied the old
+  // orientation would be caught.
+  it('resets to a clean front view (position = focus + distance·+Z, up = +Y)', () => {
+    const focus = new THREE.Vector3(3, 4, 0); // distance from a tilted camera...
+    const persp = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    persp.position.set(3, 4, 25); // 25 units along +Z from focus
+    persp.up.set(1, 0, 0); // deliberately non-default up
+    persp.lookAt(focus);
+    const { controls } = makeControls(focus);
+    let currentCamera: THREE.Camera = persp;
+    const ctx = {
+      getCamera: () => currentCamera,
+      setCamera: (cam: THREE.Camera) => {
+        currentCamera = cam;
+      },
+      controls,
+      renderer: makeRenderer(),
+      postProcessing: makePostProcessing().pp,
+      updateMaterialsForCurrentCamera: vi.fn(),
+      setLastOrthoZoom: vi.fn(),
+    } as unknown as CameraModeCtx;
+
+    swapToOrthographic(ctx);
+
+    const ortho = currentCamera as THREE.OrthographicCamera;
+    // Positioned along +Z from the focus target at the preserved distance (25).
+    expect(ortho.position.x).toBeCloseTo(3, 6);
+    expect(ortho.position.y).toBeCloseTo(4, 6);
+    expect(ortho.position.z).toBeCloseTo(25, 6);
+    // Up reset to +Y regardless of the source camera's up vector.
+    expect(ortho.up.toArray()).toEqual([0, 1, 0]);
+  });
 });
 
 describe('swapToPerspective', () => {
@@ -170,21 +206,44 @@ describe('setControlType', () => {
     const persp = new THREE.PerspectiveCamera();
     persp.position.set(0, 0, 50);
     const harness = makeCtx(persp);
+    const before = harness.getCurrentCamera();
 
     const { cameraChanged } = setControlType('ortho', harness.ctx);
 
     expect(cameraChanged).toBe(true);
     expect(harness.getCurrentCamera()).toBeInstanceOf(THREE.OrthographicCamera);
+    // W1: cameraChanged=true ⟺ the camera object reference actually changed.
+    expect(harness.getCurrentCamera()).not.toBe(before);
   });
 
   it('returns cameraChanged=false when switching control type without projection change', () => {
     const persp = new THREE.PerspectiveCamera();
     const harness = makeCtx(persp);
+    const before = harness.getCurrentCamera();
 
     const { cameraChanged } = setControlType('fly', harness.ctx);
 
     expect(cameraChanged).toBe(false);
     expect(harness.getCurrentCamera()).toBe(persp);
+    // W1: cameraChanged=false ⟺ the same camera reference is retained.
+    expect(harness.getCurrentCamera()).toBe(before);
+  });
+
+  it('swaps ortho→perspective (cameraChanged=true) when leaving ortho mode', () => {
+    // Covers the swapToPerspective branch of setControlType (the reciprocal of
+    // the ortho swap above). Starting from an orthographic camera and asking
+    // for a non-ortho control type must replace it with a perspective camera.
+    const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
+    ortho.position.set(0, 0, 50);
+    const harness = makeCtx(ortho);
+    const before = harness.getCurrentCamera();
+
+    const { cameraChanged } = setControlType('orbit', harness.ctx);
+
+    expect(cameraChanged).toBe(true);
+    expect(harness.getCurrentCamera()).toBeInstanceOf(THREE.PerspectiveCamera);
+    expect(harness.getCurrentCamera()).not.toBe(before);
+    expect(harness.setControlTypeMock).toHaveBeenCalledWith('orbit');
   });
 
   it('forwards type + new camera ref to controls', () => {

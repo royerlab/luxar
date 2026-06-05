@@ -48,6 +48,21 @@ describe('getActivePixelRatio', () => {
       expect(getActivePixelRatio(null)).toBe(1);
     });
   });
+
+  // G1: explicit override = 0 is falsy, so the `|| 1` guard maps it to 1
+  // (?? only treats null/undefined as "unset", so 0 reaches the || guard).
+  it('maps an explicit override of 0 to 1 (falsy-guard)', () => {
+    withNativeDPR(2, () => {
+      expect(getActivePixelRatio(0)).toBe(1);
+    });
+  });
+
+  // G1: a positive fractional override is returned verbatim.
+  it('returns a positive fractional override verbatim', () => {
+    withNativeDPR(2, () => {
+      expect(getActivePixelRatio(1.5)).toBe(1.5);
+    });
+  });
 });
 
 describe('computePixelRatioOverride', () => {
@@ -76,9 +91,28 @@ describe('computePixelRatioOverride', () => {
 
   it('coerces non-finite / non-positive DPR to native', () => {
     withNativeDPR(1.5, () => {
-      expect(computePixelRatioOverride(NaN).override).toBeNull();
-      expect(computePixelRatioOverride(0).override).toBeNull();
-      expect(computePixelRatioOverride(-1).override).toBeNull();
+      // G2: invalid input → override cleared AND active falls back to native,
+      // not to the invalid value.
+      for (const bad of [NaN, 0, -1, Infinity, -Infinity]) {
+        const r = computePixelRatioOverride(bad);
+        expect(r.override).toBeNull();
+        expect(r.active).toBe(1.5);
+      }
+    });
+  });
+
+  // C3: pin the ~0.01 near-native threshold on BOTH sides. A sub-threshold
+  // delta clears the override; a clearly supra-threshold delta stores it.
+  // (We avoid asserting exactly at 0.01 — `2.01 - 2` is 0.00999… in IEEE-754,
+  // so the exact boundary is float-fuzzy by nature.)
+  it('clears the override just below the 0.01 threshold and stores it above', () => {
+    withNativeDPR(2, () => {
+      // delta ≈ 0.009 < 0.01 → cleared.
+      expect(computePixelRatioOverride(2.009).override).toBeNull();
+      // delta = 0.02 > 0.01 → stored.
+      const stored = computePixelRatioOverride(2.02);
+      expect(stored.override).toBeCloseTo(2.02, 10);
+      expect(stored.active).toBeCloseTo(2.02, 10);
     });
   });
 });
