@@ -160,9 +160,7 @@ def write_bounded_scalar(
     elif enc_name == "array_ref":
         aprint(f"  ✓ Wrote {name} (reference to {enc['target']})")
     elif enc_name == "bounded_scalar_uint8":
-        aprint(
-            f"  ✓ Wrote {name} (uint8, quantized to [{bounds[0]:g}, {bounds[1]:g}])"
-        )
+        aprint(f"  ✓ Wrote {name} (uint8, quantized to [{bounds[0]:g}, {bounds[1]:g}])")
     else:
         aprint(f"  ✓ Wrote {name} ({enc_name})")
 

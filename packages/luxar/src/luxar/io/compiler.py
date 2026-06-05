@@ -180,10 +180,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Opt-in auto-partition threshold. Read at add_points / add_gsplats
         # time via resolve_auto_partition(). None disables.
-        if (
-            auto_partition_max_elements is not None
-            and auto_partition_max_elements <= 0
-        ):
+        if auto_partition_max_elements is not None and auto_partition_max_elements <= 0:
             raise ValueError(
                 "auto_partition_max_elements must be positive; "
                 f"got {auto_partition_max_elements}"
@@ -1652,9 +1649,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         positions: NDArray[np.float32],
         spatial_index_data: Optional[Dict[str, Any]],
     ) -> None:
-        write_positions(
-            group, positions, spatial_index_data, self._make_dataset_ctx()
-        )
+        write_positions(group, positions, spatial_index_data, self._make_dataset_ctx())
 
     def _write_colors_dataset(
         self,
