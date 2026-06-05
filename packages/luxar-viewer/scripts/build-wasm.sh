@@ -59,11 +59,34 @@ echo "📦 Running wasm-pack build..."
 # - target web: For browser ES modules
 # - out-dir: Output to public/wasm for Vite to serve
 # - release/dev: Build mode based on flag
-wasm-pack build \
-  --target web \
-  --out-dir ../../../public/wasm \
-  ${BUILD_MODE} \
-  --scope luxar
+build_wasm_once() {
+  wasm-pack build \
+    --target web \
+    --out-dir ../../../public/wasm \
+    ${BUILD_MODE} \
+    --scope luxar
+}
+
+# wasm-pack downloads its own wasm-opt (binaryen) binary and caches it under
+# ~/.cache/.wasm-pack. That download is occasionally corrupt on CI runners,
+# producing a non-deterministic `wasm-opt: invalid global index` parse error
+# even though the Rust source and pinned wasm-bindgen are unchanged (the same
+# wasm-pack version both passes and fails — see CI history). Retry a few
+# times, clearing the wasm-opt cache between attempts so a corrupt binary is
+# re-downloaded rather than reused. `until` is used so `set -e` doesn't abort
+# on the first failed attempt.
+attempt=1
+max_attempts=3
+until build_wasm_once; do
+  if [ "${attempt}" -ge "${max_attempts}" ]; then
+    echo "❌ wasm-pack build failed after ${max_attempts} attempts" >&2
+    exit 1
+  fi
+  echo "⚠️  wasm-pack build attempt ${attempt} failed (likely a flaky wasm-opt download); clearing cache and retrying..." >&2
+  rm -rf "${HOME}/.cache/.wasm-pack" 2>/dev/null || true
+  attempt=$((attempt + 1))
+  sleep 5
+done
 
 # wasm-pack emits a .gitignore in its output directory. Drop it so it does
 # not ride into the Vite build output and ultimately the Python wheel.
