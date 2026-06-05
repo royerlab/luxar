@@ -8,7 +8,9 @@ to the Points node type.
 
 | File                             | Role                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `DataAccumulator` for the zero-allocation hot path.                                                                                                                            |
+| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `LoadedPointsDataAccumulator` for the zero-allocation hot path.                                                                                                                  |
+| `points-progressive-loader.ts`   | Composite-pattern multi-additive-LOD facade. Wraps N `PointsSpatialIndexLoader` instances (one per `additive_<i>` subgroup), loads LODs sequentially from LOD 0, stops at the first cache miss / `CACHE_HIT_THRESHOLD_MS` overrun, prefetches the next LOD, and concatenates the loaded levels into one `LoadedPointsData`. Mirrors `GSplatsProgressiveLoader`. |
+| `lod-refinement.ts`              | Progressive Points LOD refinement — thin wrapper over the generic `data/scene-loader/progressive/refinement.ts`. Drives the per-frame refinement loop for progressive loaders (those exposing `hasMoreLODs`); commits each refined load directly via `updatePointsGeometry`. Mirrors `data/gsplats/lod-refinement.ts`.                                          |
 | `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical.                                                                        |
 | `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                                                                                                  |
 | `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                           |
@@ -21,7 +23,10 @@ same shape as the Lines and GSplats facades (constructor, `loadPoints`,
 `updateView`, `prefetchChunks`, `dispose`, monitor events via
 `addEventListener` / `getMetrics` / `getActiveQueries`). Scene-loader
 code never imports the concrete class — it goes through
-`loader-factory.ts`.
+`loader-factory.ts`. For multi-additive-LOD datasets the factory
+constructs a `PointsProgressiveLoader` instead, which implements the
+same contract (plus `hasMoreLODs` / `loadedLODCount` / `totalLODCount`
+/ `lastAllResident` for the refinement loop) over N per-LOD loaders.
 
 `projectPointsTo3D` is also exported from `projection.ts` for direct
 main-thread use (worker-disabled environments, unit tests).
@@ -35,7 +40,7 @@ main-thread use (worker-disabled environments, unit tests).
   non-displayed axis — that's exactly what
   `EffectiveRadiusCalculator` computes.
 - **Zero-allocation accumulator hot path.** The loader owns a
-  `PointsDataAccumulator` sized to the dataset's `pointCount`. Every
+  `LoadedPointsDataAccumulator` sized to the dataset's `pointCount`. Every
   nD scrub writes through pre-allocated `positions3D` / `colors` /
   `radii` / `sharpness` / `scalars` buffers — no per-update
   allocation. The accumulator preserves Uint8/Uint16 dtypes natively

@@ -19,7 +19,7 @@ renders beneath them.
 
 | File                  | Role                                                                                                    |
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
-| `gui-construction.ts` | `buildRecordingGUI(deps)` + `BuildGUIDeps` / `BuildGUIResult` interfaces. Single export, no side state. |
+| `gui-construction.ts` | `buildRecordingGUI(deps)` + `captureLabelForMode(mode)` + `BuildGUIDeps` / `BuildGUIResult` interfaces. No side state. |
 
 ## Contract
 

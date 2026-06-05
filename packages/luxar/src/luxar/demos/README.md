@@ -260,14 +260,47 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 ---
 
-#### demo_zebrahub_integrated_cells.py - Zebrahub Integrated Cells 3D UMAP
-Visualizes 95k integrated single cells from zebrafish with categorical attribute navigation between Cell Type and Timepoint views.
+#### demo_esm3_protein_landscape.py - ESM-3 Protein Landscape (Swiss-Prot)
+~572k Swiss-Prot proteins embedded with ESM-3 (or ESM C 300M) and projected to 3D with UMAP. Each point is a protein, colored by taxonomic kingdom, with hover labels showing protein name, organism, and kingdom.
 
-**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_integrated_cells.py`
+**Run**: `python -m luxar.demos.demo_esm3_protein_landscape [--no-serve] [--sample=100000] [--model=esmc-300m]`
 
-**Requires**: Internet access (downloads from CZ Biohub public store), `fsspec` and `zarr` packages.
+**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm` package; GPU strongly recommended (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results.
 
-**Demonstrates**: Remote zarr data loading, 3D UMAP embedding of single-cell data, categorical dimension navigation (cell type vs timepoint), real scientific dataset from Zebrahub.
+**Demonstrates**: Protein language model embeddings (ESM-3 / ESM C), large-scale embedding visualization (~572k proteins), UMAP dimensionality reduction, taxonomic-kingdom coloring, hover labels.
+
+---
+
+#### demo_cytoself_protein_landscape.py - CytoSelf Protein Localization 3D UMAP
+~114k per-image CytoSelf embeddings from the OpenCell dataset as a 3D UMAP point cloud. Each point is a single fluorescence microscopy crop of an endogenously tagged protein, colored by subcellular localization or protein identity.
+
+**Run**: `python -m luxar.demos.demo_cytoself_protein_landscape [--no-serve] [--recompute]`
+
+**Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
+
+**Demonstrates**: Self-supervised image embeddings (CytoSelf VQ-VAE-2, 9,216-dim), subcellular localization landscape, ~1,311 OpenCell proteins, categorical attribute switching (localization vs protein), UMAP dimensionality reduction.
+
+---
+
+#### demo_zebrahub_multiome.py - Zebrahub Integrated Cells 3D UMAP
+Visualizes integrated single cells from zebrafish with categorical attribute navigation between Cell Type and Timepoint views.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome.py`
+
+**Requires**: Internet access (downloads the integrated 3D-UMAP parquet from the CZ Biohub public store).
+
+**Demonstrates**: Remote data loading, 3D UMAP embedding of single-cell data, categorical dimension navigation (cell type vs timepoint), real scientific dataset from Zebrahub.
+
+---
+
+#### demo_zebrahub_velocity_streamlines.py - Zebrahub 3D RNA-Velocity UMAP + Streamlines
+Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D RNA-velocity UMAP embedding) into a luminous scene: cells as soft Points (colored by anatomy ontology) and RK4-integrated streamlines as Lines tracing the velocity field through UMAP space.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_velocity_streamlines.py [--preset preview] [--no-serve] [--h5ad /path/to/zebrahub_velocity.h5ad]`
+
+**Requires**: Internet access on first run (auto-downloads the `.h5ad` from the shared Zebrahub Google Drive into `~/.cache/luxar/zebrahub_velocity/`), `anndata`, `h5py`, `gdown`, `scipy`.
+
+**Demonstrates**: RNA-velocity visualization (Points + Lines together), per-cell velocity binned into a regularized smoothed cubic vector field, vectorized RK4 streamline integration through UMAP space, categorical anatomy-ontology coloring, stratified streamline seeding.
 
 ---
 
@@ -312,6 +345,28 @@ Visualizes 95k integrated single cells from zebrafish with categorical attribute
 **Requires**: User-provided `choir_umap_3d_viewer.zip` bundle (parquet + colormap JSON) — auto-detected in `~/Downloads/` or `~/.cache/luxar/chromatrace/`.
 
 **Demonstrates**: Categorical attribute switching with two color views, curated upstream palette mapping, grouped two-column HTML legend, custom hover overlay (suppresses default top-right tooltip), large categorical dimension (88 unique cell types).
+
+---
+
+#### demo_tabula_sapiens.py - Tabula Sapiens Human Single-Cell Atlas UMAP
+The Tabula Sapiens first-draft human cell atlas (~500k cells from 24 tissues of 15 donors) as a 3D UMAP embedding. Each point is a cell, colored by organ of origin, with hover labels showing cell type and tissue.
+
+**Run**: `python -m luxar.demos.demo_tabula_sapiens [--no-serve] [--sample=50000]`
+
+**Requires**: Internet access (downloads from CZ CELLxGENE Discover), `pandas`, `umap-learn`, `scipy` (installed via `luxar[demos]`).
+
+**Demonstrates**: Human single-cell transcriptomics atlas, 3D UMAP embedding, organ-of-origin categorical coloring, cell type / tissue hover labels, CELLxGENE Discover data integration.
+
+---
+
+#### demo_spotify_tracks.py - Spotify Tracks 3D UMAP of Audio Features
+~114k Spotify tracks embedded into 3D via UMAP on 9 audio features (danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo). Colored by genre, sized by popularity, with track/artist/genre hover labels.
+
+**Run**: `python -m luxar.demos.demo_spotify_tracks [--no-serve] [--sample=50000]`
+
+**Requires**: Internet access (downloads dataset CSV from Hugging Face), `pandas`, `umap-learn` (installed via `luxar[demos]`).
+
+**Demonstrates**: UMAP on tabular audio features, genre-based categorical coloring, popularity-based point sizing, hover labels, open Hugging Face dataset integration.
 
 ---
 
@@ -787,12 +842,17 @@ hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py
 hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py
-hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_integrated_cells.py
+hatch run python packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py
+hatch run python packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py
+hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome.py
+hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_velocity_streamlines.py
 hatch run python packages/luxar/src/luxar/demos/demo_human_multiome_peak_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_mouse_multiome_peak_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap_sequence.py
+hatch run python packages/luxar/src/luxar/demos/demo_tabula_sapiens.py
+hatch run python packages/luxar/src/luxar/demos/demo_spotify_tracks.py
 
 # --- Data-Driven (External Datasets) ---
 hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_3m.py

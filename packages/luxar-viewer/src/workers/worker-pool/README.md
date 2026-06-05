@@ -63,9 +63,9 @@ imports from here. It composes the pieces:
 
 ```
 WorkerPool.initialize()
-  ├─ pickWorkerCount()           ── lifecycle/worker-count
+  ├─ getConfiguredWorkerCount()  ── lifecycle/worker-count
   ├─ spawnWorker()               ── lifecycle/spawn-worker
-  └─ initWithGuard()             ── lifecycle/init-with-guard
+  └─ initializeWithGuard()       ── lifecycle/init-with-guard
         └─ attachWorkerErrorHandlers / evictFailedWorker  (lifecycle/error-handlers)
 
 WorkerPool.runWithTimeout()
@@ -90,5 +90,5 @@ orchestrator readable without changing semantics.
   worker-side counterpart: WASM bootstrap plus the spatial-index,
   visibility, projection, and decode task implementations the pool
   routes calls to.
-- `../../config/sections/data-loading/performance.ts` — the source of
+- `../../config/sections/data-loading/performance/data.ts` — the source of
   truth for the timeout values `pick-timeout-ms.ts` reads.

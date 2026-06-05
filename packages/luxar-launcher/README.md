@@ -39,7 +39,7 @@ If neither layout matches, the launcher prints a clear error and exits.
 
 ## Source
 
-`main.go` (~150 lines) using only the Go stdlib plus the WebView binding:
+`main.go` (~220 lines) using only the Go stdlib plus the WebView binding:
 
 - `github.com/webview/webview_go` for the native window (WKWebView /
   WebView2 / WebKitGTK)
@@ -47,6 +47,19 @@ If neither layout matches, the launcher prints a clear error and exits.
 - `os/exec` for the browser fallback (`open` / `xdg-open` / `rundll32`)
 - `os/signal` for graceful Ctrl-C shutdown
 - CORS middleware mirroring the policy used by `luxar serve`
+
+## Assets (app icon)
+
+`assets/` holds two macOS-only helper scripts that regenerate the icon
+shipped in the `.app` bundle. Their rendered outputs live alongside the
+Python package (`packages/luxar/src/luxar/cli/_launcher_assets/`) so they
+ride along with `pip install luxar`; the scripts only need re-running when
+the logo changes.
+
+| Script | Purpose |
+|--------|---------|
+| `build_logo.py` | Renders the 🌌 emoji (Apple Color Emoji, native 160 px strike upscaled with LANCZOS) to a 1024×1024 `luxar-logo.png`. Run via `hatch run python packages/luxar-launcher/assets/build_logo.py`. |
+| `build_icons.sh` | Packs `luxar-logo.png` into `AppIcon.icns` using macOS `sips` + `iconutil`. macOS-only; skips with a notice on other platforms. |
 
 ## Build dependencies (Linux)
 

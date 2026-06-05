@@ -22,7 +22,10 @@ numbers stay honest and its tree reads clearly:
   last-load cache-residency.
 - **Partition** (`kind=partition` groups): N disjoint BSP parts, all
   rendered. The converter tags `kind='partition'` + `partCount`; totals
-  sum across parts (correct — parts are disjoint).
+  sum across parts (correct — parts are disjoint). Partition groups are
+  static (no per-frame selector), so `monitor-wiring.ts` snapshots their
+  `{ path, partCount }` once at wire-time and feeds them to the
+  LOD-progress provider, which surfaces them as `kind:'partition'` states.
 
 `visible-counts.ts` prunes hidden subtrees so inactive LOD levels (and
 toggled-off layers) don't double-count toward the visible HUD totals.
@@ -31,10 +34,10 @@ toggled-off layers) don't double-count toward the visible HUD totals.
 
 | File                       | Role                                                                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `monitor-wiring.ts`        | `wireMonitorAfterLoad(...)` — pushes the resolved `CacheTelemetryState`, then registers cache stats / L0 / GPU buffer pool / per-geometry accumulator-stats / profiler / LOD-progress providers, converts the scene graph for the monitor's tree view, runs the initial visible-counts pass, and calls `forceUpdate()`.                                                                     |
+| `monitor-wiring.ts`        | `wireMonitorAfterLoad(...)` — pushes the resolved `CacheTelemetryState`, then registers cache stats / L0 / GPU buffer pool / per-geometry accumulator-stats / profiler / LOD-progress providers, converts the scene graph for the monitor's tree view, runs the initial visible-counts pass, and calls `forceUpdate()`. The LOD-progress provider is wired with `collectPartitionGroups(sceneGraph)` (a local walk gathering `kind=partition` groups as `{ path, partCount }`).                                                                     |
 | `scene-graph-converter.ts` | `convertToSceneGraphNode(node)` — pure recursive conversion from the loader's `SceneNode` to the monitor UI's `SceneGraphNode`: type whitelisting, display-name derivation (`/` → `"Scene"`), per-type stats (`pointCount`, `segmentCount` + `vertexCount`, `splatCount`), and specialized-group fields (`kind`, `displayType`, `lodGroupChildCount` / `partCount`, `additiveSublods`).     |
 | `visible-counts.ts`        | `updateVisibleCountsInMonitor(rootGroup, monitor)` — recurses the root group, **skipping `visible === false` subtrees**, sums per-mesh `visiblePointCount` / `visibleSegmentCount` / `visibleSplatCount` userData (points + lines + gsplats), and pushes the totals to the monitor. Called once per update cycle after the commits so the HUD shows post-clipping, post-LOD visible counts. |
-| `lod-progress-provider.ts` | `createLODProgressProvider({ loaderMaps, lodGroupRegistry })` — builds the `path → LODProgressState` snapshot the monitor polls each tick: additive `loaded/total/refining/lastAllResident` from the progressive loaders, substitutive `activeLevel/levelCount/selector` from the `LODGroupRegistry`.                                                                                       |
+| `lod-progress-provider.ts` | `createLODProgressProvider({ loaderMaps, lodGroupRegistry, partitionGroups? })` — builds the `path → LODProgressState` snapshot the monitor polls each tick: additive `loaded/total/refining/lastAllResident` from the progressive loaders (duck-typed via the `ProgressiveLike` getter surface), substitutive `activeLevel/levelCount/selector` from the `LODGroupRegistry`, and static `partCount` from the partition-group snapshot.                                                                                       |
 
 ## Consumers
 

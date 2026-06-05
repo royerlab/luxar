@@ -21,9 +21,11 @@ reaches a loader: deriving the per-node query (with `extend_to_all`
 
 ## Consumers
 
-- `../lifecycle/load-scene.ts` builds the initial per-node states
-  via `derive-node-view-state.ts` and seeds the queue's
-  per-node baseline.
+- `../lifecycle/load-scene.ts` resets the predictive-prefetch
+  baseline (the queue's `clearPrev`) on dataset switch, so the
+  first `updateView` doesn't extrapolate from the prior dataset's
+  slice position. The initial per-leaf loads themselves run through
+  `../nodes/*` below.
 - `../lifecycle/retry.ts` re-runs `derive-node-view-state.ts` so
   retry uses the same query region the failed update used.
 - `../nodes/*` consume `derive-node-view-state.ts` to issue
@@ -31,13 +33,16 @@ reaches a loader: deriving the per-node query (with `extend_to_all`
   to validate `scene_dimensions` blobs.
 - `../update-view/*` consume `derive-node-view-state.ts` to assemble
   per-type update contexts and the queue for re-entry decisions.
-- `../loaders/run-loader-updates.ts` reads + writes the queue's
-  per-node baseline as it records failures.
+- `../loaders/run-loader-updates.ts` clears the queue's per-node
+  baseline (`forgetPath`) when a path's update fails, so the next
+  success re-baselines instead of extrapolating across the error.
 - `../process/data-processor-lines.ts` uses
   `extend-tolerance.ts::EXTEND_TO_ALL_TOLERANCE` to flag covered dims.
 - `../../scene-loader.ts` (parent orchestrator) owns the
   `ViewStateQueue` instance and forwards `applyEffectiveAttrs` /
   `deriveNodeViewState` through its ctx builders.
-- `data/{points,lines,gsplats}/handler.ts` and
-  `data/gsplats/lod-refinement.ts` import `ViewStateQueue` as a type
-  (their per-step handlers carry it through the ctx).
+- `data/{points,lines,gsplats}/handler.ts` call
+  `ViewStateQueue.dispatchPrefetch(path, derivedViewState, loader)`
+  (carried through their per-step ctx) to warm the cache from each
+  node's derived view-state; `data/gsplats/lod-refinement.ts`
+  threads the queue through as a type on its ctx.

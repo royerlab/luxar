@@ -85,6 +85,8 @@ SceneManager body stays an orchestrator instead of a megaclass.
 - `../../../utils/hdr/hdr-detection.ts` — `configureHDRRenderer` /
   `logHDRCapabilities` invoked at the tail of both `create*Renderer`
   paths.
-- `../viewport/` — `ResizeOrchestrator` / `AdaptiveDPRManager`; the
-  resize wiring downstream of `createPostProcessing`'s `onResize`
-  callback.
+- `../viewport/` — `ResizeOrchestrator` + the pure `dpr-policy.ts`
+  functions; the resize / DPR wiring downstream of
+  `createPostProcessing`'s `onResize` callback. (The
+  `AdaptiveDPRManager` that drives that wiring lives in
+  `../../../rendering/adaptive-dpr-manager.ts`, not under `viewport/`.)

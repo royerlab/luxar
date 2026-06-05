@@ -82,7 +82,7 @@ export async function projectGSplatsTo3D(
 - **WASM is required, not optional.** Each kernel calls
   `requireWasm(ctx)` first — a worker without WASM throws here rather
   than silently falling back. The TypeScript fallback path is one level
-  up, in the `initWasm` shim in `../../wasm/`, which substitutes a pure-
+  up, in the `initWasm` shim in `../../../wasm/`, which substitutes a pure-
   TS implementation of every batch function before the worker reaches
   these files.
 - **Zero-copy results.** Every return goes through `comlink.transfer()`
@@ -113,7 +113,7 @@ export async function projectGSplatsTo3D(
 
 ## See also
 
-- `../README.md` (planned) — overview of all `data-worker/` task groups.
+- `../README.md` — overview of all `data-worker/` task groups.
 - `../validation.ts` — shared JS→WASM boundary checks.
 - `../../color-utils.ts` — `coerceColorsToFloat32`, `fillColorsWhite`.
 - `../../../data/scene-loader/process/README.md` — main-thread half of
@@ -122,5 +122,5 @@ export async function projectGSplatsTo3D(
 - `../../../data/lines/projection.ts`,
   `../../../data/gsplats/projection.ts` — main-thread fallback
   kernels that mirror these files when `useWebWorkers` is off.
-- `../../wasm/` — compiled WASM module + the pure-TS fallback that
+- `../../../wasm/` — compiled WASM module + the pure-TS fallback that
   satisfies the same `wasmModule.*` surface these files call.

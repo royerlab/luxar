@@ -19,5 +19,5 @@ Conforms to the section-trio pattern documented in [../../../README.md](../../..
 
 - `src/data/zarr-loader.ts` — falls back to `defaultMaxRadius` when `scene.userData.maxRadius` is unset, and passes `defaultTolerance` into `simpleDimsToViewState`.
 - `src/data/view-state-manager.ts` — seeds per-dimension tolerance with `defaultTolerance`.
-- `src/data/loaders/tolerance-computer.ts` — multiplies `defaultTolerance` by the per-dimension `step` to capture N sigma of the geometry's Gaussian kernel.
+- `src/data/loaders/spatial-query/tolerance-computer.ts` — multiplies `defaultTolerance` by the per-dimension `step` to capture N sigma of the geometry's Gaussian kernel.
 - `src/data/points/points-spatial-index-loader.ts` — uses `defaultMaxRadius` as the fallback when a points node does not declare `attrs.max_radius`.

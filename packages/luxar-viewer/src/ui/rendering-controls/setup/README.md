@@ -47,7 +47,7 @@ Creates the **🕹️ Navigation** folder with:
 - **Orbit Controls** sub-folder: auto-rotate toggle, rotation speed, `naturalDrag` toggle (defaults to ON on macOS for touchpad ergonomics).
 - **Fly Controls** sub-folder: movement speed, rotation speed, inertial-mode toggle, translation damping, rotation damping. Damping sliders only show when inertial mode is on; movement-speed, rotation-speed, and translation-damping ranges are pulled from `config.controls.fly.*` (rotation damping is hardcoded `0.9 … 0.9999`).
 
-Returns `folders.orbitFolder` and `folders.flyFolder` so the parent class can show/hide them from `updateNavigationControls(type)` when the user switches control type. The orbit folder is reused for the `ortho` mode (panning + zooming share the same settings).
+Returns `folders.orbitFolder` and `folders.flyFolder` so the parent class can show/hide them from `updateNavigationControls(type)` when the user switches control type. In `ortho` mode both sub-folders are hidden (panning + zooming need no settings), and the parent also hides the FOV slider and preset since orthographic projection has no perspective.
 
 ### `camera-setup.ts`
 

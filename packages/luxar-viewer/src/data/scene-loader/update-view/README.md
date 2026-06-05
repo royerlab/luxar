@@ -1,7 +1,7 @@
 # `updateView` orchestration helpers
 
-Helpers extracted from `scene-loader.ts::updateView`. The orchestrator
-itself stays in `scene-loader.ts`; this folder owns the three
+Helpers extracted from `data/scene-loader.ts::updateView`. The orchestrator
+itself stays in `data/scene-loader.ts`; this folder owns the three
 non-trivial sub-steps that would otherwise bloat the method: per-type
 ctx construction (entry), atomic GPU commit (Stage 2), and the
 `finally`-phase dispatch of whatever runs next.
@@ -17,7 +17,7 @@ ctx construction (entry), atomic GPU commit (Stage 2), and the
 ## Public surface
 
 Each file exports exactly one function (plus its ctx interface). None
-of these are re-exported from `data/` — only `scene-loader.ts`
+of these are re-exported from `data/` — only `data/scene-loader.ts`
 consumes them.
 
 - `buildUpdateCtxs(input: UpdateCtxsInput): { pointsCtx, linesCtx, gsplatsCtx }`
@@ -59,7 +59,7 @@ consumes them.
 
 ## See also
 
-- `../scene-loader.ts` — the orchestrator that composes these three
+- `../../scene-loader.ts` — the orchestrator that composes these three
   helpers; their ctx interfaces are shaped to match its private state.
 - `../view-state/view-state-queue.ts` — `takePending()` source consumed by
   `queueNext`.

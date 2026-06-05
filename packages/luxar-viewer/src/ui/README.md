@@ -146,13 +146,20 @@ class DimensionSliders {
 **Usage:**
 
 ```typescript
-const sliders = new DimensionSliders();
-sliders.setDimensions(sceneDims);
+import { sceneDimsManager } from '../scene/scene-dims-manager';
 
-// Listen for changes
-sliders.on('dimensionChanged', (dim, value) => {
-  updateVisualization(dim, value);
+// After the scene loads and dims are initialized
+const sliders = new DimensionSliders({
+  container: document.body,
+  dims: sceneDimsManager.getDims(),
+  dimensionRanges: sceneDimsManager.getDimensionRanges(),
+  dimensionNames: sceneDimsManager.getDimensionNames(),
+  dimensionUnits: ['μm', 'μm', 'μm', 's', ''],
 });
+
+// Sliders sync automatically through sceneDimsManager: moving a slider
+// calls sceneDimsManager.setDimensionValue(), which notifies all nD
+// objects. No per-slider event subscription is required.
 ```
 
 **Animation Controls:**
@@ -340,7 +347,7 @@ interface DatasetBrowserConfig {
 
 ### 4. Performance Monitor
 
-Real-time performance statistics overlay.
+Real-time performance statistics overlay built on stats.js.
 
 **Metrics Displayed (via stats.js panels):**
 
@@ -350,7 +357,11 @@ Real-time performance statistics overlay.
 
 **Keyboard Shortcut:** `P` to toggle visibility
 
-Panels can be cycled via `cyclePanels()` method.
+Panels can be cycled via `cyclePanels()` method. While visible, the
+monitor subscribes to the animation loop's `frame-start` / `frame-end`
+events on the cross-layer event bus (see `utils/cross-layer/event-bus`)
+to drive `stats.begin()` / `stats.end()`; when hidden it unsubscribes so
+stats.js incurs no cost.
 
 ### 5. Data Loading Monitor
 
@@ -444,7 +455,7 @@ const loader = new SceneLoader(config);
 **Usage Example:**
 
 ```typescript
-import { cycleDataMonitor } from '../data';
+import { cycleDataMonitor } from '../ui/data-monitor-manager';
 
 // Toggle monitor with M key
 document.addEventListener('keydown', (e) => {
@@ -453,6 +464,11 @@ document.addEventListener('keydown', (e) => {
   }
 });
 ```
+
+In production, lower layers drive the monitor via the cross-layer event
+bus (`panel-cycle` / `panel-hide` for `panelId: 'data-monitor'`) rather
+than importing this UI module directly. `cycleDataMonitor` is the only
+remaining convenience accessor; it is kept for integration tests.
 
 **Configuration Options:**
 
@@ -831,49 +847,52 @@ Global keyboard shortcuts managed by the UI system:
 ### Complete UI Setup
 
 ```typescript
-import { DimensionSliders, RenderingControls, PerformanceMonitor, DatasetBrowser } from './ui';
-import { DataMonitorManager } from '../data';
+import { RenderingControls, PerformanceMonitor } from './ui';
+import { DimensionSliders } from './ui/dimension-sliders';
+import { DatasetBrowser } from './ui/dataset-browser';
+import { DataMonitorManager } from './ui/data-monitor-manager';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
 
 // Initialize UI components
-const ui = {
-  dimensions: new DimensionSliders(),
-  rendering: new RenderingControls(postProcessing),
-  performance: new PerformanceMonitor(renderer),
-  browser: new DatasetBrowser(),
-};
+const rendering = new RenderingControls(postProcessing);
+const performance = new PerformanceMonitor();
+const browser = new DatasetBrowser({
+  container: document.body,
+  onDatasetSelect: (url) => loadDataset(url),
+});
 
-// Data loading monitor is automatically created by SceneLoader
-// But you can access it via the manager:
+// Dimension sliders are constructed once dims are known
+const sliders = new DimensionSliders({
+  container: document.body,
+  dims: sceneDimsManager.getDims(),
+  dimensionRanges: sceneDimsManager.getDimensionRanges(),
+  dimensionNames: sceneDimsManager.getDimensionNames(),
+});
+
+// Data loading monitor is automatically created by SceneLoader.
+// Access it via the manager (already connected to loaders, M to cycle):
 const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
-if (monitor) {
-  // Monitor is already connected to loaders automatically
-  // Use M key to show/hide/expand
-}
 
-// Connect to application
-ui.dimensions.on('change', updateSlice);
-ui.rendering.on('change', updateRendering);
-ui.browser.on('select', loadDataset);
+// Slider changes flow through sceneDimsManager — no per-component
+// `.on('change')` wiring is needed.
 ```
 
 ### Responsive UI Updates
 
 ```typescript
-// Update UI based on data
+// Update UI when a new dataset loads
 function updateUIForDataset(dataset) {
-  // Show/hide dimension sliders
+  // Dimension sliders are rebuilt from the new dims (construct a fresh
+  // DimensionSliders) and shown only when the data has >3 dimensions.
   if (dataset.ndim > 3) {
-    ui.dimensions.show();
-    ui.dimensions.setDimensions(dataset.dims);
+    sliders.setVisible(true);
   } else {
-    ui.dimensions.hide();
+    sliders.hide();
   }
 
-  // Update performance monitor
-  ui.performance.setPointCount(dataset.pointCount);
-
-  // Configure rendering controls
-  ui.rendering.setDefaults(dataset.renderingConfig);
+  // Apply rendering defaults from the dataset's zarr viewer config
+  rendering.setZarrViewerConfig(dataset.viewerConfig);
+  rendering.updateSceneScale();
 }
 ```
 
@@ -954,15 +973,21 @@ Override default styles:
 
 ### DimensionSliders
 
-| Method                            | Description                     |
-| --------------------------------- | ------------------------------- |
-| `setDimensions(dims)`             | Configure dimension sliders     |
-| `setValue(dim, value)`            | Set dimension value             |
-| `show()/hide()`                   | Toggle visibility               |
-| `on(event, handler)`              | Subscribe to events             |
-| `setAnimationManager(manager)`    | Connect animation manager to UI |
-| `updatePlayButtonState(dimIndex)` | Update play button visual state |
-| `updateFPSDisplay(dimIndex, fps)` | Update FPS display value        |
+Constructed with `SliderConfig` (`container`, `dims`, `dimensionRanges`,
+`dimensionNames`, optional `dimensionUnits`). Slider movements propagate
+through `sceneDimsManager.setDimensionValue()` rather than a local event
+emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
+
+| Method                         | Description                                   |
+| ------------------------------ | --------------------------------------------- |
+| `setAnimationManager(manager)` | Connect animation manager and build controls  |
+| `toggle()`                     | Toggle slider panel visibility                |
+| `setVisible(visible)`          | Explicitly show/hide the panel                |
+| `hide()`                       | Hide the panel                                |
+| `getIsVisible()`               | Get current visibility state                  |
+| `update()`                     | Refresh slider thumbs from `sceneDimsManager` |
+| `updateStatusBar()`            | Refresh the status/title display              |
+| `dispose()`                    | Clean up listeners and DOM                    |
 
 ### RenderingControls
 
@@ -983,14 +1008,17 @@ Override default styles:
 
 ### PerformanceMonitor
 
-| Method          | Description                                |
-| --------------- | ------------------------------------------ |
-| `begin()/end()` | Frame timing markers (call in render loop) |
-| `toggle()`      | Toggle visibility                          |
-| `show()/hide()` | Explicit show/hide                         |
-| `cyclePanels()` | Cycle FPS/MS/MB panels                     |
-| `visible`       | Get current visibility state (getter)      |
-| `dispose()`     | Clean up resources                         |
+Constructed with no arguments. Frame timing is driven automatically via
+the `frame-start` / `frame-end` event bus while the panel is visible —
+there is no public `begin()` / `end()` to call from the render loop.
+
+| Method          | Description                           |
+| --------------- | ------------------------------------- |
+| `toggle()`      | Toggle visibility                     |
+| `show()/hide()` | Explicit show/hide                    |
+| `cyclePanels()` | Cycle FPS/MS/MB panels                |
+| `visible`       | Get current visibility state (getter) |
+| `dispose()`     | Clean up resources                    |
 
 ### DatasetBrowser
 
@@ -1014,7 +1042,7 @@ Constructor takes `DatasetBrowserConfig` with `container`, `onDatasetSelect` cal
 | `getGlobalStats()`               | Get aggregated statistics             |
 | `getLoaderMetrics(path)`         | Get metrics for specific loader       |
 | `getRecommendations()`           | Get optimization recommendations      |
-| `setActiveTab(tab)`              | Switch between overview/cache/spatial |
+| `setActiveTab(tab)`              | Switch tab (overview/cache/performance/insights) |
 | `dispose()`                      | Clean up resources                    |
 
 ---

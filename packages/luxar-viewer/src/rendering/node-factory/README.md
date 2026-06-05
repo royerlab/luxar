@@ -47,7 +47,11 @@ NodeFactory (class in rendering/node-factory.ts)
 
 - **Producer-side row-major guard.** `validateTransformFormat` throws
   when a 4×4 transform looks row-major (non-zero at indices `[3,7,11]`
-  with zeros at `[12,13,14]`). Python producers must transpose before
+  with zeros at `[12,13,14]`). It also throws an "ambiguous" error when
+  *both* translation bands are non-zero — a correct column-major matrix
+  has its last row `[3,7,11,15]` equal to `[0,0,0,1]`, so a non-zero
+  `[3,7,11]` always signals a producer bug rather than letting geometry
+  land in the wrong place. Python producers must transpose before
   storing: `matrix.T.ravel().tolist()`. This is the load-time refusal
   the project-root `CLAUDE.md` ("Critical Gotchas / Matrix Storage")
   references.
@@ -93,7 +97,7 @@ NodeFactory (class in rendering/node-factory.ts)
 
 - `../README.md` — rendering package overview, material-manager / mega
   shader / picking pipeline.
-- `../../node-factory.ts` — the orchestrator class these helpers serve.
+- `../node-factory.ts` — the orchestrator class these helpers serve.
 - `../material-manager/README.md` — the material cache + global-update
   registry that the colormap clone path detaches from.
 - `../line-geometry.ts`, `../gsplat-geometry.ts`, `../point-geometry.ts`

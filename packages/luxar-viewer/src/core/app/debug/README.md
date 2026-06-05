@@ -14,8 +14,8 @@ to extend that stub with live runtime components, helper functions, and the
 synthetic-scene injector.
 
 Everything here is private to `LuxarApp` — only `app.ts` imports these files
-(see `installDebugInterface` at `core/app.ts:436`, `openCacheStatsView` re-export
-at `core/app.ts:46`).
+(see `installDebugInterface` at `core/app.ts:435`, `openCacheStatsView` re-export
+at `core/app.ts:45`).
 
 ## File Structure
 
@@ -48,6 +48,19 @@ on the runtime fields. When `LuxarApp` is instantiated outside the standalone
 entry point — e.g. embeds or unit tests — bootstrap hasn't run, so the helper
 falls back to a fresh stub.
 
+On entry it calls `setLodLoadStatsEnabled(true)` (from
+`data/scene-loader/lod-load-stats`) so per-stage timing for lazy LOD level
+loads is captured under `?debug` only. Those lazy `ensureLoaded` loads run
+outside any `updateView` cycle, so the `UpdateProfiler` never sees them — this
+fills the gap. The captured stats are reachable as
+`__luxarDebug.getLodLoadStats()` (snapshot) and `resetLodLoadStats()`.
+
+`injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via
+`log.error` and surfaces the message through the user-facing error overlay
+(`showError`), then re-throws so callers that `await` still see the rejection.
+This prevents a broken dynamic import / synthetic-line builder from becoming a
+silent unhandled promise rejection.
+
 After populating the global, it emits a series of `log.info(Modules.LUXAR, …)`
 lines documenting the available commands; this is the in-console help text
 users see after enabling `?debug`.
@@ -55,9 +68,10 @@ users see after enabling `?debug`.
 ### `debug-state.ts`
 
 Pure helper behind `__luxarDebug.getState()`. Exports
-`computeDebugState(ctx: DebugStateContext): DebugState` and the result-shape
-interfaces (`DebugState`, `PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`,
-`GPUPoolDebugStats`).
+`computeDebugState(ctx: DebugStateContext): DebugState`, the input-surface
+interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
+`PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `GPUPoolDebugStats`,
+`LODGroupDebugInfo`, `PartitionDebugInfo`).
 
 `computeDebugState` walks the scene graph once and tallies per-mesh detail for
 three geometry types — Points, Lines, GSplats — by inspecting
@@ -67,14 +81,28 @@ as the source of truth, because pooled attribute arrays are over-allocated and
 to `userData.visiblePointCount` and then attribute count when `instanceCount`
 is absent.
 
+The same traversal also summarises specialized-group containers by their
+`userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
+index of the visible child as `activeLevel`, `-1` when none), and
+`kind=partition` groups become `partitions[]` (part count + visible-part
+count).
+
 For lines, the `hasColormap` flag is read structurally from
 `material.defines.USE_COLORMAP` so the result is identical whether the mesh is
 running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
 
+The returned `DebugState` carries `totalPoints`, `totalGSplats`, `totalLines`,
+`totalElements` (their sum), the per-mesh arrays, `lodGroups`, `partitions`, an
+optional `gpuPool` byte-stats block, `dimensions`, and a nested `camera`
+(`{position, fov}`) plus flat `cameraPosition` / `cameraFov` mirrors kept for
+back-compat.
+
 Dependencies arrive as parameters (`scene`, `camera`, `currentFov`,
 `isAnimating`, `initialized`, `dims`, optional `gpuPoolStats`), so the helper
 is callable from unit tests against real `THREE.Points` / `THREE.Mesh`
-fixtures without bringing up the WebGL renderer.
+fixtures without bringing up the WebGL renderer. (`gpuPoolStats` is not wired
+in the production `installDebugInterface` call, so `gpuPool` is `undefined`
+there; tests pass it explicitly.)
 
 ### `debug-cache-helpers.ts`
 
@@ -126,7 +154,8 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `getPickingSystem()` / `getOverlayManager()`                                                   | port accessors                         | Live (survive reloads)                                                                                                              |
 | `cache.getStats()` / `listDatasets()` / `clearL0()` / `clearL1()` / `clearL2()` / `clearAll()` | `buildDebugCacheHelpers`               | Cache tier control                                                                                                                  |
 | `showError(message)`                                                                           | `ui/error-overlay`                     | Render the error dialog directly (visual-regression hook)                                                                           |
-| `injectSyntheticScene({type, count, bounds?, seed?})`                                          | dynamic import                         | Lines perf-bench injector — builds an `InstancedLinesMeshConfig` and adds it through `materialManager` + `createInstancedLinesMesh` |
+| `injectSyntheticScene({type, count, bounds?, seed?})`                                          | dynamic import                         | Lines perf-bench injector — builds an `InstancedLinesMeshConfig` and adds it through `materialManager` + `createInstancedLinesMesh`; resolves to `{type, segmentCount, mesh}` |
+| `getLodLoadStats()` / `resetLodLoadStats()`                                                    | `data/scene-loader/lod-load-stats`     | Per-stage timing for lazy LOD level loads (fetch/decode, process, commit, release)                                                 |
 | `runtimeReady`                                                                                 | `true`                                 | Sentinel flag for E2E waits                                                                                                         |
 
 `injectSyntheticScene` dynamically imports `scene/synthetic-scene` so the
@@ -146,6 +175,6 @@ their own host page pass `debug: true` to `LuxarApp.init()`.
 
 - `../../README.md` — Core package overview (debug section)
 - `../../bootstrap.ts` — Where the `__luxarDebug` stub is first seeded
-- `../../app.ts` — Caller; line 436 wires the ports
+- `../../app.ts` — Caller; line 435 wires the ports
 - `../../../utils/console-interceptor.ts` — Console buffer surfaced as `__luxarDebug.consoleInterceptor`
 - `../../../ui/data-monitor-manager.ts` — Backs `openCacheStatsView`

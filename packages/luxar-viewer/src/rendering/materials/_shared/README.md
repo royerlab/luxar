@@ -19,7 +19,7 @@ place (`buildMaterial`).
 | `camera-aware-material.ts`   | `CameraAwareMaterial` interface + `isCameraAwareMaterial` guard. The contract `updateCameraParams(fov, resolution, isOrtho?, nearCull?)` that `MaterialManager` broadcasts to every registered visual + picking material                                                  |
 | `colormap-aware-material.ts` | `ColormapAwareMaterial` interface + guard. Two setters (`setColormapTexture`, `setScalarRange`) so the colormap helpers never reach into `material.uniforms` directly                                                                                                     |
 | `camera-uniforms.ts`         | Pure math shared by visual + picking materials: `computePointSizeFactor`, `computeMaxPointSize`, `computeFocalLength`. Branches on `isOrtho` so callers don't special-case projection                                                                                     |
-| `uniform-helpers.ts`         | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor                                                                                                                                                     |
+| `uniform-helpers.ts`         | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor; `isGammaOne(g)` — `|g - 1| < 1e-4` fast-path test that gates the `LUXAR_GAMMA_ONE` define (GLSL) / `gammaOne` flag (TSL) so the shader skips `pow(color, 1/gamma)` when gamma is unity                                                            |
 | `glsl-lib.ts`                | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every Point / Line / GSplat visual _and_ picking GLSL shader                                                                                           |
 | `tsl-helpers.ts`             | TSL counterparts to the GLSL sanitisers (`sanitizePositive`, `sanitizeNonNegative`, `invalidFloatTSL`) plus `proxyIUniform(node)` — wraps a TSL `UniformNode` in an `IUniform`-shaped getter/setter so the `material.uniforms.uX.value = Y` API works under both backends |
 
@@ -97,7 +97,11 @@ Similarly, `clampGamma` exists only because the `Math.max(0.001, gamma ?? 1.0)`
 clamp was repeated in six material constructors (3 geometries × {GLSL, TSL});
 the GLSL `pow(color, 1.0 / gamma)` divides by zero when `gamma == 0`, and
 keeping the bound in one place lets us change the clamp once if the policy
-ever tightens.
+ever tightens. Its sibling `isGammaOne` is the same idea for the fast path:
+when gamma is within `1e-4` of `1.0` the per-fragment `pow(color, 1/gamma)`
+is a no-op (`pow(x, 1) == x`), so the threshold gates the `LUXAR_GAMMA_ONE`
+GLSL define / `gammaOne` TSL config flag — and sharing the threshold keeps
+that fast-path boundary byte-for-byte identical across all six files.
 
 ## Adding a new shared helper
 
@@ -116,7 +120,7 @@ small and concrete.
 
 ## See Also
 
-- `../README.md` (planned — sibling per-geometry material folders share this README's vocabulary)
+- `../README.md` — Materials subtree overview; sibling per-geometry material folders share this README's vocabulary
 - `../../README.md` — Rendering package overview and how materials fit into the pipeline
 - `../../renderer-capabilities.ts` — defines `RendererCapabilities.apiSurface` that `buildMaterial` branches on
 - `../../material-manager.ts` — owns the camera-broadcast loop that drives `CameraAwareMaterial`

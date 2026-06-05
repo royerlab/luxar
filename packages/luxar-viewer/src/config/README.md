@@ -279,7 +279,7 @@ dataLoading: {
 
     // WASM acceleration
     useWASM: true,
-    wasmModulePath: '/wasm/luxar_wasm_bg.wasm',
+    wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
     // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,

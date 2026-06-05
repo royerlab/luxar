@@ -7,7 +7,8 @@ This directory contains tools and reports for analyzing the Luxar codebase.
 Generate the statistics report:
 
 ```bash
-make stats
+make stats         # full report (runs the test suites with coverage)
+make stats-fast    # file counts only, skips test runs (--no-tests)
 ```
 
 Or run directly (with options):
@@ -38,13 +39,14 @@ The statistics analyzer examines the entire Luxar codebase and provides:
 
 ### Supported Languages
 
-The analyzer supports **13 programming and configuration languages**:
+The analyzer supports **14 programming and configuration languages**:
 
 **Primary Languages (code):**
 - **Python** (.py) - Backend, data processing, API
 - **TypeScript** (.ts, .tsx) - Viewer frontend, WebGL rendering
 - **Rust** (.rs) - WASM module for high-performance computations
 - **CUDA** (.cu, .cuh) - GPU acceleration kernels
+- **Go** (.go) - Native launcher binaries (`luxar export --native`)
 - **JavaScript** (.js, .jsx, .mjs) - Scripts and configurations
 - **CSS** (.css, .scss) - Styling
 
@@ -90,27 +92,30 @@ The generated HTML report includes:
 
 ## What's Excluded
 
-The analyzer excludes:
-- `node_modules/` - Node.js dependencies
-- `__pycache__/` - Python bytecode cache
-- `.pytest_cache/` - Pytest cache
-- `coverage/` - Coverage reports
-- `dist/` - Distribution builds
-- `build/` - Build artifacts
-- `.git/` - Git repository data
+The analyzer skips a directory whenever any path component matches a name in
+`SKIP_DIR_NAMES`, so generated/build artifacts and vendored dependencies don't
+inflate the counts. The skipped names include:
+
+- Dependencies & caches: `node_modules/`, `__pycache__/`, `.pytest_cache/`,
+  `.mypy_cache/`, `.ruff_cache/`, `.hatch/`, `.venv/`, `venv/`, `.tox/`, `.eggs/`
+- Build & coverage output: `dist/`, `build/`, `_build/`, `target/`, `coverage/`,
+  `htmlcov/`, `playwright-report/`, `test-results/`, `.playwright-mcp/`
+- Data & scratch: `datasets/`, `delme/`, `build-cuda-logs/`, `cuda-build-logs/`
+- VCS & tooling: `.git/`, `.idea/`, `.vscode/`, `.claude/`
 
 ## Technical Details
 
 ### Analysis Method
 
 The analyzer:
-1. **Recursively scans** files for all 13 supported languages
+1. **Recursively scans** files for all 14 supported languages
 2. **Counts lines** by category (code, comments, blank) with language-specific comment detection
 3. **Parses definitions** using regex patterns:
    - **Python**: classes, functions, methods
    - **TypeScript**: classes, functions, interfaces, type aliases
    - **Rust**: structs, functions, traits, impls, enums
    - **CUDA**: kernels, device functions, host functions
+   - **Go**: functions, structs, interfaces
    - **CSS**: rules, variables, media queries
 4. **Runs tests** with coverage for Python, TypeScript, and Rust
 5. **Gathers Git statistics** (commits, contributors, activity)
