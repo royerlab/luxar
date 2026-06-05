@@ -95,6 +95,84 @@ class TestResidualPeakFinding:
         assert len(peaks) == 0
 
 
+class TestTiledSeedingReproducibility:
+    """Tiled probabilistic peak selection must be reproducible under a fixed seed.
+
+    When k_per_tile < 1 the tiled seeder keeps each weak peak with probability
+    k_per_tile via an RNG. Before seeding was threaded through, that draw used
+    the unseeded global ``random`` module, so two fits with identical inputs
+    could select different peaks. These tests pin the seeded contract.
+    """
+
+    @staticmethod
+    def _spread_amplitude_residual() -> torch.Tensor:
+        """64 peaks on an 8x8 grid with amplitudes 1..64.
+
+        The amplitudes span the full range so the 75th-percentile "strong peak"
+        threshold leaves a clear majority of weak peaks subject to the
+        probabilistic keep decision — i.e. the seeded branch is actually
+        exercised. Peaks are spaced 8 voxels apart so each survives NMS and
+        lands in its own tile (auto tiling for 2D is 16x16 = 256 tiles).
+        """
+        residual = torch.zeros((64, 64))
+        amp = 1
+        for i in range(4, 64, 8):
+            for j in range(4, 64, 8):
+                residual[i, j] = float(amp)
+                amp += 1
+        return residual
+
+    def _find(self, residual: torch.Tensor, seed: int | None) -> torch.Tensor:
+        # k_max=40 over 256 tiles → keep_probability ≈ 0.156 → probabilistic mode.
+        return _find_residual_peaks(
+            residual,
+            k_max_residuals=40,
+            nms_radius_vox=1.0,
+            enable_tiled=True,
+            seed=seed,
+        )
+
+    def test_config_default_seed_is_42(self) -> None:
+        """Dynamic seeding is reproducible by default (matches FPS seed convention)."""
+        assert DynamicOpsConfig().seed == 42
+
+    def test_same_seed_is_deterministic(self) -> None:
+        """Identical input + identical seed → byte-identical peak selection."""
+        residual = self._spread_amplitude_residual()
+        first = self._find(residual, seed=123)
+        second = self._find(residual, seed=123)
+        assert torch.equal(first, second)
+
+    def test_different_seeds_change_weak_peak_selection(self) -> None:
+        """The seed actually drives the probabilistic draw, not just the API."""
+        residual = self._spread_amplitude_residual()
+        signatures = {
+            tuple(sorted(tuple(p.tolist()) for p in self._find(residual, seed=s)))
+            for s in (1, 2, 3, 4)
+        }
+        # With ~48 weak peaks each kept ~15.6% of the time, distinct seeds
+        # almost surely disagree; a single signature would mean the seed is
+        # being ignored.
+        assert len(signatures) > 1
+
+    def test_strong_peaks_always_kept_regardless_of_seed(self) -> None:
+        """Above-threshold peaks bypass the probabilistic draw (invariant)."""
+        residual = self._spread_amplitude_residual()
+        # The global maximum (amplitude 64 at (60, 60)) is well above the 75th
+        # percentile and must be retained under every seed, including unseeded.
+        for seed in (1, 7, 999, None):
+            peak_tuples = {tuple(p.tolist()) for p in self._find(residual, seed)}
+            assert (60, 60) in peak_tuples
+
+    def test_count_stays_within_candidate_bound(self) -> None:
+        """Selection never invents peaks beyond the candidate set (invariant)."""
+        residual = self._spread_amplitude_residual()
+        peaks = self._find(residual, seed=42)
+        # 64 candidate peaks total; cannot exceed that, and strong peaks
+        # guarantee a non-empty result.
+        assert 0 < len(peaks) <= 64
+
+
 class TestSimplifiedSeeding:
     """Test ultra-simple seeding approach with direct amplitude and isotropic shape."""
 

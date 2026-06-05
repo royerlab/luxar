@@ -178,6 +178,7 @@ def apply_dynamic_operations(
             num_tiles_per_dim=cfg.num_tiles_per_dim
             if cfg.num_tiles_per_dim is not None
             else 8,
+            seed=cfg.seed,
         )
 
         if len(peak_locations) == 0:
