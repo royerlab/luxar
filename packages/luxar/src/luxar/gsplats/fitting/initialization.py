@@ -286,7 +286,7 @@ def initialize_optimization(
         factor=config.lr_reduction_factor,
     )
 
-    # Boost center position LR by 1.5x post-creation (autoresearch iter 41).
+    # Boost center position LR by 1.5x post-creation (empirically tuned).
     # Centers are the most critical parameters for PSNR — a mis-positioned
     # Gaussian produces large error regardless of shape/amplitude.  Applied
     # post-creation to preserve the test-verified defaults in integration.py.

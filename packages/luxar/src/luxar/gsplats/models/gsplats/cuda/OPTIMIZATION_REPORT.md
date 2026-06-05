@@ -2,7 +2,7 @@
 
 **Date:** March 2026
 **GPU:** NVIDIA GeForce RTX 3090 Ti (sm_86, 24GB VRAM)
-**Method:** Autonomous iterative optimization (autoresearch) — 25+ iterations
+**Architecture:** Splat-centric CUDA pipeline (one CUDA block per splat, block-local gradient reduction, tile binning eliminated) with `torch.compile`-fused Python-side L→conic, validated against the PyTorch reference for correctness and speed
 
 ## Summary
 
@@ -50,45 +50,49 @@ C++:    splat_bwd (1 kernel, N blocks)
 - Block-local gradient reduction (zero global atomics in backward)
 - `torch.compile` fuses Python-side L→conic forward+backward
 
-## Optimization Progression
+## Optimizations Evaluated
 
-### Tile-based kernel optimizations (iterations 1-14)
+The optimizations below were each benchmarked individually and either kept (if
+they improved performance without regressing correctness) or discarded. Impact
+percentages are relative to the configuration immediately preceding each change.
 
-| Iter | Optimization | Impact | Status |
-|------|-------------|--------|--------|
-| 1 | Hoist pixel coords + grad out of backward splat loop (DIM<=4) | -8.2% | **KEEP** |
-| 2 | `__ballot_sync` warp early termination (backward reduction) | -25.9% | **KEEP** |
-| 3 | `__ballot_sync` warp early termination (forward inner loop) | -6.1% | **KEEP** |
-| 4 | Batch warp reductions before atomics (ILP) | -2.9% | **KEEP** |
-| 5 | Remove intensity_floor checks | — | DISCARD (guard fail) |
-| 6 | Skip write-back for non-contributing splats | -0.4% | DISCARD (noise) |
-| 7 | CSE optimization in 3D backward | +2.6% | DISCARD (register pressure) |
-| 8 | Manual interleaved warp shuffles | +0.9% | DISCARD (register pressure) |
-| 9 | Single-splat fast path (forward kernel) | -1.1% | **KEEP** |
-| 10 | Single-splat fast path (backward kernel) | +6.2% | DISCARD (global atomics too expensive) |
-| 11 | Persistent forward kernel with work-queue | +17.8% | DISCARD (lost spatial locality) |
-| 12 | Skip grad_output shared memory cache (DIM<=4) | -1.4% | **KEEP** |
-| 13 | `#pragma unroll 2` forward inner loop | +2.4% | DISCARD (register pressure) |
-| 14 | `__launch_bounds__(512, 3)` on backward kernel | ~0% primary, fixed secondaries | **KEEP** |
+### Tile-based kernel optimizations
 
-### Splat-centric architecture work (iterations 16-17)
+| Optimization | Impact | Status |
+|-------------|--------|--------|
+| Hoist pixel coords + grad out of backward splat loop (DIM<=4) | -8.2% | **KEEP** |
+| `__ballot_sync` warp early termination (backward reduction) | -25.9% | **KEEP** |
+| `__ballot_sync` warp early termination (forward inner loop) | -6.1% | **KEEP** |
+| Batch warp reductions before atomics (ILP) | -2.9% | **KEEP** |
+| Remove intensity_floor checks | — | DISCARD (guard fail) |
+| Skip write-back for non-contributing splats | -0.4% | DISCARD (noise) |
+| CSE optimization in 3D backward | +2.6% | DISCARD (register pressure) |
+| Manual interleaved warp shuffles | +0.9% | DISCARD (register pressure) |
+| Single-splat fast path (forward kernel) | -1.1% | **KEEP** |
+| Single-splat fast path (backward kernel) | +6.2% | DISCARD (global atomics too expensive) |
+| Persistent forward kernel with work-queue | +17.8% | DISCARD (lost spatial locality) |
+| Skip grad_output shared memory cache (DIM<=4) | -1.4% | **KEEP** |
+| `#pragma unroll 2` forward inner loop | +2.4% | DISCARD (register pressure) |
+| `__launch_bounds__(512, 3)` on backward kernel | ~0% primary, fixed secondaries | **KEEP** |
 
-| Iter | Optimization | Impact | Status |
-|------|-------------|--------|--------|
-| 16 | **Splat-centric backward kernel** | -25.9% from iter 4 | **KEEP** |
-| 17 | **Splat-centric forward kernel** (eliminates tile binning) | -10.3% | **KEEP** |
+### Splat-centric architecture
 
-### Python-side optimizations (iterations 19-25)
+| Optimization | Impact | Status |
+|-------------|--------|--------|
+| **Splat-centric backward kernel** | -25.9% vs. batched-warp-reduction tile baseline | **KEEP** |
+| **Splat-centric forward kernel** (eliminates tile binning) | -10.3% | **KEEP** |
 
-| Iter | Optimization | Impact | Status |
-|------|-------------|--------|--------|
-| 19 | `torch.compile` on `cholesky_to_conic` (fuse 12→1 kernel) | -3.8% | **KEEP** |
-| 20 | Backward `output_to_zero` parameter (register allocation side effect) | -11.7% | **KEEP** |
-| 21 | Wire output-zeroing API | -3.9% | **KEEP** |
-| 22 | Tighten AABB margin +0.5 → +0.01 | -3.5% | **KEEP** (later reverted for correctness) |
-| 23 | Output buffer reuse | ~0% | **KEEP** (later reverted for OOM) |
-| 24 | Analytical L→conic backward | -6.4% primary, -43% secondary | **KEEP** (later replaced) |
-| 25 | Skip Ls.clone() for 2D/3D | ~0% | **KEEP** (later reverted) |
+### Python-side optimizations
+
+| Optimization | Impact | Status |
+|-------------|--------|--------|
+| `torch.compile` on `cholesky_to_conic` (fuse 12→1 kernel) | -3.8% | **KEEP** |
+| Backward `output_to_zero` parameter (register allocation side effect) | -11.7% | **KEEP** |
+| Wire output-zeroing API | -3.9% | **KEEP** |
+| Tighten AABB margin +0.5 → +0.01 | -3.5% | **KEEP** (later reverted for correctness) |
+| Output buffer reuse | ~0% | **KEEP** (later reverted for OOM) |
+| Analytical L→conic backward | -6.4% primary, -43% secondary | **KEEP** (later replaced) |
+| Skip Ls.clone() for 2D/3D | ~0% | **KEEP** (later reverted) |
 
 ### Correctness fixes after optimization
 
@@ -107,7 +111,7 @@ C++:    splat_bwd (1 kernel, N blocks)
 
 3. **Register pressure is the #1 enemy on sm_86.** Any optimization that adds 2+ registers risks dropping occupancy from 3→2 blocks/SM, negating the compute savings.
 
-4. **Spatial locality > load balancing.** The persistent kernel (iter 11) destroyed L2 cache performance by -18% despite better load distribution.
+4. **Spatial locality > load balancing.** The persistent work-queue forward kernel destroyed L2 cache performance by -18% despite better load distribution.
 
 5. **`torch.compile` is a free lunch for Python-side fusion.** Fusing 12 kernel launches into 1 for cholesky_to_conic (both forward AND backward) gave -4% with zero code complexity.
 

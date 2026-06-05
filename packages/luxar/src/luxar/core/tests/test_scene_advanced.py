@@ -517,14 +517,14 @@ class TestToZarr:
     """Tests for to_zarr method.
 
     The full behavioral contract (FileExistsError, inside-source rejection,
-    finalize semantics) is covered in ``test_review_fixes.py``.
+    finalize semantics) is covered in ``test_api_regressions.py``.
     """
 
     def test_to_zarr_finalizes_and_copies_store(self) -> None:
         """Scene.to_zarr finalizes the backing store and copies it elsewhere.
 
         The detailed behavior (refusing existing destinations, refusing
-        nested destinations, etc.) is exercised in test_review_fixes.py;
+        nested destinations, etc.) is exercised in test_api_regressions.py;
         this test pins down the smoke-level happy path.
         """
         with tempfile.TemporaryDirectory() as tmpdir:

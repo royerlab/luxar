@@ -766,7 +766,7 @@ Tests are located in `core/tests/`:
 - `test_node_rendering.py` - Rendering attributes for Node class
 - `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)
 - `test_physical_units.py` - Physical units support through Dimensions system
-- `test_review_fixes.py` - Guards fixes from the systematic API review (regression tests)
+- `test_api_regressions.py` - Regression tests pinning core API invariants (ndim metadata key, property-setter persistence, cross-scene node inequality, Scene.dimensions, Scene.to_zarr export, top-level GSplatData export)
 - `test_scene_advanced.py` - Advanced Scene class tests (initialization, error handling)
 - `test_scene_methods.py` - Scene class methods not covered elsewhere
 - `test_scene_structure.py` - Scene graph structure
