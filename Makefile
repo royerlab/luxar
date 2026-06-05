@@ -21,6 +21,26 @@
         install-go build-launchers clean-launchers
 
 # ============================================================================
+# Shell hardening
+# ============================================================================
+# Run every recipe under bash with errexit + pipefail so a failing command in
+# a `;`-joined sequence or a piped stage aborts the recipe instead of being
+# silently swallowed. `.DELETE_ON_ERROR` removes half-written targets on
+# failure. (nounset/-u is intentionally NOT set: this Makefile relies on many
+# conditionally-set shell vars.)
+SHELL := bash
+.SHELLFLAGS := -e -o pipefail -c
+.DELETE_ON_ERROR:
+
+# Resolve `hatch` once: prefer one on PATH, else the ~/.local/bin fallback used
+# on HPC/no-sudo machines. Use $(HATCH) for all hatch invocations in recipes.
+HATCH ?= $(shell command -v hatch 2>/dev/null || echo $(HOME)/.local/bin/hatch)
+
+# Shared find-prune prefix: skip VCS/dependency/venv trees when cleaning so we
+# never recurse into node_modules/.git/.venv (slow + can delete the wrong dirs).
+FIND_PRUNE := -name node_modules -prune -o -name .git -prune -o -name .venv -prune -o
+
+# ============================================================================
 # OS Detection and Configuration
 # ============================================================================
 UNAME_S := $(shell uname -s)
@@ -44,7 +64,7 @@ else
     PKG_MANAGER := unknown
 endif
 
-# Minimum Node.js version required by Vite 7.x
+# Minimum Node.js version required by Vite 8.x
 MIN_NODE_MAJOR := 20
 MIN_NODE_MINOR := 19
 
@@ -218,7 +238,7 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "⚪ CUDA toolkit not installed (nvcc not found)"; \
 	fi
 	@# PyTorch CUDA support
-	@if hatch run python -c "import torch; print('✅ PyTorch CUDA:', torch.version.cuda if torch.cuda.is_available() else 'not available')" 2>/dev/null; then \
+	@if $(HATCH) run python -c "import torch; print('✅ PyTorch CUDA:', torch.version.cuda if torch.cuda.is_available() else 'not available')" 2>/dev/null; then \
 		:; \
 	else \
 		echo "⚪ PyTorch CUDA not available"; \
@@ -399,7 +419,7 @@ install-dev:  ## Install Luxar Python package in editable mode for development
 
 # Code formatting (using Hatch)
 format-python:  ## Format Python code with ruff
-	hatch run format
+	$(HATCH) run format
 
 format-typescript:  ## Format TypeScript code with prettier
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -446,7 +466,7 @@ format-all:  ## Format all code (Python, TypeScript, Rust, CUDA)
 
 # Code quality checks (using Hatch)
 lint-python:  ## Run ruff linting on Python code
-	hatch run python -m ruff check packages/luxar/src/luxar/
+	$(HATCH) run python -m ruff check packages/luxar/src/luxar/
 
 lint-typescript:  ## Run ESLint on TypeScript code
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -456,7 +476,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	hatch run mypy packages/luxar/src/luxar/
+	$(HATCH) run mypy packages/luxar/src/luxar/
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -466,12 +486,12 @@ type-check-typescript:  ## Run TypeScript type checking
 	cd packages/luxar-viewer && pnpm run typecheck
 
 security:  ## Run bandit security checks
-	hatch run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
+	$(HATCH) run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
 
 # Testing (using Hatch)
 test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
 	@echo "🐍 Running Python tests..."
-	hatch run test
+	$(HATCH) run test
 	@echo ""
 	@echo "🦀 Checking Rust/WASM tests..."
 	@# Source cargo env to find cargo/wasm-pack
@@ -495,7 +515,7 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 	fi
 	@echo ""
 	@echo "🔬 Generating TypeScript test fixtures..."
-	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	$(HATCH) run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 	@echo "📘 Running TypeScript tests..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -515,9 +535,9 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 	@echo ""
 	@echo "🎮 Checking CUDA tests..."
 	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		if $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 			echo "Running CUDA extension tests..."; \
-			hatch run pytest $(CUDA_EXT_DIR)/tests/ -v; \
+			$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v; \
 		else \
 			echo "⚠️  PyTorch CUDA not available - CUDA tests skipped"; \
 			echo "   Run 'make check-cuda-deps' for details"; \
@@ -532,14 +552,14 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 # produces non-deterministic test failures (observed: ~200 spurious CUDA
 # extension comparison failures when run concurrently). Run sequentially.
 test-python:  ## Run Python tests only
-	hatch run test
+	$(HATCH) run test
 
 test-cov-python:  ## Run Python tests with coverage report
-	hatch run test-cov
+	$(HATCH) run test-cov
 
 test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
 	@echo "🐍 Running Python tests with coverage..."
-	hatch run test-cov
+	$(HATCH) run test-cov
 	@echo ""
 	@echo "📘 Running TypeScript tests with coverage..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -551,20 +571,20 @@ test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅ Coverage reports generated!"
 	@echo ""
-	@echo "📊 Python coverage: See terminal output above or run 'hatch run coverage html'"
+	@echo "📊 Python coverage: See terminal output above or run '$(HATCH) run coverage html'"
 	@echo "📊 TypeScript coverage: packages/luxar-viewer/coverage/"
 
 # Pre-commit
 enable-pre-commit:  ## Enable and activate pre-commit hooks
-	hatch run pre-commit install --allow-missing-config
+	$(HATCH) run pre-commit install
 
 run-pre-commit:  ## Run pre-commit on all files
-	hatch run pre-commit run --all-files
+	$(HATCH) run pre-commit run --all-files
 
 # Quality checks (run all using Hatch)
 check-all:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
-	hatch run check
+	$(HATCH) run check
 	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + coverage)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -575,7 +595,7 @@ check-all:  ## Run all quality checks (Python and TypeScript)
 # Documentation checks
 check-docs:  ## Check documentation quality and coverage
 	@echo "📚 Checking Python documentation..."
-	hatch run python scripts/check_documentation.py
+	$(HATCH) run python scripts/check_documentation.py
 	@echo "📚 Checking TypeScript JSDoc coverage..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
@@ -585,7 +605,7 @@ check-docs:  ## Check documentation quality and coverage
 
 check-docs-verbose:  ## Check documentation with detailed output
 	@echo "📚 Checking documentation (verbose mode)..."
-	hatch run python scripts/check_documentation.py --verbose
+	$(HATCH) run python scripts/check_documentation.py --verbose
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
@@ -615,12 +635,14 @@ clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, d
 
 clean-python:  ## Clean Python build artifacts and caches
 	@echo "🐍 Cleaning Python artifacts..."
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -delete
-	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	find . -type d -name ".pytest_cache" -exec rm -rf {} +
-	find . -type d -name ".mypy_cache" -exec rm -rf {} +
-	find . -type d -name ".ruff_cache" -exec rm -rf {} +
+	@# Prune node_modules/.git/.venv (never descend) and use `rm -rf` so removal
+	@# of non-empty cache dirs can't fail the way `find -delete` does.
+	find . $(FIND_PRUNE) -type f -name '*.pyc' -exec rm -f {} +
+	find . $(FIND_PRUNE) -type d -name '__pycache__' -prune -exec rm -rf {} +
+	find . $(FIND_PRUNE) -type d -name '*.egg-info' -prune -exec rm -rf {} +
+	find . $(FIND_PRUNE) -type d -name '.pytest_cache' -prune -exec rm -rf {} +
+	find . $(FIND_PRUNE) -type d -name '.mypy_cache' -prune -exec rm -rf {} +
+	find . $(FIND_PRUNE) -type d -name '.ruff_cache' -prune -exec rm -rf {} +
 	rm -rf build/
 	rm -rf dist/
 	rm -rf coverage/
@@ -643,8 +665,10 @@ clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar)
 clean-examples:  ## Clean up generated datasets (examples, demos, zarr files)
 	@echo "🧹 Cleaning generated datasets..."
 	rm -rf datasets/
-	rm -rf *.zarr
 	rm -rf zarr_scenes/  # Remove deprecated directory
+	@# NOTE: deliberately no bare `rm -rf *.zarr` here — a root-level glob would
+	@# silently delete a user's exported scene (.zarr is gitignored → unrecoverable).
+	@# All generated datasets live under datasets/, removed above.
 	@echo "✅ Datasets cleaned!"
 
 clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUTION)
@@ -712,7 +736,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo ""
 	@echo "🧹 [2/12] Removing Hatch environments (includes PyTorch with CUDA)..."
 	@if command -v hatch >/dev/null 2>&1; then \
-		hatch env prune -y 2>/dev/null || true; \
+		$(HATCH) env prune -y 2>/dev/null || true; \
 	fi
 	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
 	@echo "   ✓ Done"
@@ -720,7 +744,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "🧹 [3/12] Removing pre-commit hooks..."
 	@if [ -d ".git/hooks" ]; then \
 		if command -v hatch >/dev/null 2>&1; then \
-			hatch run pre-commit uninstall 2>/dev/null || true; \
+			$(HATCH) run pre-commit uninstall 2>/dev/null || true; \
 			echo "   ✓ pre-commit hooks uninstalled"; \
 		elif [ -f ".git/hooks/pre-commit" ] && grep -q "pre-commit" ".git/hooks/pre-commit" 2>/dev/null; then \
 			rm -f .git/hooks/pre-commit .git/hooks/commit-msg .git/hooks/pre-push 2>/dev/null || true; \
@@ -1075,7 +1099,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	echo "Creating Hatch environment..."; \
 	$$HATCH_CMD env create || true; \
 	echo "Installing pre-commit hooks..."; \
-	$$HATCH_CMD run pre-commit install --allow-missing-config || echo "⚠️  pre-commit install skipped"
+	$$HATCH_CMD run pre-commit install || echo "⚠️  pre-commit install skipped"
 	@echo ""
 	@# Step 4: Install TypeScript dependencies (source nvm first if needed)
 	@echo "=== Step 4: Installing TypeScript Dependencies ==="
@@ -1101,7 +1125,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "CUDA (Gaussian splatting GPU acceleration):"
 	@if command -v nvcc >/dev/null 2>&1; then \
 		echo "  ✅ CUDA toolkit installed"; \
-		if hatch run python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then \
+		if $(HATCH) run python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then \
 			echo "  ✅ PyTorch CUDA available"; \
 		else \
 			echo "  ⚠️  PyTorch CUDA not available (run 'make check-cuda-deps' for details)"; \
@@ -1126,19 +1150,19 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "  make install-go     - Install Go (for native launcher builds)"
 	@echo "  make build-launchers - Build native launchers (luxar export --native)"
 	@echo ""
-	@echo "💡 Use 'hatch shell' to activate the Python environment"
+	@echo "💡 Use '$(HATCH) shell' to activate the Python environment"
 
 # Demo and serving
 demo:  ## Generate a demo dataset (datasets/demos/demo.zarr with 100k points)
 	@mkdir -p datasets/demos
-	hatch run luxar demo --no-serve --output datasets/demos/demo.zarr --points 100000
+	$(HATCH) run luxar demo --no-serve --output datasets/demos/demo.zarr --points 100000
 	@echo "✅ Demo dataset created at datasets/demos/demo.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
 	@echo "🚀 Running all examples to generate zarr files..."
 	@echo "📂 Output directory: datasets/examples/"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l); \
+	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l || echo 0); \
 	count=0; \
 	for script in packages/luxar/examples/*_example.py; do \
 		count=$$((count + 1)); \
@@ -1146,7 +1170,7 @@ run-examples:  ## Run all examples to generate zarr files (output to datasets/ex
 		echo ""; \
 		echo "[$${count}/$${total}] 📊 Running $${name}..."; \
 		echo "────────────────────────────────────────────────"; \
-		if hatch run python $$script; then \
+		if $(HATCH) run python $$script; then \
 			echo "✅ Success: $${name}"; \
 		else \
 			echo "❌ Failed: $${name}"; \
@@ -1174,7 +1198,7 @@ run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@mkdir -p datasets/demos
 	@# Run all demo scripts (skip if output exists)
-	@total=$$(ls -1 packages/luxar/src/luxar/demos/demo_*.py 2>/dev/null | wc -l); \
+	@total=$$(ls -1 packages/luxar/src/luxar/demos/demo_*.py 2>/dev/null | wc -l || echo 0); \
 	count=0; \
 	for script in packages/luxar/src/luxar/demos/demo_*.py; do \
 		count=$$((count + 1)); \
@@ -1191,7 +1215,7 @@ run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
 			fi; \
 		done; \
 		if [ "$$found" = "0" ]; then \
-			hatch run python $$script --no-serve 2>&1 | head -20 || echo "   ⚠️  Failed or requires manual run"; \
+			$(HATCH) run python $$script --no-serve 2>&1 | head -20 || echo "   ⚠️  Failed or requires manual run"; \
 		fi; \
 	done
 	@echo ""
@@ -1211,15 +1235,15 @@ generate-readme-demos:  ## Generate only the demo datasets needed for README scr
 	@echo "🚀 Generating README demo datasets..."
 	@mkdir -p datasets/demos
 	@echo "[1/5] 🌀 Lorenz Attractor..."
-	@if [ -d "datasets/demos/lorenz.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/lorenz.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[2/5] 🔮 Mandelbulb..."
-	@if [ -d "datasets/demos/mandelbulb.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/mandelbulb.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[3/5] 🌌 Spiral Galaxy..."
-	@if [ -d "datasets/demos/spiral_galaxy.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/spiral_galaxy.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[4/5] 🧬 Zebrahub Multiome UMAP..."
-	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[5/5] 🌈 Rainbow Sphere..."
-	@if [ -d "datasets/demos/rainbow_sphere.zarr" ]; then echo "   ✓ exists"; else hatch run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/rainbow_sphere.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "✅ README demos ready!"
 
 generate-readme-images: generate-readme-demos  ## Generate README screenshots using Playwright
@@ -1297,7 +1321,7 @@ serve-examples:  ## Serve the datasets directory for browsing generated datasets
 	@echo "📊 Open viewer at: http://localhost:5173/?src=http://localhost:8000"
 	@echo "💡 Press 'O' in the viewer to browse available datasets"
 	@echo ""
-	hatch run luxar serve datasets/ -p 8000
+	$(HATCH) run luxar serve datasets/ -p 8000
 
 # Default values for serve-dataset (override with: make serve-dataset DATASET=path/to/data.zarr PORT=8080)
 DATASET ?= datasets/demos/demo.zarr
@@ -1308,7 +1332,7 @@ serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 800
 		echo "No demo dataset found. Creating one..."; \
 		$(MAKE) demo; \
 	fi
-	hatch run luxar serve $(DATASET) -p $(PORT)
+	$(HATCH) run luxar serve $(DATASET) -p $(PORT)
 
 # Web viewer
 install-viewer-deps:  ## Install viewer dependencies (node_modules)
@@ -1457,8 +1481,8 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	if command -v wasm-pack >/dev/null 2>&1; then \
 		echo "✅ wasm-pack is already installed: $$(wasm-pack --version)"; \
 	else \
-		echo "📥 Installing wasm-pack (this may take a minute)..."; \
-		cargo install wasm-pack; \
+		echo "📥 Installing wasm-pack 0.14.0 (this may take a minute)..."; \
+		cargo install wasm-pack --version 0.14.0 --locked; \
 		echo "✅ wasm-pack installed successfully!"; \
 	fi; \
 	echo ""; \
@@ -1597,9 +1621,10 @@ install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball o
 		echo "📥 Installing Go $$GO_VERSION for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
 		mkdir -p "$$HOME/.local"; \
 		rm -rf "$$HOME/.local/go"; \
-		curl -fsSL "https://go.dev/dl/$$TARBALL" -o "/tmp/$$TARBALL"; \
-		tar -C "$$HOME/.local" -xzf "/tmp/$$TARBALL"; \
-		rm -f "/tmp/$$TARBALL"; \
+		TMPDIR_GO=$$(mktemp -d); \
+		trap 'rm -rf "$$TMPDIR_GO"' EXIT; \
+		curl -fsSL "https://go.dev/dl/$$TARBALL" -o "$$TMPDIR_GO/$$TARBALL"; \
+		tar -C "$$HOME/.local" -xzf "$$TMPDIR_GO/$$TARBALL"; \
 		echo "✅ Go installed: $$($$HOME/.local/go/bin/go version)"; \
 		echo "⚠️  Add ~/.local/go/bin to PATH: export PATH=\"$$HOME/.local/go/bin:$$PATH\""; \
 	else \
@@ -1724,7 +1749,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 		NEED_SUDO=1; \
 	else \
 		echo "✅ NVIDIA driver already installed"; \
-		nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs -I {} echo "   Driver version: {}"; \
+		{ nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | xargs -I {} echo "   Driver version: {}"; } || true; \
 	fi; \
 	if ! command -v nvcc >/dev/null 2>&1; then \
 		MISSING="$$MISSING cuda-toolkit"; \
@@ -1738,7 +1763,7 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	else \
 		echo "✅ C++ compiler already installed"; \
 	fi; \
-	PYTHON_INCLUDE=$$(hatch run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
+	PYTHON_INCLUDE=$$($(HATCH) run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
 	if [ -n "$$PYTHON_INCLUDE" ] && [ -f "$$PYTHON_INCLUDE/Python.h" ]; then \
 		echo "✅ Python development headers already installed"; \
 	else \
@@ -1802,12 +1827,12 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 					exit 1; \
 				fi; \
 			fi; \
+			APT_PKGS=""; \
 			if [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
-				CMD="sudo apt update && sudo apt install -y"; \
-				if [ "$$NEEDS_CUDA" = "1" ]; then CMD="$$CMD nvidia-cuda-toolkit"; fi; \
-				if [ "$$NEEDS_BUILD" = "1" ]; then CMD="$$CMD build-essential"; fi; \
+				if [ "$$NEEDS_CUDA" = "1" ]; then APT_PKGS="$$APT_PKGS nvidia-cuda-toolkit"; fi; \
+				if [ "$$NEEDS_BUILD" = "1" ]; then APT_PKGS="$$APT_PKGS build-essential"; fi; \
 				echo "   Other packages:"; \
-				echo "     $$CMD"; \
+				echo "     sudo apt-get update && sudo apt-get install -y$$APT_PKGS"; \
 			fi; \
 			if [ "$$NEEDS_DRIVER" = "1" ] || [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
 				echo ""; \
@@ -1817,9 +1842,9 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 						echo "Installing NVIDIA driver..."; \
 						sudo ubuntu-drivers autoinstall; \
 					fi; \
-					if [ -n "$$CMD" ]; then \
+					if [ -n "$$APT_PKGS" ]; then \
 						echo "Installing other packages..."; \
-						eval $$CMD; \
+						sudo apt-get update && sudo apt-get install -y$$APT_PKGS; \
 					fi; \
 				else \
 					echo ""; \
@@ -1838,11 +1863,11 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@echo ""
 	@# Step 2: Install PyTorch with CUDA (no sudo needed)
 	@echo "=== Step 2: PyTorch with CUDA ==="
-	@if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
-		TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null); \
+	@if $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		TORCH_CUDA=$$($(HATCH) run python -c "import torch; print(torch.version.cuda)" 2>/dev/null); \
 		echo "✅ PyTorch with CUDA $$TORCH_CUDA already installed"; \
 	else \
-		CUDA_VER=$$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' || echo "12.8"); \
+		CUDA_VER=$$(nvcc --version 2>/dev/null | grep release | sed 's/.*release //; s/,.*//' || echo "12.8"); \
 		CUDA_MAJOR=$$(echo $$CUDA_VER | cut -d. -f1); \
 		CUDA_MINOR=$$(echo $$CUDA_VER | cut -d. -f2); \
 		CUDA_NUM=$$(( $$CUDA_MAJOR * 10 + $$CUDA_MINOR )); \
@@ -1853,9 +1878,9 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 		else CUDA_TAG="cu118"; fi; \
 		echo "📥 Installing PyTorch with CUDA support (system CUDA $$CUDA_VER -> PyTorch index $$CUDA_TAG)..."; \
 		echo ""; \
-		hatch run pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/$$CUDA_TAG; \
+		$(HATCH) run pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/$$CUDA_TAG; \
 		echo ""; \
-		if hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		if $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 			echo "✅ PyTorch with CUDA installed successfully"; \
 		else \
 			echo "⚠️  PyTorch installed but CUDA not available"; \
@@ -1868,10 +1893,10 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 		echo "✅ CUDA extension already built"; \
 	else \
-		if command -v nvcc >/dev/null 2>&1 && hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		if command -v nvcc >/dev/null 2>&1 && $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 			echo "Building CUDA extension..."; \
-			hatch run pip install -q ninja 2>/dev/null || true; \
-			hatch run python $(CUDA_EXT_DIR)/build.py; \
+			$(HATCH) run pip install -q ninja 2>/dev/null || true; \
+			$(HATCH) run python $(CUDA_EXT_DIR)/build.py; \
 		else \
 			echo "⚠️  Cannot build - prerequisites not satisfied"; \
 			echo "   Run 'make check-cuda-deps' for details"; \
@@ -1918,8 +1943,8 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo "=== 2. NVIDIA GPU Driver ==="
 	@if command -v nvidia-smi >/dev/null 2>&1; then \
 		if nvidia-smi >/dev/null 2>&1; then \
-			DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); \
-			GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1); \
+			DRIVER_VERSION=$$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true); \
+			GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true); \
 			echo "✅ NVIDIA driver: $$DRIVER_VERSION"; \
 			echo "   GPU: $$GPU_NAME"; \
 		else \
@@ -1943,14 +1968,14 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	fi
 	@echo ""
 	@echo "=== 3. PyTorch with CUDA ==="
-	@hatch run python -c "import sys; import torch; print('✅ PyTorch:', torch.__version__); cuda_available = torch.cuda.is_available(); print('✅ PyTorch CUDA:', torch.version.cuda if cuda_available else 'not available'); (print('   GPU:', torch.cuda.get_device_name(0)) if cuda_available else None); (print('   Compute capability:', str(torch.cuda.get_device_capability()[0]) + '.' + str(torch.cuda.get_device_capability()[1])) if cuda_available else None)" 2>/dev/null || \
-	hatch run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128')" 2>/dev/null || \
+	@$(HATCH) run python -c "import sys; import torch; print('✅ PyTorch:', torch.__version__); cuda_available = torch.cuda.is_available(); print('✅ PyTorch CUDA:', torch.version.cuda if cuda_available else 'not available'); (print('   GPU:', torch.cuda.get_device_name(0)) if cuda_available else None); (print('   Compute capability:', str(torch.cuda.get_device_capability()[0]) + '.' + str(torch.cuda.get_device_capability()[1])) if cuda_available else None)" 2>/dev/null || \
+	$(HATCH) run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu128')" 2>/dev/null || \
 	echo "❌ Could not check PyTorch (hatch environment issue)"
 	@echo ""
 	@echo "=== 4. Python Development Headers ==="
-	@PYTHON_INCLUDE=$$(hatch run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
+	@PYTHON_INCLUDE=$$($(HATCH) run python -c "import sysconfig; print(sysconfig.get_path('include'))" 2>/dev/null || echo ""); \
 	if [ -n "$$PYTHON_INCLUDE" ] && [ -f "$$PYTHON_INCLUDE/Python.h" ]; then \
-		PYTHON_VERSION=$$(hatch run python -c "import sys; print(str(sys.version_info.major) + '.' + str(sys.version_info.minor))" 2>/dev/null); \
+		PYTHON_VERSION=$$($(HATCH) run python -c "import sys; print(str(sys.version_info.major) + '.' + str(sys.version_info.minor))" 2>/dev/null); \
 		echo "✅ Python development headers: $$PYTHON_VERSION"; \
 		echo "   Location: $$PYTHON_INCLUDE"; \
 	else \
@@ -1983,7 +2008,7 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 	@echo "=== 6. CUDA Extension Status ==="
 	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
+		SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1 || true); \
 		echo "✅ CUDA extension built: $$(basename $$SO_FILE)"; \
 		echo "   Size: $$(du -h $$SO_FILE | cut -f1)"; \
 	else \
@@ -2071,10 +2096,10 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 			echo ""; \
 			exit 1; \
 		fi; \
-		if ! hatch run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		if ! $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 			echo "❌ PyTorch with CUDA support not available"; \
 			echo ""; \
-			TORCH_CUDA=$$(hatch run python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown"); \
+			TORCH_CUDA=$$($(HATCH) run python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "unknown"); \
 			echo "   PyTorch CUDA version: $$TORCH_CUDA"; \
 			if command -v sbatch >/dev/null 2>&1 || type module >/dev/null 2>&1; then \
 				echo "   Did you load the matching CUDA module?"; \
@@ -2082,22 +2107,22 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 				echo ""; \
 			fi; \
 			echo "   Or reinstall PyTorch with CUDA:"; \
-			echo "     hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
+			echo "     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
 			echo ""; \
 			echo "   Run 'make check-cuda-deps' for more details."; \
 			exit 1; \
 		fi; \
 		echo "✅ Prerequisites OK"; \
 		echo ""; \
-		hatch run pip install -q ninja 2>/dev/null || true; \
+		$(HATCH) run pip install -q ninja 2>/dev/null || true; \
 		echo "Building extension (this may take a few minutes)..."; \
 		echo ""; \
-		hatch run python $(CUDA_EXT_DIR)/build.py; \
+		$(HATCH) run python $(CUDA_EXT_DIR)/build.py; \
 		echo ""; \
 		if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
 			echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 			echo "✅ CUDA extension built successfully!"; \
-			SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1); \
+			SO_FILE=$$(ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so | head -1 || true); \
 			echo "   Output: $$(basename $$SO_FILE)"; \
 			echo ""; \
 			echo "Next steps:"; \
@@ -2145,14 +2170,14 @@ test-cuda:  ## Run CUDA extension tests
 		echo ""; \
 	fi
 	@# Run tests
-	hatch run pytest $(CUDA_EXT_DIR)/tests/ -v
+	$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v
 	@echo ""
 	@echo "✅ CUDA tests completed!"
 
 benchmark-metal:  ## Run Metal (MPS) performance benchmarks (M-series only)
 	@echo "Running Metal performance benchmarks..."
 	@mkdir -p benchmarks
-	hatch run python scripts/benchmarks/benchmark_metal_optimizations.py \
+	$(HATCH) run python scripts/benchmarks/benchmark_metal_optimizations.py \
 		--label baseline-$$(date +%Y%m%d-%H%M%S) \
 		--output benchmarks/metal_$$(date +%Y%m%d-%H%M%S).json
 	@echo ""
@@ -2161,7 +2186,7 @@ benchmark-metal:  ## Run Metal (MPS) performance benchmarks (M-series only)
 benchmark-metal-stress:  ## Run Metal RSS leak-check (validates MET-1 @autoreleasepool)
 	@echo "Running Metal stress / leak-check..."
 	@mkdir -p benchmarks
-	hatch run python scripts/benchmarks/benchmark_metal_optimizations.py \
+	$(HATCH) run python scripts/benchmarks/benchmark_metal_optimizations.py \
 		--stress --label stress-$$(date +%Y%m%d-%H%M%S) \
 		--output benchmarks/metal_stress_$$(date +%Y%m%d-%H%M%S).json
 
@@ -2180,7 +2205,7 @@ benchmark-cuda:  ## Run CUDA performance benchmarks
 		echo ""; \
 	fi
 	@# Run benchmark
-	hatch run python $(CUDA_EXT_DIR)/benchmark.py
+	$(HATCH) run python $(CUDA_EXT_DIR)/benchmark.py
 	@echo ""
 	@echo "✅ Benchmark completed!"
 
@@ -2200,8 +2225,8 @@ build-nlm-cuda:  ## Build the NLM CUDA denoising extension
 		echo "❌ GPU not accessible (nvidia-smi failed)"; \
 		exit 1; \
 	fi
-	hatch run pip install -q ninja 2>/dev/null || true
-	hatch run python $(NLM_CUDA_DIR)/build.py
+	$(HATCH) run pip install -q ninja 2>/dev/null || true
+	$(HATCH) run python $(NLM_CUDA_DIR)/build.py
 	@echo ""
 	@echo "✅ NLM CUDA extension built!"
 
@@ -2220,13 +2245,13 @@ test-nlm-cuda:  ## Run NLM CUDA extension tests
 		$(MAKE) build-nlm-cuda; \
 		echo ""; \
 	fi
-	hatch run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
+	$(HATCH) run pytest packages/luxar/src/luxar/gsplats/preprocessing/tests/test_nlm_cuda.py -v
 	@echo ""
 	@echo "✅ NLM CUDA tests completed!"
 
 test-fixtures:  ## Generate test fixtures for TypeScript tests
 	@echo "🔬 Generating test fixtures..."
-	hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
+	$(HATCH) run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
 test-viewer-fixtures: test-fixtures  ## Generate fixtures + run TypeScript tests
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2334,17 +2359,17 @@ build-typedoc:  ## Generate TypeScript API documentation with TypeDoc
 	@echo "✅ TypeScript API docs generated at docs/_build/html/api/viewer/"
 
 build-docs: generate-doc-images  ## Build documentation with Sphinx (auto-generates screenshots + TypeDoc)
-	hatch run docs:build
+	$(HATCH) run docs:build
 	@# Build TypeDoc after Sphinx so we can copy into the output
 	@$(MAKE) build-typedoc
 
 serve-docs:  ## Serve documentation locally
-	hatch run docs:serve
+	$(HATCH) run docs:serve
 
 # Project statistics
 stats:  ## Generate project statistics report (HTML + Markdown)
 	@echo "📊 Analyzing project codebase..."
-	hatch run python stats/generate_stats.py
+	$(HATCH) run python stats/generate_stats.py
 	@echo "✅ Reports generated:"
 	@echo "   - stats/project_stats.html  (styled, open in a browser)"
 	@echo "   - stats/PROJECT_STATS.md    (GitHub-friendly, linked from README.md)"
@@ -2352,25 +2377,25 @@ stats:  ## Generate project statistics report (HTML + Markdown)
 
 stats-fast:  ## Generate project statistics without running tests (file counts only)
 	@echo "📊 Analyzing project codebase (no tests)..."
-	hatch run python stats/generate_stats.py --no-tests
+	$(HATCH) run python stats/generate_stats.py --no-tests
 	@echo "✅ Reports generated: stats/project_stats.html, stats/PROJECT_STATS.md"
 
 # Hatch environment management
 show-env:  ## Show all Hatch environments
-	hatch env show
+	$(HATCH) env show
 
 prune-env:  ## Remove unused Hatch environments
-	hatch env prune
+	$(HATCH) env prune
 
 shell:  ## Enter Hatch development shell
-	hatch shell
+	$(HATCH) shell
 
 # Building and publishing
 build:  ## Build distribution packages
-	hatch build
+	$(HATCH) build
 
 publish-test:  ## Publish to TestPyPI
-	hatch publish -r test
+	$(HATCH) publish -r test
 
 publish:  ## Publish to PyPI
-	hatch publish
+	$(HATCH) publish

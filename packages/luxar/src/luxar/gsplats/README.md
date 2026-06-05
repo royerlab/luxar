@@ -14,6 +14,13 @@ Gaussian splatting requires optional dependencies:
 pip install "luxar[gsplats]"
 ```
 
+> **⚠️ torch ABI coupling.** The optional CUDA extension
+> (`models/gsplats/cuda/cuda_splatting_backend*.so`) is compiled against a
+> specific PyTorch ABI. **After any `torch` upgrade you must rebuild it** with
+> `make build-cuda`, otherwise importing the backend fails with an ABI/symbol
+> mismatch. The `torch>=2.2.0,<3.0` pin in `pyproject.toml` exists to prevent a
+> silent major-version jump from breaking the prebuilt extension.
+
 ## Key Features
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D) with automatic gradient dilution compensation

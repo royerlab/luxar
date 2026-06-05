@@ -94,7 +94,7 @@ from .validation.nd_transforms import (
     validate_nd_transform,
 )
 
-__version__ = "2025.08.03"
+__version__ = "2026.06.05"
 
 # Backward compatibility and optional re-exports.
 # gsplats always provides names (real or stub that raises on use if torch is missing).

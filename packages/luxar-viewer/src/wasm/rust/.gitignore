@@ -1,6 +1,7 @@
 # Rust/Cargo artifacts
 /target/
-Cargo.lock
+# Cargo.lock IS committed: this crate ships a cdylib (luxar_wasm_bg.wasm), so we
+# pin transitive deps (wasm-bindgen, etc.) for reproducible WASM builds.
 
 # wasm-pack output (goes to public/wasm/)
 /pkg/

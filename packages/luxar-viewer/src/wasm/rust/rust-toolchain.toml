@@ -1,0 +1,8 @@
+# Pin the Rust toolchain for reproducible WASM codegen across machines and CI.
+# rustup auto-installs this toolchain + target on the first cargo invocation in
+# this directory. Keep in sync with the `toolchain:` input in
+# .github/workflows/ci.yml and the wasm-pack version pinned in the Makefile.
+[toolchain]
+channel = "1.92.0"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]
