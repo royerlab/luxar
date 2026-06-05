@@ -281,9 +281,7 @@ def make_substitutive_lod(
         M_target = max(1, math.ceil(N_in / K))
         level_method = _resolve_method(method, N_in)
         if verbose:
-            label = (
-                f"{level_method} (auto)" if method == "auto" else level_method
-            )
+            label = f"{level_method} (auto)" if method == "auto" else level_method
             with asection(
                 f"Substitutive level {level_idx}: {N_in} -> {M_target} splats"
             ):

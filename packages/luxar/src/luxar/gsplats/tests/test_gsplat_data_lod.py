@@ -860,9 +860,7 @@ class TestImmutableViews:
         d = _make_3d_gsplat(n=24)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            out = make_substitutive_lod(
-                d, compression_factor=2, levels=1, device="cpu"
-            )
+            out = make_substitutive_lod(d, compression_factor=2, levels=1, device="cpu")
         assert out.n_substitutive == 2
         assert not any("writable" in str(w.message).lower() for w in caught)
         # The stored level arrays are normal writable arrays (cell() returns
