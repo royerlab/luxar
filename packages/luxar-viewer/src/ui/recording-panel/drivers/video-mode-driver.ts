@@ -141,6 +141,11 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       if (ctx.signal.aborted) {
         return;
       }
+      // Defensive guard at the mediabunny boundary: a successful
+      // finalize() is expected to populate `target.buffer`, but we don't
+      // control that library — if it ever hands back a null/empty buffer
+      // we surface a clear message instead of constructing an empty Blob
+      // and "downloading" a 0-byte file. Covered by a regression test.
       const buffer = this.target?.buffer;
       if (!buffer) {
         ctx.showToast('Video encoding produced no output');

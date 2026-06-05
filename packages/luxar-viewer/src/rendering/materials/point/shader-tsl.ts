@@ -1,6 +1,6 @@
 /**
  * Point material TSL factory — NodeMaterial counterpart to the
- * GLSL3 pair in `shaders/point-shaders.ts`.
+ * GLSL3 pair in `shader-glsl.ts`.
  *
  * Renders one soft Gaussian-falloff sprite per point with:
  *   - world-space sizing (perspective + orthographic)

@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fc from 'fast-check';
 
 // Mock scene-dims-manager BEFORE importing the helpers so the proxy
 // doesn't return live bound functions.
@@ -35,7 +36,24 @@ describe('getTurntableInfo', () => {
     expect(getTurntableInfo(60, 30)).toBe('6.0s, 180 frames');
     expect(getTurntableInfo(45, 30)).toBe('8.0s, 240 frames');
     // Non-integer duration → frame count rounds up.
+    // [P7] 360/33 = 10.909..s; toFixed(1) = '10.9'; ceil(10.909 × 30) = 328.
     expect(getTurntableInfo(33, 30)).toBe('10.9s, 328 frames');
+  });
+
+  it('[property] frame count always equals ceil((360/speed) × fps)', () => {
+    // [P12] The exact invariant across the full speed × fps grid.
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 360 }),
+        fc.integer({ min: 1, max: 240 }),
+        (speed, fps) => {
+          const info = getTurntableInfo(speed, fps);
+          const match = info.match(/^(\d+\.\d)s, (\d+) frames$/);
+          expect(match).not.toBeNull();
+          expect(Number(match![2])).toBe(Math.ceil((360 / speed) * fps));
+        }
+      )
+    );
   });
 });
 
@@ -95,6 +113,11 @@ describe('SliderSyncCoordinator', () => {
     const mgr = makeAnimationManager();
     sc.start(-1, mgr, vi.fn(), () => true);
     expect(mgr.addEventListener).not.toHaveBeenCalled();
+    // [P11/M4] Verify the WHOLE method short-circuits, not just the listener
+    // registration — a mutation that did work before the `dimIndex < 0`
+    // return (e.g. snapping the dimension) would otherwise slip through.
+    expect(mockSetDimensionValue).not.toHaveBeenCalled();
+    expect(mgr.play).not.toHaveBeenCalled();
   });
 
   it('snaps to dimension min, registers complete listener, then plays after delay', () => {

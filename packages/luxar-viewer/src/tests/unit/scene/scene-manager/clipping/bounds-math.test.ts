@@ -63,6 +63,45 @@ describe('bounds-math', () => {
       expect(box.min).toEqual({ x: 3, y: 4, z: 5 });
       expect(box.max).toEqual({ x: 3, y: 4, z: 5 });
     });
+
+    // G1: points colinear along one axis → that axis spans, the others are
+    // zero-extent. Exercises the per-axis min/max independence.
+    it('produces a zero-extent box on the unpopulated axes for a line of points', () => {
+      const positions = [0, 0, 0, 5, 0, 0, 10, 0, 0]; // colinear along x
+      const box = calculateBoundingBoxFromPositions(positions);
+      expect(box.min).toEqual({ x: 0, y: 0, z: 0 });
+      expect(box.max).toEqual({ x: 10, y: 0, z: 0 });
+    });
+
+    // G1: very large / very small finite magnitudes are preserved (no
+    // overflow or premature clamping).
+    it('preserves extreme finite magnitudes', () => {
+      const positions = [1e30, -1e-30, 0, -1e30, 1e-30, 0];
+      const box = calculateBoundingBoxFromPositions(positions);
+      expect(box.min.x).toBe(-1e30);
+      expect(box.max.x).toBe(1e30);
+      expect(box.min.y).toBe(-1e-30);
+      expect(box.max.y).toBe(1e-30);
+    });
+
+    // G1: NaN is not guarded — Math.min/Math.max propagate it, so the affected
+    // axis becomes NaN while the others stay finite. Document this so callers
+    // know to sanitise input upstream.
+    it('propagates NaN to the affected axis only (no input sanitisation)', () => {
+      const box = calculateBoundingBoxFromPositions([NaN, 0, 0, 1, 2, 3]);
+      expect(Number.isNaN(box.min.x)).toBe(true);
+      expect(Number.isNaN(box.max.x)).toBe(true);
+      // y/z axes are unaffected.
+      expect(box.min.y).toBe(0);
+      expect(box.max.z).toBe(3);
+    });
+
+    // G1: ±Infinity inputs flow through to the bounds.
+    it('carries Infinity through to the bounds', () => {
+      const box = calculateBoundingBoxFromPositions([Infinity, 0, 0, -Infinity, 0, 0]);
+      expect(box.max.x).toBe(Infinity);
+      expect(box.min.x).toBe(-Infinity);
+    });
   });
 
   describe('mergeBoundingBoxes', () => {
@@ -136,7 +175,7 @@ describe('bounds-math', () => {
   });
 
   describe('getBoundingBoxMaxDimension', () => {
-    it('should return maximum dimension', () => {
+    it('should return maximum dimension (y is largest)', () => {
       const box: BoundingBox = {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 10, y: 20, z: 15 },
@@ -144,9 +183,56 @@ describe('bounds-math', () => {
 
       expect(getBoundingBoxMaxDimension(box)).toBe(20);
     });
+
+    // W1: original test only exercised the case where the *last* compared
+    // axis (y) is the max. Cover x-dominant and z-dominant so a mutation that
+    // returns a fixed axis (e.g. always size.z) is killed.
+    it('returns the x extent when x is the largest dimension', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: -100, z: 0 },
+        max: { x: 200, y: 50, z: 1 },
+      };
+      // sizes: x=200, y=150, z=1 → max is x.
+      expect(getBoundingBoxMaxDimension(box)).toBe(200);
+    });
+
+    it('returns the z extent when z is the largest dimension', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: -30 },
+        max: { x: 5, y: 7, z: 70 },
+      };
+      // sizes: x=5, y=7, z=100 → max is z.
+      expect(getBoundingBoxMaxDimension(box)).toBe(100);
+    });
+
+    it('handles negative coordinates symmetrically (extent is a positive width)', () => {
+      const box: BoundingBox = {
+        min: { x: -50, y: -3, z: -2 },
+        max: { x: -10, y: -1, z: -1 },
+      };
+      // sizes: x=40, y=2, z=1 → max is x=40 (all-negative coords, positive extent).
+      expect(getBoundingBoxMaxDimension(box)).toBe(40);
+    });
   });
 
   describe('calculateCameraDistance', () => {
+    // W2/M2: reference implementation of the documented formula so tests can
+    // assert the exact value instead of a loose band. Mirrors bounds-math.ts:
+    //   vertical   = maxDim / fitRatio / (2*tan(halfFov))
+    //   horizontal = vertical / aspect
+    //   distance   = max(vertical, horizontal) * 1.2  (20% margin)
+    const expectedCameraDistance = (
+      maxDim: number,
+      fovDeg: number,
+      aspect: number,
+      fitRatio: number
+    ): number => {
+      const halfFov = (fovDeg * Math.PI) / 180 / 2;
+      const vertical = maxDim / fitRatio / (2 * Math.tan(halfFov));
+      const horizontal = vertical / aspect;
+      return Math.max(vertical, horizontal) * 1.2;
+    };
+
     it('should calculate distance for perspective camera', () => {
       const box: BoundingBox = {
         min: { x: -5, y: -5, z: -5 },
@@ -165,6 +251,17 @@ describe('bounds-math', () => {
       // Should be approximately 10 / tan(30°) * 1.1 * fitRatio factor
       expect(distance).toBeGreaterThan(10);
       expect(distance).toBeLessThan(50);
+    });
+
+    // W2: pin the exact formula value (explicit fitRatio removes the config
+    // dependency). Kills constant-offset / wrong-margin / missing-factor
+    // mutants that a loose [10,50] band would survive.
+    it('matches the documented FOV/aspect/fitRatio formula exactly', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      const camera: CameraConfig = { fov: 60, aspect: 16 / 9, near: 0.1, far: 1000 };
+      const distance = calculateCameraDistance(box, camera, 0.75);
+      // maxDim = 10, fov = 60 (aspect > 1 → vertical fit dominates).
+      expect(distance).toBeCloseTo(expectedCameraDistance(10, 60, 16 / 9, 0.75), 6);
     });
 
     it('should handle different aspect ratios', () => {
@@ -192,6 +289,15 @@ describe('bounds-math', () => {
 
       // Tall camera needs more distance to fit same object
       expect(tallDistance).toBeGreaterThan(wideDistance);
+
+      // M1: pin the *magnitude* of the difference, not just the sign. For a
+      // wide aspect (>1) the vertical fit dominates, so wideDistance is
+      // independent of aspect. For the tall aspect (9/16) the horizontal fit
+      // dominates: distance = vertical / aspect. Hence the ratio equals
+      // exactly 1/aspect_tall = 16/9 ≈ 1.778. A mutant that drops the aspect
+      // term from horizontalFit would make the ratio 1 and survive a sign-only
+      // assertion.
+      expect(tallDistance / wideDistance).toBeCloseTo(16 / 9, 6);
     });
 
     it('should scale distance proportionally with scene size', () => {
@@ -209,8 +315,18 @@ describe('bounds-math', () => {
       const smallDist = calculateCameraDistance(smallBox, camera);
       const largeDist = calculateCameraDistance(largeBox, camera);
 
-      // Distance should scale linearly with scene size
-      expect(largeDist / smallDist).toBeCloseTo(500, 0);
+      // Distance scales linearly with scene size (maxDim ratio is exactly 500).
+      // M2: the original tolerance of 0 digits (±5) let a constant-offset
+      // mutant (`maxDim/fitRatio + 1`) survive — it shifts the ratio only to
+      // ~499.8. Tighten to 3 digits (±5e-4): pure linear scaling gives 500.0,
+      // any additive constant breaks it.
+      expect(largeDist / smallDist).toBeCloseTo(500, 3);
+
+      // Belt-and-suspenders: a mid-size box must fall exactly on the same
+      // proportionality line through the origin (no offset).
+      const midBox: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 50, y: 50, z: 50 } };
+      const midDist = calculateCameraDistance(midBox, camera);
+      expect(midDist / smallDist).toBeCloseTo(50, 3);
     });
 
     it('should return 0 for zero-size bounding box', () => {
@@ -300,6 +416,35 @@ describe('bounds-math', () => {
       // half-diagonal of 10x10x10 cube = sqrt(300)/2 ≈ 8.66
       expect(sphere.radius).toBeCloseTo(8.66, 1);
     });
+
+    // H2: the circumscribed-sphere radius is EXACTLY half the box diagonal —
+    // the SPHERE_SAFETY_EXPANSION factor is applied later (in
+    // calculateClippingPlanesFromSphere), NOT here. Pin the precise value so
+    // a mutant that folds the expansion in early, or changes the 0.5 factor,
+    // is killed.
+    it('radius equals exactly half the box diagonal (no safety expansion applied here)', () => {
+      const box: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 2, y: 4, z: 4 } };
+      const sphere = boundingBoxToSphere(box);
+      // diagonal = sqrt(4 + 16 + 16) = 6, half = 3 (exact).
+      expect(sphere.radius).toBeCloseTo(3, 10);
+      expect(sphere.radius).toBeCloseTo(getBoundingBoxDiagonal(box) / 2, 12);
+    });
+
+    // G5: containment invariant — the sphere must contain all 8 box corners.
+    it('contains all 8 box corners within the radius', () => {
+      const box: BoundingBox = { min: { x: -3, y: 1, z: -7 }, max: { x: 11, y: 5, z: 2 } };
+      const sphere = boundingBoxToSphere(box);
+      const corners = [box.min.x, box.max.x].flatMap((x) =>
+        [box.min.y, box.max.y].flatMap((y) => [box.min.z, box.max.z].map((z) => ({ x, y, z })))
+      );
+      expect(corners).toHaveLength(8);
+      for (const c of corners) {
+        const d = Math.hypot(c.x - sphere.center.x, c.y - sphere.center.y, c.z - sphere.center.z);
+        // Each corner sits on or inside the circumscribed sphere (allow tiny
+        // float slack above the radius).
+        expect(d).toBeLessThanOrEqual(sphere.radius + 1e-9);
+      }
+    });
   });
 
   describe('calculateClippingPlanesFromSphere', () => {
@@ -315,8 +460,43 @@ describe('bounds-math', () => {
       const cameraPos = { x: 0, y: 0, z: 50 };
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      expect(planes.near).toBeCloseTo(50 - R, 1);
-      expect(planes.far).toBeCloseTo(50 + R, 1);
+      // dist = 50 exactly; near/far are 50∓R. M3: tightened from 1 to 6 digits
+      // so a mutant that drops SPHERE_SAFETY_EXPANSION from far (R → radius)
+      // is killed — the difference (0.05*radius ≈ 0.87) far exceeds tolerance.
+      expect(planes.near).toBeCloseTo(50 - R, 6);
+      expect(planes.far).toBeCloseTo(50 + R, 6);
+    });
+
+    // W3: camera exactly on the (expanded) sphere surface, dist == R. The
+    // `dist < R` branch is false, so near = max(MIN_NEAR_PLANE, dist - R) =
+    // max(MIN_NEAR_PLANE, 0) = MIN_NEAR_PLANE, and far = dist + R = 2R.
+    it('clamps near to MIN_NEAR_PLANE when camera sits on the sphere surface (dist == R)', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+      // Place the camera exactly R away from the center along +z.
+      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R });
+      expect(planes.near).toBe(MIN_NEAR_PLANE);
+      expect(planes.far).toBeCloseTo(2 * R, 6);
+    });
+
+    // W3: camera very far from the sphere (dist >> R) — near must track
+    // (dist - R) and stay well above the floor; far tracks (dist + R).
+    it('returns near = dist - R and far = dist + R when camera is far outside the sphere', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+      const dist = 100000;
+      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: dist });
+      expect(planes.near).toBeCloseTo(dist - R, 4);
+      expect(planes.far).toBeCloseTo(dist + R, 4);
+      expect(planes.near).toBeGreaterThan(MIN_NEAR_PLANE);
     });
 
     it('should use minimum near plane when inside sphere', () => {
@@ -363,6 +543,35 @@ describe('bounds-math', () => {
       expect(far.near).toBeGreaterThan(mid.near);
       expect(mid.near).toBeGreaterThan(close.near);
       expect(close.near).toBeGreaterThan(0);
+    });
+
+    // M4: three sample points only prove ordering, which a piecewise/jumpy
+    // function could also satisfy. Sample densely and assert the near plane is
+    // strictly monotonic in camera distance AND continuous (each step changes
+    // by ~the step in distance, i.e. d(near)/d(dist) ≈ 1 in the outside-sphere
+    // regime) — no discontinuities.
+    it('near plane decreases continuously (no jumps) as the camera approaches', () => {
+      const box: BoundingBox = {
+        min: { x: -10, y: -10, z: -10 },
+        max: { x: 10, y: 10, z: 10 },
+      };
+      const sphere = boundingBoxToSphere(box);
+      const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
+
+      // Sample from z=60 down to just outside the sphere in 1-unit steps.
+      const zs: number[] = [];
+      for (let z = 60; z > Math.ceil(R) + 1; z -= 1) zs.push(z);
+      const nears = zs.map(
+        (z) => calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z }).near
+      );
+
+      for (let i = 1; i < nears.length; i++) {
+        // Strictly decreasing as distance shrinks.
+        expect(nears[i]).toBeLessThan(nears[i - 1]);
+        // Outside the sphere near = dist - R, so a 1-unit move changes near by
+        // exactly 1 unit. A jump/discontinuity would break this.
+        expect(nears[i - 1] - nears[i]).toBeCloseTo(1, 6);
+      }
     });
   });
 
@@ -419,6 +628,37 @@ describe('bounds-math', () => {
       expect(shrunk.min).toEqual({ x: -4, y: -4, z: -4 });
       expect(shrunk.max).toEqual({ x: 4, y: 4, z: 4 });
     });
+
+    // G6: zero margin is the identity (every coordinate unchanged).
+    it('is a no-op for zero margin', () => {
+      const box: BoundingBox = { min: { x: -1, y: 2, z: -3 }, max: { x: 4, y: 5, z: 6 } };
+      const same = expandBoundingBox(box, 0);
+      expect(same.min).toEqual(box.min);
+      expect(same.max).toEqual(box.max);
+    });
+
+    // G6: every axis grows by 2*margin in extent (margin added to both faces).
+    it('grows every axis extent by exactly 2*margin', () => {
+      const box: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: 20, z: 30 } };
+      const margin = 7;
+      const expanded = expandBoundingBox(box, margin);
+      const before = getBoundingBoxSize(box);
+      const after = getBoundingBoxSize(expanded);
+      expect(after.x).toBeCloseTo(before.x + 2 * margin, 10);
+      expect(after.y).toBeCloseTo(before.y + 2 * margin, 10);
+      expect(after.z).toBeCloseTo(before.z + 2 * margin, 10);
+    });
+
+    // G6: a negative margin larger than the half-extent inverts the box
+    // (min > max). expandBoundingBox does not guard this — document the
+    // behaviour so callers know they must pass a safe margin.
+    it('inverts the box (min > max) when a shrink margin exceeds the half-extent', () => {
+      const box: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 4, z: 4 } };
+      const inverted = expandBoundingBox(box, -3); // half-extent is 2
+      expect(inverted.min.x).toBe(3);
+      expect(inverted.max.x).toBe(1);
+      expect(inverted.min.x).toBeGreaterThan(inverted.max.x);
+    });
   });
 
   describe('isPointInBoundingBox', () => {
@@ -442,6 +682,28 @@ describe('bounds-math', () => {
       expect(isPointInBoundingBox({ x: 2, y: 0, z: 0 }, box)).toBe(false);
       expect(isPointInBoundingBox({ x: 0, y: 2, z: 0 }, box)).toBe(false);
       expect(isPointInBoundingBox({ x: 0, y: 0, z: -2 }, box)).toBe(false);
+    });
+
+    // W4: NaN/Infinity points. All comparisons against NaN are false, so a
+    // NaN on any axis means "not inside". +Infinity is outside any finite box.
+    it('returns false for points with NaN on any axis', () => {
+      expect(isPointInBoundingBox({ x: NaN, y: 0, z: 0 }, box)).toBe(false);
+      expect(isPointInBoundingBox({ x: 0, y: NaN, z: 0 }, box)).toBe(false);
+      expect(isPointInBoundingBox({ x: 0, y: 0, z: NaN }, box)).toBe(false);
+    });
+
+    it('returns false for points at ±Infinity', () => {
+      expect(isPointInBoundingBox({ x: Infinity, y: 0, z: 0 }, box)).toBe(false);
+      expect(isPointInBoundingBox({ x: 0, y: -Infinity, z: 0 }, box)).toBe(false);
+    });
+
+    // W4: degenerate (zero-extent) box — a point exactly on the collapsed
+    // axis is still "inside" because the bounds use inclusive <= / >=.
+    it('treats a point on the collapsed axis of a flat (zero-extent) box as inside', () => {
+      const slab: BoundingBox = { min: { x: 0, y: 0, z: 5 }, max: { x: 10, y: 10, z: 5 } };
+      expect(isPointInBoundingBox({ x: 5, y: 5, z: 5 }, slab)).toBe(true);
+      // Off the plane → outside.
+      expect(isPointInBoundingBox({ x: 5, y: 5, z: 5.0001 }, slab)).toBe(false);
     });
   });
 
@@ -575,6 +837,21 @@ describe('bounds-math', () => {
         expect(Number.isFinite(v)).toBe(true);
       }
     });
+
+    // Covers the "every corner degenerate" fallback: when the w-row is all
+    // zero (matrix[3]=matrix[7]=matrix[11]=matrix[15]=0), every corner has
+    // |w| < W_EPSILON and is skipped, so the function returns a copy of the
+    // input box rather than (Infinity, -Infinity).
+    it('falls back to a copy of the input box when ALL corners are degenerate (w≈0)', () => {
+      const box: BoundingBox = { min: { x: -1, y: -2, z: -3 }, max: { x: 4, y: 5, z: 6 } };
+      // w-row (indices 3,7,11,15) all zero → w = 0 for every corner.
+      const zeroW = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0];
+      const result = transformBoundingBox(box, zeroW);
+      expect(result.min).toEqual(box.min);
+      expect(result.max).toEqual(box.max);
+      // It must be a copy, not the same object reference (source spreads).
+      expect(result.min).not.toBe(box.min);
+    });
   });
 
   describe('projectBoundsToDisplayDims', () => {
@@ -620,6 +897,44 @@ describe('bounds-math', () => {
       // Only first 3 used; 4th and 5th are ignored.
       expect(box.min).toEqual({ x: 0, y: 10, z: 20 });
       expect(box.max).toEqual({ x: 1, y: 11, z: 21 });
+    });
+
+    // W5: negative and very large finite bounds map through unchanged.
+    it('preserves negative and large-magnitude bounds verbatim', () => {
+      const min = [-1e6, -5, 1e6];
+      const max = [0, 1, 2e6];
+      const box = projectBoundsToDisplayDims(min, max, [0, 1, 2]);
+      expect(box.min).toEqual({ x: -1e6, y: -5, z: 1e6 });
+      expect(box.max).toEqual({ x: 0, y: 1, z: 2e6 });
+    });
+
+    // W5: repeated indices map the same source dimension onto multiple axes.
+    it('maps a repeated displayDim onto every axis that references it', () => {
+      const min = [7, 100];
+      const max = [9, 200];
+      const box = projectBoundsToDisplayDims(min, max, [0, 0, 1]);
+      expect(box.min).toEqual({ x: 7, y: 7, z: 100 });
+      expect(box.max).toEqual({ x: 9, y: 9, z: 200 });
+    });
+  });
+
+  // G3: the box helpers assume min <= max. Passing an inverted box is not
+  // guarded; the size/diagonal helpers return signed/garbage values. Document
+  // the invariant so callers know inverted input is their responsibility.
+  describe('inverted box (min > max) — documented unsafe behaviour', () => {
+    const inverted: BoundingBox = { min: { x: 10, y: 10, z: 10 }, max: { x: 0, y: 0, z: 0 } };
+
+    it('getBoundingBoxSize returns negative extents for an inverted box', () => {
+      expect(getBoundingBoxSize(inverted)).toEqual({ x: -10, y: -10, z: -10 });
+    });
+
+    it('getBoundingBoxMaxDimension returns a negative value for an inverted box', () => {
+      expect(getBoundingBoxMaxDimension(inverted)).toBe(-10);
+    });
+
+    it('getBoundingBoxDiagonal still returns a positive magnitude (squares cancel the sign)', () => {
+      // sqrt((-10)^2 * 3) = sqrt(300) ≈ 17.32 — diagonal is sign-agnostic.
+      expect(getBoundingBoxDiagonal(inverted)).toBeCloseTo(Math.sqrt(300), 6);
     });
   });
 });

@@ -169,5 +169,37 @@ describe('generateSyntheticLines', () => {
       expect(Number.isFinite(result.segmentLengths[0])).toBe(true);
       expect(result.segmentLengths[0]).toBeGreaterThanOrEqual(0);
     });
+
+    // G5: the random walk re-anchors every 64 steps. Exercise counts straddling
+    // that cadence (just before, exactly at, and two full periods) to verify the
+    // reset logic neither skips nor double-allocates segments.
+    it.each([63, 64, 65, 128])(
+      'produces exactly %i finite segments across the 64-step reset cadence',
+      (count) => {
+        const result = generateSyntheticLines({ type: 'lines', count, seed: 13 });
+        expect(result.segmentCount).toBe(count);
+        expect(result.startPositions.length).toBe(count * 3);
+        expect(result.segmentLengths.length).toBe(count);
+        for (let i = 0; i < result.startPositions.length; i++) {
+          expect(Number.isFinite(result.startPositions[i])).toBe(true);
+          expect(Number.isFinite(result.endPositions[i])).toBe(true);
+        }
+      }
+    );
+
+    // G6: over many reset periods the walk must never produce NaN/Infinity, and
+    // the empirical bounds must stay finite (the periodic re-anchor keeps the
+    // walk from diverging).
+    it('stays finite across many reset periods (10k segments)', () => {
+      const result = generateSyntheticLines({ type: 'lines', count: 10000, bounds: 10, seed: 21 });
+      let maxAbs = 0;
+      for (let i = 0; i < result.startPositions.length; i++) {
+        expect(Number.isFinite(result.startPositions[i])).toBe(true);
+        expect(Number.isFinite(result.endPositions[i])).toBe(true);
+        maxAbs = Math.max(maxAbs, Math.abs(result.startPositions[i]));
+      }
+      // Anchor ∈ [-10,10] + bounded ~64-step drift ⇒ comfortably under 40.
+      expect(maxAbs).toBeLessThan(40);
+    });
   });
 });

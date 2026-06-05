@@ -83,6 +83,31 @@ describe('ResizeOrchestrator.resizeNow', () => {
     expect(harness.updateMaterialsForCurrentCamera).toHaveBeenCalledTimes(1);
     // setSize is NOT called when postProcessing owns sizing.
     expect(harness.setSize).not.toHaveBeenCalled();
+
+    // M4: pin the SEQUENCE, not just the presence, of side effects. Pixel
+    // ratio must be set before post-processing resizes, the DPR scale synced
+    // after the resize, and the material refresh must run last. A mutant that
+    // reordered these (e.g. refreshed materials before resizing) would survive
+    // presence-only assertions.
+    const order = [
+      harness.setPixelRatio.mock.invocationCallOrder[0],
+      harness.ppResize.mock.invocationCallOrder[0],
+      harness.setDPRScale.mock.invocationCallOrder[0],
+      harness.updateMaterialsForCurrentCamera.mock.invocationCallOrder[0],
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i]).toBeGreaterThan(order[i - 1]);
+    }
+  });
+
+  // G3: a zero-size resize (minimized window / detached canvas) must not crash
+  // and must still forward the 0×0 dimensions to post-processing.
+  it('handles a zero-size resize without throwing', () => {
+    const orchestrator = new ResizeOrchestrator();
+    const harness = makeCtx();
+
+    expect(() => orchestrator.resizeNow(0, 0, harness.ctx)).not.toThrow();
+    expect(harness.ppResize).toHaveBeenCalledWith(0, 0);
   });
 
   it('falls back to renderer.setSize when postProcessing has not yet been wired', () => {

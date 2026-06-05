@@ -136,11 +136,18 @@ describe('ScreenshotStrategy', () => {
       });
 
       const p1 = panel.captureScreenshot();
+      // [P11] The inProgress lock is acquired synchronously, before the
+      // first await — so it must already be set here. Observing it directly
+      // kills a mutation that drops the guard (which a "called once" check
+      // alone could survive if the second call happened to be coalesced).
+      expect((panel as any).screenshotStrategy.isInProgress()).toBe(true);
       const p2 = panel.captureScreenshot();
       await Promise.all([p1, p2]);
 
       // Second call is blocked by the inProgress lock.
       expect(mockSceneManager.postProcessing.renderToImageData).toHaveBeenCalledTimes(1);
+      // Lock released after both settle.
+      expect((panel as any).screenshotStrategy.isInProgress()).toBe(false);
 
       rafSpy.mockRestore();
     });
@@ -253,9 +260,46 @@ describe('ScreenshotStrategy', () => {
       (panel as any).options.transparentBackground = true;
       const originalBg = mockSceneManager.scene.background;
 
+      // [P2] Capture the background value AT the moment the frame is rendered
+      // (mid-capture), not only afterward. A regression that nulls too late,
+      // or restores before the render, would pass a restore-only assertion
+      // but fail here.
+      let bgDuringCapture: unknown = 'unset';
+      mockSceneManager.postProcessing.renderToImageData.mockImplementation(async () => {
+        bgDuringCapture = mockSceneManager.scene.background;
+        return new ImageData(4, 4);
+      });
+
       await panel.captureScreenshot();
 
+      expect(bgDuringCapture).toBeNull();
       expect(mockSceneManager.scene.background).toBe(originalBg);
+
+      rafSpy.mockRestore();
+    });
+
+    it('restores background + recording state and clears the lock when capture throws', async () => {
+      // [P2/C1] run() has no catch — only a finally — so a mid-capture
+      // rejection propagates. The finally MUST still restore the background,
+      // restore recording state, and release the debounce lock; otherwise
+      // the panel is wedged for every subsequent screenshot.
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+
+      (panel as any).options.transparentBackground = true;
+      const originalBg = mockSceneManager.scene.background;
+      mockSceneManager.postProcessing.renderToImageData.mockRejectedValue(
+        new Error('render failed')
+      );
+      const restoreSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
+
+      await expect(panel.captureScreenshot()).rejects.toThrow('render failed');
+
+      expect(mockSceneManager.scene.background).toBe(originalBg);
+      expect(restoreSpy).toHaveBeenCalled();
+      expect((panel as any).screenshotStrategy.isInProgress()).toBe(false);
 
       rafSpy.mockRestore();
     });
@@ -336,6 +380,34 @@ describe('ScreenshotStrategy', () => {
       expect(downloadSpy).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.exr$/));
 
       rafSpy.mockRestore();
+    });
+  });
+
+  // [P8] CaptureStrategy contract parity. Video & Offline strategies have
+  // explicit canRun / abort / dispose coverage; Screenshot only had these
+  // exercised implicitly. Pin them so the three strategies stay symmetric.
+  describe('CaptureStrategy contract (parity with video / offline)', () => {
+    it('declares kind "screenshot"', () => {
+      expect((panel as any).screenshotStrategy.kind).toBe('screenshot');
+    });
+
+    it('canRun is true when idle and false during any active/in-flight capture', () => {
+      const s = (panel as any).screenshotStrategy;
+      expect(
+        s.canRun({ isRecording: false, isOfflineCaptureActive: false, isCaptureInProgress: false })
+      ).toBe(true);
+      expect(
+        s.canRun({ isRecording: true, isOfflineCaptureActive: false, isCaptureInProgress: false })
+      ).toBe(false);
+      expect(
+        s.canRun({ isRecording: false, isOfflineCaptureActive: true, isCaptureInProgress: false })
+      ).toBe(false);
+    });
+
+    it('abort() is a safe no-op that leaves the in-progress lock clear', () => {
+      const s = (panel as any).screenshotStrategy;
+      expect(() => s.abort()).not.toThrow();
+      expect(s.isInProgress()).toBe(false);
     });
   });
 });

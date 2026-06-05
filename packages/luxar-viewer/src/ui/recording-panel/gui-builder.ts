@@ -30,9 +30,15 @@ const VALID_FORMATS_BY_MODE: Record<RecordingMode, OutputFormat[]> = {
   turntable: ['png', 'webp', 'jpeg', 'exr', 'mp4', 'webm', 'mkv'],
 };
 
-/** Return the formats valid for `mode`. */
+/**
+ * Return the formats valid for `mode`.
+ *
+ * Returns a fresh array each call — never the live `VALID_FORMATS_BY_MODE`
+ * entry — so a caller that sorts/mutates the result in place cannot
+ * corrupt the shared constant for every subsequent call.
+ */
 export function getValidFormatsForMode(mode: RecordingMode): OutputFormat[] {
-  return VALID_FORMATS_BY_MODE[mode];
+  return [...VALID_FORMATS_BY_MODE[mode]];
 }
 
 /**

@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import {
   getValidFormatsForMode,
   getDefaultFormatForMode,
@@ -17,10 +18,14 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from '../../../../ui/recording-panel/gui-builder';
+import type { RecordingMode, OutputFormat } from '../../../../ui/recording-panel/types';
 
 describe('getValidFormatsForMode', () => {
   it('returns the four image formats for image mode', () => {
-    expect(getValidFormatsForMode('image').sort()).toEqual(['exr', 'jpeg', 'png', 'webp']);
+    // [P1] Copy before sorting: getValidFormatsForMode returns the live
+    // module-level array, so an in-place .sort() here would corrupt the
+    // shared constant and leak ordering into every later test.
+    expect([...getValidFormatsForMode('image')].sort()).toEqual(['exr', 'jpeg', 'png', 'webp']);
   });
 
   it('returns only WebM for video mode', () => {
@@ -78,35 +83,68 @@ describe('isVideoContainerFormat', () => {
 });
 
 describe('FORMAT_LABEL_TO_VALUE', () => {
-  it('maps each GUI label to the right internal value', () => {
-    expect(FORMAT_LABEL_TO_VALUE.PNG).toBe('png');
-    expect(FORMAT_LABEL_TO_VALUE.WebP).toBe('webp');
-    expect(FORMAT_LABEL_TO_VALUE.JPEG).toBe('jpeg');
-    expect(FORMAT_LABEL_TO_VALUE.EXR).toBe('exr');
-    expect(FORMAT_LABEL_TO_VALUE.MP4).toBe('mp4');
-    expect(FORMAT_LABEL_TO_VALUE.WebM).toBe('webm');
-    expect(FORMAT_LABEL_TO_VALUE.MKV).toBe('mkv');
+  it('maps the complete label set to internal values, with no missing or extra keys', () => {
+    // [P2/P11] Assert the whole map (not key-by-key): a mutation that
+    // deletes, renames, reorders, or adds a label is caught here. The two
+    // GUI-side maps and the dropdown options must stay in lockstep.
+    expect(FORMAT_LABEL_TO_VALUE).toEqual({
+      PNG: 'png',
+      WebP: 'webp',
+      JPEG: 'jpeg',
+      EXR: 'exr',
+      MP4: 'mp4',
+      WebM: 'webm',
+      MKV: 'mkv',
+    });
+    expect(Object.keys(FORMAT_LABEL_TO_VALUE)).toEqual([
+      'PNG',
+      'WebP',
+      'JPEG',
+      'EXR',
+      'MP4',
+      'WebM',
+      'MKV',
+    ]);
   });
 });
 
 describe('CODEC_LABEL_TO_VALUE', () => {
-  it('maps each codec label to the right internal value', () => {
-    expect(CODEC_LABEL_TO_VALUE['H.265']).toBe('h265');
-    expect(CODEC_LABEL_TO_VALUE.VP9).toBe('vp9');
-    expect(CODEC_LABEL_TO_VALUE['H.264']).toBe('h264');
-    expect(CODEC_LABEL_TO_VALUE.VP8).toBe('vp8');
+  it('maps the complete codec-label set to internal values, with no missing or extra keys', () => {
+    // [P2/P11] Full-map assertion: the turntable codec dropdown derives its
+    // visible options from Object.values(CODEC_LABEL_TO_VALUE), so a dropped
+    // or reordered codec would silently change the dropdown.
+    expect(CODEC_LABEL_TO_VALUE).toEqual({
+      'H.265': 'h265',
+      VP9: 'vp9',
+      'H.264': 'h264',
+      VP8: 'vp8',
+    });
+    expect(Object.keys(CODEC_LABEL_TO_VALUE)).toEqual(['H.265', 'VP9', 'H.264', 'VP8']);
   });
 });
 
 describe('computeControlVisibility', () => {
   it('image mode + png: shows image group, hides quality + transparent (lossless)', () => {
     const d = computeControlVisibility('image', { outputFormat: 'png', syncToSlider: false });
-    expect(d.showImageGroup).toBe(true);
-    expect(d.showVideoGroup).toBe(false);
-    expect(d.showTurntableGroup).toBe(false);
-    expect(d.showImageQuality).toBe(false); // png is lossless
-    expect(d.showImageTransparent).toBe(true); // png has alpha
-    expect(d.correctedFormat).toBeNull();
+    // [P2] Pin the ENTIRE decision object for this representative case so a
+    // mutation that flips any single field (or returns the wrong shape) is
+    // caught — partial assertions let most-of-the-object mutations survive.
+    expect(d).toEqual({
+      showImageGroup: true,
+      showVideoGroup: false,
+      showTurntableGroup: false,
+      showFormat: true, // image offers 4 formats → real choice
+      showImageQuality: false, // png is lossless
+      showImageTransparent: true, // png has alpha
+      showVideoCodec: false,
+      showVideoQuality: false,
+      showVideoDuration: false,
+      showSyncToggle: false,
+      showSyncDimension: false,
+      validFormats: ['png', 'webp', 'jpeg', 'exr'],
+      correctedFormat: null,
+      visibleVideoCodecs: null,
+    });
   });
 
   it('image mode + jpeg: quality slider visible, transparent hidden when format is exr-equivalent', () => {
@@ -200,5 +238,46 @@ describe('computeControlVisibility', () => {
       computeControlVisibility('turntable', { outputFormat: 'mp4', syncToSlider: false })
         .validFormats
     ).toEqual(getValidFormatsForMode('turntable'));
+  });
+
+  it('[property] invariants hold across every mode × format × sync combination', () => {
+    // [P12] The example cases above are specific; these are the algebraic
+    // invariants that must hold for ALL inputs — including invalid mode/format
+    // pairs that trigger auto-correction. fast-check enumerates the full grid.
+    const modes: RecordingMode[] = ['image', 'video', 'turntable'];
+    const formats: OutputFormat[] = ['png', 'webp', 'jpeg', 'exr', 'mp4', 'webm', 'mkv'];
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...modes),
+        fc.constantFrom(...formats),
+        fc.boolean(),
+        (mode, outputFormat, syncToSlider) => {
+          const d = computeControlVisibility(mode, { outputFormat, syncToSlider });
+
+          // Group visibility is a pure function of mode.
+          expect(d.showImageGroup).toBe(mode === 'image');
+          expect(d.showVideoGroup).toBe(mode !== 'image');
+          expect(d.showTurntableGroup).toBe(mode === 'turntable');
+
+          // validFormats always equals the mode's canonical list.
+          expect(d.validFormats).toEqual(getValidFormatsForMode(mode));
+
+          // correctedFormat is non-null EXACTLY when the chosen format is
+          // invalid for the mode, and the correction is itself valid.
+          if (d.correctedFormat === null) {
+            expect(d.validFormats).toContain(outputFormat);
+          } else {
+            expect(d.validFormats).not.toContain(outputFormat);
+            expect(d.validFormats).toContain(d.correctedFormat);
+          }
+
+          // A codec list exists exactly when the codec dropdown is shown.
+          expect(d.visibleVideoCodecs !== null).toBe(d.showVideoCodec);
+
+          // The sync-dimension dropdown can only show when the sync toggle does.
+          if (d.showSyncDimension) expect(d.showSyncToggle).toBe(true);
+        }
+      )
+    );
   });
 });
