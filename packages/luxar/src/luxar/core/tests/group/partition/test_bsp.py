@@ -69,8 +69,11 @@ class TestMidpointBspPartition:
         parts = midpoint_bsp_partition(pos, max_elements=60)
         assert len(parts) == 2
         # Each part should occupy roughly the lower or upper half of X.
+        # Data-agnostic: midpoint splits at the geometric midpoint of the
+        # actual X range, not a hardcoded 50.
+        x_mid = float((pos[:, 0].min() + pos[:, 0].max()) * 0.5)
         x_means = [float(pos[p][:, 0].mean()) for p in parts]
-        assert min(x_means) < 50 < max(x_means)
+        assert min(x_means) < x_mid < max(x_means)
 
     def test_coincident_positions_emit_as_oversized_single_part(self) -> None:
         """All-coincident positions cannot partition further; one (oversized) part."""
@@ -83,6 +86,23 @@ class TestMidpointBspPartition:
         pos = np.zeros((0, 3), dtype=np.float32)
         parts = midpoint_bsp_partition(pos, max_elements=10)
         assert parts == []
+
+    def test_single_element_returns_single_part(self) -> None:
+        """B10/[P5]: N=1 boundary — one element under any cap is one part."""
+        pos = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+        parts = midpoint_bsp_partition(pos, max_elements=100)
+        assert len(parts) == 1
+        np.testing.assert_array_equal(parts[0], np.array([0]))
+
+    def test_max_elements_one_splits_to_singletons(self) -> None:
+        """B10/[P5]: max_elements=1 (minimum valid cap) on distinct points
+        recurses to maximal depth — every part is a single element and the
+        cover stays complete."""
+        pos = np.array([[i, 0.0, 0.0] for i in range(8)], dtype=np.float32)
+        parts = midpoint_bsp_partition(pos, max_elements=1)
+        assert len(parts) == 8
+        assert all(p.size == 1 for p in parts)
+        np.testing.assert_array_equal(np.sort(np.concatenate(parts)), np.arange(8))
 
     def test_rejects_non_2d_positions(self) -> None:
         with pytest.raises(ValueError, match="must be 2-D"):
@@ -387,7 +407,9 @@ class TestAddPartitionGroup:
         pos = np.zeros((5, 3), dtype=np.float32)
         with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            grp = scene.add_partition_group("bad", display_type="gsplats", max_elements=100)
+            grp = scene.add_partition_group(
+                "bad", display_type="gsplats", max_elements=100
+            )
             grp.add_gsplats("part_0", centers=c, amplitudes=a, cholesky_factors=ch)
             grp.add_points("part_1", pos)
             with pytest.raises(ValueError, match="non-homogeneous"):

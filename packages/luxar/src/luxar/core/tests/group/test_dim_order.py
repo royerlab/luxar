@@ -181,6 +181,43 @@ class TestDimOrderGSplats:
         # Time dimension (idx 3) should have variance = 0.5^2 = 0.25
         np.testing.assert_allclose(Sigma_4d[0, 3, 3], 0.25, atol=1e-5)
 
+    def test_uniform_1d_cholesky_embedded(self, tmp_path) -> None:
+        """B5/[P5]: a *uniform* Cholesky (a single 1-D packed vector shared by
+        every splat) takes the ``cholesky_factors.ndim == 1`` branch of
+        ``apply_dim_order_cholesky`` (dim_order.py:90-96): reshape to (1, k),
+        embed, reshape back. The 2-D per-row tests above never reach it."""
+        output = tmp_path / "test.zarr"
+        centers = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+        amplitudes = np.array([1.0, 1.0], dtype=np.float32)
+        # 1-D uniform packed Cholesky for an isotropic 3D Gaussian.
+        uniform_chol = pack_tril(np.eye(3, dtype=np.float32).reshape(1, 3, 3)).reshape(
+            -1
+        )
+        assert uniform_chol.ndim == 1  # precondition for the branch
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=_make_4d_dims())
+            gsplats = scene.add_gsplats(
+                "splats",
+                centers,
+                amplitudes,
+                uniform_chol,
+                dim_order=["Z", "Y", "X"],
+                fill={"Time": 0.0},
+                fill_sigma={"Time": 0.5},
+            )
+            assert gsplats.n_splats == 2
+
+        store = zarr.open(str(output), mode="r")
+        stored_chol = store["splats"]["cholesky_factors"][:]
+        L_4d = unpack_tril(
+            stored_chol.reshape(1, -1) if stored_chol.ndim == 1 else stored_chol, 4
+        )
+        Sigma_4d = L_4d @ L_4d.transpose(0, 2, 1)
+        # Permuted-identity XYZ block + the filled Time variance (0.5² = 0.25).
+        np.testing.assert_allclose(Sigma_4d[0, :3, :3], np.eye(3), atol=1e-5)
+        np.testing.assert_allclose(Sigma_4d[0, 3, 3], 0.25, atol=1e-5)
+
     def test_gsplats_cholesky_reorder_preserves_covariance(self, tmp_path) -> None:
         """Anisotropic 3D splats: verify covariance is correctly permuted."""
         output = tmp_path / "test.zarr"
