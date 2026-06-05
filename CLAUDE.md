@@ -96,10 +96,10 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-- **Node.js 22+**: via nvm (Linux) or Homebrew (macOS)
+- **Node.js 20.19+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). 20.19 is the floor required by Vite 8 and matches `engines.node` in `packages/luxar-viewer/package.json`.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
-- **Pre-commit hooks**: Automatic code quality checks
+- **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`
 
 **Key tools and their locations:**
 | Tool | Installation | Location |
@@ -395,7 +395,7 @@ The Makefile follows consistent naming conventions with **action-first** pattern
 | `clean-<scope>` | Clean build artifacts | `clean-all`, `clean-viewer`, `clean-cuda` |
 | `format-<language>` | Format code | `format-python`, `format-typescript` |
 | `run-<script>` | Run scripts/examples | `run-examples`, `run-demos` |
-| `serve-<target>` | Start a server | `serve-docs`, `serve-dataset` |
+| `serve-<target>` | Start a server | `serve-docs`, `serve-dataset`, `serve-examples` (serves the `datasets/` directory) |
 
 **Key distinctions:**
 - `install-<tool>` vs `install-<component>-deps`: Tools are executables (node, rust); deps are project dependencies (node_modules)
@@ -643,12 +643,18 @@ http://localhost:5173/?src=http://127.0.0.1:8005
 ```
 The zarr loader interprets trailing slashes as path components, causing 404s.
 
-### WASM 16-Dimension Limit
-WASM functions use fixed-size arrays (for performance) and support **maximum 16 dimensions**.
-- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `compute_gsplats_attenuation`
-- Error message: `"ndim=X exceeds maximum supported dimensions (16)"`
-- For >16D data: TypeScript fallback is used automatically (slower but works)
-- If you need >16D with WASM performance, reduce dimensions via PCA or feature selection
+### WASM 16-Dimension Limit (with automatic >16D fallback)
+The compiled WASM kernels use fixed-size arrays (for performance) and support a
+**maximum of 16 dimensions** on the fast path. `validate_ndim` **panics** (crate
+is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called above 16D.
+- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `compute_gsplats_attenuation`, etc.
+- **>16D is fully supported (slower but works), automatically.** The TypeScript
+  reference implementations in `wasm/typescript/` are uncapped, and the worker's
+  `pickBackend(ctx, ndim)` (`workers/data-worker/state.ts`) transparently routes
+  any `ndim > 16` operation to the TS backend instead of WASM. No caller action
+  is needed — high-dimensional datasets just run on the TS path.
+- Implication: the TS reference is not only a WASM-missing fallback, it is the
+  production >16D backend — keep it in 1:1 sync with the Rust kernels (parity tests).
 
 ### ViewState.dimensions for extend_to_all
 The `dimensions` field in ViewState is **required** for `extend_to_all` to work:

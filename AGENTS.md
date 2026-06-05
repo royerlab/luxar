@@ -23,7 +23,7 @@ Luxar is a high-performance Python + WebGL system for compiling and visualizing 
 - Use `make setup-dev` from the repo root for a fresh Linux/macOS machine, including HPC/Slurm login nodes with no sudo/GPU.
 - Prerequisites: Python 3.10+, Git, curl; Git LFS is optional but required for demo data (`git lfs install && git lfs pull`).
 - Ubuntu/Debian: install `pipx` when available (`sudo apt-get install -y pipx && pipx ensurepath`). HPC/no-sudo falls back to venv-based installs.
-- `make setup-dev` installs Node.js 22+, pnpm, Hatch, and pre-commit hooks without sudo.
+- `make setup-dev` installs Node.js 20.19+ (the 22 LTS by default), pnpm, Hatch, and pre-commit hooks without sudo.
 - Tool locations commonly used by setup: `~/.nvm/`, `~/.local/bin/hatch`, `~/.local/bin/pnpm`, `~/.cargo/`, `~/.local/go/`, CUDA under `/usr/local/cuda/` or loaded modules.
 - Troubleshooting: `make check-deps`; for full reset use `make clean-setup && make setup-dev`.
 - If demos fail from missing `.npz`/`.zip`, pull Git LFS files and check `packages/luxar/src/luxar/demos/data/README.md`.

@@ -99,7 +99,7 @@ The setup process has 5 steps:
 #### Step 3: Python Virtual Environment
 
 1. Creates Hatch environment (`hatch env create`)
-2. Installs pre-commit hooks (`hatch run pre-commit install`)
+2. Installs pre-commit hooks (`hatch run pre-commit install`) — hooks are defined in `.pre-commit-config.yaml` (ruff lint + format, bandit, mypy)
 
 #### Step 4: TypeScript Dependencies
 

@@ -79,12 +79,12 @@ stream in fresh chunks before the screenshot fires.
 ```bash
 APP_URL="http://localhost:5173/?src=/data/demo.zarr&debug" \
 OUT=figure-1.png WAIT=20000 WIDTH=3200 HEIGHT=2400 DSF=2 \
-  pnpm exec ts-node tools/capture-hires.ts
+  pnpm exec tsx tools/capture-hires.ts
 
 # nD navigation + camera framing for a multi-channel time series
 APP_URL="http://localhost:5173/?src=/data/4d.zarr&debug" \
 SLICE="time:240,channel:0" CAMERA_ZOOM=1.5 \
-  pnpm exec ts-node tools/capture-hires.ts
+  pnpm exec tsx tools/capture-hires.ts
 ```
 
 The script logs the resolved `getState()` snapshot before screenshotting

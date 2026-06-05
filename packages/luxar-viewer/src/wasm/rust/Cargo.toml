@@ -2,6 +2,7 @@
 name = "luxar-wasm"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.92"
 authors = ["Luxar Contributors"]
 description = "WASM acceleration for Luxar spatial queries and nD visibility computation"
 license = "BSD-3-Clause"
