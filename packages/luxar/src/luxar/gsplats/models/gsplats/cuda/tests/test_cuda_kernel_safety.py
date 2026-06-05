@@ -1,9 +1,13 @@
 """
-Tests for CUDA kernel review fixes.
+CUDA kernel safety and numerical-invariant regression tests.
 
-These tests verify the correctness of fixes identified during the CUDA kernel review:
-1. Buffer overflow guard in backward kernel's grad_output cache
-2. Tighter early rejection via amplitude-based truncation in effective_truncate_sq
+These tests guard correctness invariants of the CUDA splatting kernels:
+
+- The backward kernel's grad_output cache must not overflow its buffer, and
+  the backward pass must always yield finite, physically sensible gradients.
+- Amplitude-based early rejection in ``effective_truncate_sq`` must keep
+  low-amplitude (near-``intensity_floor``) splats consistent with the PyTorch
+  reference, and kernel output must stay bounded by per-splat amplitude.
 """
 
 import numpy as np
@@ -102,7 +106,9 @@ def _run_pytorch_reference(data, truncate=3.0, intensity_floor=1e-5):
 
 
 class TestAmplitudeBasedTruncation:
-    """Tests for Fix 2: amplitude-based tightening in effective_truncate_sq."""
+    """Invariant: amplitude-based truncation in effective_truncate_sq keeps
+    low-amplitude splats consistent with the PyTorch reference and output
+    bounded by amplitude."""
 
     def test_low_amplitude_splats_match_pytorch(self):
         """Splats with low amplitude (near intensity_floor) should still match PyTorch."""

@@ -269,7 +269,7 @@ def fit_gaussian_splats(
     max_abs_error: Optional[float] = None,
     rel_l2_target: Optional[float] = None,
     gradient_clip: Optional[float] = None,  # Disabled: MSE gradients are well-scaled
-    # Scheduler parameters — tuned via autoresearch (43 experiments):
+    # Scheduler parameters (empirically tuned):
     # patience 15 + factor 0.9 gives faster LR decay than the gentler 25/0.98,
     # yielding 33% speed improvement with same PSNR.
     scheduler_type: str = "plateau",

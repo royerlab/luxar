@@ -1,11 +1,12 @@
-"""Tests guarding fixes from the systematic API review.
+"""Regression tests pinning down core API invariants.
 
-Each test guards a specific fix to prevent regressions:
-- Fix 1: Points metadata uses "ndim" key (not "dims")
-- Fix 2: Property setters persist to zarr
-- Fix 3: Cross-scene node inequality
-- Fix 4: Scene.dimensions dead code cleanup
-- Fix 5: GSplatData re-exported at top level
+Each class guards a specific behavior that must hold:
+- Points metadata exposes the "ndim" key (never "dims"), matching Lines/GSplats.
+- Node property setters (opacity/gamma/blending_mode) persist to the zarr store.
+- Nodes from different scenes are never equal, even with identical paths.
+- Scene.dimensions returns the live Dimensions object and enforces initialization.
+- Scene.to_zarr finalizes and copies the backing store with safe destination checks.
+- GSplatData and fit_gaussian_splats are importable from the top-level luxar package.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 
-# ── Fix 1: Points metadata uses "ndim" key ──────────────────────────
+# ── Points metadata uses the "ndim" key ─────────────────────────────
 
 
 class TestPointsMetadataNdimKey:
@@ -71,7 +72,7 @@ class TestPointsMetadataNdimKey:
             assert gsplats.ndim == 3
 
 
-# ── Fix 2: Property setters persist to zarr ──────────────────────────
+# ── Property setters persist to zarr ─────────────────────────────────
 
 
 class TestPropertySettersPersistToZarr:
@@ -135,7 +136,7 @@ class TestPropertySettersPersistToZarr:
         assert float(store["pts"].attrs["opacity"]) == pytest.approx(0.75)
 
 
-# ── Fix 3: Cross-scene node inequality ───────────────────────────────
+# ── Cross-scene node inequality ──────────────────────────────────────
 
 
 class TestCrossSceneNodeInequality:
@@ -195,7 +196,7 @@ class TestCrossSceneNodeInequality:
         assert len(node_set) == 2
 
 
-# ── Fix 4: Scene.dimensions dead code cleanup ────────────────────────
+# ── Scene.dimensions returns the live Dimensions object ──────────────
 
 
 class TestSceneDimensionsProperty:
@@ -221,7 +222,7 @@ class TestSceneDimensionsProperty:
                 _ = scene.dimensions
 
 
-# ── Fix 5: Scene.to_zarr exports finalized backing store ─────────────
+# ── Scene.to_zarr exports a finalized backing store ──────────────────
 
 
 class TestSceneToZarrExport:
@@ -270,7 +271,7 @@ class TestSceneToZarrExport:
                 scene.to_zarr(source / "nested.zarr")
 
 
-# ── Fix 6: GSplatData re-exported at top level ───────────────────────
+# ── GSplatData re-exported at the top level ──────────────────────────
 
 
 class TestGSplatDataTopLevelExport:
