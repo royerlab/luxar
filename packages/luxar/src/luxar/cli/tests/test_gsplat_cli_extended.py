@@ -1258,7 +1258,9 @@ class TestPartitionCommand:
 
         # Merge back
         merged = tmp_path / "merged.gsplats.zarr"
-        part_paths = [str(partition_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)]
+        part_paths = [
+            str(partition_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)
+        ]
         result = runner.invoke(
             app,
             ["gsplat", "merge"] + part_paths + ["-o", str(merged)],
