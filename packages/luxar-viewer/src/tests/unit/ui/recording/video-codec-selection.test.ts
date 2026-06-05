@@ -44,6 +44,39 @@ describe('selectVideoCodec', () => {
     expect(can).toHaveBeenCalledWith('vp9', ENC_OPTS);
   });
 
+  it('does NOT downgrade h265 in an MKV container (only WebM downgrades)', async () => {
+    // [P11/M2] The downgrade guard is `containerMode === 'webm'`. A mutation
+    // to `!== 'mp4'` would wrongly downgrade MKV too — pin that MKV keeps the
+    // user's hevc and probes it directly.
+    const can = vi.fn(async () => true);
+    const result = await selectVideoCodec({
+      preferredCodec: 'h265',
+      containerMode: 'mkv',
+      encOpts: ENC_OPTS,
+      canEncodeVideo: can,
+    });
+    expect(result.codec).toBe('hevc');
+    expect(result.isPreferred).toBe(true);
+    expect(can).toHaveBeenCalledWith('hevc', ENC_OPTS);
+  });
+
+  it('falls through to AV1 when it is the only supported codec (non-HEVC chain order)', async () => {
+    // [P5/G5] AV1 sits mid-chain and was only ever reached incidentally.
+    const supported: ReadonlySet<MediabunnyCodec> = new Set(['av1']);
+    const can = vi.fn(async (codec: MediabunnyCodec) => supported.has(codec));
+    const result = await selectVideoCodec({
+      preferredCodec: 'h264',
+      containerMode: 'mp4',
+      encOpts: ENC_OPTS,
+      canEncodeVideo: can,
+    });
+    expect(result.codec).toBe('av1');
+    expect(result.isPreferred).toBe(false);
+    expect(result.fallbackFrom).toBe('avc');
+    // Probe order: preferred avc (fail) → vp9 (fail) → av1 (found).
+    expect(can.mock.calls.map((c) => c[0])).toEqual(['avc', 'vp9', 'av1']);
+  });
+
   it('walks fallback chain when preferred codec is unsupported', async () => {
     const supported: ReadonlySet<MediabunnyCodec> = new Set(['vp9']);
     const can = vi.fn(async (codec: MediabunnyCodec) => supported.has(codec));

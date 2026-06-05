@@ -181,7 +181,11 @@ export class RecordingPanel {
     if (activeElement?.blur) activeElement.blur();
     this.gui.hide();
     this.visible = false;
-    this.sceneManager.renderer.domElement.focus();
+    // Return focus to the canvas so keyboard shortcuts keep working.
+    // Guarded: if the renderer DOM element is missing or detached (focus
+    // not callable), this is a no-op rather than a throw that would abort
+    // the rest of hide().
+    this.sceneManager.renderer.domElement?.focus?.();
   }
 
   toggle(): void {
@@ -256,8 +260,15 @@ export class RecordingPanel {
       return;
     }
 
-    const elapsed = ((Date.now() - this.session.recordingStartTime) / 1000).toFixed(1);
-    log.info(Modules.RECORDING, `Stopping video recording after ${elapsed}s...`);
+    // recordingStartTime is stamped by the video strategy when recording
+    // actually starts. Guard against the (defensive) case where isRecording
+    // was set without a start time — otherwise `Date.now() - 0` would log a
+    // nonsense ~1.7-billion-second elapsed instead of a real duration.
+    const elapsed =
+      this.session.recordingStartTime > 0
+        ? `${((Date.now() - this.session.recordingStartTime) / 1000).toFixed(1)}s`
+        : 'unknown duration';
+    log.info(Modules.RECORDING, `Stopping video recording after ${elapsed}...`);
     this.videoRecordingStrategy.abort();
   }
 

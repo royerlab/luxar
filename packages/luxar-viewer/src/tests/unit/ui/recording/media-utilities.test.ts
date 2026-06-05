@@ -3,8 +3,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import {
   type MediaRecorderLike,
+  type VideoQuality,
   anchorOffset,
   computeVideoBitrate,
   generateFfmpegScript,
@@ -19,10 +21,12 @@ describe('computeVideoBitrate', () => {
     expect(computeVideoBitrate(1920, 1080, 30, 'high')).toBe(9_331_200);
   });
 
-  it('low quality is 4× smaller than max', () => {
+  it('low quality is exactly 7.5× smaller than max (0.3 / 0.04)', () => {
     const low = computeVideoBitrate(1920, 1080, 30, 'low');
     const max = computeVideoBitrate(1920, 1080, 30, 'max');
-    expect(max / low).toBeCloseTo(7.5, 6); // 0.3 / 0.04 = 7.5
+    // [P7] The ratio is an exact integer division at this resolution — no
+    // need for toBeCloseTo's slop, which would mask an off-by-one preset.
+    expect(max / low).toBe(7.5);
   });
 
   it('scales linearly with each input', () => {
@@ -31,9 +35,31 @@ describe('computeVideoBitrate', () => {
     expect(computeVideoBitrate(100, 100, 60, 'high')).toBe(Math.round(100 * 100 * 60 * 0.15));
   });
 
-  it('falls back to high when given an unknown quality', () => {
-    const unknown = computeVideoBitrate(1, 1, 1, 'unknown' as 'low');
-    expect(unknown).toBe(Math.round(0.15));
+  it('falls back to high (not low/medium/max) for an unknown quality', () => {
+    // [P11/M1] Use dimensions large enough that the four presets give
+    // DISTINCT results. The old assertion `toBe(Math.round(0.15))` was
+    // vacuous: round(0.15), round(0.04), round(0.08) all collapse to 0, so
+    // a mutation of the `?? BPP_BY_QUALITY.high` fallback survived.
+    const unknown = computeVideoBitrate(1000, 1000, 30, 'unknown' as VideoQuality);
+    expect(unknown).toBe(computeVideoBitrate(1000, 1000, 30, 'high'));
+    expect(unknown).not.toBe(computeVideoBitrate(1000, 1000, 30, 'low'));
+    expect(unknown).not.toBe(computeVideoBitrate(1000, 1000, 30, 'max'));
+  });
+
+  it('[property] equals round(w × h × fps × bpp) for every preset and dimension', () => {
+    // [P12] The exact contract, enumerated over the input grid.
+    const bpp: Record<VideoQuality, number> = { low: 0.04, medium: 0.08, high: 0.15, max: 0.3 };
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 7680 }),
+        fc.integer({ min: 1, max: 4320 }),
+        fc.integer({ min: 1, max: 240 }),
+        fc.constantFrom<VideoQuality>('low', 'medium', 'high', 'max'),
+        (w, h, fps, q) => {
+          expect(computeVideoBitrate(w, h, fps, q)).toBe(Math.round(w * h * fps * bpp[q]));
+        }
+      )
+    );
   });
 });
 
