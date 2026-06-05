@@ -289,8 +289,10 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(result.amplitudes).toBeInstanceOf(Float32Array);
         expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
         // Audit W8 fix: toBeFalsy matches too broadly. Pin the
-        // documented sentinel (null or undefined).
-        expect(result.colors == null).toBe(true);
+        // documented sentinel. The loader initializes `colors = null`
+        // and leaves it null when no colors array is present, so assert
+        // the concrete sentinel rather than a loose `== null` truthy check.
+        expect(result.colors).toBeNull();
       });
 
       it('should only initialize once with concurrent calls', async () => {
@@ -694,6 +696,11 @@ describe('GSplatsSpatialIndexLoader', () => {
 
         const result = await bodyLoader.loadGSplats(viewState);
         expect(result.colors).toBeInstanceOf(Float32Array);
+        // [P2] Strengthen: pin colors length to splatCount*3 (RGB per
+        // splat). Default mockExecute returns ranges 0..100 + 200..300 =
+        // 200 splats; colors must be exactly that many RGB triples.
+        expect(result.splatCount).toBe(200);
+        expect(result.colors?.length).toBe(result.splatCount * 3);
       });
     });
 

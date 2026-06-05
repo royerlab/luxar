@@ -146,6 +146,8 @@ describe('ProgressiveMonitorAdapter', () => {
     const queries = adapter.getActiveQueries();
     expect(queries).toHaveLength(3);
     expect(queries.every((q) => q.path === '/p')).toBe(true);
+    // Order is preserved (a's queries first, then b's) and ids are intact.
+    expect(queries.map((q) => q.id)).toEqual(['x', 'y', 'z']);
   });
 
   it('reflects a live (post-dispose) empty loader set without throwing', () => {

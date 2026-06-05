@@ -11,6 +11,16 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+
+// Mock the GPU update fn so the no-pool path's actual dispatch can be
+// asserted (a mutant that drops this call would otherwise still pass the
+// userData write). Mirrors the gsplats commit test's mock of
+// updateInstancedGSplatsMesh.
+const mockUpdateInstancedLinesMesh = vi.fn();
+vi.mock('../../../../rendering/line-geometry', () => ({
+  updateInstancedLinesMesh: (...args: unknown[]) => mockUpdateInstancedLinesMesh(...args),
+}));
+
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
@@ -56,12 +66,24 @@ describe('commitLinesGeometry', () => {
   });
 
   it('writes visibleSegmentCount on the mesh userData', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');
     root.add(mesh);
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(7) };
+    const processed = makeProcessed(7);
+    const staged: StagedLinesCommit = { path: '/lines', processed };
     commitLinesGeometry(staged, root, null);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
+    // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
+    // updateInstancedLinesMesh call would still pass the userData write.
+    // No-pool path calls updateInstancedLinesMesh(mesh, processed).
+    expect(mockUpdateInstancedLinesMesh).toHaveBeenCalledTimes(1);
+    const [calledMesh, calledProcessed] = mockUpdateInstancedLinesMesh.mock.calls[0] as [
+      THREE.Mesh,
+      { segmentCount: number },
+    ];
+    expect(calledMesh).toBe(mesh);
+    expect(calledProcessed).toBe(processed);
   });
 
   // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts. The
@@ -82,8 +104,11 @@ describe('commitLinesGeometry', () => {
       didLastAcquireRebuildAttributes: () => false,
     };
     const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
+    mockUpdateInstancedLinesMesh.mockReset();
     expect(() => commitLinesGeometry(staged, root, mockPool)).not.toThrow();
     expect(mesh.userData.visibleSegmentCount).toBe(11);
+    // Pool path must NOT fall through to the no-pool instanced-mesh update.
+    expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();
   });
 
   // data.md C6[P2][P8] three-geometry symmetry: the Points equivalent

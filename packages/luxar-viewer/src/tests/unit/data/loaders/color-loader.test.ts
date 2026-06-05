@@ -55,6 +55,15 @@ describe('allocateColorBuffer', () => {
     expect(allocateColorBuffer(3, false, 'float64')).toBeInstanceOf(Float32Array);
     expect(allocateColorBuffer(3, false, 'mystery')).toBeInstanceOf(Float32Array);
   });
+
+  // [P5] unsupported numeric dtypes (no uint8/uint16 match) → Float32 fallback.
+  it('falls back to Float32Array for unsupported dtypes (float64 / complex128)', () => {
+    for (const dtype of ['float64', 'complex128']) {
+      const buf = allocateColorBuffer(4, false, dtype);
+      expect(buf).toBeInstanceOf(Float32Array);
+      expect(buf.length).toBe(4);
+    }
+  });
 });
 
 describe('getExpectedColorType', () => {
@@ -73,6 +82,12 @@ describe('getExpectedColorType', () => {
   it('maps everything else to Float32Array', () => {
     expect(getExpectedColorType('float32')).toBe('Float32Array');
     expect(getExpectedColorType('mystery')).toBe('Float32Array');
+  });
+
+  // [P5] unsupported numeric dtypes also fall back to Float32Array.
+  it('maps unsupported dtypes (float64 / complex128) to Float32Array', () => {
+    expect(getExpectedColorType('float64')).toBe('Float32Array');
+    expect(getExpectedColorType('complex128')).toBe('Float32Array');
   });
 });
 
@@ -131,6 +146,23 @@ describe('restoreOriginalDtype', () => {
       expect(restoreOriginalDtype(new Float32Array([10]), dtype, 1)).toBeInstanceOf(Uint16Array);
     }
   });
+
+  // [P5] boundary clamping at the exact dtype edges.
+  it('clamps uint8 at the 0 and 255 boundaries (incl. fractional overshoot)', () => {
+    // 0 → 0, 255 → 255, 255.9 → 255 (clamp then round), -5 → 0 (clamp low).
+    const decoded = new Float32Array([0, 255, 255.9, -5]);
+    const out = restoreOriginalDtype(decoded, 'uint8', 4);
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out as Uint8Array)).toEqual([0, 255, 255, 0]);
+  });
+
+  it('clamps uint16 at the 0 and 65535 boundaries (incl. fractional overshoot)', () => {
+    // 0 → 0, 65535 → 65535, 65535.9 → 65535 (clamp then round).
+    const decoded = new Float32Array([0, 65535, 65535.9]);
+    const out = restoreOriginalDtype(decoded, 'uint16', 3);
+    expect(out).toBeInstanceOf(Uint16Array);
+    expect(Array.from(out as Uint16Array)).toEqual([0, 65535, 65535]);
+  });
 });
 
 describe('loadDirectColorRanges', () => {
@@ -146,6 +178,9 @@ describe('loadDirectColorRanges', () => {
 
     await loadDirectColorRanges(array, ranges, out);
     expect(Array.from(out.slice(0, 3))).toEqual([10, 20, 30]);
+    // Full-buffer check: only the first range is written; the untouched
+    // tail (indices 3..8 of the length-9 buffer) must remain zero.
+    expect(out).toEqual(new Uint8Array([10, 20, 30, 0, 0, 0, 0, 0, 0]));
   });
 
   it('preserves Float32 type and concatenates multiple ranges', async () => {
@@ -279,5 +314,18 @@ describe('loadColorRanges (orchestrator)', () => {
 
     expect(rl.loadRangesResolvingRef).toHaveBeenCalled();
     expect(rl.loadRangesResolvingRef.mock.calls[0][7]).toBe('GSplats');
+  });
+
+  // [P5] empty ranges → totalItems 0 → zero-length buffer, no zarr reads.
+  it('returns a zero-length buffer for empty ranges (totalItems 0)', async () => {
+    const array = { dtype: 'uint8', shape: [10, 3], attrs: {} } as never;
+    const rl = makeFakeRangeLoader();
+
+    const out = await loadColorRanges(array, [], rl, {} as never, 'TEST');
+
+    expect(out.length).toBe(0);
+    // No ranges to stream, so neither the RangeLoader nor zarr.get is touched.
+    expect(rl.loadRangesResolvingRef).not.toHaveBeenCalled();
+    expect(mockZarrGet).not.toHaveBeenCalled();
   });
 });

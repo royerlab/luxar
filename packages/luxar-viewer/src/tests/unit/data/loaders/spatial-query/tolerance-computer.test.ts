@@ -10,6 +10,12 @@ describe('computeTolerance — common rules', () => {
       expect(tol[0]).toBe(DISPLAYED);
       expect(tol[1]).toBe(DISPLAYED);
       expect(tol[2]).toBe(DISPLAYED);
+      // Pin the actual sentinel constant (1e10), not just the local alias, so a
+      // mutated DISPLAYED_TOLERANCE in the source is caught.
+      expect(tol[0]).toBe(1e10);
+      // Dimension 3 is hidden here: its tolerance must be far below the
+      // displayed sentinel (kills a swap of displayed/hidden branches).
+      expect(tol[3]).toBeLessThan(1e9);
     }
   });
 
@@ -38,6 +44,18 @@ describe('computeTolerance — points', () => {
       spatialExtendDims: [true, true, true, false],
     });
     expect(tol[3]).toBe(0.5);
+  });
+
+  it('uses maxRadius for hidden dimensions flagged spatial via spatialExtendDims', () => {
+    // Same shape, but dimension 3 is flagged spatial (true): it must use
+    // maxRadius, not the 0.5 discrete value. This pins the true branch of the
+    // spatialExtendDims flag so a flipped flag-check is caught.
+    const tol = computeTolerance('points', [0, 1, 2], 4, undefined, {
+      maxRadius: 5.0,
+      spatialExtendDims: [true, true, true, true],
+    });
+    expect(tol[3]).toBe(5.0);
+    expect(tol[3]).not.toBe(0.5);
   });
 
   it('treats dimensions beyond spatialExtendDims length as spatial', () => {

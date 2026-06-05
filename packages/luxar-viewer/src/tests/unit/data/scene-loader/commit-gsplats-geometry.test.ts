@@ -67,6 +67,16 @@ describe('commitGSplatsGeometry', () => {
     commitGSplatsGeometry(makeStaged(11), root, null);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
+    // C7[P2][P11]: a mutant that drops the GPU update call would still pass
+    // the userData write above — pin the actual dispatch. The no-pool path
+    // calls updateInstancedGSplatsMesh(mesh, {centers, cholesky*, amplitudes,
+    // colors, splatCount}). Assert the target mesh AND the splatCount payload.
+    const [calledMesh, payload] = mockUpdateInstancedMesh.mock.calls[0] as [
+      THREE.Mesh,
+      { splatCount: number },
+    ];
+    expect(calledMesh).toBe(mesh);
+    expect(payload.splatCount).toBe(11);
   });
 
   // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts.
@@ -84,6 +94,8 @@ describe('commitGSplatsGeometry', () => {
     };
     expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool)).not.toThrow();
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
+    // Pool path must NOT fall through to the no-pool instanced-mesh update.
+    expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
   });
 
   // data.md C7[P2][P8] three-geometry symmetry: mirror the Points and Lines

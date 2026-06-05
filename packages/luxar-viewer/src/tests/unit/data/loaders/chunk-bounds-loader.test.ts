@@ -54,6 +54,12 @@ describe('fetchChunkBoundsArray', () => {
     expect(result).not.toBeNull();
     expect(Array.from(result!.data)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(result!.shape).toEqual([1, 3, 2]);
+    // Combined shape: catches a null/missing field that the separate
+    // (non-null-asserted) checks above would skip over.
+    expect(result).toEqual({
+      data: new Float32Array([1, 2, 3, 4, 5, 6]),
+      shape: [1, 3, 2],
+    });
   });
 
   it('returns null + INFO log on a 404 error', async () => {

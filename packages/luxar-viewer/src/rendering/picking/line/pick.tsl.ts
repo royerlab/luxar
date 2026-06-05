@@ -1,6 +1,6 @@
 /**
  * Line picking material TSL factory — NodeMaterial counterpart to
- * `LINE_PICK_SOURCE` in `picking-shaders.ts`.
+ * `LINE_PICK_SOURCE` in `shaders.ts`.
  *
  * Mirrors line.tsl's sprite-expansion math, but the fragment outputs:
  *   - R: nodeId (set via uniform)
@@ -74,7 +74,7 @@ export interface LinePickTSLNodes {
  * Consumes pre-created `UniformNode` references via `nodes`; the
  * wrapper class (`LinePickingTSLMaterial`) owns those nodes and
  * exposes them through `material.uniforms` as `IUniform`-shaped
- * getter/setter proxies. The harness / picking-shaders ShaderSource
+ * getter/setter proxies. The harness / `shaders.ts` ShaderSource
  * registry constructs the nodes from a plain `uniforms` record via
  * {@link buildLinePickTSLNodesFromUniforms}.
  */
@@ -291,7 +291,7 @@ export function linePickWebGPUFactory(
 /**
  * Build a `LinePickTSLNodes` set from a plain `IUniform` record. Used
  * by the harness and the `LINE_PICK_SOURCE` ShaderSource factory in
- * `picking-shaders.ts` — callers that don't own persistent
+ * `shaders.ts` — callers that don't own persistent
  * wrapper-side `UniformNode`s. Symmetric with
  * `buildPointPickTSLNodesFromUniforms` /
  * `buildGSplatPickTSLNodesFromUniforms`.
