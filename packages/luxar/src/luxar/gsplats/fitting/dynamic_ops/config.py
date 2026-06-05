@@ -39,6 +39,11 @@ class DynamicOpsConfig:
     num_tiles_per_dim: Optional[int] = (
         None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
     )
+    # RNG seed for the probabilistic per-tile keep decision used when
+    # k_per_tile < 1 (tiled seeding). A fixed default makes dynamic seeding
+    # reproducible run-to-run, matching the seed=42 convention used by the
+    # farthest-point-sampling seeder. Set to None for nondeterministic behavior.
+    seed: Optional[int] = 42
 
     # Step 2: Weak Splat Identification
     relocation_percentile: float = (

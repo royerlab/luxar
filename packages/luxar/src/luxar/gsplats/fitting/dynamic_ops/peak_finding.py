@@ -78,6 +78,7 @@ def _find_residual_peaks(
     nms_radius_vox: float,
     enable_tiled: bool = False,
     num_tiles_per_dim: int = 8,
+    seed: int | None = None,
 ) -> torch.Tensor:
     """
     Find k strongest residual peaks with spatial exclusion (non-maximum suppression).
@@ -98,6 +99,9 @@ def _find_residual_peaks(
         nms_radius_vox: Minimum distance between peaks
         enable_tiled: If True, use tile-based seeding for spatial fairness
         num_tiles_per_dim: Number of tiles per dimension (e.g., 8 → 8×8=64 tiles for 2D, 8³=512 for 3D)
+        seed: RNG seed for the probabilistic per-tile keep decision (tiled mode
+            only, when k_per_tile < 1). None → nondeterministic. Ignored in
+            global mode, which is fully deterministic.
 
     Returns:
         Tensor of peak coordinates, shape (K, d), on same device as residual
@@ -110,7 +114,7 @@ def _find_residual_peaks(
     """
     if enable_tiled:
         return _find_residual_peaks_tiled(
-            residual, num_tiles_per_dim, k_max_residuals, nms_radius_vox
+            residual, num_tiles_per_dim, k_max_residuals, nms_radius_vox, seed=seed
         )
     else:
         return _find_residual_peaks_global(residual, k_max_residuals, nms_radius_vox)
@@ -198,6 +202,7 @@ def _find_residual_peaks_tiled(
     num_tiles_per_dim: int | None,
     k_max_residuals: int,
     nms_radius_vox: float,
+    seed: int | None = None,
 ) -> torch.Tensor:
     """
     Find residual peaks using tile-based approach for spatial fairness.
@@ -237,6 +242,11 @@ def _find_residual_peaks_tiled(
     residual_positive = torch.clamp(residual, min=0)
     shape = residual.shape
     d = residual.ndim
+
+    # Local RNG for the probabilistic per-tile keep decision below. Seeding
+    # makes weak-peak selection reproducible run-to-run; a private instance
+    # avoids perturbing (and being perturbed by) the global random state.
+    rng = random.Random(seed)
 
     # Auto-select num_tiles_per_dim based on dimensionality
     if num_tiles_per_dim is None:
@@ -329,7 +339,7 @@ def _find_residual_peaks_tiled(
                 if peak_value >= strong_peak_threshold:
                     # Keep strong peak unconditionally
                     pass
-                elif random.random() >= keep_probability:
+                elif rng.random() >= keep_probability:
                     # Reject weak peak based on probability
                     tile_peaks = []
         else:
