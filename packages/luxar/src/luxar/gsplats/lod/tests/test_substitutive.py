@@ -1,15 +1,19 @@
-"""Tests for :mod:`luxar.gsplats.lod.substitutive`.
+"""Tests for :mod:`luxar.gsplats.lod.substitutive` and its
+``_substitutive/`` algorithm helpers (greedy Runnalls merge, Morton
+warm-start).
+
+The shared closed-form kernels are tested in :mod:`test_kernels`.
 
 Coverage:
 
-- Closed-form bin-merge correctness (moment matching laws of total
-  variance, $L^2$-optimal amplitude has zero gradient at the optimum).
-- Lloyd refinement is monotone non-increasing in $\\sum_j E_j^\\star$.
-- Multi-level hierarchy emits the expected $\\lceil N/K^\\ell\\rceil$ counts.
-- Cost-aware Lloyd beats spatial-only k-means on a synthetic anisotropic
-  mixture (mirrors supp doc Experiment C qualitatively).
+- Multi-level hierarchy emits the expected $\\lceil N/K^\\ell\\rceil$ counts
+  and is monotone non-increasing across levels.
+- Cost-aware Lloyd refinement does not increase the rendered $L^2$ error
+  vs spatial-only k-means (mirrors supp doc Experiment C qualitatively).
+- Greedy pairwise merge conserves the mass-weighted mean; Morton partition
+  is balanced and surjective.
 - Edge cases: empty input, ``levels=1``, ``N << K``, all four methods,
-  ``device='auto'``.
+  colors / float32 round-trip, ``device='auto'``.
 """
 
 from __future__ import annotations
@@ -20,13 +24,9 @@ import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import make_substitutive_lod
-from luxar.gsplats.lod._kernels import (
-    bin_inner_product_with_template_torch,
-    bin_residual_energy_torch,
-    bin_squared_norm_torch,
-    kwise_moment_match_torch,
-    template_squared_norm_torch,
-)
+from luxar.gsplats.lod._kernels import bin_squared_norm_torch
+from luxar.gsplats.lod._substitutive.greedy import _merge_two_clusters
+from luxar.gsplats.lod._substitutive.warm_start import _morton_partition
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
 
 # ─────────────────────────────────────────────────────────────────────
@@ -87,83 +87,60 @@ def _gsplat_to_torch(
     return centres, L, amps
 
 
-def _bin_residual(centres, L, amps) -> float:
-    mu_bar, Sigma_bar, _ = kwise_moment_match_torch(centres, L, amps)
-    template_inner = bin_inner_product_with_template_torch(
-        centres, L, amps, mu_bar, Sigma_bar
-    )
-    template_norm_sq = template_squared_norm_torch(Sigma_bar)
-    bin_norm_sq = bin_squared_norm_torch(centres, L, amps)
-    return float(
-        bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
-    )
-
-
 # ─────────────────────────────────────────────────────────────────────
-# Bin-merge primitives
+# Low-level algorithm primitives (_substitutive/)
 # ─────────────────────────────────────────────────────────────────────
 
 
-class TestKWiseMomentMatch:
-    def test_law_of_total_variance(self):
-        """Σ̄ = Σ_i w_i Σ_i + Σ_i w_i (μ_i - μ̄)(μ_i - μ̄)^T."""
-        data = _make_anisotropic_3d(n=4, seed=10)
-        centres, L, amps = _gsplat_to_torch(data)
-        mu_bar, Sigma_bar, weights = kwise_moment_match_torch(centres, L, amps)
+class TestGreedyMerge:
+    """[P12/G9] Moment conservation of the Runnalls pairwise merge."""
 
-        # Compute expected via direct mass weighting.
-        sqrt_det = torch.abs(torch.prod(torch.diagonal(L, dim1=-2, dim2=-1), dim=-1))
-        masses = amps * sqrt_det
-        expected_w = masses / masses.sum()
-        torch.testing.assert_close(weights, expected_w)
-        expected_mu = (expected_w[:, None] * centres).sum(dim=0)
-        torch.testing.assert_close(mu_bar, expected_mu)
-
-        # Direct intra + inter computation
-        Sigma = L @ L.transpose(-1, -2)
-        intra = (expected_w[:, None, None] * Sigma).sum(dim=0)
-        delta = centres - expected_mu[None, :]
-        inter = (
-            expected_w[:, None, None] * (delta.unsqueeze(2) @ delta.unsqueeze(1))
-        ).sum(dim=0)
-        expected_Sigma = intra + inter
-        torch.testing.assert_close(Sigma_bar, expected_Sigma)
-
-    def test_pairwise_reduces_to_companion_doc(self):
-        """K=2: inter-bin spread = w_1 w_2 (μ_1 - μ_2)(μ_1 - μ_2)^T."""
-        data = _make_anisotropic_3d(n=2, seed=20)
-        centres, L, amps = _gsplat_to_torch(data)
-        mu_bar, Sigma_bar, weights = kwise_moment_match_torch(centres, L, amps)
-        Sigma = L @ L.transpose(-1, -2)
-        # Manual pairwise formula
-        w1, w2 = float(weights[0]), float(weights[1])
-        diff = centres[0] - centres[1]
-        inter_expected = w1 * w2 * torch.outer(diff, diff)
-        intra_expected = w1 * Sigma[0] + w2 * Sigma[1]
-        torch.testing.assert_close(Sigma_bar, intra_expected + inter_expected)
-
-    def test_l2_optimal_amplitude_zero_gradient(self):
-        """∂/∂a ‖f - a Ḡ‖² = 0 at a = a* (Prop. 2.2)."""
-        data = _make_anisotropic_3d(n=4, seed=30)
-        centres, L, amps = _gsplat_to_torch(data)
-        mu_bar, Sigma_bar, _ = kwise_moment_match_torch(centres, L, amps)
-        template_inner = bin_inner_product_with_template_torch(
-            centres, L, amps, mu_bar, Sigma_bar
+    def test_merge_preserves_mass_weighted_mean(self):
+        """The merged centre is the mass-weighted mean of its two parents
+        (mass = a·|Σ|^{1/2}); the merged covariance is symmetric/PD."""
+        cen = torch.tensor([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=torch.float64)
+        Lc = torch.stack(
+            [
+                torch.eye(3, dtype=torch.float64),
+                torch.eye(3, dtype=torch.float64) * 2.0,
+            ]
         )
-        template_norm_sq = template_squared_norm_torch(Sigma_bar)
-        a_star = float(template_inner / template_norm_sq)
+        am = torch.tensor([1.0, 3.0], dtype=torch.float64)
+        mu_bar, L_bar, a_star = _merge_two_clusters(cen, Lc, am, 0, 1)
 
-        # Numerical gradient: grad = -2 ⟨f, Ḡ⟩ + 2a ‖Ḡ‖²
-        def cost(a: float) -> float:
-            return (
-                float(bin_squared_norm_torch(centres, L, amps))
-                - 2 * a * float(template_inner)
-                + a * a * float(template_norm_sq)
-            )
+        sqrt_det = torch.abs(torch.prod(torch.diagonal(Lc, dim1=-2, dim2=-1), dim=-1))
+        masses = am * sqrt_det
+        w = masses / masses.sum()
+        expected_mu = (w[:, None] * cen).sum(dim=0)
+        torch.testing.assert_close(mu_bar, expected_mu, rtol=1e-12, atol=1e-12)
+        # Merged covariance is a valid Gaussian: positive Cholesky diagonal.
+        assert torch.all(torch.diagonal(L_bar) > 0)
+        # L²-optimal amplitude of a real merge is strictly positive.
+        assert float(a_star) > 0
 
-        eps = 1e-3
-        grad = (cost(a_star + eps) - cost(a_star - eps)) / (2 * eps)
-        assert abs(grad) < 1e-3, f"gradient at optimum should be ~0; got {grad}"
+
+class TestMortonPartition:
+    """[P5/P12] Warm-start partition is a balanced, surjective assignment."""
+
+    def test_partition_is_balanced_and_surjective(self):
+        """[G11] N=20 into M=4 bins: assignments in [0, M), every bin used,
+        sizes within 1 of N/M."""
+        rng = np.random.RandomState(0)
+        centres = torch.from_numpy(rng.randn(20, 3).astype(np.float64))
+        assignments = _morton_partition(centres, M=4).numpy()
+        assert assignments.min() >= 0 and assignments.max() < 4
+        counts = np.bincount(assignments, minlength=4)
+        assert (counts > 0).all()  # surjective onto [0, M)
+        assert counts.max() - counts.min() <= 1  # balanced
+
+    def test_partition_caps_M_to_N(self):
+        """[C7] M > N is silently capped to N (one splat per bin); no bin
+        index exceeds N-1."""
+        rng = np.random.RandomState(1)
+        centres = torch.from_numpy(rng.randn(10, 3).astype(np.float64))
+        assignments = _morton_partition(centres, M=100).numpy()
+        assert assignments.max() < 10
+        assert len(np.unique(assignments)) == 10  # each splat its own bin
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -195,24 +172,24 @@ class TestHierarchy:
         assert 1 <= pyramid.substitutive_levels[1].n_splats_total <= 16
         assert 1 <= pyramid.substitutive_levels[2].n_splats_total <= 4
 
-        # [Python-R3/B-C2] The above bounds-only assertions accept a
+        # [Python-R3/B-C2][P2] The above bounds-only assertions accept a
         # degenerate "1 splat per level" output as valid. In practice,
         # 64 splats compressed by factor-4 to 1 splat is a catastrophic
         # collapse (a k-means bug that returned all-zero assignments
-        # would pass). For these isotropic 3D inputs, a healthy k-means
-        # run actually reaches close to the target — pin a tighter lower
-        # bound (≥ 25% of target) so a serious collapse is caught.
-        # Empty-bin tolerance is preserved by leaving the upper bound
-        # unchanged at the target.
+        # would pass). All four methods empirically reach the EXACT target
+        # ([64, 16, 4]) on these isotropic 3D inputs, so pin a tight lower
+        # bound (≥ 75% of target) that still leaves a small margin for the
+        # handful of empty bins Lloyd may produce, while catching any
+        # serious collapse. Upper bound stays at the target.
         target_l1 = 16  # ceil(64/4)
         target_l2 = 4  # ceil(16/4)
-        assert pyramid.substitutive_levels[1].n_splats_total >= target_l1 // 4, (
+        assert pyramid.substitutive_levels[1].n_splats_total >= target_l1 * 3 // 4, (
             f"level-1 collapsed to "
             f"{pyramid.substitutive_levels[1].n_splats_total} splats "
             f"(target {target_l1}); k-means likely producing too many empty bins"
         )
         assert pyramid.substitutive_levels[2].n_splats_total >= max(
-            target_l2 // 4, 1
+            target_l2 * 3 // 4, 1
         ), (
             f"level-2 collapsed to "
             f"{pyramid.substitutive_levels[2].n_splats_total} splats "
@@ -285,19 +262,82 @@ class TestHierarchy:
         )
         assert pyramid.substitutive_levels[0].n_splats_total == 0
 
+    def test_counts_monotone_non_increasing_across_levels(self):
+        """[P12/G10] Each substitutive level has ≤ the count of the previous
+        one — the hierarchy must never grow."""
+        data = _make_isotropic_3d(n=200, seed=2)
+        pyramid = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=3,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        counts = [lv.n_splats_total for lv in pyramid.substitutive_levels]
+        assert counts[0] == 200
+        assert all(counts[i] >= counts[i + 1] for i in range(len(counts) - 1)), (
+            f"counts not monotone non-increasing: {counts}"
+        )
+        assert all(c >= 1 for c in counts)
+
+    def test_output_arrays_are_float32(self):
+        """[P5/G4] The reduction works internally in float64 but must emit
+        float32 GSplatData (the on-disk / viewer contract), with finite
+        values after the float64→float32 round-trip."""
+        data = _make_anisotropic_3d(n=48, seed=3)
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        level_1 = out.at_substitutive(1)
+        assert level_1.centers.dtype == np.float32
+        assert level_1.cholesky_factors.dtype == np.float32
+        assert level_1.amplitudes.dtype == np.float32
+        assert np.all(np.isfinite(level_1.centers))
+        assert np.all(np.isfinite(level_1.cholesky_factors))
+
+    def test_colors_preserved_through_reduction(self):
+        """[P11/G6] When the input carries per-splat colors, the reduced
+        level must too — the colors branch of the merge is otherwise
+        never executed."""
+        rng = np.random.RandomState(0)
+        n = 40
+        data = GSplatData(
+            centers=rng.randn(n, 3).astype(np.float32),
+            amplitudes=(rng.rand(n) + 0.5).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
+            ),
+            colors=rng.rand(n, 3).astype(np.float32),
+        )
+        out = make_substitutive_lod(
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
+        )
+        level_1 = out.at_substitutive(1)
+        assert level_1.colors is not None
+        assert level_1.colors.shape == (level_1.n_splats, 3)
+        assert np.all(np.isfinite(level_1.colors))
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Lloyd refinement: monotonicity + cost-aware advantage
 # ─────────────────────────────────────────────────────────────────────
-
-
-def _total_residual_for_assignments(data: GSplatData, pyramid: GSplatData) -> float:
-    """Helper: compute the sum of residual energies of all bins in
-    a single-level reduction, recovering it from the difference
-    ``‖f‖² - ⟨f, g⟩`` at the level."""
-    return float(
-        pyramid.substitutive_levels[1].stats.get("residual_energy", float("nan"))
-    )
 
 
 class TestLloyd:
@@ -538,9 +578,18 @@ class TestShapeAwareSeeding:
             seed=0,
         )
         level_1 = out.at_substitutive(1)
+        # [P2] The level must actually be REDUCED (mutant that returns the
+        # input unchanged would keep all 16). Target M = ceil(16/4) = 4.
+        assert level_1.n_splats <= 4, f"not reduced: {level_1.n_splats} splats"
         assert level_1.n_splats >= 1
         assert np.all(level_1.amplitudes > 0)  # no zero-amplitude empties
         assert np.all(np.isfinite(level_1.centers))
+        # [P12] Every representative covariance must be a valid (PD) Gaussian:
+        # the Cholesky-factor diagonal is strictly positive (no rank-deficient
+        # or inverted splats slipping through the merge).
+        L = unpack_tril(np.asarray(level_1.cholesky_factors), level_1.ndim)
+        diag = np.diagonal(L, axis1=-2, axis2=-1)
+        assert np.all(diag > 0), "non-positive Cholesky diagonal (degenerate Σ)"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -588,7 +637,9 @@ class TestScaling:
         # under a second; the former O(N²/K) k-means++ init took minutes at
         # this N. A 60 s bound catches catastrophic regressions without
         # being flaky on slow CI.
-        assert elapsed < 60.0, f"reduction too slow ({elapsed:.1f}s) — O(N²) regression?"
+        assert elapsed < 60.0, (
+            f"reduction too slow ({elapsed:.1f}s) — O(N²) regression?"
+        )
 
     def test_greedy_scales_past_old_quadratic_wall(self):
         """Greedy's lazy-heap Runnalls is ~O(Nk log Nk), not O(N²).

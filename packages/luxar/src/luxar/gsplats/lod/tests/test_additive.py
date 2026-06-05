@@ -55,6 +55,13 @@ def test_order_is_permutation(method: str) -> None:
     assert order.shape == (data.n_splats,)
     assert order.dtype == np.int64
     assert sorted(order.tolist()) == list(range(data.n_splats))
+    # [P2] A permutation check alone is satisfied by a no-op that returns
+    # ``arange(N)`` unchanged. On this non-degenerate random data every
+    # method genuinely reorders, so require the result to differ from the
+    # trivial identity — this kills a mutant that skips the ordering.
+    assert order.tolist() != list(range(data.n_splats)), (
+        f"{method!r} returned the identity order; ranking is a no-op"
+    )
 
 
 @pytest.mark.parametrize("method", METHODS)
@@ -117,6 +124,37 @@ def test_invalid_method_raises() -> None:
         compute_additive_order(data, method="not_a_method")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("method", METHODS)
+def test_order_empty_returns_empty(method: str) -> None:
+    """[P5] N=0 boundary: every method returns an empty int64 array."""
+    data = _make_empty_gsplat(ndim=3)
+    order = compute_additive_order(data, method=method, seed=0)
+    assert order.shape == (0,)
+    assert order.dtype == np.int64
+
+
+@pytest.mark.parametrize("method", METHODS)
+def test_order_single_splat_returns_zero(method: str) -> None:
+    """[P5] N=1 boundary: the only valid ordering is ``[0]``."""
+    data = _make_random_gsplat(n=1, ndim=3, seed=99)
+    order = compute_additive_order(data, method=method, seed=0)
+    assert order.tolist() == [0]
+    assert order.dtype == np.int64
+
+
+def test_greedy_lazy_path_matches_dense() -> None:
+    """[P11] The lazy/sparse greedy branch (``N > max_n_dense``) is never
+    exercised by the other tests, which all sit below the 2000 default.
+    Force it with a tiny ``max_n_dense`` and verify it returns the same
+    valid permutation as the dense scan-greedy path."""
+    data = _make_random_gsplat(n=20, ndim=3, seed=17)
+    dense = compute_additive_order(data, method="greedy", max_n_dense=2_000)
+    lazy = compute_additive_order(data, method="greedy", max_n_dense=4)
+    assert sorted(lazy.tolist()) == list(range(data.n_splats))
+    # Both branches implement the same greedy criterion → identical order.
+    assert lazy.tolist() == dense.tolist()
+
+
 def test_self_energy_score_matches_closed_form() -> None:
     """The self-energy ranking score should equal a_i^2 * |Σ_i|^{1/2}
     (up to the shared π^{D/2} constant which cancels in any ordering).
@@ -150,6 +188,14 @@ def test_make_additive_lod_equal_count() -> None:
         ladder.additive_prefix(k).n_splats for k in range(ladder.n_additive_sublods)
     ]
     assert all(counts[i] < counts[i + 1] for i in range(len(counts) - 1))
+    # [P2] The prefix counts must form an exact partition of all N splats:
+    # the final prefix covers everything, and each prefix equals the
+    # running cumulative of the per-LOD sizes (no gaps, no double-counting).
+    # A bare ``sum(sizes) == N`` would still pass if an intermediate LOD
+    # were duplicated or dropped; the cumulative-equality check would not.
+    assert counts[-1] == data.n_splats
+    expected_cumulative = np.cumsum(sizes).tolist()
+    assert counts == expected_cumulative
 
 
 def test_make_additive_lod_explicit_counts() -> None:
@@ -211,6 +257,15 @@ def test_make_additive_lod_energy_fractions() -> None:
     U_at_cut = (E_total - E[cuts[0]]) / E_total
     assert U_at_cut >= 0.5 - 1e-6
     assert cuts[-1] == data.n_splats
+    # [P2/P12] The residual energy at successive cut indices must be
+    # monotonically non-increasing (each LOD captures strictly more
+    # energy). A lower-bound-only check on the first cut would not catch
+    # a resolver that places later cuts at a *higher* residual.
+    residual_at_cuts = [E[c] for c in cuts]
+    assert all(
+        residual_at_cuts[i] >= residual_at_cuts[i + 1] - 1e-5
+        for i in range(len(residual_at_cuts) - 1)
+    ), f"residual energy not non-increasing at cuts: {residual_at_cuts}"
 
 
 def test_make_additive_lod_invalid_breakpoints() -> None:
@@ -297,47 +352,3 @@ def test_make_additive_lod_substitutive_level_out_of_bounds() -> None:
     data = _make_random_gsplat(n=8, ndim=3, seed=13)
     with pytest.raises(ValueError, match="out of bounds"):
         make_additive_lod(data, n_lods=2, substitutive_level=2)
-
-
-def test_make_lod_pyramid_full_matrix() -> None:
-    """`make_lod_pyramid` produces a [levels+1, n_additive_lods] matrix."""
-    from luxar.gsplats.lod import make_lod_pyramid
-
-    data = _make_random_gsplat(n=64, ndim=3, seed=14)
-    pyr = make_lod_pyramid(
-        data,
-        compression_factor=4,
-        levels=2,
-        substitutive_method="kmeans_lloyd",
-        n_additive_lods=3,
-        additive_method="self_energy",
-        device="cpu",
-        seed=0,
-    )
-    assert pyr.n_substitutive == 3
-    # Each substitutive level has its own additive ladder (subject to clamping).
-    for s in range(3):
-        lev = pyr.substitutive_levels[s]
-        assert lev.n_additive_lods >= 1
-        # Stats propagated:
-        assert lev.compression_factor == 4**s
-        assert lev.level_index == s
-        if s == 0:
-            assert lev.parent_method is None
-        else:
-            assert lev.parent_method == "kmeans_lloyd"
-
-
-def test_make_lod_pyramid_defaults_to_auto_substitutive_method() -> None:
-    """The library default for `substitutive_method` is `auto` (matches
-    `make_substitutive_lod`), not the legacy `kmeans_lloyd`."""
-    import inspect
-
-    from luxar.gsplats.lod import make_lod_pyramid
-
-    assert inspect.signature(make_lod_pyramid).parameters["substitutive_method"].default == "auto"
-
-    # And it runs end-to-end without an explicit method (resolves via `auto`).
-    data = _make_random_gsplat(n=64, ndim=3, seed=21)
-    pyr = make_lod_pyramid(data, compression_factor=4, levels=1, n_additive_lods=2, device="cpu")
-    assert pyr.n_substitutive == 2

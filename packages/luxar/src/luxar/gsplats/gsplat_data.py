@@ -535,9 +535,7 @@ class GSplatData(_SplatArrayMixin):
         """
         n = self.n_additive_sublods
         if not 0 <= level < n:
-            raise IndexError(
-                f"additive level {level} out of range [0, {n})"
-            )
+            raise IndexError(f"additive level {level} out of range [0, {n})")
         return GSplatData(
             additive_sublods=[
                 _readonly_sublod(lod) for lod in self.additive_sublods[: level + 1]
@@ -1208,9 +1206,7 @@ class GSplatData(_SplatArrayMixin):
                     f"partition split points must be strictly increasing, "
                     f"got {split_points}"
                 )
-            if split_points and (
-                split_points[0] <= 0 or split_points[-1] >= n_splats
-            ):
+            if split_points and (split_points[0] <= 0 or split_points[-1] >= n_splats):
                 raise ValueError(
                     f"partition split points must lie within (0, "
                     f"n_splats={n_splats}), got {split_points}"
