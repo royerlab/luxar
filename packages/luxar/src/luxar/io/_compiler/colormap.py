@@ -85,9 +85,7 @@ def write_colormap_lut_if_needed(
             dtype=np.uint8,
         )
         attrs["colormap"] = "custom"
-        aprint(
-            f"  ✓ Resolved '{colormap}' to LUT and wrote as custom (256x3 uint8)"
-        )
+        aprint(f"  ✓ Resolved '{colormap}' to LUT and wrote as custom (256x3 uint8)")
         return lut_tone_mapping_warned
 
     # Array colormap — resolve and write as dataset
