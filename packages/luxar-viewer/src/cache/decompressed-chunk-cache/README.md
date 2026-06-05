@@ -7,8 +7,8 @@ splices it onto a real zarr array without touching zarrita's source.
 
 ## Overview
 
-`wrapWithCache(array, cache, arrayPath)` returns a `Proxy<zarr.Array>` that
-intercepts `getChunk()`:
+`wrapWithCache(array, cache, arrayPath, getProbe?)` returns a
+`Proxy<zarr.Array>` that intercepts `getChunk()`:
 
 1. Build a key via `DecompressedChunkCache.makeKey(arrayPath, coords)`.
 2. On L0 hit, return the cached `{ data, shape, stride }` immediately
@@ -18,6 +18,13 @@ intercepts `getChunk()`:
 4. **Same-chunk decode coalescing** — a per-wrapper `Map<key, Promise>`
    ensures concurrent `getChunk()` calls for the same key share one
    underlying decompression instead of running Blosc twice.
+5. **Residency reporting** — when an optional `getProbe` accessor is
+   supplied, every `getChunk()` calls `getProbe()?.record(hit)` against
+   the currently-active `ResidencyProbe` (see `../residency-probe`). L0
+   hits and coalesced waits count as hits (no fresh Blosc work); genuine
+   misses count as misses. `getProbe` returning `null` (the default, or
+   when no load is in flight) disables reporting, keeping prefetch
+   traffic out of a demand load's signal.
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)
@@ -33,12 +40,12 @@ decompressed-chunk-cache/
 
 ## API
 
-| Export                                    | Purpose                                                                                        |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `wrapWithCache(array, cache, arrayPath)`  | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is.   |
-| `isCachedArray(array)`                    | Detect the wrapper via a private `Symbol` marker.                                              |
-| `unwrapCachedArray(array)`                | Recover the original unwrapped array (or pass through if not wrapped).                         |
-| `cloneArrayBufferView(view)` _(internal)_ | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests. |
+| Export                                              | Purpose                                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `wrapWithCache(array, cache, arrayPath, getProbe?)` | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is. Optional `getProbe` accessor reports hit/miss to the active `ResidencyProbe`. |
+| `isCachedArray(array)`                              | Detect the wrapper via a private `Symbol` marker.                                                                   |
+| `unwrapCachedArray(array)`                          | Recover the original unwrapped array (or pass through if not wrapped).                                              |
+| `cloneArrayBufferView(view)` _(internal)_           | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                      |
 
 ## Invariants
 

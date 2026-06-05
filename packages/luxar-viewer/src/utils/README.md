@@ -72,9 +72,9 @@ Ring buffer system for capturing and managing console output:
 **Core Features**:
 
 - **Lazy Proxy Singleton**: Importing `consoleInterceptor` is side-effect-free; patching is explicit via `.patch()`
-- **Ring Buffer**: Fixed-size 10,000-message circular buffer that wraps cleanly on the fill boundary
+- **Ring Buffer**: Circular buffer that wraps cleanly on the fill boundary. Capacity defaults to `DEFAULT_MAX_BUFFER_SIZE` (10,000) and is reconfigurable via `setMaxBufferSize(n)` so the bootstrap can push the canonical `config.ui.debugConsole.interceptor.maxBufferSize` value without a load-time config import (`getMaxBufferSize()` reads it back)
 - **Listener Set**: Real-time callbacks (`addListener` / `removeListener`) for live UI consumption
-- **Reversible**: `dispose()` restores the original console methods; `disposeInstance()` resets the singleton between tests
+- **Reversible**: `patch()` is idempotent (`isPatched` reports state); `dispose()` restores the original console methods; `disposeInstance()` resets the singleton between tests
 
 ### log.ts - Structured Logging
 
@@ -112,7 +112,7 @@ Converts linear sRGB float RGBA pixels (from WebGL `readPixels`) to BT.2020 PQ Y
 
 Simple XSS prevention utility:
 
-- `escapeHtml(str)` — Escape HTML special characters (`&`, `<`, `>`, `"`)
+- `escapeHtml(str)` — Escape HTML special characters (`&`, `<`, `>`, `"`, and `'` as `&#39;` for single-quoted-attribute defense-in-depth)
 
 ### camera-utils.ts - Camera Type Helpers
 
@@ -204,14 +204,14 @@ Page-load-time graphics-API probe answering "what's available?" (vs `RendererCap
 class ConsoleInterceptor {
   private messageBuffer: BufferedMessage[] = [];
   private bufferIndex = 0;
-  private readonly maxBufferSize = 10000;
+  private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE; // 10000; reconfigurable via setMaxBufferSize()
   private hasWrapped = false;
 }
 ```
 
 **Key Features**:
 
-- **Memory Efficient**: Fixed-size circular buffer prevents memory leaks
+- **Memory Efficient**: Bounded circular buffer (default 10,000, `setMaxBufferSize`-tunable) prevents memory leaks
 - **Early Capture**: Starts before any other code executes
 - **Original Preservation**: Maintains original console.\* functionality
 - **Stack Traces**: Automatic stack trace extraction for errors
@@ -368,7 +368,7 @@ class Panel {
 
 ### Console Buffer Management
 
-- **Fixed Size**: 10,000-message ring buffer prevents unbounded memory growth
+- **Bounded Size**: Ring buffer (default 10,000 messages, `setMaxBufferSize`-tunable) prevents unbounded memory growth; shrinking trims oldest-first to preserve chronological order
 - **Boundary-Safe Wrap**: When `length === maxBufferSize`, the next write goes to index 0 (not `maxBufferSize`, which would have grown the array and stranded the oldest entry)
 - **Listener Set**: `Set<callback>` for O(1) add/remove and snapshot iteration on emit
 

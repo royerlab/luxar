@@ -164,25 +164,41 @@ class LuxarApp {
 
 ### Disposal and Resource Management
 
+`dispose()` is a thin orchestrator: it flips the idempotency / re-entrance
+guards, marks the app uninitialized, then hands every component to
+`runDisposePipeline()` (in `app/lifecycle/dispose-pipeline.ts`), which
+`safeDispose`s each one and clears the singleton state. App-level listeners
+(`beforeunload`, `focus`, `visibilitychange`, the dataset-browser shortcut,
+plus the picking system's per-scene listeners) are owned by two `EventGroup`s
+(`this.events`, `this.pickingEvents`) and torn down in one call from the
+pipeline — there is no hand-rolled `removeEventListener` here.
+
 ```typescript
 dispose(): void {
-  // 1. Stop animation loop (prevents further rendering)
-  this.animationController?.dispose();
+  // Idempotency: a second dispose() after a successful one is a no-op.
+  if (this.isDisposed) return;
+  // Re-entrance guard: a beforeunload firing mid-dispose does nothing.
+  if (this.isDisposing) return;
+  this.isDisposing = true;
 
-  // 2. Remove event listeners (prevents memory leaks)
-  this.inputHandler?.dispose();
+  // Flip initialized at entry so concurrent observers of `app.initialized`
+  // see teardown immediately, even if teardown throws partway through.
+  this.isInitialized = false;
 
-  // 3. Clean up UI components (remove DOM elements)
-  this.renderingControls?.dispose();
+  runDisposePipeline({
+    events: this.events,             // beforeunload / focus / shortcut listeners
+    pickingEvents: this.pickingEvents,
+    sceneManager: this.sceneManager, // WebGL/WebGPU resources
+    animationController: this.animationController, // stops the render loop
+    inputHandler: this.inputHandler,
+    renderingControls: this.renderingControls,
+    // …all panels, overlays, picking system, label loaders, dataset browser…
+    clearScaleBar: () => { this.scaleBar = undefined; },
+    // …per-field clear callbacks so the orchestrator never reaches in…
+  });
 
-  // 4. Dispose WebGL resources (textures, buffers, shaders)
-  this.sceneManager?.dispose();
-
-  // 5. Remove global event listeners
-  if (this.boundDispose) {
-    window.removeEventListener('beforeunload', this.boundDispose);
-    this.boundDispose = null;
-  }
+  this.isDisposing = false;
+  this.isDisposed = true;
 }
 ```
 
@@ -487,28 +503,32 @@ animationController.stopAnimation();
 
 The app automatically handles window focus and visibility changes for power efficiency:
 
-```typescript
-// Setup in app initialization
-private setupFocusHandling(): void {
-  // Refresh rendering when window gains focus
-  window.addEventListener('focus', () => {
-    this.animationController.startAnimation();
-    log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
-  });
+The orchestrator delegates to `installFocusHandling` (in
+`app/lifecycle/focus-handling.ts`), which registers both listeners on
+`this.events` so dispose() reclaims them. Both handlers early-return while a
+recording is in progress, so offline capture keeps a stable, deterministic
+loop regardless of tab focus:
 
-  // Handle tab switching - STOP animation when hidden to save resources
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      // Tab hidden - stop completely to guarantee zero CPU/GPU usage
-      this.animationController.stopAnimation();
-      log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
-    } else {
-      // Tab visible - resume rendering
-      this.animationController.startAnimation();
-      log.info(Modules.LUXAR, 'Document became visible - resuming animation');
-    }
-  });
-}
+```typescript
+// app/lifecycle/focus-handling.ts (essence)
+ports.events.on(window, 'focus', () => {
+  if (ports.getRecordingPanel()?.isCurrentlyRecording()) return;
+  ports.animationController.startAnimation();
+  log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
+});
+
+ports.events.on(document, 'visibilitychange', () => {
+  if (ports.getRecordingPanel()?.isCurrentlyRecording()) return;
+  if (document.hidden) {
+    // Tab hidden - stop completely to guarantee zero CPU/GPU usage
+    ports.animationController.stopAnimation();
+    log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
+  } else {
+    // Tab visible - resume rendering
+    ports.animationController.startAnimation();
+    log.info(Modules.LUXAR, 'Document became visible - resuming animation');
+  }
+});
 ```
 
 **Power Saving Behavior**:
@@ -566,29 +586,23 @@ const src = params.get('src') ?? config.defaultZarrPath;
 ### Resource Management
 
 ```typescript
-// ✅ Good: Comprehensive disposal
+// ✅ Good: Idempotent disposal delegated to the dispose pipeline
 dispose(): void {
-  // Stop animation first (prevents new work)
-  this.animationController?.dispose();
-
-  // Clean up in reverse initialization order
-  this.inputHandler?.dispose();
-  this.renderingControls?.dispose();
-  this.sceneManager?.dispose();
-
-  // Remove global listeners
-  if (this.boundDispose) {
-    window.removeEventListener('beforeunload', this.boundDispose);
-    this.boundDispose = null;
-  }
+  if (this.isDisposed || this.isDisposing) return; // guard double / nested calls
+  this.isDisposing = true;
+  this.isInitialized = false;
+  runDisposePipeline({ events: this.events, sceneManager: this.sceneManager, /* … */ });
+  this.isDisposing = false;
+  this.isDisposed = true;
 }
 
-// ✅ Good: Store bound reference for proper cleanup
-private boundDispose: (() => void) | null = null;
+// ✅ Good: own listeners through an EventGroup, not hand-rolled bound refs.
+// `installUnloadHandler` registers the beforeunload listener AND its
+// removal on `this.events`, so dispose() reclaims it with one teardown call.
+private events = new EventGroup();
 
 private setupDisposeOnUnload(): void {
-  this.boundDispose = this.dispose.bind(this);
-  window.addEventListener('beforeunload', this.boundDispose);
+  installUnloadHandler({ events: this.events, dispose: () => this.dispose() });
 }
 ```
 

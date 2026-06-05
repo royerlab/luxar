@@ -18,9 +18,9 @@ All five controllers follow the same skeleton:
 1. Constructor calls `super(object, property)`, sets type-specific state, then `this.initializeDOMElement()`.
 2. `createDOMElement()` builds the widget DOM using `this.createBaseElement()` from the base (except `BooleanController` and `FunctionController`, which build their own minimal containers).
 3. Event listeners are registered via `this.eventManager.add(...)` so `super.dispose()` removes them.
-4. `applyAutoBlur(element, eventManager)` is applied to every focusable element so keyboard shortcuts resume after interaction.
+4. `applyAutoBlur(element, eventManager)` is applied to every editable widget so keyboard shortcuts resume after interaction (`FunctionController`'s button is the exception — it has nothing to edit).
 5. `updateDisplay()` syncs the DOM from the bound `object[property]`.
-6. The native input element is exposed as `this.$input` for callers that need direct DOM access (e.g. `rendering-controls/` overrides).
+6. The native input element is exposed as `this.$input` for callers that need direct DOM access (e.g. `rendering-controls/` overrides). `FunctionController` does not set `$input` — it has only a button.
 
 ## Controllers
 
@@ -56,7 +56,11 @@ Live `change` events on every keystroke; `finishChange` on commit (`change` even
 
 **Custom display override**
 
-`setCustomUpdateDisplay(fn)` lets consumers (notably `rendering-controls/`) install a custom `updateDisplay` implementation — used to render logarithmic sliders whose internal slider value is `log(actual)`.
+`setCustomUpdateDisplay(fn)` lets consumers install a custom `updateDisplay` implementation — e.g. to render logarithmic sliders whose internal slider value is `log(actual)`.
+
+**Programmatic `setValue`**
+
+Overrides `Controller.setValue` to reject `NaN` (refreshes the display but never writes `NaN` into the model) and to clamp every other input — including ±Infinity and out-of-range finite values — through the same `constrainValue` helper the DOM event paths use, before delegating to `super.setValue`.
 
 **Disposal**
 
@@ -77,7 +81,7 @@ Renders a single `<button>` whose textContent is the controller label. Clicks in
 ## Conventions
 
 - **Type discriminator**: each subclass sets `protected type = ControllerType.{BOOLEAN|NUMBER|STRING|OPTION|FUNCTION}` (see `../types.ts`). This becomes a CSS class suffix (`luxar-gui__controller--number`) so styles in `../styles/` can target widget kinds.
-- **Auto-blur**: every focusable element passes through `applyAutoBlur` (`../format/auto-blur`) so the viewer's keyboard shortcut layer regains focus after a user edits a value.
+- **Auto-blur**: every editable widget passes through `applyAutoBlur` (`../format/auto-blur`) so the viewer's keyboard shortcut layer regains focus after a user edits a value. `FunctionController`'s button is the lone exception — there is nothing to edit, so it is left untouched.
 - **Safety checks**: every event handler guards `if (!this.<element>) return` to tolerate post-`dispose()` callbacks that may still be queued.
 - **Event ownership**: no controller calls `addEventListener` directly — everything goes through `this.eventManager.add(...)` so `Controller.dispose()` can remove every listener centrally.
 
@@ -88,4 +92,4 @@ Renders a single `<button>` whose textContent is the controller label. Clicks in
 - `../format/auto-blur.ts` — `applyAutoBlur` helper.
 - `../format/value-formatting.ts` — `clamp` and `formatNumber` (used by `NumberController`).
 - `../gui.ts` / `../folder.ts` — `Folder.add(object, property, ...args)` selects the appropriate controller subclass based on the value's runtime type and the optional args.
-- `../../rendering-controls/` — Primary consumer; uses `setCustomUpdateDisplay` and `$input` for logarithmic sliders.
+- `../../rendering-controls/` — Consumer of the GUI library (imports `NumberController`); the slider hooks `setCustomUpdateDisplay` and `$input` exist for custom display logic such as logarithmic sliders.

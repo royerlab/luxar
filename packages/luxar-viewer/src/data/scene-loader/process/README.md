@@ -110,12 +110,13 @@ in `nodes/build-ctx.ts`, never via direct import.
 - `../commit/` — atomic GPU commit phase consumed by these stages.
 - `../nodes/build-ctx.ts` — assembles the `LoadCtx` that exposes
   `processLinesData` / `processGSplatsData` to the per-node loaders.
-- `../retry.ts` — re-runs the same `process → commit` pair when a
-  previous attempt failed.
+- `../lifecycle/retry.ts` — re-runs the same `process → commit` pair
+  when a previous attempt failed.
 - `../../lines/projection.ts`, `../../gsplats/projection.ts` —
   main-thread projection kernels used as the worker fallback.
-- `../../loaders/tolerance-computer.ts` — geometry-aware per-dim
-  tolerance used by `processLinesData`.
+- `../../loaders/spatial-query/tolerance-computer.ts` — geometry-aware
+  per-dim tolerance used by `processLinesData` (imported via the
+  `../../loaders` index).
 - `../view-state/extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
 - `../../../workers/worker-pool.ts` — `runWithTimeout` dispatch used
   by both worker projection paths.

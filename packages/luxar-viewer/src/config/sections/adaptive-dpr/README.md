@@ -2,7 +2,7 @@
 
 Adaptive device-pixel-ratio configuration slice. Owns the construction-time defaults for the FPS-driven DPR scaler: scale-up/down FPS thresholds, multiplicative scaling factors, the floor on DPR, and the hysteresis / evaluation timings used to avoid rapid quality oscillation.
 
-Conforms to the section pattern documented in [../../README.md](../../README.md): `data.ts` exports the literal and `types.ts` defines the interface. This slice has no `validate.ts` — it carries only numeric defaults consumed by the renderer's DPR controller; the runtime on/off toggle lives in `renderingControls.defaults.adaptiveDPREnabled`, not here.
+Conforms to the section-trio pattern documented in [../README.md](../README.md): `data.ts` exports the literal and `types.ts` defines the interface. This slice has no `validate.ts` — it carries only numeric defaults consumed by the renderer's DPR controller; the runtime on/off toggle lives in `renderingControls.defaults.adaptiveDPREnabled`, not here.
 
 ## Contents
 

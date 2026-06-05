@@ -93,7 +93,7 @@ from luxar.io import LuxarScene
 scene = LuxarScene.load('scene.zarr')
 
 # Scene metadata
-print(scene.version)        # "1.0.0"
+print(scene.version)        # "0.1" (LUXAR_VERSION_CURRENT)
 print(scene.dimensions)     # Dimensions object or None
 print(scene.path)           # Path to zarr store
 
@@ -209,13 +209,15 @@ See `luxar.encoding` package for complete encoding system documentation.
 - Fast bit-interleaving algorithm
 - Simple implementation
 - Good compression
-- **Default for Points**
 
 **Hilbert**:
 - Better locality preservation
 - ~10% better compression
-- Requires `hilbertcurve` package
-- **Default for GSplats**
+- **Default** for Points, Lines, and GSplats (`ordering_method="hilbert"`)
+
+Both encoders use a Numba JIT kernel when available (with a vectorized NumPy
+fallback for Morton and a pure-Python `hilbertcurve` fallback for Hilbert), so
+neither method needs an extra dependency to run.
 
 ### Metadata Structure
 
@@ -381,10 +383,13 @@ Compression gains from:
 - `luxar.validation`: Data validation
 
 **External**:
-- `zarr>=2.16`: Storage backend
+- `zarr>=2.16,<3.0`: Storage backend
 - `numpy>=2.0`: Array operations
+- `numcodecs`: Blosc compressor (`DEFAULT_COMP`)
 - `arbol>=0.3.5`: Progress logging
-- `hilbertcurve>=2.0.5`: Hilbert curve ordering (optional, for Hilbert method)
+- `xxhash>=3.0.0`: Array deduplication hashing
+- `hilbertcurve>=2.0.5`: Pure-Python Hilbert fallback when Numba is unavailable
+- `numba` (optional): JIT-accelerated Morton/Hilbert encoding kernels
 
 ## Related Documentation
 

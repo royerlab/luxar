@@ -54,7 +54,7 @@ opfs-store/
 
 `OPFSMetadataManager` owns the JSON index file at the root of the
 cache directory. The persisted `OPFSMetadata` shape (in `../../types`)
-records `{entries, totalSize, orderCounter, contentHash,
+records `{baseUrl, entries, totalSize, orderCounter, contentHash,
 encodingVersion, validationMode, lastValidatedAt}`.
 
 - **`load(root)`** — read + parse. Returns:

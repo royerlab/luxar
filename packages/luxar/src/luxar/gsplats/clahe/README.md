@@ -277,7 +277,7 @@ Compute sampling probabilities from CLAHE-equalized volume.
 
 ## Examples
 
-See the `demos/` directory for complete examples:
+See the `luxar/gsplats/demos/` directory for complete examples:
 - `demo_splats_mitosis_intgrad.py`: CLAHE-based seeding validation
 - `demo_3d_dapi_microscopy.py`: 3D microscopy enhancement
 

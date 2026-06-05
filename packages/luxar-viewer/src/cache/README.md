@@ -531,15 +531,17 @@ Register array shape and chunk sizes for bounds checking during prefetch. When r
 prefetcher.registerArrayBounds('gsplats_t0023/centers', [2096, 4], [1024, 4]);
 ```
 
-**`getStats(): { queued, inFlight, enabled }`**
+**`getStats(): { queued, queuedHigh, queuedNormal, inFlight, enabled }`**
 
 Get prefetch queue statistics:
 
 ```typescript
 {
-  queued: number,    // Chunks waiting to be prefetched
-  inFlight: number,  // Chunks currently being prefetched
-  enabled: boolean   // Whether prefetching is enabled
+  queued: number,        // Total chunks waiting (high + normal tiers)
+  queuedHigh: number,    // Chunks waiting in the high-priority tier
+  queuedNormal: number,  // Chunks waiting in the normal-priority tier
+  inFlight: number,      // Chunks currently being prefetched
+  enabled: boolean       // Whether prefetching is enabled
 }
 ```
 
@@ -800,8 +802,13 @@ await window.__luxarDebug.cache.clearAll();
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
   with per-array bounds registration and high/normal priority queues.
 - `lru-cache.ts` — Generic LRU with O(1) get/set/delete.
-- `types.ts` — Shared cache types (`MultiLevelCacheStats`,
-  `CacheStatusBadge`, validation-mode helpers, etc.).
+- `residency-probe.ts` — `ResidencyProbe` interface + `ResidencyAccumulator`:
+  a per-load sink the L0 proxy reports chunk hit/miss outcomes to, so a
+  loader can tell whether a load was served entirely from cache (used by
+  the progressive loaders to decide whether to refine the next LOD in the
+  same frame).
+- `types.ts` — Shared cache types (`CacheStats`, `MultiLevelCacheStats`,
+  `CacheValidationMode`, `OPFSMetadata`, `OPFS_ENCODING_VERSION`, etc.).
 - `decompressed-chunk-cache/cached-zarr-array.ts` — ES6 Proxy that
   wraps a `zarr.Array` with the L0 cache (`wrapWithCache`,
   `isCachedArray`, `unwrapCachedArray`).

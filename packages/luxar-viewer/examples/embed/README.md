@@ -24,14 +24,21 @@ From `packages/luxar-viewer`:
 
 ```bash
 pnpm build:lib                       # builds dist/lib/{luxar-viewer.js,.css,types}
-cd examples/embed
-python -m http.server 8765
-open http://localhost:8765/
+python -m http.server 8765           # serve from packages/luxar-viewer, NOT examples/embed
+open http://localhost:8765/examples/embed/
 ```
+
+Serve from `packages/luxar-viewer` (not from this directory): `index.html`
+loads the built library via `../../dist/lib/luxar-viewer.{js,css}`, so the
+HTTP root must be the package root for those paths to resolve.
 
 (The page uses an `<script type="importmap">` to point `three` at jsdelivr
 so it works without npm-resolution. In a real app you install `three`
 from npm and let your bundler resolve it.)
+
+The page also wires two buttons — **Dispose viewer** and **Re-initialize**
+— so you can mount, tear down, and remount the viewer by hand and watch
+the host page survive each cycle.
 
 ## The minimal embedding code
 

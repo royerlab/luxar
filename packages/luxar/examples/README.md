@@ -115,7 +115,7 @@ Each script prints the absolute output path on completion. Defaults to
 |---|---|
 | `gsplats_basic_example.py` | `add_gsplats` with hand-authored centers, amplitudes, Cholesky factors. |
 | `gsplats_fit_volume_example.py` | `fit_gaussian_splats(volume, …)` → `add_gsplats_from_data(…)`. |
-| `gsplats_lod_example.py` | Substitutive LOD via `lod_group=dict(compression_factor, levels)`. |
+| `gsplats_lod_example.py` | Substitutive LOD: build a ladder with `make_substitutive_lod(compression_factor, levels)`, then hand it to `add_gsplats_from_data(..., lod_group=True)`. |
 
 ## Keyboard controls (in viewer)
 

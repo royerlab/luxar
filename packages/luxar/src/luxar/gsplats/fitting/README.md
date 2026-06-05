@@ -118,8 +118,15 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 - `OptimizationResults`: Results from optimization
 - `ModelComponents`: Model, optimizer, scheduler
 - `OptimConfig`: Frozen dataclass for optimization hyperparameters (n_iters, lr, etc.)
-- `LossConfig`: Frozen dataclass for loss function configuration (loss_type, asymmetric_penalty, etc.)
+- `LossConfig`: Frozen dataclass for loss function configuration (loss_type defaults to `"l1"`, asymmetric_penalty, etc.)
 - `ConstraintConfig`: Frozen dataclass for constraint configuration (amp_max, max_eccentricity, etc.)
+
+**Key Type Alias:**
+- `IterCallback = Callable[[int, torch.Tensor, Dict[str, Any]], None]`: Optional per-iteration
+  callback signature wired through `FitConfig.iter_callback`. Invoked inside `torch.no_grad()`
+  alongside the periodic eval with the 1-based iteration index, the detached prediction tensor,
+  and an info dict (`loss`, `best_loss`, `max_abs_error`, `rel_l2`, `n_splats`). Used for
+  validation-set scoring, custom snapshot logging, or stop-on-external-criterion.
 
 **Design Pattern:** Configuration objects with validation at boundaries.
 

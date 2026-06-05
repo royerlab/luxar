@@ -51,9 +51,9 @@ with LuxarZarrCompiler('my_scene.zarr') as compiler:
 
 ## Key Components
 
-### 1. Scene (`scene.py`)
+### 1. Scene (`scene/`)
 
-The root node of the scene hierarchy. Provides builder methods for constructing complex scenes with multiple data types.
+The root node of the scene hierarchy. Provides builder methods for constructing complex scenes with multiple data types. `Scene` now lives in its own subpackage (`scene/scene.py` plus `validation.py`, `dim_order.py`, and an `overlays/` subpackage) — see [scene/README.md](scene/README.md) for the full breakdown. `from luxar import Scene` and `from luxar.core import Scene` resolve unchanged.
 
 **Key Features:**
 - Progressive writing through `LuxarZarrCompiler`
@@ -102,14 +102,26 @@ with LuxarZarrCompiler('output.zarr') as compiler:
 - `add_gsplats_from_data(name, result, ..., dim_order=..., fill=..., fill_sigma=...)` - Add from GSplatData
 - `add_gsplats_from_file(name, path, ...)` - Add from .gsplats.zarr file
 - `add_gsplats_from_volume(name, volume, ...)` - Fit and add Gaussian splats in one step
-- `dimensions` (property) - Get/set scene-level dimensions
-- `viewer_config` (property) - Get/set ViewerConfig hints
 
-### 2. Group (`group.py`)
+**Scene-only methods** (not on Group):
+- `add_text(text, position, ...)` - Screen-space text overlay (returns `Overlay`)
+- `add_image(image, position, ...)` - Screen-space image overlay (returns `Overlay`)
+- `add_html(html, position, ...)` - Screen-space sanitized-HTML overlay (returns `Overlay`)
+- `to_zarr(path)` - Finalize the writer and copy the backing store to `path`
+- `dimensions` (property) - Get/set scene-level dimensions (required at construction)
+- `viewer_config` (property) - Get/set ViewerConfig hints
+- `overlays` (property) - List of `Overlay` descriptors added to the scene
+
+### 2. Group (`group/`)
 
 Container node with data-adding methods. Groups walk up the parent chain to
 find the root Scene for dimension validation and writer access. Scene inherits
-from Group, so all these methods work on both.
+from Group, so all these methods work on both. `Group` lives in its own
+subpackage (`group/group.py` plus `partition.py`, `auto_partition.py`,
+`compositing.py`, `dim_order.py`, and the `adders/`, `gsplats_pipeline/`, and
+`lod/` subpackages) — see [group/README.md](group/README.md). The leaf adders
+can return a `kind=partition` or `kind=lod` wrapper `Group` for very large or
+multi-resolution geometry.
 
 **Key Features:**
 - `add_points()`, `add_lines()`, `add_gsplats()` add data children directly
@@ -133,9 +145,10 @@ scene.add_gsplats_from_data('splats', result_3d,
     fill_sigma={'Time': 0.5})          # Cholesky sigma for unmapped dim
 ```
 
-### 3. Node (`node.py`)
+### 3. Node (`node/`)
 
-Base class for all scene graph nodes.
+Base class for all scene graph nodes. `Node` lives in its own subpackage
+(`node/node.py` plus `specialized_groups.py`) — see [node/README.md](node/README.md).
 
 **Key Features:**
 - Hierarchical parent-child relationships
@@ -269,6 +282,8 @@ print(f"Elements: {points.n_elements}")  # Alias for n_points
 - `has_radii` - Whether radii are present
 - `has_sharpness` - Whether sharpness is present
 - `has_scalars` - Whether scalar values for colormap lookup are present
+- `has_labels` - Whether per-element string labels (hover tooltips) are present
+- `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
 - `metadata` - Full metadata dictionary
 
 ### 6. Lines (`lines.py`)
@@ -318,6 +333,8 @@ print(f"Max width: {lines.max_width}")
 - `has_colors` - Whether per-vertex colors are present
 - `has_sharpness` - Whether per-vertex sharpness is present
 - `has_scalars` - Whether scalar values for colormap lookup are present
+- `has_labels` - Whether per-element string labels (hover tooltips) are present
+- `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
 - `max_width` - Maximum line width
 - `has_spatial_index` - Whether spatial indexing is enabled
 - `ordering` - Spatial ordering method (e.g., 'morton', 'hilbert', 'none')
@@ -385,6 +402,8 @@ print(f"Center bounds: {splats.center_bounds}")
 - `n_splats` - Number of splats
 - `n_elements` - Alias for n_splats (DataNode protocol)
 - `has_colors` - Whether splat colors are present
+- `has_labels` - Whether per-element string labels (hover tooltips) are present
+- `has_image_labels` - Whether per-element image labels (hover thumbnails) are present
 - `ordering` - Spatial ordering type (e.g., 'morton', 'none')
 - `amplitude_range` - Min/max amplitude values
 - `center_bounds` - Bounding box of centers
@@ -437,6 +456,23 @@ Scene-level coordinate system definitions with support for categorical dimension
 **Key Classes:**
 - `Dimension` - Single dimension specification
 - `Dimensions` - Complete scene dimension system
+
+**`Dimensions` Convenience Constructors:**
+- `Dimensions.default_2d()` - 2D (x, y) in px
+- `Dimensions.default_3d()` - 3D (x, y, z)
+- `Dimensions.default_timeseries(n_timepoints=100, time_unit="s")` - (t, x, y, z)
+- `Dimensions.default_multichannel(n_channels=3)` - (c, x, y, z)
+- `Dimensions.from_positions(positions, names=None)` - Infer from an (N, D) array
+
+**`Dimensions` Properties / Methods:**
+- `ndim` / `len(dims)` - Number of dimensions
+- `names` - Dimension names in order
+- `displayed` / `non_displayed` - Index lists of displayed / non-displayed dims
+- `spatial_extend_dims` - Per-dimension spatial-extension flags
+- `get_dimension(name)` - Dimension by name (or `None`)
+- `get_index(name)` - Index by name (raises if missing)
+- `validate_positions(positions, name="positions")` - Shape + range check
+- `to_dict()` / `from_dict()` - Serialize / deserialize
 
 **Key Features:**
 - Support for arbitrary dimensionality (not limited to 3D)
@@ -541,6 +577,12 @@ Utilities for creating and manipulating 4x4 transformation matrices.
 - `from_list(values)` - Convert from storage format (column-major from THREE.js)
 - `prepare_transform_for_zarr(transform)` - Convert any format to zarr-compatible list
 - `read_transform_from_zarr(transform_list)` - Read transform from zarr attributes
+- `transform_bounding_box(matrix, lo, hi)` - Transform all 8 corners of an AABB and return the enclosing axis-aligned box (correct under rotation/shear; mirrors the viewer's `transformBoundingBox`)
+
+(`identity`, `translate`, `scale`, `rotate*`, `compose`, `inverse`, `look_at`,
+`to_list`, `from_list`, and the aliases are re-exported from `luxar.core`;
+`prepare_transform_for_zarr`, `read_transform_from_zarr`, and
+`transform_bounding_box` are module-level helpers used internally.)
 
 **Convenience Aliases:**
 - `translation()` - Alias for `translate()`
@@ -590,9 +632,9 @@ Dataclasses for viewer configuration hints stored in the zarr file.
 **Key Classes:**
 - `ViewerConfig` - Top-level viewer configuration (camera, rendering, bloom, effects, UI, theme)
 - `CameraConfig` - Camera position, target, FOV, clipping planes, target_node
-- `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers)
+- `UIConfig` - Panel visibility (help, rendering controls, performance, dimensions, scale bar, layers, overlays)
 - `DimensionsConfig` - nD navigation state (current step, selected dimension)
-- `AnimationConfig` - Per-dimension animation (playing, fps, loop mode, direction)
+- `AnimationConfig` - Per-dimension animation (playing, target_fps, loop mode, direction)
 
 **Usage Example:**
 ```python
@@ -618,6 +660,30 @@ with LuxarZarrCompiler('output.zarr') as compiler:
 - `from_json(string)` / `to_json()` - JSON string I/O
 - `validate()` - Validate all configuration values
 
+### 11. Overlay (`overlay.py`)
+
+Lightweight metadata descriptor for a screen-space annotation. Overlays are
+**not** part of the 3D scene graph — they exist at the Scene level only and are
+positioned in normalized screen coordinates over the viewer canvas.
+
+`Overlay` is a frozen-style dataclass returned (for optional inspection) by
+`Scene.add_text()`, `Scene.add_image()`, and `Scene.add_html()`. The overlay is
+written immediately to zarr; the returned object is just a descriptor.
+
+**Attributes:**
+- `name` - Unique overlay name (auto-generated or user-specified)
+- `overlay_type` - One of `'overlay_text'`, `'overlay_image'`, `'overlay_html'`
+- `position` - `(x, y)` in normalized screen coordinates `[0, 1]`, top-left origin
+- `attrs` - All overlay attributes as written to the zarr `.zattrs`
+
+```python
+ov = scene.add_text("Hello", position=(0.05, 0.05))
+print(ov)  # <Overlay 'text_0' type=overlay_text pos=(0.05, 0.05)>
+```
+
+See [scene/README.md](scene/README.md) and [scene/overlays/README.md](scene/overlays/README.md)
+for the overlay adders, hover templating, and label-driven auto-injection.
+
 ## Architecture
 
 ### Progressive Writing Design
@@ -642,10 +708,14 @@ Scene (root)
 │   ├── Points "cell_1"
 │   ├── Lines "cell_edges"
 │   └── GSplats "cell_uncertainty"
-└── Group "markers"
-    ├── Points "marker_points"
-    └── Lines "marker_connections"
+├── Group "markers"
+│   ├── Points "marker_points"
+│   └── Lines "marker_connections"
+└── (overlays)            # screen-space text/image/HTML, not 3D nodes
 ```
+
+Overlays (`add_text` / `add_image` / `add_html`) are tracked separately on the
+`Scene` and live in normalized screen space, not in the 3D transform hierarchy.
 
 ### Transform Hierarchy
 
@@ -683,6 +753,7 @@ Node (base class)
 ## Testing
 
 Tests are located in `core/tests/`:
+- `test_compositing.py` - Partition/LOD wrapper compositing primitives
 - `test_datanode_types.py` - DataNode types: Lines and GSplats
 - `test_dim_order.py` - dim_order dimension mapping on add_points / add_lines / add_gsplats
 - `test_dimension_metadata.py` - Dimension functionality (current Dimension class)
@@ -693,6 +764,7 @@ Tests are located in `core/tests/`:
 - `test_hdr_colors.py` - Edge case tests for HDR color support
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
+- `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)
 - `test_physical_units.py` - Physical units support through Dimensions system
 - `test_review_fixes.py` - Guards fixes from the systematic API review (regression tests)
 - `test_scene_advanced.py` - Advanced Scene class tests (initialization, error handling)
@@ -822,8 +894,11 @@ Dimension('channel', range=(0, 2), discrete=True)  # What does 0 mean?
 
 ## See Also
 
+- [node/README.md](node/README.md) - `Node` base class and specialized groups
+- [group/README.md](group/README.md) - `Group` and the `add_*` machinery (partition, LOD, adders)
+- [scene/README.md](scene/README.md) - `Scene` root, validation, dim_order, overlays
 - [io/README.md](../io/README.md) - I/O operations and writers
 - [typing_utils/README.md](../typing_utils/README.md) - Type system
 - [validation/README.md](../validation/README.md) - Validation utilities
 - [encoding/README.md](../encoding/README.md) - Data encoding and semantic types
-- [Main README](../../../../README.md) - Project overview
+- [Main README](../../../../../README.md) - Project overview

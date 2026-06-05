@@ -145,10 +145,10 @@ Tests mirror the source layout under `tests/unit/input/`. The shape:
 
 ```
 tests/unit/input/
-├── input-handler.test.ts                          # Orchestrator unit suite
-├── input-handler-class.test.ts                    # Orchestrator class shape
-├── input-context-manager.test.ts                  # Context-manager suite
+├── input-handler-class.test.ts                     # Orchestrator class shape
+├── input-handler-utilities.test.ts                 # Orchestrator helper behaviour
 └── input-handler/
+    ├── context-manager-class.test.ts
     ├── context-manager-keyup.test.ts
     ├── context-manager-recursion.test.ts
     ├── context-manager/
@@ -158,12 +158,16 @@ tests/unit/input/
     │   └── animation-shortcuts.test.ts
     ├── dimension-navigation/
     │   ├── compute-step.test.ts
+    │   ├── setup.test.ts
     │   └── utils.test.ts
     ├── window-events/
+    │   ├── fullscreen-toggle.test.ts
     │   └── window-event-handler.test.ts
     ├── commands/
     │   ├── control-mode.test.ts
+    │   ├── data-monitor-cycle.test.ts
     │   ├── focus-utils.test.ts
-    │   └── panel-coordinator.test.ts
+    │   ├── panel-coordinator.test.ts
+    │   └── viewer-state-export.test.ts
     └── keyboard-validation.test.ts
 ```

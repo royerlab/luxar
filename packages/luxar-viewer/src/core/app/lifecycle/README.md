@@ -24,7 +24,7 @@ lifecycle/
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dispose-pipeline.ts` | `runDisposePipeline(ports)` — runs every subsystem's `dispose()` through a `safeDispose` wrapper that catches and logs without bubbling. Component order is the teardown contract; singletons (`ThemeManager`, `DataMonitorManager`, `SceneLoaderManager`, `disposeWorkerPool`) tear down last. `DisposePipelinePorts` declares the snapshot of orchestrator state plus per-field clear callbacks. |
 | `focus-handling.ts`   | `installFocusHandling(ports)` registers `window.focus` and `document.visibilitychange` listeners on the shared `EventGroup`. Both early-return when `getRecordingPanel()?.isCurrentlyRecording()` reports an active capture so offline recording keeps a stable loop.                                                                                                                              |
-| `unload-handling.ts`  | `installUnloadHandler(ports)` registers a `beforeunload` listener that invokes the supplied `dispose` callback. The listener is owned by the shared `EventGroup`, so it is removed automatically by `events.dispose()` inside `runDisposePipeline`.                                                                                                                                                |
+| `unload-handling.ts`  | `installUnloadHandler(ports)` registers a `beforeunload` listener that invokes the supplied `dispose` callback inside a defensive try/catch (unload is terminal — a throw would otherwise bubble to `window.onerror` and block other unload work). The listener is owned by the shared `EventGroup`, so it is removed automatically by `events.dispose()` inside `runDisposePipeline`.            |
 
 ## Animate-tick orchestration
 
@@ -52,18 +52,25 @@ states (any port may be `undefined`). The order encodes a teardown
 contract:
 
 ```
-1. animation + adaptive-DPR + resolution-indicator
-2. scaleBar, colormapLegend, overlayManager (overlay routes off first)
-3. recordingPanel, layersPanel
-4. pickingEvents → pickingSystem → labelLoader, imageLabelLoader
-5. datasetBrowser (close + unbind from inputHandler)
-6. inputHandler                         ← child panels gone before host
-7. renderingControls
-8. sceneManager
-9. ThemeManager.disposeInstance() + cleanupUI()
-10. events.dispose()                    ← all listeners (focus, visibility, beforeunload, …)
-11. DataMonitorManager → SceneLoaderManager → disposeWorkerPool()
+1.  animation + adaptive-DPR + resolution-indicator
+2.  scaleBar, colormapLegend
+3.  pickingEvents                        ← BEFORE overlayManager (HIGH-12 mousemove race)
+4.  overlayManager (clears recordingPanel back-ref first)
+5.  recordingPanel, layersPanel
+6.  pickingSystem → labelLoader, imageLabelLoader
+7.  datasetBrowser (close + unbind from inputHandler)
+8.  inputHandler                         ← child panels gone before host
+9.  renderingControls
+10. sceneManager
+11. ThemeManager.disposeInstance() + cleanupUI()
+12. events.dispose()                     ← all listeners (focus, visibility, beforeunload, …)
+13. DataMonitorManager → SceneLoaderManager → disposeWorkerPool()
 ```
+
+`pickingEvents` is released ahead of `overlayManager` because the
+picking system's mousemove handler closes over the overlay manager;
+disposing the overlay first would leave a window in which a
+synchronously-dispatched mousemove null-derefs the disposed overlay.
 
 A throwing component must NOT skip later cleanup — `safeDispose`
 records the failure label and continues, and a final aggregated
@@ -81,4 +88,4 @@ ports.
   tears down; the install-helpers here run at the end of `init()`.
 - `../../../utils/cross-layer/event-group.ts` — the `EventGroup`
   abstraction every install-helper uses, so listener removal is one
-  call (`events.dispose()`) in step 10 of the dispose flow.
+  call (`events.dispose()`) in step 12 of the dispose flow.

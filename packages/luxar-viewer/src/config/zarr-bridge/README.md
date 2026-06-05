@@ -10,7 +10,7 @@ Unlike the `sections/<name>/` slices, this folder does not contribute a section 
   - `RENDERING_SETTINGS_MAP` — snake_case zarr key → camelCase `RenderingSettings` key, covering tone mapping, EOG (exposure / global offset / global gamma), bloom, navigation, cinematic mode, vignette, detector noise, anti-aliasing (FXAA/MSAA/SSAA), chromatic lens distortion, fly controls, dynamic clipping, and adaptive DPR.
   - `REVERSE_SETTINGS_MAP` — built at module load by inverting `RENDERING_SETTINGS_MAP`.
   - `extractRenderingOverrides(zarrConfig)` — returns a `Partial<RenderingSettings>` containing only fields set in zarr. Also pulls `camera.fov`, `camera.fov_preset`, `camera.near`, and `camera.far` because those properties live on `RenderingSettings` even though zarr stores them under `camera`.
-  - `renderingSettingsToZarr(settings)` — inverse mapping. Camera-related fields (`fov`, `fovPreset`, `near`, `far`) are intentionally not emitted here — `captureViewerState` writes them under `camera.*`.
+  - `renderingSettingsToZarr(settings)` — inverse mapping. Camera-related fields (`fov`, `fovPreset`, `near`, `far`) are intentionally not emitted here — `captureViewerState` writes them under `camera.*`. Iterates the input keys (not `REVERSE_SETTINGS_MAP`) so a `RenderingSettings` field missing from the bridge map is still dropped (round-trip safety with older zarr files) but logs a single warning per unknown key via the module-local `_warnedUnknownRenderingKeys` set (exported so tests can reset it).
   - `CameraOverrides` interface — spatial state applied to the camera on every scene load: `position`, `target`, `up`, `targetNode` (a named node whose bounding-box center becomes the camera target). Not part of `RenderingSettings`.
   - `extractCameraOverrides(zarrConfig)` — pulls `camera.position`/`target`/`up`/`target_node` from the zarr blob.
   - `extractBackgroundColor(zarrConfig)` — returns the hex `background_color` string or `undefined`.
@@ -21,6 +21,7 @@ Unlike the `sections/<name>/` slices, this folder does not contribute a section 
 
 - `RENDERING_SETTINGS_MAP`, `REVERSE_SETTINGS_MAP` — key tables.
 - `extractRenderingOverrides`, `renderingSettingsToZarr` — settings conversion.
+- `_warnedUnknownRenderingKeys` — module-local warned-key set, exported for tests.
 - `CameraOverrides`, `extractCameraOverrides`, `extractBackgroundColor` — scene-state extraction.
 - `captureViewerState` — live snapshot for clipboard export.
 

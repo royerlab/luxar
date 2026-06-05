@@ -74,6 +74,7 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 | **demo_splats_mitosis_explicit_seeding.py** | Seeding | Explicit seed generation for mitosis |
 | **demo_boundary_containment.py** | Boundaries | Boundary containment during fitting |
 | **demo_tiled_fitting.py** | Tiling | Tiled fitting for large volumes |
+| **demo_substitutive_lod_dapi.py** | Substitutive LOD | Cost-aware Lloyd vs amplitude-culling baseline |
 
 ---
 
@@ -317,6 +318,17 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 
 ---
 
+### **demo_substitutive_lod_dapi.py**
+**What it does**: Builds a substitutive LOD hierarchy from progressively-fitted gsplats of a DAPI nuclear volume
+- Fits progressive gsplats to a moderate splat budget on a downscaled (64³) DAPI volume
+- Builds a substitutive LOD hierarchy with `make_substitutive_lod()` at K=4, L=3 (cost-increment Lloyd refinement)
+- Compares against an amplitude-culling baseline at matched per-level counts
+- Reports relative L² error and per-level PSNR, mirroring supp-doc `substitutive_lod` Experiment C
+
+**Usage**: `python demo_substitutive_lod_dapi.py [--no-napari]`
+
+---
+
 ## Running Demos
 
 ### **Standard Execution (with napari visualization)**
@@ -357,13 +369,13 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 |-----------|-----|-----------|------------|-------------|----------|
 | demo_basic_fitting | 2D | Synthetic | 1000 | Simple API | ~5s |
 | demo_performance_metrics | 2D | Synthetic | 300 | Metrics | ~3s |
-| demo_2d_synthetic_blobs | 2D | Synthetic | 1000 | Compression | ~8s |
+| demo_2d_synthetic_blobs | 2D | Synthetic | 4000 | Compression | ~8s |
 | demo_3d_synthetic_phantom | 3D | Synthetic | 1000 | 3D Ellipsoids | ~45s |
-| demo_3d_dapi_microscopy | 3D | Real (IDR) | 2000 | Remote Zarr | ~90s |
+| demo_3d_dapi_microscopy | 3D | Real (IDR) | 6000 | Remote Zarr | ~90s |
 | demo_4d_hypercube | 4D | Synthetic | 400 | nD Validation | ~60s |
 | demo_splats_astronaut | 2D | Real (photo) | 2000 | Photography | ~12s |
-| demo_splats_coins | 2D | Real (photo) | 2000 | Metallic | ~10s |
-| demo_splats_mitosis | 2D | Real (bio) | 2000 | Histology | ~10s |
+| demo_splats_coins | 2D | Real (photo) | 4000 | Metallic | ~10s |
+| demo_splats_mitosis | 2D | Real (bio) | 5000 | Histology | ~10s |
 | demo_splats_mitosis_intgrad | 2D | Real (bio) | 2000 | CLAHE Test | ~15s |
 | demo_splats_mitosis_explicit_seeding | 2D | Real (bio) | - | Explicit Seeding | ~10s |
 | demo_progressive_fitting | 2D | Synthetic | - | Progressive API | ~10s |
@@ -376,6 +388,7 @@ python demo_performance_metrics.py --no-napari --n-iters 500
 | demo_3d_dapi_progressive | 3D | Real (IDR) | - | Progressive 3D | ~120s |
 | demo_boundary_containment | 2D | Synthetic | - | Boundaries | ~10s |
 | demo_tiled_fitting | 3D | Synthetic | - | Tiled Fitting | ~60s |
+| demo_substitutive_lod_dapi | 3D | Real (IDR) | - | Substitutive LOD | ~60s |
 
 *Run times are approximate on modern CPU (M1/M2 or recent Intel/AMD)*
 
@@ -619,4 +632,4 @@ When adding new demos, follow these standards:
 
 ---
 
-**Last updated**: 2025-01 (demos reorganized and renamed)
+**Last updated**: 2026-06 (added demo_substitutive_lod_dapi; refreshed iteration counts)

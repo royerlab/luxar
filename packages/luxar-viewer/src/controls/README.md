@@ -98,12 +98,17 @@ package.
 | Ctrl/Cmd + scroll | Adjust field of view           |
 | Arrow keys        | Pan                            |
 
+The table shows the default CAD/Blender mapping (left-drag pans, right-drag
+rotates). "Natural drag" mode (default on macOS, see `setNaturalDrag`) swaps
+LEFT ↔ RIGHT so one-finger drag rotates and right-drag pans — touchpad
+ergonomics. In both mappings `Shift+left` performs the opposite action.
+
 **Features:**
 
 - Quaternion-based rotation (no gimbal lock at any angle)
 - Exponential damping for smooth interaction
 - Auto-rotation around the screen-vertical axis
-- Configurable mouse button mapping
+- Configurable mouse button mapping (CAD/Blender vs. natural-drag)
 - Touch support (1-finger rotate, 2-finger pinch-zoom + pan)
 
 ### 2. Fly Controls
@@ -169,6 +174,8 @@ class ControlsManager extends THREE.EventDispatcher {
   setAutoRotateSpeed(speed: number): void;
   getAutoRotate(): boolean;
   setEnableZoom(enabled: boolean): void;
+  setNaturalDrag(enabled: boolean): void; // swap LEFT↔RIGHT (orbit only)
+  getNaturalDrag(): boolean;
 
   // Fly configuration
   setFlyMovementSpeed(speed: number): void;

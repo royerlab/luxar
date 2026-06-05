@@ -32,8 +32,8 @@ Low-level rendering engine with specialized fast paths:
 | Function | Description |
 |----------|-------------|
 | `render_gaussians(shape, centers, Ls, amps, ...)` | Main rendering entry point (dispatches to 2D/3D fast paths or generic nD) |
-| `fwd_norm2_2d(L, delta)` | 2D forward substitution (specialized) |
-| `fwd_norm2_3d(L, delta)` | 3D forward substitution (specialized) |
+| `fwd_norm2_2d(L, d0, d1)` | 2D forward substitution (specialized) |
+| `fwd_norm2_3d(L, d0, d1, d2)` | 3D forward substitution (specialized) |
 | `compute_aabb_with_intensity_floor(...)` | AABB computation with intensity-based truncation |
 | `group_by_box(aabb_lo, aabb_hi, shape)` | CPU spatial grouping for chunk processing |
 | `group_by_box_gpu(aabb_lo, aabb_hi, shape)` | GPU spatial grouping |

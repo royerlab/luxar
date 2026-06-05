@@ -66,6 +66,7 @@ def create_optimizer_and_scheduler(
     cooldown: int = 0,
     min_lr: float = 1e-8,
     gamma: float = 0.95,
+    **extra_kwargs: Any,
 ) -> Tuple[torch.optim.Optimizer, Optional[torch.optim.lr_scheduler.LRScheduler]]:
 ```
 

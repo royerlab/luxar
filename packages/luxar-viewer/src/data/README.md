@@ -39,15 +39,19 @@ data/
 │
 ├── points/                        # Points geometry — facade + decomposition + math
 │   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
+│   ├── points-progressive-loader.ts   # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
 │   ├── handler.ts                     # GeometryTypeHandler<Points> registry entry
+│   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
 │   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
 │
 ├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
+│   ├── lines-progressive-loader.ts    # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
 │   ├── handler.ts                     # GeometryTypeHandler<Lines> registry entry
+│   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   └── projection.ts                  # clipSegmentToSlice + lerp + projectLinesTo3D (TS + WASM) + initLinesWASM
 │
 ├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
@@ -84,28 +88,36 @@ data/
 │   └── aggregator.ts              # Accumulator stats aggregation across loaders
 │
 ├── scene-loader/                  # Modules composed by scene-loader.ts, organised into
-│                                  #   nine subpackages: cache/, loaders/, view-state/,
+│                                  #   ten subpackages: cache/, loaders/, view-state/,
 │                                  #   lifecycle/, monitor/, commit/, nodes/, process/,
-│                                  #   update-view/. See scene-loader/README.md.
+│                                  #   progressive/, update-view/, plus the top-level
+│                                  #   lod-load-stats.ts. See scene-loader/README.md.
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
+│   ├── index.ts                   # Barrel — external callers import from here
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
-│   ├── range-loader.ts            # Unified encoding dispatch
-│   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
-│   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
-│   │                              #   tolerance to `loaders/tolerance-computer.computeTolerance`) or a
-│   │                              #   pre-computed `tolerance: number[]`.
-│   ├── tolerance-computer.ts      # Geometry-aware per-dimension tolerance
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
+│   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
 │   ├── transferable-accumulator.ts # Zero-allocation buffer management
-│   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
-│   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
-│   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
+│   ├── aggregate-loader-metrics.ts # Roll up per-loader metrics for the monitor
 │   ├── monitor-events.ts          # Shared LoaderEventEmitter for monitor events
 │   ├── once-init.ts               # Tiny once-init helper for lazy initializers
-│   └── color-attribute-utils.ts   # Shared color-range loader (points, lines, gsplats)
+│   ├── progressive-monitor-adapter.ts # Bridges progressive loaders → monitor events
+│   ├── spatial-query/             # Chunk-bounds query pipeline
+│   │   ├── spatial-query-builder.ts # Canonical chunk-bounds query API
+│   │   │                          #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
+│   │   │                          #   tolerance to `tolerance-computer.computeTolerance`) or a
+│   │   │                          #   pre-computed `tolerance: number[]`.
+│   │   ├── tolerance-computer.ts  # Geometry-aware per-dimension tolerance
+│   │   └── range-loader.ts        # Unified encoding dispatch (+ range-loader/ shared instance)
+│   ├── picking/                   # Lazy label fetching for the picking subsystem
+│   │   ├── image-label-loader.ts  # Lazy per-element image fetching from zarr
+│   │   └── label-loader.ts        # Lazy CSR-style label fetching from zarr
+│   ├── overlays/                  # Overlay config loading
+│   │   └── overlay-loader.ts      # Reads overlay configurations from zarr store
+│   └── progressive/               # Shared progressive-LOD helpers (concat, constants)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing
@@ -193,13 +205,14 @@ SceneLoader is split into focused, testable modules:
 
 - **Testability**: Each module tested independently
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: `scene-loader.ts` is now ~1,050 lines (down
+- **Reduced Complexity**: `scene-loader.ts` is now ~1,180 lines (down
   from ~2,100) thanks to ongoing extraction. See `scene-loader/` for
-  the extracted modules, organised into nine thematic subpackages:
+  the extracted modules, organised into ten thematic subpackages:
   `cache/`, `loaders/`, `view-state/`, `lifecycle/`, `monitor/`,
-  `commit/`, `nodes/`, `process/`, and `update-view/`. Top-level of
-  `scene-loader/` contains no `.ts` files — every helper lives in
-  one of the subpackages above.
+  `commit/`, `nodes/`, `process/`, `progressive/`, and `update-view/`.
+  The top level of `scene-loader/` holds a single helper,
+  `lod-load-stats.ts`; every other helper lives in one of the
+  subpackages above.
 
 ---
 
@@ -264,7 +277,7 @@ export async function updateSceneForDimensions(
 
 ### 2. Chunk-Based Spatial Index
 
-The chunk-bounds spatial-query API lives in `loaders/spatial-query-builder.ts` and is used by all three geometry loaders (Points, Lines, GSplats). Each loader inlines its own `chunk_bounds` zarr probe — the array names differ slightly (`chunk_bounds` for points/gsplats, `vertex_chunk_bounds` + `segment_chunk_bounds` for lines) — and then delegates the AABB scan, range conversion, and range merge to the canonical `SpatialQueryBuilder`.
+The chunk-bounds spatial-query API lives in `loaders/spatial-query/spatial-query-builder.ts` and is used by all three geometry loaders (Points, Lines, GSplats). Each loader inlines its own `chunk_bounds` zarr probe — the array names differ slightly (`chunk_bounds` for points/gsplats, `vertex_chunk_bounds` + `segment_chunk_bounds` for lines) — and then delegates the AABB scan, range conversion, and range merge to the canonical `SpatialQueryBuilder`.
 
 **Core features:**
 
@@ -1086,7 +1099,7 @@ Cache statistics are aggregated by the parent `SceneLoader` via the
 `loader-metrics.ts` event bus — per-loader cache APIs were removed in
 favour of a single `SceneLoader.getCacheStats()` snapshot.
 
-### Spatial-query API (loaders/spatial-query-builder.ts)
+### Spatial-query API (loaders/spatial-query/spatial-query-builder.ts)
 
 | Symbol                                            | Description                                                          |
 | ------------------------------------------------- | -------------------------------------------------------------------- |
@@ -1099,7 +1112,7 @@ favour of a single `SceneLoader.getCacheStats()` snapshot.
 | `shouldExtendVisibility(extendDims, viewState)`   | True if any extend-to-all dim is currently hidden.                   |
 | `createLoadAllRange(totalElements)`               | Single range covering the whole dataset.                             |
 
-### Tolerance computer (tolerance-computer.ts)
+### Tolerance computer (loaders/spatial-query/tolerance-computer.ts)
 
 | Symbol                                                               | Description                                                                                  |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |

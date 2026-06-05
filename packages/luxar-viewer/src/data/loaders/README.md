@@ -68,7 +68,7 @@ interface SpatialDataLoader<TViewState, TLoadedData> {
 ### 2. spatial-query/range-loader.ts
 
 Unified encoding dispatch. The orchestrator (`spatial-query/range-loader.ts`)
-is a 111-line dispatcher; each encoding's body lives in a sibling helper
+is a thin dispatcher; each encoding's body lives in a sibling helper
 under `spatial-query/range-loader/` (`broadcasted.ts`, `quantized.ts`,
 `lut.ts`, `direct.ts`, `array-ref.ts`, plus `detect-encoding.ts`,
 `ref-resolution.ts`, `shared-instance.ts`, and the shared `encoding-types.ts`).
@@ -334,6 +334,19 @@ loadTime)` (rolling-mean update of `loads` / `pointsLoaded` / `bytesLoaded`
   shared in-flight promise; a rejected init clears the cache so the next call
   can retry from scratch. Centralizes the pattern previously duplicated four
   times across the three loaders.
+- **`aggregate-loader-metrics.ts`** — `aggregateLoaderMetrics(inner, path)`:
+  pure roll-up of N per-LOD `LoaderMetrics` into one snapshot for a progressive
+  node. Counters are summed; `memoryLimit` is the max (a shared cap, not
+  additive); `avgQueryTime` / `avgLoadTime` are query/load-weighted means;
+  optional `spatialIndex` cell counts are summed with query-weighted rate means
+  (descriptive grid arrays from the first carrier); `optimization` is taken from
+  the first reporter to avoid double-counting app-global singletons.
+- **`progressive-monitor-adapter.ts`** — `ProgressiveMonitorAdapter`: makes a
+  progressive node (N inner per-LOD loaders) look like a SINGLE loader to the
+  data monitor. Re-stamps every inner monitor event / active query with the
+  parent node path so per-`additive_<i>` sub-paths never reach the monitor
+  (which would otherwise double-count throughput/memory). `getMetrics()`
+  delegates to `aggregateLoaderMetrics`; `addEventListener` is idempotent.
 
 ## File Structure
 
@@ -352,11 +365,13 @@ src/data/loaders/
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
 ├── once-init.ts                  # One-shot async initializer with retry-on-failure
 ├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce
+├── aggregate-loader-metrics.ts   # Pure roll-up of per-LOD metrics into one snapshot
+├── progressive-monitor-adapter.ts # Re-paths inner-LOD monitor events to the parent node
 │
 ├── spatial-query/                # Chunk-bounds → tolerance → AABB scan → range fetch
 │   ├── spatial-query-builder.ts  # Canonical chunk-bounds AABB query + helpers
 │   ├── tolerance-computer.ts     # Geometry-aware per-dimension tolerance
-│   ├── range-loader.ts           # Encoding-dispatch orchestrator (111 LOC)
+│   ├── range-loader.ts           # Encoding-dispatch orchestrator (thin dispatcher)
 │   └── range-loader/             # Per-encoding helper bodies (private to range-loader.ts)
 │       ├── encoding-types.ts     # EncodingType, RangeLoaderConfig, shared helpers
 │       ├── detect-encoding.ts    # Encoding detection from ArrayMetadata
@@ -371,6 +386,10 @@ src/data/loaders/
 ├── picking/                      # Label loaders consumed by core/app/picking
 │   ├── label-loader.ts           # Lazy CSR-style string-label fetching
 │   └── image-label-loader.ts     # Lazy per-element image-label fetching (LRU blob URLs)
+│
+├── progressive/                  # Shared helpers for additive-LOD progressive loaders
+│   ├── concat-helpers.ts         # Generic typed-array field concatenation across LOD parts
+│   └── constants.ts              # CACHE_HIT_THRESHOLD_MS — shared streaming threshold
 │
 └── overlays/                     # Overlay metadata loader
     └── overlay-loader.ts         # Reads overlay configurations from the zarr store
@@ -424,6 +443,13 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   try/catch isolation, `clear()` on dispose.
 - **once-init.test.ts** — concurrent callers share in-flight promise;
   rejected init clears the cache so the next call retries.
+- **aggregate-loader-metrics.test.ts** — empty-array zeroed fallback,
+  counter summing, max-of `memoryLimit`, weighted-mean times, `spatialIndex`
+  roll-up, first-reporter `optimization`.
+- **progressive-monitor-adapter.test.ts** — event/active-query re-pathing to
+  the parent node, `addEventListener` idempotency, `getMetrics` aggregation.
+- **concat-helpers.test.ts** (under `progressive/`) — required/optional
+  typed-array concatenation, dtype preservation, all-or-nothing optional gate.
 
 ## Dependencies
 
@@ -437,3 +463,4 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 
 - [../array-decoder/](../array-decoder/) — low-level encoding metadata and decoders consumed by `spatial-query/range-loader.ts`.
 - [../../workers/README.md](../../workers/README.md) — worker pool API and the `runWithTimeout()` contract referenced above.
+- [progressive/README.md](progressive/README.md) — shared concat/constants helpers for the additive-LOD progressive loaders that the metrics-aggregation and monitor-adapter helpers above also serve.

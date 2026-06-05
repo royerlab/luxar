@@ -124,7 +124,7 @@ into LOD levels:
   each target. Example: `[0.5, 0.9, 0.99, 1.0]`.
 
 The result of `make_additive_lod` is a multi-LOD `GSplatData` whose
-`up_to_lod(k)` returns a valid additive prefix.
+`additive_prefix(k)` returns a valid additive prefix.
 
 ## Complexity
 
@@ -170,6 +170,7 @@ make_substitutive_lod(
     candidate_bins_k: int = 12,
     device: str = "auto",               # auto | cpu | cuda | mps
     seed: int | None = None,
+    verbose: bool = False,              # per-level Arbol logging
 ) -> GSplatData
 ```
 
