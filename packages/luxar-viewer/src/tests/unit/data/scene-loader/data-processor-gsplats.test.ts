@@ -4,8 +4,10 @@
  * Strategy mirrors data-processor-lines.test.ts:
  *   - Real `THREE.Group` + `THREE.Mesh` for `rootGroup` so the
  *     getObjectByName + nodeType guard is exercised in full.
- *   - Mock `projectGSplats` and `packCholeskyForShader` so tests aren't
- *     coupled to the real Mahalanobis math; we only verify orchestration.
+ *   - Mock `projectGSplatsInProcess` (the in-process dispatcher that
+ *     replaced the deleted main-thread `projectGSplats` copy) and
+ *     `packCholeskyForShader` so tests aren't coupled to the real
+ *     Mahalanobis math; we only verify orchestration.
  *   - Mock the worker pool so we can control success / failure /
  *     fallback paths.
  */
@@ -13,9 +15,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
+// The non-worker and worker-failure paths now run the shared dispatcher
+// in-process (`workers/data-worker/projection/in-process`), not a
+// separate main-thread copy. Mock it to detect those paths.
 const mockProcessGSplats = vi.fn();
-vi.mock('../../../../data/gsplats/projection', () => ({
-  projectGSplats: (...args: unknown[]) => mockProcessGSplats(...args),
+vi.mock('../../../../workers/data-worker/projection/in-process', () => ({
+  projectGSplatsInProcess: (...args: unknown[]) => mockProcessGSplats(...args),
 }));
 
 const mockPackCholesky = vi.fn();
@@ -46,13 +51,19 @@ import {
 } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 
-function makeProcessed(splatCount = 2) {
+/**
+ * Dispatcher-shaped result (keyed by `visibleCount`, as the worker /
+ * in-process dispatcher returns it). `toProcessed` in the data-processor
+ * maps `visibleCount → splatCount`.
+ */
+function makeDispatcherResult(visibleCount = 2) {
   return {
-    centers3D: new Float32Array(splatCount * 3),
-    choleskyFactors3D: new Float32Array(splatCount * 6),
-    amplitudes: new Float32Array(splatCount),
-    colors: new Float32Array(splatCount * 3),
-    splatCount,
+    centers3D: new Float32Array(visibleCount * 3),
+    choleskyFactors3D: new Float32Array(visibleCount * 6),
+    amplitudes: new Float32Array(visibleCount),
+    colors: new Float32Array(visibleCount * 3),
+    sharpness: new Float32Array(0),
+    visibleCount,
   };
 }
 
@@ -93,7 +104,7 @@ function makeMesh(name: string, attrs: Record<string, unknown> = {}): THREE.Mesh
 }
 
 beforeEach(() => {
-  mockProcessGSplats.mockReset().mockImplementation(() => makeProcessed());
+  mockProcessGSplats.mockReset().mockImplementation(() => makeDispatcherResult());
   mockPackCholesky.mockReset().mockReturnValue({
     cholesky01: new Float32Array(),
     cholesky23: new Float32Array(),
@@ -125,7 +136,7 @@ describe('processGSplatsData', () => {
     expect(result).toBeNull();
   });
 
-  it('runs main thread for small datasets (splatCount <= 1000)', async () => {
+  it('runs in-process dispatcher for small datasets (splatCount <= 1000)', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const result = await processGSplatsData('/g', makeData(500), makeViewState(), root, 1);
@@ -134,7 +145,7 @@ describe('processGSplatsData', () => {
     expect(mockGetWorkerPool).not.toHaveBeenCalled();
   });
 
-  it('runs main thread for 3D data even when splatCount > 1000', async () => {
+  it('runs in-process dispatcher for 3D data even when splatCount > 1000', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     // ndim=3 → worker NOT used regardless of count
@@ -173,9 +184,9 @@ describe('processGSplatsData', () => {
   // Worker is used iff: useWebWorkers && splatCount > 1000 && ndim > 3.
   // These cases pin the exact boundary on both axes.
   it.each([
-    { splatCount: 1000, ndim: 4, expectWorker: false, label: '[1000, 4] → main thread' },
+    { splatCount: 1000, ndim: 4, expectWorker: false, label: '[1000, 4] → in-process' },
     { splatCount: 1001, ndim: 4, expectWorker: true, label: '[1001, 4] → worker' },
-    { splatCount: 2000, ndim: 3, expectWorker: false, label: '[2000, 3] → main thread' },
+    { splatCount: 2000, ndim: 3, expectWorker: false, label: '[2000, 3] → in-process' },
     { splatCount: 2000, ndim: 4, expectWorker: true, label: '[2000, 4] → worker' },
   ])('threshold boundary $label', async ({ splatCount, ndim, expectWorker }) => {
     const root = new THREE.Group();
@@ -237,13 +248,13 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
   });
 
-  it('falls back to main thread on worker failure', async () => {
+  it('falls back to the in-process dispatcher on worker failure', async () => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
         throw new Error('boom');
       }),
     });
-    mockProcessGSplats.mockReturnValue(makeProcessed(7));
+    mockProcessGSplats.mockReturnValue(makeDispatcherResult(7));
 
     const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(7);

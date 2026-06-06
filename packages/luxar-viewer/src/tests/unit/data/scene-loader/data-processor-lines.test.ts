@@ -9,8 +9,10 @@
  *     or returns canned data.
  *   - Mock `appConfig` indirectly: the threshold (`segmentCount > 1000`)
  *     is exercised by simply varying `data.segmentCount` in tests.
- *   - Mock `projectLinesTo3D` so we can detect main-thread vs
- *     worker code paths without running the real clipping math.
+ *   - Mock `projectLinesInProcess` (the in-process dispatcher that
+ *     replaced the deleted main-thread `projectLinesTo3D` copy) so we can
+ *     detect the non-worker / worker-failure paths without running the
+ *     real clipping math.
  *
  * The class isLinesUserData / mesh.userData.attrs / nodeType plumbing
  * is real — that's the boundary the helper guards on.
@@ -19,10 +21,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
-// Mock projectLinesTo3D so we can sniff which path ran
+// The non-worker and worker-failure paths now run the shared dispatcher
+// in-process. It takes a SINGLE params object (not positional args), so
+// `mock.calls[0][0]` is the params; `params.viewState.tolerance` carries
+// the per-dim tolerance the old positional `calls[0][2]` exposed.
 const mockBuildInstanceBuffers = vi.fn();
-vi.mock('../../../../data/lines/projection', () => ({
-  projectLinesTo3D: (...args: unknown[]) => mockBuildInstanceBuffers(...args),
+vi.mock('../../../../workers/data-worker/projection/in-process', () => ({
+  projectLinesInProcess: (...args: unknown[]) => mockBuildInstanceBuffers(...args),
 }));
 
 const mockGetWorkerPool = vi.fn();
@@ -44,22 +49,30 @@ import {
   processLinesData,
   projectLinesTo3DUsingWorker,
 } from '../../../../data/scene-loader/process/data-processor-lines';
-import type { LoadedLinesData, ProcessedLinesData } from '../../../../types/lines';
+import type { LoadedLinesData } from '../../../../types/lines';
 
-function makeProcessed(segmentCount = 2): ProcessedLinesData {
+/**
+ * Dispatcher-shaped result (keyed by `visibleSegmentCount`, plus empty
+ * `startScalars`/`endScalars`, as the worker / in-process dispatcher
+ * returns it). `toProcessedLines` in the data-processor maps
+ * `visibleSegmentCount → segmentCount`.
+ */
+function makeDispatcherLinesResult(visibleSegmentCount = 2) {
   return {
-    startPositions: new Float32Array(segmentCount * 3),
-    endPositions: new Float32Array(segmentCount * 3),
-    startColors: new Float32Array(segmentCount * 3),
-    endColors: new Float32Array(segmentCount * 3),
-    startWidths: new Float32Array(segmentCount),
-    endWidths: new Float32Array(segmentCount),
-    startSharpness: new Float32Array(segmentCount),
-    endSharpness: new Float32Array(segmentCount),
-    segmentLengths: new Float32Array(segmentCount),
-    startClipped: new Uint8Array(segmentCount),
-    endClipped: new Uint8Array(segmentCount),
-    segmentCount,
+    startPositions: new Float32Array(visibleSegmentCount * 3),
+    endPositions: new Float32Array(visibleSegmentCount * 3),
+    startColors: new Float32Array(visibleSegmentCount * 3),
+    endColors: new Float32Array(visibleSegmentCount * 3),
+    startWidths: new Float32Array(visibleSegmentCount),
+    endWidths: new Float32Array(visibleSegmentCount),
+    startSharpness: new Float32Array(visibleSegmentCount),
+    endSharpness: new Float32Array(visibleSegmentCount),
+    startScalars: new Float32Array(0),
+    endScalars: new Float32Array(0),
+    segmentLengths: new Float32Array(visibleSegmentCount),
+    startClipped: new Uint8Array(visibleSegmentCount),
+    endClipped: new Uint8Array(visibleSegmentCount),
+    visibleSegmentCount,
   };
 }
 
@@ -89,7 +102,7 @@ function makeMesh(name: string, attrs: Record<string, unknown> = {}): THREE.Mesh
 }
 
 beforeEach(() => {
-  mockBuildInstanceBuffers.mockReset().mockImplementation(() => makeProcessed());
+  mockBuildInstanceBuffers.mockReset().mockImplementation(() => makeDispatcherLinesResult());
   mockGetWorkerPool.mockReset();
 });
 
@@ -145,7 +158,7 @@ describe('processLinesData', () => {
     expect(result).toBeNull();
   });
 
-  it('uses main thread (projectLinesTo3D) for small datasets', async () => {
+  it('uses the in-process dispatcher for small datasets', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const result = await processLinesData(
@@ -219,8 +232,12 @@ describe('processLinesData', () => {
     );
 
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
-    const tolerance = mockBuildInstanceBuffers.mock.calls[0][2];
-    expect(tolerance[3]).toBe(1e10);
+    // In-process dispatcher takes one params object; tolerance lives in
+    // params.viewState.tolerance.
+    const params = mockBuildInstanceBuffers.mock.calls[0][0] as {
+      viewState: { tolerance: number[] };
+    };
+    expect(params.viewState.tolerance[3]).toBe(1e10);
   });
 });
 
@@ -254,13 +271,13 @@ describe('projectLinesTo3DUsingWorker', () => {
     expect(Array.from(result.startPositions)).toEqual([1, 2, 3]);
   });
 
-  it('falls back to main thread on worker failure', async () => {
+  it('falls back to the in-process dispatcher on worker failure', async () => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
         throw new Error('boom');
       }),
     });
-    mockBuildInstanceBuffers.mockReturnValue(makeProcessed(3));
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(3));
 
     const result = await projectLinesTo3DUsingWorker(
       makeData(),
@@ -286,7 +303,7 @@ describe('projectLinesTo3DUsingWorker', () => {
       ...makeData(2000),
       scalars: new Float32Array(2 * 2000), // 2 vertices per segment
     };
-    mockBuildInstanceBuffers.mockReturnValue(makeProcessed(2000));
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(2000));
 
     await projectLinesTo3DUsingWorker(
       dataWithScalars,

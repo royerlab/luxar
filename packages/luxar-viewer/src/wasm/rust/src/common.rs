@@ -15,6 +15,13 @@ pub const MAX_PACKED_CHOLESKY_SIZE: usize = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED
 /// Epsilon for degenerate diagonal detection during forward substitution.
 pub const CHOLESKY_EPSILON: f32 = 1e-10;
 
+/// Threshold below which a segment is treated as parallel to the slice in a
+/// hidden dimension (so clipping in that dim is skipped). Sized to f32 precision
+/// for order-1 coordinates; MUST stay identical to the TS reference's
+/// `SEGMENT_PARALLEL_EPSILON` in `wasm/typescript/lines-clipping.ts` — a mismatch
+/// silently diverges visibility for near-parallel segments.
+pub const SEGMENT_PARALLEL_EPSILON: f32 = 1e-7;
+
 /// Validate that the number of dimensions is within the supported limit.
 /// Panics with a clear error message if the limit is exceeded.
 #[inline]

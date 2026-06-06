@@ -150,7 +150,9 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
       },
 
       defines: {
-        LUXAR_TONE_MAPPING_MODE: toneMappingModeDefine(cfg.toneMapping ?? THREE.ACESFilmicToneMapping),
+        LUXAR_TONE_MAPPING_MODE: toneMappingModeDefine(
+          cfg.toneMapping ?? THREE.ACESFilmicToneMapping
+        ),
       },
     });
 

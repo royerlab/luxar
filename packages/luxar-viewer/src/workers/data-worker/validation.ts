@@ -16,12 +16,13 @@
 import { MAX_SUPPORTED_DIMS } from '../../config/constants';
 
 /**
- * Maximum number of dimensions WASM supports. The compiled Rust code
- * uses fixed-size arrays (`[f32; MAX_DIMS]` = 16) for performance, so
- * inputs above this limit must be rejected at the worker boundary
- * rather than triggering an out-of-bounds read inside WASM. Aliased to
- * `MAX_SUPPORTED_DIMS` so the worker stays self-documenting at call
- * sites while sharing the canonical constant.
+ * Maximum number of dimensions the compiled WASM kernels support (fixed-size
+ * `[f32; 16]` arrays). Inputs above this are NOT rejected — `pickBackend` in
+ * `state.ts` routes them to the uncapped TypeScript reference instead, so >16D
+ * datasets are supported (slower but correct). These validators therefore only
+ * enforce `ndim >= 1` (integer) plus array-length consistency, which hold for
+ * any backend. Aliased to `MAX_SUPPORTED_DIMS` so the worker stays
+ * self-documenting while sharing the canonical constant.
  */
 export const MAX_WASM_DIMS = MAX_SUPPORTED_DIMS;
 
@@ -47,8 +48,8 @@ export function validateNDArrays(
   positionsPerItem: number = ndim,
   radii?: Float32Array
 ): void {
-  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  if (!Number.isInteger(ndim) || ndim < 1) {
+    throw new Error(`${fnName}: ndim=${ndim} must be a positive integer`);
   }
   if (!Number.isInteger(numItems) || numItems < 0) {
     throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
@@ -80,15 +81,25 @@ export function validateNDArrays(
  */
 export function validateProjectionInputs(
   fnName: string,
-  positions: Float32Array,
+  // Only `.length` is read here; accept any numeric array so the
+  // main-thread Points projection (positions may be Uint8/Uint16/Float16
+  // before WASM coercion) can share this guard with the worker dispatchers.
+  positions: ArrayLike<number>,
   displayDims: readonly number[] | Uint32Array,
   slicePosition: readonly number[] | Float32Array,
   ndim: number,
   numItems: number,
-  positionsPerItem: number = ndim
+  positionsPerItem: number = ndim,
+  // The 3D-extraction kernel (extract_3d_positions) does not read
+  // slicePosition, so the main-thread Points path skips this check on its
+  // extraction-only call (a pure-3D view legitimately carries a short/empty
+  // slicePosition) and validates length separately in its effective-radius
+  // branch, where the kernel actually consumes it. Worker dispatchers keep
+  // the default (slicePosition always required).
+  requireSlicePosition: boolean = true
 ): void {
-  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  if (!Number.isInteger(ndim) || ndim < 1) {
+    throw new Error(`${fnName}: ndim=${ndim} must be a positive integer`);
   }
   if (!Number.isInteger(numItems) || numItems < 0) {
     throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
@@ -108,7 +119,7 @@ export function validateProjectionInputs(
       throw new Error(`${fnName}: displayDims[${i}]=${d} out of range [0, ${ndim - 1}]`);
     }
   }
-  if (slicePosition.length < ndim) {
+  if (requireSlicePosition && slicePosition.length < ndim) {
     throw new Error(
       `${fnName}: slicePosition too short (got ${slicePosition.length}, expected ≥ ${ndim})`
     );
@@ -276,8 +287,8 @@ export function validateChunkQueryInputs(
   ndim: number,
   numChunks: number
 ): void {
-  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  if (!Number.isInteger(ndim) || ndim < 1) {
+    throw new Error(`${fnName}: ndim=${ndim} must be a positive integer`);
   }
   if (!Number.isInteger(numChunks) || numChunks < 0) {
     throw new Error(`${fnName}: numChunks=${numChunks} must be a non-negative integer`);

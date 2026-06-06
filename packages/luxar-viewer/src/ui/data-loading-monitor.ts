@@ -1665,9 +1665,7 @@ export class DataLoadingMonitor {
     // loader (their adapter re-paths inner events to the node path), so each
     // node contributes exactly one entry here — no per-LOD double-counting.
     const isSpatialType = (t: string | undefined): boolean =>
-      t === 'point-spatial-index' ||
-      t === 'lines-spatial-index' ||
-      t === 'gsplats-spatial-index';
+      t === 'point-spatial-index' || t === 'lines-spatial-index' || t === 'gsplats-spatial-index';
 
     for (const metrics of this.metrics.values()) {
       totalPoints += metrics.pointsLoaded;

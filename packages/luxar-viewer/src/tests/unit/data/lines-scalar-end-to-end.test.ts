@@ -17,7 +17,11 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LinesDataAccumulator } from '../../../data/accumulators/lines';
-import { projectLinesTo3D } from '../../../data/lines/projection';
+// The main-thread lines projection copy was deleted in W4; drive the live
+// worker dispatcher in-process via the adapter, backed by the TypeScript
+// reference (always available without a compiled WASM build).
+import { projectLinesViaDispatcher } from '../../helpers/projection-adapters';
+import { TypeScriptFallback } from '../../../wasm/typescript';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import {
   createInstancedLinesMesh,
@@ -27,6 +31,9 @@ import {
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
+
+/** TypeScript-reference backend for the in-process dispatcher adapter. */
+const lineBackend = new TypeScriptFallback();
 
 function loadedLines({
   positions,
@@ -151,7 +158,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
 });
 
 describe('projectLinesTo3D scalar interpolation', () => {
-  it('passes scalars through unclipped segments unchanged', () => {
+  it('passes scalars through unclipped segments unchanged', async () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
@@ -159,7 +166,8 @@ describe('projectLinesTo3D scalar interpolation', () => {
       scalars: new Float32Array([0.0, 1.0]),
     });
     // No clipping — slice covers full range.
-    const out = projectLinesTo3D(
+    const out = await projectLinesViaDispatcher(
+      lineBackend,
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -171,14 +179,15 @@ describe('projectLinesTo3D scalar interpolation', () => {
     expect(out.endScalars![0]).toBeCloseTo(1.0, 5);
   });
 
-  it('omits scalars from output when input has no scalars', () => {
+  it('omits scalars from output when input has no scalars', async () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       scalars: undefined,
     });
-    const out = projectLinesTo3D(
+    const out = await projectLinesViaDispatcher(
+      lineBackend,
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -188,26 +197,30 @@ describe('projectLinesTo3D scalar interpolation', () => {
     expect(out.endScalars).toBeUndefined();
   });
 
-  it('suppresses scalars when length mismatches vertex count', () => {
-    // 2 vertices, but only 1 scalar — mismatched.
+  it('rejects when scalar length mismatches vertex count', async () => {
+    // 2 vertices, but only 1 scalar — too short. The worker dispatcher
+    // validates per-vertex scalar length and throws (fail-hard), matching
+    // the Points/GSplats validators (three-geometry symmetry). The deleted
+    // main-thread copy fail-soft-suppressed instead; W4 makes Lines
+    // consistent with the other geometries and the large-data worker path.
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       scalars: new Float32Array([0.5]) as Float32Array,
     });
-    const out = projectLinesTo3D(
-      data,
-      [0, 0, 0, 0],
-      [Infinity, Infinity, Infinity, Infinity],
-      [0, 1, 2]
-    );
-    // Output should omit scalars because the validation fired.
-    expect(out.startScalars).toBeUndefined();
-    expect(out.endScalars).toBeUndefined();
+    await expect(
+      projectLinesViaDispatcher(
+        lineBackend,
+        data,
+        [0, 0, 0, 0],
+        [Infinity, Infinity, Infinity, Infinity],
+        [0, 1, 2]
+      )
+    ).rejects.toThrow(/scalars too short/);
   });
 
-  it('roundtrips Uint8 scalars through accumulator + projection', () => {
+  it('roundtrips Uint8 scalars through accumulator + projection', async () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
@@ -221,12 +234,16 @@ describe('projectLinesTo3D scalar interpolation', () => {
     expect((buf as Uint8Array)[0]).toBe(64);
     expect((buf as Uint8Array)[1]).toBe(192);
 
-    // Output of accumulator carries Uint8 scalars; projectLinesTo3D
-    // widens to Float32 in the output via numeric assignment.
+    // Output of accumulator carries Uint8 scalars; the dispatcher
+    // coerces them to Float32 normalized by 1/255 (colormap-shader [0,1]
+    // contract). This also unifies behavior with the large-data worker
+    // path, which always normalized — the deleted main-thread copy
+    // raw-widened, an inconsistency W4 removes.
     const data = acc.getData(1, 2);
     expect(data.scalars).toBeInstanceOf(Uint8Array);
 
-    const out = projectLinesTo3D(
+    const out = await projectLinesViaDispatcher(
+      lineBackend,
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -234,9 +251,10 @@ describe('projectLinesTo3D scalar interpolation', () => {
     );
     expect(out.startScalars).toBeInstanceOf(Float32Array);
     expect(out.endScalars).toBeInstanceOf(Float32Array);
-    // Unclipped, t1=0 ⇒ start = scalar[0] = 64, t2=1 ⇒ end = scalar[1] = 192.
-    expect(out.startScalars![0]).toBeCloseTo(64, 5);
-    expect(out.endScalars![0]).toBeCloseTo(192, 5);
+    // Unclipped, t1=0 ⇒ start = scalar[0], t2=1 ⇒ end = scalar[1], each
+    // normalized by 1/255.
+    expect(out.startScalars![0]).toBeCloseTo(64 / 255, 5);
+    expect(out.endScalars![0]).toBeCloseTo(192 / 255, 5);
   });
 });
 
@@ -412,14 +430,15 @@ describe('line-geometry mesh creation/update', () => {
 });
 
 describe('end-to-end scalar binding for Lines', () => {
-  it('processed → mesh → supportsScalarColormap returns true', () => {
+  it('processed → mesh → supportsScalarColormap returns true', async () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       scalars: new Float32Array([0.0, 1.0]),
     });
-    const processed = projectLinesTo3D(
+    const processed = await projectLinesViaDispatcher(
+      lineBackend,
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -429,14 +448,15 @@ describe('end-to-end scalar binding for Lines', () => {
     expect(supportsScalarColormap('lines', mesh.geometry)).toBe(true);
   });
 
-  it('without scalars, supportsScalarColormap returns false', () => {
+  it('without scalars, supportsScalarColormap returns false', async () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
       scalars: undefined,
     });
-    const processed = projectLinesTo3D(
+    const processed = await projectLinesViaDispatcher(
+      lineBackend,
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],

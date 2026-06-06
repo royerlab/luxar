@@ -22,20 +22,25 @@ vi.mock('../../../../../wasm', () => ({
 
 vi.mock('../../../../../workers/worker-pool', () => ({
   setDataWorkerUrl: vi.fn(),
+  setDataWorkerWasmPath: vi.fn(),
 }));
 
 import { applyModuleOverrides } from '../../../../../core/app/init/module-overrides';
 import { setWasmJsUrl } from '../../../../../wasm';
-import { setDataWorkerUrl } from '../../../../../workers/worker-pool';
+import { setDataWorkerUrl, setDataWorkerWasmPath } from '../../../../../workers/worker-pool';
 
 describe('applyModuleOverrides', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('forwards wasmPath when set', () => {
+  it('forwards wasmPath to BOTH the main thread and the worker pool', () => {
     applyModuleOverrides({ wasmPath: '/custom/wasm.js' });
+    // Main-thread consumers...
     expect(setWasmJsUrl).toHaveBeenCalledExactlyOnceWith('/custom/wasm.js');
+    // ...and the worker pool (the override does not cross the worker boundary
+    // on its own, so it must be forwarded explicitly).
+    expect(setDataWorkerWasmPath).toHaveBeenCalledExactlyOnceWith('/custom/wasm.js');
     expect(setDataWorkerUrl).not.toHaveBeenCalled();
   });
 

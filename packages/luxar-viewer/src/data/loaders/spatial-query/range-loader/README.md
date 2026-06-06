@@ -40,13 +40,13 @@ range-loader/
 Encoding detection follows the same priority order as the Python encoder
 (`detect-encoding.ts`):
 
-| Encoding      | Loader            | Stored form                          | Decode |
-| ------------- | ----------------- | ------------------------------------ | ------ |
-| `broadcasted` | `loadBroadcasted` | single value + repeat count          | Replicate one value across all items (`elementsPerItem` wide). |
-| `array_ref`   | `loadArrayRef`    | reference to another array           | Must be pre-resolved upstream — reaching the loader throws. |
-| `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode). |
-| `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values    | Dequantize via bounds (linear) or `maxLog` (log-space). |
-| `direct`      | `loadDirect`      | raw values in any numeric dtype      | Slice the requested ranges, convert to `Float32Array`. |
+| Encoding      | Loader            | Stored form                              | Decode                                                         |
+| ------------- | ----------------- | ---------------------------------------- | -------------------------------------------------------------- |
+| `broadcasted` | `loadBroadcasted` | single value + repeat count              | Replicate one value across all items (`elementsPerItem` wide). |
+| `array_ref`   | `loadArrayRef`    | reference to another array               | Must be pre-resolved upstream — reaching the loader throws.    |
+| `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode).       |
+| `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values        | Dequantize via bounds (linear) or `maxLog` (log-space).        |
+| `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, convert to `Float32Array`.         |
 
 `direct` is also the fallback when an array has no `encoding` metadata.
 
@@ -95,10 +95,10 @@ the first call. `resetSharedRangeLoader()` clears both singletons (test-only).
 
 `RangeLoaderConfig` (`encoding-types.ts`) is small:
 
-| Field             | Default                        | Meaning                                  |
-| ----------------- | ------------------------------ | ---------------------------------------- |
+| Field             | Default                        | Meaning                                    |
+| ----------------- | ------------------------------ | ------------------------------------------ |
 | `workerThreshold` | `1000`                         | Min elements before a decode uses workers. |
-| `logModule`       | `Modules.SPATIAL_INDEX_LOADER` | Log module tag for verbose output.       |
+| `logModule`       | `Modules.SPATIAL_INDEX_LOADER` | Log module tag for verbose output.         |
 
 `EncodingType` is the union `'broadcasted' | 'quantized' | 'lut' | 'array_ref' | 'direct'`.
 

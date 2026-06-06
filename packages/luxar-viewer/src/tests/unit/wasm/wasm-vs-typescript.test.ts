@@ -265,6 +265,127 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(wasmCount).toBe(tsCount);
       expect(arraysEqual(wasmOutput, tsOutput)).toBe(true);
     });
+
+    // Regression (W1): a NaN Cholesky entry must produce IDENTICAL visibility on
+    // both backends. Previously Rust used f32::max (discards NaN → finite extent
+    // → splat could be visible) while TS used Math.max (propagates NaN → hidden).
+    // Now Rust propagates NaN too, so both hide a far splat with NaN covariance.
+    // This case relies on the NaN-aware comparator (arraysEqual treats NaN-vs-NaN
+    // as equal, NaN-vs-finite as a mismatch).
+    it.skipIf(!wasmFilesExist)(
+      'NaN Cholesky + far center: WASM and TS agree (no f32::max divergence)',
+      () => {
+        const centers = new Float32Array([3.0, 0.0, 0.0]); // far from slice
+        // Row 1 norm is NaN (off-diagonal NaN): [L00, L10, L11, L20, L21, L22]
+        const choleskyFactors = new Float32Array([1.0, 0.0, NaN, 0.0, 0.0, 1.0]);
+        const slicePos = new Float32Array([0.0, 0.0, 0.0]);
+        const tolerance = new Float32Array([5.0, 5.0, 5.0]);
+        const tsOutput = new Uint8Array(1);
+        const wasmOutput = new Uint8Array(1);
+        const tsCount = tsModule.compute_nd_visibility_gsplats(
+          centers,
+          choleskyFactors,
+          slicePos,
+          tolerance,
+          3,
+          1,
+          tsOutput
+        );
+        const wasmCount = wasmModule!.compute_nd_visibility_gsplats(
+          centers,
+          choleskyFactors,
+          slicePos,
+          tolerance,
+          3,
+          1,
+          wasmOutput
+        );
+        expect(wasmCount).toBe(tsCount);
+        expect(arraysEqual(wasmOutput, tsOutput)).toBe(true);
+      }
+    );
+
+    // Regression (W1): near-1.0 visibility boundary. Reciprocal-multiply
+    // (`delta * (1/tol)`) vs direct division (`delta / tol`) can flip the
+    // `dist_sq <= 1.0` test by a ULP; both backends now use direct division, so
+    // a splat sitting on the boundary resolves identically.
+    it.skipIf(!wasmFilesExist)('near-boundary splat: WASM and TS agree (divide parity)', () => {
+      const centers = new Float32Array([0.7, 0.7, 0.0]);
+      const choleskyFactors = new Float32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+      const slicePos = new Float32Array([0.0, 0.0, 0.0]);
+      const tolerance = new Float32Array([1.0, 1.0, 1.0]);
+      const tsOutput = new Uint8Array(1);
+      const wasmOutput = new Uint8Array(1);
+      const tsCount = tsModule.compute_nd_visibility_gsplats(
+        centers,
+        choleskyFactors,
+        slicePos,
+        tolerance,
+        3,
+        1,
+        tsOutput
+      );
+      const wasmCount = wasmModule!.compute_nd_visibility_gsplats(
+        centers,
+        choleskyFactors,
+        slicePos,
+        tolerance,
+        3,
+        1,
+        wasmOutput
+      );
+      expect(wasmCount).toBe(tsCount);
+      expect(arraysEqual(wasmOutput, tsOutput)).toBe(true);
+    });
+  });
+
+  // Regression (W1): line-clipping near-parallel epsilon. A hidden-dim delta in
+  // [1e-10, 1e-7) previously diverged (Rust skipped clipping at <1e-7; TS only
+  // at <1e-10). Both now use SEGMENT_PARALLEL_EPSILON = 1e-7, so a near-parallel
+  // segment clips identically.
+  describe('regression: lines clip near-parallel epsilon (W1)', () => {
+    it.skipIf(!wasmFilesExist)('dv in [1e-10, 1e-7): WASM and TS agree', () => {
+      // 2 vertices, ndim=3, display dims [0,1]; hidden dim 2 has a tiny delta.
+      const positions = new Float32Array([0.0, 0.0, 0.05, 1.0, 1.0, 0.05 + 1e-8]);
+      const segments = new Uint32Array([0, 1]);
+      const slicePos = new Float32Array([0.0, 0.0, 0.0]);
+      const tolerance = new Float32Array([10.0, 10.0, 0.1]);
+      const displayDims = new Uint32Array([0, 1]);
+      const tsVis = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wVis = new Uint8Array(1);
+      const wT1 = new Float32Array(1);
+      const wT2 = new Float32Array(1);
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        1,
+        tsVis,
+        tsT1,
+        tsT2
+      );
+      const wCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        1,
+        wVis,
+        wT1,
+        wT2
+      );
+      expect(wCount).toBe(tsCount);
+      expect(arraysEqual(wVis, tsVis)).toBe(true);
+      expect(arraysAlmostEqual(wT1, tsT1)).toBe(true);
+      expect(arraysAlmostEqual(wT2, tsT2)).toBe(true);
+    });
   });
 
   // ============================================================================
@@ -712,6 +833,136 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(wasmCount).toBe(tsCount);
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
+
+    // Fused single-call projection (W5). The fused kernel writes compacted
+    // outputs, so we compare the dense prefix [0, count*stride) only. epsilon is
+    // scaled by sqrt(ndim) per the file's high-ndim accumulation convention.
+    const runFused = (
+      mod: WasmModule,
+      args: {
+        positions: Float32Array;
+        cholesky: Float32Array;
+        amplitudes: Float32Array;
+        colors: Float32Array;
+        discreteVisibility: Uint8Array;
+        slicePosition: Float32Array;
+        continuousHiddenDims: Uint32Array;
+        displayDims: Uint32Array;
+        ndim: number;
+        splatCount: number;
+      }
+    ): {
+      count: number;
+      centers: Float32Array;
+      chol: Float32Array;
+      amps: Float32Array;
+      cols: Float32Array;
+    } => {
+      const n = args.splatCount;
+      const centers = new Float32Array(n * 3);
+      const chol = new Float32Array(n * 6);
+      const amps = new Float32Array(n);
+      const cols = new Float32Array(n * 3);
+      const count = mod.project_gsplats_nd_to_3d(
+        args.positions,
+        args.cholesky,
+        args.amplitudes,
+        args.colors,
+        args.discreteVisibility,
+        args.slicePosition,
+        args.continuousHiddenDims,
+        args.displayDims,
+        args.ndim,
+        n,
+        1e-6,
+        3.0,
+        centers,
+        chol,
+        amps,
+        cols
+      );
+      return { count, centers, chol, amps, cols };
+    };
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d matches TS (correlated covariance)',
+      () => {
+        const ndim = 4;
+        const splatCount = 3;
+        const one = [2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0]; // correlated 4D packed
+        const args = {
+          positions: new Float32Array([0, 0, 0, 0, 1, 1, 1, 0.3, 2, 2, 2, 50]),
+          cholesky: new Float32Array([...one, ...one, ...one]),
+          amplitudes: new Float32Array([1.0, 0.8, 0.5]),
+          colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
+          discreteVisibility: new Uint8Array([1, 1, 1]),
+          slicePosition: new Float32Array([0, 0, 0, 0]),
+          continuousHiddenDims: new Uint32Array([3]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount,
+        };
+        const ts = runFused(tsModule, args);
+        const w = runFused(wasmModule!, args);
+        const eps = 1e-5 * Math.sqrt(ndim);
+        expect(w.count).toBe(ts.count);
+        expect(
+          arraysAlmostEqual(
+            w.centers.subarray(0, w.count * 3),
+            ts.centers.subarray(0, ts.count * 3),
+            eps
+          )
+        ).toBe(true);
+        expect(
+          arraysAlmostEqual(w.chol.subarray(0, w.count * 6), ts.chol.subarray(0, ts.count * 6), eps)
+        ).toBe(true);
+        expect(
+          arraysAlmostEqual(w.amps.subarray(0, w.count), ts.amps.subarray(0, ts.count), eps)
+        ).toBe(true);
+        expect(
+          arraysEqual(w.cols.subarray(0, w.count * 3), ts.cols.subarray(0, ts.count * 3))
+        ).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d matches TS (axis-permuted displayDims + discrete gate)',
+      () => {
+        const ndim = 4;
+        const splatCount = 3;
+        const one = [2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        const args = {
+          positions: new Float32Array([0, 0, 0, 0, 1, 1, 1, 0, 2, 2, 2, 0]),
+          cholesky: new Float32Array([...one, ...one, ...one]),
+          amplitudes: new Float32Array([1.0, 1.0, 1.0]),
+          colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
+          discreteVisibility: new Uint8Array([1, 0, 1]), // splat 1 gated out
+          slicePosition: new Float32Array([0, 0, 0, 0]),
+          continuousHiddenDims: new Uint32Array([3]),
+          displayDims: new Uint32Array([2, 0, 1]), // permuted X=dim2,Y=dim0,Z=dim1
+          ndim,
+          splatCount,
+        };
+        const ts = runFused(tsModule, args);
+        const w = runFused(wasmModule!, args);
+        const eps = 1e-5 * Math.sqrt(ndim);
+        expect(w.count).toBe(ts.count);
+        expect(w.count).toBe(2); // splat 1 gated
+        expect(
+          arraysAlmostEqual(
+            w.centers.subarray(0, w.count * 3),
+            ts.centers.subarray(0, ts.count * 3),
+            eps
+          )
+        ).toBe(true);
+        expect(
+          arraysAlmostEqual(w.chol.subarray(0, w.count * 6), ts.chol.subarray(0, ts.count * 6), eps)
+        ).toBe(true);
+        expect(
+          arraysEqual(w.cols.subarray(0, w.count * 3), ts.cols.subarray(0, ts.count * 3))
+        ).toBe(true);
+      }
+    );
   });
 
   // ============================================================================

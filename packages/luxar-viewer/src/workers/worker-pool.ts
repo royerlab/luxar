@@ -56,6 +56,25 @@ export function setDataWorkerUrl(url: string): void {
   dataWorkerUrlOverride = url;
 }
 
+/**
+ * WASM JS-shim URL forwarded into each worker's `initialize()` so the worker
+ * loads a relocated WASM binary instead of silently using the slow TS fallback.
+ *
+ * The main thread's {@link setWasmJsUrl} override lives in a different module
+ * instance than the worker's, so it does NOT cross the worker boundary on its
+ * own — this value is sent over the Comlink `initialize` RPC instead. Set via
+ * `LuxarAppOptions.wasmPath` from `applyModuleOverrides`.
+ */
+let dataWorkerWasmPathOverride: string | undefined;
+
+/**
+ * Override the WASM JS-shim URL used inside data workers. Pass an absolute URL.
+ * Call before the first worker is created.
+ */
+export function setDataWorkerWasmPath(url: string): void {
+  dataWorkerWasmPathOverride = url;
+}
+
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
@@ -129,6 +148,7 @@ export class WorkerPool {
         // (inside spawnWorker via the captured value) so setDataWorkerUrl
         // calls made before the first getWorkerPool() take effect.
         const urlOverride = dataWorkerUrlOverride;
+        const wasmPathOverride = dataWorkerWasmPathOverride;
         const workerPromises = Array.from({ length: workerCount }, (_, index) =>
           spawnWorker({
             index,
@@ -137,7 +157,7 @@ export class WorkerPool {
             urlOverride,
             pendingWorkers: this.pendingWorkers,
             attachPermanentHandlers: (w, n) => this.attachWorkerErrorHandlers(w, n),
-            runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n),
+            runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n, wasmPathOverride),
             isCurrentGeneration: () => this.initGeneration === myGeneration,
           })
         );
@@ -277,14 +297,16 @@ export class WorkerPool {
   private initializeWithGuard(
     worker: Worker,
     api: Remote<DataWorkerAPI>,
-    workerNumber: number
+    workerNumber: number,
+    wasmPath?: string
   ): Promise<WorkerInitResult> {
     return initializeWithGuard(
       worker,
       api,
       workerNumber,
       config.dataLoading.performance.workerInitTimeoutMs,
-      () => this.attachWorkerErrorHandlers(worker, workerNumber)
+      () => this.attachWorkerErrorHandlers(worker, workerNumber),
+      wasmPath
     );
   }
 

@@ -28,9 +28,14 @@ export async function decodeBroadcasted(
       `decodeBroadcasted: elementsPerPoint=${elementsPerPoint} must be a positive integer`
     );
   }
-  if (value.length < elementsPerPoint) {
+  // Strict contract (matches the Rust kernel + TS reference): value must be a
+  // scalar (length 1) or exactly elementsPerPoint values. Every other shape is
+  // rejected here — this is the single enforcement point, since the WASM kernel
+  // assumes a valid shape and the old "mixed broadcast" pad/truncate behavior
+  // was removed for Rust↔TS parity.
+  if (value.length !== 1 && value.length !== elementsPerPoint) {
     throw new Error(
-      `decodeBroadcasted: value too short (got ${value.length}, expected ≥ ${elementsPerPoint})`
+      `decodeBroadcasted: value.length must be 1 (scalar broadcast) or elementsPerPoint (${elementsPerPoint}), got ${value.length}`
     );
   }
   const result = new Float32Array(numPoints * elementsPerPoint);

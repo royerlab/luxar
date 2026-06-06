@@ -208,7 +208,9 @@ describe('validateNDArrays — direct boundary tests (P5)', () => {
     ).toThrow(/numItems=-1 must be a non-negative integer/);
   });
 
-  it('rejects ndim above MAX_WASM_DIMS', () => {
+  it('accepts ndim above MAX_WASM_DIMS (>16D is routed to the TS backend, not rejected)', () => {
+    // The validator no longer caps ndim — pickBackend() routes >16D to the
+    // uncapped TS reference. Array-length consistency is still enforced.
     expect(() =>
       validateNDArrays(
         'test',
@@ -218,10 +220,16 @@ describe('validateNDArrays — direct boundary tests (P5)', () => {
         MAX_WASM_DIMS + 1,
         0
       )
-    ).toThrow(new RegExp(`ndim=${MAX_WASM_DIMS + 1} out of range`));
+    ).not.toThrow();
   });
 
-  it('accepts ndim === MAX_WASM_DIMS (upper boundary inclusive)', () => {
+  it('rejects ndim < 1 (non-positive)', () => {
+    expect(() =>
+      validateNDArrays('test', new Float32Array(0), new Float32Array(0), new Float32Array(0), 0, 0)
+    ).toThrow(/must be a positive integer/);
+  });
+
+  it('accepts ndim === MAX_WASM_DIMS (WASM fast-path upper boundary)', () => {
     expect(() =>
       validateNDArrays(
         'test',
@@ -398,17 +406,30 @@ describe('validateChunkQueryInputs — boundary (P5)', () => {
     ).toThrow(/numChunks=-1 must be a non-negative integer/);
   });
 
-  it('rejects ndim out of range', () => {
+  it('rejects non-positive ndim', () => {
     expect(() =>
       validateChunkQueryInputs(
         'test',
         new Float32Array(0),
         new Float32Array(20),
         new Float32Array(20),
+        0,
+        0
+      )
+    ).toThrow(/must be a positive integer/);
+  });
+
+  it('accepts ndim>16 (chunk query is dimension-agnostic, not capped)', () => {
+    expect(() =>
+      validateChunkQueryInputs(
+        'test',
+        new Float32Array(0),
+        new Float32Array(17),
+        new Float32Array(17),
         17,
         0
       )
-    ).toThrow(/ndim=17 out of range/);
+    ).not.toThrow();
   });
 
   it('passes on exact-fit chunkBounds = numChunks × ndim × 2', () => {

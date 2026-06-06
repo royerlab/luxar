@@ -23,11 +23,12 @@ import type { ViewState, DataLoader } from '../data/data-loader-types';
 /**
  * Configuration for effective radius calculation.
  *
- * Canonical definition lives here in `types/` because both
- * `data/points/effective-radius-calculator.ts` (main-thread path) and
- * `workers/data-worker/projection/points.ts` (WASM-accelerated worker
- * path) consume the same shape. Re-exported from both sites for
- * backward compatibility — existing importers don't need to change.
+ * Canonical definition lives here in `types/`. The Points effective-radius
+ * code consumes this shape: `data/points/effective-radius-calculator.ts`
+ * (query-tolerance helpers) and `data/points/projection.ts` (the
+ * main-thread, WASM-accelerated projection). Re-exported from
+ * `effective-radius-calculator.ts` for backward compatibility — existing
+ * importers don't need to change.
  */
 export interface EffectiveRadiusConfig {
   /** Which dimensions points extend through spatially */

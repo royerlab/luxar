@@ -27,16 +27,16 @@ picking/
 7. **Pick gating** — `pickingSystem.setShouldPick(() => getOverlayManager()?.hasVisibleHoverOverlay() ?? false)` — no consumer, no work.
 8. **Event wiring** — all listeners are registered through the shared `EventGroup` so a single `pickingEvents.dispose()` removes them:
 
-| Source                                    | Event                  | Action                                                                     |
-| ----------------------------------------- | ---------------------- | -------------------------------------------------------------------------- |
-| `renderer.domElement`                     | `mousemove` (passive)  | `pickingSystem.onMouseMove(e)`                                             |
-| `renderer.domElement`                     | `mouseleave` (passive) | `pickingSystem.onMouseLeave()` — drops pending cursor                      |
-| `sceneManager.controls` (EventDispatcher) | `change`               | `pickingSystem.markDirty()`                                                |
-| `sceneManager.controls`                   | `start`                | `pickingSystem.suppress(true)` + `overlayManager.updateHoverContent(null)` |
-| `sceneManager.controls`                   | `end`                  | `pickingSystem.suppress(false)` — camera-settle re-pick re-arms naturally  |
-| `window`                                  | `resize`               | `pickingSystem.markDirty()`                                                |
+| Source                                    | Event                       | Action                                                                                                                                                                    |
+| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderer.domElement`                     | `mousemove` (passive)       | `pickingSystem.onMouseMove(e)`                                                                                                                                            |
+| `renderer.domElement`                     | `mouseleave` (passive)      | `pickingSystem.onMouseLeave()` — drops pending cursor                                                                                                                     |
+| `sceneManager.controls` (EventDispatcher) | `change`                    | `pickingSystem.markDirty()`                                                                                                                                               |
+| `sceneManager.controls`                   | `start`                     | `pickingSystem.suppress(true)` + `overlayManager.updateHoverContent(null)`                                                                                                |
+| `sceneManager.controls`                   | `end`                       | `pickingSystem.suppress(false)` — camera-settle re-pick re-arms naturally                                                                                                 |
+| `window`                                  | `resize`                    | `pickingSystem.markDirty()`                                                                                                                                               |
 | `window`                                  | `scroll` (capture, passive) | `pickingSystem.invalidateCanvasRect()` — page scroll moves the canvas on screen without changing the view, so bust just the cached rect (cheap) rather than `markDirty()` |
-| `sceneManager` (EventDispatcher)          | `camera-changed`       | `pickingSystem.setCamera(...)` for perspective ↔ ortho swaps               |
+| `sceneManager` (EventDispatcher)          | `camera-changed`            | `pickingSystem.setCamera(...)` for perspective ↔ ortho swaps                                                                                                              |
 
 Three.js EventDispatcher sources are registered via `pickingEvents.add(() => …removeEventListener)` since their signatures don't match `EventTarget`.
 

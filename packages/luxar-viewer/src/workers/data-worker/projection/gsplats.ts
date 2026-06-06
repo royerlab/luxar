@@ -12,10 +12,29 @@
  */
 
 import { transfer } from 'comlink';
-import { requireWasm, type WasmCtx } from '../state';
+import { pickBackend, type WasmCtx } from '../state';
 import { validateProjectionInputs } from '../validation';
 import { coerceColorsToFloat32, fillColorsWhite } from '../../color-utils';
+import { classifyHiddenDims } from './hidden-dims';
+import { MIN_AMPLITUDE, SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from './constants';
 import type { ProjectionViewState } from '../types';
+
+/**
+ * Coerce input colors to a normalized RGB Float32Array of length
+ * `splatCount * 3`, white-filling when no colors were provided. Shared
+ * by the standard-3D fast path and the general fused path so the
+ * `/255`, `/65535` normalization contract stays in one place
+ * (`color-utils.coerceColorsToFloat32`).
+ */
+function coerceColorsOrWhite(
+  colors: Float32Array | Uint8Array | Uint16Array | null,
+  splatCount: number
+): Float32Array {
+  if (colors) return coerceColorsToFloat32(colors);
+  const out = new Float32Array(splatCount * 3);
+  fillColorsWhite(out, splatCount);
+  return out;
+}
 
 export async function projectGSplatsTo3D(
   ctx: WasmCtx,
@@ -52,7 +71,7 @@ export async function projectGSplatsTo3D(
   sharpness: Float32Array;
   visibleCount: number;
 }> {
-  const wasmModule = requireWasm(ctx);
+  const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
   const { positions, choleskyFactors, amplitudes, colors, sharpness, viewState, ndim, splatCount } =
     params;
@@ -99,36 +118,75 @@ export async function projectGSplatsTo3D(
     );
   }
 
-  // Compute hidden dimensions (all dims not in displayDims)
-  const hiddenDims: number[] = [];
-  for (let d = 0; d < ndim; d++) {
-    if (!displayDims.includes(d)) {
-      hiddenDims.push(d);
+  // Standard-3D fast path: ndim === 3 with displayDims === [0, 1, 2]
+  // has no hidden dimensions, so there is nothing to attenuate or
+  // compact — every splat is visible. Preserves the semantics of the
+  // former main-thread `projectGSplats3DOnly`: a straight copy with NO
+  // amplitude filtering (the general fused path below culls amplitude <
+  // MIN_AMPLITUDE; the standard-3D copy intentionally does not). centers
+  // and Cholesky are already in 3D layout (3 and 6 elements per splat).
+  if (
+    ndim === 3 &&
+    displayDims.length === 3 &&
+    displayDims[0] === 0 &&
+    displayDims[1] === 1 &&
+    displayDims[2] === 2
+  ) {
+    if (splatCount === 0) {
+      const emptyF32 = new Float32Array(0);
+      return transfer(
+        {
+          centers3D: emptyF32,
+          choleskyFactors3D: new Float32Array(0),
+          amplitudes: new Float32Array(0),
+          colors: new Float32Array(0),
+          sharpness: new Float32Array(0),
+          visibleCount: 0,
+        },
+        [emptyF32.buffer]
+      );
     }
+    const centers3D = positions.slice(0, splatCount * 3);
+    const choleskyFactors3D = choleskyFactors.slice(0, splatCount * 6);
+    const outAmplitudes = amplitudes.slice(0, splatCount);
+    const outColors = coerceColorsOrWhite(colors, splatCount);
+    return transfer(
+      {
+        centers3D,
+        choleskyFactors3D,
+        amplitudes: outAmplitudes,
+        colors: outColors,
+        sharpness: new Float32Array(0),
+        visibleCount: splatCount,
+      },
+      [
+        centers3D.buffer as ArrayBuffer,
+        choleskyFactors3D.buffer as ArrayBuffer,
+        outAmplitudes.buffer as ArrayBuffer,
+        outColors.buffer as ArrayBuffer,
+      ]
+    );
   }
 
-  // preserve requested displayDims order (matches main-thread
-  // processor + Points/Lines convention). Hidden dims are still sorted
-  // for the WASM Mahalanobis path which expects ascending indices.
-  const orderedDisplayDims = [...displayDims];
-  const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
-
-  // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
-  // Discrete dimensions use a half-step threshold; continuous use WASM Mahalanobis.
-  // extend_to_all dimensions are skipped entirely — splats are always visible there.
-  const extendSet = new Set(params.extendToAllDims ?? []);
-  const discreteSet = new Set(params.discreteDims ?? []);
-  const activeHiddenDims = sortedHiddenDims.filter((d) => !extendSet.has(d));
-  const continuousHiddenDims = activeHiddenDims.filter((d) => !discreteSet.has(d));
-  const discreteHiddenDims = activeHiddenDims.filter((d) => discreteSet.has(d));
+  // Partition the hidden (non-displayed) dims into discrete (binary
+  // half-step visibility) and continuous (Gaussian attenuation),
+  // skipping extend_to_all dims entirely. displayDims order is
+  // preserved; hidden dims are sorted ascending for the WASM Mahalanobis
+  // path. (Shared with the golden-equivalence tests via hidden-dims.ts.)
+  const { orderedDisplayDims, continuousHiddenDims, discreteHiddenDims } = classifyHiddenDims(
+    ndim,
+    displayDims,
+    new Set(params.discreteDims ?? []),
+    new Set(params.extendToAllDims ?? [])
+  );
 
   // Convert to WASM-compatible arrays
   const slicePosF32 = new Float32Array(slicePosition);
   const continuousHiddenDimsU32 = new Uint32Array(continuousHiddenDims);
   const displayDimsU32 = new Uint32Array(orderedDisplayDims);
 
-  // Minimum amplitude threshold
-  const minAmplitude = 1e-6;
+  // Minimum attenuated-amplitude threshold for visibility.
+  const minAmplitude = MIN_AMPLITUDE;
 
   // Step 0: Pre-filter discrete dimensions (TypeScript, before WASM).
   // Splats whose center is more than half a step away in any discrete dim are invisible.
@@ -152,34 +210,45 @@ export async function projectGSplatsTo3D(
     discreteVisibility.fill(1);
   }
 
-  // Step 1: Compute attenuation and visibility for CONTINUOUS hidden dims using WASM
-  const visibility = new Uint8Array(splatCount);
-  const attenuation = new Float32Array(splatCount);
+  // Colors are coerced to normalized f32 once (or white-filled) on this side —
+  // the fused kernel takes a single Float32Array (wasm-bindgen can't accept a
+  // typed-array union), keeping the /255,/65535 contract centralized in
+  // color-utils. White-fill covers the whole splatCount so the kernel can read
+  // colors[i*3] for any visible splat.
+  const coercedColors = coerceColorsOrWhite(colors, splatCount);
 
-  const truncate = params.truncate ?? 3.0;
-  wasmModule.compute_gsplats_attenuation(
+  const truncate = params.truncate ?? SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
+
+  // FUSED single-call projection: discrete gate → continuous attenuation →
+  // visibility → compacted outputs, all in one pass. Replaces the former
+  // 6-call pipeline (compute_gsplats_attenuation + extract_3d_positions +
+  // compact_by_mask×2 + extract_visible_cholesky_3d + compact_attenuated_
+  // amplitudes), eliminating ~5 full passes and the repeated copies of the
+  // large positions/cholesky arrays across the wasm boundary. Outputs are
+  // worst-case sized to splatCount, then sliced to the returned visible count.
+  const outCentersBuf = new Float32Array(splatCount * 3);
+  const outCholBuf = new Float32Array(splatCount * 6);
+  const outAmpsBuf = new Float32Array(splatCount);
+  const outColorsBuf = new Float32Array(splatCount * 3);
+
+  const visibleCount = wasmModule.project_gsplats_nd_to_3d(
     positions,
     choleskyFactors,
     amplitudes,
+    coercedColors,
+    discreteVisibility,
     slicePosF32,
     continuousHiddenDimsU32,
+    displayDimsU32,
     ndim,
     splatCount,
     minAmplitude,
     truncate,
-    visibility,
-    attenuation
+    outCentersBuf,
+    outCholBuf,
+    outAmpsBuf,
+    outColorsBuf
   );
-
-  // Combine discrete and continuous visibility masks
-  let visibleCount = 0;
-  for (let i = 0; i < splatCount; i++) {
-    if (discreteVisibility[i] === 0) {
-      visibility[i] = 0;
-      attenuation[i] = 0.0;
-    }
-    if (visibility[i] !== 0) visibleCount++;
-  }
 
   // Early exit if no visible splats
   if (visibleCount === 0) {
@@ -197,52 +266,13 @@ export async function projectGSplatsTo3D(
     );
   }
 
-  // Step 2: Extract 3D centers using WASM
-  // First extract all centers, then compact by visibility
-  const allCenters3D = new Float32Array(splatCount * 3);
-  wasmModule.extract_3d_positions(positions, displayDimsU32, ndim, splatCount, allCenters3D);
-
-  // Compact centers by visibility
-  const centers3D = new Float32Array(visibleCount * 3);
-  wasmModule.compact_by_mask(allCenters3D, visibility, splatCount, 3, centers3D);
-
-  // Step 3: Extract 3D Cholesky submatrices for visible splats using WASM
-  const choleskyFactors3D = new Float32Array(visibleCount * 6);
-  wasmModule.extract_visible_cholesky_3d(
-    choleskyFactors,
-    visibility,
-    displayDimsU32,
-    ndim,
-    splatCount,
-    choleskyFactors3D
-  );
-
-  // Step 4: Compact attenuated amplitudes using WASM
-  const outAmplitudes = new Float32Array(visibleCount);
-  wasmModule.compact_attenuated_amplitudes(
-    amplitudes,
-    attenuation,
-    visibility,
-    splatCount,
-    outAmplitudes
-  );
-
-  // Step 5: Handle colors
-  const outColors = new Float32Array(visibleCount * 3);
-  if (colors) {
-    // Compact colors by visibility (WASM expects Float32 input)
-    wasmModule.compact_by_mask(coerceColorsToFloat32(colors), visibility, splatCount, 3, outColors);
-  } else {
-    fillColorsWhite(outColors, visibleCount);
-  }
-
-  // Build transferable list
-  const transferables: ArrayBuffer[] = [
-    centers3D.buffer as ArrayBuffer,
-    choleskyFactors3D.buffer as ArrayBuffer,
-    outAmplitudes.buffer as ArrayBuffer,
-    outColors.buffer as ArrayBuffer,
-  ];
+  // Dense prefix views (zero-copy); transfer the parent worst-case buffers.
+  // The renderer keys off `visibleCount`, and `.length` of each subarray is the
+  // exact visible extent, so the unused tail is never read.
+  const centers3D = outCentersBuf.subarray(0, visibleCount * 3);
+  const choleskyFactors3D = outCholBuf.subarray(0, visibleCount * 6);
+  const outAmplitudes = outAmpsBuf.subarray(0, visibleCount);
+  const outColors = outColorsBuf.subarray(0, visibleCount * 3);
 
   return transfer(
     {
@@ -253,6 +283,11 @@ export async function projectGSplatsTo3D(
       sharpness: new Float32Array(0), // Kept for API compatibility but unused
       visibleCount,
     },
-    transferables
+    [
+      outCentersBuf.buffer as ArrayBuffer,
+      outCholBuf.buffer as ArrayBuffer,
+      outAmpsBuf.buffer as ArrayBuffer,
+      outColorsBuf.buffer as ArrayBuffer,
+    ]
   );
 }

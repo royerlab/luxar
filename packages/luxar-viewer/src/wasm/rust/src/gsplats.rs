@@ -68,19 +68,26 @@ pub fn compute_nd_visibility_gsplats(
                 let val = cholesky_factors[row_start + col];
                 row_norm_sq += val * val;
             }
-            max_extent = max_extent.max(row_norm_sq.sqrt());
+            // NaN-propagating max to mirror the TS reference's `Math.max`
+            // (f32::max would DISCARD a NaN operand, leaving a finite extent and
+            // diverging from TS on malformed/NaN Cholesky input — see the
+            // gsplats parity test). Once max_extent is NaN it stays NaN.
+            let row_norm = row_norm_sq.sqrt();
+            if row_norm.is_nan() || row_norm > max_extent {
+                max_extent = row_norm;
+            }
         }
 
-        // Check if center + max extent is within tolerance
-        // OPTIMIZATION: Use reciprocal multiplication instead of division (10x faster)
+        // Check if center + max extent is within tolerance. Direct division is
+        // used (not reciprocal-multiply) so the boundary (dist_sq ≈ 1.0) is
+        // bit-for-bit consistent with the TS reference.
         let mut dist_sq = 0.0_f32;
         for dim in 0..ndim {
             let delta = centers[center_offset + dim] - slice_position[dim];
             let effective_tolerance = tolerance[dim] + max_extent;
 
             if effective_tolerance > 0.0 {
-                let inv_tolerance = 1.0 / effective_tolerance;
-                let normalized = delta * inv_tolerance;
+                let normalized = delta / effective_tolerance;
                 dist_sq += normalized * normalized;
             } else if delta.abs() > 1e-6 {
                 dist_sq = f32::INFINITY;
@@ -104,7 +111,7 @@ mod tests {
     fn test_gsplat_visibility_basic() {
         // 2 splats in 3D
         let centers = vec![
-            0.0, 0.0, 0.0,    // Splat 0 at origin
+            0.0, 0.0, 0.0, // Splat 0 at origin
             10.0, 10.0, 10.0, // Splat 1 far away
         ];
         // 3D cholesky: 6 elements per splat [L00, L10, L11, L20, L21, L22]
@@ -135,7 +142,7 @@ mod tests {
     fn test_gsplat_visibility_4d() {
         // 2 splats in 4D, same XYZ but different T
         let centers = vec![
-            0.0, 0.0, 0.0, 0.0,  // Splat 0 at t=0
+            0.0, 0.0, 0.0, 0.0, // Splat 0 at t=0
             0.0, 0.0, 0.0, 10.0, // Splat 1 at t=10
         ];
         // 4D cholesky: 10 elements per splat
@@ -169,8 +176,8 @@ mod tests {
         // L = [[0.5, 0, 0], [0, 0.5, 0], [0, 0, 5.0]]
         // Sigma = L * L^T -> diag(0.25, 0.25, 25.0) - elongated in z
         let centers = vec![
-            0.0, 0.0, 0.0,   // Splat 0 at origin
-            0.0, 0.0, 20.0,  // Splat 1 at z=20
+            0.0, 0.0, 0.0, // Splat 0 at origin
+            0.0, 0.0, 20.0, // Splat 1 at z=20
         ];
         let cholesky = vec![
             0.5, 0.0, 0.5, 0.0, 0.0, 5.0, // Splat 0

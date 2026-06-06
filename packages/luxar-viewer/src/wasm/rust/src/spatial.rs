@@ -77,10 +77,8 @@ mod tests {
         // 3 chunks in 3D space
         let chunk_bounds = vec![
             // Chunk 0: [0,0,0] to [1,1,1]
-            0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
-            // Chunk 1: [1,1,1] to [2,2,2]
-            1.0, 2.0, 1.0, 2.0, 1.0, 2.0,
-            // Chunk 2: [5,5,5] to [6,6,6] (far away)
+            0.0, 1.0, 0.0, 1.0, 0.0, 1.0, // Chunk 1: [1,1,1] to [2,2,2]
+            1.0, 2.0, 1.0, 2.0, 1.0, 2.0, // Chunk 2: [5,5,5] to [6,6,6] (far away)
             5.0, 6.0, 5.0, 6.0, 5.0, 6.0,
         ];
 
@@ -107,8 +105,7 @@ mod tests {
         // 2 chunks in 2D space
         let chunk_bounds = vec![
             // Chunk 0: [0,0] to [1,1]
-            0.0, 1.0, 0.0, 1.0,
-            // Chunk 1: [3,3] to [4,4] (far away)
+            0.0, 1.0, 0.0, 1.0, // Chunk 1: [3,3] to [4,4] (far away)
             3.0, 4.0, 3.0, 4.0,
         ];
 
@@ -136,7 +133,10 @@ mod tests {
         let mut output = vec![0u32; 1];
         let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 3, 1, &mut output);
 
-        assert_eq!(count, 1, "Single all-encompassing chunk should always match");
+        assert_eq!(
+            count, 1,
+            "Single all-encompassing chunk should always match"
+        );
         assert_eq!(output[0], 0);
     }
 
@@ -145,8 +145,7 @@ mod tests {
         // 2 chunks, query position far outside both
         let chunk_bounds = vec![
             // Chunk 0: [0,0,0] to [1,1,1]
-            0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
-            // Chunk 1: [2,2,2] to [3,3,3]
+            0.0, 1.0, 0.0, 1.0, 0.0, 1.0, // Chunk 1: [2,2,2] to [3,3,3]
             2.0, 3.0, 2.0, 3.0, 2.0, 3.0,
         ];
 
@@ -156,7 +155,10 @@ mod tests {
         let mut output = vec![0u32; 2];
         let count = query_chunks_for_view(&chunk_bounds, &slice_pos, &tolerance, 3, 2, &mut output);
 
-        assert_eq!(count, 0, "No chunks should match when position is far outside");
+        assert_eq!(
+            count, 0,
+            "No chunks should match when position is far outside"
+        );
     }
 
     #[test]
@@ -178,7 +180,10 @@ mod tests {
         // Check: chunk_max < query_min? 1.0 < 1.0 = false
         // Check: chunk_min > query_max? 0.0 > 1.0 = false
         // So it intersects
-        assert_eq!(count, 1, "Chunk should match when position is exactly on boundary");
+        assert_eq!(
+            count, 1,
+            "Chunk should match when position is exactly on boundary"
+        );
         assert_eq!(output[0], 0);
     }
 }

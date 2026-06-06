@@ -28,9 +28,12 @@ async function loadWorker(): Promise<WorkerModule> {
     calculate_segment_lengths: vi.fn(),
     mark_clipped_endpoints: vi.fn(),
     compact_by_mask: vi.fn(),
+    calculate_bounds_3d: vi.fn(() => 0),
+    count_visible: vi.fn(() => 0),
+    radii_to_visibility_mask: vi.fn(() => 0),
     extract_visible_cholesky_3d: vi.fn(),
-    compute_gsplats_attenuation: vi.fn(),
-    compact_attenuated_amplitudes: vi.fn(),
+    compute_gsplats_attenuation: vi.fn(() => 0),
+    compact_attenuated_amplitudes: vi.fn(() => 0),
     decode_quantized_u8: vi.fn(),
     decode_quantized_u16: vi.fn(),
     decode_log_scalar_u8: vi.fn(),
@@ -46,6 +49,9 @@ async function loadWorker(): Promise<WorkerModule> {
     initWasm: vi.fn(async () => wasmStub),
     // wasmStub stands in for the compiled backend, not the fallback.
     isWasmFallback: vi.fn(() => false),
+    // getFallback supplies the uncapped TS backend used for ndim>16 routing;
+    // we reuse the same stub so >16D calls land on the same spies.
+    getFallback: vi.fn(() => wasmStub),
   }));
   vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -66,69 +72,11 @@ describe('data-worker validation — projection entry points', () => {
     vi.unstubAllGlobals();
   });
 
-  it('projectPointsTo3D rejects ndim out of [1, 16]', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(0),
-        colors: null,
-        radii: null,
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: new Array(20).fill(0) },
-        effectiveRadiusConfig: null,
-        ndim: 17,
-        numPoints: 0,
-      })
-    ).rejects.toThrow(/ndim=17 out of range/);
-  });
-
-  it('projectPointsTo3D rejects positions array shorter than numPoints × ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(5), // too short for 10 points × 3 dims
-        colors: null,
-        radii: null,
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
-        effectiveRadiusConfig: null,
-        ndim: 3,
-        numPoints: 10,
-      })
-    ).rejects.toThrow(/positions array too short/);
-  });
-
-  it('projectPointsTo3D rejects radii too short for numPoints', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(30),
-        colors: null,
-        radii: new Float32Array(3), // need 10
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
-        effectiveRadiusConfig: null,
-        ndim: 3,
-        numPoints: 10,
-      })
-    ).rejects.toThrow(/radii too short/);
-  });
-
-  it('projectPointsTo3D rejects displayDims with out-of-range entries', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(30),
-        colors: null,
-        radii: null,
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 7], slicePosition: [0, 0, 0] }, // 7 ≥ ndim
-        effectiveRadiusConfig: null,
-        ndim: 3,
-        numPoints: 10,
-      })
-    ).rejects.toThrow(/displayDims\[2\]=7 out of range/);
-  });
+  // Points projection moved to the main thread (WASM-accelerated) in W4b,
+  // so it's no longer a worker entry point. Its validation guards (ndim,
+  // positions/radii length, displayDims range, effectiveRadiusConfig) are
+  // now exercised against `projectPointsTo3D` directly in
+  // `tests/unit/data/points/projection.test.ts`.
 
   it('projectLinesTo3D rejects negative segmentCount', async () => {
     const mod = await loadWorker();
@@ -399,15 +347,28 @@ describe('data-worker validation — decode entry points', () => {
     ).rejects.toThrow(/elementsPerPoint=0 must be a positive integer/);
   });
 
-  it('decodeBroadcasted rejects value shorter than elementsPerPoint', async () => {
+  it('decodeBroadcasted rejects ambiguous value length (not 1 and not elementsPerPoint)', async () => {
     const mod = await loadWorker();
+    // Strict contract: value must be a scalar (length 1) or exactly
+    // elementsPerPoint. length 2 with elementsPerPoint 4 is rejected.
     await expect(
       mod.workerAPI.decodeBroadcasted({
-        value: new Float32Array([1, 2]), // need 4
+        value: new Float32Array([1, 2]),
         numPoints: 10,
         elementsPerPoint: 4,
       })
-    ).rejects.toThrow(/value too short/);
+    ).rejects.toThrow(/value\.length must be 1/);
+  });
+
+  it('decodeBroadcasted also rejects an over-long value (length > elementsPerPoint)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeBroadcasted({
+        value: new Float32Array([1, 2, 3, 4]), // 4 > elementsPerPoint 3
+        numPoints: 10,
+        elementsPerPoint: 3,
+      })
+    ).rejects.toThrow(/value\.length must be 1/);
   });
 });
 
@@ -458,21 +419,7 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/colors too short for max segment vertex 3/);
   });
 
-  it('projectPointsTo3D rejects colors shorter than 3 × numPoints', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(30),
-        colors: new Uint8Array(15), // need 30 (10 points × 3)
-        radii: null,
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
-        effectiveRadiusConfig: null,
-        ndim: 3,
-        numPoints: 10,
-      })
-    ).rejects.toThrow(/colors too short/);
-  });
+  // (Points colors-length guard moved to data/points/projection.test.ts — W4b.)
 
   it('projectGSplatsTo3D rejects colors shorter than 3 × splatCount', async () => {
     const mod = await loadWorker();
@@ -527,7 +474,7 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/sharpness too short/);
   });
 
-  it('querySpatialIndex rejects ndim out of [1, 16]', async () => {
+  it('querySpatialIndex rejects non-positive / non-integer ndim', async () => {
     const mod = await loadWorker();
     await expect(
       mod.workerAPI.querySpatialIndex({
@@ -535,9 +482,24 @@ describe('data-worker validation — segment/color/query gaps', () => {
         slicePosition: new Float32Array(20),
         tolerance: new Float32Array(20),
         numChunks: 0,
+        ndim: 0,
+      })
+    ).rejects.toThrow(/must be a positive integer/);
+  });
+
+  it('querySpatialIndex accepts ndim>16 (chunk AABB query is dimension-agnostic)', async () => {
+    const mod = await loadWorker();
+    // query_chunks_for_view uses dynamic indexing (no fixed 16-dim cap), so >16D
+    // is handled natively — it must not be rejected.
+    await expect(
+      mod.workerAPI.querySpatialIndex({
+        chunkBounds: new Float32Array(0),
+        slicePosition: new Float32Array(17),
+        tolerance: new Float32Array(17),
+        numChunks: 0,
         ndim: 17,
       })
-    ).rejects.toThrow(/ndim=17 out of range/);
+    ).resolves.toBeDefined();
   });
 
   it('querySpatialIndex rejects chunkBounds shorter than numChunks × ndim × 2', async () => {
@@ -660,86 +622,8 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/scalars too short/);
   });
 
-  it('projectPointsTo3D rejects effectiveRadiusConfig.spatialExtendDims shorter than ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(15), // 5 points × 3
-        colors: null,
-        radii: new Float32Array(5),
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
-        effectiveRadiusConfig: {
-          // ndim=3 below; need at least 3 entries.
-          spatialExtendDims: [false, false],
-          maxRadius: 1.0,
-        },
-        ndim: 3,
-        numPoints: 5,
-      })
-    ).rejects.toThrow(/spatialExtendDims too short/);
-  });
-
-  it('projectPointsTo3D rejects effectiveRadiusConfig.maxRadius non-finite', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(15),
-        colors: null,
-        radii: new Float32Array(5),
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
-        effectiveRadiusConfig: {
-          spatialExtendDims: [false, false, false],
-          maxRadius: Number.POSITIVE_INFINITY,
-        },
-        ndim: 3,
-        numPoints: 5,
-      })
-    ).rejects.toThrow(/maxRadius=Infinity must be a finite number/);
-  });
-
-  it('projectPointsTo3D rejects effectiveRadiusConfig with missing tolerance', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(15),
-        colors: null,
-        radii: new Float32Array(5),
-        sharpness: null,
-        // tolerance omitted via cast — production callers always provide
-        // it; this test guards the worker boundary against malformed
-        // direct callers and future regressions.
-        viewState: {
-          displayDims: [0, 1, 2],
-          slicePosition: [0, 0, 0],
-        } as unknown as { displayDims: number[]; slicePosition: number[]; tolerance: number[] },
-        effectiveRadiusConfig: {
-          spatialExtendDims: [false, false, false],
-          maxRadius: 1.0,
-        },
-        ndim: 3,
-        numPoints: 5,
-      })
-    ).rejects.toThrow(/viewState.tolerance too short/);
-  });
-
-  it('projectPointsTo3D rejects effectiveRadiusConfig with tolerance shorter than ndim', async () => {
-    const mod = await loadWorker();
-    await expect(
-      mod.workerAPI.projectPointsTo3D({
-        positions: new Float32Array(15),
-        colors: null,
-        radii: new Float32Array(5),
-        sharpness: null,
-        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0] },
-        effectiveRadiusConfig: {
-          spatialExtendDims: [false, false, false],
-          maxRadius: 1.0,
-        },
-        ndim: 3,
-        numPoints: 5,
-      })
-    ).rejects.toThrow(/viewState.tolerance too short/);
-  });
+  // (Points effectiveRadiusConfig guards — spatialExtendDims length,
+  // finite maxRadius, tolerance length — moved to
+  // data/points/projection.test.ts in W4b, where they run against the
+  // main-thread WASM-accelerated projectPointsTo3D.)
 });

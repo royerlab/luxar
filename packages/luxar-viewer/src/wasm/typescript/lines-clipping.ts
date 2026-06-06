@@ -14,6 +14,15 @@
  */
 
 /**
+ * Threshold below which a segment is treated as parallel to the slice in a
+ * hidden dimension (so clipping in that dim is skipped). MUST stay identical to
+ * the Rust crate's `common::SEGMENT_PARALLEL_EPSILON` — a mismatch silently
+ * diverges visibility for near-parallel segments (this was previously 1e-10 here
+ * vs 1e-7 in Rust).
+ */
+const SEGMENT_PARALLEL_EPSILON = 1e-7;
+
+/**
  * Clip a single segment to the nD slice and return interpolation parameters.
  *
  * Returns [visible, t1, t2] where:
@@ -82,7 +91,7 @@ export function clip_segment_single(
 
     // Compute intersection parameters
     const dv = v2 - v1;
-    if (Math.abs(dv) < 1e-10) {
+    if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
       continue; // Parallel to slice
     }
 
@@ -178,7 +187,7 @@ export function clip_segments_batch(
       }
 
       const dv = v2Val - v1Val;
-      if (Math.abs(dv) < 1e-10) {
+      if (Math.abs(dv) < SEGMENT_PARALLEL_EPSILON) {
         continue;
       }
 

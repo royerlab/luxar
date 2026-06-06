@@ -47,7 +47,7 @@ export { commitLinesGeometry } from '../commit/commit-lines-geometry';
 // GSplats
 export interface StagedGSplatsCommit {
   path: string;
-  processed: ReturnType<typeof projectGSplats>;
+  processed: ProcessedGSplatsData;
   cholesky01: Float32Array;
   cholesky23: Float32Array;
   cholesky45: Float32Array;
@@ -65,7 +65,7 @@ export async function projectGSplatsTo3DUsingWorker(
   viewState: GSplatsViewState,
   truncate: number,
   updateVersion: number
-): Promise<ReturnType<typeof projectGSplats>>;
+): Promise<ProcessedGSplatsData>;
 export { commitGSplatsGeometry } from '../commit/commit-gsplats-geometry';
 ```
 

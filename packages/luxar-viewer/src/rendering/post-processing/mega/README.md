@@ -3,7 +3,7 @@
 The heaviest post-processing effect: a fused fragment shader that runs
 bloom mix → chromatic lens distortion → detector noise → EOG → tone
 mapping → vignette → sRGB encoding in a single pass. Bloom is mixed
-into the HDR sample *before* lens distortion samples the buffer, so a
+into the HDR sample _before_ lens distortion samples the buffer, so a
 distorted sample picks up bloom at its distorted UV too. The four files
 here reference only each other (plus the shared `ShaderSource` type
 from `../../materials/_shared/`).

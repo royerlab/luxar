@@ -62,6 +62,9 @@ function makeCtx(wasmStub: unknown): WasmCtx {
     // visibility helpers only touch one each, and the stub is opaque
     // to those callsites.
     wasm: wasmStub as WasmCtx['wasm'],
+    // tsFallback mirrors the stub so the >16D routing path (pickBackend) lands
+    // on the same spy — lets us assert that ndim>16 is SERVED (not rejected).
+    tsFallback: wasmStub as WasmCtx['wasm'],
     visibilityMaskBuffer: null,
   };
 }
@@ -202,19 +205,23 @@ describe('computeNDVisibilityPoints — direct unit (G1)', () => {
     expect(wasm.compute_nd_visibility_points).not.toHaveBeenCalled();
   });
 
-  it('rejects ndim out of [1, 16] (boundary, P5)', async () => {
-    const wasm = makeWasmStub();
-    const ctx = makeCtx(wasm);
-    await expect(
-      computeNDVisibilityPoints(ctx, {
-        positions: new Float32Array(0),
-        radii: new Float32Array(0),
-        slicePosition: new Float32Array(20),
-        tolerance: new Float32Array(20),
-        ndim: 17,
-        numPoints: 0,
-      })
-    ).rejects.toThrow(/ndim=17 out of range/);
+  it('routes ndim>16 to the uncapped TS backend instead of rejecting (>16D support)', async () => {
+    const onPoints = vi.fn();
+    const wasm = makeWasmStub({ pointsReturn: 1, onPoints });
+    const ctx = makeCtx(wasm); // tsFallback === wasm stub
+    const result = await computeNDVisibilityPoints(ctx, {
+      positions: new Float32Array(17),
+      radii: new Float32Array(1),
+      slicePosition: new Float32Array(17),
+      tolerance: new Float32Array(17),
+      ndim: 17,
+      numPoints: 1,
+    });
+    // >16D is SUPPORTED (served by the TS reference via pickBackend), not refused.
+    expect(result.visibleCount).toBe(1);
+    expect(onPoints).toHaveBeenCalled();
+    const calledNdim = onPoints.mock.calls[0][4]; // ndim arg (positions, radii, slice, tol, ndim, ...)
+    expect(calledNdim).toBe(17);
   });
 
   it('rejects slicePosition shorter than ndim (boundary, P5)', async () => {
@@ -365,20 +372,22 @@ describe('computeNDVisibilityLines — direct unit (G1)', () => {
     ).rejects.toThrow(/widths too short/);
   });
 
-  it('rejects ndim out of [1, 16] (boundary, P5)', async () => {
-    const wasm = makeWasmStub();
+  it('routes ndim>16 to the uncapped TS backend instead of rejecting (>16D support)', async () => {
+    const onLines = vi.fn();
+    const wasm = makeWasmStub({ linesReturn: 1, onLines });
     const ctx = makeCtx(wasm);
-    await expect(
-      computeNDVisibilityLines(ctx, {
-        vertices: new Float32Array(0),
-        segments: new Uint32Array(0),
-        widths: new Float32Array(0),
-        slicePosition: new Float32Array(20),
-        tolerance: new Float32Array(20),
-        ndim: 17,
-        numSegments: 0,
-      })
-    ).rejects.toThrow(/ndim=17 out of range/);
+    const result = await computeNDVisibilityLines(ctx, {
+      vertices: new Float32Array(34), // 2 vertices × 17 dims
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([1, 1]),
+      slicePosition: new Float32Array(17),
+      tolerance: new Float32Array(17),
+      ndim: 17,
+      numSegments: 1,
+    });
+    expect(result.visibleCount).toBe(1);
+    expect(onLines).toHaveBeenCalled();
+    expect(onLines.mock.calls[0][5]).toBe(17); // ndim arg
   });
 
   it('rejects slicePosition shorter than ndim (boundary, P5)', async () => {
@@ -466,19 +475,21 @@ describe('computeNDVisibilityGSplats — direct unit (G1)', () => {
     expect(wasm.compute_nd_visibility_gsplats).not.toHaveBeenCalled();
   });
 
-  it('rejects ndim out of [1, 16] (boundary, P5)', async () => {
-    const wasm = makeWasmStub();
+  it('routes ndim>16 to the uncapped TS backend instead of rejecting (>16D support)', async () => {
+    const onGSplats = vi.fn();
+    const wasm = makeWasmStub({ gsplatsReturn: 1, onGSplats });
     const ctx = makeCtx(wasm);
-    await expect(
-      computeNDVisibilityGSplats(ctx, {
-        centers: new Float32Array(0),
-        choleskyFactors: new Float32Array(0),
-        slicePosition: new Float32Array(20),
-        tolerance: new Float32Array(20),
-        ndim: 17,
-        numSplats: 0,
-      })
-    ).rejects.toThrow(/ndim=17 out of range/);
+    const result = await computeNDVisibilityGSplats(ctx, {
+      centers: new Float32Array(17), // 1 splat × 17 dims
+      choleskyFactors: new Float32Array((17 * 18) / 2), // packed lower-triangular
+      slicePosition: new Float32Array(17),
+      tolerance: new Float32Array(17),
+      ndim: 17,
+      numSplats: 1,
+    });
+    expect(result.visibleCount).toBe(1);
+    expect(onGSplats).toHaveBeenCalled();
+    expect(onGSplats.mock.calls[0][4]).toBe(17); // ndim arg
   });
 
   it('grows pooled buffer using 1.5x policy (symmetry with points/lines) (P8)', async () => {

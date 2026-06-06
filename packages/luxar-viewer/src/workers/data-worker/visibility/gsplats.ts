@@ -6,7 +6,7 @@
  * Reuses the pooled `ctx.visibilityMaskBuffer` across calls.
  */
 
-import { requireWasm, type WasmCtx } from '../state';
+import { pickBackend, type WasmCtx } from '../state';
 import { validateNDArrays } from '../validation';
 
 export async function computeNDVisibilityGSplats(
@@ -20,7 +20,7 @@ export async function computeNDVisibilityGSplats(
     numSplats: number;
   }
 ): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(ctx);
+  const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
   const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
   validateNDArrays(

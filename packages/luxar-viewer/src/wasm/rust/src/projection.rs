@@ -162,9 +162,8 @@ pub fn compact_by_mask(
             let src_offset = i * stride;
             let dst_offset = out_idx * stride;
 
-            for j in 0..stride {
-                output[dst_offset + j] = input[src_offset + j];
-            }
+            output[dst_offset..dst_offset + stride]
+                .copy_from_slice(&input[src_offset..src_offset + stride]);
 
             out_idx += 1;
         }
@@ -209,7 +208,12 @@ pub fn radii_to_visibility_mask(
     count: usize,
     output: &mut [u8],
 ) -> u32 {
-    debug_assert!(output.len() >= count, "output too small: {} < {}", output.len(), count);
+    debug_assert!(
+        output.len() >= count,
+        "output too small: {} < {}",
+        output.len(),
+        count
+    );
 
     let mut visible = 0u32;
 

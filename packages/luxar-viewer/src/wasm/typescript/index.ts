@@ -46,6 +46,7 @@ export {
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
+  project_gsplats_nd_to_3d,
 } from './gsplats-processing';
 export {
   clip_segment_single,
@@ -91,6 +92,7 @@ import {
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
+  project_gsplats_nd_to_3d,
 } from './gsplats-processing';
 import {
   clip_segment_single,
@@ -134,6 +136,7 @@ export class TypeScriptFallback implements WasmModule {
   compute_gsplats_attenuation = compute_gsplats_attenuation;
   extract_visible_cholesky_3d = extract_visible_cholesky_3d;
   compact_attenuated_amplitudes = compact_attenuated_amplitudes;
+  project_gsplats_nd_to_3d = project_gsplats_nd_to_3d;
   clip_segment_single = clip_segment_single;
   clip_segments_batch = clip_segments_batch;
   interpolate_clipped_positions = interpolate_clipped_positions;

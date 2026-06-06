@@ -1,11 +1,21 @@
 // [data.md/O2][P10] Split from `lines-clipping.test.ts`: clipSegmentToSlice
 // concrete cases + property-based invariants + small math helpers
-// (lerp / lerpVec3 / distance3D) used by the clipper. Projection-pipeline
-// tests live alongside in `project-lines-to-3d.test.ts` and
-// `project-lines-wasm-parity.test.ts`.
+// (lerp / lerpVec3 / distance3D) used by the clipper.
+//
+// The hand-written main-thread clip copy was deleted in W4. These tests
+// now run against `tests/helpers/projection-adapters`, which wraps the
+// live TS-reference clipper (`wasm/typescript/lines-clipping.ts`) — the
+// implementation the worker dispatcher uses as its fallback — in the
+// legacy object-shaped API, so the property/case coverage is preserved
+// against production code rather than a deleted duplicate.
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { clipSegmentToSlice, lerp, lerpVec3, distance3D } from '../../../../data/lines/projection';
+import {
+  clipSegmentToSlice,
+  lerp,
+  lerpVec3,
+  distance3D,
+} from '../../../helpers/projection-adapters';
 
 describe('clipSegmentToSlice', () => {
   // Default 3D display setup: display dims [0, 1, 2] (XYZ)

@@ -25,11 +25,9 @@ data-worker/
 │                      100K-element visibility scratch buffer, throws if
 │                      WebAssembly itself is unavailable.
 ├── types.ts         — ProjectionViewState (narrow ViewState subset the
-│                      worker actually consumes) and PointsOutputBuffers
-│                      (TransferableAccumulator pre-allocated outputs).
-│                      Re-exports EffectiveRadiusConfig from
-│                      `../../types/points` so producers and worker can't
-│                      drift.
+│                      worker actually consumes). Re-exports
+│                      EffectiveRadiusConfig from `../../types/points` so
+│                      producers and worker can't drift.
 ├── validation.ts    — Pure JS→WASM boundary guards: validateNDArrays,
 │                      validateProjectionInputs, validateDecodeArgs,
 │                      validateLineSegmentReferences,
@@ -42,10 +40,11 @@ data-worker/
 ├── visibility/      — Three tasks: computeNDVisibilityPoints / Lines /
 │                      GSplats. Share the pooled visibilityMaskBuffer
 │                      from state.ts (grown as needed).
-├── projection/      — Three tasks: projectPointsTo3D / projectLinesTo3D /
-│                      projectGSplatsTo3D. nD → 3D extraction; Points
-│                      supports the TransferableAccumulator zero-alloc
-│                      output path via PointsOutputBuffers.
+├── projection/      — Two tasks: projectLinesTo3D / projectGSplatsTo3D
+│                      (nD → 3D). Points project on the main thread
+│                      (WASM-accelerated, data/points/projection.ts), so
+│                      they are not a worker task; this dir also hosts the
+│                      shared in-process dispatcher + getPointsBackend.
 └── decode/          — Four tasks: decodeQuantized, decodeLogScalar,
                        decodeLUT, decodeBroadcasted. Per-attribute
                        dequantization paths called from the loaders'
@@ -103,8 +102,9 @@ worker.
   visibility pass.
 - [visibility](./visibility/) — per-geometry hypersphere-intersection
   kernels (Points, Lines, GSplats) sharing the pooled mask buffer.
-- [projection](./projection/) — per-geometry nD → 3D extraction; Points
-  supports zero-alloc output via TransferableAccumulator buffers.
+- [projection](./projection/) — Lines/GSplats nD → 3D extraction (worker
+  or in-process); Points project on the main thread (WASM-accelerated) in
+  `data/points/projection.ts`.
 - [decode](./decode/) — quantized / log-scalar / LUT / broadcasted
   dequantization tasks called from the loader chunk-decode stage.
 

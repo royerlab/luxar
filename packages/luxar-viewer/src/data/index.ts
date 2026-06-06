@@ -58,13 +58,10 @@ export type { ArrayMetadata } from './array-decoder/decoder';
 
 // Lines data loading
 export { LinesSpatialIndexLoader } from './lines/lines-spatial-index-loader';
-export {
-  clipSegmentToSlice,
-  projectLinesTo3D,
-  lerp,
-  lerpVec3,
-  distance3D,
-} from './lines/projection';
+// nD → 3D line projection now lives solely in the worker dispatcher
+// (`workers/data-worker/projection/lines.ts`); only the empty-payload
+// factory remains in `lines/projection.ts` and is consumed directly by
+// the loader, so nothing is re-exported from the barrel here.
 
 // Extracted modules (decomposed from SceneLoader)
 export {
