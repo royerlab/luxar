@@ -37,7 +37,7 @@ use crate::common::{
 /// Panics if `ndim > 16`. Use TypeScript fallback for higher dimensions.
 ///
 /// # Optimization Notes
-/// - Replaced division with reciprocal multiplication (10x faster)
+/// - Direct division (bit-consistent with the TS reference)
 /// - Hoisted epsilon constant
 /// - Loop fusion for norm computation
 #[wasm_bindgen]
@@ -50,18 +50,16 @@ pub fn mahalanobis_distance(diff: &[f32], packed_l: &[f32], ndim: usize) -> f32 
     // Using a small fixed-size array for common cases (up to 16 dims)
     let mut y = [0.0f32; MAX_SUPPORTED_DIMS];
 
-    // OPTIMIZATION: Avoid division in hot loop - use reciprocal multiplication
+    // Direct division (not reciprocal-multiply) keeps forward-substitution
+    // bit-consistent with the TS reference; rounding from `val * (1/diag)`
+    // would compound per dimension and silently drift at high ndim.
     for i in 0..ndim {
         let mut val = diff[i];
         for j in 0..i {
             val -= packed_l[packed_index(i, j)] * y[j];
         }
         let diag = packed_l[packed_index(i, i)];
-        y[i] = if diag > EPSILON {
-            val * (1.0 / diag) // Reciprocal multiplication instead of division
-        } else {
-            0.0
-        };
+        y[i] = if diag > EPSILON { val / diag } else { 0.0 };
     }
 
     // OPTIMIZATION: Loop fusion - compute sum of squares directly
@@ -236,8 +234,18 @@ pub fn compute_gsplats_attenuation(
 ) -> u32 {
     validate_ndim(ndim, "compute_gsplats_attenuation");
 
-    debug_assert!(output_visibility.len() >= splat_count, "output_visibility too small: {} < {}", output_visibility.len(), splat_count);
-    debug_assert!(output_attenuation.len() >= splat_count, "output_attenuation too small: {} < {}", output_attenuation.len(), splat_count);
+    debug_assert!(
+        output_visibility.len() >= splat_count,
+        "output_visibility too small: {} < {}",
+        output_visibility.len(),
+        splat_count
+    );
+    debug_assert!(
+        output_attenuation.len() >= splat_count,
+        "output_attenuation too small: {} < {}",
+        output_attenuation.len(),
+        splat_count
+    );
 
     let num_hidden = hidden_dims.len();
     let full_packed_size = (ndim * (ndim + 1)) / 2;
@@ -302,7 +310,7 @@ pub fn compute_gsplats_attenuation(
 ///
 /// # Optimization Notes
 /// - Inlined for zero-overhead abstraction
-/// - Reciprocal multiplication instead of division (10x faster)
+/// - Direct division (bit-consistent with the TS reference, see `mahalanobis_distance`)
 /// - Hoisted epsilon constant
 #[inline]
 fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) -> f32 {
@@ -310,18 +318,13 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 
     let mut y = [0.0f32; MAX_SUPPORTED_DIMS];
 
-    // OPTIMIZATION: Avoid division in hot loop
     for i in 0..ndim {
         let mut val = diff[i];
         for j in 0..i {
             val -= packed_l[packed_index(i, j)] * y[j];
         }
         let diag = packed_l[packed_index(i, i)];
-        y[i] = if diag > EPSILON {
-            val * (1.0 / diag) // Reciprocal multiplication
-        } else {
-            0.0
-        };
+        y[i] = if diag > EPSILON { val / diag } else { 0.0 };
     }
 
     let mut sum_sq = 0.0f32;
@@ -359,7 +362,10 @@ pub fn extract_visible_cholesky_3d(
 
     // output size depends on visible count which is unknown upfront;
     // assert minimum based on splat_count (upper bound for visible)
-    debug_assert!(output.len() >= 6, "output must hold at least one 3D Cholesky (6 elements)");
+    debug_assert!(
+        output.len() >= 6,
+        "output must hold at least one 3D Cholesky (6 elements)"
+    );
 
     let full_packed_size = (ndim * (ndim + 1)) / 2;
     let mut out_splat = 0u32;
@@ -412,6 +418,170 @@ pub fn compact_attenuated_amplitudes(
     }
 
     out_idx
+}
+
+/// Fused nD→3D GSplat projection in a SINGLE pass over the splats.
+///
+/// Collapses the previous 6-call worker pipeline
+/// (`compute_gsplats_attenuation` + `extract_3d_positions` + `compact_by_mask`
+/// for centers + `extract_visible_cholesky_3d` + `compact_attenuated_amplitudes`
+/// + `compact_by_mask` for colors) into one kernel, eliminating ~5 full passes
+/// over `splat_count` and the repeated copies of the large `positions` /
+/// `cholesky` arrays across the wasm-bindgen boundary.
+///
+/// For each splat it: (1) applies the precomputed discrete-visibility gate,
+/// (2) computes continuous attenuation (marginal Cholesky + shifted Gaussian,
+/// identical math to `compute_gsplats_attenuation`), (3) decides visibility via
+/// `amplitude * attenuation >= min_amplitude`, and (4) writes COMPACTED outputs
+/// (visible centers3D, cholesky3D[6], attenuated amplitudes, colors) densely
+/// from index 0. The visible set and all values are bit-identical to the
+/// multi-call path (same helpers, same op order) — see the golden-equivalence
+/// test `test_fused_matches_multicall`.
+///
+/// Colors are coerced to normalized f32 on the TS side (wasm-bindgen can't take
+/// a typed-array union), so `colors` is `[splat_count * 3]` f32 (white-filled
+/// when the dataset has no colors).
+///
+/// Outputs must be sized for the `splat_count` worst case; the caller slices
+/// each to the returned visible count.
+///
+/// # Arguments
+/// * `positions` - Splat centers [splat_count * ndim]
+/// * `cholesky` - Packed Cholesky factors [splat_count * packedSize]
+/// * `amplitudes` - Splat amplitudes [splat_count]
+/// * `colors` - Pre-normalized RGB [splat_count * 3]
+/// * `discrete_visibility` - Precomputed discrete-dim gate [splat_count] (all 1 if none)
+/// * `slice_position` - Current slice [ndim]
+/// * `continuous_hidden_dims` - Sorted continuous hidden dims [num_continuous]
+/// * `display_dims` - Display dims in requested order [2 or 3]
+/// * `ndim`, `splat_count`, `min_amplitude`, `truncate`
+/// * `out_centers3d` [splat_count * 3], `out_cholesky3d` [splat_count * 6],
+///   `out_amplitudes` [splat_count], `out_colors` [splat_count * 3]
+///
+/// # Returns
+/// Number of visible splats written (dense prefix length / stride).
+///
+/// # Panics
+/// Panics if `ndim > 16`. The worker routes >16D to the uncapped TS reference.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn project_gsplats_nd_to_3d(
+    positions: &[f32],
+    cholesky: &[f32],
+    amplitudes: &[f32],
+    colors: &[f32],
+    discrete_visibility: &[u8],
+    slice_position: &[f32],
+    continuous_hidden_dims: &[u32],
+    display_dims: &[u32],
+    ndim: usize,
+    splat_count: usize,
+    min_amplitude: f32,
+    truncate: f32,
+    out_centers3d: &mut [f32],
+    out_cholesky3d: &mut [f32],
+    out_amplitudes: &mut [f32],
+    out_colors: &mut [f32],
+) -> u32 {
+    validate_ndim(ndim, "project_gsplats_nd_to_3d");
+
+    debug_assert!(
+        out_centers3d.len() >= splat_count * 3,
+        "out_centers3d too small"
+    );
+    debug_assert!(
+        out_cholesky3d.len() >= splat_count * 6,
+        "out_cholesky3d too small"
+    );
+    debug_assert!(
+        out_amplitudes.len() >= splat_count,
+        "out_amplitudes too small"
+    );
+    debug_assert!(out_colors.len() >= splat_count * 3, "out_colors too small");
+
+    let num_continuous = continuous_hidden_dims.len();
+    let num_display = display_dims.len().min(3);
+    let full_packed_size = (ndim * (ndim + 1)) / 2;
+
+    // Shifted Gaussian constants (identical to compute_gsplats_attenuation).
+    let shift_c = (-0.5f32 * truncate * truncate).exp();
+    let inv_one_minus_c = 1.0 / (1.0 - shift_c);
+
+    let mut diff = [0.0f32; MAX_SUPPORTED_DIMS];
+    let mut hidden_cholesky = [0.0f32; MAX_PACKED_CHOLESKY_SIZE];
+
+    let mut out = 0usize;
+
+    for i in 0..splat_count {
+        // (1) Discrete gate first — cheapest; lets us skip all Cholesky work.
+        if discrete_visibility[i] == 0 {
+            continue;
+        }
+
+        let center_offset = i * ndim;
+        let cholesky_offset = i * full_packed_size;
+
+        // (2) Continuous attenuation (identical to compute_gsplats_attenuation).
+        let attenuation = if num_continuous == 0 {
+            1.0
+        } else {
+            for (h_idx, &dim) in continuous_hidden_dims.iter().enumerate() {
+                let d = dim as usize;
+                diff[h_idx] = slice_position[d] - positions[center_offset + d];
+            }
+            compute_marginal_cholesky(
+                cholesky,
+                cholesky_offset,
+                continuous_hidden_dims,
+                num_continuous,
+                &mut hidden_cholesky,
+            );
+            let mahal_dist = mahalanobis_distance_internal(
+                &diff[..num_continuous],
+                &hidden_cholesky,
+                num_continuous,
+            );
+            let raw_exp = (-0.5 * mahal_dist * mahal_dist).exp();
+            (inv_one_minus_c * (raw_exp - shift_c)).max(0.0)
+        };
+
+        // (3) Visibility decision (identical to compute_gsplats_attenuation).
+        let attenuated_amplitude = amplitudes[i] * attenuation;
+        if attenuated_amplitude < min_amplitude {
+            continue;
+        }
+
+        // (4) Write compacted outputs at dense slot `out`.
+        // Centers in display order (mirrors extract_3d_positions: min(len,3), zero-fill).
+        let c_off = out * 3;
+        for j in 0..num_display {
+            out_centers3d[c_off + j] = positions[center_offset + display_dims[j] as usize];
+        }
+        for j in num_display..3 {
+            out_centers3d[c_off + j] = 0.0;
+        }
+
+        // Marginal Cholesky for display dims (mirrors extract_visible_cholesky_3d).
+        let chol_off = out * 6;
+        compute_marginal_cholesky(
+            cholesky,
+            cholesky_offset,
+            display_dims,
+            3,
+            &mut out_cholesky3d[chol_off..chol_off + 6],
+        );
+
+        out_amplitudes[out] = attenuated_amplitude;
+
+        let col_off = out * 3;
+        out_colors[col_off] = colors[i * 3];
+        out_colors[col_off + 1] = colors[i * 3 + 1];
+        out_colors[col_off + 2] = colors[i * 3 + 2];
+
+        out += 1;
+    }
+
+    out as u32
 }
 
 #[cfg(test)]
@@ -534,7 +704,7 @@ mod tests {
             4,
             2,
             0.01, // Low threshold
-            3.0, // truncation radius
+            3.0,  // truncation radius
             &mut visibility,
             &mut attenuation,
         );
@@ -563,9 +733,17 @@ mod tests {
 
         // Σ = diag(4, 9, 25, 49), marginal for dims [0,2] = diag(4, 25)
         // Cholesky of diag(4, 25) = diag(2, 5) → packed [2, 0, 5]
-        assert!((output[0] - 2.0).abs() < 1e-5, "L_S[0,0] = 2.0, got {}", output[0]);
+        assert!(
+            (output[0] - 2.0).abs() < 1e-5,
+            "L_S[0,0] = 2.0, got {}",
+            output[0]
+        );
         assert!(output[1].abs() < 1e-5, "L_S[1,0] = 0.0, got {}", output[1]);
-        assert!((output[2] - 5.0).abs() < 1e-5, "L_S[1,1] = 5.0, got {}", output[2]);
+        assert!(
+            (output[2] - 5.0).abs() < 1e-5,
+            "L_S[1,1] = 5.0, got {}",
+            output[2]
+        );
     }
 
     #[test]
@@ -593,8 +771,16 @@ mod tests {
 
         compute_marginal_cholesky(&packed, 0, &keep_dims, 2, &mut output);
 
-        assert!((output[0] - 2.0).abs() < 1e-4, "L_S[0,0] = 2.0, got {}", output[0]);
-        assert!((output[1] - 0.5).abs() < 1e-4, "L_S[1,0] = 0.5, got {}", output[1]);
+        assert!(
+            (output[0] - 2.0).abs() < 1e-4,
+            "L_S[0,0] = 2.0, got {}",
+            output[0]
+        );
+        assert!(
+            (output[1] - 0.5).abs() < 1e-4,
+            "L_S[1,0] = 0.5, got {}",
+            output[1]
+        );
         let expected_diag = (16.25_f32).sqrt(); // ≈ 4.0311
         assert!(
             (output[2] - expected_diag).abs() < 1e-4,
@@ -700,5 +886,115 @@ mod tests {
             attenuation[0]
         );
         assert_eq!(visibility[0], 1);
+    }
+
+    /// Golden equivalence: the fused single-pass kernel must produce a
+    /// bit-identical visible set + outputs to the legacy 6-call pipeline
+    /// (attenuation → combine discrete → extract_3d_positions + compact centers
+    /// → extract_visible_cholesky_3d → compact_attenuated_amplitudes → compact
+    /// colors). Exercises correlated covariance, a discrete-gated splat, an
+    /// attenuated-out splat, and a fully-visible splat.
+    #[test]
+    fn test_fused_matches_multicall() {
+        use crate::projection::{compact_by_mask, extract_3d_positions};
+
+        let ndim = 4usize;
+        let n = 4usize;
+        let continuous_hidden = [3u32];
+        let display = [0u32, 1, 2];
+        let min_amp = 0.001f32;
+        let truncate = 3.0f32;
+
+        // 4 splats. Dim 3 is the hidden (continuous) slicing dim; slice at 0.
+        // splat0: on slice (dim3=0) → visible; splat1: far in dim3 → attenuated
+        // out; splat2: on slice but discrete-gated; splat3: near slice → visible.
+        let positions: Vec<f32> = vec![
+            0.0, 0.0, 0.0, 0.0, // splat0
+            1.0, 1.0, 1.0, 50.0, // splat1 (far in dim3)
+            2.0, 2.0, 2.0, 0.0, // splat2 (discrete-gated)
+            3.0, 1.0, 2.0, 0.3, // splat3
+        ];
+        // Correlated 4D Cholesky per splat (off-diagonals couple dim3 to others).
+        let one: Vec<f32> = vec![2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        let cholesky: Vec<f32> = (0..n).flat_map(|_| one.clone()).collect();
+        let amplitudes: Vec<f32> = vec![1.0, 0.5, 1.0, 0.8];
+        let colors: Vec<f32> = vec![
+            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.15, 0.25, 0.35,
+        ];
+        let slice = vec![0.0f32, 0.0, 0.0, 0.0];
+        let discrete_visibility = [1u8, 1, 0, 1]; // splat2 gated
+
+        // ---- Legacy multi-call pipeline ----
+        let mut vis = vec![0u8; n];
+        let mut atten = vec![0.0f32; n];
+        compute_gsplats_attenuation(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &slice,
+            &continuous_hidden,
+            ndim,
+            n,
+            min_amp,
+            truncate,
+            &mut vis,
+            &mut atten,
+        );
+        for i in 0..n {
+            if discrete_visibility[i] == 0 {
+                vis[i] = 0;
+            }
+        }
+        let visible_count = vis.iter().filter(|&&v| v != 0).count();
+
+        let mut all_centers = vec![0.0f32; n * 3];
+        extract_3d_positions(&positions, &display, ndim, n, &mut all_centers);
+        let mut exp_centers = vec![0.0f32; visible_count * 3];
+        compact_by_mask(&all_centers, &vis, n, 3, &mut exp_centers);
+
+        let mut exp_chol = vec![0.0f32; visible_count * 6];
+        extract_visible_cholesky_3d(&cholesky, &vis, &display, ndim, n, &mut exp_chol);
+
+        let mut exp_amps = vec![0.0f32; visible_count];
+        compact_attenuated_amplitudes(&amplitudes, &atten, &vis, n, &mut exp_amps);
+
+        let mut exp_colors = vec![0.0f32; visible_count * 3];
+        compact_by_mask(&colors, &vis, n, 3, &mut exp_colors);
+
+        // ---- Fused single-pass kernel ----
+        let mut f_centers = vec![0.0f32; n * 3];
+        let mut f_chol = vec![0.0f32; n * 6];
+        let mut f_amps = vec![0.0f32; n];
+        let mut f_colors = vec![0.0f32; n * 3];
+        let f_count = project_gsplats_nd_to_3d(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &colors,
+            &discrete_visibility,
+            &slice,
+            &continuous_hidden,
+            &display,
+            ndim,
+            n,
+            min_amp,
+            truncate,
+            &mut f_centers,
+            &mut f_chol,
+            &mut f_amps,
+            &mut f_colors,
+        ) as usize;
+
+        // Must agree on the visible set and every output value (bit-identical).
+        assert_eq!(f_count, visible_count, "visible count mismatch");
+        assert!(visible_count >= 2, "test should keep ≥2 visible splats");
+        assert_eq!(
+            &f_centers[..f_count * 3],
+            &exp_centers[..],
+            "centers mismatch"
+        );
+        assert_eq!(&f_chol[..f_count * 6], &exp_chol[..], "cholesky mismatch");
+        assert_eq!(&f_amps[..f_count], &exp_amps[..], "amplitudes mismatch");
+        assert_eq!(&f_colors[..f_count * 3], &exp_colors[..], "colors mismatch");
     }
 }

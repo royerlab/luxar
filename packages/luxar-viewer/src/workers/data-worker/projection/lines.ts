@@ -1,8 +1,10 @@
 /**
  * Project Lines from nD to 3D with segment clipping.
  *
- * Mirrors the main-thread `data/lines/projection.ts::projectLinesTo3D`
- * but runs in the worker via WASM batch functions:
+ * The single Lines projection implementation — run on a worker, or on the
+ * main thread via `in-process.ts` (the former hand-written main-thread
+ * copy in `data/lines/projection.ts` was deleted in W4). Uses WASM batch
+ * functions:
  * 1. Clips all segments to the nD slice
  * 2. Projects clipped endpoints to 3D
  * 3. Interpolates per-vertex attributes (colors, widths, sharpness, scalars)
@@ -12,7 +14,7 @@
  */
 
 import { transfer } from 'comlink';
-import { requireWasm, type WasmCtx } from '../state';
+import { pickBackend, type WasmCtx } from '../state';
 import { validateProjectionInputs, validateLineSegmentReferences } from '../validation';
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from '../../color-utils';
 import type { ProjectionViewState } from '../types';
@@ -65,7 +67,7 @@ export async function projectLinesTo3D(
   endClipped: Uint8Array;
   visibleSegmentCount: number;
 }> {
-  const wasmModule = requireWasm(ctx);
+  const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
   const { positions, segments, widths, colors, sharpness, scalars, viewState, ndim, segmentCount } =
     params;

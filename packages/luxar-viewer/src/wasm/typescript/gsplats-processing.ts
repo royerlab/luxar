@@ -357,3 +357,119 @@ export function compact_attenuated_amplitudes(
 
   return outIdx;
 }
+
+// Module-level forward-substitution + marginal-Cholesky scratch for the fused
+// kernel (single-threaded JS — safe to reuse across the splat loop).
+const _fusedDiff = new Float32Array(MAX_SUPPORTED_DIMS);
+const _fusedY = new Float32Array(MAX_SUPPORTED_DIMS);
+const _fusedHiddenCholesky = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
+
+/**
+ * Fused nD→3D GSplat projection — TypeScript reference mirroring
+ * `gsplats_processing.rs::project_gsplats_nd_to_3d`.
+ *
+ * Single pass over the splats: discrete-visibility gate → continuous
+ * attenuation (marginal Cholesky + shifted Gaussian) → visibility decision
+ * (`amplitude * attenuation >= minAmplitude`) → write COMPACTED outputs
+ * (visible centers3D, cholesky3D[6], attenuated amplitudes, colors). Bit-for-bit
+ * equivalent to the legacy 6-call pipeline (reuses the same
+ * `computeMarginalCholesky` / `mahalanobisDistanceInternal` helpers in the same
+ * order). Replaces ~5 full passes and the repeated large-array copies.
+ *
+ * Colors are pre-normalized to f32 by the caller (white-filled when absent).
+ * Outputs are sized for the `splatCount` worst case; the caller slices each to
+ * the returned visible count.
+ *
+ * @returns Number of visible splats written.
+ */
+export function project_gsplats_nd_to_3d(
+  positions: Float32Array,
+  cholesky: Float32Array,
+  amplitudes: Float32Array,
+  colors: Float32Array,
+  discreteVisibility: Uint8Array,
+  slicePosition: Float32Array,
+  continuousHiddenDims: Uint32Array,
+  displayDims: Uint32Array,
+  ndim: number,
+  splatCount: number,
+  minAmplitude: number,
+  truncate: number,
+  outCenters3d: Float32Array,
+  outCholesky3d: Float32Array,
+  outAmplitudes: Float32Array,
+  outColors: Float32Array
+): number {
+  const numContinuous = continuousHiddenDims.length;
+  const numDisplay = Math.min(displayDims.length, 3);
+  const fullPackedSize = (ndim * (ndim + 1)) / 2;
+
+  const shiftC = Math.exp(-0.5 * truncate * truncate);
+  const invOneMinusC = 1.0 / (1.0 - shiftC);
+
+  const diff = _fusedDiff;
+  const hiddenCholesky = _fusedHiddenCholesky;
+
+  let out = 0;
+
+  for (let i = 0; i < splatCount; i++) {
+    // (1) Discrete gate first.
+    if (discreteVisibility[i] === 0) continue;
+
+    const centerOffset = i * ndim;
+    const choleskyOffset = i * fullPackedSize;
+
+    // (2) Continuous attenuation (identical to compute_gsplats_attenuation).
+    let attenuation: number;
+    if (numContinuous === 0) {
+      attenuation = 1.0;
+    } else {
+      for (let hIdx = 0; hIdx < numContinuous; hIdx++) {
+        const d = continuousHiddenDims[hIdx];
+        diff[hIdx] = slicePosition[d] - positions[centerOffset + d];
+      }
+      computeMarginalCholesky(
+        cholesky,
+        choleskyOffset,
+        continuousHiddenDims,
+        numContinuous,
+        hiddenCholesky,
+        0
+      );
+      const mahalDist = mahalanobisDistanceInternal(
+        diff.subarray(0, numContinuous),
+        hiddenCholesky,
+        numContinuous,
+        _fusedY
+      );
+      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
+      attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
+    }
+
+    // (3) Visibility decision.
+    const attenuatedAmplitude = amplitudes[i] * attenuation;
+    if (attenuatedAmplitude < minAmplitude) continue;
+
+    // (4) Write compacted outputs at dense slot `out`.
+    const cOff = out * 3;
+    for (let j = 0; j < numDisplay; j++) {
+      outCenters3d[cOff + j] = positions[centerOffset + displayDims[j]];
+    }
+    for (let j = numDisplay; j < 3; j++) {
+      outCenters3d[cOff + j] = 0.0;
+    }
+
+    computeMarginalCholesky(cholesky, choleskyOffset, displayDims, 3, outCholesky3d, out * 6);
+
+    outAmplitudes[out] = attenuatedAmplitude;
+
+    const colOff = out * 3;
+    outColors[colOff] = colors[i * 3];
+    outColors[colOff + 1] = colors[i * 3 + 1];
+    outColors[colOff + 2] = colors[i * 3 + 2];
+
+    out++;
+  }
+
+  return out;
+}

@@ -12,10 +12,10 @@ maps without spinning up WebGL or a zarr store.
 
 ## Files
 
-| File             | Role                                                                                                                                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/lines/gsplats meshes, total instance counts (points instances, line segments, splats), and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks).          |
-| `aggregator.ts`  | Sums `AccumulatorStats` across a `Map<path, loader>` of spatial-index loaders. One per-geometry public wrapper (`getAggregatedPointsAccumulatorStats`, `...Lines...`, `...GSplats...`) calls a shared private `aggregateStats` over any iterable of loaders exposing `getAccumulatorStats()`. |
+| File             | Role                                                                                                                                                                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/lines/gsplats meshes, total instance counts (points instances, line segments, splats), and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks). |
+| `aggregator.ts`  | Sums `AccumulatorStats` across a `Map<path, loader>` of spatial-index loaders. One per-geometry public wrapper (`getAggregatedPointsAccumulatorStats`, `...Lines...`, `...GSplats...`) calls a shared private `aggregateStats` over any iterable of loaders exposing `getAccumulatorStats()`.                                        |
 
 ## Public surface
 
@@ -68,8 +68,8 @@ export function getAggregatedGSplatsAccumulatorStats(
      segments.
   2. `userData.visibleSegmentCount` — fallback for tests that
      synthesize Lines meshes without setting the instance count.
-  Both feed `totalSegments`. (There is no `aCenter` last-resort branch
-  for lines.)
+     Both feed `totalSegments`. (There is no `aCenter` last-resort branch
+     for lines.)
 - **`nodeType === 'gsplats'`** — increments `gsplatsObjects` and adds
   `userData.visibleSplatCount` (default `0`) to `totalGSplats`.
 - For all three kinds, `userData.attrs?.has_spatial_index` truthy

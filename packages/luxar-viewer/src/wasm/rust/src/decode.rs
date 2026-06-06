@@ -24,7 +24,12 @@ use wasm_bindgen::prelude::*;
 /// * `output` - Output float32 buffer (same length as data)
 #[wasm_bindgen]
 pub fn decode_quantized_u8(data: &[u8], min_val: f32, max_val: f32, output: &mut [f32]) {
-    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
 
     let scale = (max_val - min_val) / 255.0;
 
@@ -44,7 +49,12 @@ pub fn decode_quantized_u8(data: &[u8], min_val: f32, max_val: f32, output: &mut
 /// * `output` - Output float32 buffer (same length as data)
 #[wasm_bindgen]
 pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &mut [f32]) {
-    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
 
     let scale = (max_val - min_val) / 65535.0;
 
@@ -64,7 +74,12 @@ pub fn decode_quantized_u16(data: &[u16], min_val: f32, max_val: f32, output: &m
 /// * `output` - Output float32 buffer
 #[wasm_bindgen]
 pub fn decode_log_scalar_u8(data: &[u8], max_log: f32, output: &mut [f32]) {
-    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
 
     let inv_max = max_log / 255.0;
 
@@ -78,7 +93,12 @@ pub fn decode_log_scalar_u8(data: &[u8], max_log: f32, output: &mut [f32]) {
 /// Decode log-space quantized uint16 data to float32.
 #[wasm_bindgen]
 pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
-    debug_assert!(output.len() >= data.len(), "output too small: {} < {}", output.len(), data.len());
+    debug_assert!(
+        output.len() >= data.len(),
+        "output too small: {} < {}",
+        output.len(),
+        data.len()
+    );
 
     let inv_max = max_log / 65535.0;
 
@@ -98,7 +118,12 @@ pub fn decode_log_scalar_u16(data: &[u16], max_log: f32, output: &mut [f32]) {
 /// * `output` - Output float32 buffer (same length as indices)
 #[wasm_bindgen]
 pub fn decode_lut_scalar_u8(indices: &[u8], lut: &[f32], output: &mut [f32]) {
-    debug_assert!(output.len() >= indices.len(), "output too small: {} < {}", output.len(), indices.len());
+    debug_assert!(
+        output.len() >= indices.len(),
+        "output too small: {} < {}",
+        output.len(),
+        indices.len()
+    );
 
     for i in 0..indices.len() {
         output[i] = lut[indices[i] as usize];
@@ -108,7 +133,12 @@ pub fn decode_lut_scalar_u8(indices: &[u8], lut: &[f32], output: &mut [f32]) {
 /// Decode LUT-encoded uint16 indices to float32 (scalar mode).
 #[wasm_bindgen]
 pub fn decode_lut_scalar_u16(indices: &[u16], lut: &[f32], output: &mut [f32]) {
-    debug_assert!(output.len() >= indices.len(), "output too small: {} < {}", output.len(), indices.len());
+    debug_assert!(
+        output.len() >= indices.len(),
+        "output too small: {} < {}",
+        output.len(),
+        indices.len()
+    );
 
     for i in 0..indices.len() {
         output[i] = lut[indices[i] as usize];
@@ -127,7 +157,12 @@ pub fn decode_lut_scalar_u16(indices: &[u16], lut: &[f32], output: &mut [f32]) {
 /// * `output` - Output float32 buffer [indices.len() * k]
 #[wasm_bindgen]
 pub fn decode_lut_row_u8(indices: &[u8], lut: &[f32], k: usize, output: &mut [f32]) {
-    debug_assert!(output.len() >= indices.len() * k, "output too small: {} < {}", output.len(), indices.len() * k);
+    debug_assert!(
+        output.len() >= indices.len() * k,
+        "output too small: {} < {}",
+        output.len(),
+        indices.len() * k
+    );
 
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
@@ -139,7 +174,12 @@ pub fn decode_lut_row_u8(indices: &[u8], lut: &[f32], k: usize, output: &mut [f3
 /// Decode LUT-encoded uint16 indices to float32 (row mode).
 #[wasm_bindgen]
 pub fn decode_lut_row_u16(indices: &[u16], lut: &[f32], k: usize, output: &mut [f32]) {
-    debug_assert!(output.len() >= indices.len() * k, "output too small: {} < {}", output.len(), indices.len() * k);
+    debug_assert!(
+        output.len() >= indices.len() * k,
+        "output too small: {} < {}",
+        output.len(),
+        indices.len() * k
+    );
 
     for i in 0..indices.len() {
         let lut_offset = (indices[i] as usize) * k;
@@ -148,10 +188,19 @@ pub fn decode_lut_row_u16(indices: &[u16], lut: &[f32], k: usize, output: &mut [
     }
 }
 
-/// Broadcast a single value to all points.
+/// Broadcast a value to all points.
+///
+/// Strict contract (mirrors `wasm/typescript/decode.ts::decode_broadcasted`):
+/// `value.len()` must be either `1` (a scalar broadcast to every slot) or
+/// exactly `elements_per_point` (a per-element vector replicated across every
+/// point). Any other length is INVALID and rejected upstream by the worker
+/// wrapper (`workers/data-worker/decode/broadcasted.ts`) with a catchable error
+/// before this kernel is reached. The old "mixed broadcast" pad/truncate
+/// fallback (e.g. `value=[v0,v1], epp=3 -> [v0,v1,v0]`) was removed because it
+/// silently diverged from the TS reference.
 ///
 /// # Arguments
-/// * `value` - Value(s) to broadcast [elements_per_point]
+/// * `value` - `1` value (scalar) or `elements_per_point` values (vector)
 /// * `num_points` - Number of points
 /// * `elements_per_point` - Elements per point (1 for scalar, 3 for vec3, etc.)
 /// * `output` - Output buffer [num_points * elements_per_point]
@@ -169,21 +218,18 @@ pub fn decode_broadcasted(
         num_points * elements_per_point
     );
 
-    // OPTIMIZATION: Fast path when value has enough elements (common case)
-    if value.len() >= elements_per_point {
+    if value.len() == 1 {
+        // Scalar broadcast: fill every slot with the single value.
+        let v = value[0];
+        for slot in output[..num_points * elements_per_point].iter_mut() {
+            *slot = v;
+        }
+    } else {
+        // Per-element vector: value.len() == elements_per_point (contract).
         for i in 0..num_points {
             let out_offset = i * elements_per_point;
             output[out_offset..out_offset + elements_per_point]
                 .copy_from_slice(&value[..elements_per_point]);
-        }
-    } else {
-        // Fallback: pad with value[0] if value is shorter
-        let default = value[0];
-        for i in 0..num_points {
-            let out_offset = i * elements_per_point;
-            for j in 0..elements_per_point {
-                output[out_offset + j] = if j < value.len() { value[j] } else { default };
-            }
         }
     }
 }
@@ -283,14 +329,14 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_broadcasted_short_value() {
-        // Edge case: value has fewer elements than elements_per_point
-        let value = vec![0.5f32]; // Only 1 element, but we need 3 per point
+    fn test_decode_broadcasted_scalar() {
+        // Scalar broadcast (value.len() == 1): the single value fills every
+        // slot of every point, regardless of elements_per_point.
+        let value = vec![0.5f32]; // scalar
         let mut output = vec![0.0f32; 6]; // 2 points * 3 elements
 
         decode_broadcasted(&value, 2, 3, &mut output);
 
-        // Should pad with value[0] = 0.5
         for i in 0..6 {
             assert_eq!(output[i], 0.5, "output[{}] should be 0.5", i);
         }

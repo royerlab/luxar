@@ -40,12 +40,12 @@ decompressed-chunk-cache/
 
 ## API
 
-| Export                                              | Purpose                                                                                                              |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Export                                              | Purpose                                                                                                                                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wrapWithCache(array, cache, arrayPath, getProbe?)` | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is. Optional `getProbe` accessor reports hit/miss to the active `ResidencyProbe`. |
-| `isCachedArray(array)`                              | Detect the wrapper via a private `Symbol` marker.                                                                   |
-| `unwrapCachedArray(array)`                          | Recover the original unwrapped array (or pass through if not wrapped).                                              |
-| `cloneArrayBufferView(view)` _(internal)_           | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                      |
+| `isCachedArray(array)`                              | Detect the wrapper via a private `Symbol` marker.                                                                                                                          |
+| `unwrapCachedArray(array)`                          | Recover the original unwrapped array (or pass through if not wrapped).                                                                                                     |
+| `cloneArrayBufferView(view)` _(internal)_           | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                                                                             |
 
 ## Invariants
 

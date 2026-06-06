@@ -10,10 +10,10 @@ zarr, on demand, and cache the result.
 Labels and image labels are stored per node as **CSR-style** pairs of
 zarr arrays — an offsets array plus a concatenated bytes blob:
 
-| Label kind | Offsets array          | Bytes array           | `.zattrs` flag      |
-| ---------- | ---------------------- | --------------------- | ------------------- |
-| Text       | `label_offsets`        | `label_bytes`         | `has_labels`        |
-| Image      | `image_label_offsets`  | `image_label_bytes`   | `has_image_labels`  |
+| Label kind | Offsets array         | Bytes array         | `.zattrs` flag     |
+| ---------- | --------------------- | ------------------- | ------------------ |
+| Text       | `label_offsets`       | `label_bytes`       | `has_labels`       |
+| Image      | `image_label_offsets` | `image_label_bytes` | `has_image_labels` |
 
 For element `i`, the payload is `bytes[offsets[i] : offsets[i+1]]`. An
 empty entry (`offsets[i] === offsets[i+1]`) means "no label for this

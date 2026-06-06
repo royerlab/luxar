@@ -3,10 +3,6 @@
  *
  * `EffectiveRadiusConfig` is sourced from the canonical definition
  * in `types/points.ts` so worker and main-thread paths can't drift.
- *
- * `PointsOutputBuffers` is re-exported from `data-worker.ts` because
- * the TransferableAccumulator pattern on the main thread needs the
- * shape.
  */
 
 import type { EffectiveRadiusConfig } from '../../types/points';
@@ -24,15 +20,4 @@ export interface ProjectionViewState {
   displayDims: readonly number[];
   slicePosition: readonly number[];
   tolerance: readonly number[];
-}
-
-/**
- * Pre-allocated output buffers for TransferableAccumulator pattern.
- * When provided, projection writes directly to these buffers for zero-allocation.
- */
-export interface PointsOutputBuffers {
-  positions3D: Float32Array;
-  colors?: Float32Array | Uint8Array | Uint16Array | null;
-  radii?: Float32Array | null;
-  sharpness?: Float32Array | null;
 }

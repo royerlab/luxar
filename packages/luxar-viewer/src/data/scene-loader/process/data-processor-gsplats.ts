@@ -10,7 +10,8 @@
  *   - truncation radius is read from the mesh material,
  *   - Cholesky factors are packed after projection,
  *   - worker args derive discreteDims / discreteSteps / extendToAllDims from `viewState.dimensions`,
- *   - worker failures fall back to `projectGSplats`,
+ *   - the non-worker path and worker failures run the shared dispatcher
+ *     in-process (`workers/data-worker/projection/in-process`),
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedGSplatsMesh`.
@@ -19,24 +20,93 @@
  */
 
 import * as THREE from 'three';
-import { projectGSplats } from '../../gsplats/projection';
 import { packCholeskyForShader } from '../../../rendering/gsplat-geometry';
-import type { LoadedGSplatsData, GSplatsViewState } from '../../../types/gsplats';
+import type {
+  LoadedGSplatsData,
+  GSplatsViewState,
+  ProcessedGSplatsData,
+} from '../../../types/gsplats';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { getWorkerPool } from '../../../workers/worker-pool';
+import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
+import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
+import { SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from '../../../workers/data-worker/projection/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
-const DEFAULT_TRUNCATE = 3.0;
+const DEFAULT_TRUNCATE = SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedGSplatsCommit {
   path: string;
-  processed: ReturnType<typeof projectGSplats>;
+  processed: ProcessedGSplatsData;
   cholesky01: Float32Array;
   cholesky23: Float32Array;
   cholesky45: Float32Array;
+}
+
+/**
+ * Build the projection params consumed by both the worker RPC and the
+ * in-process dispatcher (they share the same dispatcher signature). The
+ * worker needs a flat description of which non-display dimensions are
+ * extend_to_all and which are discrete; derive it once here from the
+ * scene's dimension metadata so the dispatcher stays dim-agnostic.
+ */
+function buildGSplatsParams(
+  data: LoadedGSplatsData,
+  viewState: GSplatsViewState,
+  truncate: number
+): Parameters<typeof projectGSplatsInProcess>[0] {
+  const discreteDims: number[] = [];
+  const discreteSteps: Record<number, number> = {};
+  const extendToAllDims: number[] = [];
+  if (viewState.dimensions) {
+    for (let d = 0; d < viewState.dimensions.length; d++) {
+      if (viewState.displayDims.includes(d)) continue;
+      if (isExtendToAll(viewState.tolerance[d])) {
+        extendToAllDims.push(d);
+      } else if (viewState.dimensions[d]?.discrete) {
+        discreteDims.push(d);
+        discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
+      }
+    }
+  }
+  return {
+    positions: data.positions,
+    choleskyFactors: data.choleskyFactors,
+    amplitudes: data.amplitudes,
+    colors: data.colors,
+    sharpness: null,
+    viewState: {
+      displayDims: viewState.displayDims,
+      slicePosition: viewState.slicePosition,
+      // GSplats doesn't consume tolerance in the dispatcher — hidden-dim
+      // attenuation is computed from the cholesky factors. The field is
+      // required for the uniform `ProjectionViewState` shape; pass the
+      // loader's tolerance through for parity.
+      tolerance: viewState.tolerance,
+    },
+    ndim: data.ndim,
+    splatCount: data.splatCount,
+    discreteDims,
+    discreteSteps,
+    extendToAllDims,
+    truncate,
+  };
+}
+
+/** Map a dispatcher result (worker or in-process) to `ProcessedGSplatsData`. */
+function toProcessed(
+  result: Awaited<ReturnType<typeof projectGSplatsInProcess>>
+): ProcessedGSplatsData {
+  return {
+    centers3D: result.centers3D,
+    choleskyFactors3D: result.choleskyFactors3D,
+    amplitudes: result.amplitudes,
+    colors: result.colors,
+    splatCount: result.visibleCount,
+  };
 }
 
 /**
@@ -52,8 +122,10 @@ function readTruncate(mesh: THREE.Mesh): number {
 }
 
 /**
- * Project GSplats to 3D on a worker thread. Falls back to the main
- * thread `projectGSplats` on worker failure with a warning log.
+ * Project GSplats to 3D on a worker thread. On worker-infrastructure
+ * failure (anything but a dataset-switch abort) it degrades to the
+ * in-process dispatcher — the *same* projection kernel run on the main
+ * thread — rather than a separate hand-written copy.
  *
  * `updateVersion` gates the first-update info logs.
  */
@@ -62,7 +134,8 @@ export async function projectGSplatsTo3DUsingWorker(
   viewState: GSplatsViewState,
   truncate: number,
   updateVersion: number
-): Promise<ReturnType<typeof projectGSplats>> {
+): Promise<ProcessedGSplatsData> {
+  const params = buildGSplatsParams(data, viewState, truncate);
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -71,51 +144,10 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
-    // Worker needs a flat description of which non-display dimensions
-    // are extend_to_all and which are discrete. Computed once here so
-    // the worker side can stay dim-agnostic.
-    const discreteDims: number[] = [];
-    const discreteSteps: Record<number, number> = {};
-    const extendToAllDims: number[] = [];
-    if (viewState.dimensions) {
-      for (let d = 0; d < viewState.dimensions.length; d++) {
-        if (viewState.displayDims.includes(d)) continue;
-        if (viewState.tolerance[d] >= 1e9) {
-          extendToAllDims.push(d);
-        } else if (viewState.dimensions[d]?.discrete) {
-          discreteDims.push(d);
-          discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
-        }
-      }
-    }
-
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectGSplatsTo3D',
       'projection',
-      (api) =>
-        api.projectGSplatsTo3D({
-          positions: data.positions,
-          choleskyFactors: data.choleskyFactors,
-          amplitudes: data.amplitudes,
-          colors: data.colors,
-          sharpness: null,
-          viewState: {
-            displayDims: viewState.displayDims,
-            slicePosition: viewState.slicePosition,
-            // GSplats doesn't consume tolerance in the worker —
-            // hidden-dim attenuation is computed from cholesky
-            // factors. The field is required for the uniform
-            // `ProjectionViewState` shape; pass the loader's
-            // tolerance through for parity.
-            tolerance: viewState.tolerance,
-          },
-          ndim: data.ndim,
-          splatCount: data.splatCount,
-          discreteDims,
-          discreteSteps,
-          extendToAllDims,
-          truncate,
-        })
+      (api) => api.projectGSplatsTo3D(params)
     );
 
     if (updateVersion <= 1) {
@@ -125,24 +157,18 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
-    return {
-      centers3D: workerResult.centers3D,
-      choleskyFactors3D: workerResult.choleskyFactors3D,
-      amplitudes: workerResult.amplitudes,
-      colors: workerResult.colors,
-      splatCount: workerResult.visibleCount,
-    };
+    return toProcessed(workerResult);
   } catch (error) {
-    // Dataset-switch abort: don't burn CPU on stale main-thread work.
+    // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
     log.warning(
       Modules.SCENE_LOADER,
-      'Worker GSplats projection failed, falling back to main thread:',
+      'Worker GSplats projection failed, falling back to in-process dispatcher:',
       error
     );
-    return projectGSplats(data, viewState, truncate);
+    return toProcessed(await projectGSplatsInProcess(params));
   }
 }
 
@@ -179,7 +205,7 @@ export async function processGSplatsData(
 
   const truncate = readTruncate(mesh);
 
-  let processed: ReturnType<typeof projectGSplats>;
+  let processed: ProcessedGSplatsData;
   let cholesky01: Float32Array;
   let cholesky23: Float32Array;
   let cholesky45: Float32Array;
@@ -188,7 +214,10 @@ export async function processGSplatsData(
     if (useWorkerProjection) {
       return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion);
     }
-    return projectGSplats(data, viewState, truncate);
+    // Non-worker path (useWebWorkers off, small, or 3D-only data): run
+    // the same dispatcher in-process. The standard-3D fast path inside
+    // the dispatcher handles the ndim===3 case efficiently.
+    return toProcessed(await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)));
   };
 
   if (session) {

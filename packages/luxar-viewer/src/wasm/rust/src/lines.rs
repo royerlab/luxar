@@ -156,7 +156,7 @@ mod tests {
     fn test_line_visibility_one_endpoint_visible() {
         // 1 segment with one endpoint far away
         let vertices = vec![
-            0.0, 0.0, 0.0,    // Vertex 0 (near)
+            0.0, 0.0, 0.0, // Vertex 0 (near)
             10.0, 10.0, 10.0, // Vertex 1 (far)
         ];
         let segments = vec![0, 1];
@@ -176,7 +176,10 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(output[0], 1, "Segment should be visible (one endpoint visible)");
+        assert_eq!(
+            output[0], 1,
+            "Segment should be visible (one endpoint visible)"
+        );
         assert_eq!(count, 1);
     }
 
@@ -204,7 +207,10 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(output[0], 0, "Segment should be hidden (both endpoints far)");
+        assert_eq!(
+            output[0], 0,
+            "Segment should be hidden (both endpoints far)"
+        );
         assert_eq!(count, 0);
     }
 
@@ -214,7 +220,7 @@ mod tests {
         // Endpoint 0: [0,0,0, 0] (inside slice)
         // Endpoint 1: [0,0,0, 10] (outside slice in dim 4)
         let vertices = vec![
-            0.0, 0.0, 0.0, 0.0,  // Vertex 0
+            0.0, 0.0, 0.0, 0.0, // Vertex 0
             0.0, 0.0, 0.0, 10.0, // Vertex 1
         ];
         let segments = vec![0, 1];
@@ -237,7 +243,10 @@ mod tests {
         // Vertex 0 is at slice position exactly -> visible
         // Vertex 1 is at dim4=10, tolerance=2.0 -> normalized dist = 10/2.1 ~ 4.76 -> hidden
         // Segment visible because at least one endpoint (vertex 0) is visible
-        assert_eq!(output[0], 1, "Segment should be visible (endpoint 0 inside 4D slice)");
+        assert_eq!(
+            output[0], 1,
+            "Segment should be visible (endpoint 0 inside 4D slice)"
+        );
         assert_eq!(count, 1);
     }
 
@@ -265,7 +274,10 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(output[0], 1, "2D segment should be visible (both endpoints inside)");
+        assert_eq!(
+            output[0], 1,
+            "2D segment should be visible (both endpoints inside)"
+        );
         assert_eq!(count, 1);
     }
 }

@@ -6,15 +6,15 @@ to the Points node type.
 
 ## Files
 
-| File                             | Role                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `LoadedPointsDataAccumulator` for the zero-allocation hot path.                                                                                                                  |
+| File                             | Role                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `LoadedPointsDataAccumulator` for the zero-allocation hot path.                                                                                                                      |
 | `points-progressive-loader.ts`   | Composite-pattern multi-additive-LOD facade. Wraps N `PointsSpatialIndexLoader` instances (one per `additive_<i>` subgroup), loads LODs sequentially from LOD 0, stops at the first cache miss / `CACHE_HIT_THRESHOLD_MS` overrun, prefetches the next LOD, and concatenates the loaded levels into one `LoadedPointsData`. Mirrors `GSplatsProgressiveLoader`. |
 | `lod-refinement.ts`              | Progressive Points LOD refinement — thin wrapper over the generic `data/scene-loader/progressive/refinement.ts`. Drives the per-frame refinement loop for progressive loaders (those exposing `hasMoreLODs`); commits each refined load directly via `updatePointsGeometry`. Mirrors `data/gsplats/lod-refinement.ts`.                                          |
-| `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical.                                                                        |
-| `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                                                                                                  |
-| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                           |
-| `handler.ts`                     | Per-type wiring for the scene-loader's load + stage phase. Exports `loadAndStage` (skip → `loader.updateView` → failure-clear → metadata → predictive-prefetch dispatch), plus `kind`/`label` constants and the `StagedPointsCommit` / `PointsHandlerCtx` shapes. Lines and GSplats mirror this shape so all first-class geometry kinds stay symmetrical. |
+| `projection.ts`                  | The single, **WASM-accelerated** nD→3D Points projection (`projectPointsTo3D`) + `createEmptyPointsData`. Runs the `extract_3d_positions` / `calculate_effective_radii` WASM kernels (via a `wasm` backend from `getPointsBackend`), then filters by visibility, normalizes uint8 radii (`/255`), and writes through `targetBuffers` (zero-alloc accumulator). Runs on the **main thread** — Points projection is bandwidth-bound and pairs with the accumulator, so it isn't worker-offloaded (W4b removed the former dead worker dispatcher copy). |
+| `effective-radius-calculator.ts` | `calculateSpatialQueryTolerance` + `shouldApplyEffectiveRadius` (used by the loader), plus a TS reference `calculateEffectiveRadii` (the production path now uses the WASM kernel; the TS twin lives in `wasm/typescript/effective-radii.ts`). Points-only — Lines and GSplats carry equivalent info in segment bounds / Cholesky factors.                                                                          |
+| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                                 |
+| `handler.ts`                     | Per-type wiring for the scene-loader's load + stage phase. Exports `loadAndStage` (skip → `loader.updateView` → failure-clear → metadata → predictive-prefetch dispatch), plus `kind`/`label` constants and the `StagedPointsCommit` / `PointsHandlerCtx` shapes. Lines and GSplats mirror this shape so all first-class geometry kinds stay symmetrical.       |
 
 ## Public surface
 
@@ -28,8 +28,10 @@ constructs a `PointsProgressiveLoader` instead, which implements the
 same contract (plus `hasMoreLODs` / `loadedLODCount` / `totalLODCount`
 / `lastAllResident` for the refinement loop) over N per-LOD loaders.
 
-`projectPointsTo3D` is also exported from `projection.ts` for direct
-main-thread use (worker-disabled environments, unit tests).
+`projectPointsTo3D` (in `projection.ts`) is the single projection
+implementation; the loader calls it directly with a WASM backend from
+`getPointsBackend(ndim)`. It is always on the main thread (WASM-accelerated)
+— there is no worker round-trip for Points.
 
 ## Invariants
 

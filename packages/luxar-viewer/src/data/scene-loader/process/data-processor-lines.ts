@@ -14,8 +14,9 @@
  *   - per-vertex scalars (colormap mode) ride the worker payload too —
  *     forwarded as a transferable typed-array and interpolated via
  *     `interpolate_scalars_batch` on the worker side,
- *   - worker failures fall back to `projectLinesTo3D` (which itself
- *     handles the scalar path on the main thread),
+ *   - the non-worker path and worker failures run the shared dispatcher
+ *     in-process (`workers/data-worker/projection/in-process`), which
+ *     handles the scalar path identically to the worker,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
@@ -24,7 +25,6 @@
  */
 
 import * as THREE from 'three';
-import { projectLinesTo3D } from '../../lines/projection';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 import { isLinesUserData } from '../../../types/lines';
 import { computeTolerance } from '../../loaders';
@@ -32,6 +32,7 @@ import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { getWorkerPool } from '../../../workers/worker-pool';
+import { projectLinesInProcess } from '../../../workers/data-worker/projection/in-process';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Staged data carried between async processing and the GPU commit. */
@@ -41,10 +42,70 @@ export interface StagedLinesCommit {
 }
 
 /**
+ * Build the projection params consumed by both the worker RPC and the
+ * in-process dispatcher (they share the same dispatcher signature).
+ * Per-vertex scalars (colormap-mode Lines) ride along as a typed array;
+ * `undefined → null` so Comlink doesn't strip the field.
+ */
+function buildLinesParams(
+  data: LoadedLinesData,
+  viewState: LinesViewState,
+  tolerance: readonly number[]
+): Parameters<typeof projectLinesInProcess>[0] {
+  return {
+    positions: data.positions,
+    segments: data.segments,
+    widths: data.widths,
+    colors: data.colors,
+    sharpness: data.sharpness,
+    scalars: data.scalars ?? null,
+    viewState: {
+      displayDims: viewState.displayDims,
+      slicePosition: viewState.slicePosition,
+      tolerance,
+    },
+    ndim: data.ndim,
+    segmentCount: data.segmentCount,
+  };
+}
+
+/**
+ * Map a dispatcher result (worker or in-process) to `ProcessedLinesData`.
+ *
+ * The worker returns an empty `startScalars` when input scalars were
+ * null; the loader treats absent source scalars as the "no colormap"
+ * signal so the geometry's scalar attribute stays unallocated. We pass
+ * `hasSourceScalars` (truthiness of `data.scalars`) so undefined and
+ * null inputs are handled uniformly.
+ */
+function toProcessedLines(
+  result: Awaited<ReturnType<typeof projectLinesInProcess>>,
+  hasSourceScalars: boolean
+): ProcessedLinesData {
+  const hasScalars = hasSourceScalars && result.startScalars.length > 0;
+  return {
+    startPositions: result.startPositions,
+    endPositions: result.endPositions,
+    startColors: result.startColors,
+    endColors: result.endColors,
+    startWidths: result.startWidths,
+    endWidths: result.endWidths,
+    startSharpness: result.startSharpness,
+    endSharpness: result.endSharpness,
+    startScalars: hasScalars ? result.startScalars : undefined,
+    endScalars: hasScalars ? result.endScalars : undefined,
+    segmentLengths: result.segmentLengths,
+    startClipped: result.startClipped,
+    endClipped: result.endClipped,
+    segmentCount: result.visibleSegmentCount,
+  };
+}
+
+/**
  * Project nD lines to a 3D instance-buffer set on a worker thread.
- * Falls back to the main-thread `projectLinesTo3D` on worker
- * failure with a warning log — the user-visible behavior is identical
- * either way; only timing differs.
+ * Falls back to the in-process dispatcher (the same kernel run on the
+ * main thread) on worker failure with a warning log — the user-visible
+ * behavior is identical either way; only timing differs.
  *
  * `updateVersion` gates the first-update info logs to avoid noisy long
  * sessions.
@@ -60,6 +121,7 @@ export async function projectLinesTo3DUsingWorker(
   // calls `interpolate_scalars_batch` on them just like widths /
   // sharpness. The empty-scalar (no colormap) case is preserved by
   // passing `null`.
+  const params = buildLinesParams(data, viewState, tolerance);
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -71,26 +133,7 @@ export async function projectLinesTo3DUsingWorker(
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectLinesTo3D',
       'projection',
-      (api) =>
-        api.projectLinesTo3D({
-          positions: data.positions,
-          segments: data.segments,
-          widths: data.widths,
-          colors: data.colors,
-          sharpness: data.sharpness,
-          // Loader-side `data.scalars` is `ScalarArray | undefined`
-          // (optional, matching `LoadedPointsData`); the worker API
-          // boundary uses `... | null` so Comlink doesn't strip the
-          // field. Map `undefined → null` at the dispatch site.
-          scalars: data.scalars ?? null,
-          viewState: {
-            displayDims: viewState.displayDims,
-            slicePosition: viewState.slicePosition,
-            tolerance,
-          },
-          ndim: data.ndim,
-          segmentCount: data.segmentCount,
-        })
+      (api) => api.projectLinesTo3D(params)
     );
 
     if (updateVersion <= 1) {
@@ -100,41 +143,18 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
-    // Worker returns empty Float32Array when input scalars=null; the
-    // loader treats absent (undefined) source scalars as the
-    // "no colormap" signal so the geometry's scalar attribute stays
-    // unallocated downstream. `data.scalars` is now `?: ScalarArray`
-    // (optional), so the truthy check covers both undefined and
-    // null inputs uniformly.
-    const hasScalars = !!data.scalars && workerResult.startScalars.length > 0;
-
-    return {
-      startPositions: workerResult.startPositions,
-      endPositions: workerResult.endPositions,
-      startColors: workerResult.startColors,
-      endColors: workerResult.endColors,
-      startWidths: workerResult.startWidths,
-      endWidths: workerResult.endWidths,
-      startSharpness: workerResult.startSharpness,
-      endSharpness: workerResult.endSharpness,
-      startScalars: hasScalars ? workerResult.startScalars : undefined,
-      endScalars: hasScalars ? workerResult.endScalars : undefined,
-      segmentLengths: workerResult.segmentLengths,
-      startClipped: workerResult.startClipped,
-      endClipped: workerResult.endClipped,
-      segmentCount: workerResult.visibleSegmentCount,
-    };
+    return toProcessedLines(workerResult, !!data.scalars);
   } catch (error) {
-    // Dataset-switch abort: don't burn CPU on stale main-thread work.
+    // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
     log.warning(
       Modules.SCENE_LOADER,
-      'Worker lines projection failed, falling back to main thread:',
+      'Worker lines projection failed, falling back to in-process dispatcher:',
       error
     );
-    return projectLinesTo3D(data, viewState.slicePosition, tolerance, viewState.displayDims);
+    return toProcessedLines(await projectLinesInProcess(params), !!data.scalars);
   }
 }
 
@@ -185,7 +205,12 @@ export async function processLinesData(
     if (useWorkerProjection) {
       return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion);
     }
-    return projectLinesTo3D(data, viewState.slicePosition, tolerance, viewState.displayDims);
+    // Non-worker path (useWebWorkers off or small data): run the same
+    // dispatcher in-process rather than a separate main-thread copy.
+    return toProcessedLines(
+      await projectLinesInProcess(buildLinesParams(data, viewState, tolerance)),
+      !!data.scalars
+    );
   };
 
   if (session) {

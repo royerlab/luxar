@@ -1031,19 +1031,19 @@ Constructor takes `DatasetBrowserConfig` with `container`, `onDatasetSelect` cal
 
 ### DataLoadingMonitor
 
-| Method                           | Description                           |
-| -------------------------------- | ------------------------------------- |
-| `connectLoader(path, loader)`    | Connect a loader for monitoring       |
-| `disconnectLoader(path)`         | Disconnect a specific loader          |
-| `disconnectAllLoaders()`         | Disconnect all loaders (scene change) |
-| `show()/hide()/toggle()`         | Control visibility                    |
-| `cycleState()`                   | Cycle through hidden→mini→expanded    |
-| `expand()/minimize()/collapse()` | Control expanded state                |
-| `getGlobalStats()`               | Get aggregated statistics             |
-| `getLoaderMetrics(path)`         | Get metrics for specific loader       |
-| `getRecommendations()`           | Get optimization recommendations      |
+| Method                           | Description                                      |
+| -------------------------------- | ------------------------------------------------ |
+| `connectLoader(path, loader)`    | Connect a loader for monitoring                  |
+| `disconnectLoader(path)`         | Disconnect a specific loader                     |
+| `disconnectAllLoaders()`         | Disconnect all loaders (scene change)            |
+| `show()/hide()/toggle()`         | Control visibility                               |
+| `cycleState()`                   | Cycle through hidden→mini→expanded               |
+| `expand()/minimize()/collapse()` | Control expanded state                           |
+| `getGlobalStats()`               | Get aggregated statistics                        |
+| `getLoaderMetrics(path)`         | Get metrics for specific loader                  |
+| `getRecommendations()`           | Get optimization recommendations                 |
 | `setActiveTab(tab)`              | Switch tab (overview/cache/performance/insights) |
-| `dispose()`                      | Clean up resources                    |
+| `dispose()`                      | Clean up resources                               |
 
 ---
 

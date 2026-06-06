@@ -10,7 +10,7 @@
  * Run with: pnpm test:e2e or pnpm test:e2e:ui
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import {
   waitForLuxarReady,
   waitForDataLoaded,
@@ -220,7 +220,19 @@ test.describe('WASM Integration E2E', () => {
     expect(state?.totalPoints).toBeGreaterThan(0);
   });
 
-  test('should fallback to TypeScript if WASM unavailable', async ({ page }) => {
+  test('should fallback to TypeScript if WASM unavailable', async ({ page }, testInfo) => {
+    // This test deliberately aborts the WASM fetch, so the browser logs a
+    // benign `net::ERR_FAILED` for the blocked resource. Since W4 the
+    // in-process projection dispatcher loads WASM on the main thread too
+    // (Points are now main-thread, WASM-accelerated), so that blocked fetch
+    // surfaces on the page console. Opt out of the console-error guard —
+    // the induced network error is the whole point of the test; the real
+    // assertions below (TS-fallback taken + points still load) stand.
+    testInfo.annotations.push({
+      type: ALLOW_CONSOLE_ERRORS,
+      description: 'Deliberately blocks the WASM fetch to exercise the TypeScript fallback.',
+    });
+
     // Block WASM binary from loading to force TypeScript fallback
     await page.route(/\.wasm$/, (route) => route.abort());
     await page.route(/luxar_wasm/, (route) => route.abort());

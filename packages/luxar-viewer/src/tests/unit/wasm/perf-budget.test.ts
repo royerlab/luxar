@@ -139,10 +139,15 @@ function generateSegments(count: number): Uint32Array {
 }
 
 function generateCholeskyFactors(count: number, ndim: number): Float32Array {
+  // Deterministic (sine-based, matching generatePositions/generateRadii) rather
+  // than Math.random: the perf gate must be reproducible run-to-run, and
+  // unseeded factors could yield ill-conditioned/non-positive-definite packed
+  // Cholesky that makes the mahalanobis/attenuation branch timing input-
+  // dependent — the very flakiness the threshold was lowered to absorb.
   const size = (ndim * (ndim + 1)) / 2;
   const factors = new Float32Array(count * size);
   for (let i = 0; i < count * size; i++) {
-    factors[i] = Math.random() * 0.5 + 0.5;
+    factors[i] = Math.abs(Math.sin(i * 0.053 + 0.5)) * 0.5 + 0.5; // ∈ [0.5, 1.0]
   }
   return factors;
 }

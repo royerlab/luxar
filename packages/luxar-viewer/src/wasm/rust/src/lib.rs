@@ -13,13 +13,21 @@
 //! - Cache-friendly access patterns
 //! - Zero-copy data transfer via wasm-bindgen
 //!
-//! ## Dimension Limits
+//! ## Dimension Limits (and the >16D fallback)
 //!
-//! **Maximum supported dimensions: 16**
+//! **WASM fast path: up to 16 dimensions.**
 //!
-//! Functions that process nD data use fixed-size arrays for performance.
-//! If your dataset has more than 16 dimensions, the TypeScript fallback
-//! will be used automatically (via automatic fallback detection).
+//! Functions that process nD data use fixed-size arrays for performance and call
+//! `common::validate_ndim`, which panics (the crate is built `panic = "abort"`)
+//! for `ndim > 16`. These kernels must therefore never be invoked above 16D.
+//!
+//! **>16D is still fully supported** — automatically and transparently. The
+//! TypeScript reference implementations in `wasm/typescript/` are uncapped and
+//! handle arbitrary ndim, and the worker's `pickBackend(ctx, ndim)`
+//! (`workers/data-worker/state.ts`) routes any `ndim > 16` operation to that TS
+//! backend instead of the WASM kernel. So high-dimensional datasets run on the
+//! (slower but correct) TS path rather than being rejected — keep both backends
+//! in sync so this fallback stays a faithful substitute.
 //!
 //! ## Module Organization
 //!
@@ -30,6 +38,25 @@
 //! - `effective_radii` - Effective radius calculation for nD slicing
 //! - `decode` - Data decoding (quantized, LUT, log-space)
 //! - `projection` - nD to 3D projection and bounds
+
+// Clippy lint configuration for this numerical WASM crate.
+//
+// - `too_many_arguments`: the `#[wasm_bindgen]` kernels take many flat
+//   slice/scalar parameters (input buffers + pre-allocated output buffers +
+//   shape scalars). wasm-bindgen exports cannot accept aggregate structs for
+//   the zero-copy typed-array contract, so collapsing them is not an option.
+// - `needless_range_loop`: the kernels are in-place numerical algorithms
+//   (forward/back substitution, Cholesky factorization, mask compaction over
+//   parallel arrays). Index loops are the natural — and often the only
+//   borrow-checker-valid — form (e.g. reading `y[k]` while writing `y[i]`),
+//   and indexing by a shared `i` across several arrays is clearer than
+//   zipping. The iterator rewrites clippy suggests are infeasible or less
+//   readable here.
+//
+// `manual_memcpy` is intentionally NOT allowed — that lint flags genuinely
+// improvable slice copies (use `copy_from_slice`), which we fix in place.
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_range_loop)]
 
 // Shared constants and utilities
 pub mod common;
@@ -55,13 +82,13 @@ pub use effective_radii::calculate_effective_radii;
 pub use gsplats::compute_nd_visibility_gsplats;
 pub use gsplats_processing::{
     compact_attenuated_amplitudes, compute_gsplats_attenuation, extract_cholesky_submatrix,
-    extract_visible_cholesky_3d, mahalanobis_distance,
+    extract_visible_cholesky_3d, mahalanobis_distance, project_gsplats_nd_to_3d,
 };
 pub use lines::compute_nd_visibility_lines;
 pub use lines_clipping::{
-    calculate_segment_lengths, clip_segment_single, clip_segments_batch,
+    calculate_segment_lengths, clip_segment_single, clip_segments_batch, distance_3d,
     interpolate_clipped_positions, interpolate_colors_batch, interpolate_scalars_batch, lerp,
-    lerp_vec3, mark_clipped_endpoints, distance_3d,
+    lerp_vec3, mark_clipped_endpoints,
 };
 pub use points::compute_nd_visibility_points;
 pub use projection::{

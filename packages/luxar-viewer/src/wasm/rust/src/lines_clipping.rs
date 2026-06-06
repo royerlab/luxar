@@ -18,7 +18,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::{validate_ndim, MAX_SUPPORTED_DIMS};
+use crate::common::{validate_ndim, MAX_SUPPORTED_DIMS, SEGMENT_PARALLEL_EPSILON};
 
 /// Alias for readability within this module
 const MAX_DIMS: usize = MAX_SUPPORTED_DIMS;
@@ -86,7 +86,7 @@ pub fn clip_segment_single(
 
         // Compute intersection parameters
         let dv = v2 - v1;
-        if dv.abs() < 1e-7 {
+        if dv.abs() < SEGMENT_PARALLEL_EPSILON {
             continue; // Parallel to slice
         }
 
@@ -145,9 +145,24 @@ pub fn clip_segments_batch(
 ) -> u32 {
     validate_ndim(ndim, "clip_segments_batch");
 
-    debug_assert!(output_visibility.len() >= num_segments, "output_visibility too small: {} < {}", output_visibility.len(), num_segments);
-    debug_assert!(output_t1.len() >= num_segments, "output_t1 too small: {} < {}", output_t1.len(), num_segments);
-    debug_assert!(output_t2.len() >= num_segments, "output_t2 too small: {} < {}", output_t2.len(), num_segments);
+    debug_assert!(
+        output_visibility.len() >= num_segments,
+        "output_visibility too small: {} < {}",
+        output_visibility.len(),
+        num_segments
+    );
+    debug_assert!(
+        output_t1.len() >= num_segments,
+        "output_t1 too small: {} < {}",
+        output_t1.len(),
+        num_segments
+    );
+    debug_assert!(
+        output_t2.len() >= num_segments,
+        "output_t2 too small: {} < {}",
+        output_t2.len(),
+        num_segments
+    );
 
     // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
     let mut is_display_dim = [false; MAX_DIMS];
@@ -199,7 +214,7 @@ pub fn clip_segments_batch(
             }
 
             let dv = v2_val - v1_val;
-            if dv.abs() < 1e-7 {
+            if dv.abs() < SEGMENT_PARALLEL_EPSILON {
                 continue;
             }
 
@@ -463,7 +478,12 @@ pub fn calculate_segment_lengths(
     visible_count: usize,
     output: &mut [f32],
 ) {
-    debug_assert!(output.len() >= visible_count, "output too small: {} < {}", output.len(), visible_count);
+    debug_assert!(
+        output.len() >= visible_count,
+        "output too small: {} < {}",
+        output.len(),
+        visible_count
+    );
 
     for i in 0..visible_count {
         let dx = end_positions[i * 3] - start_positions[i * 3];
@@ -589,9 +609,9 @@ mod tests {
         // Segment 1: hidden (visibility=0)
         let ndim = 4;
         let positions: Vec<f32> = vec![
-            0.0, 0.0, 0.0, 0.0,   // v0
-            10.0, 0.0, 0.0, 5.0,  // v1
-            0.0, 10.0, 0.0, 5.0,  // v2
+            0.0, 0.0, 0.0, 0.0, // v0
+            10.0, 0.0, 0.0, 5.0, // v1
+            0.0, 10.0, 0.0, 5.0, // v2
             10.0, 10.0, 0.0, 5.0, // v3
         ];
         let segments: Vec<u32> = vec![0, 1, 2, 3];
@@ -600,8 +620,9 @@ mod tests {
         let t2_params: Vec<f32> = vec![0.5, 1.0];
         let display_dims: Vec<u32> = vec![0, 1, 2];
 
-        let mut output_start = vec![0.0f32; 1 * 3]; // 1 visible segment
-        let mut output_end = vec![0.0f32; 1 * 3];
+        // 1 visible segment × 3 components.
+        let mut output_start = vec![0.0f32; 3];
+        let mut output_end = vec![0.0f32; 3];
 
         let count = interpolate_clipped_positions(
             &positions,

@@ -16,6 +16,12 @@ import { describe, it, expect } from 'vitest';
 import { projectPointsTo3D, type ProjectionContext } from '../../../data/points/projection';
 import type { ViewState, PointRange } from '../../../data/data-loader-types';
 import type { PointsMetadata } from '../../../types/points';
+import { TypeScriptFallback } from '../../../wasm/typescript';
+
+// projectPointsTo3D is now WASM-accelerated; drive it with the TS-reference
+// backend (always available without a compiled build). The extraction
+// contract under test (displayDims selection / zero-fill) is the kernel's.
+const wasm = new TypeScriptFallback();
 
 function makeContext(overrides: Partial<ProjectionContext> = {}): ProjectionContext {
   const nodeAttrs: PointsMetadata = {
@@ -49,6 +55,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const positions = new Float32Array([0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const ranges: PointRange[] = [{ start: 0, end: 4 }];
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -71,6 +78,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const positions = new Float32Array([1, 2, 3, 100, 4, 5, 6, 200, 7, 8, 9, 300]);
     const ranges: PointRange[] = [{ start: 0, end: 3 }];
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -97,6 +105,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
       tolerance: [0, 1, 0, 1, 0],
     };
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -120,7 +129,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
       // Stub chunkIndex with metadata.ndim = 7 to verify the fallback path.
       chunkIndex: { metadata: { ndim: 7 } } as ProjectionContext['chunkIndex'],
     });
-    const result = projectPointsTo3D(positions, null, null, null, viewState3D, ranges, ctx);
+    const result = projectPointsTo3D(wasm, positions, null, null, null, viewState3D, ranges, ctx);
     expect(result.pointCount).toBe(0);
     expect(result.positions.length).toBe(0);
     // The contract under test: ndim flows from chunkIndex.metadata.ndim
@@ -138,7 +147,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const positions = new Float32Array(39);
     const ranges: PointRange[] = [{ start: 0, end: 10 }];
     expect(() =>
-      projectPointsTo3D(positions, null, null, null, viewState4D, ranges, makeContext())
+      projectPointsTo3D(wasm, positions, null, null, null, viewState4D, ranges, makeContext())
     ).toThrow(/size mismatch/i);
   });
 });
@@ -156,17 +165,19 @@ describe('projectPointsTo3D — corner cases', () => {
       slicePosition: [0, 0, 0, 0, 0],
       tolerance: [0, 0, 0, 0, 0],
     };
-    const result = projectPointsTo3D(positions, null, null, null, viewState, ranges, makeContext());
+    const result = projectPointsTo3D(wasm, positions, null, null, null, viewState, ranges, makeContext());
     expect(result.pointCount).toBe(1);
     expect(result.positions.length).toBe(3);
     // displayDims=[1,3,0] picks values [20, 40, 10] from the source point.
     expect(Array.from(result.positions)).toEqual([20, 40, 10]);
   });
 
-  it('displayDims.length=0 (no displayed dim): output positions are all zero', () => {
-    // 2 points, 3D, no displayed dims → output is all zeros (source
-    // fills the remaining `j < 3` slots with 0; with displayDims.length=0
-    // ALL 3 slots are zero-filled).
+  it('displayDims.length=0 is rejected (must have 1–3 entries)', () => {
+    // W4b: the WASM-accelerated path validates inputs via the shared
+    // `validateProjectionInputs`, which requires 1–3 display dims — matching
+    // the Lines/GSplats dispatchers. The deleted pure-TS copy silently
+    // produced all-zero output; rejecting is the symmetric, correct behavior
+    // (a 0-display-dim view is not renderable).
     const positions = new Float32Array([1, 2, 3, 4, 5, 6]);
     const ranges: PointRange[] = [{ start: 0, end: 2 }];
     const viewState: ViewState = {
@@ -174,10 +185,9 @@ describe('projectPointsTo3D — corner cases', () => {
       slicePosition: [0, 0, 0],
       tolerance: [0, 0, 0],
     };
-    const result = projectPointsTo3D(positions, null, null, null, viewState, ranges, makeContext());
-    expect(result.pointCount).toBe(2);
-    expect(result.positions.length).toBe(6);
-    expect(Array.from(result.positions)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(() =>
+      projectPointsTo3D(wasm, positions, null, null, null, viewState, ranges, makeContext())
+    ).toThrow(/displayDims must have 1–3 entries/);
   });
 
   it('displayDims.length=1 (one displayed dim): output X is that dim, Y/Z are 0', () => {
@@ -189,7 +199,7 @@ describe('projectPointsTo3D — corner cases', () => {
       slicePosition: [0, 0, 0, 0],
       tolerance: [0, 0, 0, 0],
     };
-    const result = projectPointsTo3D(positions, null, null, null, viewState, ranges, makeContext());
+    const result = projectPointsTo3D(wasm, positions, null, null, null, viewState, ranges, makeContext());
     expect(result.pointCount).toBe(2);
     expect(Array.from(result.positions)).toEqual([30, 0, 0, 70, 0, 0]);
   });
@@ -205,6 +215,7 @@ describe('projectPointsTo3D — corner cases', () => {
       { start: 1, end: 2 },
     ];
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,

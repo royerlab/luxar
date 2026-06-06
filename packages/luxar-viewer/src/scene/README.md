@@ -316,7 +316,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
 2. Lift that box to world space through the group's `matrixWorld`
    (`transformBoundingBox`).
 3. **Off-screen gate**: if the world box is entirely outside the
-   camera frustum, hold the group at its coarsest *ready* level
+   camera frustum, hold the group at its coarsest _ready_ level
    instead of loading a fine level the renderer would frustum-cull.
 4. Otherwise, project the 8 world corners to NDC and measure the
    diagonal of the screen-space AABB in pixels
@@ -941,9 +941,9 @@ _For implementation details, see the source files in this directory._
   and lazy-Proxy singleton `sceneDimsManager`).
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (screen-space-diagonal pick + frustum off-screen gate
-  + asymmetric hysteresis), lazy-load gating, and shared-VRAM-budget
-  LRU eviction. Exports pure helpers `projectBoxDiagonalPx` and
-  `pickChildWithHysteresis` for unit testing.
+  - asymmetric hysteresis), lazy-load gating, and shared-VRAM-budget
+    LRU eviction. Exports pure helpers `projectBoxDiagonalPx` and
+    `pickChildWithHysteresis` for unit testing.
 - `synthetic-scene.ts` — Mulberry32-seeded synthetic line-segment
   scene generator (`generateSyntheticLines`) used by the perf bench
   and the `__luxarDebug.injectSyntheticScene` debug API.

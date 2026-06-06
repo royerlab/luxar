@@ -12,13 +12,13 @@ Transparent BG, Video Quality, Resolution, Max Duration, Frame Rate,
 turntable Output / Speed / Smooth) sit directly on the root GUI,
 while niche toggles (Show Panels, Include Overlays, Max Resolution,
 Codec, Sync to Slider, Dimension) live in the `Advanced Options`
-folder. The folder is created *after* the primary controls so it
+folder. The folder is created _after_ the primary controls so it
 renders beneath them.
 
 ## Files
 
-| File                  | Role                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| File                  | Role                                                                                                                   |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `gui-construction.ts` | `buildRecordingGUI(deps)` + `captureLabelForMode(mode)` + `BuildGUIDeps` / `BuildGUIResult` interfaces. No side state. |
 
 ## Contract

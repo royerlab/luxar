@@ -62,11 +62,11 @@ pub fn compute_nd_visibility_points(
             let delta = positions[pt_offset + dim] - slice_position[dim];
             let effective_tolerance = tolerance[dim] + radius;
 
-            // OPTIMIZATION: Avoid division in hot loop - use reciprocal multiplication
-            // Division is ~10x slower than multiplication on most architectures
+            // Direct division (not reciprocal-multiply) keeps the visibility
+            // boundary (dist_sq ≈ VISIBILITY_THRESHOLD) bit-for-bit consistent
+            // with the TS reference; the perf delta is negligible on modern FPUs.
             if effective_tolerance > 0.0 {
-                let inv_tolerance = 1.0 / effective_tolerance;
-                let normalized = delta * inv_tolerance;
+                let normalized = delta / effective_tolerance;
                 dist_sq += normalized * normalized;
             } else if delta.abs() > EPSILON {
                 // Point is far from slice with zero tolerance - not visible
@@ -101,8 +101,15 @@ mod tests {
         let tolerance = vec![1.0, 1.0, 1.0];
 
         let mut output = vec![0u8; 3];
-        let count =
-            compute_nd_visibility_points(&positions, &radii, &slice_pos, &tolerance, 3, 3, &mut output);
+        let count = compute_nd_visibility_points(
+            &positions,
+            &radii,
+            &slice_pos,
+            &tolerance,
+            3,
+            3,
+            &mut output,
+        );
 
         assert_eq!(output[0], 1, "Point 0 should be visible (at origin)");
         assert_eq!(output[2], 1, "Point 2 should be visible (z=0.5)");
@@ -113,7 +120,7 @@ mod tests {
     fn test_point_visibility_4d_hidden_dimension() {
         // 2 points in 4D, same XYZ but different T
         let positions = vec![
-            0.0, 0.0, 0.0, 0.0,  // Point 0 at t=0
+            0.0, 0.0, 0.0, 0.0, // Point 0 at t=0
             0.0, 0.0, 0.0, 10.0, // Point 1 at t=10 (far away)
         ];
         let radii = vec![0.5, 0.5];
@@ -122,8 +129,15 @@ mod tests {
         let tolerance = vec![1e10, 1e10, 1e10, 1.0];
 
         let mut output = vec![0u8; 2];
-        let count =
-            compute_nd_visibility_points(&positions, &radii, &slice_pos, &tolerance, 4, 2, &mut output);
+        let count = compute_nd_visibility_points(
+            &positions,
+            &radii,
+            &slice_pos,
+            &tolerance,
+            4,
+            2,
+            &mut output,
+        );
 
         assert_eq!(output[0], 1, "Point 0 should be visible (t=0)");
         assert_eq!(output[1], 0, "Point 1 should be hidden (t=10)");
@@ -139,8 +153,15 @@ mod tests {
         let tolerance = vec![0.0, 0.0, 0.0];
 
         let mut output = vec![0u8; 1];
-        let count =
-            compute_nd_visibility_points(&positions, &radii, &slice_pos, &tolerance, 3, 1, &mut output);
+        let count = compute_nd_visibility_points(
+            &positions,
+            &radii,
+            &slice_pos,
+            &tolerance,
+            3,
+            1,
+            &mut output,
+        );
 
         // With radius 0.1 and zero tolerance, point should still be visible
         assert_eq!(output[0], 1, "Point at exact position should be visible");

@@ -3,18 +3,13 @@
  *
  * Sharing matrix:
  *
- * - **Lines** uses this helper on **both** threads — the main-thread
- *   `data/lines/projection.ts:projectLinesTo3D` and both WASM
- *   call paths import `coerceColorsToFloat32` from here.
- * - **GSplats** uses this helper on the **worker thread only**
- *   (`workers/data-worker.ts:projectGSplatsTo3D`). The main-thread
- *   path `data/gsplats/projection.ts:projectGSplats3DOnly`
- *   intentionally inlines the same `1/255` / `1/65535` math: it
- *   already has a pre-allocated output Float32Array and writes
- *   directly with no extra allocation. Per-frame splat counts are
- *   high enough that the extra alloc would be measurable; readability
- *   wins from sharing a 5-line helper aren't worth it. See commit
- *   `c93a9c20` for the trade-off rationale.
+ * - Both **Lines** and **GSplats** projection now lives solely in the
+ *   worker dispatchers (`workers/data-worker/projection/{lines,gsplats}.ts`),
+ *   run either on a worker or on the main thread via
+ *   `workers/data-worker/projection/in-process.ts`. Both import
+ *   `coerceColorsToFloat32` from here, so the `1/255` / `1/65535`
+ *   normalization contract has a single home. (The deleted main-thread
+ *   projection copies used to inline the same math; W4 removed them.)
  *
  * Workers are a cross-cutting layer per `.dependency-cruiser.cjs`,
  * so importing from this file is fine from any layer.

@@ -32,10 +32,11 @@ import {
 import {
   createEmptyPointsData as createEmptyPointsDataHelper,
   projectPointsTo3D,
-  projectPointsTo3DUsingWorker,
   type ProjectionContext,
   type ProjectionTargetBuffers,
 } from './projection';
+import { getPointsBackend } from '../../workers/data-worker/projection/in-process';
+import type { WasmModule } from '../../wasm/types';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -653,87 +654,26 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         }
       }
 
-      // Project to 3D display space
-      // Strategy:
-      // - If accumulators enabled: use main thread (ZERO allocations via targetBuffers)
-      // - If workers enabled AND no accumulators: use worker (offloads CPU, zero-copy transfer)
-      // - Otherwise: main thread (fallback)
-      let result: LoadedPointsData;
-      const useWorkerProjection =
-        appConfig.dataLoading.performance.useWebWorkers &&
-        !appConfig.dataLoading.performance.useAccumulators &&
-        totalPoints > 1000; // Only worth it for larger datasets
+      // Project to 3D display space on the main thread, WASM-accelerated.
+      // Points projection is memory-bandwidth-bound and pairs with the
+      // zero-allocation accumulator (targetBuffers), so it stays on the
+      // main thread rather than a worker — offloading would pay transfer
+      // cost both ways for negligible compute savings. The WASM kernels
+      // (extract_3d_positions / calculate_effective_radii) run via the
+      // backend resolved here; `getPointsBackend` routes ndim > 16 to the
+      // uncapped TS reference.
+      const ndimForBackend =
+        totalPoints > 0
+          ? Math.round(positions.length / totalPoints)
+          : this.chunkIndex?.metadata.ndim || 3;
+      const wasm = await getPointsBackend(ndimForBackend);
 
+      let result: LoadedPointsData;
       if (session) {
         const projectSession = session.begin('Project to 3D');
         try {
-          if (useWorkerProjection) {
-            // worker projection currently does not carry scalars
-            // through the worker boundary. Fall back to the main thread
-            // when the dataset has scalars so the colormap path stays
-            // wired end-to-end. (Worker scalar support is a separate
-            // optimisation, not blocking colormap correctness.)
-            if (scalars) {
-              result = this.projectTo3D(
-                positions,
-                colors,
-                radii,
-                sharpness,
-                viewState,
-                ranges,
-                targetBuffers,
-                scalars
-              );
-            } else {
-              result = await this.projectTo3DUsingWorker(
-                positions,
-                colors,
-                radii,
-                sharpness,
-                viewState,
-                ranges
-              );
-            }
-          } else {
-            result = this.projectTo3D(
-              positions,
-              colors,
-              radii,
-              sharpness,
-              viewState,
-              ranges,
-              targetBuffers,
-              scalars
-            );
-          }
-        } finally {
-          projectSession.end();
-        }
-      } else {
-        if (useWorkerProjection) {
-          if (scalars) {
-            result = this.projectTo3D(
-              positions,
-              colors,
-              radii,
-              sharpness,
-              viewState,
-              ranges,
-              targetBuffers,
-              scalars
-            );
-          } else {
-            result = await this.projectTo3DUsingWorker(
-              positions,
-              colors,
-              radii,
-              sharpness,
-              viewState,
-              ranges
-            );
-          }
-        } else {
           result = this.projectTo3D(
+            wasm,
             positions,
             colors,
             radii,
@@ -743,7 +683,21 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             targetBuffers,
             scalars
           );
+        } finally {
+          projectSession.end();
         }
+      } else {
+        result = this.projectTo3D(
+          wasm,
+          positions,
+          colors,
+          radii,
+          sharpness,
+          viewState,
+          ranges,
+          targetBuffers,
+          scalars
+        );
       }
 
       // Clean up completed query
@@ -1338,10 +1292,13 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Main-thread nD → 3D projection. Thin delegate to
-   * `projectPointsTo3D` in `point-loader/projection.ts`.
+   * Main-thread, WASM-accelerated nD → 3D projection. Thin delegate to
+   * `projectPointsTo3D` in `point-loader/projection.ts`. The `wasm`
+   * backend (compiled or TS-reference fallback) is resolved by the caller
+   * via `getPointsBackend(ndim)`.
    */
   private projectTo3D(
+    wasm: WasmModule,
     positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
@@ -1352,6 +1309,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     scalars?: Float32Array | Uint8Array | Uint16Array | Float16Array | null
   ): LoadedPointsData {
     return projectPointsTo3D(
+      wasm,
       positions,
       colors,
       radii,
@@ -1361,30 +1319,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.buildProjectionContext(),
       targetBuffers,
       scalars ?? null
-    );
-  }
-
-  /**
-   * Worker-based nD → 3D projection. Thin delegate to
-   * `projectPointsTo3DUsingWorker` in `point-loader/projection.ts`,
-   * which falls back to the main thread on worker failure.
-   */
-  private async projectTo3DUsingWorker(
-    positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-    colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-    radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-    sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-    viewState: ViewState,
-    ranges: PointRange[]
-  ): Promise<LoadedPointsData> {
-    return projectPointsTo3DUsingWorker(
-      positions,
-      colors,
-      radii,
-      sharpness,
-      viewState,
-      ranges,
-      this.buildProjectionContext()
     );
   }
 
