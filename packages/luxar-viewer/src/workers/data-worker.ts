@@ -28,7 +28,6 @@ import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatia
 import { computeNDVisibilityPoints as computeNDVisibilityPointsImpl } from './data-worker/visibility/points';
 import { computeNDVisibilityLines as computeNDVisibilityLinesImpl } from './data-worker/visibility/lines';
 import { computeNDVisibilityGSplats as computeNDVisibilityGSplatsImpl } from './data-worker/visibility/gsplats';
-import { projectPointsTo3D as projectPointsTo3DImpl } from './data-worker/projection/points';
 import { projectLinesTo3D as projectLinesTo3DImpl } from './data-worker/projection/lines';
 import { projectGSplatsTo3D as projectGSplatsTo3DImpl } from './data-worker/projection/gsplats';
 import { decodeQuantized as decodeQuantizedImpl } from './data-worker/decode/quantized';
@@ -37,20 +36,22 @@ import { decodeLUT as decodeLUTImpl } from './data-worker/decode/lut';
 import { decodeBroadcasted as decodeBroadcastedImpl } from './data-worker/decode/broadcasted';
 
 // Re-export the projection/effective-radius types that the loader needs.
-import type {
-  EffectiveRadiusConfig,
-  ProjectionViewState,
-  PointsOutputBuffers,
-} from './data-worker/types';
+// Points projection runs on the main thread (WASM-accelerated, see
+// data/points/projection.ts), so the worker no longer exposes a Points
+// projection task — only Lines and GSplats (worker-offloaded for large data).
+import type { EffectiveRadiusConfig, ProjectionViewState } from './data-worker/types';
 export type { EffectiveRadiusConfig, ProjectionViewState };
-export type { PointsOutputBuffers };
 export type { WorkerInitResult };
 
 /**
  * Comlink RPC surface. Each entry binds `state` to its task helper.
  */
 export const workerAPI = {
-  initialize: (): Promise<WorkerInitResult> => initializeImpl(state),
+  // `wasmPath` forwards the embedder's LuxarAppOptions.wasmPath into the worker
+  // module scope (the main-thread setWasmJsUrl override does NOT cross into the
+  // worker), so a relocated WASM binary is loaded here instead of silently
+  // falling back to the slower TS implementation.
+  initialize: (wasmPath?: string): Promise<WorkerInitResult> => initializeImpl(state, wasmPath),
   querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
     querySpatialIndexImpl(state, p),
   computeNDVisibilityPoints: (p: Parameters<typeof computeNDVisibilityPointsImpl>[1]) =>
@@ -65,9 +66,8 @@ export const workerAPI = {
   decodeLUT: (p: Parameters<typeof decodeLUTImpl>[1]) => decodeLUTImpl(state, p),
   decodeBroadcasted: (p: Parameters<typeof decodeBroadcastedImpl>[1]) =>
     decodeBroadcastedImpl(state, p),
-  // Projection functions (nD → 3D, CPU-intensive)
-  projectPointsTo3D: (p: Parameters<typeof projectPointsTo3DImpl>[1]) =>
-    projectPointsTo3DImpl(state, p),
+  // Projection functions (nD → 3D, CPU-intensive). Points project on the
+  // main thread (WASM + zero-alloc accumulator), so only Lines/GSplats here.
   projectLinesTo3D: (p: Parameters<typeof projectLinesTo3DImpl>[1]) =>
     projectLinesTo3DImpl(state, p),
   projectGSplatsTo3D: (p: Parameters<typeof projectGSplatsTo3DImpl>[1]) =>

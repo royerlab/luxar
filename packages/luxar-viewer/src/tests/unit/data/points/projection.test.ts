@@ -24,6 +24,12 @@ import type { ViewState, PointRange } from '../../../../data/data-loader-types';
 import type { PointsMetadata, EffectiveRadiusConfig } from '../../../../types/points';
 import type { PointsChunkIndex } from '../../../../data/points/chunk-index-loader';
 import { LoadedPointsDataAccumulator } from '../../../../data/accumulators/points';
+import { TypeScriptFallback } from '../../../../wasm/typescript';
+
+// projectPointsTo3D is WASM-accelerated; drive it with the TS-reference
+// backend (always available without a compiled build). The extraction +
+// effective-radius math under test is the kernel's.
+const wasm = new TypeScriptFallback();
 
 function makeAttrs(overrides: Partial<PointsMetadata> = {}): PointsMetadata {
   return {
@@ -127,6 +133,7 @@ describe('projectPointsTo3D', () => {
   it('throws when positions is null', () => {
     expect(() =>
       projectPointsTo3D(
+        wasm,
         null,
         null,
         null,
@@ -144,11 +151,16 @@ describe('projectPointsTo3D', () => {
     // Point 1: (20, 21, 22, 23, 24)  → projected (21, 23, 24)
     const positions = new Float32Array([10, 11, 12, 13, 14, 20, 21, 22, 23, 24]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
       null,
-      makeViewState({ displayDims: [1, 3, 4] }),
+      makeViewState({
+        displayDims: [1, 3, 4],
+        slicePosition: [0, 0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0, 0],
+      }),
       [{ start: 0, end: 2 }] as PointRange[],
       makeCtx()
     );
@@ -160,6 +172,7 @@ describe('projectPointsTo3D', () => {
     // 2 points × 2 dims; only display dim 0
     const positions = new Float32Array([5, 99, 6, 99]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -179,6 +192,7 @@ describe('projectPointsTo3D', () => {
     // 1 point × 4 dims, but chunkIndex says ndim=99 — actual ndim wins.
     const positions = new Float32Array([1, 2, 3, 4]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -196,6 +210,7 @@ describe('projectPointsTo3D', () => {
 
   it('returns metadata.usedSpatialIndex=true and totalPoints from nodeAttrs.n_points', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([1, 2, 3]),
       null,
       null,
@@ -210,6 +225,7 @@ describe('projectPointsTo3D', () => {
 
   it('falls back to range total for totalPoints when n_points is 0', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([1, 2, 3, 4, 5, 6]),
       null,
       null,
@@ -225,12 +241,12 @@ describe('projectPointsTo3D', () => {
 describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)', () => {
   // The accumulator path is the supported hot path used in production.
   // The fallback path runs when targetBuffers is null/undefined — used
-  // for tests, the no-accumulator opt-out, and the worker-error rescue
-  // route in projectPointsTo3DUsingWorker.
+  // for tests and the explicit no-accumulator opt-out.
 
   it('allocates a fresh Float32Array for positions3D (length = numPoints * 3)', () => {
     const positions = new Float32Array([1, 2, 3, 4, 5, 6]); // 2 points × 3 dims
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -248,6 +264,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   it('passes Float32 colors through to the result (same reference)', () => {
     const colors = new Float32Array([1.0, 0.0, 0.0, 0.5, 0.5, 0.5]);
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1]),
       colors,
       null,
@@ -263,6 +280,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   it('passes Uint8 colors through to the result (same reference, dtype preserved)', () => {
     const colors = new Uint8Array([255, 0, 0, 0, 128, 255]);
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1]),
       colors,
       null,
@@ -278,6 +296,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   it('passes Uint16 colors through to the result (HDR dtype preserved)', () => {
     const colors = new Uint16Array([65535, 0, 0, 0, 32768, 65535]);
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1]),
       colors,
       null,
@@ -293,6 +312,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   it('passes Float32 radii through (same reference) when no effectiveRadiusConfig', () => {
     const radii = new Float32Array([0.5, 1.0]);
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1]),
       null,
       radii,
@@ -308,6 +328,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
   it('passes sharpness through to the result (same reference)', () => {
     const sharpness = new Uint8Array([200, 100]);
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1]),
       null,
       null,
@@ -321,6 +342,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
 
   it('metadata.dtypes mirrors the nodeAttrs dtype declarations', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0]),
       null,
       null,
@@ -346,6 +368,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
 
   it('metadata.usedEffectiveRadius is false when effectiveRadiusConfig is null', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0]),
       null,
       new Float32Array([1.0]),
@@ -359,6 +382,7 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
 
   it('loadedPoints reflects post-projection count (matches range total when no filtering)', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       null,
       null,
@@ -417,6 +441,7 @@ describe('Uint8 radius normalization (÷255) before effective-radius use', () =>
     expect(accumulator.getRadiiBuffer()).toBeInstanceOf(Uint8Array);
 
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 100]), // 1 point × 4 dims; dim3 = 100
       null,
       new Uint8Array([255]),
@@ -453,6 +478,7 @@ describe('Uint8 radius normalization (÷255) before effective-radius use', () =>
     };
 
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 0]), // dim3 = 0 → on slice
       null,
       new Uint8Array([255]),
@@ -500,6 +526,7 @@ describe('multi-range projection', () => {
       3, // pt 3
     ]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -537,6 +564,7 @@ describe('multi-range projection', () => {
       43, // pt 3 → (43, 40, 41)
     ]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -561,6 +589,7 @@ describe('multi-range projection', () => {
 describe('scalar length validation', () => {
   it('suppresses scalars when scalars.length !== point count', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       null,
       null,
@@ -577,6 +606,7 @@ describe('scalar length validation', () => {
 
   it('keeps scalars when length matches point count', () => {
     const result = projectPointsTo3D(
+      wasm,
       new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       null,
       null,
@@ -608,6 +638,7 @@ describe('projectPointsTo3D — size-mismatch guard (MED-14)', () => {
     const positions = new Float32Array(39); // garbage size
     expect(() =>
       projectPointsTo3D(
+        wasm,
         positions,
         null,
         null,
@@ -628,6 +659,7 @@ describe('projectPointsTo3D — size-mismatch guard (MED-14)', () => {
     const positions = new Float32Array(12);
     expect(() =>
       projectPointsTo3D(
+        wasm,
         positions,
         null,
         null,
@@ -641,5 +673,149 @@ describe('projectPointsTo3D — size-mismatch guard (MED-14)', () => {
         makeCtx()
       )
     ).not.toThrow();
+  });
+});
+
+// W4b: Points projection moved to the main thread (WASM-accelerated). copy-C
+// now feeds the WASM kernels directly, so the WASM-boundary guards the former
+// worker dispatcher applied live here. These cases migrated from
+// tests/unit/workers/data-worker/validation.test.ts.
+describe('projectPointsTo3D — WASM-boundary validation guards', () => {
+  const ranges10: PointRange[] = [{ start: 0, end: 10 }];
+
+  it('rejects displayDims with out-of-range entries', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30), // 10 points × 3
+        null,
+        null,
+        null,
+        makeViewState({ displayDims: [0, 1, 7], slicePosition: [0, 0, 0] }), // 7 ≥ ndim=3
+        ranges10,
+        makeCtx()
+      )
+    ).toThrow(/displayDims\[2\]=7 out of range/);
+  });
+
+  it('rejects radii shorter than numPoints', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        null,
+        new Float32Array(3), // need 10
+        null,
+        makeViewState(),
+        ranges10,
+        makeCtx()
+      )
+    ).toThrow(/radii too short/);
+  });
+
+  it('rejects colors shorter than 3 × numPoints', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        new Uint8Array(15), // need 30
+        null,
+        null,
+        makeViewState(),
+        ranges10,
+        makeCtx()
+      )
+    ).toThrow(/colors too short/);
+  });
+
+  it('rejects sharpness shorter than numPoints (symmetry with lines/gsplats)', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        null,
+        null,
+        new Float32Array(3), // need 10
+        makeViewState(),
+        ranges10,
+        makeCtx()
+      )
+    ).toThrow(/sharpness too short/);
+  });
+
+  it('rejects effectiveRadiusConfig.spatialExtendDims shorter than ndim', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        null,
+        new Float32Array(10),
+        null,
+        makeViewState({ tolerance: [0, 0, 0] }),
+        ranges10,
+        makeCtx({ effectiveRadiusConfig: { spatialExtendDims: [false, false], maxRadius: 1.0 } })
+      )
+    ).toThrow(/spatialExtendDims too short/);
+  });
+
+  it('rejects effectiveRadiusConfig.maxRadius non-finite', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        null,
+        new Float32Array(10),
+        null,
+        makeViewState({ tolerance: [0, 0, 0] }),
+        ranges10,
+        makeCtx({
+          effectiveRadiusConfig: {
+            spatialExtendDims: [false, false, false],
+            maxRadius: Number.POSITIVE_INFINITY,
+          },
+        })
+      )
+    ).toThrow(/maxRadius=Infinity must be a finite number/);
+  });
+
+  it('rejects effectiveRadiusConfig with tolerance shorter than ndim', () => {
+    expect(() =>
+      projectPointsTo3D(
+        wasm,
+        new Float32Array(30),
+        null,
+        new Float32Array(10),
+        null,
+        makeViewState({ tolerance: [0, 0] }), // len 2 < ndim 3
+        ranges10,
+        makeCtx({
+          effectiveRadiusConfig: { spatialExtendDims: [false, false, false], maxRadius: 1.0 },
+        })
+      )
+    ).toThrow(/viewState.tolerance too short/);
+  });
+
+  it('supports ndim > 16 via the uncapped TS reference backend (not rejected)', () => {
+    // 1 point × 17 dims. The compiled WASM kernels cap at 16; the TS-reference
+    // backend (used here, and selected by getPointsBackend for ndim>16) is
+    // uncapped, so projection succeeds.
+    const positions = new Float32Array(17);
+    for (let d = 0; d < 17; d++) positions[d] = d;
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: new Array(17).fill(0),
+        tolerance: new Array(17).fill(0),
+      }),
+      [{ start: 0, end: 1 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.ndim).toBe(17);
+    expect(Array.from(result.positions)).toEqual([0, 1, 2]);
   });
 });

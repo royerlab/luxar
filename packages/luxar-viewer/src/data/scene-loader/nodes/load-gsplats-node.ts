@@ -151,9 +151,7 @@ export async function loadGSplatsNodeExpensive(
     // three meaningful costs — fetch+decode, CPU process (project+pack),
     // GPU commit — so navigation hitches can be attributed to a stage
     // before deciding what (if anything) to move off the main thread.
-    const data = await timeLodStage('lazy:loadGSplats', () =>
-      loader.loadGSplats(gsplatsViewState)
-    );
+    const data = await timeLodStage('lazy:loadGSplats', () => loader.loadGSplats(gsplatsViewState));
 
     if (data.splatCount === 0) {
       log.info(

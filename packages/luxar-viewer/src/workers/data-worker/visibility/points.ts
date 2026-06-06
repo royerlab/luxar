@@ -8,7 +8,7 @@
  * next call can reuse it.
  */
 
-import { requireWasm, type WasmCtx } from '../state';
+import { pickBackend, type WasmCtx } from '../state';
 import { validateNDArrays } from '../validation';
 
 export async function computeNDVisibilityPoints(
@@ -22,7 +22,7 @@ export async function computeNDVisibilityPoints(
     numPoints: number;
   }
 ): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(ctx);
+  const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
   const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
   validateNDArrays(

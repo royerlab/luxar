@@ -43,8 +43,8 @@ data/
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
 │   ├── handler.ts                     # GeometryTypeHandler<Points> registry entry
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
-│   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
-│   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
+│   ├── projection.ts                  # nD → 3D projection (main-thread, WASM-accelerated; single impl)
+│   └── effective-radius-calculator.ts # query-tolerance + should-apply helpers (+ TS-ref effective-radii)
 │
 ├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
@@ -52,7 +52,7 @@ data/
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
 │   ├── handler.ts                     # GeometryTypeHandler<Lines> registry entry
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
-│   └── projection.ts                  # clipSegmentToSlice + lerp + projectLinesTo3D (TS + WASM) + initLinesWASM
+│   └── projection.ts                  # createEmptyLinesData only (nD→3D math lives in workers/data-worker/projection/lines.ts)
 │
 ├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
@@ -60,7 +60,7 @@ data/
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
 │   ├── handler.ts                       # GeometryTypeHandler<GSplats> registry entry
 │   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
-│   └── projection.ts                    # nD → 3D pure-math companion (centers, Cholesky, attenuation)
+│   └── projection.ts                    # createEmptyGSplatsData only (nD→3D math lives in workers/data-worker/projection/gsplats.ts)
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions

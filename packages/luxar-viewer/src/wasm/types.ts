@@ -340,6 +340,57 @@ export interface WasmModule {
     output: Float32Array
   ): number;
 
+  /**
+   * Fused nD→3D GSplat projection in a single pass: discrete-visibility gate →
+   * continuous attenuation (marginal Cholesky + shifted Gaussian) → visibility
+   * (`amplitude * attenuation >= minAmplitude`) → COMPACTED outputs. Replaces the
+   * 6-call pipeline (`compute_gsplats_attenuation` + `extract_3d_positions` +
+   * `compact_by_mask` ×2 + `extract_visible_cholesky_3d` +
+   * `compact_attenuated_amplitudes`), eliminating ~5 passes and the repeated
+   * large-array boundary copies. Bit-identical visible set + values.
+   *
+   * Colors must be pre-normalized to f32 (white-filled when absent) — the kernel
+   * takes a single `Float32Array` because wasm-bindgen can't accept a typed-array
+   * union. Outputs are sized for the `splatCount` worst case; slice each to the
+   * returned visible count.
+   *
+   * @param positions - Splat centers [splatCount * ndim]
+   * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
+   * @param amplitudes - Splat amplitudes [splatCount]
+   * @param colors - Pre-normalized RGB [splatCount * 3]
+   * @param discreteVisibility - Precomputed discrete-dim gate [splatCount]
+   * @param slicePosition - Current slice [ndim]
+   * @param continuousHiddenDims - Sorted continuous hidden dims [numContinuous]
+   * @param displayDims - Display dims in requested order [2 or 3]
+   * @param ndim - Total dimensionality
+   * @param splatCount - Number of splats
+   * @param minAmplitude - Visibility threshold
+   * @param truncate - Truncation radius in sigmas (typically 3.0)
+   * @param outCenters3d - Output visible centers [splatCount * 3] worst-case
+   * @param outCholesky3d - Output visible 3D Cholesky [splatCount * 6] worst-case
+   * @param outAmplitudes - Output visible attenuated amplitudes [splatCount] worst-case
+   * @param outColors - Output visible colors [splatCount * 3] worst-case
+   * @returns Number of visible splats written
+   */
+  project_gsplats_nd_to_3d(
+    positions: Float32Array,
+    cholesky: Float32Array,
+    amplitudes: Float32Array,
+    colors: Float32Array,
+    discreteVisibility: Uint8Array,
+    slicePosition: Float32Array,
+    continuousHiddenDims: Uint32Array,
+    displayDims: Uint32Array,
+    ndim: number,
+    splatCount: number,
+    minAmplitude: number,
+    truncate: number,
+    outCenters3d: Float32Array,
+    outCholesky3d: Float32Array,
+    outAmplitudes: Float32Array,
+    outColors: Float32Array
+  ): number;
+
   // ============================================================================
   // LINES CLIPPING FUNCTIONS - nD segment clipping and interpolation
   // ============================================================================

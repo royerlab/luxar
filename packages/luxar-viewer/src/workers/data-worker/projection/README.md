@@ -1,19 +1,25 @@
 # Data-Worker Projection
 
-WASM-backed nD→3D projection kernels for the three Luxar geometry
-types — **Points**, **Lines**, **GSplats**. One file per geometry,
-parallel shape, shared validation and color helpers. These are the
-worker-side bodies that the main-thread `data/scene-loader/process/`
-stage dispatches to via Comlink (`projectPointsTo3D`,
-`projectLinesTo3D`, `projectGSplatsTo3D` on the `DataWorkerAPI`).
+WASM-backed nD→3D projection kernels for **Lines** and **GSplats**. These
+are the worker-side bodies that the main-thread `data/scene-loader/process/`
+stage dispatches to via Comlink (`projectLinesTo3D`, `projectGSplatsTo3D`
+on the `DataWorkerAPI`), or runs in-process via `in-process.ts`.
+
+**Points are not here.** Points projection is memory-bandwidth-bound and
+pairs with a zero-allocation accumulator, so it runs on the **main thread**
+(still WASM-accelerated) in `data/points/projection.ts` — see that module
+and `getPointsBackend` in `in-process.ts`. All three geometries thus share
+the same WASM kernels; only Lines/GSplats are worker-offloaded.
 
 ## Files
 
 | File         | Geometry | Role                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `points.ts`  | Points   | Extracts 3D positions via `extract_3d_positions`, optionally runs `calculate_effective_radii` (treating `extend_to_all` dims as displayed), filters zero-radius points with `radii_to_visibility_mask` + `compact_by_mask`, computes bounds via `calculate_bounds_3d`. Supports the TransferableAccumulator zero-allocation path via `outputBuffers`.                             |
 | `lines.ts`   | Lines    | Clips segments with `clip_segments_batch` (slicePosition + tolerance + displayDims), interpolates clipped endpoints to 3D via `interpolate_clipped_positions`, then interpolates per-vertex colors / widths / sharpness / scalars with `interpolate_colors_batch` + `interpolate_scalars_batch`, finishes with `calculate_segment_lengths` and `mark_clipped_endpoints`.          |
-| `gsplats.ts` | GSplats  | Pre-filters discrete hidden dims (half-step threshold, TS), runs `compute_gsplats_attenuation` over the continuous hidden dims for Mahalanobis-based visibility + attenuation, then `extract_3d_positions` + `compact_by_mask` for centers, `extract_visible_cholesky_3d` for the 3D Cholesky submatrices, and `compact_attenuated_amplitudes` for the per-splat amplitude scale. |
+| `gsplats.ts` | GSplats  | Pre-filters discrete hidden dims (half-step threshold, TS), coerces colors to normalized f32, then makes a **single fused `project_gsplats_nd_to_3d` call** (discrete gate → continuous Mahalanobis attenuation → visibility → compacted centers / 3D Cholesky / amplitudes / colors). A standard-3D fast path (`ndim===3`, `displayDims===[0,1,2]`) skips the kernel with a straight copy and **no** amplitude filtering. Hidden-dim classification is shared via `hidden-dims.ts`. |
+| `hidden-dims.ts` | shared  | `classifyHiddenDims` (partitions non-displayed dims into extend_to_all / discrete / continuous, preserving displayDims order) and `isExtendToAll`. Used by `gsplats.ts` and the data-processor's param builder.                                                                                                                                                              |
+| `constants.ts` | shared  | Numeric thresholds shared across the dispatchers: `MIN_AMPLITUDE`, `ZERO_RADIUS_THRESHOLD`, `EXTEND_TO_ALL_THRESHOLD`, `SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE`.                                                                                                                                                                                                                  |
+| `in-process.ts` | shared  | Runs the dispatchers **on the main thread** against a lazily-initialized `WasmCtx` (`projectGSplatsInProcess` / `projectLinesInProcess`). The data-processors use this for the `useWebWorkers=false` / below-threshold path and as the worker-failure fallback — the same kernel code, no second copy. Also exposes `getPointsBackend(ndim)`, which resolves the WASM backend (compiled, or TS-reference for `ndim>16`) that `data/points/projection.ts` runs its kernels on. |
 
 ## Public surface
 
@@ -22,22 +28,10 @@ All three functions take a `ctx: WasmCtx` (from `../state.ts`) plus a
 typed-array buffers move to the main thread without copying.
 
 ```typescript
-// All three share the same ProjectionViewState shape from ../types.ts.
+// Both share the same ProjectionViewState shape from ../types.ts.
 // displayDims + slicePosition are consumed by every kernel; tolerance
-// is read by Points (extend_to_all detection) and Lines (clip bounds)
-// but is required by GSplats only for API parity.
-export async function projectPointsTo3D(
-  ctx,
-  params
-): Promise<{
-  positions3D;
-  colors;
-  radii;
-  sharpness;
-  visibleCount;
-  bounds;
-  outputBuffers?: PointsOutputBuffers; // TransferableAccumulator
-}>;
+// is read by Lines (clip bounds) but is required by GSplats only for
+// API parity. (Points projection lives in data/points/projection.ts.)
 export async function projectLinesTo3D(
   ctx,
   params
@@ -87,29 +81,21 @@ export async function projectGSplatsTo3D(
   these files.
 - **Zero-copy results.** Every return goes through `comlink.transfer()`
   with the full list of result-array buffers, so the main thread adopts
-  them without an intermediate copy. Points additionally supports a
-  caller-provided `outputBuffers` for fully pre-allocated zero-alloc
-  loops (the TransferableAccumulator pattern).
-- **`extend_to_all` is geometry-aware.** Points detects extend-to-all
-  via `tolerance[d] >= 1e9` and treats those dims as displayed inside
-  `calculate_effective_radii`. GSplats receives an explicit
+  them without an intermediate copy. (Points' zero-alloc accumulator
+  `outputBuffers` path lives with its main-thread projection in
+  `data/points/projection.ts`.)
+- **`extend_to_all` is geometry-aware.** GSplats receives an explicit
   `extendToAllDims` index list and removes those dims from the active
   hidden-dim set before Mahalanobis attenuation. Lines has no
   `extend_to_all` step here — the caller already mutates the tolerance
   array to `EXTEND_TO_ALL_TOLERANCE` upstream in
-  `scene-loader/process/data-processor-lines.ts`.
+  `scene-loader/process/data-processor-lines.ts`. (Points fold extend
+  dims into the display set for `calculate_effective_radii`, on the main
+  thread in `data/points/projection.ts`.)
 - **Early-exit on empty visibility.** When the visibility mask resolves
-  to zero, every kernel returns empty typed arrays of the correct
-  element type (preserving the input color dtype for Points) instead of
-  running the compact / interpolate steps. This keeps the worker fast
-  on hidden-slice navigation.
-- **No Points process step upstream.** Unlike Lines and GSplats, Points
-  has no `data-processor-points.ts` — the spatial-index loader already
-  produces 3D-ready buffers, so `projectPointsTo3D` is only invoked by
-  loaders that _do_ want async nD compaction (effective-radius +
-  extend-to-all paths). See
-  `../../../data/scene-loader/commit/commit-points-geometry.ts` for the
-  rationale.
+  to zero, both kernels return empty typed arrays of the correct element
+  type instead of running the compact / interpolate steps. This keeps
+  the worker fast on hidden-slice navigation.
 
 ## See also
 

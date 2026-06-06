@@ -22,11 +22,15 @@ import {
   type ProjectionContext,
   type ProjectionTargetBuffers,
 } from '../../../data/points/projection';
+import { TypeScriptFallback } from '../../../wasm/typescript';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedPointsData, ViewState } from '../../../data/data-loader-types';
 import type { PointsMetadata } from '../../../types/points';
+
+// projectPointsTo3D is WASM-accelerated; drive it with the TS-reference backend.
+const wasm = new TypeScriptFallback();
 
 function pointsAttrs(): PointsMetadata {
   return {
@@ -116,6 +120,7 @@ describe('projectPointsTo3D scalar pass-through', () => {
     const positions = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]);
     const scalars = new Float32Array([0.1, 0.5, 0.9]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -135,6 +140,7 @@ describe('projectPointsTo3D scalar pass-through', () => {
   it('returns scalars: undefined when no scalars supplied', () => {
     const positions = new Float32Array([0, 0, 0]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -150,6 +156,7 @@ describe('projectPointsTo3D scalar pass-through', () => {
     const positions = new Float32Array([0, 0, 0, 1, 0, 0]);
     const scalars = new Uint8Array([100, 200]);
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,
@@ -183,6 +190,7 @@ describe('projectPointsTo3D scalar pass-through', () => {
     });
     const projCtx: ProjectionContext = { ...ctx(), accumulator: acc };
     const result = projectPointsTo3D(
+      wasm,
       positions,
       null,
       null,

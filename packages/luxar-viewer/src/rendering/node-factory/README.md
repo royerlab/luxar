@@ -48,7 +48,7 @@ NodeFactory (class in rendering/node-factory.ts)
 - **Producer-side row-major guard.** `validateTransformFormat` throws
   when a 4×4 transform looks row-major (non-zero at indices `[3,7,11]`
   with zeros at `[12,13,14]`). It also throws an "ambiguous" error when
-  *both* translation bands are non-zero — a correct column-major matrix
+  _both_ translation bands are non-zero — a correct column-major matrix
   has its last row `[3,7,11,15]` equal to `[0,0,0,1]`, so a non-zero
   `[3,7,11]` always signals a producer bug rather than letting geometry
   land in the wrong place. Python producers must transpose before

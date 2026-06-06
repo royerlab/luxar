@@ -33,11 +33,11 @@ Structurally-generic concatenation over any typed array `A`
 (Float32Array, Uint8/16/32Array, Float16Array, …). The output dtype is
 preserved by constructing from the first part's array.
 
-| Symbol                          | Description                                                                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `interface ConcatTypedArray`    | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                                 |
-| `concatRequiredField(parts, get, countOf, perItem?)` | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.    |
-| `concatOptionalField(parts, get, countOf, perItem?)` | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless *every* part carries the field. |
+| Symbol                                               | Description                                                                                                                  |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `interface ConcatTypedArray`                         | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                   |
+| `concatRequiredField(parts, get, countOf, perItem?)` | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.      |
+| `concatOptionalField(parts, get, countOf, perItem?)` | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless _every_ part carries the field. |
 
 `get` extracts the field from a part, `countOf` returns a part's element
 count (rows), and `perItem` is the components per element (e.g. `3` for
@@ -45,10 +45,7 @@ positions, `1` for scalar widths/radii). `parts` is assumed to have
 length ≥ 1.
 
 ```typescript
-import {
-  concatRequiredField,
-  concatOptionalField,
-} from '../loaders/progressive/concat-helpers';
+import { concatRequiredField, concatOptionalField } from '../loaders/progressive/concat-helpers';
 
 // Required: positions are ndim components per row.
 const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
@@ -80,11 +77,11 @@ tuning knob — Points, Lines, and GSplats all import the same constant.
 
 ## Consumers
 
-| File                                          | Uses                                                       |
-| --------------------------------------------- | ---------------------------------------------------------- |
-| `../points/points-progressive-loader.ts`      | `concatRequiredField`, `concatOptionalField`, `CACHE_HIT_THRESHOLD_MS` |
-| `../lines/lines-progressive-loader.ts`        | `concatRequiredField`, `concatOptionalField`, `CACHE_HIT_THRESHOLD_MS` |
-| `../gsplats/gsplats-progressive-loader.ts`    | `concatRequiredField`, `CACHE_HIT_THRESHOLD_MS`            |
+| File                                       | Uses                                                                   |
+| ------------------------------------------ | ---------------------------------------------------------------------- |
+| `../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, `CACHE_HIT_THRESHOLD_MS` |
+| `../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, `CACHE_HIT_THRESHOLD_MS` |
+| `../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, `CACHE_HIT_THRESHOLD_MS`                        |
 
 ## See Also
 

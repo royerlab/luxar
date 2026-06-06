@@ -13,14 +13,24 @@
  */
 
 import type { WasmModule } from '../../wasm';
+import { MAX_SUPPORTED_DIMS } from '../../config/constants';
 
 export interface WasmCtx {
   wasm: WasmModule | null;
+  /**
+   * Uncapped TypeScript reference backend, set at init. Used by
+   * {@link pickBackend} to serve `ndim > MAX_SUPPORTED_DIMS` operations, which
+   * the compiled WASM kernels cannot handle (fixed-size `[_; 16]` arrays). When
+   * compiled WASM failed to load, this is the same instance as `wasm`. Optional
+   * so test harnesses that only exercise the `ndim <= 16` WASM path need not set it.
+   */
+  tsFallback?: WasmModule | null;
   visibilityMaskBuffer: Uint8Array | null;
 }
 
 export const state: WasmCtx = {
   wasm: null,
+  tsFallback: null,
   visibilityMaskBuffer: null,
 };
 
@@ -37,4 +47,26 @@ export const NOT_INITIALIZED_MSG = '[DataWorker] Not initialized - call initiali
 export function requireWasm(ctx: WasmCtx): WasmModule {
   if (!ctx.wasm) throw new Error(NOT_INITIALIZED_MSG);
   return ctx.wasm;
+}
+
+/**
+ * Select the backend for a dimension-sensitive operation.
+ *
+ * The compiled WASM kernels use fixed-size `[_; MAX_SUPPORTED_DIMS]` arrays and
+ * panic (the crate is `panic = "abort"`) for `ndim > MAX_SUPPORTED_DIMS`. The
+ * TypeScript reference implementation is uncapped and handles arbitrary ndim, so
+ * for `ndim > MAX_SUPPORTED_DIMS` we transparently route the operation to it.
+ * This is the ">16D uses the TypeScript fallback automatically (slower but
+ * works)" contract — higher-dimensional datasets are SUPPORTED, not rejected.
+ *
+ * For `ndim <= MAX_SUPPORTED_DIMS` the active backend (compiled WASM when
+ * available, otherwise the same TS fallback) is used.
+ */
+export function pickBackend(ctx: WasmCtx, ndim: number): WasmModule {
+  const wasm = requireWasm(ctx);
+  if (ndim > MAX_SUPPORTED_DIMS) {
+    if (!ctx.tsFallback) throw new Error(NOT_INITIALIZED_MSG);
+    return ctx.tsFallback;
+  }
+  return wasm;
 }

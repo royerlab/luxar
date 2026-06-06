@@ -1,8 +1,12 @@
 /**
  * Vitest global setup — runs once before the entire test suite.
  *
- * Ensures Python-generated zarr test fixtures exist.
- * If any are missing, runs the generator script automatically.
+ * Ensures Python-generated zarr test fixtures exist, and that the compiled
+ * WASM module is built so the WASM-vs-TS parity tests actually run (rather
+ * than silently skipping and reporting green having verified nothing about
+ * the compiled backend).
+ *
+ * If any fixtures are missing, runs the generator script automatically.
  */
 
 import { existsSync, readFileSync, statSync } from 'fs';
@@ -15,6 +19,8 @@ const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
 const VIEWER_ROOT = resolve(THIS_DIR, '../..');
 const FIXTURES_DIR = resolve(VIEWER_ROOT, 'tests/fixtures');
 const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
+const WASM_JS_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm.js');
+const WASM_BIN_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm_bg.wasm');
 const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
 const EXPECTATIONS_GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_expectations.py');
 const EXPECTATIONS_PATH = resolve(FIXTURES_DIR, 'roundtrip_expectations.json');
@@ -100,7 +106,65 @@ function isExpectationsStale(fixtureNames: string[]): boolean {
   );
 }
 
+/**
+ * Ensure the compiled WASM module exists so the WASM-vs-TS parity tests run.
+ *
+ * The parity harness (`wasm-vs-typescript.test.ts`) skips every case via
+ * `it.skipIf(!wasmFilesExist)` when the artifacts are absent — which means a
+ * dev box that never ran `make build-wasm` gets a fully-green suite that has
+ * verified NOTHING about the compiled backend (the only guard against Rust↔TS
+ * drift). To avoid that silent-coverage trap:
+ *   - if the artifacts are missing and a Rust/wasm-pack toolchain is present,
+ *     build them automatically (mirrors the auto fixture-generation above);
+ *   - if no toolchain is available, emit a LOUD warning so the skip is visible;
+ *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/unbuildable module is a
+ *     hard failure.
+ */
+function ensureWasmBuilt(): void {
+  if (existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH)) return;
+
+  const require = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
+  const hasToolchain = ((): boolean => {
+    try {
+      execSync('command -v wasm-pack', { stdio: 'ignore', shell: '/bin/bash' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!hasToolchain) {
+    const msg =
+      '[test-setup] Compiled WASM not found and wasm-pack is not installed.\n' +
+      '             WASM-vs-TypeScript parity tests will be SKIPPED — the compiled\n' +
+      '             backend is NOT being verified. Install Rust + wasm-pack and run\n' +
+      '             `make build-wasm` (or `pnpm build:wasm`) for full coverage.';
+    if (require) {
+      throw new Error(`${msg}\n(LUXAR_REQUIRE_WASM_TESTS=1 — refusing to run without WASM.)`);
+    }
+    console.warn(`\n⚠️  ${msg}\n`);
+    return;
+  }
+
+  console.log('[test-setup] Compiled WASM missing — building via `pnpm build:wasm`...');
+  try {
+    execSync('pnpm run build:wasm', { cwd: VIEWER_ROOT, stdio: 'inherit' });
+  } catch (err) {
+    const msg = `[test-setup] WASM build failed: ${err instanceof Error ? err.message : String(err)}`;
+    if (require) throw new Error(msg);
+    console.warn(`\n⚠️  ${msg}\n   Parity tests will be skipped.\n`);
+    return;
+  }
+  if (!existsSync(WASM_JS_PATH) || !existsSync(WASM_BIN_PATH)) {
+    const msg = '[test-setup] WASM build ran but artifacts are still missing.';
+    if (require) throw new Error(msg);
+    console.warn(`\n⚠️  ${msg}\n`);
+  }
+}
+
 export async function setup(): Promise<void> {
+  ensureWasmBuilt();
+
   const missing = EXPECTED_FIXTURES.filter((name) => !existsSync(resolve(FIXTURES_DIR, name)));
 
   if (missing.length > 0) {

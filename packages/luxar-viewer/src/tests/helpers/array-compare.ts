@@ -18,11 +18,30 @@
  *
  * `epsilon = 0` (default) does true equality on each element via `Math.abs`.
  * Pass a positive epsilon for tolerance-based comparison.
+ *
+ * NaN/Inf semantics (load-bearing for WASM-vs-TS parity): a naive
+ * `Math.abs(a - b) > epsilon` check is NaN-BLIND — when either side is NaN the
+ * subtraction is NaN and `NaN > epsilon` is `false`, so a backend that emits NaN
+ * while the other emits a finite value would be reported EQUAL, silently hiding a
+ * real divergence. We therefore:
+ *   - treat NaN-vs-finite (exactly one side NaN) as a MISMATCH,
+ *   - treat NaN-vs-NaN as equal,
+ *   - let the existing magnitude check handle ±Inf correctly: same-sign Inf
+ *     yields `Inf - Inf = NaN` (not `> epsilon`) → equal, while `+Inf` vs `-Inf`
+ *     or Inf vs finite yields `Inf > epsilon` → mismatch.
  */
 export function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 0): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i] - b[i]) > epsilon) return false;
+    const ai = a[i];
+    const bi = b[i];
+    const aNaN = Number.isNaN(ai);
+    const bNaN = Number.isNaN(bi);
+    if (aNaN || bNaN) {
+      if (aNaN !== bNaN) return false; // one NaN, one finite/Inf → genuine divergence
+      continue; // both NaN → equal
+    }
+    if (Math.abs(ai - bi) > epsilon) return false;
   }
   return true;
 }

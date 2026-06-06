@@ -30,7 +30,8 @@ export function initializeWithGuard(
   api: Remote<DataWorkerAPI>,
   workerNumber: number,
   timeoutMs: number,
-  attachPermanentHandlers: () => void
+  attachPermanentHandlers: () => void,
+  wasmPath?: string
 ): Promise<WorkerInitResult> {
   return new Promise<WorkerInitResult>((resolve, reject) => {
     let settled = false;
@@ -70,7 +71,7 @@ export function initializeWithGuard(
         new Error(`Worker ${workerNumber} produced an unserializable message during init`)
       );
     };
-    api.initialize().then(
+    api.initialize(wasmPath).then(
       (result) => settle('ok', result),
       (err) => settle('err', err instanceof Error ? err : new Error(String(err)))
     );

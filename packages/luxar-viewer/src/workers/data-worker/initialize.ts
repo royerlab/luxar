@@ -7,7 +7,7 @@
  * requires a functioning worker.
  */
 
-import { initWasm, isWasmFallback } from '../../wasm';
+import { initWasm, isWasmFallback, getFallback, setWasmJsUrl } from '../../wasm';
 import { log, Modules } from '../../utils/log';
 import type { WasmCtx } from './state';
 
@@ -17,8 +17,15 @@ export interface WorkerInitResult {
   wasmFallback: boolean;
 }
 
-export async function initialize(ctx: WasmCtx): Promise<WorkerInitResult> {
+export async function initialize(ctx: WasmCtx, wasmPath?: string): Promise<WorkerInitResult> {
   log.info(Modules.WORKER_POOL, 'DataWorker initializing...');
+
+  // Honor an embedder-supplied WASM location INSIDE the worker scope. The
+  // main-thread setWasmJsUrl override does not propagate here (separate module
+  // instance), so without this a relocated WASM binary would fail to load in
+  // the worker and silently fall back to the slower TS path. Must run before
+  // initWasm(). Empty string resets to the default resolution.
+  if (wasmPath) setWasmJsUrl(wasmPath);
 
   // Load WASM module (falls back to TypeScript implementation if compiled WASM missing).
   // The active backend (WASM vs TypeScript fallback) is reported once by the
@@ -26,6 +33,10 @@ export async function initialize(ctx: WasmCtx): Promise<WorkerInitResult> {
   // here, to keep the console quiet.
   try {
     ctx.wasm = await initWasm();
+    // The uncapped TypeScript reference serves >16D operations (the WASM kernels
+    // cap at MAX_SUPPORTED_DIMS). Reuse the same instance when WASM itself fell
+    // back to TS; otherwise keep a dedicated (stateless) fallback alongside WASM.
+    ctx.tsFallback = isWasmFallback(ctx.wasm) ? ctx.wasm : getFallback();
   } catch (error) {
     log.error(Modules.WORKER_POOL, 'DataWorker WASM initialization failed', error);
     throw new Error(

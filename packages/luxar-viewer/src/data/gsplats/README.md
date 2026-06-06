@@ -11,7 +11,7 @@ specific to the GSplats node type.
 | `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload                                                                                                                                      |
 | `gsplats-progressive-loader.ts`   | Composite multi-LOD facade: wraps N `GSplatsSpatialIndexLoader` instances (one per LOD subgroup) and loads them sequentially. Stops at the first LOD whose load exceeds the cache-hit threshold and prefetches the next one                                                                  |
 | `chunk-index-loader.ts`           | Loads the GSplats `chunk_bounds` index from zarr metadata, reconciles the metadata-implied chunk count against the array's implied count (taking the smaller value on mismatch), and exposes `registerGSplatsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds` |
-| `projection.ts`                   | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback                                                                                                                             |
+| `projection.ts`                   | Exports `createEmptyGSplatsData` (the "no visible splats" payload) only. The nD→3D projection math (marginal Cholesky, Mahalanobis attenuation, 3D center extraction) lives solely in the worker dispatcher `workers/data-worker/projection/gsplats.ts` (run on a worker, or on the main thread via `workers/data-worker/projection/in-process.ts`), backed by the fused WASM kernel + TS reference; the hand-written main-thread copy was deleted in W4 to leave one implementation |
 | `handler.ts`                      | Per-type wiring for the scene-loader load+stage path. Derives the gsplats view state (with `applyPartialExtendTolerance: true`), calls `loader.updateView()`, hands off to `processGSplatsData`, and dispatches predictive prefetch                                                          |
 | `lod-refinement.ts`               | Progressive LOD refinement loop: after the initial commit, loads remaining LODs one pass per `requestAnimationFrame`, with cancellation when the view-state queue has pending state                                                                                                          |
 
@@ -37,8 +37,9 @@ Scene-loader code never imports the concrete class — it goes through
   first regardless of how many LODs have streamed in.
 - Hidden-dim attenuation uses **marginal** Σ, not conditional. The
   marginal path is correct for diagonal hidden-display covariance
-  (the typical case for time-stamped / channel-stamped splats). See
-  `projection.ts` header for the conditional-slicing trade-off.
+  (the typical case for time-stamped / channel-stamped splats). See the
+  `wasm/typescript/gsplats-processing.ts` reference kernel (and its Rust
+  twin) for the conditional-slicing trade-off.
 
 ## See also
 

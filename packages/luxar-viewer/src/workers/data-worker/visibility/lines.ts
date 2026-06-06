@@ -5,8 +5,8 @@
  * Reuses the pooled `ctx.visibilityMaskBuffer` across calls.
  */
 
-import { requireWasm, type WasmCtx } from '../state';
-import { MAX_WASM_DIMS, validateLineSegmentReferences } from '../validation';
+import { pickBackend, type WasmCtx } from '../state';
+import { validateLineSegmentReferences } from '../validation';
 
 export async function computeNDVisibilityLines(
   ctx: WasmCtx,
@@ -20,11 +20,11 @@ export async function computeNDVisibilityLines(
     numSegments: number;
   }
 ): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(ctx);
-
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
-  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(`computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  // Routes >16D to the uncapped TS reference (the WASM kernel caps at 16 dims).
+  const wasmModule = pickBackend(ctx, ndim);
+  if (!Number.isInteger(ndim) || ndim < 1) {
+    throw new Error(`computeNDVisibilityLines: ndim=${ndim} must be a positive integer`);
   }
   if (slicePosition.length < ndim || tolerance.length < ndim) {
     throw new Error(`computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`);

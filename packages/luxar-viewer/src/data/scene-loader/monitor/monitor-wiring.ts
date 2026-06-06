@@ -160,10 +160,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
 function collectPartitionGroups(root: SceneNode): Array<{ path: string; partCount: number }> {
   const out: Array<{ path: string; partCount: number }> = [];
   const visit = (node: SceneNode): void => {
-    if (
-      node.type === 'group' &&
-      (node.attrs as Record<string, unknown>).kind === 'partition'
-    ) {
+    if (node.type === 'group' && (node.attrs as Record<string, unknown>).kind === 'partition') {
       out.push({ path: node.path, partCount: node.children?.length ?? 0 });
     }
     node.children?.forEach(visit);

@@ -1,36 +1,29 @@
 /**
- * nD → 3D projection helpers for the points spatial-index loader.
+ * nD → 3D projection for the points spatial-index loader.
  *
- * Three behaviors live here, extracted from
+ * Two behaviors live here, extracted from
  * `data/points-spatial-index-loader.ts`:
  *
- *   - `projectPointsTo3D` — main-thread projection, with optional
- *     accumulator-buffer write-through (zero-allocation when the loader
- *     enabled the accumulator path) and effective-radius filtering.
- *   - `projectPointsTo3DUsingWorker` — same projection on a worker thread
- *     via the worker pool, with a main-thread fallback on worker failure.
- *   - `createEmptyPointsData` — factory for the "no visible points" return
- *     path, shared between both projectors.
+ *   - `projectPointsTo3D` — the single, **WASM-accelerated** Points
+ *     projection (nD→3D extraction + effective-radius via the WASM
+ *     kernels), with optional accumulator-buffer write-through
+ *     (zero-allocation) and effective-radius filtering. Points run on the
+ *     main thread by design (memory-bandwidth-bound + zero-alloc
+ *     accumulator); the former worker-dispatcher copy was deleted in W4b.
+ *   - `createEmptyPointsData` — factory for the "no visible points" return.
  *
- * All three are pure with respect to the loader: the loader-side state
+ * Both are pure with respect to the loader: the loader-side state
  * (`chunkIndex`, `effectiveRadiusConfig`, `accumulator`, node attrs) is
- * passed in via a small `ProjectionContext` so the helpers can be
+ * passed in via a small `ProjectionContext`, and the WASM backend is
+ * supplied as an argument (via `getPointsBackend`), so the helpers can be
  * unit-tested without instantiating a full `PointsSpatialIndexLoader`.
- *
- * Behavior is identical to the inlined methods — bit-for-bit on the
- * happy path and on every "early return" branch (missing positions,
- * accumulator filtering, all-zero-radius fallback, worker failure).
  *
  * @module data/point-loader/projection
  */
 
 import * as THREE from 'three';
 import { log, Modules } from '../../utils/log';
-import {
-  calculateEffectiveRadii,
-  shouldApplyEffectiveRadius,
-  type EffectiveRadiusConfig,
-} from './effective-radius-calculator';
+import { shouldApplyEffectiveRadius, type EffectiveRadiusConfig } from './effective-radius-calculator';
 import type {
   ViewState,
   LoadedPointsData,
@@ -42,7 +35,8 @@ import type {
 import { LoadedPointsDataAccumulator } from '../accumulators/points';
 import type { PointsMetadata } from '../../types/points';
 import type { PointsChunkIndex } from './chunk-index-loader';
-import { getWorkerPool } from '../../workers/worker-pool';
+import type { WasmModule } from '../../wasm/types';
+import { validateProjectionInputs } from '../../workers/data-worker/validation';
 
 /** Buffers an accumulator owns; writing directly into them avoids allocations. */
 export interface ProjectionTargetBuffers {
@@ -112,7 +106,22 @@ export function createEmptyPointsData(
 }
 
 /**
- * Project nD points to 3D display space on the main thread.
+ * Project nD points to 3D display space on the main thread, **WASM-accelerated**.
+ *
+ * The two expensive steps — nD→3D extraction and effective-radius
+ * computation — run through the compiled WASM kernels (`extract_3d_positions`,
+ * `calculate_effective_radii`) on the `wasm` module the caller supplies
+ * (compiled WASM, or the uncapped TS reference for `ndim > 16` — see
+ * `getPointsBackend`). The zero-radius filter, multi-type compaction,
+ * uint8-radius `/255` normalization, scalar handling, and bounds stay in
+ * TypeScript: they are cheap, multi-type, and tightly coupled to the
+ * accumulator's in-place reuse contract.
+ *
+ * Points run on the main thread (not a worker) by design: projection is
+ * memory-bandwidth-bound and pairs with the zero-allocation accumulator,
+ * so offloading would pay transfer cost both ways for little compute
+ * gain. This is the single Points projection implementation — the former
+ * worker dispatcher copy was deleted in W4b.
  *
  * Two execution paths share this entry point:
  *
@@ -121,18 +130,19 @@ export function createEmptyPointsData(
  *    zero-allocation operation. Production code always takes this
  *    path via `LoadedPointsDataAccumulator`.
  *  - **Fallback path** (`targetBuffers` null/undefined): allocates
- *    fresh arrays. Used by tests, the explicit no-accumulator opt-out,
- *    and the worker-error rescue route in
- *    `projectPointsTo3DUsingWorker`. Color/sharpness inputs pass
- *    through by reference; positions3D and (when filtering applies)
- *    radii are freshly allocated.
+ *    fresh arrays. Used by tests and the explicit no-accumulator opt-out.
+ *    Color/sharpness inputs pass through by reference; positions3D and
+ *    (when filtering applies) radii are freshly allocated.
  *
+ * @param wasm - WASM backend (compiled or TS-reference fallback) supplying
+ *               the projection kernels. Obtain via `getPointsBackend(ndim)`.
  * @param targetBuffers - Optional accumulator buffers for zero-allocation
  *                        operation. When provided, writes directly
  *                        through; when null/undefined, allocates new
  *                        arrays for the result.
  */
 export function projectPointsTo3D(
+  wasm: WasmModule,
   positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
   colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
   radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
@@ -168,6 +178,71 @@ export function projectPointsTo3D(
     );
   }
 
+  // WASM-boundary guards. This function now feeds the WASM kernels
+  // (`extract_3d_positions`, `calculate_effective_radii`) directly, so
+  // out-of-range displayDims or short radii / spatialExtendDims / tolerance
+  // would cause OOB reads inside WASM. Reject them here — the same guards
+  // the former worker dispatcher applied at the RPC boundary. Skipped for
+  // the empty (totalPoints === 0) early-out, where no kernel reads occur.
+  if (totalPoints > 0) {
+    // requireSlicePosition=false: extract_3d_positions doesn't read
+    // slicePosition (a pure-3D view may carry a short/empty one); the
+    // effective-radius branch below validates its length where the kernel
+    // actually consumes it.
+    validateProjectionInputs(
+      'projectPointsTo3D',
+      positions,
+      viewState.displayDims,
+      viewState.slicePosition,
+      ndim,
+      totalPoints,
+      ndim,
+      false
+    );
+    if (radii && radii.length < totalPoints) {
+      throw new Error(
+        `projectPointsTo3D: radii too short (got ${radii.length}, expected ≥ ${totalPoints})`
+      );
+    }
+    if (sharpness && sharpness.length < totalPoints) {
+      throw new Error(
+        `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${totalPoints})`
+      );
+    }
+    // RGB triplet per point — short colors corrupt the TS-side compaction.
+    if (colors && colors.length < totalPoints * 3) {
+      throw new Error(
+        `projectPointsTo3D: colors too short (got ${colors.length}, expected ≥ ${totalPoints * 3})`
+      );
+    }
+    if (ctx.effectiveRadiusConfig) {
+      // The effective-radius kernel reads slicePosition[d] for d < ndim.
+      if (viewState.slicePosition.length < ndim) {
+        throw new Error(
+          'projectPointsTo3D: slicePosition too short for effective radius ' +
+            `(got ${viewState.slicePosition.length}, expected ≥ ${ndim})`
+        );
+      }
+      if (ctx.effectiveRadiusConfig.spatialExtendDims.length < ndim) {
+        throw new Error(
+          'projectPointsTo3D: effectiveRadiusConfig.spatialExtendDims too short ' +
+            `(got ${ctx.effectiveRadiusConfig.spatialExtendDims.length}, expected ≥ ${ndim})`
+        );
+      }
+      if (!Number.isFinite(ctx.effectiveRadiusConfig.maxRadius)) {
+        throw new Error(
+          `projectPointsTo3D: effectiveRadiusConfig.maxRadius=${ctx.effectiveRadiusConfig.maxRadius} must be a finite number`
+        );
+      }
+      if (!viewState.tolerance || viewState.tolerance.length < ndim) {
+        throw new Error(
+          'projectPointsTo3D: viewState.tolerance too short for effective radius ' +
+            `(got ${viewState.tolerance?.length ?? 0}, expected ≥ ${ndim})`
+        );
+      }
+    }
+  }
+
   // Validate scalar length matches point count. Mismatch suppresses the
   // scalar branch (fail-closed) — geometry renders without colormap
   // rather than carrying truncated/over-large scalar arrays into the GPU
@@ -190,18 +265,14 @@ export function projectPointsTo3D(
   // Use target buffer or allocate new (zero-allocation when targetBuffers provided)
   let positions3D = targetBuffers ? targetBuffers.positions3D : new Float32Array(numPoints * 3);
 
-  // Extract 3D positions from nD data (write directly to buffer)
-  for (let i = 0; i < numPoints; i++) {
-    // Extract displayed dimensions
-    for (let j = 0; j < Math.min(3, displayDims.length); j++) {
-      const dimIdx = displayDims[j];
-      positions3D[i * 3 + j] = positions[i * ndim + dimIdx];
-    }
-    // Fill remaining with zeros
-    for (let j = displayDims.length; j < 3; j++) {
-      positions3D[i * 3 + j] = 0;
-    }
-  }
+  // Extract 3D positions from nD data via WASM (extract_3d_positions writes
+  // displayed dims and zero-fills any remaining slots, matching the former
+  // TS loop). The kernel requires Float32 input; positions are Float32 in
+  // production but coerce defensively for non-Float32 sources.
+  const positionsF32 =
+    positions instanceof Float32Array ? positions : new Float32Array(positions);
+  const displayDimsU32 = new Uint32Array(displayDims);
+  wasm.extract_3d_positions(positionsF32, displayDimsU32, ndim, numPoints, positions3D);
 
   // Calculate bounds
   const bounds = new THREE.Box3();
@@ -264,12 +335,37 @@ export function projectPointsTo3D(
     if (effectiveRadiusConfig && finalRadii instanceof Float32Array) {
       // Check if we should apply effective radius
       if (shouldApplyEffectiveRadius(effectiveRadiusConfig, viewState.displayDims, true)) {
-        const effectiveRadii = calculateEffectiveRadii(
-          positions,
+        // WASM effective-radius kernel. extend_to_all dims (tolerance ≥ 1e9)
+        // are folded into the display-dims set so the kernel skips them
+        // entirely (no discrete check, no distance) — the same construction
+        // the worker dispatcher used, matching the deleted TS
+        // `calculateEffectiveRadii`'s internal `tolerance >= 1e9` skip.
+        const slicePositionF32 = new Float32Array(viewState.slicePosition);
+        const spatialExtendDimsU8 = new Uint8Array(
+          effectiveRadiusConfig.spatialExtendDims.map((b) => (b ? 1 : 0))
+        );
+        const extendToAllDims: number[] = [];
+        for (let d = 0; d < ndim; d++) {
+          const tol = viewState.tolerance[d];
+          if (!displayDims.includes(d) && Number.isFinite(tol) && tol >= 1e9) {
+            extendToAllDims.push(d);
+          }
+        }
+        const effDisplayDims =
+          extendToAllDims.length > 0
+            ? new Uint32Array([...displayDims, ...extendToAllDims])
+            : displayDimsU32;
+
+        const effectiveRadii = new Float32Array(numPoints);
+        wasm.calculate_effective_radii(
+          positionsF32,
           finalRadii,
-          viewState,
-          effectiveRadiusConfig,
-          ndim
+          effDisplayDims,
+          slicePositionF32,
+          spatialExtendDimsU8,
+          ndim,
+          numPoints,
+          effectiveRadii
         );
 
         // Write result to target buffer (if using) or replace
@@ -534,188 +630,4 @@ export function projectPointsTo3D(
       dtypes: dtypesFromAttrs(ctx.nodeAttrs),
     },
   };
-}
-
-/**
- * Project nD points to 3D display space using a web worker.
- *
- * Offloads CPU-intensive projection work (nD → 3D extraction,
- * effective-radius computation, zero-radius filter, bounds calc) to a
- * worker thread via the global worker pool. Uses `Comlink.transfer()`
- * under the hood for zero-copy `ArrayBuffer` transfer.
- *
- * On any worker failure (`runWithTimeout` rejection — including the
- * {@link import('../../workers/worker-pool').WorkerTimeoutError} fired
- * after `workerProjectionTimeoutMs` — RPC error, or structured clone
- * failure) the call falls back to `projectPointsTo3D` on the main
- * thread with `targetBuffers=null` — no accumulator path on fallback.
- */
-export async function projectPointsTo3DUsingWorker(
-  positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-  colors: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-  radii: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-  sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
-  viewState: ViewState,
-  ranges: PointRange[],
-  ctx: ProjectionContext
-): Promise<LoadedPointsData> {
-  const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-
-  if (!positions) {
-    throw new Error('[PointsProjection] Positions data is required for points');
-  }
-
-  // Calculate ndim from actual positions array
-  const ndim =
-    totalPoints > 0
-      ? Math.round(positions.length / totalPoints)
-      : ctx.chunkIndex?.metadata.ndim || 3;
-
-  // Convert positions to Float32Array if needed (positions must be Float32)
-  const positionsFloat32 =
-    positions instanceof Float32Array ? positions : new Float32Array(positions);
-
-  // Colors: Keep native type! Worker and GPU buffer pool support multi-type (Uint8/Uint16/Float32)
-  // THREE.js handles normalization in shader via normalized attribute flag
-  // Float16Array needs conversion to Float32Array (worker doesn't support Float16)
-  // Note: Float16 values are already in float range, no normalization needed
-  let colorsMultiType: Float32Array | Uint8Array | Uint16Array | null = null;
-  if (colors) {
-    if (colors instanceof Float16Array) {
-      // Convert Float16 to Float32 (no normalization - already in float range)
-      colorsMultiType = new Float32Array(colors);
-    } else {
-      colorsMultiType = colors;
-    }
-  }
-
-  // Radii/sharpness: Convert to Float32Array (no normalization needed - already world units)
-  const radiiFloat32 = radii
-    ? radii instanceof Float32Array
-      ? radii
-      : new Float32Array(radii)
-    : null;
-
-  const sharpnessFloat32 = sharpness
-    ? sharpness instanceof Float32Array
-      ? sharpness
-      : new Float32Array(sharpness)
-    : null;
-
-  // Build effective radius config for worker
-  let workerEffectiveRadiusConfig: { spatialExtendDims: boolean[]; maxRadius: number } | null =
-    null;
-  if (ctx.effectiveRadiusConfig && radiiFloat32) {
-    // Check if we should apply effective radius
-    if (shouldApplyEffectiveRadius(ctx.effectiveRadiusConfig, viewState.displayDims, true)) {
-      workerEffectiveRadiusConfig = {
-        spatialExtendDims: ctx.effectiveRadiusConfig.spatialExtendDims,
-        maxRadius: ctx.effectiveRadiusConfig.maxRadius,
-      };
-    }
-  }
-
-  try {
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Projecting ${totalPoints} points to 3D using worker (ndim=${ndim})`
-    );
-
-    const workerResult = await getWorkerPool().runWithTimeout(
-      'projectPointsTo3D',
-      'projection',
-      (api) =>
-        api.projectPointsTo3D({
-          positions: positionsFloat32,
-          colors: colorsMultiType,
-          radii: radiiFloat32,
-          sharpness: sharpnessFloat32,
-          viewState: {
-            displayDims: viewState.displayDims,
-            slicePosition: viewState.slicePosition,
-            tolerance: viewState.tolerance,
-          },
-          effectiveRadiusConfig: workerEffectiveRadiusConfig,
-          ndim,
-          numPoints: totalPoints,
-        })
-    );
-
-    // Handle empty result
-    if (workerResult.visibleCount === 0) {
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Worker projection: all ${totalPoints} points have zero effective radius`
-      );
-      return createEmptyPointsData(ctx, viewState);
-    }
-
-    // Build THREE.Box3 from worker bounds
-    const bounds = new THREE.Box3(
-      new THREE.Vector3(...workerResult.bounds.min),
-      new THREE.Vector3(...workerResult.bounds.max)
-    );
-
-    log.info(
-      Modules.SPATIAL_INDEX_LOADER,
-      `Worker projection complete: ${workerResult.visibleCount}/${totalPoints} visible points`
-    );
-
-    return {
-      positions: workerResult.positions3D as PositionArray,
-      colors: workerResult.colors as ColorArray | undefined,
-      radii: workerResult.radii as ScalarArray | undefined,
-      sharpness: workerResult.sharpness as ScalarArray | undefined,
-      pointCount: workerResult.visibleCount,
-      ndim,
-      metadata: {
-        totalPoints: ctx.nodeAttrs.n_points || totalPoints,
-        loadedPoints: workerResult.visibleCount,
-        bounds,
-        usedSpatialIndex: true,
-        usedEffectiveRadius: !!workerEffectiveRadiusConfig,
-        dtypes: dtypesFromAttrs(ctx.nodeAttrs),
-      },
-    };
-  } catch (error) {
-    // If the dataset-scope abort signal fired (user switched datasets),
-    // the worker call rejects with `WorkerAbortError`. Falling back to
-    // main thread would burn CPU computing geometry for a scene the
-    // user has navigated away from. Re-throw so the caller's
-    // dataset-switch path can unwind without a stale commit.
-    if (error instanceof Error && error.name === 'WorkerAbortError') {
-      throw error;
-    }
-    // Fallback to main thread on worker failure. When the loader owns an
-    // accumulator, route the projection through its buffers so we don't
-    // allocate a fresh Float32Array per worker timeout — the accumulator
-    // is already sized for `totalPoints` (the loader called
-    // `ensureCapacity` before kicking off the worker call).
-    log.warning(
-      Modules.SPATIAL_INDEX_LOADER,
-      'Worker projection failed, falling back to main thread:',
-      error
-    );
-    if (ctx.accumulator && ctx.accumulator.hasTypes()) {
-      // Ensure the accumulator is sized for the fallback (idempotent).
-      ctx.accumulator.ensureCapacity(totalPoints);
-      const targetBuffers: ProjectionTargetBuffers = {
-        positions3D: ctx.accumulator.getPositionBuffer(),
-        colors: ctx.accumulator.getColorBuffer() as ColorArray,
-        radii: ctx.accumulator.getRadiiBuffer() as ScalarArray,
-        sharpness: ctx.accumulator.getSharpnessBuffer() as ScalarArray,
-      };
-      return projectPointsTo3D(
-        positions,
-        colors,
-        radii,
-        sharpness,
-        viewState,
-        ranges,
-        ctx,
-        targetBuffers
-      );
-    }
-    return projectPointsTo3D(positions, colors, radii, sharpness, viewState, ranges, ctx, null);
-  }
 }
