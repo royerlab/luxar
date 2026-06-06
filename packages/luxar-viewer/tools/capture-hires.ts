@@ -3,7 +3,7 @@
  *
  * Usage:
  *   APP_URL="http://.../?src=...&debug" OUT=/path/to/out.png WAIT=15000 WIDTH=2400 HEIGHT=1600 \
- *     pnpm exec ts-node tools/capture-hires.ts
+ *     pnpm exec tsx tools/capture-hires.ts
  */
 
 import { chromium } from '@playwright/test';

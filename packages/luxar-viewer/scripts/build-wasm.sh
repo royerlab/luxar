@@ -60,11 +60,14 @@ echo "📦 Running wasm-pack build..."
 # - out-dir: Output to public/wasm for Vite to serve
 # - release/dev: Build mode based on flag
 build_wasm_once() {
+  # `-- --locked` forwards to cargo so the committed Cargo.lock is enforced
+  # (reproducible WASM: fail instead of silently resolving newer transitive deps).
   wasm-pack build \
     --target web \
     --out-dir ../../../public/wasm \
     ${BUILD_MODE} \
-    --scope luxar
+    --scope luxar \
+    -- --locked
 }
 
 # wasm-pack downloads its own wasm-opt (binaryen) binary and caches it under

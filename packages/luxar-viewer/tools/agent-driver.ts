@@ -6,9 +6,9 @@
  * inspects Three.js scene state, and takes screenshots.
  *
  * Usage:
- *   npx ts-node tools/agent-driver.ts
- *   npx ts-node tools/agent-driver.ts --url http://localhost:5173/?src=/data/demo.zarr
- *   npx ts-node tools/agent-driver.ts --headless=false  # Watch in real browser
+ *   tsx tools/agent-driver.ts
+ *   tsx tools/agent-driver.ts --url http://localhost:5173/?src=/data/demo.zarr
+ *   tsx tools/agent-driver.ts --headless=false  # Watch in real browser
  *
  * Output:
  *   - Terminal: All browser console logs, errors, and state dumps

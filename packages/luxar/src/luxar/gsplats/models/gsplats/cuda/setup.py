@@ -56,6 +56,32 @@ if not CUDA_AVAILABLE:
 # 12.0 = Blackwell (future) - requires very recent CUDA
 ALL_MODERN_ARCHS = "7.5;8.0;8.6;8.9;9.0;10.0;12.0"
 
+# Blackwell arches (sm_100 / sm_120) only exist in CUDA Toolkit 12.8+. Targeting
+# them with an older nvcc fails the whole build, so when we fall back to building
+# "all modern" arches we drop them unless the toolkit is new enough.
+_BLACKWELL_ARCHS = ("10.0", "12.0")
+
+
+def _filter_archs_for_toolkit(arch_str: str) -> str:
+    """Drop Blackwell arches when the active CUDA toolkit is < 12.8."""
+    cuda_ver = getattr(torch.version, "cuda", None)  # e.g. "12.8"
+    try:
+        major, minor = (int(x) for x in cuda_ver.split(".")[:2])  # type: ignore[union-attr]
+        supports_blackwell = (major, minor) >= (12, 8)
+    except (AttributeError, ValueError):
+        supports_blackwell = False
+    archs = arch_str.replace(";", " ").split()
+    if not supports_blackwell:
+        dropped = [a for a in archs if a in _BLACKWELL_ARCHS]
+        if dropped:
+            print(
+                f"⚠️  Toolkit CUDA {cuda_ver} < 12.8; dropping Blackwell arches "
+                f"{dropped} (set TORCH_CUDA_ARCH_LIST to override)."
+            )
+        archs = [a for a in archs if a not in _BLACKWELL_ARCHS]
+    return ";".join(archs)
+
+
 # Get CUDA compute capabilities
 cuda_arch_list = os.environ.get("TORCH_CUDA_ARCH_LIST", None)
 build_all_archs = os.environ.get("LUXAR_CUDA_ALL_ARCHS", "0") == "1"
@@ -65,7 +91,7 @@ if cuda_arch_list is not None:
     print(f"Using TORCH_CUDA_ARCH_LIST from environment: {cuda_arch_list}")
 elif build_all_archs:
     # Build for all modern architectures (good for distribution)
-    cuda_arch_list = ALL_MODERN_ARCHS
+    cuda_arch_list = _filter_archs_for_toolkit(ALL_MODERN_ARCHS)
     print(f"Building for ALL modern architectures: {cuda_arch_list}")
     print("  (This may take a while, but ensures compatibility with most GPUs)")
 else:
@@ -79,7 +105,7 @@ else:
         print(f"Auto-detected GPU architectures: {cuda_arch_list}")
     else:
         # Fallback to all modern architectures
-        cuda_arch_list = ALL_MODERN_ARCHS
+        cuda_arch_list = _filter_archs_for_toolkit(ALL_MODERN_ARCHS)
         print(
             f"No GPU detected, building for all modern architectures: {cuda_arch_list}"
         )
@@ -151,7 +177,7 @@ setup(
     author="Luxar Team",
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     install_requires=[
         "torch>=2.2.0",
     ],

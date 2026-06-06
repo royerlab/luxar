@@ -1,0 +1,59 @@
+# Pre-commit hooks for Luxar.
+#
+# Enable once with `make enable-pre-commit` (or `hatch run pre-commit install`);
+# the hooks then run automatically on every `git commit`. Run across the whole
+# tree at any time with `make run-pre-commit`.
+#
+# Hook tool versions are pinned here independently of pyproject.toml — pre-commit
+# runs each hook in its own isolated environment. Keep them roughly in sync with
+# the pyproject pins and bump with `pre-commit autoupdate`. mypy is a `local`
+# hook so it type-checks with the full project environment (via Hatch).
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Preserve markdown hard line-breaks (trailing 2-space), matching the
+        # `[*.md] trim_trailing_whitespace = false` rule in .editorconfig.
+        args: ['--markdown-linebreak-ext=md']
+        exclude: '\.svg$'
+      - id: end-of-file-fixer
+        exclude: '\.svg$'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+
+  # Ruff: lint (with autofix) + format. Reads [tool.ruff] from pyproject.toml.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        name: ruff (lint + autofix)
+        args: [--fix]
+      - id: ruff-format
+        name: ruff (format)
+
+  # Bandit security checks. Reads [tool.bandit] from pyproject.toml.
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.0
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
+
+  # mypy runs against the real project environment so imports resolve. Uses the
+  # same invocation as `make type-check-python` / CI.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (luxar package)
+        entry: hatch run mypy packages/luxar/src/luxar/
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true

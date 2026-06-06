@@ -1,0 +1,38 @@
+# Dependabot — automated dependency + GitHub Actions update PRs.
+# Covers every ecosystem in the repo so security advisories surface as PRs.
+version: 2
+updates:
+  # Python (Hatch/pip) — root pyproject.toml
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # TypeScript viewer (pnpm/npm)
+  - package-ecosystem: npm
+    directory: "/packages/luxar-viewer"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Rust / WASM acceleration crate
+  - package-ecosystem: cargo
+    directory: "/packages/luxar-viewer/src/wasm/rust"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Go native launcher
+  - package-ecosystem: gomod
+    directory: "/packages/luxar-launcher"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # GitHub Actions — keep the SHA-pinned actions in workflows up to date.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
