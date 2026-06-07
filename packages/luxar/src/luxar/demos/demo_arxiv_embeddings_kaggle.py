@@ -614,7 +614,7 @@ def generate_paper_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_papers, 4.0, dtype=np.float32)
+            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
 
             # Hover labels: title + year + category
             if titles is not None:

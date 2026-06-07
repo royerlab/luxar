@@ -334,16 +334,16 @@ def generate_volumetric_cloud(
 
         # === STEP 7: Very soft sharpness for cloud-like appearance ===
         # Clouds are extremely soft and fluffy, not sharp at all
-        # Use very low sharpness values for maximum softness
+        # sharpness is a normalized [0, 1] knob: low values -> peakier/softer cusp
         # Inverse relationship: denser areas are actually SOFTER (more diffuse light scattering)
-        sharpness = 1.0 + (1.0 - density_norm) * 0.6  # Range: 0.2 to 0.8 (very soft!)
+        sharpness = 0.2 + (1.0 - density_norm) * 0.15  # Range: 0.2 to 0.35 (very soft!)
 
         # Add slight randomness for natural variation
         sharpness_noise = rng.uniform(0.9, 1.1, len(positions))
         sharpness = sharpness * sharpness_noise
-        sharpness = np.clip(sharpness, 0.2, 1.0).astype(np.float32)
+        sharpness = np.clip(sharpness, 0.15, 0.4).astype(np.float32)
 
-        aprint("✓ Very soft sharpness: 0.2 to 0.8 (cloud-like softness)")
+        aprint("✓ Very soft sharpness: 0.2 to 0.35 (cloud-like softness)")
         aprint(f"  Mean: {np.mean(sharpness):.2f} (softer than default)")
         aprint("  Inverse to density (dense areas softer = more diffuse)")
 
@@ -411,7 +411,7 @@ def main() -> None:
     aprint("  - 6-octave fractal noise for detail at multiple scales")
     aprint("  - Turbulence/curl for wispy tendrils and structure")
     aprint("  - Dramatic size variation (0.03 to 0.5 units)")
-    aprint("  - Very soft appearance (sharpness 0.2-0.8)")
+    aprint("  - Very soft appearance (sharpness 0.2-0.35)")
     aprint("  - Dense areas are SOFTER (diffuse light scattering)")
     aprint("  - Higher density threshold for wispy, irregular boundaries")
     aprint("")

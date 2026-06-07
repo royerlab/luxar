@@ -219,7 +219,6 @@ describe('custom LUT byte-loading', () => {
           customLutBytes: lut,
         },
         1.0,
-        1.0,
         geometry,
         '/test'
       ) as THREE.ShaderMaterial;
@@ -245,7 +244,6 @@ describe('custom LUT byte-loading', () => {
           has_scalars: true,
           scalar_data_range: [0, 1],
         },
-        1.0,
         1.0,
         geometry,
         '/test'

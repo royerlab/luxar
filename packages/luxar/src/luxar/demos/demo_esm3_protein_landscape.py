@@ -589,7 +589,7 @@ def generate_esm3_landscape(
                 positions=positions,
                 colors=colors,
                 radii=radii,
-                sharpness=np.full(n, 4.0, dtype=np.float32),
+                sharpness=np.full(n, 0.6, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.12,
                 labels=labels,

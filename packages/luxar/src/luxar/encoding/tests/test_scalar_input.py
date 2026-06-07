@@ -498,7 +498,7 @@ class TestScalarInputIntegration:
                     positions,
                     radii=0.8,  # Scalar
                     colors=(0.5, 0.5, 1.0),  # Tuple
-                    sharpness=3.0,  # Scalar
+                    sharpness=0.8,  # Scalar
                 )
 
             # Verify all were stored as broadcasted
@@ -510,7 +510,7 @@ class TestScalarInputIntegration:
             # Check values
             assert store["test/radii"][:][0] == pytest.approx(0.8)
             assert np.allclose(store["test/colors"][:], [[0.5, 0.5, 1.0]])
-            assert store["test/sharpnesses"][:][0] == pytest.approx(3.0)
+            assert store["test/sharpnesses"][:][0] == pytest.approx(0.8)
 
     def test_mixed_scalar_and_array(self) -> None:
         """Test mixing scalar and array attributes."""
@@ -529,7 +529,7 @@ class TestScalarInputIntegration:
                     positions,
                     radii=varied_radii,  # Array (varying)
                     colors=(1.0, 1.0, 0.0),  # Scalar tuple
-                    sharpness=2.5,  # Scalar
+                    sharpness=0.5,  # Scalar
                 )
 
             # Verify storage

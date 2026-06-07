@@ -1,12 +1,13 @@
 # Line Material
 
-> Thick-line material stack — instanced-quad geometry, semicircle-kernel soft falloff, and seamless additive joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
+> Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and seamless additive joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
 
 This folder holds the four-file material stack that renders one of Luxar's
 three first-class geometry types. Each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
-fragment stage shades a parabolic `(1 − p²)^sharpness` profile that sums to
-flat full intensity at joints under additive blending. Both backends share
+fragment stage shades a shifted-truncated super-Gaussian perpendicular
+cross-section that sums to flat full intensity at joints under additive
+blending. Both backends share
 the same `LineMaterialConfig` shape and the same update / clone / blending
 semantics — `MaterialManager.getLineMaterial` dispatches on
 `RendererCapabilities.apiSurface`, so call sites never see the divergence.
@@ -36,11 +37,22 @@ shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
 The fragment stage shades
-`capFactor × (1 − p²)^sharpness × edgeAA × widthScale × vWidthFade`,
+`capFactor × perpFalloff × edgeAA × widthScale × vWidthFade`, where the
+perpendicular cross-section `perpFalloff(p) = max(exp(−K·p^β) − C, 0)/(1 − C)`
+is a **shifted-truncated super-Gaussian** (`p = |vPerpNorm| ∈ [0, 1]` from the
+centerline, `K = ln(100) ≈ 4.605`, `C = exp(−K) = 0.01`, the 1% iso-contour
+floor). The per-vertex `sharpness` is a normalised `[0, 1]` knob mapping to the
+super-Gaussian exponent `β = 2^(6s − 2)`: `s = 0.5 → β = 2` (a truncated
+Gaussian, the default — identical to the GSplat kernel's shape), `s = 1 → β = 16`
+(hard edge), `s = 0 → β = 0.25` (cusp). It is C⁰-continuous at the line edge
+(`perpFalloff(0) = 1`, `perpFalloff(1) = 0`, no hard ring). The stage then
 applies the per-node GOG (`color × uIntensity + uOffset`, clamped) and the
 `pow(·, uInvGamma)` gamma curve, and writes `vec4(rgb, intensity × uOpacity)`.
+The `capFactor` joint trick (next section) is **independent** of the
+perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
+to the super-Gaussian.
 
-## The semicircle-kernel joint trick
+## The cap-factor joint trick
 
 Without compensation, two adjacent segments sharing an endpoint would each
 draw a full-intensity quad up to that endpoint, summing to **2.0** under
@@ -69,17 +81,23 @@ init; see `scene-manager.ts::setupWebGPURenderer`). See
 
 ## Variant defines (fast paths)
 
-Both backends share the same five `#define`s, set by the wrapper and
+Both backends share the same four `#define`s, set by the wrapper and
 either gated via `#ifdef` (GLSL) or read at TSL build time
 (`rebuildGraph` re-runs the factory):
 
-| Define                       | Effect                                                                                                                                                                | Set by                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `USE_COLORMAP`               | Replaces `aStartColor`/`aEndColor` per-vertex RGB with `aStartScalar`/`aEndScalar` + LUT lookup                                                                       | `setColormapTexture(texture)` / `updateColormapTexture`          |
-| `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                        |
-| `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine`     |
-| `LUXAR_SHARPNESS_TWO`        | Replaces `pow((1 − p²), max(vSharpness, 1e-4))` with `(1 − p²)²` when every per-vertex sharpness is 2.0                                                               | `setSharpnessAllTwo(true)` — node-factory inspects upload arrays |
-| `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                       |
+| Define                       | Effect                                                                                                                                                                | Set by                                                       |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `USE_COLORMAP`               | Replaces `aStartColor`/`aEndColor` per-vertex RGB with `aStartScalar`/`aEndScalar` + LUT lookup                                                                       | `setColormapTexture(texture)` / `updateColormapTexture`      |
+| `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
+| `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
+| `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
+
+The perpendicular falloff is **not** a define-gated fast path: the
+super-Gaussian `max(exp(−K·p^β) − C, 0)/(1 − C)` is computed unconditionally
+from the interpolated `[0, 1]` sharpness knob (`β = 2^(6s − 2)`), so there is
+no `LUXAR_SHARPNESS_TWO` / `setSharpnessAllTwo` analogue any more — the old
+`(1 − p²)^sharpness` polynomial that needed an `x·x` shortcut for `sharpness == 2`
+is gone.
 
 The GLSL wrapper toggles `this.needsUpdate = true` when a define changes
 so THREE's program cache recompiles; the TSL wrapper calls

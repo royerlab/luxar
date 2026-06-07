@@ -51,11 +51,6 @@ vi.mock('../../../../rendering/material-manager', async () => {
         clone: vi.fn().mockReturnThis(),
         updateColormapTexture: vi.fn(),
         updateScalarRange: vi.fn(),
-        // NodeFactory calls `setSharpnessAllTwo` on every line material
-        // at upload time. The mock stubs it so production code paths
-        // exercising an empty / placeholder geometry don't trip on
-        // missing API.
-        setSharpnessAllTwo: vi.fn(),
       })),
       getGSplatMaterial: vi.fn(() => ({
         uniforms: { uTruncate: { value: 3.0 } },
@@ -83,7 +78,6 @@ describe('NodeFactory.createEmptyPointsNode', () => {
     const attrs: PointsMetadata = {
       n_points: 100,
       max_radius: 1.0,
-      max_sharpness: 31.0,
     } as PointsMetadata;
     const loader = { dispose: vi.fn() } as unknown as DataLoader;
 

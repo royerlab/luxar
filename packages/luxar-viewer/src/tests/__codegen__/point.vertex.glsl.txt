@@ -39,12 +39,11 @@ layout( std140 ) uniform object {
 	float nodeUniform3;
 	float nodeUniform4;
 	float nodeUniform5;
-	float nodeUniform6;
-	mat4 nodeUniform9;
+	mat4 nodeUniform8;
+	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
-	float nodeUniform12;
-	vec2 nodeUniform13;
+	vec2 nodeUniform12;
 };
 
 layout( std140 ) uniform render {
@@ -72,14 +71,11 @@ layout( location = 4 ) in vec3 aCenter;
 float nodeVar0;
 float nodeVar1;
 float nodeVar4;
-float nodeVar5;
 mat4 modelViewMatrix;
+vec4 nodeVar6;
 vec4 nodeVar7;
-vec4 nodeVar8;
-float nodeVar9;
-float nodeVar10;
-float nodeVar11;
-vec4 nodeVar12;
+float nodeVar8;
+vec4 nodeVar9;
 
 // codes
 
@@ -107,49 +103,36 @@ void main() {
 	nodeVarying0 = nodeVar0;
 	nodeVarying1 = ( ( aQuadCorner + vec2( 1.0 ) ) * vec2( 0.5 ) );
 	nodeVarying2 = aColor;
-	nodeVar5 = ( aSharpness * nodeUniform4 );
 
-	if ( ( ( ( nodeVar5 < 1e30 ) && ( nodeVar5 > -1e30 ) ) && ( nodeVar5 > 0.0 ) ) ) {
+	if ( ( ( ( aSharpness < 1e30 ) && ( aSharpness > -1e30 ) ) && ( aSharpness >= 0.0 ) ) ) {
 
-		nodeVar4 = nodeVar5;
-
-	} else {
-
-		nodeVar4 = 2.0;
-
-	}
-
-	nodeVarying3 = nodeVar4;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform9 );
-	nodeVar7 = ( modelViewMatrix * vec4( aCenter, 1.0 ) );
-	nodeVar8 = ( cameraProjectionMatrix * nodeVar7 );
-
-	if ( ( int( nodeUniform11 ) == 1 ) ) {
-
-		nodeVar9 = 1.0;
+		nodeVar4 = aSharpness;
 
 	} else {
 
-		nodeVar9 = ( 1.0 / length( nodeVar7.xyz ) );
+		nodeVar4 = 0.5;
 
 	}
 
-	nodeVar11 = ( 1.0 / ( 1.0 - pow( 0.01, ( 1.0 / max( nodeVar4, 0.01 ) ) ) ) );
+	nodeVarying3 = pow( 2.0, ( ( clamp( nodeVar4, 0.0, 1.0 ) * 6.0 ) - 2.0 ) );
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform8 );
+	nodeVar6 = ( modelViewMatrix * vec4( aCenter, 1.0 ) );
+	nodeVar7 = ( cameraProjectionMatrix * nodeVar6 );
 
-	if ( ( ( nodeVar11 < 1e30 ) && ( nodeVar11 > -1e30 ) ) ) {
+	if ( ( int( nodeUniform10 ) == 1 ) ) {
 
-		nodeVar10 = nodeVar11;
+		nodeVar8 = 1.0;
 
 	} else {
 
-		nodeVar10 = 1.0;
+		nodeVar8 = ( 1.0 / length( nodeVar6.xyz ) );
 
 	}
 
-	nodeVar12 = ( nodeVar8 + vec4( ( ( aQuadCorner * ( vec2( max( 1.0, clamp( ( ( ( nodeVar0 * nodeUniform10 ) * nodeVar9 ) * nodeVar10 ), 1.0, nodeUniform12 ) ) ) / nodeUniform13 ) ) * vec2( nodeVar8.w ) ), 0.0, 0.0 ) );
+	nodeVar9 = ( nodeVar7 + vec4( ( ( aQuadCorner * ( vec2( max( 1.0, clamp( ( ( nodeVar0 * nodeUniform9 ) * nodeVar8 ), 1.0, nodeUniform11 ) ) ) / nodeUniform12 ) ) * vec2( nodeVar7.w ) ), 0.0, 0.0 ) );
 
 	// result
-	gl_Position = nodeVar12;
+	gl_Position = nodeVar9;
 
 	gl_PointSize = 1.0;
 

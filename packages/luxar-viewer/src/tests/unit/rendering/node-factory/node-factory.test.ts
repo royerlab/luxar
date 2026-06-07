@@ -159,8 +159,8 @@ describe('NodeFactory', () => {
       const sharpnessAttr = geometry.getAttribute('aSharpness');
       expect(sharpnessAttr).toBeDefined();
       expect(sharpnessAttr.count).toBe(50);
-      // Default sharpness is 2.0
-      expect(sharpnessAttr.array[0]).toBe(2.0);
+      // Default sharpness is 0.5 (-> beta=2, a true Gaussian).
+      expect(sharpnessAttr.array[0]).toBe(0.5);
     });
 
     it('should handle uint8 colors with normalization', () => {
@@ -222,17 +222,18 @@ describe('NodeFactory', () => {
       expect(geometry.boundingBox?.max.x).toBeCloseTo(10.5, 5);
     });
 
-    it('should store radius and sharpness scales in userData', () => {
+    it('should store the radius scale in userData', () => {
       const data = createMockPointsData({
         pointCount: 50,
         hasRadii: true,
         hasSharpness: true,
         radiiType: 'uint8',
       });
-      const geometry = factory.createPointsGeometry(data, 1.5, 20.0);
+      const geometry = factory.createPointsGeometry(data, 1.5);
 
       expect(geometry.userData.radiusScale).toBe(1.5);
-      expect(geometry.userData.sharpnessScale).toBe(1.0); // Float32 sharpness = 1.0 scale
+      // Sharpness has no scale — authored natively in [0, 1].
+      expect(geometry.userData.sharpnessScale).toBeUndefined();
     });
 
     it('should set bounding box from metadata (plus footprint margin)', () => {
@@ -495,9 +496,9 @@ describe('NodeFactory', () => {
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     });
 
-    it('should pass radius and sharpness scales', () => {
+    it('should pass the radius scale', () => {
       const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' as const };
-      const material = factory.createPointsMaterial(attrs, 2.0, 10.0);
+      const material = factory.createPointsMaterial(attrs, 2.0);
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     });

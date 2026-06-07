@@ -23,7 +23,6 @@ const POINT_PICK_GLSL = requireWebGLSources(POINT_PICK_SOURCE);
 export interface PointPickingMaterialConfig {
   nodeId: number;
   radiusScale?: number;
-  sharpnessScale?: number;
 }
 
 export class PointPickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
@@ -37,7 +36,6 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
         maxPointSize: { value: defaultResolutionY * 0.5 },
         radiusScale: { value: config.radiusScale ?? 1.0 },
-        sharpnessScale: { value: config.sharpnessScale ?? 1.0 },
         uIsOrtho: { value: 0 },
         uNodeId: { value: config.nodeId },
         // Resolution needed for instanced-quad expansion (matches
@@ -70,14 +68,11 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
 
   /**
    * keep pick footprint in lock-step with the visible footprint by
-   * mirroring radius/sharpness scale updates. Called from the commit
-   * helpers when geometry dtype scaling changes (e.g. placeholder →
-   * normalized Uint8 commit).
+   * mirroring radius scale updates. Called from the commit helpers when
+   * geometry dtype scaling changes (e.g. placeholder → normalized Uint8
+   * commit).
    */
   updateRadiusScale(scale: number): void {
     this.uniforms.radiusScale.value = scale;
-  }
-  updateSharpnessScale(scale: number): void {
-    this.uniforms.sharpnessScale.value = scale;
   }
 }

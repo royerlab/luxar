@@ -5,7 +5,7 @@
  * Renders one tight sprite per point with output:
  *   - R: nodeId (set as uniform)
  *   - G: elementId (= `gl_InstanceID`)
- *   - B: brightness (Gaussian falloff at the fragment position)
+ *   - B: brightness (super-Gaussian falloff at the fragment position)
  *   - A: 1.0
  *
  * Depth is set to `1.0 - brightness` (brightness-as-depth) so the
@@ -36,17 +36,13 @@ import {
   clamp,
   length,
   dot,
-  pow,
+  exp,
   Discard,
   modelViewMatrix,
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import {
-  sanitizePositive,
-  sanitizeNonNegative,
-  type TSLNode,
-} from '../../materials/_shared/tsl-helpers';
+import { sanitizeNonNegative, type TSLNode } from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. See
@@ -58,7 +54,6 @@ export interface PointPickTSLNodes {
   readonly pointSizeFactor: TSLNode;
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
-  readonly sharpnessScale: TSLNode;
   readonly uIsOrtho: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uResolution: TSLNode;
@@ -83,19 +78,17 @@ export function pointPickWebGPUFactory(
   const uPointSizeFactor = nodes.pointSizeFactor;
   const uMaxPointSize = nodes.maxPointSize;
   const uRadiusScale = nodes.radiusScale;
-  const uSharpnessScale = nodes.sharpnessScale;
   const uIsOrtho = nodes.uIsOrtho;
   const uNodeId = nodes.uNodeId;
   const uResolution = nodes.uResolution;
 
-  // Per-instance sanitisation — mirrors visual shader-tsl.ts
-  // and the GLSL picking shader after the parity-fix update. A NaN/Inf
-  // sharpness or negative radius would otherwise let the pick
-  // footprint diverge from the visible footprint.
-  const normalizedSharpness: TSLNode = sanitizePositive(
-    aSharpness.mul(uSharpnessScale),
-    float(2.0)
-  );
+  // Per-instance sanitisation — mirrors visual shader-tsl.ts and the GLSL
+  // picking shader: sharpness in [0, 1] -> super-Gaussian exponent
+  // beta = 2^(6s - 2). sanitizeNonNegative keeps a valid s=0 and routes
+  // NaN/Inf/negative to the 0.5 default so the pick footprint can't diverge
+  // from the visible footprint.
+  const sClamped: TSLNode = clamp(sanitizeNonNegative(aSharpness, float(0.5)), 0.0, 1.0);
+  const beta: TSLNode = float(2.0).pow(sClamped.mul(6.0).sub(2.0));
   const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
   // Vertex transform.
@@ -107,21 +100,13 @@ export function pointPickWebGPUFactory(
     .select(float(1.0), length(mvPos.xyz).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
-  // Picking footprint: × 0.8 vs the visual material
-  // (keep the 0.8 in sync with shaders.ts). Guard the
-  // sharpness-compensation expression against Inf/NaN the same way
-  // shader-tsl.ts does — degenerate sharpness must not poison
-  // the quad expansion.
-  const sharpnessCompRaw: TSLNode = float(1.0).div(
-    float(1.0).sub(pow(float(0.01), float(1.0).div(max(normalizedSharpness, float(0.01)))))
-  );
-  const sharpnessCompFinite = sharpnessCompRaw
-    .lessThan(1e30)
-    .and(sharpnessCompRaw.greaterThan(-1e30));
-  const sharpnessComp: TSLNode = sharpnessCompFinite.select(sharpnessCompRaw, float(1.0));
+  // Picking footprint: × 0.8 vs the visual material (keep the 0.8 in sync
+  // with shaders.ts). No sharpness size compensation — the shifted-truncated
+  // super-Gaussian truncates at the sprite edge, so basePointSize IS the
+  // visible extent (matches shader-tsl.ts).
   const pickPointSize: TSLNode = max(
     float(1.0),
-    clamp(basePointSize.mul(sharpnessComp).mul(0.8), float(1.0), uMaxPointSize)
+    clamp(basePointSize.mul(0.8), float(1.0), uMaxPointSize)
   );
 
   const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
@@ -130,7 +115,7 @@ export function pointPickWebGPUFactory(
   // Varyings.
   const vSpriteCoord: TSLNode = varying(aQuadCorner.add(1.0).mul(0.5));
   const vRadius: TSLNode = varying(normalizedRadius);
-  const vSharpness: TSLNode = varying(normalizedSharpness);
+  const vBeta: TSLNode = varying(beta);
   // nodeId and elementId are flat in the GLSL path. TSL's `varying()`
   // wraps with per-vertex linear interpolation by default; for a
   // single-instance quad all 4 corners carry the same value, so
@@ -147,7 +132,14 @@ export function pointPickWebGPUFactory(
     Discard(r2.greaterThan(0.25));
 
     const normalizedR: TSLNode = r2.mul(4.0).sqrt();
-    const falloff: TSLNode = float(1.0).sub(normalizedR).max(float(0.0)).pow(vSharpness);
+    // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
+    const K = 4.6051702; // ln(100)
+    const C = 0.01; // exp(-K) = floor
+    const invOneMinusC = 1.0 / (1.0 - C);
+    const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
+      .sub(C)
+      .max(float(0.0))
+      .mul(invOneMinusC);
     const brightness: TSLNode = falloff;
     Discard(brightness.lessThan(1e-4));
 
@@ -163,7 +155,14 @@ export function pointPickWebGPUFactory(
     const centered: TSLNode = vec2(vSpriteCoord.sub(0.5));
     const r2: TSLNode = dot(centered, centered);
     const normalizedR: TSLNode = r2.mul(4.0).sqrt();
-    const falloff: TSLNode = float(1.0).sub(normalizedR).max(float(0.0)).pow(vSharpness);
+    // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
+    const K = 4.6051702; // ln(100)
+    const C = 0.01; // exp(-K) = floor
+    const invOneMinusC = 1.0 / (1.0 - C);
+    const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
+      .sub(C)
+      .max(float(0.0))
+      .mul(invOneMinusC);
     return float(1.0).sub(clamp(falloff, 0.0, 1.0));
   });
 
@@ -194,7 +193,6 @@ export function buildPointPickTSLNodesFromUniforms(
     pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
-    sharpnessScale: uniform((uniforms.sharpnessScale?.value as number) ?? 1.0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uResolution: uniform(

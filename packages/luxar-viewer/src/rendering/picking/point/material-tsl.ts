@@ -3,7 +3,7 @@
  *
  * Mirrors the GLSL `PointPickingMaterial` one-for-one — same
  * constructor signature, same `updateCameraParams` /
- * `updateRadiusScale` / `updateSharpnessScale` / `dispose` surface,
+ * `updateRadiusScale` / `dispose` surface,
  * same `CameraAwareMaterial` contract. Per-mesh lifetime (the
  * NodeFactory creates one per points node and registers it with
  * `materialManager` for camera updates).
@@ -38,7 +38,6 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     pointSizeFactor: TSLNode;
     maxPointSize: TSLNode;
     radiusScale: TSLNode;
-    sharpnessScale: TSLNode;
     uIsOrtho: TSLNode;
     uNodeId: TSLNode;
     uResolution: TSLNode;
@@ -55,7 +54,6 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(config.radiusScale ?? 1.0),
-      sharpnessScale: uniform(config.sharpnessScale ?? 1.0),
       uIsOrtho: uniform(0),
       uNodeId: uniform(config.nodeId),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
@@ -65,7 +63,6 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
-      sharpnessScale: proxyIUniform(this.tslNodes.sharpnessScale),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
@@ -90,9 +87,5 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
 
   updateRadiusScale(scale: number): void {
     this.uniforms.radiusScale.value = scale;
-  }
-
-  updateSharpnessScale(scale: number): void {
-    this.uniforms.sharpnessScale.value = scale;
   }
 }

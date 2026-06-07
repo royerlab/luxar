@@ -74,11 +74,15 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vClippedStart = aStartClipped;
       vClippedEnd = aEndClipped;
 
-      // sanitize width/sharpness against negative/NaN/Inf.
+      // sanitize width/sharpness against negative/NaN/Inf. Sharpness is a
+      // [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2) (computed
+      // in the fragment); a valid s=0 must NOT be rejected, so clamp a
+      // non-negative-sanitised value into [0, 1] with the 0.5 default.
+      // Mirrors the visual shader (shader-glsl.ts).
       float startW = (isnan(aStartWidth) || isinf(aStartWidth) || aStartWidth < 0.0) ? 0.0 : aStartWidth;
       float endW = (isnan(aEndWidth) || isinf(aEndWidth) || aEndWidth < 0.0) ? 0.0 : aEndWidth;
-      float startS = (isnan(aStartSharpness) || isinf(aStartSharpness) || aStartSharpness <= 0.0) ? 2.0 : aStartSharpness;
-      float endS = (isnan(aEndSharpness) || isinf(aEndSharpness) || aEndSharpness <= 0.0) ? 2.0 : aEndSharpness;
+      float startS = clamp((isnan(aStartSharpness) || isinf(aStartSharpness) || aStartSharpness < 0.0) ? 0.5 : aStartSharpness, 0.0, 1.0);
+      float endS = clamp((isnan(aEndSharpness) || isinf(aEndSharpness) || aEndSharpness < 0.0) ? 0.5 : aEndSharpness, 0.0, 1.0);
 
       float width = mix(startW, endW, t);
       vSharpness = mix(startS, endS, t);
@@ -198,13 +202,14 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // Full width — lines are already narrow, no need for tighter truncation
       if (p >= 1.0) discard;
 
-      // Sharpness fast path — visual-shader parity. See shader-glsl.ts.
-      float oneMinusPSq = max(1.0 - p * p, 0.0);
-      #ifdef LUXAR_SHARPNESS_TWO
-      float perpFalloff = oneMinusPSq * oneMinusPSq;
-      #else
-      float perpFalloff = pow(oneMinusPSq, max(vSharpness, 0.0001));
-      #endif
+      // Shifted-truncated super-Gaussian perpendicular cross-section —
+      // visual-shader parity. beta = 2^(6s - 2) from the [0, 1] knob.
+      // K = ln(100), C = exp(-K). See shader-glsl.ts.
+      const float K = 4.6051702;
+      const float C = 0.01;
+      const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
+      float beta = exp2(6.0 * vSharpness - 2.0);
+      float perpFalloff = max(exp(-K * pow(p, beta)) - C, 0.0) * INV_ONE_MINUS_C;
 
       float minPixelWidth = 1.5;
       float widthScale = min(vPixelWidth / minPixelWidth, 1.0);

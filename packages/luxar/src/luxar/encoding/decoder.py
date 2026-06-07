@@ -156,7 +156,7 @@ class ArrayDecoder:
         maximum representable code (e.g. 255 for bits=8) maps exactly to
         ``max_val`` and the minimum (0) maps exactly to ``min_val``. The
         quantization step is ``(max - min) / (2**bits - 1)`` — for the
-        sharpness encoding this is ``31 / 255 ≈ 0.1216``.
+        sharpness encoding (normalized [0, 1] knob) this is ``1 / 255 ≈ 0.0039``.
 
         Args:
             arr: Zarr array with encoded data

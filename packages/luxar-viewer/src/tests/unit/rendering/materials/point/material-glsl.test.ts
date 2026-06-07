@@ -126,13 +126,10 @@ describe('PointMaterial', () => {
         'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
       );
 
-      // Check that sharpness compensation IS applied
-      expect(material.vertexShader).toContain(
-        '1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)))'
-      );
-      expect(material.vertexShader).toContain(
-        'float pointSize = basePointSize * sharpnessCompensation'
-      );
+      // Sharpness compensation is GONE — the shifted-truncated super-Gaussian
+      // truncates at the sprite edge, so the sprite size IS the visible extent.
+      expect(material.vertexShader).not.toContain('sharpnessCompensation');
+      expect(material.vertexShader).toContain('float pointSize = basePointSize');
 
       // Per-instance attributes. aQuadCorner is per-vertex.
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
@@ -141,26 +138,27 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('in float aSharpness');
       expect(material.vertexShader).toContain('in vec3 aColor');
 
-      // Check for optimized uniforms
+      // Check for optimized uniforms (sharpnessScale is removed — sharpness
+      // is now authored natively in [0, 1], no dtype scale needed).
       expect(material.vertexShader).toContain('uniform float radiusScale');
-      expect(material.vertexShader).toContain('uniform float sharpnessScale');
+      expect(material.vertexShader).not.toContain('uniform float sharpnessScale');
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
 
-      // Sharpness normalization flows through sanitizePositive from glsl-lib.
+      // sharpness -> beta mapping: beta = 2^(6s - 2), s clamped to [0, 1] and
+      // NaN/Inf-guarded to the 0.5 default via sanitizeNonNegative.
       expect(material.vertexShader).toContain(
-        'float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale'
+        'float s = clamp(sanitizeNonNegative(aSharpness, 0.5), 0.0, 1.0)'
       );
-      expect(material.vertexShader).toContain('vSharpness = normalizedSharpness');
+      expect(material.vertexShader).toContain('vBeta = exp2(6.0 * s - 2.0)');
 
       // GLSL sanitize lib is injected; verify the helper functions are present.
       expect(material.vertexShader).toContain('bool isInvalidFloat(float v)');
       expect(material.vertexShader).toContain('float sanitizePositive(float v, float fallback)');
       expect(material.vertexShader).toContain('float sanitizeNonNegative(float v, float fallback)');
-      expect(material.vertexShader).toContain('isInvalidFloat(sharpnessCompensationRaw)');
 
       // Check for mediump precision on varyings (reduces register pressure)
       expect(material.vertexShader).toContain('out mediump vec3 vColor');
-      expect(material.vertexShader).toContain('out mediump float vSharpness');
+      expect(material.vertexShader).toContain('out mediump float vBeta');
       // Sprite UV varying (replaces gl_PointCoord).
       expect(material.vertexShader).toContain('out mediump vec2 vSpriteCoord');
     });
@@ -180,9 +178,9 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).toContain('uniform mediump float invGamma');
       expect(material.fragmentShader).not.toContain('uniform float gamma'); // gamma removed
 
-      // Check for simple falloff calculation with mediump
+      // Shifted-truncated super-Gaussian falloff (beta=2 reproduces the gsplat Gaussian).
       expect(material.fragmentShader).toContain(
-        'mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness)'
+        'mediump float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C'
       );
       // GOG model: intensity * color + offset, clip, gamma
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
@@ -260,19 +258,38 @@ describe('PointMaterial', () => {
   });
 
   describe('shader correctness', () => {
-    it('should have correct sharpness compensation in vertex shader', () => {
+    it('should map sharpness to the super-Gaussian exponent with no size compensation', () => {
       const material = new PointMaterial();
 
-      // The old incorrect sharpness compensation should be removed
+      // No size compensation of any kind — the truncated kernel sizes itself.
       expect(material.vertexShader).not.toContain('sizeCompensation');
-      expect(material.vertexShader).not.toContain('sqrt(vSharpness / 2.0)');
-      expect(material.vertexShader).not.toContain('pow(sharpness, 0.15)');
+      expect(material.vertexShader).not.toContain('sharpnessCompensation');
+      expect(material.fragmentShader).not.toContain('vSharpness');
 
-      // The new correct compensation should be present
-      expect(material.vertexShader).toContain('sharpnessCompensation');
-      expect(material.vertexShader).toContain(
-        '1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)))'
-      );
+      // sharpness in [0, 1] -> beta = 2^(6s - 2); s=0.5 -> beta=2 (Gaussian).
+      // exp2(6*0.5 - 2) = exp2(1) = 2.
+      expect(material.vertexShader).toContain('vBeta = exp2(6.0 * s - 2.0)');
+      expect(2 ** (6 * 0.5 - 2)).toBeCloseTo(2.0, 10);
+      expect(2 ** (6 * 0.0 - 2)).toBeCloseTo(0.25, 10);
+      expect(2 ** (6 * 1.0 - 2)).toBeCloseTo(16.0, 10);
+    });
+
+    it('has a C0-truncated super-Gaussian: falloff(0)=1, falloff(1)=0', () => {
+      // Reproduce the fragment kernel constants in JS and check the endpoints.
+      const K = Math.log(100); // ln(1/floor), floor = 0.01
+      const C = Math.exp(-K); // = 0.01
+      const invOneMinusC = 1 / (1 - C);
+      const falloff = (rho: number, beta: number) =>
+        Math.max(Math.exp(-K * rho ** beta) - C, 0) * invOneMinusC;
+
+      for (const beta of [0.25, 0.71, 2.0, 5.66, 16.0]) {
+        expect(falloff(0, beta)).toBeCloseTo(1.0, 6);
+        expect(falloff(1, beta)).toBeCloseTo(0.0, 6);
+      }
+      // Monotonic shape ordering at the half-extent: higher beta = flatter,
+      // harder-edged plateau (brighter mid-disk); lower beta = peakier cusp.
+      expect(falloff(0.5, 0.25)).toBeLessThan(falloff(0.5, 2.0));
+      expect(falloff(0.5, 2.0)).toBeLessThan(falloff(0.5, 16.0));
     });
 
     it('should clamp point size to avoid undefined behavior', () => {

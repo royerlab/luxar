@@ -299,36 +299,22 @@ def validate_sharpness_for_writing(
 
     _validate_numeric_finite_values(sharpness, context)
 
-    # Check for invalid values
-    if np.any(sharpness <= 0):
+    # Sharpness is a normalised [0, 1] knob mapped in the viewer to the
+    # super-Gaussian falloff exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a
+    # true Gaussian), higher s -> harder edge, lower s -> peakier cusp.
+    if np.any(sharpness < SHARPNESS_MIN):
         min_val: float = float(np.min(sharpness))
         raise ValidationError(
-            f"{context}: Sharpness must be positive. Found minimum value: {min_val:.3f}",
+            f"{context}: Sharpness must be >= {SHARPNESS_MIN}. Found minimum value: {min_val:.3f}",
             f"Use values between {SHARPNESS_MIN} and {SHARPNESS_MAX} for valid range",
         )
 
-    # Check for values exceeding the maximum allowed (for uint8 mapping)
     if np.any(sharpness > SHARPNESS_MAX):
         max_val: float = float(np.max(sharpness))
         raise ValidationError(
             f"{context}: Sharpness values exceed maximum allowed value ({SHARPNESS_MAX}). "
             f"Found maximum: {max_val:.3f}",
-            f"Clip values to valid range: np.clip(sharpness, 0, {SHARPNESS_MAX})",
-        )
-
-    # Optional: Warn about extreme values that might not look good
-    if np.any(sharpness < 0.5) or np.any(sharpness > 10.0):
-        import warnings
-
-        min_val = np.min(sharpness)
-        max_val = np.max(sharpness)
-        warnings.warn(
-            f"{context}: Using extreme sharpness values.\n"
-            f"  Your range: [{min_val:.2f}, {max_val:.2f}]\n"
-            f"  Values < 0.5 create very soft, blurry points\n"
-            f"  Values > 10.0 create very hard-edged points\n"
-            f"  Valid range: [{SHARPNESS_MIN}, {SHARPNESS_MAX}]",
-            UserWarning,
+            f"Clip values to valid range: np.clip(sharpness, {SHARPNESS_MIN}, {SHARPNESS_MAX})",
         )
 
 

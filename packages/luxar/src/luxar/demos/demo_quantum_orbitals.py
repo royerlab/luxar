@@ -269,8 +269,8 @@ def generate_quantum_orbitals(
             # Grid spacing: ~0.25 units, use 0.35 for ~140% overlap
             radii = np.full(len(positions_4d), 0.35, dtype=np.float32)
             sharpnesses = np.full(
-                len(positions_4d), 2.0, dtype=np.float32
-            )  # Soft edges
+                len(positions_4d), 0.5, dtype=np.float32
+            )  # Soft edges (normalized [0, 1] knob; 0.5 = Gaussian)
 
             scene.add_points(
                 "QuantumOrbitals",

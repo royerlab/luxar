@@ -231,7 +231,7 @@ def create_zebrahub_scene(
             # Add points with small radii for dense point cloud
             total_points = len(positions_combined)
             radii = np.full(total_points, 0.02, dtype=np.float32)
-            sharpnesses = np.full(total_points, 4.0, dtype=np.float32)
+            sharpnesses = np.full(total_points, 0.6, dtype=np.float32)
 
             # Hover labels: resolve integer codes to category names, repeated per view
             per_cell_labels = []

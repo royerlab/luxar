@@ -479,7 +479,7 @@ def generate_detector_geometry(
                 vertices.extend([[x1, y1, z], [x2, y2, z]])
                 widths.extend([width, width])
                 colors.extend([color, color])
-                sharpness_vals.extend([2.0, 2.0])
+                sharpness_vals.extend([0.5, 0.5])
 
     # Longitudinal ribs connecting the z-planes (structural support visualization)
     n_long = 24  # More longitudinal lines for better structure
@@ -495,7 +495,7 @@ def generate_detector_geometry(
             )
             widths.extend([width * 0.5, width * 0.5])
             colors.extend([color, color])
-            sharpness_vals.extend([1.5, 1.5])
+            sharpness_vals.extend([0.45, 0.45])
 
     # Endcap disks (circular rings at z-ends showing layer boundaries)
     endcap_z = [DETECTOR_LENGTH * 0.5, -DETECTOR_LENGTH * 0.5]
@@ -519,7 +519,7 @@ def generate_detector_geometry(
                 vertices.extend([[x_inner, y_inner, z], [x_outer, y_outer, z]])
                 widths.extend([width, width])
                 colors.extend([color, color])
-                sharpness_vals.extend([1.5, 1.5])
+                sharpness_vals.extend([0.45, 0.45])
 
     # Beam pipe extension (thin central tube)
     beam_color = [0.4, 0.35, 0.2]  # Golden beam pipe
@@ -532,7 +532,7 @@ def generate_detector_geometry(
         vertices.extend([[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]])
         widths.extend([0.015, 0.015])
         colors.extend([beam_color, beam_color])
-        sharpness_vals.extend([2.5, 2.5])
+        sharpness_vals.extend([0.6, 0.6])
 
     # Interaction point marker rings (where collisions happen)
     ip_radii = [0.3, 0.6, 1.0]
@@ -548,7 +548,7 @@ def generate_detector_geometry(
             vertices.extend([[x1, y1, 0], [x2, y2, 0]])
             widths.extend([0.008, 0.008])
             colors.extend([ip_color, ip_color])
-            sharpness_vals.extend([3.0, 3.0])
+            sharpness_vals.extend([0.65, 0.65])
 
     return (
         np.array(vertices, dtype=np.float32),
@@ -624,7 +624,8 @@ def generate_calorimeter_deposits_with_times(
 
             size = 0.1 + 0.05 * np.log1p(particle.energy)
             radii.append(size * rng.uniform(0.7, 1.3))
-            sharpness.append(rng.uniform(0.5, 1.5))
+            # Soft, glowing appearance (normalized [0, 1] knob; low = peakier/softer)
+            sharpness.append(rng.uniform(0.25, 0.4))
             birth_times.append(base_birth_time + rng.uniform(-0.05, 0.1))
 
     if not positions:
@@ -923,7 +924,7 @@ def generate_animated_detector_scene(
                         vertices=all_positions,
                         widths=all_widths,
                         colors=all_colors,
-                        sharpness=1.5,
+                        sharpness=0.5,
                         line_type="segments",
                         # NOTE: NOT using extend_to_all - tracks should only be visible at their birth time
                         layer=True,

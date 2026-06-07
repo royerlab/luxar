@@ -43,7 +43,7 @@ test.describe('Test Fixture Rendering', () => {
     const state = await getLuxarState(page);
 
     // Verify points loaded
-    expect(state.totalPoints).toBe(31); // 31 points with sharpness [1, 31]
+    expect(state.totalPoints).toBe(32); // 32 points sampling sharpness [0, 1]
     expect(state.pointClouds.length).toBe(1);
 
     // Verify sharpness attribute exists and has correct range
@@ -85,12 +85,12 @@ test.describe('Test Fixture Rendering', () => {
     });
 
     expect(sharpnessData).not.toBeNull();
-    expect(sharpnessData?.count).toBe(31);
+    expect(sharpnessData?.count).toBe(32);
 
-    // CRITICAL: Verify sharpness reaches high values (not clamped to 15)
-    // With bug: max would be ~15
-    // With fix: max should be close to 31 (sharpness stored as float32)
-    expect(sharpnessData?.max).toBeGreaterThan(25); // Sharpness values range from 1 to 31
+    // Sharpness is a normalized [0, 1] knob (fixture = linspace(0, 1, 32)).
+    // Verify the decoded range spans the full [0, 1] knob.
+    expect(sharpnessData?.max).toBeGreaterThan(0.95); // reaches ~1.0
+    expect(sharpnessData?.min).toBeLessThan(0.05); // reaches ~0.0
 
     // Check for WebGL errors (CRITICAL)
     const webglErrors = await getWebGLErrors(page);

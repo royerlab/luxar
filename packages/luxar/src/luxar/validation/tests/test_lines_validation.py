@@ -195,19 +195,19 @@ def test_valid_widths(tmp_path) -> None:
     "sharpness_factory,error_pattern,test_id",
     [
         (
-            lambda: np.random.uniform(-1.0, 1.0, 100).astype(np.float32),
-            "Sharpness must be positive",
+            lambda: np.random.uniform(-1.0, 0.0, 100).astype(np.float32),
+            "must be >= 0.0",
             "negative_values",
         ),
         (
-            lambda: np.random.uniform(0.5, 10.0, 50).astype(np.float32),
-            "doesn't match",
-            "count_mismatch",
+            lambda: np.random.uniform(1.5, 5.0, 100).astype(np.float32),
+            "exceed maximum",
+            "above_max",
         ),
         (
-            lambda: np.zeros(100, dtype=np.float32),
-            "Sharpness must be positive",
-            "all_zeros",
+            lambda: np.random.uniform(0.0, 1.0, 50).astype(np.float32),
+            "doesn't match",
+            "count_mismatch",
         ),
     ],
     ids=lambda x: x if isinstance(x, str) else None,
@@ -234,7 +234,7 @@ def test_valid_sharpness(tmp_path) -> None:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(100)
         widths = np.ones(100, dtype=np.float32) * 0.1
-        sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
+        sharpness = np.random.uniform(0.0, 1.0, 100).astype(np.float32)
         compiler.write_lines("test", vertices, widths=widths, sharpness=sharpness)
 
     root = zarr.open_group(store, mode="r")
@@ -245,14 +245,14 @@ def test_valid_sharpness(tmp_path) -> None:
     np.testing.assert_array_equal(stored, sharpness)
 
 
-def test_sharpness_warning(tmp_path) -> None:
-    """Out-of-range sharpness for lines triggers the same warning as Points."""
-    store = tmp_path / "lines_sharp_warn.zarr"
+def test_sharpness_out_of_range_rejected(tmp_path) -> None:
+    """Out-of-range sharpness for lines is rejected the same way as Points."""
+    store = tmp_path / "lines_sharp_reject.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(100)
         widths = np.ones(100, dtype=np.float32) * 0.1
-        sharpness = np.array([0.3, 2.0, 15.0] * 33 + [5.0]).astype(np.float32)
+        sharpness = np.array([0.3, 0.5, 15.0] * 33 + [0.5]).astype(np.float32)
 
-        with pytest.warns(UserWarning, match="Using extreme sharpness values"):
+        with pytest.raises((ValueError, ValidationError), match="exceed maximum"):
             compiler.write_lines("test", vertices, widths=widths, sharpness=sharpness)

@@ -67,7 +67,7 @@ expectations.
 | `test_log_scalar.zarr` | Wide-dynamic-range radii encoded as log-scalar uint8/uint16. |
 | `test_4d_scalar_lut.zarr` | 4D positions combined with scalar LUT encoding. |
 | `test_uint16_quantization.zarr` | uint16 quantization for attributes whose dynamic range exceeds uint8 precision. |
-| `test_sharpness_range.zarr` | Sharpness values spanning the full `[0, 31]` range — verifies decoded sharpness handling. |
+| `test_sharpness_range.zarr` | 32 points sampling the full normalized `[0, 1]` sharpness knob range — verifies decoded sharpness handling. |
 | `test_nd_transforms.zarr` | `nd_transform` metadata on non-displayed dimensions — exercises the viewer's inverse-query path. |
 | `test_lines.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
 | `test_gsplats.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |

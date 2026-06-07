@@ -116,7 +116,7 @@ def main():
         aprint("\nCreating reference coordinate system at origin...")
         origin_pos, origin_colors = create_coordinate_axes(2.0)
         scene.add_points(
-            "OriginAxes", origin_pos, colors=origin_colors, radii=0.1, sharpness=4.0
+            "OriginAxes", origin_pos, colors=origin_colors, radii=0.1, sharpness=0.65
         )
 
         # 2. Basic translation
@@ -140,7 +140,7 @@ def main():
             colors=translated_axes_colors,
             radii=0.08,
             transform=translation,
-            sharpness=4.0,
+            sharpness=0.65,
         )
 
         # 3. Basic rotation
@@ -164,7 +164,7 @@ def main():
             colors=translated_axes_colors,
             radii=0.08,
             transform=rotated_transform,
-            sharpness=4.0,
+            sharpness=0.65,
         )
 
         # 4. Scaling
@@ -188,7 +188,7 @@ def main():
             colors=translated_axes_colors,
             radii=0.08,
             transform=scaled_transform,
-            sharpness=4.0,
+            sharpness=0.65,
         )
 
         # 5. Complex composition
@@ -214,7 +214,7 @@ def main():
             colors=translated_axes_colors,
             radii=0.08,
             transform=complex_transform,
-            sharpness=4.0,
+            sharpness=0.65,
         )
 
         # 6. Hierarchical transforms (parent-child)
@@ -261,7 +261,7 @@ def main():
             radii=0.06,
             transform=transforms.identity(),  # No additional transform
             parent=parent_group,
-            sharpness=4.0,
+            sharpness=0.65,
         )
 
         add_explainer(

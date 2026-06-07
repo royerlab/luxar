@@ -115,7 +115,7 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( nodeVar13, ( ( ( ( ( mix( ( 0.5 + ( nodeVar14 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar7, nodeVar8 ) ) ) * pow( max( ( 1.0 - ( nodeVar5 * nodeVar5 ) ), 0.0 ), max( nodeVarying7, 0.0001 ) ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying8, 1.5 ) ) ), 1.0, nodeVar5 ) ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeUniform8 ) );
+	DiffuseColor = vec4( nodeVar13, ( ( ( ( ( mix( ( 0.5 + ( nodeVar14 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar7, nodeVar8 ) ) ) * ( max( ( exp( ( pow( nodeVar5, pow( 2.0, ( ( nodeVarying7 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying8, 1.5 ) ) ), 1.0, nodeVar5 ) ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeUniform8 ) );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform9 );
 	nodeVar21 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar21;

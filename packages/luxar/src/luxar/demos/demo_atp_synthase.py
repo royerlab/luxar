@@ -469,8 +469,8 @@ def generate_atp_synthase(
                 )
                 scene = compiler.create_scene(dimensions=dims)
 
-                # Sharpness for protein atoms
-                sharpness = np.full(len(positions), 1, dtype=np.float32)
+                # Sharpness for protein atoms (normalized [0, 1] knob; 0.5 = Gaussian)
+                sharpness = np.full(len(positions), 0.5, dtype=np.float32)
 
                 scene.add_points(
                     "atp_synthase",

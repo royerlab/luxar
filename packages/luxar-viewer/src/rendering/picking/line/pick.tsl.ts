@@ -33,16 +33,13 @@ import {
   mix,
   length,
   step,
+  exp,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import {
-  sanitizeNonNegative,
-  sanitizePositive,
-  type TSLNode,
-} from '../../materials/_shared/tsl-helpers';
+import { sanitizeNonNegative, type TSLNode } from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
@@ -79,17 +76,9 @@ export interface LinePickTSLNodes {
  * {@link buildLinePickTSLNodesFromUniforms}.
  */
 /**
- * Per-build configuration for the line-pick factory. Currently
- * exposes the `sharpnessTwo` fast path that mirrors the visual
- * factory's; expect future variant flags to land here alongside.
+ * Per-build configuration for the line-pick factory.
  */
 export interface LinePickTSLConfig {
-  /**
-   * Fast path: replace `pow(max(1-p², 0), max(vSharpness, 0.0001))`
-   * with `(max(1-p², 0))²` when the wrapper knows all sharpness
-   * values are 2.0 (the default for the line dataset).
-   */
-  readonly sharpnessTwo?: boolean;
   /**
    * Camera projection mode at build time — mirrors `LineTSLConfig`.
    * When true, only the ortho pixel-width branch is emitted; when
@@ -131,8 +120,12 @@ export function linePickWebGPUFactory(
   const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
   const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
   const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
-  const startS: TSLNode = sanitizePositive(aStartSharpness, float(2.0));
-  const endS: TSLNode = sanitizePositive(aEndSharpness, float(2.0));
+  // Sharpness is a [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2)
+  // (computed in the fragment). A valid s=0 must NOT be rejected, so clamp a
+  // non-negative-sanitised value into [0, 1] with the 0.5 default. Mirrors
+  // the visual shaders.
+  const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
+  const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
   const width: TSLNode = mix(startW, endW, t);
   const vSharpnessVal: TSLNode = mix(startS, endS, t);
 
@@ -236,14 +229,14 @@ export function linePickWebGPUFactory(
   // bind to it.
   const brightnessShared = Fn(() => {
     const p: TSLNode = vPerpNorm.abs();
-    // Sharpness fast path: when the wrapper knows every segment in
-    // the buffer has sharpness == 2.0 (the default), replace
-    // `pow(x, 2)` with `x * x` so the fragment shader avoids the
-    // transcendental.
-    const oneMinusPSq: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0));
-    const perpFalloff: TSLNode = config.sharpnessTwo
-      ? oneMinusPSq.mul(oneMinusPSq)
-      : oneMinusPSq.pow(max(vSharpness, float(0.0001)));
+    // Shifted-truncated super-Gaussian perpendicular cross-section —
+    // visual-shader parity. beta = 2^(6s - 2) from the [0, 1] knob.
+    // K = ln(100), C = exp(-K).
+    const K = 4.6051702;
+    const C = 0.01;
+    const invOneMinusC = 1.0 / (1.0 - C);
+    const beta: TSLNode = float(2.0).pow(vSharpness.mul(6.0).sub(2.0));
+    const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
     const minPW = float(1.5);
     const widthScale: TSLNode = min(vPixelWidth.div(minPW), float(1.0));
 

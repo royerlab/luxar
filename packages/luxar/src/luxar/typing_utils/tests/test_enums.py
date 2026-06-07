@@ -215,8 +215,8 @@ class TestRenderingLimits:
 
     def test_sharpness_limits(self) -> None:
         """Test sharpness limits."""
-        assert RenderingLimits.SHARPNESS_MIN == 0.001
-        assert RenderingLimits.SHARPNESS_MAX == 31.0
+        assert RenderingLimits.SHARPNESS_MIN == 0.0
+        assert RenderingLimits.SHARPNESS_MAX == 1.0
 
     def test_color_limits(self) -> None:
         """Test color limits."""
@@ -237,7 +237,7 @@ class TestRenderingLimits:
         assert RenderingLimits.GAMMA_MIN < RenderingLimits.GAMMA_MAX
         assert RenderingLimits.GAMMA_MIN > 0  # gamma=0 is undefined (∞ exponent)
         assert RenderingLimits.SHARPNESS_MIN < RenderingLimits.SHARPNESS_MAX
-        assert RenderingLimits.SHARPNESS_MIN > 0  # sharpness must be positive
+        assert RenderingLimits.SHARPNESS_MIN >= 0  # normalised [0, 1] knob
         assert RenderingLimits.COLOR_SDR_MIN < RenderingLimits.COLOR_SDR_MAX
         # HDR includes SDR: HDR's max must be at least SDR's max.
         assert RenderingLimits.COLOR_HDR_MAX >= RenderingLimits.COLOR_SDR_MAX
@@ -266,7 +266,7 @@ class TestDefaults:
         """Test rendering property defaults."""
         assert Defaults.OPACITY == 1.0
         assert Defaults.GAMMA == 1.0
-        assert Defaults.SHARPNESS == 2.0  # Quadratic polynomial falloff
+        assert Defaults.SHARPNESS == 0.5  # -> super-Gaussian beta = 2 (Gaussian)
         assert Defaults.BLENDING_MODE == BlendingMode.ADDITIVE
 
     def test_storage_defaults(self) -> None:

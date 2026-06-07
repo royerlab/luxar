@@ -3,9 +3,8 @@
  *
  * `createLinesNode` resolves the line material backend through
  * materialManager, applies the colormap clone path when scalars +
- * a non-null colormap are requested, detects the sharpness=2 fast
- * path, then builds the InstancedLinesMesh + optional picking
- * shadow node.
+ * a non-null colormap are requested, then builds the
+ * InstancedLinesMesh + optional picking shadow node.
  *
  * @module rendering/node-factory/create-lines-node
  */
@@ -13,11 +12,7 @@
 import * as THREE from 'three';
 import { materialManager, type BlendingMode, type LuxarLineMaterial } from '../material-manager';
 import { getColormapTexture } from '../colormap-textures';
-import {
-  createInstancedLinesMesh,
-  isAllSharpnessTwo,
-  type InstancedLinesMeshConfig,
-} from '../line-geometry';
+import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from '../line-geometry';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
@@ -66,12 +61,6 @@ export function createLinesNode(
     }
   }
 
-  // Sharpness fast path: when every per-vertex sharpness is 2.0, the
-  // wrapper toggles `LUXAR_SHARPNESS_TWO` so the fragment shader
-  // replaces its `pow(x, vSharpness)` with `x*x`.
-  const sharpnessFastPath = isAllSharpnessTwo(processed);
-  material.setSharpnessAllTwo(sharpnessFastPath);
-
   const mesh = createInstancedLinesMesh(processed, material);
   mesh.name = path;
   mesh.userData = {
@@ -88,9 +77,6 @@ export function createLinesNode(
     const pickId = pickingSystem.allocatePickId();
     mesh.userData.pickId = pickId;
     const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
-    // Mirror the visual material's sharpness fast path on the picking
-    // material so the pick shader skips its pow(...) too.
-    pickMaterial.setSharpnessAllTwo(sharpnessFastPath);
     materialManager.register(pickMaterial);
     // Share the same InstancedBufferGeometry — only material differs.
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);

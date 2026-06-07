@@ -82,7 +82,7 @@ def main() -> None:
             positions,
             colors=colors,
             radii=0.10,
-            sharpness=2.0,
+            sharpness=0.5,
         )
 
         # Per-species colour legend (bottom-left), each line tinted to match

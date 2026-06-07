@@ -669,7 +669,7 @@ def generate_tabula_sapiens(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_cells, 4.0, dtype=np.float32)
+            sharpness = np.full(n_cells, 0.6, dtype=np.float32)
 
             scene.add_points(
                 "cells",

@@ -671,7 +671,7 @@ describe('SceneLoader', () => {
     // `expect(material).toBeDefined()` + `expect(material.updateCameraParams).toBeDefined()`.
     // Both fields are pre-populated by the materialManager mock at the top
     // of this file, so the assertions held trivially for any input — a
-    // mutation that swapped radiusScale/sharpnessScale, dropped blending
+    // mutation that swapped radiusScale, dropped blending
     // mode, or stopped honoring opacity/gamma defaults would still pass.
     //
     // The materialManager mock is the trust boundary (P3): we spy on
@@ -690,18 +690,16 @@ describe('SceneLoader', () => {
       };
     });
 
-    it('forwards explicit radiusScale and sharpnessScale to the material manager', () => {
+    it('forwards explicit radiusScale to the material manager', () => {
       (sceneLoader as any).nodeFactory.createPointsMaterial(
         { opacity: 1.0, gamma: 1.0, blending_mode: 'normal' as const },
-        2.5,
-        1.0
+        2.5
       );
 
       expect(materialManagerMock.getPointMaterial).toHaveBeenCalledTimes(1);
       expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
           radiusScale: 2.5,
-          sharpnessScale: 1.0,
           opacity: 1.0,
           gamma: 1.0,
           blendingMode: 'normal',
@@ -709,33 +707,13 @@ describe('SceneLoader', () => {
       );
     });
 
-    it('forwards sharpnessScale=31 for uint8-sharpness scenes', () => {
-      (sceneLoader as any).nodeFactory.createPointsMaterial(
-        { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' as const },
-        1.0,
-        31.0
-      );
-
-      expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sharpnessScale: 31.0,
-          radiusScale: 1.0,
-          opacity: 0.8,
-          gamma: 2.2,
-          blendingMode: 'additive',
-        })
-      );
-    });
-
     it('propagates blendingMode distinctly for normal vs additive', () => {
       (sceneLoader as any).nodeFactory.createPointsMaterial(
         { blending_mode: 'normal' as const },
-        1.0,
         1.0
       );
       (sceneLoader as any).nodeFactory.createPointsMaterial(
         { blending_mode: 'additive' as const },
-        1.0,
         1.0
       );
 
@@ -746,7 +724,7 @@ describe('SceneLoader', () => {
     });
 
     it('uses opacity=1.0 and gamma=1.0 as defaults when attrs omit them', () => {
-      (sceneLoader as any).nodeFactory.createPointsMaterial({}, 1.0, 1.0);
+      (sceneLoader as any).nodeFactory.createPointsMaterial({}, 1.0);
 
       // Note: the source defaults blending_mode to 'additive' when absent
       // (see create-points-node.ts line ~179).
@@ -760,7 +738,7 @@ describe('SceneLoader', () => {
     });
 
     it('passes through custom opacity and gamma values from attrs', () => {
-      (sceneLoader as any).nodeFactory.createPointsMaterial({ opacity: 0.5, gamma: 2.2 }, 1.0, 1.0);
+      (sceneLoader as any).nodeFactory.createPointsMaterial({ opacity: 0.5, gamma: 2.2 }, 1.0);
 
       expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -770,13 +748,12 @@ describe('SceneLoader', () => {
       );
     });
 
-    it('defaults radiusScale and sharpnessScale to 1.0 when callers omit them', () => {
-      (sceneLoader as any).nodeFactory.createPointsMaterial({}); // No scales provided
+    it('defaults radiusScale to 1.0 when callers omit it', () => {
+      (sceneLoader as any).nodeFactory.createPointsMaterial({}); // No scale provided
 
       expect(materialManagerMock.getPointMaterial).toHaveBeenCalledWith(
         expect.objectContaining({
           radiusScale: 1.0,
-          sharpnessScale: 1.0,
         })
       );
     });

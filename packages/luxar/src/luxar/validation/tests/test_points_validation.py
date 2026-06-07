@@ -174,29 +174,29 @@ def test_valid_radii(tmp_path) -> None:
 @pytest.mark.parametrize(
     "sharpness_factory,error_pattern,test_id",
     [
-        # Negative values
+        # Negative values (below the normalized [0, 1] range)
         (
-            lambda: np.random.uniform(-1.0, 1.0, 100).astype(np.float32),
-            "Sharpness must be positive",
+            lambda: np.random.uniform(-1.0, 0.0, 100).astype(np.float32),
+            "must be >= 0.0",
             "negative_values",
+        ),
+        # Above the maximum (> 1.0)
+        (
+            lambda: np.random.uniform(1.5, 5.0, 100).astype(np.float32),
+            "exceed maximum",
+            "above_max",
         ),
         # Wrong count (50 instead of 100)
         (
-            lambda: np.random.uniform(0.5, 10.0, 50).astype(np.float32),
+            lambda: np.random.uniform(0.0, 1.0, 50).astype(np.float32),
             "doesn't match",
             "count_mismatch",
         ),
         # Wrong shape (2D instead of 1D)
         (
-            lambda: np.random.uniform(0.5, 10.0, (100, 2)).astype(np.float32),
+            lambda: np.random.uniform(0.0, 1.0, (100, 2)).astype(np.float32),
             "Expected 1D array",
             "wrong_shape",
-        ),
-        # All zeros (edge case)
-        (
-            lambda: np.zeros(100, dtype=np.float32),
-            "Sharpness must be positive",
-            "all_zeros",
         ),
     ],
     ids=lambda x: x if isinstance(x, str) else None,
@@ -220,7 +220,7 @@ def test_valid_sharpness(tmp_path) -> None:
     ) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         positions = np.random.randn(100, 3).astype(np.float32)
-        sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
+        sharpness = np.random.uniform(0.0, 1.0, 100).astype(np.float32)
         compiler.write_points("test", positions, sharpness=sharpness)
 
     root = zarr.open_group(store, mode="r")
@@ -231,14 +231,14 @@ def test_valid_sharpness(tmp_path) -> None:
     np.testing.assert_array_equal(stored_sharpness, sharpness)
 
 
-def test_sharpness_warning(tmp_path) -> None:
-    """Test that out-of-range sharpness values trigger a warning."""
-    store = tmp_path / "sharpness_warning.zarr"
+def test_sharpness_out_of_range_rejected(tmp_path) -> None:
+    """Out-of-range sharpness (outside [0, 1]) raises a ValidationError."""
+    store = tmp_path / "sharpness_rejected.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         positions = np.random.randn(100, 3).astype(np.float32)
-        # Mix of values including out-of-range
-        sharpness = np.array([0.3, 2.0, 15.0] * 33 + [5.0]).astype(np.float32)
+        # Mix of values including out-of-range (sharpness is a normalized [0, 1] knob)
+        sharpness = np.array([0.3, 0.5, 15.0] * 33 + [0.5]).astype(np.float32)
 
-        with pytest.warns(UserWarning, match="Using extreme sharpness values"):
+        with pytest.raises(ValidationError, match="exceed maximum"):
             compiler.write_points("test", positions, sharpness=sharpness)

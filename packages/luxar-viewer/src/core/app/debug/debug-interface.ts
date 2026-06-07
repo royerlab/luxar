@@ -4,7 +4,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { showError } from '../../../ui/error-overlay';
-import { createInstancedLinesMesh, isAllSharpnessTwo } from '../../../rendering/line-geometry';
+import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { materialManager } from '../../../rendering/material-manager';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
@@ -177,7 +177,6 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           intensity: 1.0,
           offset: 0.0,
         });
-        material.setSharpnessAllTwo(isAllSharpnessTwo(cfg));
         const mesh = createInstancedLinesMesh(cfg, material);
         mesh.userData = {
           nodeType: 'lines',

@@ -200,7 +200,6 @@ export class LineTSLMaterial
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
-    const sharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
     // Camera mode lives on the uniform itself, not in defines: the
     // factory reads `tslNodes.uIsOrtho.value` at build time so a fresh
     // rebuild after `updateCameraParams` flips the flag picks up the
@@ -214,30 +213,12 @@ export class LineTSLMaterial
         useColormap,
         gammaOne,
         noGOG,
-        sharpnessTwo,
         isOrtho,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
     );
     this.needsUpdate = true;
-  }
-
-  /**
-   * Toggle the sharpness-fast-path define + rebuild the TSL graph.
-   * Called by the line node-factory after inspecting the per-vertex
-   * sharpness arrays at upload time.
-   */
-  setSharpnessAllTwo(active: boolean): void {
-    if (!this.defines) this.defines = {};
-    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
-    if (active && !had) {
-      this.defines.LUXAR_SHARPNESS_TWO = '';
-      this.rebuildGraph();
-    } else if (!active && had) {
-      delete this.defines.LUXAR_SHARPNESS_TWO;
-      this.rebuildGraph();
-    }
   }
 
   /** Same toggle helper as `LineMaterial._refreshNoGOGDefine` — see there. */
@@ -393,25 +374,16 @@ export class LineTSLMaterial
     );
     // `uIsOrtho` is a graph-specialized config — the constructor's
     // `rebuildGraph` ran against the default value 0 (perspective).
-    // The `LUXAR_SHARPNESS_TWO` define is also graph-specialized
-    // (selects an `x*x` fragment fast path) and the constructor
-    // doesn't carry it either. Compute both source flags up front,
-    // copy uniforms, then re-apply the flags so the final rebuild
-    // picks up BOTH at once. If only sharpnessTwo applies, its
-    // setter rebuilds (which also sees the now-correct uIsOrtho);
-    // if only ortho applies, do an explicit rebuild; if both, the
-    // setter call subsumes the ortho rebuild.
+    // Copy uniforms, then re-run the rebuild against the now-correct
+    // value so the right pixel-width branch is emitted.
     const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
-    const sourceSharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    if (sourceSharpnessTwo) {
-      cloned.setSharpnessAllTwo(true);
-    } else if (sourceIsOrtho) {
+    if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }
 

@@ -94,7 +94,6 @@ export function commitPointsGeometry(
   // is the correct world-space max for both. No radii → 0.5 fill default.
   const attrs = points.userData.attrs;
   const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
-  const maxSharpness = (attrs?.max_sharpness as number | undefined) ?? 31.0;
   const footprintRadius = data.radii ? maxRadius : 0.5;
 
   const bufferSession = session?.begin('Update Buffers');
@@ -117,16 +116,14 @@ export function commitPointsGeometry(
         geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
       }
 
-      // propagate dtype-aware radius/sharpness scales onto
-      // geometry userData and immediately sync render + pick material
-      // uniforms. Without this, a placeholder→real-data transition
-      // would leave radiusScale=1 even though Uint8 normalized radii
-      // should map to [0, max_radius].
+      // propagate dtype-aware radius scale onto geometry userData and
+      // immediately sync render + pick material uniforms. Without this,
+      // a placeholder→real-data transition would leave radiusScale=1
+      // even though Uint8 normalized radii should map to [0, max_radius].
       if (!geometry.userData) {
         geometry.userData = {};
       }
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
-      geometry.userData.sharpnessScale = data.sharpness instanceof Uint8Array ? maxSharpness : 1.0;
 
       points.geometry = geometry;
       syncPointMaterialWithGeometry(points);
@@ -217,10 +214,10 @@ export function commitPointsGeometry(
       if (oldGeometry) {
         oldGeometry.dispose();
       }
-      // Pass max_radius / max_sharpness so the rebuilt geometry bakes the
-      // correct footprint into boundingBox (and the right dtype scales);
-      // omitting them would default maxRadius=1.0 and clip large radii.
-      points.geometry = nodeFactory.createPointsGeometry(data, maxRadius, maxSharpness);
+      // Pass max_radius so the rebuilt geometry bakes the correct
+      // footprint into boundingBox (and the right dtype scale); omitting
+      // it would default maxRadius=1.0 and clip large radii.
+      points.geometry = nodeFactory.createPointsGeometry(data, maxRadius);
       // dispose+recreate path picks up new dtype-aware scales from
       // the freshly built geometry's userData.
       syncPointMaterialWithGeometry(points);

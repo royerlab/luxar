@@ -288,7 +288,7 @@ def generate_spotify_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_tracks, 4.0, dtype=np.float32)
+            sharpness = np.full(n_tracks, 0.6, dtype=np.float32)
 
             scene.add_points(
                 "tracks",

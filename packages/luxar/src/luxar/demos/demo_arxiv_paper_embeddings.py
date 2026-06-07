@@ -497,7 +497,7 @@ def generate_paper_landscape(
             scene = compiler.create_scene(dimensions=dims)
 
             # Sharp points for clarity
-            sharpness = np.full(n_papers, 4.0, dtype=np.float32)
+            sharpness = np.full(n_papers, 0.6, dtype=np.float32)
 
             # Hover labels: title (citations, field)
             paper_labels = []

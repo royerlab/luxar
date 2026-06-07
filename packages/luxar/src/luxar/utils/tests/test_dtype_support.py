@@ -43,19 +43,19 @@ class TestCompilerWithDtypes:
 
             # Check positions encoding (new default: float32 for compatibility)
             pos_enc = points["positions"].attrs.get("encoding", {})
-            assert pos_enc["name"] == "float32", (
-                "MEMORY mode uses float32 by default (float16_allowed=False for compatibility)"
-            )
+            assert (
+                pos_enc["name"] == "float32"
+            ), "MEMORY mode uses float32 by default (float16_allowed=False for compatibility)"
 
             # Check colors encoding (should be uint8, may be LUT/broadcasted/quantized)
-            assert points["colors"].dtype == np.uint8, (
-                "Colors should be uint8 in MEMORY mode"
-            )
+            assert (
+                points["colors"].dtype == np.uint8
+            ), "Colors should be uint8 in MEMORY mode"
 
             # Check radii encoding (small range [0, 0.5] should be quantized to uint8)
-            assert points["radii"].dtype == np.uint8, (
-                "Radii with small range should be uint8"
-            )
+            assert (
+                points["radii"].dtype == np.uint8
+            ), "Radii with small range should be uint8"
 
     def test_compiler_with_precision_mode(self) -> None:
         """Test compiler with PRECISION mode (float32 everywhere)."""
@@ -66,7 +66,7 @@ class TestCompilerWithDtypes:
             positions = np.random.randn(100, 3).astype(np.float32)
             colors = np.random.rand(100, 3).astype(np.float32)  # SDR colors
             radii = np.random.rand(100).astype(np.float32) * 0.5  # Small range
-            sharpness = np.random.rand(100).astype(np.float32) * 2  # [0, 2] range
+            sharpness = np.random.rand(100).astype(np.float32)  # [0, 1] range
 
             # Write with PRECISION mode
             with LuxarZarrCompiler(
@@ -82,18 +82,18 @@ class TestCompilerWithDtypes:
             points = store["test"]
 
             # Check encodings match PRECISION mode behavior (float32 everywhere)
-            assert points["positions"].dtype == np.float32, (
-                "PRECISION uses float32 for positions"
-            )
-            assert points["colors"].dtype == np.float32, (
-                "PRECISION preserves float32 for colors"
-            )
-            assert points["radii"].dtype == np.float32, (
-                "PRECISION uses float32 for radii"
-            )
-            assert points["sharpnesses"].dtype == np.float32, (
-                "PRECISION uses float32 for sharpness"
-            )
+            assert (
+                points["positions"].dtype == np.float32
+            ), "PRECISION uses float32 for positions"
+            assert (
+                points["colors"].dtype == np.float32
+            ), "PRECISION preserves float32 for colors"
+            assert (
+                points["radii"].dtype == np.float32
+            ), "PRECISION uses float32 for radii"
+            assert (
+                points["sharpnesses"].dtype == np.float32
+            ), "PRECISION uses float32 for sharpness"
 
     def test_hdr_color_detection(self) -> None:
         """Test that HDR colors are automatically detected and stored as float32."""

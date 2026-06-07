@@ -18,7 +18,7 @@ class SemanticType(str, Enum):
       SDR (0-1): uint8, uint16, float16, float32
       HDR (>1): float16, float32
     - BOUNDED_SCALAR: Scalars with known [min, max] bounds.
-      Examples: sharpness [0, 31], opacity [0, 1]
+      Examples: sharpness [0, 1], opacity [0, 1]
       Valid: uint8, uint16, float16, float32
     - POSITIVE_SCALAR: Non-negative scalars, potentially wide dynamic range.
       Examples: radii, amplitudes, distances

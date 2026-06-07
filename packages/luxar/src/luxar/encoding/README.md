@@ -164,15 +164,15 @@ encoder.encode(
     mode=EncodingMode.MEMORY  # Aggressive compression
 )
 
-# Encode sharpness (BOUNDED_SCALAR semantic type)
-sharpness = np.random.rand(1000).astype(np.float32) * 31
+# Encode sharpness (BOUNDED_SCALAR semantic type; normalized [0, 1] knob)
+sharpness = np.random.rand(1000).astype(np.float32)
 encoder.encode(
     data=sharpness,
     zarr_group=root,
     name="sharpness",
     semantic_type=SemanticType.BOUNDED_SCALAR,
     mode=EncodingMode.AUTO,
-    bounds=(0.0, 31.0)  # Explicit bounds
+    bounds=(0.0, 1.0)  # Explicit bounds
 )
 ```
 
@@ -337,7 +337,7 @@ encoder.encode(
     ...,
     mode=EncodingMode.CUSTOM,
     custom_encoder="bounded_scalar_uint8",
-    bounds=(0.0, 31.0)
+    bounds=(0.0, 1.0)
 )
 ```
 
@@ -508,7 +508,7 @@ encoder.encode(
     data=sharpness,
     semantic_type=SemanticType.BOUNDED_SCALAR,
     mode=EncodingMode.MEMORY,
-    bounds=(0.0, 31.0)
+    bounds=(0.0, 1.0)
 )
 ```
 
@@ -718,7 +718,7 @@ encoder.encode(
 encoder.encode(
     data=sharpness,
     semantic_type=SemanticType.BOUNDED_SCALAR,
-    bounds=(0.0, 31.0)  # Known logical range
+    bounds=(0.0, 1.0)  # Known logical range (normalized sharpness knob)
 )
 ```
 

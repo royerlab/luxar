@@ -359,7 +359,7 @@ def build_scene(
                 positions,
                 colors=colors,
                 radii=np.full(len(positions), 0.04, dtype=np.float32),
-                sharpness=np.full(len(positions), 4.0, dtype=np.float32),
+                sharpness=np.full(len(positions), 0.6, dtype=np.float32),
                 opacity=0.85,
                 intensity=0.2,
                 labels=labels,

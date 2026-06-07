@@ -1022,8 +1022,8 @@ def generate_cloud_layer(
             base_radius = 0.006 + 0.004 * opacity_factor
             cloud_radii.append(base_radius)
 
-            # Soft, diffuse sharpness
-            cloud_sharpness.append(1.5)
+            # Soft, diffuse sharpness (normalized [0, 1] knob; low = peakier/softer)
+            cloud_sharpness.append(0.35)
 
         # Progress indicator
         if (i + 1) % 20000 == 0:
@@ -1225,7 +1225,7 @@ def generate_earthquake_lines(
         colors.extend([color, color * 0.7])  # Fade toward tip
 
         # Sharp lines for clarity
-        sharpness.extend([2.0, 2.0])
+        sharpness.extend([0.5, 0.5])
 
     return (
         np.array(vertices, dtype=np.float32),
@@ -1317,7 +1317,7 @@ def generate_earthquake_scene(
 
             # Add Earth surface
             earth_radii = np.full(len(earth_positions), 0.003, dtype=np.float32)
-            earth_sharpness = np.full(len(earth_positions), 3.0, dtype=np.float32)
+            earth_sharpness = np.full(len(earth_positions), 0.55, dtype=np.float32)
 
             # Earth surface uses opaque blending - solid rendering with depth write
             # This means the Earth will occlude earthquake rays behind it
