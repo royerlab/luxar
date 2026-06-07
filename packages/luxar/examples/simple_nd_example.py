@@ -156,7 +156,7 @@ def main():
             positions,
             colors=colors,
             radii=radii,
-            sharpness=np.full(len(positions), 2.0, dtype=np.float32),
+            sharpness=np.full(len(positions), 0.5, dtype=np.float32),
         )
 
         add_explainer(

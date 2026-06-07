@@ -77,7 +77,7 @@ def main() -> None:
             positions,
             colors=colors,
             radii=0.4,
-            sharpness=2.0,
+            sharpness=0.5,
             # Per-point labels feed the {hover_label} template below.
             labels=labels,
         )

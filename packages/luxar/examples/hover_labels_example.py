@@ -139,7 +139,7 @@ def main() -> None:
             positions,
             colors=colors,
             radii=0.5,
-            sharpness=2.0,
+            sharpness=0.5,
             labels=labels,
             image_labels=image_labels,
         )
