@@ -8,6 +8,7 @@
 
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
+import { getViewerContainer } from '../utils/viewer-container';
 import type { OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
@@ -134,7 +135,7 @@ export class OverlayManager {
     for (const config of overlayConfigs) {
       try {
         const el = this.createOverlayElement(config);
-        document.body.appendChild(el);
+        getViewerContainer().appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
 

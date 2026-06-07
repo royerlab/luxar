@@ -220,10 +220,10 @@
 .luxar-monitor-compact__alert {
   color: var(--luxar-warning);
   font-size: var(--luxar-text-lg);
-  animation: pulse 2s ease-in-out infinite;
+  animation: luxar-monitor-pulse 2s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes luxar-monitor-pulse {
   0%,
   100% {
     opacity: 1;

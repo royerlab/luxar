@@ -21,6 +21,7 @@
 
 import type { OverlayManager } from '../overlay-manager';
 import { compositeOverlays } from './overlay-compositor';
+import { getViewerContainer } from '../../utils/viewer-container';
 
 /** Subset of PostProcessingManager the screenshot path reads. */
 export interface ScreenshotPostProcessing {
@@ -133,7 +134,9 @@ export function downloadBlob(blob: Blob, filename: string): void {
     a.style.display = 'none';
     a.href = url;
     a.download = filename;
-    document.body.appendChild(a);
+    // Append to the viewer container (falls back to document.body) so the
+    // viewer never leaves transient nodes on the host's document.body.
+    getViewerContainer().appendChild(a);
     a.click();
     setTimeout(() => {
       try {

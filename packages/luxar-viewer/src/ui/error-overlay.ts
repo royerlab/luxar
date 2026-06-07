@@ -9,6 +9,7 @@
 
 import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
+import { getViewerContainer } from '../utils/viewer-container';
 
 const UI_CONFIG = config.ui;
 
@@ -154,7 +155,7 @@ export function showError(message: string) {
     }
   }, UI_CONFIG.timings.errorAutoDismissMs);
 
-  document.body.appendChild(errorDiv);
+  getViewerContainer().appendChild(errorDiv);
 
   // Trap focus within the error dialog. Stored at module scope so the
   // clearError() teardown path can release it without going through

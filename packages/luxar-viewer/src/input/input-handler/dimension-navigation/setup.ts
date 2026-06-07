@@ -23,6 +23,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { updateSceneForDimensions } from '../../../data';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { log, Modules } from '../../../utils/log';
+import { getViewerContainer } from '../../../utils/viewer-container';
 import { AnimationShortcuts } from '../key-bindings/animation-shortcuts';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -167,7 +168,7 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
     const dimensionUnits = sceneDimsManager.getDimensionUnits();
 
     const sliders = ctx.dimensionSlidersFactory({
-      container: document.body,
+      container: getViewerContainer(),
       dims,
       dimensionRanges,
       dimensionNames,

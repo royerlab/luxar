@@ -11,6 +11,7 @@
  */
 
 import { Folder } from './folder';
+import { getViewerContainer } from '../../utils/viewer-container';
 import type { GUIOptions } from './types';
 
 /** Internal type with optional onClose */
@@ -52,7 +53,7 @@ export class GUI extends Folder {
       title: options.title ?? 'Controls',
       width: options.width ?? 300,
       closeFolders: options.closeFolders ?? false,
-      container: options.container ?? document.body,
+      container: options.container ?? getViewerContainer(),
       onClose: options.onClose,
       closeButtonTitle: options.closeButtonTitle,
     };

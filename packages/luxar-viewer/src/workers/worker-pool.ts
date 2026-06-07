@@ -658,7 +658,13 @@ export function getWorkerPool(): WorkerPool {
  */
 export function disposeWorkerPool(): void {
   if (workerPoolInstance) {
-    workerPoolInstance.dispose();
-    workerPoolInstance = null;
+    // Null the singleton even if termination throws: a half-disposed pool
+    // must never be handed back out by getWorkerPool(). A subsequent call
+    // then lazily constructs a fresh pool rather than reusing dead workers.
+    try {
+      workerPoolInstance.dispose();
+    } finally {
+      workerPoolInstance = null;
+    }
   }
 }

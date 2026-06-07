@@ -1,5 +1,6 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { getViewerContainer } from '../utils/viewer-container';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
@@ -161,7 +162,9 @@ export class DimensionSliders {
    * a slider triggers dimension changes which update all nD objects in the scene.
    *
    * @param config - Configuration object for slider initialization
-   * @param config.container - DOM element to append sliders to (typically document.body)
+   * @param config.container - DOM element to append sliders to (the viewer
+   *   container — `getViewerContainer()`, i.e. the embedder's `container` or
+   *   `document.body` by default)
    * @param config.dims - Current dimension state from sceneDimsManager
    * @param config.dimensionRanges - [min, max] bounds for each dimension
    * @param config.dimensionNames - Human-readable names (e.g., ['X', 'Y', 'Z', 'Time'])
@@ -175,7 +178,7 @@ export class DimensionSliders {
    * const names = sceneDimsManager.getDimensionNames();
    *
    * const sliders = new DimensionSliders({
-   *   container: document.body,
+   *   container: getViewerContainer(),
    *   dims,
    *   dimensionRanges: ranges,
    *   dimensionNames: names,
@@ -1161,7 +1164,7 @@ export class DimensionSliders {
     menu.appendChild(loopSection);
 
     // Add to document first (needed to measure height)
-    document.body.appendChild(menu);
+    getViewerContainer().appendChild(menu);
     this.activeContextMenu = menu;
 
     // Position menu above the cursor (Napari-style) with bounds checking

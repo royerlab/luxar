@@ -4,6 +4,8 @@
  * background; removed via hideLoadingIndicator() or element.remove().
  */
 
+import { getViewerContainer } from '../utils/viewer-container';
+
 export function showLoadingIndicator(): HTMLElement {
   const loadingDiv = document.createElement('div');
   loadingDiv.id = 'luxar-loading-indicator';
@@ -19,7 +21,7 @@ export function showLoadingIndicator(): HTMLElement {
 
   loadingDiv.appendChild(spinner);
   loadingDiv.appendChild(text);
-  document.body.appendChild(loadingDiv);
+  getViewerContainer().appendChild(loadingDiv);
 
   return loadingDiv;
 }

@@ -2,6 +2,7 @@ import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { clearError, showError } from '../../../ui/error-overlay';
 import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
 import { log, Modules } from '../../../utils/log';
+import { getViewerContainer } from '../../../utils/viewer-container';
 import type { InputHandler } from '../../../input/input-handler';
 
 /**
@@ -28,7 +29,7 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
   clearError();
 
   const browser = new DatasetBrowser({
-    container: document.body,
+    container: getViewerContainer(),
     currentSrc: ports.currentSrc,
     onDatasetSelect: async (fullUrl: string) => {
       // The browser now passes full URLs directly, preserving directory context

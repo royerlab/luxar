@@ -19,6 +19,7 @@
 import { LuxarApp } from '../../dist/lib/luxar-viewer.js';
 
 const canvas = document.getElementById('luxar-canvas');
+const viewerFrame = document.getElementById('viewer-frame');
 const disposeBtn = document.getElementById('dispose-btn');
 const reinitBtn = document.getElementById('reinit-btn');
 
@@ -29,6 +30,11 @@ async function mount() {
   app = new LuxarApp();
   await app.init({
     canvas,
+    // Mount every viewer overlay/panel/toast/dialog inside our framed box
+    // rather than document.body. The frame is position:relative, so the
+    // viewer's fixed overlays are scoped to it (and dispose() removes the
+    // whole subtree cleanly).
+    container: viewerFrame,
     // Embed-friendly defaults: don't rewrite the host page's URL when the
     // user picks a dataset from the viewer's browser UI.
     updateBrowserUrl: false,

@@ -375,5 +375,15 @@ export const consoleInterceptor: ConsoleInterceptor = new Proxy({} as ConsoleInt
   },
 });
 
+/**
+ * Dispose the console-interceptor singleton, restoring the host's original
+ * `console.*` methods (if patched) and clearing the buffer. Idempotent and
+ * side-effect-free when never patched. Called from the app dispose pipeline
+ * so a mount/unmount cycle leaves the host console exactly as it found it.
+ */
+export function disposeConsoleInterceptor(): void {
+  ConsoleInterceptor.disposeInstance();
+}
+
 // Also export the type for the singleton
 export type { ConsoleInterceptor };

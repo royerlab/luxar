@@ -45,7 +45,7 @@ the host page survive each cycle.
 ```html
 <canvas id="luxar-canvas"></canvas>
 <script type="importmap">
-  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js" } }
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js" } }
 </script>
 <link rel="stylesheet" href="/path/to/luxar-viewer.css" />
 <script type="module">
@@ -63,11 +63,25 @@ the host page survive each cycle.
 </script>
 ```
 
+### Via a bundler (npm)
+
+In a real app you install from npm and let your bundler resolve the
+specifiers — no importmap or `/path/to/` URLs:
+
+```ts
+import { LuxarApp } from 'luxar-viewer';
+import 'luxar-viewer/styles.css';   // component styles, scoped under .luxar-*
+
+const app = new LuxarApp();
+await app.init({ canvas, src: 'https://example.com/data.zarr', updateBrowserUrl: false });
+```
+
 ## Tested embed surface
 
 | Option           | Type             | Default | Why an embedder cares                                                 |
 | ---------------- | ---------------- | ------- | --------------------------------------------------------------------- |
 | `canvas`         | HTMLCanvasElement| —       | The canvas the viewer renders into. Required.                         |
+| `container`      | HTMLElement      | `document.body` | Host element all overlays/panels/toasts mount into. A non-`body` container is made a containing block so fixed overlays scope to it; restored on `dispose()`. This demo passes the framed box. |
 | `src`            | string           | config  | Initial Zarr URL.                                                     |
 | `debug`          | boolean          | false   | Exposes `window.__luxarDebug` for Playwright / dev console.           |
 | `loaderConfig`   | LoaderConfig     | —       | Cache and prefetch flags.                                             |

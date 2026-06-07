@@ -19,6 +19,7 @@ import type { DimensionAnimationManager } from '../../scene/animation/dimension-
 import type { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
 import type { OverlayManager } from '../overlay-manager';
 import { SliderSyncCoordinator } from './animation-sync';
+import { getViewerContainer } from '../../utils/viewer-container';
 import type { PanelStates, RecordingMode, RecordingOptions } from './types';
 
 export type CaptureKind = 'screenshot' | 'video' | 'offline';
@@ -374,7 +375,7 @@ export class RecordingSession {
 
       overlay.addEventListener('keydown', trapKeyboard, true);
       overlay.addEventListener('click', handleClick);
-      document.body.appendChild(overlay);
+      getViewerContainer().appendChild(overlay);
       const primaryBtn = overlay.querySelector<HTMLButtonElement>(
         '.luxar-recording-confirm__btn--primary'
       );
@@ -408,7 +409,7 @@ export class RecordingSession {
       indicator.removeEventListener('click', handleIndicatorClick);
       this.recordingIndicatorClickCleanup = null;
     };
-    document.body.appendChild(indicator);
+    getViewerContainer().appendChild(indicator);
     this.recordingIndicator = indicator;
 
     const timeEl = indicator.querySelector('.luxar-recording-indicator__time');
