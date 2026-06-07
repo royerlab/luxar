@@ -2,28 +2,28 @@
 """Sharpness Showcase Example - Comprehensive demonstration of edge sharpness control.
 
 This example demonstrates:
-- Sharpness gradient: smooth transition from peaky (0.0) to hard-edged (1.0)
+- Sharpness gradient: smooth transition from soft (0.5) to sharp (15.0)
 - Fixed comparison: side-by-side points with different sharpness values
 - Mixed cloud: varying sharpness within one point set
 - Sharpness wave: sinusoidal patterns creating visual rhythm
 - How sharpness affects apparent glow and edge definition
 
 Educational value:
-- Understand the sharpness parameter as a normalized [0, 1] knob
+- Understand the sharpness parameter range (0.5-10.0)
 - Learn visual effects of different sharpness values
 - Master sharpness for artistic and technical effects
 - See sharpness as aesthetic control, not just technical parameter
 - Understand shader compensation that maintains consistent sizes
 
-The sharpness knob maps to a super-Gaussian falloff exponent beta=2^(6s-2):
-- 0.0-0.3: Soft, glowing, nebula-like cusp (peakier)
-- 0.5: Balanced default (true Gaussian falloff)
-- 0.8-1.0: Sharp, crisp, disc-like points (hard edge)
+Visual effects by sharpness:
+- 0.5-1.0: Soft, glowing, nebula-like appearance
+- 2.0: Balanced default with natural falloff
+- 5.0-10.0: Sharp, crisp, star-like points
 
 When to use:
-- Low sharpness (0.0-0.3): Atmospheric effects, soft focus, glows
-- Medium (0.5): General purpose, natural Gaussian appearance
-- High (0.8-1.0): Technical precision, sharp features, stars
+- Low sharpness (0.5-1.0): Atmospheric effects, soft focus, glows
+- Medium (2.0): General purpose, natural appearance
+- High (5.0-10.0): Technical precision, sharp features, stars
 """
 
 import numpy as np
@@ -53,9 +53,10 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
         np.float32
     )
 
-    # Sharpness increases from left to right (normalized [0, 1] knob)
+    # Sharpness increases from left to right
     normalized_x = (positions[:, 0] + 10) / 20  # 0 to 1
-    sharpness = normalized_x.astype(np.float32)  # 0.0 to 1.0
+    sharpness = 0.5 + normalized_x * 14.5  # 0.5 to 15.0
+    sharpness = sharpness.astype(np.float32)
 
     # All points same size for fair comparison
     radii = np.full(positions.shape[0], 0.3, dtype=np.float32)
@@ -82,14 +83,14 @@ def create_sharpness_comparison_example(scene) -> None:
     aprint("Creating sharpness comparison example...")
 
     n_points_per_row = 20
-    sharpness_values = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    sharpness_values = [0.5, 1.0, 2.0, 4.0, 8.0, 15.0]
     labels = [
-        "Peaky (0.0)",
-        "Soft (0.2)",
-        "Sub-Gaussian (0.4)",
-        "Crisp (0.6)",
-        "Sharp (0.8)",
-        "Hard-edged (1.0)",
+        "Very Soft (0.5)",
+        "Linear (1.0)",
+        "Quadratic (2.0)",
+        "Quartic (4.0)",
+        "Sharp (8.0)",
+        "Maximum (15.0)",
     ]
 
     for i, (sharp_val, label) in enumerate(zip(sharpness_values, labels)):
@@ -149,24 +150,26 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
 
     positions = np.column_stack([x, y, z]).astype(np.float32)
 
-    # Mix of sharpness values - create clusters (normalized [0, 1] knob)
+    # Mix of sharpness values - create clusters
     sharpness = np.zeros(n_points, dtype=np.float32)
     # 1/3 soft points
-    sharpness[: n_points // 3] = rng.uniform(0.1, 0.3, n_points // 3)
+    sharpness[: n_points // 3] = rng.uniform(0.5, 1.5, n_points // 3)
     # 1/3 medium points
-    sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(0.4, 0.6, n_points // 3)
+    sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(2.0, 4.0, n_points // 3)
     # 1/3 sharp points
-    sharpness[2 * n_points // 3 :] = rng.uniform(0.7, 1.0, n_points - 2 * n_points // 3)
+    sharpness[2 * n_points // 3 :] = rng.uniform(
+        6.0, 15.0, n_points - 2 * n_points // 3
+    )
 
     # Shuffle to mix them
     rng.shuffle(sharpness)
 
     # Size varies with sharpness (sharp points are smaller)
-    radii = 0.4 - sharpness * 0.2  # Larger soft points, smaller sharp points
+    radii = 0.4 - (sharpness - 0.5) * 0.02  # Larger soft points, smaller sharp points
     radii = np.clip(radii, 0.1, 0.4).astype(np.float32)
 
     # Color based on sharpness
-    normalized_sharp = sharpness
+    normalized_sharp = (sharpness - 0.5) / 14.5
     colors = np.zeros((n_points, 3), dtype=np.float32)
     colors[:, 0] = normalized_sharp  # Red for sharp
     colors[:, 1] = 0.5 * (1 - np.abs(normalized_sharp - 0.5) * 2)  # Green for medium
@@ -204,8 +207,8 @@ def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
         np.float32
     )
 
-    # Sharpness varies with the wave (normalized [0, 1] knob)
-    sharpness = 0.5 + 0.45 * np.sin(distance.flatten() * 0.5)
+    # Sharpness varies with the wave
+    sharpness = 5.0 + 4.5 * np.sin(distance.flatten() * 0.5)
     sharpness = sharpness.astype(np.float32)
 
     # Radii also vary slightly
@@ -233,7 +236,7 @@ def main():
 
     aprint(f"Creating sharpness example scene at {output_path}")
     aprint("\nThis example showcases the per-point sharpness feature:")
-    aprint("- Gradient: Smooth transition from peaky (0.0) to hard-edged (1.0)")
+    aprint("- Gradient: Smooth transition from soft (0.5) to sharp (15.0)")
     aprint("- Comparison: Fixed sharpness values side by side")
     aprint("- Mixed cloud: Sphere with varying sharpness values")
     aprint("- Wave: Sinusoidal sharpness variation")
@@ -260,8 +263,8 @@ def main():
                 "and a sinusoidal wave."
             ),
             observe=[
-                "Top gradient runs peaky (left) to hard-edged (right) at fixed radius.",
-                "Right-side rows step through fixed values 0.0 to 1.0.",
+                "Top gradient runs soft (left) to sharp (right) at fixed radius.",
+                "Right-side rows step through fixed values 0.5 to 15.0.",
                 "Mixed cloud interleaves soft, medium, and sharp points.",
                 "Wave shows sharpness rising and falling with the surface.",
             ],
