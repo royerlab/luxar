@@ -170,7 +170,7 @@ Educational value:
         positions, colors, radii = create_touching_pairs()
 
         # Use high sharpness for crisp edges
-        sharpness = np.full(len(positions), 0.85, dtype=np.float32)
+        sharpness = np.full(len(positions), 8.0, dtype=np.float32)
 
         # Add the spheres
         scene.add_points(

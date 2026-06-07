@@ -128,8 +128,8 @@ def main():
 
         # Add sharpness variation for additional demonstration
         # Sharper points will have more defined boundaries
-        sharpness = np.ones(len(all_positions), dtype=np.float32) * 0.5
-        sharpness[len(positions) :] = 0.8  # Make gradient points sharper
+        sharpness = np.ones(len(all_positions), dtype=np.float32) * 2.0
+        sharpness[len(positions) :] = 5.0  # Make gradient points sharper
 
         # Add points to scene
         scene.add_points(

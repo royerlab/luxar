@@ -115,7 +115,7 @@ def main() -> None:
             axis_positions,
             colors=axis_colors_arr,
             radii=0.3,
-            sharpness=0.65,
+            sharpness=4.0,
             extend_to_all=["time"],
         )
 

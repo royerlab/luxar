@@ -98,8 +98,8 @@ def create_test_data(n_points: int = 100000):
     # Create radii in a small range
     radii = np.random.rand(n_points).astype(np.float32) * 0.5 + 0.1
 
-    # Create sharpness values (normalized [0, 1] knob)
-    sharpness = np.random.rand(n_points).astype(np.float32) * 0.7 + 0.2
+    # Create sharpness values
+    sharpness = np.random.rand(n_points).astype(np.float32) * 3 + 0.5
 
     return positions, colors, radii, sharpness
 

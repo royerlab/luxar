@@ -137,7 +137,7 @@ def main():
             positions,
             colors=colors,
             radii=radii,
-            sharpness=0.5,
+            sharpness=2.0,
             opacity=0.9,
             gamma=1.0,
             blending_mode="normal",
