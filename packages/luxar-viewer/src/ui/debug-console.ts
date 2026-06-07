@@ -33,6 +33,7 @@
 
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { config } from '../config';
+import { getViewerContainer } from '../utils/viewer-container';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import {
@@ -112,7 +113,7 @@ export class DebugConsole {
     consoleInterceptor.addListener(this.messageListenerCallback);
 
     // Add to DOM
-    document.body.appendChild(this.panel);
+    getViewerContainer().appendChild(this.panel);
 
     // Start hidden
     this.hide();

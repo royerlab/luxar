@@ -10,6 +10,8 @@
  * Based on advanced glassmorphism techniques with Sobel edge detection.
  */
 
+import { getViewerContainer } from '../utils/viewer-container';
+
 export interface GlassFilterParams {
   // Geometry parameters
   blurRadius: number; // Edge curve width - larger = thicker glass feel (10-30)
@@ -216,7 +218,7 @@ export function injectGlassFilters(params: GlassFilterParams = defaultGlassParam
     </defs>
   `;
 
-  document.body.appendChild(svg);
+  getViewerContainer().appendChild(svg);
 }
 
 /**
@@ -316,14 +318,11 @@ export function setupGlassRefractionObserver(): () => void {
     }
   });
 
-  // Scope observer to a specific container if available, falling back to document.body.
-  // Using subtree: true on body is expensive; scoping reduces DOM mutation noise.
-  const container =
-    document.querySelector('.luxar-viewer') ||
-    document.getElementById('luxar-container') ||
-    document.body;
-
-  observer.observe(container, {
+  // Scope the observer to the viewer container (the element panels actually
+  // mount into — the embedder's `container` or `document.body` by default).
+  // Using subtree: true on document.body is expensive; scoping to the
+  // container reduces DOM-mutation noise and stays correct under embedding.
+  observer.observe(getViewerContainer(), {
     childList: true,
     subtree: true,
   });

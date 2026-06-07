@@ -28,7 +28,8 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 `luxar-viewer` ships as a side-effect-free ES module. Importing the
 package does not patch your `console`, inject CSS into your `body`, or
 mutate `:root` — the viewer only touches DOM you give it via the `canvas`
-option, plus the body-level UI overlays it owns.
+option, plus the UI overlays it mounts into the `container` you provide
+(defaulting to `document.body`).
 
 ```bash
 npm install luxar-viewer three   # three is a peer dep
@@ -55,12 +56,18 @@ app.dispose();                       // removes all listeners, GPU resources, UI
 | Option              | Type             | Default | Notes                                                                                              |
 | ------------------- | ---------------- | ------- | -------------------------------------------------------------------------------------------------- |
 | `canvas`            | `HTMLCanvasElement` | —    | The canvas the viewer renders into. Required.                                                       |
+| `container`         | `HTMLElement`    | `document.body` | Host element the viewer mounts all overlays/panels/toasts/dialogs into. A non-`body` container is promoted to a containing block (`contain: layout`) so fixed overlays scope to it; restored on `dispose()`. |
 | `src`               | `string`         | config  | Initial Zarr URL. Empty/missing shows the dataset browser.                                          |
 | `debug`             | `boolean`        | `false` | Exposes `window.__luxarDebug` for Playwright / dev console.                                         |
 | `loaderConfig`      | `LoaderConfig`   | —       | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).    |
 | `updateBrowserUrl`  | `boolean`        | `false` | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`. |
 | `wasmPath`          | `string`         | —       | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.).     |
 | `workerPath`        | `string`         | —       | Same, for the data worker.                                                                          |
+| `renderer`          | `'webgl' \| 'webgpu'` | `'webgl'` | Force the rendering backend. `'webgpu'` uses `WebGPURenderer` + TSL `NodeMaterial`, falling back to WebGL2 when no adapter. |
+| `webgpuForceWebGL`  | `boolean`        | `false` | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface. |
+| `perfTimestamp`     | `boolean`        | `false` | Opt in to WebGPU `timestamp-query` GPU profiling. Tiny runtime cost; ignored under WebGL. |
+| `openCacheStats`    | `boolean`        | `false` | Open the data-loading monitor (Cache tab, expanded) once the scene is wired up — useful for profiling cache behaviour. |
+| `factories`         | `AppFactories`   | —       | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path. |
 
 ### What's NOT supported in v1
 

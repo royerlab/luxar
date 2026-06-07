@@ -12,6 +12,7 @@
 
 import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
+import { getViewerContainer } from '../utils/viewer-container';
 
 const UI_CONFIG = config.ui;
 
@@ -252,7 +253,7 @@ export function showHelpOverlay() {
   // Wire up close button to use the proper cleanup function
   closeBtn.onclick = () => closeHelp();
 
-  document.body.appendChild(helpDiv);
+  getViewerContainer().appendChild(helpDiv);
 
   // Trap focus within the help overlay
   activeHelpFocusTrapRelease = trapFocus(helpDiv);

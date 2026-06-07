@@ -49,6 +49,7 @@ utils/
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
+├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
 ├── webgpu-availability.ts   # getRendererAPI (async) + getRendererAPISync
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
@@ -186,6 +187,14 @@ Single source of truth for every `localStorage` key the viewer touches. Keys are
 - `StorageKeys.theme` — Active theme id (`'dark' | 'light' | 'frosted-glass' | 'liquid-glass'`)
 - `StorageKeys.debug` — Persisted debug-mode toggle (mirrors `?debug` URL param)
 - `StorageKeys.rendering(sceneId)` — Per-scene rendering settings; segment is sanitized to `[a-zA-Z0-9-_]`
+
+### viewer-container.ts - Mount-Root Registry
+
+The single DOM element the viewer mounts all overlays, panels, toasts, dialogs, and injected SVG filters into. Defaults to `document.body`; an embedder points it at a host-owned element via `LuxarApp.init({ container })`. Page-level singleton (like `eventBus`/`ThemeManager`) — set at the start of `init()`, reset by the dispose pipeline — so the supported contract stays **one viewer per page**.
+
+- `getViewerContainer()` — The current mount root (falls back to `document.body`).
+- `setViewerContainer(el)` — Adopt `el`; a non-`body` element is promoted to a containing block (`contain: layout`, plus `position: relative` when statically positioned) so the viewer's `position: fixed`/`absolute` overlays scope to it. Saves the element's prior inline `position`/`contain`.
+- `resetViewerContainer()` — Revert to `document.body` and restore exactly the inline styles `setViewerContainer` mutated.
 
 ### webgpu-availability.ts - Backend Availability Probe
 

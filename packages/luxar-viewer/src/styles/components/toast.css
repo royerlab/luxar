@@ -16,7 +16,7 @@
   z-index: 10000;
   transition: opacity 0.3s ease;
   pointer-events: none;
-  background-color: var(--luxar-panel-bg, rgba(0, 0, 0, 0.8));
-  color: var(--luxar-text-color, #fff);
-  border: 1px solid var(--luxar-border-color, rgba(255, 255, 255, 0.1));
+  background-color: var(--luxar-bg-secondary, rgba(0, 0, 0, 0.8));
+  color: var(--luxar-text-primary, #fff);
+  border: 1px solid var(--luxar-border-subtle, rgba(255, 255, 255, 0.1));
 }

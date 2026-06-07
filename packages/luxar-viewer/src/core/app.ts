@@ -26,6 +26,7 @@ import type { OverlayManager } from '../ui/overlay-manager';
 import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader, ImageLabelLoader } from '../data/loaders';
 import { EventGroup } from '../utils/cross-layer/event-group';
+import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
 import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
@@ -159,6 +160,12 @@ export class LuxarApp {
     this.options = options;
 
     applyModuleOverrides(options);
+
+    // Point all viewer overlays/panels at the host-provided container (or
+    // document.body by default) before any subsystem mounts DOM. A custom
+    // container is also promoted to a containing block so fixed overlays
+    // scope to it; resetViewerContainer() in the dispose pipeline restores it.
+    setViewerContainer(options.container ?? document.body);
 
     // Mutable accumulator: pipeline writes each subsystem here as it
     // constructs it, so even if init() throws partway through, the

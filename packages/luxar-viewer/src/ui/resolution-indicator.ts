@@ -9,6 +9,7 @@
  */
 
 import { log, Modules } from '../utils/log';
+import { getViewerContainer } from '../utils/viewer-container';
 
 /**
  * Manages the resolution indicator UI
@@ -50,7 +51,7 @@ export class ResolutionIndicator {
     // Hide initially
     this.element.style.display = 'none';
 
-    document.body.appendChild(this.element);
+    getViewerContainer().appendChild(this.element);
 
     return this.element;
   }

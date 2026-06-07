@@ -4,6 +4,8 @@
  * Replaces any existing toast so multiple rapid calls collapse into one.
  */
 
+import { getViewerContainer } from '../utils/viewer-container';
+
 export function showToast(message: string, durationMs: number = 2000): void {
   const existing = document.getElementById('luxar-toast');
   if (existing) existing.remove();
@@ -14,7 +16,7 @@ export function showToast(message: string, durationMs: number = 2000): void {
   toast.textContent = message;
   toast.style.opacity = '1';
 
-  document.body.appendChild(toast);
+  getViewerContainer().appendChild(toast);
 
   setTimeout(() => {
     toast.style.opacity = '0';
