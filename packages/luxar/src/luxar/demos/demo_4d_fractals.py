@@ -474,7 +474,7 @@ def generate_4d_fractal_dataset(
 
             # Add all points with small uniform radius
             radii = np.full(len(positions_5d), 0.025, dtype=np.float32)
-            sharpnesses = np.full(len(positions_5d), 3.0, dtype=np.float32)
+            sharpnesses = np.full(len(positions_5d), 0.55, dtype=np.float32)
 
             scene.add_points(
                 "Fractals4D",

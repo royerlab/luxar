@@ -203,7 +203,7 @@ def generate_5d_spiral_galaxy(
                 positions,
                 colors=colors,
                 radii=radii,
-                sharpness=3.0,
+                sharpness=0.55,
                 opacity=0.85,
                 gamma=1.0,
                 blending_mode="additive",

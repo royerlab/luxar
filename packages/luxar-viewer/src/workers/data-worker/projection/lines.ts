@@ -218,9 +218,9 @@ export async function projectLinesTo3D(
       endSharpness
     );
   } else {
-    // Default sharpness is 1.0
-    startSharpness.fill(1.0);
-    endSharpness.fill(1.0);
+    // Default sharpness knob is 0.5 -> beta=2 (Gaussian)
+    startSharpness.fill(0.5);
+    endSharpness.fill(0.5);
   }
 
   // Step 6: Interpolate per-vertex scalars using WASM (colormap mode).

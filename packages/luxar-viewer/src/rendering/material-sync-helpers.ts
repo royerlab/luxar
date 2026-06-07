@@ -20,27 +20,23 @@ import { PointPickingTSLMaterial } from './picking/point/material-tsl';
  * commit.
  *
  * The placeholder-first loading pattern creates a `PointMaterial` /
- * `PointTSLMaterial` from an empty geometry (radiusScale=1,
- * sharpnessScale=1) before real data arrives. When the first commit
- * replaces the geometry with real normalized Uint8 radii/sharpness,
- * the material uniforms must be updated or the points render at
- * `[0,1]` scale instead of `[0,max_radius]` / `[0,max_sharpness]`.
+ * `PointTSLMaterial` from an empty geometry (radiusScale=1) before
+ * real data arrives. When the first commit replaces the geometry with
+ * real normalized Uint8 radii, the material uniforms must be updated
+ * or the points render at `[0,1]` scale instead of `[0,max_radius]`.
  *
- * Reads `geometry.userData.{radiusScale, sharpnessScale}` and propagates
- * the values to both the render and pick materials (GLSL and TSL
- * wrappers — both expose identical `updateRadiusScale` /
- * `updateSharpnessScale` surfaces). Idempotent.
+ * Reads `geometry.userData.radiusScale` and propagates the value to
+ * both the render and pick materials (GLSL and TSL wrappers — both
+ * expose identical `updateRadiusScale` surfaces). Idempotent.
  */
 export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   const geometry = points.geometry;
   if (!geometry) return;
   const radiusScale = (geometry.userData?.radiusScale as number | undefined) ?? 1.0;
-  const sharpnessScale = (geometry.userData?.sharpnessScale as number | undefined) ?? 1.0;
 
   const renderMat = points.material as THREE.Material | null;
   if (renderMat instanceof PointMaterial || renderMat instanceof PointTSLMaterial) {
     renderMat.updateRadiusScale(radiusScale);
-    renderMat.updateSharpnessScale(sharpnessScale);
   }
 
   // Picking shadow node was wired into userData by
@@ -51,7 +47,6 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
     const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as THREE.Material | undefined;
     if (pickMat instanceof PointPickingMaterial || pickMat instanceof PointPickingTSLMaterial) {
       pickMat.updateRadiusScale(radiusScale);
-      pickMat.updateSharpnessScale(sharpnessScale);
     }
   }
 }

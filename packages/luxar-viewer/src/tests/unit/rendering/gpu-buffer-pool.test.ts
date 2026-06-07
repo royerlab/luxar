@@ -170,7 +170,7 @@ describe('GPUBufferPool', () => {
       expect(stats.reuses).toBe(1); // Reused for node2
     });
 
-    it('positions-only Points get default radius=0.5 and sharpness=2.0', () => {
+    it('positions-only Points get default radius=0.5 and sharpness=0.5', () => {
       const positionsOnly: LoadedPointsData = {
         positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
         pointCount: 3,
@@ -194,7 +194,7 @@ describe('GPUBufferPool', () => {
       // of whether the underlying storage is standalone or interleaved.
       for (let i = 0; i < 3; i++) {
         expect(radAttr.getX(i)).toBeCloseTo(0.5, 5);
-        expect(sharpAttr.getX(i)).toBeCloseTo(2.0, 5);
+        expect(sharpAttr.getX(i)).toBeCloseTo(0.5, 5); // [0,1] knob default -> beta=2
         // White default color (R, G, B = 1.0).
         expect(colAttr.getX(i)).toBeCloseTo(1.0, 5);
         expect(colAttr.getY(i)).toBeCloseTo(1.0, 5);

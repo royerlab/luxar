@@ -762,8 +762,8 @@ def generate_calorimeter_deposits(
             size = 0.1 + 0.05 * np.log1p(particle.energy)
             radii.append(size * rng.uniform(0.7, 1.3))
 
-            # Soft, glowing appearance
-            sharpness.append(rng.uniform(0.5, 1.5))
+            # Soft, glowing appearance (normalized [0, 1] knob; low = peakier/softer)
+            sharpness.append(rng.uniform(0.25, 0.4))
 
     if not positions:
         return (
@@ -825,7 +825,7 @@ def generate_detector_geometry(
                 vertices.extend([[x1, y1, z], [x2, y2, z]])
                 widths.extend([width, width])
                 colors.extend([color, color])
-                sharpness_vals.extend([2.0, 2.0])
+                sharpness_vals.extend([0.5, 0.5])
 
     # Add longitudinal lines connecting layers
     n_long = 16
@@ -840,7 +840,7 @@ def generate_detector_geometry(
             )
             widths.extend([width * 0.5, width * 0.5])
             colors.extend([color, color])
-            sharpness_vals.extend([2.0, 2.0])
+            sharpness_vals.extend([0.5, 0.5])
 
     return (
         np.array(vertices, dtype=np.float32),
@@ -1152,7 +1152,7 @@ def generate_detector_scene(
                     vertices=track_vertices,
                     widths=track_widths,
                     colors=track_colors,
-                    sharpness=1.5,
+                    sharpness=0.5,
                     line_type="segments",
                     layer=True,
                 )

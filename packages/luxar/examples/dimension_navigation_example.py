@@ -255,8 +255,8 @@ def main():
             colors=colors,
             radii=radii,
             sharpness=np.full(
-                len(positions), 3.0, dtype=np.float32
-            ),  # Sharp edges for clarity
+                len(positions), 0.6, dtype=np.float32
+            ),  # Crisp edges for clarity
         )
 
         # Per-frame colour legend (bottom-left): the frame dimension is

@@ -66,7 +66,7 @@ with LuxarZarrCompiler(
     scene.add_points('uniform', positions,
                      radii=0.5,              # Scalar instead of np.full(N, 0.5)
                      colors=(1.0, 0, 0),     # Tuple instead of np.full((N,3), [1,0,0])
-                     sharpness=2.0)          # Scalar instead of np.full(N, 2.0)
+                     sharpness=0.5)          # Scalar instead of np.full(N, 0.5)
 ```
 
 **Key Features**:
@@ -191,7 +191,7 @@ The I/O layer uses `luxar.encoding` for semantic type-aware array encoding:
 # - positions → COORDINATE (float16 in MEMORY mode)
 # - colors → COLOR (rgb_uint8 for SDR, float32 for HDR)
 # - radii → POSITIVE_SCALAR (log_scalar_uint8 for wide ranges)
-# - sharpness → BOUNDED_SCALAR (bounded_scalar_uint8, bounds [0, 31])
+# - sharpness → BOUNDED_SCALAR (bounded_scalar_uint8, bounds [0, 1])
 ```
 
 **Encoding Modes**:

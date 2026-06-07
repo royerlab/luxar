@@ -54,16 +54,18 @@ materials/
 
 - [`point/`](./point/README.md) — Soft-edged sprite shader for Luxar's
   **Points** geometry. One instanced unit-quad per point, world-space FOV-
-  independent sizing, per-point sharpness with analytical compensation,
-  per-node Gain/Offset/Gamma, optional `USE_COLORMAP` LUT branch, and
-  zero-radius-discard nD slicing.
+  independent sizing, per-point sharpness mapped to a shifted-truncated
+  super-Gaussian falloff exponent (`β = 2^(6s − 2)`, no size compensation —
+  the kernel truncates at the sprite edge), per-node Gain/Offset/Gamma,
+  optional `USE_COLORMAP` LUT branch, and zero-radius-discard nD slicing.
 
 - [`line/`](./line/README.md) — Thick-line material with instanced screen-space
-  quad expansion, parabolic `(1 − p²)^sharpness` falloff, and the
-  semicircle-kernel joint trick that makes adjacent segments sum to exactly
-  `1.0` under additive blending. Five variant defines (`USE_COLORMAP`,
-  `LUXAR_GAMMA_ONE`, `LUXAR_NO_GOG`, `LUXAR_SHARPNESS_TWO`,
-  `LUXAR_MAX_RGB_CONTRIBUTION`) drive fast paths.
+  quad expansion, a shifted-truncated super-Gaussian perpendicular
+  cross-section `max(exp(−K·p^β) − C, 0)/(1 − C)` (sharpness a `[0, 1]` knob,
+  `β = 2^(6s − 2)`, default `s = 0.5 → β = 2` Gaussian), and the cap-factor
+  joint trick that makes adjacent segments sum to exactly `1.0` under additive
+  blending. Four variant defines (`USE_COLORMAP`, `LUXAR_GAMMA_ONE`,
+  `LUXAR_NO_GOG`, `LUXAR_MAX_RGB_CONTRIBUTION`) drive fast paths.
 
 - [`gsplat/`](./gsplat/README.md) — Volumetric Gaussian-splat material with
   oriented instanced quads, full 3D covariance via Cholesky factors,

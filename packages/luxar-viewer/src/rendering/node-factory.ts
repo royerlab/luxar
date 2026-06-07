@@ -79,11 +79,9 @@ export class NodeFactory {
         const pickId = this.pickingSystem!.allocatePickId();
         obj.userData.pickId = pickId;
         const radiusScale = obj.geometry?.userData?.radiusScale ?? 1.0;
-        const sharpnessScale = obj.geometry?.userData?.sharpnessScale ?? 1.0;
         const pickMaterial = materialManager.createPointPickingMaterial({
           nodeId: pickId,
           radiusScale,
-          sharpnessScale,
         });
         materialManager.register(pickMaterial);
         const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
@@ -164,12 +162,10 @@ export class NodeFactory {
     isPlaceholder: boolean = false
   ): THREE.Mesh {
     const maxRadius = attrs.max_radius ?? 1.0;
-    const maxSharpness = attrs.max_sharpness ?? 31.0;
-    const geometry = this.createPointsGeometry(data, maxRadius, maxSharpness, isPlaceholder);
+    const geometry = this.createPointsGeometry(data, maxRadius, isPlaceholder);
 
     const radiusScale = geometry.userData.radiusScale ?? 1.0;
-    const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
-    const material = this.createPointsMaterial(attrs, radiusScale, sharpnessScale, geometry, path);
+    const material = this.createPointsMaterial(attrs, radiusScale, geometry, path);
 
     const points = new THREE.Mesh(geometry, material);
     points.name = path;
@@ -198,7 +194,6 @@ export class NodeFactory {
       const pickMaterial = materialManager.createPointPickingMaterial({
         nodeId: pickId,
         radiusScale,
-        sharpnessScale,
       });
       materialManager.register(pickMaterial);
       const pickNode = new THREE.Mesh(geometry, pickMaterial);
@@ -349,19 +344,17 @@ export class NodeFactory {
   createPointsGeometry(
     data: LoadedPointsData,
     maxRadius: number = 1.0,
-    maxSharpness: number = 31.0,
     isPlaceholder: boolean = false
   ): THREE.BufferGeometry {
-    return createPointsGeometryImpl(data, maxRadius, maxSharpness, isPlaceholder);
+    return createPointsGeometryImpl(data, maxRadius, isPlaceholder);
   }
 
   createPointsMaterial(
     attrs: Partial<PointsMetadata>,
     radiusScale: number = 1.0,
-    sharpnessScale: number = 1.0,
     geometry?: THREE.BufferGeometry,
     path?: string
   ): LuxarPointMaterial {
-    return createPointsMaterialImpl(attrs, radiusScale, sharpnessScale, geometry, path);
+    return createPointsMaterialImpl(attrs, radiusScale, geometry, path);
   }
 }

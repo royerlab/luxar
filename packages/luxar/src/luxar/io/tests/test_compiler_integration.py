@@ -127,7 +127,7 @@ class TestCompilerIntegration:
                 positions,
                 colors=(0.25, 0.5, 0.75),
                 radii=0.5,
-                sharpness=2.0,
+                sharpness=0.5,
             )
             compiler.write_points(
                 "ref_with_colormap",

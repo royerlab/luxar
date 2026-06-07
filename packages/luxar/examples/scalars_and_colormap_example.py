@@ -73,7 +73,7 @@ def main() -> None:
                 scalars=scalars,
                 colormap=colormap_name,
                 radii=0.06,
-                sharpness=2.0,
+                sharpness=0.5,
                 # layer=True surfaces the spiral in the layers panel so
                 # the user can toggle each colormap variant independently.
                 layer=True,

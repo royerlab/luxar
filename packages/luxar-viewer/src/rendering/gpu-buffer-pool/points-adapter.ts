@@ -335,7 +335,7 @@ export class PointsBufferAdapter {
       writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, widened, count);
     } else {
       const fill = new Float32Array(count);
-      fill.fill(2.0);
+      fill.fill(0.5); // default sharpness knob -> beta=2 (Gaussian)
       writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, fill, count);
     }
 

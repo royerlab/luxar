@@ -22,9 +22,11 @@
  * "vWidthFade" for near-camera degenerate cases, then expands the
  * quad by perpendicular×pixelWidth in NDC.
  *
- * Fragment stage produces a soft parabolic line: (1 - p²)^sharpness
- * × edgeAA × widthScale × widthFade × capFactor (capFactor ramps to
- * full intensity inside the body but is 1.0 at clipped endpoints).
+ * Fragment stage produces a soft line: a shifted-truncated super-Gaussian
+ * perpendicular cross-section `max(exp(-K·p^beta) - C, 0)/(1-C)`
+ * (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) × edgeAA × widthScale
+ * × widthFade × capFactor (capFactor ramps to full intensity inside the body
+ * but is 1.0 at clipped endpoints).
  *
  * @module rendering/materials/line/shader-tsl
  */
@@ -47,13 +49,14 @@ import {
   length,
   step,
   smoothstep,
+  exp,
   texture,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../_shared/tsl-helpers';
+import { sanitizeNonNegative, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
@@ -83,13 +86,6 @@ export interface LineTSLConfig {
    * max per fragment.
    */
   readonly noGOG?: boolean;
-  /**
-   * Fast path: replace `pow(max(1-p², 0), max(vSharpness, 0.0001))`
-   * with the closed-form `(max(1-p², 0))²` when the wrapper knows
-   * every per-vertex sharpness in the bound geometry is 2.0 (the
-   * dataset default). One per-fragment transcendental eliminated.
-   */
-  readonly sharpnessTwo?: boolean;
   /**
    * Camera projection mode at build time. When `true` (orthographic),
    * the factory emits only the ortho pixel-width branch; when `false`
@@ -238,12 +234,17 @@ export function lineWebGPUFactory(
     perPointColor = mix(aStartColor!, aEndColor!, t);
   }
 
-  // Sanitised widths / sharpness, interpolated.
+  // Sanitised widths / sharpness, interpolated. Sharpness is authored in
+  // [0, 1] and maps (in the fragment) to the super-Gaussian exponent
+  // beta = 2^(6s - 2). sanitizeNonNegative keeps a valid s=0 (-> beta=0.25)
+  // and routes NaN/Inf/negative to the 0.5 default; clamp bounds [0, 1].
+  // (NOT sanitizePositive — that would wrongly reject s=0.) Mirrors GLSL.
   const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
   const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
-  const startS: TSLNode = sanitizePositive(aStartSharpness, float(2.0));
-  const endS: TSLNode = sanitizePositive(aEndSharpness, float(2.0));
+  const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
+  const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
   const width: TSLNode = mix(startW, endW, t);
+  // Interpolated [0, 1] sharpness KNOB; beta computed in the fragment.
   const vSharpnessVal: TSLNode = mix(startS, endS, t);
 
   // Project endpoints to view + clip space.
@@ -361,13 +362,16 @@ export function lineWebGPUFactory(
     const p: TSLNode = vPerpNorm.abs();
     Discard(p.greaterThanEqual(1.0));
 
-    // Parabolic falloff (1 - p²)^sharpness. Sharpness fast path uses
-    // `x*x` instead of `pow(x, 2)` when the wrapper knows every
-    // segment in the buffer has sharpness == 2.0.
-    const oneMinusPSq: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0));
-    const perpFalloff: TSLNode = config.sharpnessTwo
-      ? oneMinusPSq.mul(oneMinusPSq)
-      : oneMinusPSq.pow(max(vSharpness, float(0.0001)));
+    // Shifted-truncated super-Gaussian perpendicular cross-section:
+    // max(exp(-K * p^beta) - C, 0) / (1 - C), C0-continuous at the line
+    // edge. The [0, 1] sharpness KNOB maps to beta = 2^(6s - 2) (s=0.5 ->
+    // beta=2, a truncated Gaussian). K = ln(1/floor), floor = 0.01.
+    // Mirrors the GLSL3 fragment exactly.
+    const K = 4.6051702; // ln(100)
+    const C = 0.01; // exp(-K) = floor
+    const invOneMinusC = 1.0 / (1.0 - C);
+    const beta: TSLNode = float(2.0).pow(vSharpness.mul(6.0).sub(2.0));
+    const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
 
     // Edge AA: smoothstep over ~1 pixel.
     const minPW = float(1.5);

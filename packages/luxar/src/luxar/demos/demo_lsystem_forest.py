@@ -359,8 +359,8 @@ def create_tree(
                 rng.uniform(0.08, 0.18, size=n_leaves).astype(np.float32) * scale
             )
 
-            # Leaf sharpness: very soft/fluffy (low values = soft edges)
-            leaf_sharpness = rng.uniform(0.5, 1.2, size=n_leaves).astype(np.float32)
+            # Leaf sharpness: very soft/fluffy (low values = peakier/softer edges)
+            leaf_sharpness = rng.uniform(0.2, 0.35, size=n_leaves).astype(np.float32)
 
             leaves_dict = {
                 "positions": leaf_positions.astype(np.float32),
@@ -383,13 +383,13 @@ def create_tree(
     colors[0::2] = start_colors
     colors[1::2] = end_colors
 
-    # Sharpness: crisp trunk, softer tips (valid range: 0.5 to 31.0)
+    # Sharpness: crisp trunk, softer tips (normalized knob, valid range: 0.0 to 1.0)
     t = depths / max(max_depth, 1)
-    # Trunk: 2.5, tips: 1.0 - nice gradient from sharp to soft
-    sharpness_base = 2.5 - t * 1.5
+    # Trunk: 0.65, tips: 0.3 - nice gradient from sharp to soft
+    sharpness_base = 0.65 - t * 0.35
     sharpness = np.zeros(n * 2, dtype=np.float32)
     sharpness[0::2] = sharpness_base
-    sharpness[1::2] = np.maximum(sharpness_base * 0.95, 0.5)
+    sharpness[1::2] = np.maximum(sharpness_base * 0.95, 0.25)
 
     return vertices, widths, colors, sharpness, leaves_dict
 

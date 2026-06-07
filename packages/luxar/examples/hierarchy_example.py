@@ -94,7 +94,7 @@ def main():
                 central_positions,
                 colors=[1.0, 1.0, 1.0],  # White
                 radii=0.05,
-                sharpness=2.0,
+                sharpness=0.5,
                 opacity=1.0,
                 gamma=1.0,
             )

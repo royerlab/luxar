@@ -1259,9 +1259,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert dynamic_range > 256, (
-            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
-        )
+        assert (
+            dynamic_range > 256
+        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -1298,29 +1298,31 @@ def generate_uint16_quantization_test() -> None:
 
 
 def generate_sharpness_range_test() -> None:
-    """Test dataset with full sharpness range [0, 31] to verify decoding.
+    """Test dataset spanning the full normalized sharpness range [0, 1].
 
-    CRITICAL: This test verifies the bug fix where TypeScript was using
-    scale factor 15.0 instead of 31.0 (matching Python's SHARPNESS_MAX).
+    Verifies that the bounded_scalar_uint8 encode/decode round-trip preserves
+    sharpness across its valid range. Sharpness is now a normalized [0, 1] knob
+    (SHARPNESS_MAX = 1.0); the viewer maps it to the super-Gaussian exponent
+    beta = 2^(6s - 2). The uint8 quantization step is 1/255 ≈ 0.0039.
     """
     with asection("Generating Sharpness Range Test"):
         output = FIXTURES_DIR / "test_sharpness_range.zarr"
 
-        # Create 31 points, each with a different sharpness value from 1 to 31
-        # Note: Skipping 0.0 because validation requires strictly positive values
-        num_points = 31
+        # Create 32 points sampling the full [0, 1] sharpness range, including
+        # the s=0 endpoint (now valid -> beta=0.25) and s=1 (-> beta=16).
+        num_points = 32
         positions = np.zeros((num_points, 3), dtype=np.float32)
 
         # Arrange points in a line along X axis for easy visualization
         positions[:, 0] = np.arange(num_points, dtype=np.float32)
 
-        # Sharpness values: [1.0, 2.0, 3.0, ..., 31.0]
-        sharpness = np.arange(1, num_points + 1, dtype=np.float32)
+        # Sharpness values: [0.0, 1/31, 2/31, ..., 1.0]
+        sharpness = np.linspace(0.0, 1.0, num_points, dtype=np.float32)
 
         # Assign colors based on sharpness (gradient from blue to red)
         colors = np.zeros((num_points, 3), dtype=np.float32)
-        colors[:, 0] = sharpness / 31.0  # Red increases with sharpness
-        colors[:, 2] = 1.0 - (sharpness / 31.0)  # Blue decreases with sharpness
+        colors[:, 0] = sharpness  # Red increases with sharpness (already [0,1])
+        colors[:, 2] = 1.0 - sharpness  # Blue decreases with sharpness
 
         # Add radii so points are visible
         radii = np.ones(num_points, dtype=np.float32) * 0.5
@@ -1345,14 +1347,14 @@ def generate_sharpness_range_test() -> None:
                 "sharpness_test",
                 positions,
                 colors=colors,
-                sharpness=sharpness,  # Full range [0, 31]
+                sharpness=sharpness,  # Normalized range [0, 1]
                 radii=radii,
             )
 
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape}")
         aprint(f"  Sharpness range: [{sharpness.min()}, {sharpness.max()}]")
-        aprint("  CRITICAL: Verifies TypeScript uses scale factor 31.0 (not 15.0)")
+        aprint("  Verifies bounded_scalar round-trip over the [0, 1] knob")
 
 
 def generate_nd_transforms_test() -> None:

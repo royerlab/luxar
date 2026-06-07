@@ -198,7 +198,7 @@ def generate_demo(output_path: Path) -> int:
                         positions,
                         colors=colors,
                         radii=radii,
-                        sharpness=4.0,
+                        sharpness=0.6,
                         extend_to_all=[],
                         intensity=0.125,
                     )
@@ -240,7 +240,7 @@ def generate_demo(output_path: Path) -> int:
                     positions,
                     colors=colors,
                     radii=radii * 1.5,
-                    sharpness=2.5,
+                    sharpness=0.5,
                     extend_to_all=[],
                     intensity=0.125,
                 )
@@ -294,7 +294,7 @@ def generate_demo(output_path: Path) -> int:
                         positions,
                         colors=colors,
                         radii=radii * 0.8,
-                        sharpness=6.0,
+                        sharpness=0.8,
                         blending_mode="additive",
                         extend_to_all=[],
                         intensity=0.125,

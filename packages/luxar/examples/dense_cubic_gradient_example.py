@@ -28,7 +28,7 @@ def create_cubic_array(
     grid_size: int = 100,
     spacing: float = 0.5,
     radius: float = 0.05,
-    sharpness: float = 10.0,
+    sharpness: float = 0.9,
 ) -> tuple:
     """Create a dense cubic lattice with depth-based color gradient.
 
@@ -154,7 +154,7 @@ Performance notes:
             grid_size=100,  # 100x100x100 grid
             spacing=0.5,  # Distance between points
             radius=0.05,  # Small radius for disc-like appearance
-            sharpness=10.0,  # High sharpness for sharp edges
+            sharpness=0.9,  # High sharpness for sharp edges
         )
 
         # Add main points
@@ -199,7 +199,7 @@ Performance notes:
             star_positions,
             colors=np.array(star_colors, dtype=np.float32),
             radii=np.array(star_radii, dtype=np.float32),
-            sharpness=2.0,
+            sharpness=0.5,
             opacity=0.4,
             gamma=1.0,
             blending_mode="normal",
@@ -228,7 +228,7 @@ Performance notes:
         aprint("  Grid dimensions: 100×100×100")
         aprint("  Point spacing: 0.5 units")
         aprint("  Point radius: 0.05 units")
-        aprint("  Point sharpness: 10.0 (sharp edges)")
+        aprint("  Point sharpness: 0.9 (sharp edges)")
 
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")

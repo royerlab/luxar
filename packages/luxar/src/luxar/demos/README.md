@@ -37,7 +37,7 @@ Realistic cloud using multi-octave fractal noise and varying point sizes.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_volumetric_cloud.py [--points=1000000]`
 
-**Demonstrates**: Self-contained Perlin-like fractal noise, multi-octave detail at multiple scales, volumetric density filtering, varying point sizes based on local density, soft cloud-like appearance (low sharpness 0.5-2.0).
+**Demonstrates**: Self-contained Perlin-like fractal noise, multi-octave detail at multiple scales, volumetric density filtering, varying point sizes based on local density, soft cloud-like appearance (low sharpness 0.2-0.35 on the normalized [0, 1] knob).
 
 ---
 
@@ -185,11 +185,11 @@ Three instruments (optical telescope, radio telescope, X-ray satellite) observin
 ### Feature Showcase Demos
 
 #### demo_sharpness_showcase.py - Point Sharpness Showcase
-Comprehensive showcase of the point sharpness feature: gradient from soft (0.5) to sharp (15.0), fixed sharpness comparison rows, mixed sharpness cloud, and sinusoidal wave pattern.
+Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0) to hard-edged (1.0) on the normalized knob, fixed sharpness comparison rows, mixed sharpness cloud, and sinusoidal wave pattern.
 
 **Run**: `hatch run python packages/luxar/src/luxar/demos/demo_sharpness_showcase.py [--points N]`
 
-**Demonstrates**: Sharpness parameter control (intensity = (1 - r^2)^sharpness), soft glowing points (0.5-1.0) vs sharp disc-like points (8.0-15.0), color-coded sharpness values, multiple visualization patterns.
+**Demonstrates**: Sharpness parameter control (normalized [0, 1] knob mapping to a super-Gaussian falloff exponent beta=2^(6s-2); 0.5 = Gaussian), soft/peaky points (low s) vs sharp disc-like points (high s), color-coded sharpness values, multiple visualization patterns.
 
 ---
 

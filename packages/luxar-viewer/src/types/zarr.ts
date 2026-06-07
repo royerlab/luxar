@@ -276,7 +276,6 @@ export interface ZarrNodeAttrs {
   /** Points metadata */
   n_points?: number;
   max_radius?: number;
-  max_sharpness?: number;
 
   /** Position bounds (nD bounding box) */
   position_bounds?: PositionBounds;

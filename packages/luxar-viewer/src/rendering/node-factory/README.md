@@ -20,7 +20,7 @@ a real scene, renderer, or picking system.
 | `validation.ts`          | `validateLoadedPointsData` (length/divisibility checks + structured log), `validateColorMode` (HDR Float32 vs SDR normalized-integer sanity), `validateTransformFormat` (row-major NumPy → throws)                                                                        |
 | `transforms.ts`          | `applyTransform` — length-16 guard + row-major guard, then `Matrix4.fromArray().decompose()` onto `object.position / quaternion / scale`                                                                                                                                  |
 | `create-points-node.ts`  | `createPointsGeometry` (one shared unit quad + per-instance `aCenter/aColor/aRadius/aSharpness/aScalar`, dtype-aware normalization, `instanceCount` + `drawRange(0,6)`, metadata bounds) and `createPointsMaterial` (materialManager lookup + scalar-colormap clone path) |
-| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `sharpness=2` fast path + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder                                                                                                |
+| `create-lines-node.ts`   | `createLinesNode` (line material + colormap clone + `createInstancedLinesMesh` + optional picking shadow) and `createEmptyLinesNode` placeholder                                                                                                                          |
 | `create-gsplats-node.ts` | `createGSplatsNode` (gsplat material + colormap clone + `createInstancedGSplatsMesh` + optional picking shadow) and `createEmptyGSplatsNode` placeholder                                                                                                                  |
 
 ## How the orchestrator composes them
@@ -70,12 +70,6 @@ NodeFactory (class in rendering/node-factory.ts)
   processed config. If the guard fails, the colormap is suppressed and
   rendering falls back to vertex colors with a warning. GSplats do
   not gate on scalar binding — amplitudes are always present.
-- **Sharpness fast path (lines).** `createLinesNode` calls
-  `isAllSharpnessTwo(processed)` and forwards the result to both the
-  visual and picking materials via `setSharpnessAllTwo(...)`. The
-  shader then replaces `pow(x, vSharpness)` with `x*x`. The picking
-  material **must** mirror the same toggle or pick rays will not match
-  visible geometry.
 - **Shared geometry across visual + pick.** The lines and gsplats
   picking shadow node reuses `mesh.geometry` directly — only the
   material differs. The pick material is registered with
@@ -84,10 +78,11 @@ NodeFactory (class in rendering/node-factory.ts)
 - **dtype-aware normalization (points).** `aRadius` / `aSharpness` /
   `aScalar` accept Float16 (widened to Float32 for the
   `InstancedBufferAttribute`), Uint8 (`normalized: true`, with a
-  `radiusScale` / `sharpnessScale` baked into `geometry.userData` so
-  the material can scale back to physical units), or Float32
-  (unnormalized). The shader reads the normalized value times the
-  per-geometry scale uniform.
+  `radiusScale` baked into `geometry.userData` so the material can
+  scale radii back to physical units), or Float32 (unnormalized). The
+  shader reads the normalized radius times the `radiusScale` uniform;
+  `aSharpness` needs no scale — it is authored natively in the `[0, 1]`
+  knob range (a `uint8/255` value already lands in range).
 - **Empty-buffer placeholders.** `createEmptyLinesNode` and
   `createEmptyGSplatsNode` build a fully-typed mesh with zero-length
   buffers so the scene graph can mount the node before its data

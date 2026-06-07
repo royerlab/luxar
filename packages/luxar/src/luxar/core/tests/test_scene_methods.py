@@ -288,7 +288,7 @@ class TestSceneMethods:
             positions = np.random.randn(n_points, 3).astype(np.float32)
             colors = np.random.rand(n_points, 3).astype(np.float32)
             radii = np.ones(n_points, dtype=np.float32) * 0.15
-            sharpness = np.ones(n_points, dtype=np.float32) * 2.0
+            sharpness = np.ones(n_points, dtype=np.float32) * 0.5
 
             points = scene.add_points(
                 "test_points",

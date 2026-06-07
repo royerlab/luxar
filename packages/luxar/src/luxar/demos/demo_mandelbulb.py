@@ -227,8 +227,8 @@ def generate_mandelbulb_volumetric(
         distance_normalized = np.clip(surface_distances / max_distance, 0, 1)
         radii = (0.005 + distance_normalized * 0.015).astype(np.float32)
 
-        # Use moderate sharpness for fractal edges
-        sharpnesses = np.full(len(positions), 2.0, dtype=np.float32)
+        # Use moderate sharpness for fractal edges (normalized [0, 1] knob; 0.5 = Gaussian)
+        sharpnesses = np.full(len(positions), 0.5, dtype=np.float32)
 
         aprint(f"✓ Radii range: [{radii.min():.4f}, {radii.max():.4f}]")
 

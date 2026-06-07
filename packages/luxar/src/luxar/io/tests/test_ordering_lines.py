@@ -605,7 +605,7 @@ class TestIntegration:
             vertices = np.random.rand(100, 3).astype(np.float32) * 10
             colors = np.random.rand(100, 3).astype(np.float32)
             widths = np.random.rand(100).astype(np.float32) * 0.5 + 0.1
-            sharpness = np.random.rand(100).astype(np.float32) * 5
+            sharpness = np.random.rand(100).astype(np.float32)
 
             scene.add_lines(
                 "test_lines",

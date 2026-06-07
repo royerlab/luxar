@@ -54,7 +54,7 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_positions()`: Validate position arrays (N, D) with optional dimensionality check
 - `validate_colors()`: Validate color arrays in HDR float32 format
 - `validate_radii()`: Validate radii arrays (positive values)
-- `validate_sharpness()`: Validate sharpness arrays (positive values only)
+- `validate_sharpness()`: Validate sharpness arrays (normalized [0, 1] knob)
 - `validate_transform()`: Validate 4x4 transformation matrices
 - `validate_node_type()`: Validate node type strings
 - `validate_physical_unit()`: Validate physical unit strings
@@ -408,14 +408,16 @@ ValidationError: "Colors shape (100, 4) doesn't match expected (100, 3).
 Luxar expects RGB colors. If you have RGBA, use colors[:, :3] to extract RGB."
 ```
 
-### Range Warnings
+### Sharpness range enforcement
 
-**Note**: `types.py` still emits a "typical range" warning; `base.py` write-time validation enforces the full [0, 31] range.
+Sharpness is a normalized `[0, 1]` knob (the viewer maps it to the super-Gaussian
+falloff exponent `β = 2^(6s − 2)`; `s = 0.5 → β = 2`, a true Gaussian). Both
+`validate_sharpness` (`types.py`) and `validate_sharpness_for_writing` (`base.py`)
+**hard-raise** (no warning) for any value outside `[0, 1]`.
 
 ```python
-# Warning from types.py (still present):
-Warning: "Sharpness values outside typical range [0.5, 10.0] detected.
-Values < 0.5 create uniform disks, values > 10 create hard edges."
+# Error from either validator:
+ValidationError: "Sharpness values exceed maximum allowed value (1.0). Found maximum: 2.000"
 ```
 
 ### Categorical Validation Errors
@@ -577,7 +579,7 @@ def validate_categorical_positions(positions, dimensions):
 - `GAMMA_MIN = 0.1`, `GAMMA_MAX = 10.0` - Gamma range
 - `INTENSITY_MIN`, `INTENSITY_MAX` - Intensity range (used by `validate_intensity`)
 - `OFFSET_MIN`, `OFFSET_MAX` - Offset range (used by `validate_offset`)
-- `SHARPNESS_MIN`, `SHARPNESS_MAX = 31.0` - Sharpness range (full range enforced by `base.validate_sharpness_for_writing`)
+- `SHARPNESS_MIN = 0.0`, `SHARPNESS_MAX = 1.0` - Normalized sharpness knob range (enforced by `base.validate_sharpness_for_writing`; maps to super-Gaussian exponent beta=2^(6s-2))
 
 ## Dependencies
 

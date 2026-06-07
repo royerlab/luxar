@@ -153,28 +153,28 @@ void main() {
 	nodeVarying5 = aEndClipped;
 	nodeVarying6 = aStartClipped;
 
-	if ( ( ( ( aStartSharpness < 1e30 ) && ( aStartSharpness > -1e30 ) ) && ( aStartSharpness > 0.0 ) ) ) {
+	if ( ( ( ( aStartSharpness < 1e30 ) && ( aStartSharpness > -1e30 ) ) && ( aStartSharpness >= 0.0 ) ) ) {
 
 		nodeVar15 = aStartSharpness;
 
 	} else {
 
-		nodeVar15 = 2.0;
+		nodeVar15 = 0.5;
 
 	}
 
 
-	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness > 0.0 ) ) ) {
+	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness >= 0.0 ) ) ) {
 
 		nodeVar16 = aEndSharpness;
 
 	} else {
 
-		nodeVar16 = 2.0;
+		nodeVar16 = 0.5;
 
 	}
 
-	nodeVarying7 = mix( nodeVar15, nodeVar16, nodeVar6 );
+	nodeVarying7 = mix( clamp( nodeVar15, 0.0, 1.0 ), clamp( nodeVar16, 0.0, 1.0 ), nodeVar6 );
 	nodeVar17 = ( nodeVar11 * nodeUniform6 );
 	nodeVarying8 = nodeVar17;
 	nodeVar19 = max( nodeUniform7, ( 1.5 + 1.0 ) );

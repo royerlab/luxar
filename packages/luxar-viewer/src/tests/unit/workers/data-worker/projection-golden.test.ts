@@ -31,10 +31,7 @@ import {
 } from '../../../helpers/projection-adapters';
 import { createEmptyGSplatsData } from '../../../../data/gsplats/projection';
 import { createEmptyLinesData } from '../../../../data/lines/projection';
-import {
-  projectPointsTo3D,
-  type ProjectionContext,
-} from '../../../../data/points/projection';
+import { projectPointsTo3D, type ProjectionContext } from '../../../../data/points/projection';
 import type {
   LoadedGSplatsData,
   GSplatsViewState,
@@ -288,7 +285,13 @@ async function runLinesBothBackends(
   tolerance: number[],
   displayDims: number[]
 ): Promise<ProcessedLinesData> {
-  const ts = await projectLinesViaDispatcher(tsBackend, loaded, slicePosition, tolerance, displayDims);
+  const ts = await projectLinesViaDispatcher(
+    tsBackend,
+    loaded,
+    slicePosition,
+    tolerance,
+    displayDims
+  );
   if (wasmBackend) {
     const w = await projectLinesViaDispatcher(
       wasmBackend,
@@ -337,7 +340,12 @@ describe('lines dispatcher: hidden-dim clipping + culling', () => {
       vertexCount: 2,
       ndim: 4,
     };
-    const out = await runLinesBothBackends(loaded, [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5], [0, 1, 2]);
+    const out = await runLinesBothBackends(
+      loaded,
+      [0, 0, 0, 0],
+      [1e10, 1e10, 1e10, 0.5],
+      [0, 1, 2]
+    );
     expect(out.segmentCount).toBe(0);
   });
 });

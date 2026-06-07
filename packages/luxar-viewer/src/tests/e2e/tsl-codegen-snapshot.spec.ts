@@ -119,7 +119,6 @@ const SHADERS = [
   'line-pick',
   'line-gamma-one',
   'line-no-gog',
-  'line-sharpness-two',
   'point',
   'point-pick',
   'point-gamma-one',

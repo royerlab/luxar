@@ -31,13 +31,13 @@ the base geometry from `../../point-geometry.ts`). Per-instance attributes —
 supplied as `InstancedBufferAttribute`s by `setupInstancedPointsMesh` — drive
 the vertex stage:
 
-| Attribute    | Type  | Meaning                                                                                                                                  |
-| ------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `aCenter`    | vec3  | World-space centre position                                                                                                              |
-| `aRadius`    | float | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                 |
-| `aSharpness` | float | Per-point sharpness (multiplied by `sharpnessScale` similarly)                                                                           |
-| `aColor`     | vec3  | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute |
-| `aScalar`    | float | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                                                   |
+| Attribute    | Type  | Meaning                                                                                                                                                         |
+| ------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aCenter`    | vec3  | World-space centre position                                                                                                                                     |
+| `aRadius`    | float | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                                        |
+| `aSharpness` | float | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)` |
+| `aColor`     | vec3  | Per-point colour (HDR). Always present — the instanced layout bypasses Three's `vertexColors=true` auto-injection of a `color` attribute                        |
+| `aScalar`    | float | `USE_COLORMAP` only — replaces `aColor` via LUT lookup                                                                                                          |
 
 The vertex shader projects `aCenter` to clip space, computes a world-space
 `pointSize` in pixels, then expands the unit quad by
@@ -59,37 +59,38 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
 - `uIsOrtho` (`int`) branches the inverse-distance term: `1.0` for ortho,
   `inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))` for perspective. `inversesqrt`
   is a native GPU instruction — faster than `sqrt + divide`.
-- `pointSize = max(1.0, min(basePointSize · sharpnessCompensation, maxPointSize))`.
-  The lower bound of `1.0` avoids degenerate quads; zero-radius filtering happens
-  in the fragment shader (see "nD slicing" below).
+- `pointSize = max(1.0, min(basePointSize, maxPointSize))`. There is **no
+  sharpness size compensation** — the shifted-truncated super-Gaussian falloff
+  truncates to zero exactly at the sprite edge (`ρ = 1`), so `basePointSize`
+  already is the visible extent. The lower bound of `1.0` avoids degenerate
+  quads; zero-radius filtering happens in the fragment shader (see "nD slicing").
 
 `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` broadcasts to
 every registered material via the `CameraAwareMaterial` interface, so a single
 camera-change call updates every Point material in the scene.
 
-## Sharpness compensation
+## Sharpness → super-Gaussian exponent
 
-The fragment falloff is `(1 - r)^s` (parabolic, where `r ∈ [0, 1]` is the
-normalised sprite radius and `s` is per-point sharpness). Larger `s` makes the
-visible disk smaller, so without compensation high-sharpness points would
-shrink as `s` rises. The vertex stage upscales `pointSize` by
+The fragment falloff is a **shifted-truncated super-Gaussian** (see the next
+section). `sharpness` is a normalised `[0, 1]` knob; the vertex stage maps it to
+the exponent `β`:
 
 ```
-compensation = 1 / (1 - 0.01^(1/s))
+s    = clamp(sanitizeNonNegative(aSharpness, 0.5), 0.0, 1.0)
+vBeta = exp2(6·s − 2)        // β = 2^(6s − 2)
 ```
 
-— the analytical inverse of the radius at which intensity drops to 1%. This
-keeps the visible disk size constant across the full sharpness range.
+So `s = 0.5 → β = 2` (a true Gaussian — the default, and exactly the GSplat
+kernel's shape); higher `s → β` up to 16 (a harder, crisper edge); lower
+`s → β` down to 0.25 (a peakier cusp). Because the kernel truncates at the
+sprite edge, the visible extent no longer depends on `β` — there is **no
+sharpness size compensation** (the old polynomial `(1 − r)^s` kernel needed it;
+this kernel does not).
 
-The raw expression diverges as `s → 0`, so the GLSL shader sanitises with
-`max(vSharpness, 0.01)` and `isInvalidFloat(...)` falls back to `1.0` on
-NaN/Inf. The TSL factory mirrors both guards (`max(normalizedSharpness, 0.01)`
-plus an explicit `lessThan(1e30).and(greaterThan(-1e30))` test).
-
-NaN/Inf sanitisation on `aSharpness` and `aRadius` goes through
-`sanitizePositive` / `sanitizeNonNegative` from `../_shared/glsl-lib.ts` (GLSL)
-and `../_shared/tsl-helpers.ts` (TSL) — the shared sanitisers prevent
-malformed-data poisoning of the `pow()` chain.
+`sanitizeNonNegative` keeps a valid `s = 0` (→ β = 0.25) and routes
+NaN/Inf/negative to the `0.5` default; the subsequent `clamp` bounds `[0, 1]`.
+It comes from `../_shared/glsl-lib.ts` (GLSL) / `../_shared/tsl-helpers.ts`
+(TSL); `aRadius` is sanitised the same way to prevent malformed-data poisoning.
 
 ## Fragment stage: falloff + GOG + max-mode
 
@@ -101,7 +102,11 @@ The fragment shader runs in this order:
 2. **Inscribed-circle discard** — `centered = vSpriteCoord - 0.5`,
    `r2 = dot(centered, centered)`, `discard` if `r2 > 0.25`. Comparing squared
    distance avoids a `sqrt` on the discard path.
-3. **Falloff** — `normalizedR = sqrt(4 · r2)`, `falloff = max(1 - r, 0)^s`.
+3. **Falloff** — `normalizedR = sqrt(4 · r2)`, then the shifted-truncated
+   super-Gaussian `falloff = max(exp(−K·ρ^β) − C, 0) / (1 − C)` with
+   `K = ln(100) ≈ 4.605`, `C = exp(−K) = 0.01` (the 1% iso-contour floor). It is
+   C⁰-continuous at the edge (`falloff(0)=1`, `falloff(1)=0`, no hard ring), and
+   `β = 2` reproduces the GSplat Gaussian exactly.
 4. **Per-node GOG (Gain/Offset/Gamma)** —
    `adjusted = vColor * uIntensity + uOffset` (clamped non-negative),
    then `finalColor = pow(adjusted, vec3(invGamma))`. Pre-computed `invGamma`
@@ -198,7 +203,6 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 | `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                            |
 | `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion     |
 | `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                        |
-| `sharpnessScale`  | float     | `updateSharpnessScale`                        | Same idea for sharpness                                                   |
 | `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                            |
 | `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                     |
 | `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                   |
@@ -218,7 +222,7 @@ The clone path:
    and `this.uniforms.uColormapTex?.value`. The constructor's
    `applyBlendingMode` re-establishes blending state and shader defines.
 2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
-   `invGamma`, `radiusScale`, `sharpnessScale`) verbatim so the clone starts at
+   `invGamma`, `radiusScale`) verbatim so the clone starts at
    the current camera frame, not the default.
 3. For `THREE.CustomBlending` (`max` mode), copies `blendEquation/Src/Dst` from
    the source — the constructor would set canonical defaults, but if the source

@@ -23,7 +23,10 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../../utils/log';
-import { shouldApplyEffectiveRadius, type EffectiveRadiusConfig } from './effective-radius-calculator';
+import {
+  shouldApplyEffectiveRadius,
+  type EffectiveRadiusConfig,
+} from './effective-radius-calculator';
 import type {
   ViewState,
   LoadedPointsData,
@@ -269,8 +272,7 @@ export function projectPointsTo3D(
   // displayed dims and zero-fills any remaining slots, matching the former
   // TS loop). The kernel requires Float32 input; positions are Float32 in
   // production but coerce defensively for non-Float32 sources.
-  const positionsF32 =
-    positions instanceof Float32Array ? positions : new Float32Array(positions);
+  const positionsF32 = positions instanceof Float32Array ? positions : new Float32Array(positions);
   const displayDimsU32 = new Uint32Array(displayDims);
   wasm.extract_3d_positions(positionsF32, displayDimsU32, ndim, numPoints, positions3D);
 

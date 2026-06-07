@@ -234,7 +234,6 @@ export class MaterialManager {
       offset: props.offset,
       blendingMode: props.blendingMode,
       radiusScale: props.radiusScale,
-      sharpnessScale: props.sharpnessScale,
     });
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;

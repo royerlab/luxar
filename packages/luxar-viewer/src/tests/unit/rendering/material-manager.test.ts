@@ -194,19 +194,6 @@ describe('MaterialManager', () => {
 
       expect(material.uniforms.radiusScale.value).toBeCloseTo(1.0 / 255.0, 5);
     });
-
-    it('should handle sharpness scale parameter', () => {
-      const material = manager.getPointMaterial({
-        blendingMode: 'additive',
-        opacity: 1.0,
-        gamma: 1.0,
-        intensity: 1.0,
-        offset: 0.0,
-        sharpnessScale: 1.0 / 255.0, // For uint8 sharpness
-      });
-
-      expect(material.uniforms.sharpnessScale.value).toBeCloseTo(1.0 / 255.0, 5);
-    });
   });
 
   // =========================================================================
@@ -747,7 +734,7 @@ describe('MaterialManager', () => {
       expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
     });
 
-    it('should generate shaders with sharpness compensation', () => {
+    it('should generate shaders with the sharpness -> beta mapping (no size compensation)', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -756,9 +743,9 @@ describe('MaterialManager', () => {
         offset: 0.0,
       }) as PointMaterial;
 
-      // Verify sharpness compensation exists
-      expect(material.vertexShader).toContain('sharpnessCompensation');
-      expect(material.vertexShader).toContain('vSharpness');
+      // Sharpness maps to the super-Gaussian exponent; no size compensation.
+      expect(material.vertexShader).not.toContain('sharpnessCompensation');
+      expect(material.vertexShader).toContain('vBeta = exp2(6.0 * s - 2.0)');
     });
 
     it('should generate shaders with gamma correction', () => {

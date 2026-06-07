@@ -258,7 +258,7 @@ def generate_turing_patterns(
 
             # Small flat points for 2D appearance
             radii = np.full(len(positions), 0.6, dtype=np.float32)
-            sharpnesses = np.full(len(positions), 4.0, dtype=np.float32)
+            sharpnesses = np.full(len(positions), 0.6, dtype=np.float32)
 
             scene.add_points(
                 "TuringPatterns",

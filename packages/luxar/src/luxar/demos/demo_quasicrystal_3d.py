@@ -359,7 +359,7 @@ def generate_quasicrystal_3d(
 
             # Small points for dense quasicrystal appearance
             radii = np.full(len(positions_3d), 0.08, dtype=np.float32)
-            sharpnesses = np.full(len(positions_3d), 6.0, dtype=np.float32)
+            sharpnesses = np.full(len(positions_3d), 0.8, dtype=np.float32)
 
             scene.add_points(
                 "Quasicrystal",

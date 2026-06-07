@@ -308,8 +308,8 @@ def generate_spiral_galaxy(
         radii = 0.04 + (1 - ages) * 0.03  # Young stars bigger
         radii = radii.astype(np.float32)
 
-        # Sharpness varies with age (young stars sharper)
-        sharpnesses = (4.0 + ages * 2.0).astype(np.float32)
+        # Sharpness varies with age (young stars sharper); normalized [0, 1] knob
+        sharpnesses = (0.6 + ages * 0.25).astype(np.float32)
 
         aprint(f"✓ Radii range: [{radii.min():.3f}, {radii.max():.3f}]")
 

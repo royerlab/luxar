@@ -40,23 +40,22 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float pointSizeFactor;
     uniform float maxPointSize;
     uniform float radiusScale;
-    uniform float sharpnessScale;
     uniform int uIsOrtho;
     uniform float uNodeId;
     uniform vec2 uResolution;
 
     out highp float vRadius;
-    out mediump float vSharpness;
+    out mediump float vBeta;
     out mediump vec2 vSpriteCoord;
     flat out highp float vNodeId;
     flat out highp float vElementId;
 
     void main() {
-      // Mirror visual point shader sanitization (shader-glsl.ts)
-      // so a NaN/Inf sharpness or negative radius can't cause the pick
-      // footprint to diverge from the visible footprint.
-      float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
-      vSharpness = normalizedSharpness;
+      // Mirror visual point shader sanitization (shader-glsl.ts) so the
+      // pick footprint can't diverge from the visible footprint: sharpness
+      // in [0, 1] -> super-Gaussian exponent beta = 2^(6s - 2).
+      float s = clamp(sanitizeNonNegative(aSharpness, 0.5), 0.0, 1.0);
+      vBeta = exp2(6.0 * s - 2.0);
 
       float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale, 0.0);
       vRadius = normalizedRadius;
@@ -72,11 +71,10 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // clouds still resolve to the point whose core you're over, but
       // forgiving enough that hovering a sparse point doesn't require
       // pixel-perfect aim. Keep in sync with pick.tsl.ts.
-      // Mirror visual point shader's invalid-result guard so a degenerate
-      // vSharpness (e.g. ≪0.01 after clamp) can't poison pointSize.
-      float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
-      float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
-      float pointSize = basePointSize * sharpnessCompensation * 0.8;
+      // No sharpness size compensation: the shifted-truncated super-Gaussian
+      // truncates at the sprite edge, so basePointSize IS the visible extent
+      // (matches shader-glsl.ts).
+      float pointSize = basePointSize * 0.8;
       pointSize = max(1.0, min(pointSize, maxPointSize));
 
       // Instanced quad expansion (matches shader-glsl.ts approach).
@@ -100,7 +98,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
     in highp float vRadius;
-    in mediump float vSharpness;
+    in mediump float vBeta;
     in mediump vec2 vSpriteCoord;
     flat in highp float vNodeId;
     flat in highp float vElementId;
@@ -117,7 +115,12 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       if (r2 > 0.25) discard;
 
       float normalizedR = sqrt(4.0 * r2);
-      float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
+      // Shifted-truncated super-Gaussian (matches shader-glsl.ts) so the pick
+      // brightness tie-break tracks the visible falloff. K=ln(100), C=exp(-K).
+      const float K = 4.6051702;
+      const float C = 0.01;
+      const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
+      float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 
       float brightness = falloff;
       if (brightness < 1e-4) discard;

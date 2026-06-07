@@ -78,7 +78,7 @@ def generate_background_stars(
     radii = rng.uniform(0.01, 0.05, n_stars).astype(np.float32)
 
     # Sharp points for stars (they're distant point sources)
-    sharpness = np.full(n_stars, 2.0, dtype=np.float32)
+    sharpness = np.full(n_stars, 0.85, dtype=np.float32)
 
     return positions, colors, radii, sharpness
 
@@ -88,7 +88,7 @@ def generate_cubic_array(
     grid_size: int = 100,
     spacing: float = 0.5,
     radius: float = 0.05,
-    sharpness: float = 10.0,
+    sharpness: float = 0.9,
 ) -> None:
     """Generate a cubic array of sharp disc-like points.
 

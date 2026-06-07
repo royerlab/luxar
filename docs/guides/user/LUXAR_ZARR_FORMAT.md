@@ -471,9 +471,12 @@ Points nodes contain the actual point data.
 - **Dtype:** `float32`
 - **Chunks:** `(min(N, 32768),)` for 1D chunking
 - **Compression:** Blosc with zstd, level 3, bit-shuffle
-- **Description:** Point edge sharpness (0.5-10.0 typical range)
-- **Default:** 2.0 if not provided
-- **Validation:** All values must be positive
+- **Description:** Point edge sharpness — a normalised `[0, 1]` knob. The viewer
+  maps it to the super-Gaussian falloff exponent `β = 2^(6s − 2)`: `s = 0.5 → β = 2`
+  (a true Gaussian), higher `s` → harder/crisper edge (β up to 16), lower `s` →
+  peakier cusp (β down to 0.25).
+- **Default:** 0.5 (→ β = 2, Gaussian) if not provided
+- **Validation:** All values must be in `[0, 1]`
 
 ## Scalar Colormap Attributes
 

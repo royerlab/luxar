@@ -3,8 +3,8 @@
 
 This demo demonstrates:
 - Comprehensive showcase of the point sharpness feature in Luxar
-- Sharpness gradient showing smooth transition from soft (0.5) to sharp (15.0)
-- Fixed sharpness comparison with labeled rows (Very Soft to Maximum)
+- Sharpness gradient showing smooth transition from peaky (0.0) to hard-edged (1.0)
+- Fixed sharpness comparison with labeled rows (Peaky to Hard-edged)
 - Mixed sharpness cloud with color-coded sharpness values
 - Sinusoidal sharpness wave pattern
 - Complete workflow: generate → serve → view → cleanup
@@ -12,11 +12,13 @@ This demo demonstrates:
 The demo is completely self-contained - all generation code is in this file.
 
 Sharpness Parameter:
-    The sharpness parameter controls the edge falloff of points using a power function.
-    - Low values (0.5-1.0): Soft, glowing points with gradual falloff
-    - Medium values (2.0-4.0): Quadratic to quartic falloff
-    - High values (8.0-15.0): Sharp edges, disc-like appearance
-    - Formula: intensity = (1 - r²)^sharpness, where r is normalized radius
+    The sharpness parameter is a normalized [0, 1] knob controlling the edge
+    falloff of points. The viewer maps it to a super-Gaussian falloff exponent
+    beta = 2^(6s - 2):
+    - s = 0.0: beta = 0.25, a peaky/cuspy profile.
+    - s = 0.5: beta = 2.0, a true Gaussian (the default).
+    - s = 1.0: beta = 16.0, a hard, disc-like edge.
+    - Falloff: intensity = exp(-(r²)^(beta/2)) (shifted-truncated super-Gaussian).
 
 Usage:
     python demo_sharpness_showcase.py [--points N]
@@ -59,10 +61,9 @@ def create_sharpness_gradient_example(scene, n_points: int = 5000) -> None:
             [xx.flatten(), yy.flatten(), np.zeros(xx.size)]
         ).astype(np.float32)
 
-        # Sharpness increases from left to right
+        # Sharpness increases from left to right (normalized [0, 1] knob)
         normalized_x = (positions[:, 0] + 10) / 20  # 0 to 1
-        sharpness = 0.5 + normalized_x * 14.5  # 0.5 to 15.0
-        sharpness = sharpness.astype(np.float32)
+        sharpness = normalized_x.astype(np.float32)  # 0.0 to 1.0
 
         # All points same size for fair comparison
         radii = np.full(positions.shape[0], 0.3, dtype=np.float32)
@@ -91,21 +92,21 @@ def create_sharpness_comparison_example(scene) -> None:
     """Create rows of points with different fixed sharpness values.
 
     Each row demonstrates a specific sharpness value with labeled examples,
-    from very soft (0.5) to maximum sharpness (15.0).
+    from peaky (0.0) to hard-edged (1.0) on the normalized knob.
 
     Args:
         scene: LuxarZarrCompiler scene to add points to
     """
     with asection("Creating sharpness comparison rows"):
         n_points_per_row = 20
-        sharpness_values = [0.5, 1.0, 2.0, 4.0, 8.0, 15.0]
+        sharpness_values = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
         labels = [
-            "Very Soft (0.5)",
-            "Linear (1.0)",
-            "Quadratic (2.0)",
-            "Quartic (4.0)",
-            "Sharp (8.0)",
-            "Maximum (15.0)",
+            "Peaky (0.0)",
+            "Soft (0.2)",
+            "Near-Gaussian (0.4)",
+            "Crisp (0.6)",
+            "Hard (0.8)",
+            "Maximum (1.0)",
         ]
 
         for i, (sharp_val, label) in enumerate(zip(sharpness_values, labels)):
@@ -177,30 +178,28 @@ def create_mixed_sharpness_example(scene, n_points: int = 10000) -> None:
 
         positions = np.column_stack([x, y, z]).astype(np.float32)
 
-        # Mix of sharpness values - create clusters
+        # Mix of sharpness values - create clusters (normalized [0, 1] knob)
         sharpness = np.zeros(n_points, dtype=np.float32)
-        # 1/3 soft points
-        sharpness[: n_points // 3] = rng.uniform(0.5, 1.5, n_points // 3)
-        # 1/3 medium points
+        # 1/3 soft (peaky) points
+        sharpness[: n_points // 3] = rng.uniform(0.1, 0.3, n_points // 3)
+        # 1/3 medium (near-Gaussian) points
         sharpness[n_points // 3 : 2 * n_points // 3] = rng.uniform(
-            2.0, 4.0, n_points // 3
+            0.4, 0.6, n_points // 3
         )
-        # 1/3 sharp points
+        # 1/3 sharp (hard-edged) points
         sharpness[2 * n_points // 3 :] = rng.uniform(
-            6.0, 15.0, n_points - 2 * n_points // 3
+            0.75, 1.0, n_points - 2 * n_points // 3
         )
 
         # Shuffle to mix them
         rng.shuffle(sharpness)
 
         # Size varies with sharpness (sharp points are smaller)
-        radii = (
-            0.4 - (sharpness - 0.5) * 0.02
-        )  # Larger soft points, smaller sharp points
+        radii = 0.4 - sharpness * 0.2  # Larger soft points, smaller sharp points
         radii = np.clip(radii, 0.1, 0.4).astype(np.float32)
 
         # Color based on sharpness (blue=soft, green=medium, red=sharp)
-        normalized_sharp = (sharpness - 0.5) / 14.5
+        normalized_sharp = sharpness
         colors = np.zeros((n_points, 3), dtype=np.float32)
         colors[:, 0] = normalized_sharp  # Red for sharp
         colors[:, 1] = 0.5 * (
@@ -251,8 +250,8 @@ def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
             np.float32
         )
 
-        # Sharpness varies with the wave
-        sharpness = 5.0 + 4.5 * np.sin(distance.flatten() * 0.5)
+        # Sharpness varies with the wave (normalized [0, 1] knob)
+        sharpness = 0.5 + 0.45 * np.sin(distance.flatten() * 0.5)
         sharpness = sharpness.astype(np.float32)
 
         # Radii also vary slightly
@@ -337,7 +336,7 @@ def generate_sharpness_showcase(
 
             # Info
             scene.add_text(
-                "Sharpness range 0.5\u201315",
+                "Sharpness range 0\u20131 (super-Gaussian \u03b2 = 2^(6s-2))",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",

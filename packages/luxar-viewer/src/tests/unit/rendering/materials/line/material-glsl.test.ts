@@ -141,7 +141,7 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('aSegmentLength');
     });
 
-    it('should have correct fragment shader with parabolic falloff', () => {
+    it('should have correct fragment shader with shifted-truncated super-Gaussian falloff', () => {
       const material = new LineMaterial();
 
       // Check for uniforms
@@ -152,9 +152,14 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
       expect(material.fragmentShader).toContain('pow(adjusted, vec3(uInvGamma))');
 
-      // Check for parabolic falloff formula
-      expect(material.fragmentShader).toContain('1.0 - p * p');
-      expect(material.fragmentShader).toContain('vSharpness');
+      // Shifted-truncated super-Gaussian perpendicular cross-section,
+      // beta = 2^(6s - 2), K=ln(100), C=exp(-K). NOT the old parabolic
+      // (1 - p²)^sharpness kernel, and no LUXAR_SHARPNESS_TWO fast path.
+      expect(material.fragmentShader).toContain('exp2(6.0 * vSharpness - 2.0)');
+      expect(material.fragmentShader).toContain('exp(-K * pow(p, beta))');
+      expect(material.fragmentShader).toContain('INV_ONE_MINUS_C');
+      expect(material.fragmentShader).not.toContain('1.0 - p * p');
+      expect(material.fragmentShader).not.toContain('LUXAR_SHARPNESS_TWO');
 
       // cap factor is computed in fragment from vT/vSegmentLength/etc.
       expect(material.fragmentShader).toContain('capFactor');
@@ -227,26 +232,6 @@ describe('LineMaterial', () => {
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
-    });
-
-    it('should preserve the LUXAR_SHARPNESS_TWO fast-path define on clone', () => {
-      // The node-factory sets this post-construction after inspecting
-      // per-vertex sharpness arrays. A naïve clone reconstructs from
-      // config + uniforms only, losing the define and silently dropping
-      // the fragment-stage `x * x` fast path.
-      const original = new LineMaterial();
-      original.setSharpnessAllTwo(true);
-
-      const cloned = original.clone();
-
-      expect(cloned.defines).toBeDefined();
-      expect('LUXAR_SHARPNESS_TWO' in (cloned.defines as Record<string, unknown>)).toBe(true);
-    });
-
-    it('clone of a material without LUXAR_SHARPNESS_TWO does not introduce it', () => {
-      const original = new LineMaterial();
-      const cloned = original.clone();
-      expect('LUXAR_SHARPNESS_TWO' in (cloned.defines as Record<string, unknown>)).toBe(false);
     });
   });
 

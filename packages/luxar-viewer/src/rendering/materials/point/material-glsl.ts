@@ -42,7 +42,6 @@ export interface PointMaterialConfig {
   depthTest?: boolean; // Whether to test against depth buffer (default true)
   transparent?: boolean; // Whether material is transparent (default true)
   radiusScale?: number; // Scale factor for radius normalization (e.g., 1/255 for uint8)
-  sharpnessScale?: number; // Scale factor for sharpness normalization (e.g., 1/255 for uint8)
   colormapTexture?: THREE.DataTexture; // Colormap LUT texture (256x1 RGB)
   scalarRange?: [number, number]; // Scalar data range [min, max] for normalization
 }
@@ -100,9 +99,8 @@ export class PointMaterial
         pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
         maxPointSize: { value: defaultResolutionY * 0.5 }, // resolution.y * 0.5
 
-        // Radius and sharpness scaling for dtype normalization
+        // Radius scaling for dtype normalization
         radiusScale: { value: materialConfig.radiusScale ?? 1.0 }, // Default 1.0 (no scaling)
-        sharpnessScale: { value: materialConfig.sharpnessScale ?? 1.0 }, // Default 1.0 (no scaling)
 
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
@@ -252,14 +250,6 @@ export class PointMaterial
   }
 
   /**
-   * Update sharpness scale for dtype normalization
-   * Use 1/255 for uint8 sharpness, 1.0 for float sharpness
-   */
-  updateSharpnessScale(scale: number): void {
-    this.uniforms.sharpnessScale.value = scale;
-  }
-
-  /**
    * Update the colormap texture and enable/disable colormap mode.
    *
    * Under the instanced-quad rendering path, vertexColors is always
@@ -367,7 +357,6 @@ export class PointMaterial
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
-    cloned.uniforms.sharpnessScale.value = this.uniforms.sharpnessScale.value;
 
     return cloned as this;
   }

@@ -39,11 +39,7 @@ import type {
   GSplatsViewState,
   ProcessedGSplatsData,
 } from '../../types/gsplats';
-import type {
-  LoadedLinesData,
-  ProcessedLinesData,
-  ClippedSegment,
-} from '../../types/lines';
+import type { LoadedLinesData, ProcessedLinesData, ClippedSegment } from '../../types/lines';
 
 // ---------------------------------------------------------------------------
 // Per-segment clip primitive (legacy `clipSegmentToSlice` object shape)
