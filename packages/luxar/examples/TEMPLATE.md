@@ -245,8 +245,9 @@ phi = np.pi * (1 + 5**0.5) * indices
 spacing = 2 * radius
 
 # GOOD: Explains non-obvious choice
-# Use high sharpness (10.0) for sharp edges that clearly show grid structure
-sharpness = 10.0
+# sharpness is a normalized [0, 1] knob (0.5 = Gaussian); use high values
+# (~0.9) for crisp edges that clearly show grid structure
+sharpness = 0.9
 ```
 
 ### arbol Usage
@@ -286,8 +287,8 @@ colors = np.array(color_data, dtype=np.float32)
 # Radii - float32
 radii = np.array(radii_data, dtype=np.float32)
 
-# Sharpness - float32
-sharpness = np.full(n_points, 2.0, dtype=np.float32)
+# Sharpness - float32, normalized [0, 1] knob (0.5 = Gaussian default)
+sharpness = np.full(n_points, 0.5, dtype=np.float32)
 ```
 
 ### Variable Naming

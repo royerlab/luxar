@@ -156,7 +156,7 @@ def main():
             all_positions,
             colors=all_colors,
             radii=all_radii,
-            sharpness=2.0,
+            sharpness=0.5,
             opacity=0.8,
             blending_mode="additive",
             # Explicitly set extend_to_all=[] - points only appear at their defined time/channel values
@@ -194,7 +194,7 @@ def main():
             np.array(axis_positions, dtype=np.float32),
             colors=np.array(axis_colors, dtype=np.float32),
             radii=0.3,
-            sharpness=10.0,
+            sharpness=0.9,
             opacity=1.0,
             blending_mode="normal",
             # Explicitly extend axis markers to all time points and channels

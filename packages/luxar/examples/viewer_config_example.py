@@ -80,7 +80,7 @@ def main() -> None:
             positions,
             colors=colors,
             radii=0.04,
-            sharpness=2.0,
+            sharpness=0.5,
         )
 
         # Explainer overlay: confirm the authored viewer state on load.
