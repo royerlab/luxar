@@ -159,10 +159,10 @@ def create_dynamic_sharpness(
     # Creates bands of varying sharpness that move over time
     sharpness_pattern = np.sin(y_normalized * 8 * np.pi + time_phase * 4)
 
-    # Map to the normalized [0, 1] sharpness knob, range [0.25, 0.75]
-    # When sharpness_pattern is -1: sharpness = 0.25 (softer/peakier)
-    # When sharpness_pattern is +1: sharpness = 0.75 (crisper)
-    sharpness = 0.5 + sharpness_pattern * 0.25
+    # Map to sharpness range [0.5, 2.0] (factor 4 max change)
+    # When sharpness_pattern is -1: sharpness = 0.5
+    # When sharpness_pattern is +1: sharpness = 2.0
+    sharpness = 1.25 + sharpness_pattern * 0.75
 
     return sharpness.astype(np.float32)
 

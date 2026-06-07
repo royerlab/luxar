@@ -567,8 +567,8 @@ def generate_nuclear_pore_complex(
                 )
                 scene = compiler.create_scene(dimensions=dims)
 
-                # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)
-                sharpness = np.full(len(sym_positions), 0.85, dtype=np.float32)
+                # Sharpness for crisp, sharp protein atoms
+                sharpness = np.full(len(sym_positions), 1, dtype=np.float32)
 
                 scene.add_points(
                     "nuclear_pore_complex",
