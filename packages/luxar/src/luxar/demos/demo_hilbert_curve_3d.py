@@ -227,7 +227,7 @@ def build_scene(output_path: Path, max_order: int) -> int:
                     widths=LINE_WIDTH,
                     colors=colors,
                     line_type="polyline",
-                    sharpness=2.0,
+                    sharpness=0.5,
                     opacity=0.95,
                     intensity=0.55,
                     blending_mode="luminous",

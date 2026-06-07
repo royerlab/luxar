@@ -45,12 +45,11 @@ layout( std140 ) uniform object {
 	float nodeUniform3;
 	float nodeUniform4;
 	float nodeUniform5;
-	float nodeUniform6;
-	mat4 nodeUniform9;
+	mat4 nodeUniform8;
+	float nodeUniform9;
 	float nodeUniform10;
 	float nodeUniform11;
-	float nodeUniform12;
-	vec2 nodeUniform13;
+	vec2 nodeUniform12;
 };
 
 
@@ -66,7 +65,7 @@ vec4 DiffuseColor;
 float nodeVar2;
 vec3 nodeVar3;
 vec4 Output;
-vec4 nodeVar6;
+vec4 nodeVar5;
 
 // codes
 
@@ -102,12 +101,12 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( pow( nodeVar3, vec3( nodeUniform3 ) ), ( pow( max( ( 1.0 - sqrt( ( nodeVar2 * 4.0 ) ) ), 0.0 ), nodeVarying3 ) * nodeUniform5 ) );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform6 );
-	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar6;
+	DiffuseColor = vec4( pow( nodeVar3, vec3( nodeUniform3 ) ), ( ( max( ( exp( ( pow( sqrt( ( nodeVar2 * 4.0 ) ), nodeVarying3 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform4 ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform5 );
+	nodeVar5 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar5;
 
 	// result
-	fragColor = nodeVar6;
+	fragColor = nodeVar5;
 
 }

@@ -47,12 +47,11 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
-    uniform float sharpnessScale;
     uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
     uniform vec2 uResolution;      // Physical framebuffer size in pixels
 
     out mediump vec3 vColor;
-    out mediump float vSharpness;
+    out mediump float vBeta;       // Super-Gaussian exponent beta (per-instance)
     out highp float vRadius;       // Pass radius to fragment for zero-check (needs precision)
     out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
 
@@ -72,10 +71,13 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       vColor = aColor;
       #endif
 
-      // Apply sharpness scale for dtype normalization and use 2.0 as default.
-      // Guard NaN/Inf from malformed data so pow() below cannot poison pointSize.
-      float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
-      vSharpness = normalizedSharpness;
+      // Sharpness is authored in [0, 1] and maps to the super-Gaussian
+      // exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a true Gaussian, the
+      // gsplat member), higher s -> harder edge, lower s -> peakier cusp.
+      // sanitizeNonNegative keeps a valid s=0 (-> beta=0.25) and routes
+      // NaN/Inf/negative to the 0.5 default; clamp guards the [0, 1] range.
+      float s = clamp(sanitizeNonNegative(aSharpness, 0.5), 0.0, 1.0);
+      vBeta = exp2(6.0 * s - 2.0);
 
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
       float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale, 0.0);
@@ -91,14 +93,11 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
-      // Sharpness compensation based on visibility threshold
-      // For falloff function f(r) = (1-r)^s, the visible radius where intensity drops to 1% is:
-      // r_vis = 1 - 0.01^(1/s)
-      // We need to scale the point size by 1/r_vis to maintain consistent visible size
-      // Exact formula: compensation = 1 / (1 - 0.01^(1/s)), guarded against s=0
-      float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
-      float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
-      float pointSize = basePointSize * sharpnessCompensation;
+      // The shifted-truncated super-Gaussian falloff (fragment shader)
+      // truncates to zero exactly at the sprite edge (rho = 1), so the
+      // sprite size already IS the visible extent — no sharpness-dependent
+      // size compensation is needed (the old polynomial kernel required it).
+      float pointSize = basePointSize;
 
       // Clamp: minimum 1.0 (avoids degenerate quads) and maxPointSize cap.
       // Zero-radius filtering happens in fragment shader.
@@ -121,7 +120,8 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 /**
  * Fragment shader for standard point rendering.
  *
- * Computes Gaussian falloff, GOG color adjustment, and alpha output.
+ * Computes the shifted-truncated super-Gaussian falloff, GOG color
+ * adjustment, and alpha output.
  * The picking system uses a different fragment shader (see picking/point-picking-material.ts).
  */
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
@@ -133,7 +133,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
     in mediump vec3 vColor;
-    in mediump float vSharpness;
+    in mediump float vBeta; // Super-Gaussian exponent beta (per-instance)
     in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
     in mediump vec2 vSpriteCoord; // [0,1] sprite UV (replaces gl_PointCoord)
 
@@ -158,8 +158,16 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // normalizedR is in 0-1 range (gl_PointCoord is 0-1, centered is -0.5 to 0.5)
       mediump float normalizedR = sqrt(4.0 * r2);
 
-      // Simple power function for falloff - modern GPUs optimize pow() well
-      mediump float falloff = pow(max(1.0 - normalizedR, 0.0), vSharpness);
+      // Shifted-truncated super-Gaussian falloff:
+      //   falloff(rho) = max(exp(-K * rho^beta) - C, 0) / (1 - C)
+      // shifted by C and renormalised so falloff(0)=1 and falloff(1)=0
+      // (C0-continuous truncation at the sprite edge, no hard ring).
+      // beta=2 reproduces the gsplat Gaussian shape. K = ln(1/floor) with
+      // floor = 0.01 encodes the 1% iso-contour sizing convention.
+      const mediump float K = 4.6051702;          // ln(100)
+      const mediump float C = 0.01;               // exp(-K) = floor
+      const mediump float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
+      mediump float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment.
       //
@@ -212,7 +220,7 @@ export const POINT_SOURCE: ShaderSource = {
   name: 'point',
   webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
   // TSL NodeMaterial that owns vertexNode (sprite expansion)
-  // and colorNode (Gaussian falloff + GOG). Default config — no
+  // and colorNode (super-Gaussian falloff + GOG). Default config — no
   // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
   // call `pointWebGPUFactory(uniforms, { ...flags })` directly.
   webgpu: (uniforms: Record<string, unknown>) =>

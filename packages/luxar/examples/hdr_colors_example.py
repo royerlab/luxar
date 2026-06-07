@@ -100,7 +100,7 @@ def main() -> None:
             sdr_positions,
             colors=sdr_colors,
             radii=0.08,
-            sharpness=1.0,
+            sharpness=0.5,
             blending_mode="additive",
             layer=True,
         )
@@ -109,7 +109,7 @@ def main() -> None:
             hdr_positions,
             colors=hdr_colors,
             radii=0.08,
-            sharpness=1.0,
+            sharpness=0.5,
             blending_mode="additive",
             layer=True,
         )

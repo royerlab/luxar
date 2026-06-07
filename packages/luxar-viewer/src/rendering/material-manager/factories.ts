@@ -59,8 +59,6 @@ export interface PointMaterialProperties {
   offset: number;
   /** Scale factor for radius normalization (e.g., 1/255 for uint8) */
   radiusScale?: number;
-  /** Scale factor for sharpness normalization (e.g., 1/255 for uint8) */
-  sharpnessScale?: number;
 }
 
 /** Line material properties driving cache key + constructor config. */
@@ -160,11 +158,8 @@ export function pointCacheKey(props: PointMaterialProperties, backend: MaterialB
   const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
     getCommonMaterialBuckets(props);
   const radiusBucket = props.radiusScale ? Math.round(Math.max(0, props.radiusScale) * 1000) : 1000;
-  const sharpnessBucket = props.sharpnessScale
-    ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
-    : 1000;
   const transparent = props.blendingMode !== 'opaque';
-  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
+  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_t${transparent ? 1 : 0}`;
 }
 
 /** Cache key for a Lines material variant. */

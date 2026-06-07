@@ -83,7 +83,7 @@ def main() -> None:
             np.vstack(all_positions),
             colors=np.vstack(all_colors),
             radii=0.1,
-            sharpness=2.0,
+            sharpness=0.5,
         )
 
         add_explainer(

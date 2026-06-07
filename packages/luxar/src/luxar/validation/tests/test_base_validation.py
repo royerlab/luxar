@@ -252,12 +252,12 @@ class TestSharpnessValidation:
 
     def test_valid_sharpness(self) -> None:
         """Test valid sharpness passes validation."""
-        sharpness = np.random.uniform(0.5, 10.0, 100).astype(np.float32)
+        sharpness = np.random.uniform(0.0, 1.0, 100).astype(np.float32)
         validate_sharpness_for_writing(sharpness, 100)  # Should not raise
 
     def test_2d_sharpness_error(self) -> None:
         """Test error for 2D sharpness array."""
-        sharpness = np.random.uniform(0.5, 10.0, (100, 1)).astype(np.float32)
+        sharpness = np.random.uniform(0.0, 1.0, (100, 1)).astype(np.float32)
         with pytest.raises(ValidationError) as exc_info:
             validate_sharpness_for_writing(sharpness, 100)
 
@@ -266,7 +266,7 @@ class TestSharpnessValidation:
 
     def test_mismatched_sharpness_count(self) -> None:
         """Test error for mismatched sharpness count."""
-        sharpness = np.random.uniform(0.5, 10.0, 50).astype(np.float32)
+        sharpness = np.random.uniform(0.0, 1.0, 50).astype(np.float32)
         with pytest.raises(ValidationError) as exc_info:
             validate_sharpness_for_writing(sharpness, 100)
 
@@ -280,17 +280,20 @@ class TestSharpnessValidation:
         with pytest.raises(ValidationError) as exc_info:
             validate_sharpness_for_writing(sharpness, 100)
 
-        assert "must be positive" in str(exc_info.value)
+        assert "must be >= 0.0" in str(exc_info.value)
         assert "Found minimum value: -1.000" in str(exc_info.value)
-        assert "between 0.001 and 31.0" in str(
+        assert "between 0.0 and 1.0" in str(
             exc_info.value
-        )  # Matches SHARPNESS_MIN constant
+        )  # Matches SHARPNESS_MIN/MAX constants
 
-    def test_out_of_range_sharpness_warning(self) -> None:
-        """Test warning for out-of-range sharpness values."""
-        sharpness = np.array([0.1, 5.0, 12.0] * 33 + [5.0], dtype=np.float32)
-        with pytest.warns(UserWarning, match="Using extreme sharpness values"):
+    def test_out_of_range_sharpness_rejected(self) -> None:
+        """Sharpness above the [0, 1] range raises a ValidationError."""
+        sharpness = np.array([0.1, 0.5, 12.0] * 33 + [0.5], dtype=np.float32)
+        with pytest.raises(ValidationError) as exc_info:
             validate_sharpness_for_writing(sharpness, 100)
+
+        assert "exceed maximum" in str(exc_info.value)
+        assert "Found maximum: 12.000" in str(exc_info.value)
 
 
 class TestContextParameter:
@@ -322,7 +325,7 @@ class TestContextParameter:
 
     def test_sharpness_with_context(self) -> None:
         """Test sharpness validation with custom context."""
-        sharpness = np.zeros(100, dtype=np.float32)
+        sharpness = np.full(100, -1.0, dtype=np.float32)
         with pytest.raises(ValidationError) as exc_info:
             validate_sharpness_for_writing(sharpness, 100, context="point sharpness")
 

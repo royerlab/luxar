@@ -25,7 +25,6 @@ import { validateLoadedPointsData, validateColorMode } from './validation';
 export function createPointsGeometry(
   data: LoadedPointsData,
   maxRadius: number = 1.0,
-  maxSharpness: number = 31.0,
   isPlaceholder: boolean = false
 ): THREE.BufferGeometry {
   const geometry = createPointQuadGeometry();
@@ -98,8 +97,9 @@ export function createPointsGeometry(
     );
   }
 
-  // Per-instance sharpness (same dtype rules).
-  let sharpnessScale = 1.0;
+  // Per-instance sharpness (same dtype rules). Sharpness is authored in
+  // [0, 1]: Float16/Float32 are stored directly, Uint8 normalizes via the
+  // buffer's `normalized:true` flag (uint8/255 → [0, 1]). No scale needed.
   if (data.sharpness) {
     if (
       typeof globalThis.Float16Array !== 'undefined' &&
@@ -109,24 +109,21 @@ export function createPointsGeometry(
         'aSharpness',
         new THREE.InstancedBufferAttribute(new Float32Array(data.sharpness), 1)
       );
-      sharpnessScale = 1.0;
     } else if (data.sharpness instanceof Uint8Array) {
       geometry.setAttribute(
         'aSharpness',
         new THREE.InstancedBufferAttribute(data.sharpness, 1, true)
       );
-      sharpnessScale = maxSharpness;
     } else {
       geometry.setAttribute(
         'aSharpness',
         new THREE.InstancedBufferAttribute(data.sharpness as Float32Array, 1, false)
       );
-      sharpnessScale = 1.0;
     }
   } else {
     geometry.setAttribute(
       'aSharpness',
-      new THREE.InstancedBufferAttribute(new Float32Array(pointCount).fill(2.0), 1)
+      new THREE.InstancedBufferAttribute(new Float32Array(pointCount).fill(0.5), 1)
     );
   }
 
@@ -169,7 +166,6 @@ export function createPointsGeometry(
 
   if (!geometry.userData) geometry.userData = {};
   geometry.userData.radiusScale = radiusScale;
-  geometry.userData.sharpnessScale = sharpnessScale;
   geometry.userData.pointCount = pointCount;
 
   return geometry;
@@ -182,7 +178,6 @@ export function createPointsGeometry(
 export function createPointsMaterial(
   attrs: Partial<PointsMetadata>,
   radiusScale: number = 1.0,
-  sharpnessScale: number = 1.0,
   geometry?: THREE.BufferGeometry,
   path?: string
 ): LuxarPointMaterial {
@@ -193,7 +188,6 @@ export function createPointsMaterial(
     offset: attrs.offset ?? 0.0,
     blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
     radiusScale,
-    sharpnessScale,
   });
 
   const ptColormapName = attrs.colormap;

@@ -141,7 +141,7 @@ class TestBasicRoundTrip:
         positions = rng.randn(n_points, 3).astype(np.float32)
         colors = rng.rand(n_points, 3).astype(np.float32)
         radii = rng.rand(n_points).astype(np.float32) * 0.5 + 0.1
-        sharpness = rng.rand(n_points).astype(np.float32) * 10.0
+        sharpness = rng.rand(n_points).astype(np.float32)  # normalized [0, 1]
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -178,7 +178,7 @@ class TestBasicRoundTrip:
             err_msg="Color values differ beyond uint8 quantization tolerance",
         )
         # Radii/sharpness are encoded as positive_scalar with dynamic quantization.
-        # Sharpness uses uint8 over [0, 31] range: step ≈ 31/255 ≈ 0.12.
+        # Sharpness uses uint8 over [0, 1] range: step ≈ 1/255 ≈ 0.0039.
         # Use atol based on quantization step size rather than rtol.
         np.testing.assert_allclose(
             data["radii"][sort_idx_load],
@@ -186,12 +186,10 @@ class TestBasicRoundTrip:
             atol=0.01,
             err_msg="Radii values differ after round-trip",
         )
-        # Audit C2 fix: previous atol=0.15 was 23% larger than the
-        # theoretical quantization step (31 / (2**8 - 1) ≈ 0.1216),
-        # masking ~off-by-one mistakes in either the encoder or decoder.
+        # The theoretical quantization step is 1 / (2**8 - 1) ≈ 0.00392.
         # Tighten to one full step + tiny float slop. If a real change
         # in the encoder pushes us above this bound, we want to know.
-        sharpness_step = 31.0 / 255.0  # ≈ 0.1216 (see decoder.py docstring)
+        sharpness_step = 1.0 / 255.0  # ≈ 0.00392 (see decoder.py docstring)
         np.testing.assert_allclose(
             data["sharpness"][sort_idx_load],
             sharpness[sort_idx_orig],
@@ -886,7 +884,7 @@ class TestMultiplePointGroups:
                 np.random.randn(50, 3).astype(np.float32),
                 colors=np.random.rand(50, 3).astype(np.float32),
                 radii=np.random.rand(50).astype(np.float32) * 0.5,
-                sharpness=np.random.rand(50).astype(np.float32) * 10,
+                sharpness=np.random.rand(50).astype(np.float32),
             )
 
         scene = LuxarScene.load(output_path)
@@ -1200,7 +1198,7 @@ class TestLinesRoundTrip:
         output_path = tmp_path / "test.zarr"
 
         positions = np.random.randn(5, 3).astype(np.float32)
-        sharpness = np.ones(5, dtype=np.float32) * 2.0
+        sharpness = np.ones(5, dtype=np.float32) * 0.5
         vertices = np.random.randn(6, 3).astype(np.float32)
         widths = np.ones(6, dtype=np.float32) * 0.1
 
@@ -1254,7 +1252,7 @@ class TestBroadcastedArraysRoundTrip:
         positions = np.random.randn(n_points, 3).astype(np.float32)
         colors = np.array([[0.2, 0.4, 0.6]], dtype=np.float32)
         radii = np.array([0.5], dtype=np.float32)
-        sharpness = np.array([2.0], dtype=np.float32)
+        sharpness = np.array([0.5], dtype=np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1281,7 +1279,7 @@ class TestBroadcastedArraysRoundTrip:
         vertices = np.random.randn(n_vertices, 3).astype(np.float32)
         widths = 0.1
         colors = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
-        sharpness = np.array([2.0], dtype=np.float32)
+        sharpness = np.array([0.5], dtype=np.float32)
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())

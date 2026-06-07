@@ -2,9 +2,9 @@
  * Point material TSL factory — NodeMaterial counterpart to the
  * GLSL3 pair in `shader-glsl.ts`.
  *
- * Renders one soft Gaussian-falloff sprite per point with:
+ * Renders one soft super-Gaussian-falloff sprite per point with:
  *   - world-space sizing (perspective + orthographic)
- *   - sharpness compensation (visibility-threshold normalisation)
+ *   - sharpness -> super-Gaussian exponent beta mapping (beta = 2^(6s-2))
  *   - per-node Gain/Offset/Gamma colour adjustment
  *   - zero-radius nD-slicing discard
  *
@@ -13,7 +13,7 @@
  * (aCenter, aRadius, aSharpness, aColor, aScalar). The vertex stage
  * projects aCenter to clip space and expands the unit quad by the
  * per-instance pointSize; the fragment stage discards outside the
- * inscribed circle and computes Gaussian falloff.
+ * inscribed circle and computes the shifted-truncated super-Gaussian falloff.
  *
  * Feature toggles map to {@link PointTSLConfig}, mirroring the GLSL3
  * `#define` semantics where flipping a flag triggers a recompile:
@@ -40,14 +40,14 @@ import {
   clamp,
   length,
   dot,
-  pow,
+  exp,
   Discard,
   texture,
   modelViewMatrix,
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../_shared/tsl-helpers';
+import { sanitizeNonNegative, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 
@@ -124,10 +124,6 @@ export function pointWebGPUFactory(
     () => (uniforms.radiusScale.value as number) ?? 1.0,
     'render'
   );
-  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.sharpnessScale.value as number) ?? 1.0,
-    'render'
-  );
   const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
     () => (uniforms.uIsOrtho.value as number) ?? 0,
     'render'
@@ -194,10 +190,12 @@ export function pointWebGPUFactory(
   // ---- Vertex computation ----
 
   // Sanitise per-instance attributes (NaN/Inf-safe).
-  const normalizedSharpness: TSLNode = sanitizePositive(
-    aSharpness.mul(uSharpnessScale),
-    float(2.0)
-  );
+  // Sharpness is authored in [0, 1] -> super-Gaussian exponent
+  // beta = 2^(6s - 2) (s=0.5 -> beta=2, a true Gaussian). sanitizeNonNegative
+  // keeps a valid s=0 (-> beta=0.25) and routes NaN/Inf/negative to the 0.5
+  // default; clamp bounds the [0, 1] range. Mirrors the GLSL3 path exactly.
+  const sClamped: TSLNode = clamp(sanitizeNonNegative(aSharpness, float(0.5)), 0.0, 1.0);
+  const beta: TSLNode = float(2.0).pow(sClamped.mul(6.0).sub(2.0));
   const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
   // Per-instance colour from LUT or attribute. In colormap mode the
@@ -225,16 +223,9 @@ export function pointWebGPUFactory(
     .select(float(1.0), length(vec3(mvPos)).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
-  // Sharpness compensation: keep visible disk extent constant.
-  const sharpnessCompRaw: TSLNode = float(1.0).div(
-    float(1.0).sub(pow(float(0.01), float(1.0).div(max(normalizedSharpness, float(0.01)))))
-  );
-  const sharpnessCompFinite = sharpnessCompRaw
-    .lessThan(1e30)
-    .and(sharpnessCompRaw.greaterThan(-1e30));
-  const sharpnessComp: TSLNode = sharpnessCompFinite.select(sharpnessCompRaw, float(1.0));
-  const computedPointSize: TSLNode = basePointSize.mul(sharpnessComp);
-  const pointSize: TSLNode = max(float(1.0), clamp(computedPointSize, float(1.0), uMaxPointSize));
+  // No size compensation: the shifted-truncated super-Gaussian truncates at
+  // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
+  const pointSize: TSLNode = max(float(1.0), clamp(basePointSize, float(1.0), uMaxPointSize));
 
   // Expand the unit quad to a sprite in clip space.
   const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
@@ -244,12 +235,12 @@ export function pointWebGPUFactory(
   // interpolated to the fragment via the `varying()` wrapper —
   // matches `vSpriteCoord = (aQuadCorner + 1.0) * 0.5` from GLSL.
   const vSpriteCoord: TSLNode = varying(aQuadCorner.add(1.0).mul(0.5));
-  // Per-instance vRadius and vSharpness are constant within a quad
+  // Per-instance vRadius and vBeta are constant within a quad
   // (4 verts share the same instance) so `varying()` interpolation
   // is a no-op but the wrapper is what gets TSL to pass them to the
   // fragment stage.
   const vRadius: TSLNode = varying(normalizedRadius);
-  const vSharpness: TSLNode = varying(normalizedSharpness);
+  const vBeta: TSLNode = varying(beta);
   const vColor: TSLNode = varying(perPointColor);
 
   // ---- Fragment computation ----
@@ -263,7 +254,16 @@ export function pointWebGPUFactory(
     Discard(r2.greaterThan(0.25));
 
     const normalizedR: TSLNode = r2.mul(4.0).sqrt();
-    const falloff: TSLNode = float(1.0).sub(normalizedR).max(float(0.0)).pow(vSharpness);
+    // Shifted-truncated super-Gaussian: max(exp(-K * rho^beta) - C, 0) / (1 - C),
+    // C0-continuous at the sprite edge. beta=2 reproduces the gsplat Gaussian.
+    // K = ln(1/floor), floor = 0.01. Mirrors the GLSL3 fragment exactly.
+    const K = 4.6051702; // ln(100)
+    const C = 0.01; // exp(-K) = floor
+    const invOneMinusC = 1.0 / (1.0 - C);
+    const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
+      .sub(C)
+      .max(float(0.0))
+      .mul(invOneMinusC);
 
     // GOG: colour × intensity + offset, clamped, then gamma.
     // Colormap mode bypasses color GOG — gamma + display-range shaped the

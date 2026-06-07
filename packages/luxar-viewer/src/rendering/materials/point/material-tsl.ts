@@ -79,7 +79,6 @@ export class PointTSLMaterial
       maxPointSize: { value: defaultResolutionY * 0.5 },
 
       radiusScale: { value: materialConfig.radiusScale ?? 1.0 },
-      sharpnessScale: { value: materialConfig.sharpnessScale ?? 1.0 },
 
       uIsOrtho: { value: 0 },
       uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
@@ -217,10 +216,6 @@ export class PointTSLMaterial
     this.uniforms.radiusScale.value = scale;
   }
 
-  updateSharpnessScale(scale: number): void {
-    this.uniforms.sharpnessScale.value = scale;
-  }
-
   /**
    * Toggle the colormap branch. Rebuild the graph whenever the
    * colormap state actually changes — either an on/off flip OR a
@@ -313,7 +308,6 @@ export class PointTSLMaterial
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
-    cloned.uniforms.sharpnessScale.value = this.uniforms.sharpnessScale.value;
 
     return cloned as this;
   }

@@ -697,7 +697,7 @@ def create_cytoself_scene(
 
             total_points = len(positions_combined)
             radii = np.full(total_points, 0.02, dtype=np.float32)
-            sharpnesses = np.full(total_points, 4.0, dtype=np.float32)
+            sharpnesses = np.full(total_points, 0.6, dtype=np.float32)
 
             # Hover labels: resolve codes to category names, repeated per view
             per_cell_labels = []

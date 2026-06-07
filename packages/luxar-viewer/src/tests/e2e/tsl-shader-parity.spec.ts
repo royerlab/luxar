@@ -200,7 +200,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('point: PointMaterial sprite expansion + GOG + Gaussian falloff', async ({ page }) => {
+  test('point: PointMaterial sprite expansion + GOG + super-Gaussian falloff', async ({ page }) => {
     await bootHarness(page);
 
     const glslPixels = await runGLSL(page, 'point');
@@ -224,6 +224,22 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       `Point parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSprite samples:\n${samples}`
     ).toBeLessThan(2.0);
   });
+
+  // The super-Gaussian exponent beta = 2^(6s - 2) drives a per-fragment
+  // pow(rho, beta) + exp(...) chain. Parity must hold across the beta range,
+  // not just the default — soft cusp (s=0.1) and hard edge (s=0.9).
+  for (const variant of ['point-soft', 'point-hard'] as const) {
+    test(`${variant}: super-Gaussian falloff parity across the beta range`, async ({ page }) => {
+      await bootHarness(page);
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      expect(
+        diff,
+        `${variant} parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.`
+      ).toBeLessThan(2.0);
+    });
+  }
 
   test('point-colormap: USE_COLORMAP LUT lookup with gamma applied to the value', async ({
     page,

@@ -543,62 +543,59 @@ describe('Encoded Array Range Extraction', () => {
       expect(actualElementsPerPoint).toBe(1); // Sharpness is scalar
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
-      const decoded = await decoder.decode(array, attrs, 31, rootLoc);
+      const decoded = await decoder.decode(array, attrs, 32, rootLoc);
 
-      expect(decoded.length).toBe(31);
+      expect(decoded.length).toBe(32);
 
-      // Sharpness range should be approximately [1, 31]
-      // (may have quantization error)
+      // Sharpness is a normalized [0, 1] knob (fixture = linspace(0, 1, 32)).
       for (let i = 0; i < decoded.length; i++) {
-        expect(decoded[i]).toBeGreaterThanOrEqual(0.9); // Small tolerance
-        expect(decoded[i]).toBeLessThanOrEqual(31.1);
+        expect(decoded[i]).toBeGreaterThanOrEqual(-0.01); // small quantization tolerance
+        expect(decoded[i]).toBeLessThanOrEqual(1.01);
       }
 
       // Test range extraction
       const ranges: PointRange[] = [
         { start: 0, end: 10 },
-        { start: 20, end: 31 },
+        { start: 20, end: 32 },
       ];
 
       const extracted = extractRangesFromDecoded(decoded, ranges, actualElementsPerPoint);
 
-      expect(extracted.length).toBe(21); // 10 + 11 points
+      expect(extracted.length).toBe(22); // 10 + 12 points
 
       // Verify extracted matches decoded
       for (let i = 0; i < 10; i++) {
         expect(extracted[i]).toBeCloseTo(decoded[i], 4);
       }
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < 12; i++) {
         expect(extracted[10 + i]).toBeCloseTo(decoded[20 + i], 4);
       }
     });
 
-    it('should verify full sharpness range [1, 31] is preserved after decoding', async () => {
+    it('should verify the full sharpness range [0, 1] is preserved after decoding', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
         'sharpness_test/sharpnesses'
       );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
-      const decoded = await decoder.decode(array, attrs, 31, rootLoc);
+      const decoded = await decoder.decode(array, attrs, 32, rootLoc);
 
-      // CRITICAL: This tests the bug fix where TypeScript was using scale factor 15.0
-      // instead of 31.0 (matching Python's SHARPNESS_MAX)
-      // Expected values: [1.0, 2.0, 3.0, ..., 31.0]
-      // Spatial ordering may reorder points, so check sorted values
+      // Sharpness is a normalized [0, 1] knob; fixture = linspace(0, 1, 32).
+      // Spatial ordering may reorder points, so check sorted values.
       const sorted = Array.from(decoded).sort((a, b) => a - b);
 
-      // Smallest value should be close to 1.0
-      expect(sorted[0]).toBeGreaterThanOrEqual(0.5);
-      expect(sorted[0]).toBeLessThanOrEqual(1.5);
+      // Smallest value should be close to 0.0
+      expect(sorted[0]).toBeGreaterThanOrEqual(-0.01);
+      expect(sorted[0]).toBeLessThanOrEqual(0.05);
 
-      // Largest value should be close to 31.0
-      expect(sorted[30]).toBeGreaterThanOrEqual(30.0);
-      expect(sorted[30]).toBeLessThanOrEqual(31.5);
+      // Largest value should be close to 1.0
+      expect(sorted[31]).toBeGreaterThanOrEqual(0.95);
+      expect(sorted[31]).toBeLessThanOrEqual(1.01);
 
-      // Middle value should be close to 16.0
-      expect(sorted[15]).toBeGreaterThanOrEqual(15.0);
-      expect(sorted[15]).toBeLessThanOrEqual(17.0);
+      // Middle value should be near 0.5
+      expect(sorted[16]).toBeGreaterThanOrEqual(0.45);
+      expect(sorted[16]).toBeLessThanOrEqual(0.6);
     });
   });
 

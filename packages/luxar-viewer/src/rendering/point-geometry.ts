@@ -39,10 +39,9 @@ import {
  * `Uint16Array`; the geometry layer widens to `Float32` at pack
  * time (honouring the per-attribute `normalized` flag with the
  * appropriate divisor) so the interleaved storage is uniformly
- * Float32. The per-point material's `radiusScale` / `sharpnessScale`
- * uniforms continue to scale the shader-visible values exactly as
- * before — the widening preserves the [0, 1]-or-raw range that
- * those uniforms expect.
+ * Float32. The per-point material's `radiusScale` uniform continues
+ * to scale the shader-visible radii exactly as before — the widening
+ * preserves the [0, 1]-or-raw range that uniform expects.
  */
 export interface InstancedPointsMeshConfig {
   /**

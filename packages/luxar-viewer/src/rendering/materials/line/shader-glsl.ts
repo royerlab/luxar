@@ -139,7 +139,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         // values don't actually matter, but uninitialised out-vars can
         // trip driver validators on some platforms.
         vColor = vec3(0.0);
-        vSharpness = 2.0;
+        vSharpness = 0.5;
         vWidthAtT = 0.0;
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
@@ -172,10 +172,18 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // space expansion. Sanitize helpers from glsl-lib.
       float startW = sanitizeNonNegative(aStartWidth, 0.0);
       float endW = sanitizeNonNegative(aEndWidth, 0.0);
-      float startS = sanitizePositive(aStartSharpness, 2.0);
-      float endS = sanitizePositive(aEndSharpness, 2.0);
+      // Sharpness is authored in [0, 1] and maps (in the fragment) to the
+      // super-Gaussian exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a true
+      // Gaussian, the default). sanitizeNonNegative keeps a valid s=0
+      // (-> beta=0.25) and routes NaN/Inf/negative to the 0.5 default;
+      // clamp guards the [0, 1] range. (NOT sanitizePositive — that would
+      // wrongly reject s=0.)
+      float startS = clamp(sanitizeNonNegative(aStartSharpness, 0.5), 0.0, 1.0);
+      float endS = clamp(sanitizeNonNegative(aEndSharpness, 0.5), 0.0, 1.0);
 
       float width = mix(startW, endW, t);
+      // Pass the interpolated [0, 1] sharpness KNOB to the fragment; beta is
+      // computed there from the interpolated value.
       vSharpness = mix(startS, endS, t);
       vWidthAtT = width;
 
@@ -272,7 +280,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 /**
  * Fragment shader for standard line rendering.
  *
- * Computes parabolic falloff from semicircle kernel convolution plus
+ * Computes the shifted-truncated super-Gaussian perpendicular
+ * cross-section (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) plus
  * fragment-side cap factor so the segment body reaches the documented
  * full intensity. The picking system uses a different fragment shader
  * (see picking/line-picking-material.ts).
@@ -305,18 +314,19 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Discard pixels clearly outside the line width
       if (p >= 1.0) discard;
 
-      // Parabolic falloff from semicircle kernel convolution
-      // Base: (1 - p²) where p = distance from centerline
-      // With per-vertex sharpness: (1 - p²)^sharpness
-      // Sharpness fast path: LUXAR_SHARPNESS_TWO is stamped by the
-      // wrapper when the bound geometry's per-vertex sharpness is all
-      // 2.0 (the default), replacing the pow() with x*x.
-      float oneMinusPSq = max(1.0 - p * p, 0.0);
-      #ifdef LUXAR_SHARPNESS_TWO
-      float perpFalloff = oneMinusPSq * oneMinusPSq;
-      #else
-      float perpFalloff = pow(oneMinusPSq, max(vSharpness, 0.0001));
-      #endif
+      // Shifted-truncated super-Gaussian perpendicular cross-section:
+      //   perpFalloff(p) = max(exp(-K * p^beta) - C, 0) / (1 - C)
+      // where p = distance from centerline in [0, 1] and the per-vertex
+      // sharpness KNOB s in [0, 1] maps to beta = 2^(6s - 2): s=0.5 ->
+      // beta=2 (a truncated Gaussian, the default), s=1 -> beta=16 (hard
+      // edge), s=0 -> beta=0.25 (cusp). Shifted by C and renormalised so
+      // perpFalloff(0)=1 and perpFalloff(1)=0 (C0-continuous truncation at
+      // the line edge, no hard ring). K = ln(1/floor), floor = 0.01.
+      const float K = 4.6051702;          // ln(100)
+      const float C = 0.01;               // exp(-K) = floor
+      const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
+      float beta = exp2(6.0 * vSharpness - 2.0);
+      float perpFalloff = max(exp(-K * pow(p, beta)) - C, 0.0) * INV_ONE_MINUS_C;
 
       // Anti-aliasing: smooth falloff at edges
       // The AA region is ~1 pixel wide in the rendered quad

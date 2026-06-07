@@ -54,7 +54,7 @@ MaterialManager (class)
   `{opacity, gamma, intensity, offset}` quartet through the same
   internal `getCommonMaterialBuckets` so the four ranges and rounding
   rules stay in sync. Kind-specific extras (`radiusScale`,
-  `sharpnessScale`, `truncationRadius`) and the `transparent` bit
+  `truncationRadius`) and the `transparent` bit
   (derived from `blendingMode !== 'opaque'`) are appended per kind.
 - **LRU = `Map` insertion order.** `lruGet` promotes by delete +
   re-insert; `lruSet` evicts from `cache.keys().next().value` until

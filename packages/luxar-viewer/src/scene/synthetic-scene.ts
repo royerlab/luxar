@@ -55,8 +55,8 @@ function mulberry32(seed: number): () => number {
 /**
  * Generate a line-segments scene of the requested size. Segments form
  * a random walk through a cube of side `2 * bounds`, with per-segment
- * widths and sharpness at the dataset defaults (1.0 and 2.0) so the
- * existing `LUXAR_SHARPNESS_TWO` fast path applies.
+ * widths and sharpness at the dataset defaults (1.0 and 0.5; the
+ * normalized sharpness knob's Gaussian midpoint, beta = 2).
  *
  * Memory cost — these are *source* arrays only; the actual peak
  * during a `?renderer=…` bench run is higher because
@@ -139,10 +139,10 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
 
     startWidths[i] = 1.0;
     endWidths[i] = 1.0;
-    // Default 2.0 so the sharpness fast path lights up — most
-    // realistic for production-default datasets.
-    startSharpness[i] = 2.0;
-    endSharpness[i] = 2.0;
+    // Default 0.5 — the normalized sharpness knob's Gaussian midpoint
+    // (beta = 2^(6·0.5 − 2) = 2), the production-default dataset value.
+    startSharpness[i] = 0.5;
+    endSharpness[i] = 0.5;
 
     const dx = endPositions[i3] - startPositions[i3];
     const dy = endPositions[i3 + 1] - startPositions[i3 + 1];

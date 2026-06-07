@@ -217,7 +217,9 @@ export async function processGSplatsData(
     // Non-worker path (useWebWorkers off, small, or 3D-only data): run
     // the same dispatcher in-process. The standard-3D fast path inside
     // the dispatcher handles the ndim===3 case efficiently.
-    return toProcessed(await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)));
+    return toProcessed(
+      await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate))
+    );
   };
 
   if (session) {

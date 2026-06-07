@@ -581,7 +581,7 @@ def generate_protein_landscape(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
-            sharpness = np.full(n_proteins, 3.0, dtype=np.float32)
+            sharpness = np.full(n_proteins, 0.55, dtype=np.float32)
 
             # Hover labels: function category for each protein
             protein_labels = [f"{functions[i]}" for i in range(n_proteins)]

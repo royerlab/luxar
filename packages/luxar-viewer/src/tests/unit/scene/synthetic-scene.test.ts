@@ -42,13 +42,13 @@ describe('generateSyntheticLines', () => {
       expect(result.endClipped.length).toBe(50);
     });
 
-    it('produces widths=1.0 and sharpness=2.0 for every segment endpoint (LUXAR_SHARPNESS_TWO fast path)', () => {
+    it('produces widths=1.0 and sharpness=0.5 (the [0,1] knob Gaussian midpoint, beta=2) for every endpoint', () => {
       const result = generateSyntheticLines({ type: 'lines', count: 20, seed: 7 });
       for (let i = 0; i < result.segmentCount; i++) {
         expect(result.startWidths[i]).toBe(1.0);
         expect(result.endWidths[i]).toBe(1.0);
-        expect(result.startSharpness[i]).toBe(2.0);
-        expect(result.endSharpness[i]).toBe(2.0);
+        expect(result.startSharpness[i]).toBe(0.5);
+        expect(result.endSharpness[i]).toBe(0.5);
       }
     });
 

@@ -245,8 +245,8 @@ def generate_bell_points(
             point_radius = 0.08 * jelly.size * (0.5 + 0.5 * ring_frac)
             radii.append(point_radius)
 
-            # Softer/glowier appearance
-            sharpness.append(0.8 + 0.4 * rng.random())
+            # Softer/glowier appearance (normalized [0, 1] knob)
+            sharpness.append(0.3 + 0.2 * rng.random())
 
     # Add central glow points (bioluminescent organs)
     n_glow = 8
@@ -367,7 +367,7 @@ def generate_tentacles(
             color = jelly.palette["tentacle"] * fade
             all_colors.extend([color, color * 0.98])
 
-            all_sharpness.extend([1.2, 1.2])
+            all_sharpness.extend([0.5, 0.5])
 
     return (
         np.array(all_vertices, dtype=np.float32),

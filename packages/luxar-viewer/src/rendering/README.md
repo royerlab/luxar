@@ -216,7 +216,7 @@ Specialized shader material for thick lines using instanced quad geometry.
 
 **Key Features:**
 
-- **Semicircle Kernel Model**: Parabolic intensity falloff (1 - p²)^sharpness
+- **Super-Gaussian Kernel**: shifted-truncated super-Gaussian perpendicular falloff `max(exp(−K·p^β) − C, 0)/(1 − C)` (K=ln(100)≈4.605, C=0.01); sharpness is a normalised `[0, 1]` knob mapping to `β = 2^(6s − 2)` (s=0.5 → β=2 Gaussian, the default)
 - **Seamless Joints**: Cap factor calculation ensures correct additive blending at joints
 - **World-Space Width**: Lines have consistent thickness regardless of distance
 - **nD Clipping**: Clipped endpoints use full intensity for correct visual appearance

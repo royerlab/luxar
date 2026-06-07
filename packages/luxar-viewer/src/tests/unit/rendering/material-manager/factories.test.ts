@@ -117,19 +117,16 @@ describe('pointCacheKey', () => {
     expect(pointCacheKey({ ...basePoint, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0$/);
   });
 
-  it('encodes radiusScale and sharpnessScale into bucket suffixes (default = 1000)', () => {
+  it('encodes radiusScale into a bucket suffix (default = 1000)', () => {
     const def = pointCacheKey(basePoint, 'glsl');
-    expect(def).toMatch(/_r1000_s1000_/);
-    const scaled = pointCacheKey({ ...basePoint, radiusScale: 0.5, sharpnessScale: 2.0 }, 'glsl');
-    expect(scaled).toMatch(/_r500_s2000_/);
+    expect(def).toMatch(/_r1000_/);
+    const scaled = pointCacheKey({ ...basePoint, radiusScale: 0.5 }, 'glsl');
+    expect(scaled).toMatch(/_r500_/);
   });
 
-  it('clamps negative radiusScale / sharpnessScale to zero (Math.max(0, ...))', () => {
-    const negative = pointCacheKey(
-      { ...basePoint, radiusScale: -2.5, sharpnessScale: -1.0 },
-      'glsl'
-    );
-    expect(negative).toMatch(/_r0_s0_/);
+  it('clamps negative radiusScale to zero (Math.max(0, ...))', () => {
+    const negative = pointCacheKey({ ...basePoint, radiusScale: -2.5 }, 'glsl');
+    expect(negative).toMatch(/_r0_/);
   });
 });
 

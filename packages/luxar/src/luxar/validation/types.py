@@ -25,6 +25,8 @@ from ..typing_utils.constants import (
     OFFSET_MIN,
     OPACITY_MAX,
     OPACITY_MIN,
+    SHARPNESS_MAX,
+    SHARPNESS_MIN,
 )
 from ..typing_utils.enums import BlendingMode, NodeType, PhysicalUnit
 
@@ -121,12 +123,12 @@ def validate_sharpness(
 ) -> np.ndarray[Any, np.dtype[np.float32]]:
     """Validate and convert sharpness array to correct type.
 
-    Sharpness controls the falloff profile of points, from soft (low values)
-    to sharp (high values). Must be positive float32 values with shape (N,)
-    where N is the number of points. The full allowed range is
-    (SHARPNESS_MIN, SHARPNESS_MAX] and is enforced by
-    ``base.validate_sharpness_for_writing``; this basic validator only
-    requires values to be positive.
+    Sharpness is a normalised [0, 1] knob mapped in the viewer to the
+    super-Gaussian falloff exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a true
+    Gaussian), higher s -> harder/crisper edge, lower s -> peakier cusp. Must be
+    float32 values in [SHARPNESS_MIN, SHARPNESS_MAX] = [0, 1] with shape (N,)
+    where N is the number of points. The full range is also enforced by
+    ``base.validate_sharpness_for_writing``.
 
     Args:
         sharpness: Input sharpness array to validate
@@ -151,11 +153,12 @@ def validate_sharpness(
             f"Expected {n_points} elements or 1 (broadcast), got {sharpness.shape[0]}"
         )
 
-    if np.any(sharpness <= 0):
-        raise ValueError("All sharpness values must be positive")
-
-    # Valid sharpness range is (0, 31] enforced by base.validate_sharpness_for_writing().
-    # Basic validation here only checks positivity (> 0) for type guards and runtime checks.
+    # Sharpness is a normalised [0, 1] knob. The full range is also enforced by
+    # base.validate_sharpness_for_writing().
+    if np.any(sharpness < SHARPNESS_MIN) or np.any(sharpness > SHARPNESS_MAX):
+        raise ValueError(
+            f"All sharpness values must be in [{SHARPNESS_MIN}, {SHARPNESS_MAX}]"
+        )
 
     return sharpness.astype(np.float32, copy=False)
 

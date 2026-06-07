@@ -165,7 +165,16 @@ describe('projectPointsTo3D — corner cases', () => {
       slicePosition: [0, 0, 0, 0, 0],
       tolerance: [0, 0, 0, 0, 0],
     };
-    const result = projectPointsTo3D(wasm, positions, null, null, null, viewState, ranges, makeContext());
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      viewState,
+      ranges,
+      makeContext()
+    );
     expect(result.pointCount).toBe(1);
     expect(result.positions.length).toBe(3);
     // displayDims=[1,3,0] picks values [20, 40, 10] from the source point.
@@ -199,7 +208,16 @@ describe('projectPointsTo3D — corner cases', () => {
       slicePosition: [0, 0, 0, 0],
       tolerance: [0, 0, 0, 0],
     };
-    const result = projectPointsTo3D(wasm, positions, null, null, null, viewState, ranges, makeContext());
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      viewState,
+      ranges,
+      makeContext()
+    );
     expect(result.pointCount).toBe(2);
     expect(Array.from(result.positions)).toEqual([30, 0, 0, 70, 0, 0]);
   });

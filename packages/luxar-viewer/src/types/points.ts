@@ -169,9 +169,6 @@ export interface PointsMetadata {
   /** Maximum point radius in world units */
   max_radius?: number;
 
-  /** Maximum sharpness value (used to scale Uint8-quantised sharpness arrays back to [0, max_sharpness]). Default 31.0. */
-  max_sharpness?: number;
-
   /** Whether colors array is present */
   has_colors?: boolean;
 

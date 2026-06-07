@@ -170,7 +170,7 @@ def main():
         colors = create_4d_rainbow_colors(positions)
 
         # Create sharpness array (high sharpness for crisp points)
-        sharpness = np.full(len(positions), 10.0, dtype=np.float32)
+        sharpness = np.full(len(positions), 0.9, dtype=np.float32)
 
         # Add points to scene
         aprint(f"├ Adding points node with {len(positions)} points in 4D space")

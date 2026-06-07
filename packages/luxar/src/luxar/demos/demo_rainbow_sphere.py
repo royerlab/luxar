@@ -39,7 +39,7 @@ def generate_rainbow_sphere(
     output_path: Path,
     n_points: int = 200000,
     sphere_radius: float = 10.0,
-    sharpness: float = 8.0,
+    sharpness: float = 0.85,
 ) -> None:
     """Generate a dense sphere with rainbow colors along a spiral.
 

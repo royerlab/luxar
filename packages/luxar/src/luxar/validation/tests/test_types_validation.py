@@ -524,7 +524,7 @@ class TestSharpnessValidation:
     def test_valid_sharpness(self) -> None:
         """Test that valid sharpness values are accepted."""
         n_points = 10
-        sharpness = np.ones(n_points, dtype=np.float32) * 2.0
+        sharpness = np.ones(n_points, dtype=np.float32) * 0.5
         result = validate_sharpness(sharpness, n_points)
         assert result.shape == (n_points,)
         assert result.dtype == np.float32
@@ -534,44 +534,35 @@ class TestSharpnessValidation:
         """Test that sharpness values are converted to float32."""
         n_points = 5
         # float64 to float32
-        sharpness_f64 = np.ones(n_points, dtype=np.float64) * 1.5
+        sharpness_f64 = np.ones(n_points, dtype=np.float64) * 0.6
         result = validate_sharpness(sharpness_f64, n_points)
         assert result.dtype == np.float32
 
-        # int to float32
-        sharpness_int = np.array([1, 2, 3, 2, 1], dtype=np.int32)
+        # int to float32 (all in [0, 1])
+        sharpness_int = np.array([0, 1, 1, 0, 1], dtype=np.int32)
         result = validate_sharpness(sharpness_int, n_points)
         assert result.dtype == np.float32
 
     def test_sharpness_typical_range(self) -> None:
-        """Test sharpness in typical range [0.5, 10.0] passes without warning."""
+        """Test sharpness across the full normalized [0, 1] range is accepted."""
         n_points = 5
-        sharpness = np.array([0.5, 1.0, 5.0, 8.0, 10.0], dtype=np.float32)
-        # Should not raise warning
+        sharpness = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float32)
         result = validate_sharpness(sharpness, n_points)
         assert result.shape == (n_points,)
 
-    def test_sharpness_out_of_range_no_warning(self) -> None:
-        """Test that values outside the old typical range are accepted without warning.
-
-        Basic validation only checks positivity. Full range [0, 31] enforced by base.py.
-        """
+    def test_sharpness_out_of_range_rejected(self) -> None:
+        """Sharpness outside the normalized [0, 1] range raises ValueError."""
         n_points = 3
 
-        # Very low values - should be accepted without warning
-        sharpness_low = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-        result = validate_sharpness(sharpness_low, n_points)
-        assert result.shape == (3,)
+        # Below the minimum -> rejected
+        sharpness_low = np.array([-0.1, 0.2, 0.3], dtype=np.float32)
+        with pytest.raises(ValueError, match="must be in"):
+            validate_sharpness(sharpness_low, n_points)
 
-        # Very high values - should be accepted without warning
-        sharpness_high = np.array([15.0, 20.0, 30.0], dtype=np.float32)
-        result = validate_sharpness(sharpness_high, n_points)
-        assert result.shape == (3,)
-
-        # Mixed - no warning
-        sharpness_mixed = np.array([0.3, 5.0, 15.0], dtype=np.float32)
-        result = validate_sharpness(sharpness_mixed, n_points)
-        assert result.shape == (3,)
+        # Above the maximum -> rejected
+        sharpness_high = np.array([0.5, 2.0, 30.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="must be in"):
+            validate_sharpness(sharpness_high, n_points)
 
     def test_sharpness_not_numpy_array(self) -> None:
         """Test that non-numpy array raises ValueError."""
@@ -605,26 +596,26 @@ class TestSharpnessValidation:
 
     def test_sharpness_broadcast_single_value(self) -> None:
         """Test that single-element sharpness array is accepted (broadcast support)."""
-        sharpness = np.array([2.0], dtype=np.float32)
+        sharpness = np.array([0.6], dtype=np.float32)
         n_points = 100
         result = validate_sharpness(sharpness, n_points)
         assert result.shape == (1,)
-        assert result[0] == 2.0
+        assert result[0] == 0.6
         assert result.dtype == np.float32
 
     def test_sharpness_negative_values(self) -> None:
         """Test that negative sharpness values raise ValueError."""
         n_points = 5
-        sharpness_negative = np.array([1.0, 2.0, -0.5, 1.0, 1.0], dtype=np.float32)
-        with pytest.raises(ValueError, match="All sharpness values must be positive"):
+        sharpness_negative = np.array([0.5, 0.8, -0.5, 0.5, 0.5], dtype=np.float32)
+        with pytest.raises(ValueError, match="must be in"):
             validate_sharpness(sharpness_negative, n_points)
 
     def test_sharpness_zero_values(self) -> None:
-        """Test that zero sharpness values raise ValueError."""
+        """Test that zero sharpness (the lower bound) is accepted."""
         n_points = 3
         sharpness_with_zero = np.array([1.0, 0.0, 1.0], dtype=np.float32)
-        with pytest.raises(ValueError, match="All sharpness values must be positive"):
-            validate_sharpness(sharpness_with_zero, n_points)
+        result = validate_sharpness(sharpness_with_zero, n_points)
+        assert result.shape == (n_points,)
 
 
 class TestTypeGuards:

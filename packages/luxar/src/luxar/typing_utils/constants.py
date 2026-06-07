@@ -30,10 +30,13 @@ DEFAULT_OFFSET: Final[float] = 0.0
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
-# Sharpness constants
-SHARPNESS_MIN: Final[float] = 0.001  # Practical minimum (values must be > 0)
-SHARPNESS_MAX: Final[float] = 31.0  # Maximum allowed value
-SHARPNESS_DEFAULT: Final[float] = 2.0
+# Sharpness constants.
+# Sharpness is a normalised [0, 1] knob mapped in the viewer to the
+# super-Gaussian falloff exponent beta = 2^(6s - 2): s=0.5 -> beta=2 (a true
+# Gaussian), higher s -> harder/crisper edge, lower s -> peakier cusp.
+SHARPNESS_MIN: Final[float] = 0.0  # Normalised range floor
+SHARPNESS_MAX: Final[float] = 1.0  # Normalised range ceiling
+SHARPNESS_DEFAULT: Final[float] = 0.5  # -> beta = 2 (Gaussian)
 
 # HDR color constants
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum

@@ -73,7 +73,7 @@ class ZarrWriterProtocol(Protocol):
         Scalar Convenience (v1.4.0): Optional attributes accept scalars:
         - radii=0.5 instead of np.full(N, 0.5)
         - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
-        - sharpness=2.0 instead of np.full(N, 2.0)
+        - sharpness=0.5 instead of np.full(N, 0.5)
 
         Args:
             path: Path within the Zarr store for this points
@@ -118,7 +118,7 @@ class ZarrWriterProtocol(Protocol):
         Scalar Convenience (v1.4.0): Uniform attributes accept scalars:
         - widths=0.1 instead of np.full(N, 0.1)
         - colors=(1.0, 0, 0) instead of np.full((N, 3), [1,0,0])
-        - sharpness=2.0 instead of np.full(N, 2.0)
+        - sharpness=0.5 instead of np.full(N, 0.5)
 
         Args:
             path: Path within the Zarr store for this lines node

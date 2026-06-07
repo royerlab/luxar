@@ -242,11 +242,19 @@ const CONST_SHADER: ShaderSource = {
  * One point at world origin with realistic attributes; 4-vertex quad
  * base + InstancedBufferAttribute per-instance data (aCenter etc.).
  */
-function buildPointInstancedMesh(material: THREE.Material): THREE.Object3D {
+function buildPointInstancedMesh(
+  material: THREE.Material,
+  sharpness: number = 0.5
+): THREE.Object3D {
+  // sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
+  // beta = 2^(6s - 2). Default 0.5 -> beta=2 (a true Gaussian).
   const geom = createPointQuadGeometry();
   geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
   geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
-  geom.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1));
+  geom.setAttribute(
+    'aSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([sharpness]), 1)
+  );
   geom.setAttribute(
     'aColor',
     new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
@@ -288,13 +296,15 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
   );
   geom.setAttribute('aStartWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
   geom.setAttribute('aEndWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
+  // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
+  // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
   geom.setAttribute(
     'aStartSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
   );
   geom.setAttribute(
     'aEndSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+    new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
   );
   geom.setAttribute(
     'aSegmentLength',
@@ -470,16 +480,16 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) =>
       megaWebGPUFactory(uniforms, { toneMappingMode: 4 }) as unknown as THREE.Material,
   },
-  // Point parity: full PointMaterial sprite + GOG + Gaussian falloff.
+  // Point parity: full PointMaterial sprite + GOG + super-Gaussian falloff.
   // Uniforms mirror the production PointMaterial constructor; ortho mode
   // keeps `invDistance = 1` so the test is deterministic across cameras.
+  // The default mesh sharpness is 0.5 -> beta=2 (a true Gaussian).
   point: {
     source: POINT_SOURCE,
     buildUniforms: () => ({
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      sharpnessScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       opacity: { value: 1.0 },
@@ -499,6 +509,52 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildPointInstancedMesh,
   },
+  // Super-Gaussian exponent sweep: the GLSL `pow(rho, beta)` / `exp(...)`
+  // falloff must match TSL across the beta range, not just at the default.
+  // `point-soft` exercises a peaky cusp (s=0.1 -> beta≈0.36); `point-hard`
+  // a near-flat-top hard edge (s=0.9 -> beta≈12.1).
+  'point-soft': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.1),
+  },
+  'point-hard': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.9),
+  },
   // Point with the gamma==1 fast path enabled. Same geometry as `point`
   // but invGamma=1 + `gammaOne: true`, so the fragment-stage color pow()
   // is replaced with an identity. The GLSL counterpart defines
@@ -509,7 +565,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      sharpnessScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       opacity: { value: 1.0 },
@@ -536,7 +591,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      sharpnessScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
       opacity: { value: 1.0 },
@@ -611,37 +665,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         gammaOne: true,
-        isOrtho: true,
-      }) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: buildLineInstancedMesh,
-  },
-  // Line with the sharpness == 2 fast path. The factory uses
-  // `sharpnessTwo: true` so the fragment shader's
-  // `pow(x, max(vSharpness, 0.0001))` is replaced by `x * x`. The GLSL
-  // counterpart defines `LUXAR_SHARPNESS_TWO`.
-  'line-sharpness-two': {
-    source: LINE_SOURCE,
-    buildUniforms: () => ({
-      uFOV: { value: 2.0 },
-      uResolution: { value: new THREE.Vector2(64, 64) },
-      uIsOrtho: { value: 1 },
-      uNearCull: { value: 0.01 },
-      uMaxLinePixelWidth: { value: 32.0 },
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 64.0 },
-      uOpacity: { value: 1.0 },
-      uInvGamma: { value: 1.0 / 2.2 },
-      uIntensity: { value: 1.0 },
-      uOffset: { value: 0.0 },
-    }),
-    buildDefines: () => ({ LUXAR_SHARPNESS_TWO: '' }),
-    buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
-        sharpnessTwo: true,
         isOrtho: true,
       }) as unknown as THREE.Material;
       m.transparent = false;
@@ -878,7 +901,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       pointSizeFactor: { value: 32.0 },
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
-      sharpnessScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uNodeId: { value: 42 },
       uResolution: { value: new THREE.Vector2(64, 64) },

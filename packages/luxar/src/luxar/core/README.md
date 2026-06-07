@@ -366,9 +366,10 @@ Each splat is defined by:
 - Center position: μ ∈ ℝᴰ
 - Cholesky factor: L (lower triangular)
 - Amplitude: α (intensity/weight)
-- Sharpness: β (generalized Gaussian exponent, default 2.0)
+- Sharpness: normalized `[0, 1]` knob mapping to the generalized-Gaussian
+  exponent `β = 2^(6s − 2)` (default `s = 0.5 → β = 2`, a true Gaussian)
 
-The splat function: `f(x) = α * exp(-||L(x - μ)||^β)`
+The splat function: `f(x) = α * exp(-||L(x - μ)||^β)`, with `β = 2^(6s − 2)`
 
 **Usage Example:**
 ```python
@@ -383,7 +384,7 @@ cholesky = np.random.randn(n_splats, 6).astype(np.float32)
 
 # Optional: colors and sharpness
 colors = np.random.rand(n_splats, 3).astype(np.float32)
-sharpness = np.full(n_splats, 2.0)  # Standard Gaussian
+sharpness = np.full(n_splats, 0.5)  # Standard Gaussian (normalized [0, 1] knob)
 
 splats = scene.add_gsplats('gaussians',
                           centers=centers,
@@ -413,7 +414,7 @@ print(f"Center bounds: {splats.center_bounds}")
 - `amplitudes` - Shape (N,) intensities (or scalar broadcast)
 - `cholesky_factors` - Shape (N, k) where k=D*(D+1)/2 (packed lower triangle)
 - `colors` - Shape (N, 3) splat colors (optional)
-- `sharpness` - Shape (N,) generalized Gaussian exponent (optional, default 2.0)
+- `sharpness` - Shape (N,) normalized [0, 1] edge knob mapping to super-Gaussian exponent beta=2^(6s-2) (optional, default 0.5 = Gaussian)
 
 **Convenience Methods for GSplats:**
 

@@ -598,45 +598,40 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
   });
 
   describe('Sharpness Range Test', () => {
-    it('should decode sharpness with the Python SHARPNESS_MAX bound', async () => {
-      // Python writes SHARPNESS_MAX = 31.0 as quantization metadata.
-      // TypeScript must decode using the stored metadata, not hard-coded scale factors.
+    it('should decode sharpness across the normalized [0, 1] knob range', async () => {
+      // Sharpness is a normalized [0, 1] knob (Python SHARPNESS_MAX = 1.0).
+      // TypeScript must decode using the stored metadata bounds, not a hard-coded scale.
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
         'sharpness_test/sharpnesses'
       );
 
-      // Verify metadata indicates uint8 quantization with min/max [0, 31]
+      // Verify metadata indicates uint8 quantization with min/max [0, 1]
       expect(attrs.encoding?.name).toBe('bounded_scalar_uint8');
       expect((attrs.encoding as any)?.min).toBe(0.0);
-      expect((attrs.encoding as any)?.max).toBe(31.0);
+      expect((attrs.encoding as any)?.max).toBe(1.0);
       expect(ArrayDecoder.isEncoded(attrs)).toBe(true);
 
-      // Decode
+      // Decode — fixture is 32 points sampling linspace(0, 1, 32).
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
-      const decoded = await decoder.decode(array, attrs, 31);
+      const decoded = await decoder.decode(array, attrs, 32);
 
-      // Verify shape: 31 sharpness values
-      expect(decoded.length).toBe(31);
+      // Verify shape: 32 sharpness values
+      expect(decoded.length).toBe(32);
 
-      // Verify sharpness values contain all integers [1.0, 2.0, ..., 31.0]
-      // Spatial ordering may reorder points, so check sorted values
-      // uint8 with range [0, 31] has step size 31/255 ≈ 0.1216
+      // Verify the decoded values reproduce linspace(0, 1, 32).
+      // Spatial ordering may reorder points, so check sorted values.
+      // uint8 with range [0, 1] has step size 1/255 ≈ 0.0039.
       const sorted = Array.from(decoded).sort((a, b) => a - b);
-      for (let i = 0; i < 31; i++) {
-        const expected = i + 1; // [1, 2, 3, ..., 31]
-        expect(sorted[i]).toBeCloseTo(expected, 0); // Tolerance: ±0.5 (1 decimal place)
+      for (let i = 0; i < 32; i++) {
+        const expected = i / 31; // [0, 1/31, ..., 1.0]
+        expect(sorted[i]).toBeCloseTo(expected, 2); // within uint8 step (~0.004)
       }
 
-      // Verify high sharpness values reach the encoded metadata range.
-      const maxSharpness = Math.max(...Array.from(decoded));
-      expect(maxSharpness).toBeGreaterThan(29.0); // Must be close to 31.0
-      expect(maxSharpness).toBeCloseTo(31.0, 1);
-
-      // Verify minimum sharpness
-      const minSharpness = Math.min(...Array.from(decoded));
-      expect(minSharpness).toBeCloseTo(1.0, 1);
+      // Endpoints reach the encoded [0, 1] bounds.
+      expect(Math.max(...Array.from(decoded))).toBeCloseTo(1.0, 2);
+      expect(Math.min(...Array.from(decoded))).toBeCloseTo(0.0, 2);
     });
 
     it('should decode uint16 bounded_scalar using the zarr storage dtype', async () => {
@@ -1088,9 +1083,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(rgbMeta!.bounds).toEqual([0, 1]);
       expect(rgbMeta!.isLogSpace).toBe(false);
 
-      // Bounded scalar metadata
+      // Bounded scalar metadata — sharpness is a normalized [0, 1] knob.
       expect(boundedMeta).not.toBeNull();
-      expect(boundedMeta!.bounds).toEqual([0, 31]);
+      expect(boundedMeta!.bounds).toEqual([0, 1]);
       expect(boundedMeta!.isLogSpace).toBe(false);
     });
 

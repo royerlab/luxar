@@ -660,7 +660,7 @@ def write_laniakea_scene(
                 galaxies.positions,
                 colors=galaxies.colors,
                 radii=galaxies.radii * preset.point_radius,
-                sharpness=2.0,
+                sharpness=0.5,
                 opacity=0.55,
                 intensity=0.45,
                 blending_mode="additive",

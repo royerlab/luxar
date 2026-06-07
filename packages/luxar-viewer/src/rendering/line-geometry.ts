@@ -104,25 +104,6 @@ export interface InstancedLinesMeshConfig {
 }
 
 /**
- * Scan the per-vertex sharpness arrays once and return true iff every
- * value is within `±1e-4` of 2.0 (the dataset default). Used by the
- * line node-factory to decide whether to stamp the
- * `LUXAR_SHARPNESS_TWO` fragment-stage fast-path define on the
- * material — replacing `pow(x, vSharpness)` with `x * x`.
- *
- * O(N) over the segment count; runs once at upload time.
- */
-export function isAllSharpnessTwo(meshConfig: InstancedLinesMeshConfig): boolean {
-  const eps = 1e-4;
-  const { startSharpness, endSharpness, segmentCount } = meshConfig;
-  for (let i = 0; i < segmentCount; i++) {
-    if (Math.abs(startSharpness[i] - 2.0) > eps) return false;
-    if (Math.abs(endSharpness[i] - 2.0) > eps) return false;
-  }
-  return true;
-}
-
-/**
  * Build the per-instance attribute specs in canonical declaration
  * order. The line shader reads via `attribute('aStartPos', 'vec3')`
  * etc., so layout order within the buffer doesn't affect the shader,

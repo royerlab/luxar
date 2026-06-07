@@ -449,9 +449,9 @@ class TestGSplatsWithoutSharpness:
 
         sig = inspect.signature(Group.add_gsplats)
         params = list(sig.parameters.keys())
-        assert "sharpness" not in params, (
-            f"sharpness should not be in add_gsplats params: {params}"
-        )
+        assert (
+            "sharpness" not in params
+        ), f"sharpness should not be in add_gsplats params: {params}"
 
     def test_points_still_have_sharpness(self, tmp_path):
         """Points should still support the sharpness parameter."""
@@ -464,13 +464,13 @@ class TestGSplatsWithoutSharpness:
                 "pts",
                 positions=np.array([[1, 2, 3]], dtype=np.float32),
                 radii=np.array([0.5], dtype=np.float32),
-                sharpness=np.array([3.0], dtype=np.float32),
+                sharpness=np.array([0.55], dtype=np.float32),
             )
 
         s = LuxarScene.load(path)
         data = s.get_points("pts")
         assert data["sharpness"] is not None
-        np.testing.assert_allclose(data["sharpness"], [3.0])
+        np.testing.assert_allclose(data["sharpness"], [0.55], atol=1.0 / 255)
 
     def test_lines_still_have_sharpness(self, tmp_path):
         """Lines should still support the sharpness parameter."""
@@ -483,7 +483,7 @@ class TestGSplatsWithoutSharpness:
                 "ln",
                 vertices=np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32),
                 widths=np.array([0.1, 0.1], dtype=np.float32),
-                sharpness=np.array([1.5, 1.5], dtype=np.float32),
+                sharpness=np.array([0.5, 0.5], dtype=np.float32),
             )
 
         s = LuxarScene.load(path)

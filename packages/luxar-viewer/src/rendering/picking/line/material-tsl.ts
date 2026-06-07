@@ -73,39 +73,12 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   }
 
   /**
-   * Build the per-rebuild factory config from current defines + uniforms.
-   *
-   * Use existence (`'KEY' in this.defines`) instead of truthiness for
-   * the `LUXAR_SHARPNESS_TWO` flag — the define is stored as an empty
-   * string (matching the GLSL3 `#define` shape), which is falsey, so
-   * a truthy check would always disable the fast path. Mirrors the
-   * visual `LineTSLMaterial._currentConfig` pattern.
+   * Build the per-rebuild factory config from current uniforms.
    */
-  private _currentConfig(): { sharpnessTwo: boolean; isOrtho: boolean } {
+  private _currentConfig(): { isOrtho: boolean } {
     return {
-      sharpnessTwo: !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines,
       isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
     };
-  }
-
-  /**
-   * Toggle the sharpness-fast-path define + rebuild the TSL graph.
-   * Called by the line node-factory after it inspects the per-vertex
-   * sharpness arrays at upload time.
-   */
-  setSharpnessAllTwo(active: boolean): void {
-    if (!this.defines) this.defines = {};
-    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
-    if (active && !had) {
-      this.defines.LUXAR_SHARPNESS_TWO = '';
-    } else if (!active && had) {
-      delete this.defines.LUXAR_SHARPNESS_TWO;
-    } else {
-      return;
-    }
-    // Rebuild graph so the factory picks up the new flag.
-    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
-    this.needsUpdate = true;
   }
 
   updateCameraParams(

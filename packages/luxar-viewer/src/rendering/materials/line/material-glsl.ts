@@ -315,24 +315,6 @@ export class LineMaterial
   }
 
   /**
-   * Toggle the sharpness-fast-path define. Triggers a shader rebuild
-   * so the `LUXAR_SHARPNESS_TWO` `#ifdef` block is recompiled. Called
-   * by the line node-factory after inspecting the per-vertex sharpness
-   * arrays at upload time.
-   */
-  setSharpnessAllTwo(active: boolean): void {
-    if (!this.defines) this.defines = {};
-    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
-    if (active && !had) {
-      this.defines.LUXAR_SHARPNESS_TWO = '';
-      this.needsUpdate = true;
-    } else if (!active && had) {
-      delete this.defines.LUXAR_SHARPNESS_TWO;
-      this.needsUpdate = true;
-    }
-  }
-
-  /**
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
@@ -382,15 +364,6 @@ export class LineMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-
-    // Preserve post-construction fast-path defines. The constructor
-    // doesn't know about these (they're set by the node-factory after
-    // it inspects the geometry's per-vertex sharpness arrays), so a
-    // bare clone reverts to the slow `pow()` path. Re-set via the
-    // public method so `needsUpdate` is bumped on the clone.
-    if (this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines) {
-      cloned.setSharpnessAllTwo(true);
-    }
 
     return cloned as this;
   }

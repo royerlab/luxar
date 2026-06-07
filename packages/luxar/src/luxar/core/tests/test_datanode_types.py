@@ -209,7 +209,7 @@ class TestLinesNode:
         """Test lines with per-vertex sharpness."""
         vertices = np.array([[0, 0], [1, 0]], dtype=np.float32)
         widths = np.array([0.1, 0.2], dtype=np.float32)
-        sharpness = np.array([1.0, 5.0], dtype=np.float32)
+        sharpness = np.array([0.3, 0.8], dtype=np.float32)
 
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_2d())

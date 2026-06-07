@@ -58,7 +58,6 @@ from ._compiler.dataset_writers.scalars import (
     write_positive_scalar,
     write_radii,
     write_scalars,
-    write_sharpness,
 )
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
@@ -366,7 +365,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Scalar convenience: radii, sharpness, scalars, and colors accept scalars:
         - radii=0.5 → all points get radius 0.5 (broadcasted)
         - colors=[1.0, 0, 0] → all points red (broadcasted)
-        - sharpness=2.0 → all points standard Gaussian (broadcasted)
+        - sharpness=0.5 → all points standard Gaussian (broadcasted; normalized [0, 1] knob)
         - scalars=0.5 → all points get scalar 0.5 (broadcasted)
 
         Args:
@@ -478,12 +477,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate arrays only (scalars validated by encoder)
             if isinstance(sharpness, np.ndarray):
                 validate_sharpness_for_writing(sharpness, n_points)
-            max_sharpness = self._write_sharpness_dataset(
-                group, sharpness, ordering_data, n_points
+            # Canonical BOUNDED_SCALAR helper (shared with Lines
+            # "sharpnesses"). Sharpness is a normalized [0, 1] knob, so it
+            # carries no `max_sharpness` — the bounds tuple is fixed at
+            # (0.0, SHARPNESS_MAX) and the decoder reads it from the encoding
+            # metadata (mirrors the radii-without-max pattern).
+            self._write_bounded_scalar_dataset(
+                group=group,
+                data=sharpness,
+                name="sharpnesses",
+                bounds=(0.0, SHARPNESS_MAX),
+                spatial_index_data=ordering_data,
+                n_elements=n_points,
+                log_label_singular="sharpness",
             )
-            metadata["max_sharpness"] = max_sharpness
             metadata["has_sharpness"] = True
-            group.attrs["max_sharpness"] = max_sharpness
 
         if scalars is not None:
             self._write_scalars_dataset(group, scalars, ordering_data, n_points)
@@ -592,7 +600,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Scalar convenience: widths, colors, and sharpness accept scalars:
         - widths=0.1 → all vertices get width 0.1
         - colors=[1.0, 0, 0] → all vertices red
-        - sharpness=2.0 → uniform sharpness
+        - sharpness=0.5 → uniform sharpness (normalized [0, 1] knob; 0.5 = Gaussian)
 
         Args:
             path: Path for the lines within the store
@@ -1711,17 +1719,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     ) -> float:
         return write_radii(
             group, radii, spatial_index_data, n_points, self._make_dataset_ctx()
-        )
-
-    def _write_sharpness_dataset(
-        self,
-        group: zarr.Group,
-        sharpness: Union[NDArray[np.float32], float, int],
-        spatial_index_data: Optional[Dict[str, Any]],
-        n_points: int,
-    ) -> float:
-        return write_sharpness(
-            group, sharpness, spatial_index_data, n_points, self._make_dataset_ctx()
         )
 
     def _write_scalars_dataset(

@@ -160,8 +160,8 @@ class RenderingLimits:
     OPACITY_MAX = 1.0
     GAMMA_MIN = 0.1  # Symmetric: gamma and 1/gamma have equal range
     GAMMA_MAX = 10.0  # Symmetric: gamma and 1/gamma have equal range
-    SHARPNESS_MIN = 0.001  # Must be > 0 (mirrors constants.SHARPNESS_MIN)
-    SHARPNESS_MAX = 31.0
+    SHARPNESS_MIN = 0.0  # Normalised [0, 1] knob (mirrors constants.SHARPNESS_MIN)
+    SHARPNESS_MAX = 1.0
 
     # HDR color ranges
     COLOR_SDR_MIN = 0.0  # Standard dynamic range minimum
@@ -175,7 +175,7 @@ class Defaults:
 
     OPACITY = 1.0
     GAMMA = 1.0
-    SHARPNESS = 2.0  # Quadratic polynomial falloff (default)
+    SHARPNESS = 0.5  # Normalised knob -> super-Gaussian beta = 2 (Gaussian)
     BLENDING_MODE = BlendingMode.ADDITIVE
     CHUNK_SIZE = 32768  # Default chunk size in elements
     RADIUS = 0.1
