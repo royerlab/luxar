@@ -5,7 +5,7 @@ This example demonstrates:
 - Creating high-density points (200,000) on a sphere surface
 - Using spherical spiral (Fibonacci-like) for even distribution
 - Calculating proper point spacing to avoid gaps
-- Soft-edged spheres (sharpness 1.0)
+- Soft-edged spheres (sharpness 0.3)
 - Smooth rainbow gradient flowing along the spiral
 
 Educational value:
@@ -118,7 +118,7 @@ def main():
     aprint("This example creates a high-density sphere with:")
     aprint("- 200,000 points in a spherical spiral pattern")
     aprint("- Points spaced approximately one radius apart")
-    aprint("- Soft-edged spheres (sharpness 1.0)")
+    aprint("- Soft-edged spheres (sharpness 0.3)")
     aprint("- Smooth rainbow gradient along the spiral")
 
     # Parameters
@@ -145,8 +145,8 @@ def main():
         # Create uniform radii array
         radii = np.full(n_points, point_radius, dtype=np.float32)
 
-        # Soft-edged spheres (low sharpness)
-        sharpness = np.full(n_points, 1.0, dtype=np.float32)
+        # Soft-edged spheres (low sharpness on the normalized [0, 1] knob)
+        sharpness = np.full(n_points, 0.3, dtype=np.float32)
 
         # Add points to scene
         scene.add_points(

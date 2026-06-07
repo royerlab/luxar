@@ -886,7 +886,7 @@ def write_scene(
                 radii=np.full(
                     len(data.positions), preset.cell_radius, dtype=np.float32
                 ),
-                sharpness=np.full(len(data.positions), 3.6, dtype=np.float32),
+                sharpness=np.full(len(data.positions), 0.55, dtype=np.float32),
                 opacity=0.92,
                 intensity=CELL_INTENSITY,
                 labels=cell_labels,
@@ -906,7 +906,7 @@ def write_scene(
                 vertices=comet_vertices,
                 widths=comet_widths,
                 colors=comet_colors,
-                sharpness=1.4,
+                sharpness=0.85,
                 line_type="segments",
                 blending_mode="additive",
                 opacity=0.95,
