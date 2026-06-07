@@ -33,6 +33,7 @@
  */
 
 import { log, Modules } from '../../utils/log';
+import { getViewerContainer } from '../../utils/viewer-container';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
@@ -281,7 +282,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     };
     this.overlayCleanup = cleanupOfflineOverlay;
 
-    document.body.appendChild(overlay);
+    getViewerContainer().appendChild(overlay);
     cancelButton?.focus();
 
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');

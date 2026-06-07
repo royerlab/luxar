@@ -15,6 +15,20 @@ export interface LuxarAppOptions {
    * HTMLCanvasElement they own.
    */
   canvas: HTMLCanvasElement;
+  /**
+   * Host element the viewer mounts all of its overlays, panels, toasts,
+   * dialogs, and injected SVG filters into. Defaults to `document.body`
+   * (the standalone-app behaviour).
+   *
+   * Embedders pass the element that wraps their `canvas` so the entire
+   * viewer DOM subtree lives inside host-owned markup — `dispose()` then
+   * removes it cleanly, and the viewer's `position: fixed` overlays are
+   * scoped to the container box (the viewer promotes a non-`body` container
+   * to a containing block via `contain: layout`, restored on dispose).
+   *
+   * Note: still one viewer per page — see the README "Embedding" section.
+   */
+  container?: HTMLElement;
   /** Dataset URL. Defaults to {@link config.defaultZarrPath}. */
   src?: string;
   /** Expose `window.__luxarDebug` and verbose hardware logging. */

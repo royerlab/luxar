@@ -13,6 +13,7 @@
  */
 
 import { ThemeManager } from '../../themes/theme-manager';
+import { getViewerContainer } from '../../utils/viewer-container';
 import type { Theme } from '../../themes/types';
 
 /**
@@ -228,7 +229,7 @@ export abstract class UIComponent<TConfig = unknown> {
    */
   public show(): void {
     if (!this.element.parentNode) {
-      document.body.appendChild(this.element);
+      getViewerContainer().appendChild(this.element);
     }
     this.element.classList.add(`${this.getClassName()}--visible`);
   }

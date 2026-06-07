@@ -34,6 +34,14 @@ import type { RenderingControls } from '../../../ui/rendering-controls';
 export class WindowEventHandler {
   private renderingControls?: RenderingControls;
 
+  /**
+   * The canvas `style` attribute as it was just before we entered
+   * fullscreen, so exiting restores exactly what the embedder authored
+   * (e.g. `width:100%;height:100%` inside their container) instead of
+   * wiping every inline style. `null` when not in fullscreen.
+   */
+  private savedCanvasStyle: string | null = null;
+
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController
@@ -99,7 +107,13 @@ export class WindowEventHandler {
     const canvas = this.sceneManager.renderer.domElement;
 
     if (document.fullscreenElement) {
-      // Entering fullscreen — make the canvas fill the entire screen.
+      // Entering fullscreen — save the embedder's inline styles first, then
+      // make the canvas fill the entire screen. Saving only on a clean
+      // enter (savedCanvasStyle === null) avoids clobbering the saved value
+      // if fullscreenchange fires twice.
+      if (this.savedCanvasStyle === null) {
+        this.savedCanvasStyle = canvas.getAttribute('style') ?? '';
+      }
       canvas.style.width = '100vw';
       canvas.style.height = '100vh';
       canvas.style.position = 'fixed';
@@ -108,8 +122,15 @@ export class WindowEventHandler {
       canvas.style.opacity = '1';
       canvas.style.filter = 'none';
     } else {
-      // Exiting fullscreen — drop every inline style we may have set.
-      canvas.removeAttribute('style');
+      // Exiting fullscreen — restore exactly the inline styles the canvas
+      // had before, rather than wiping everything (which would drop an
+      // embedder's own sizing/positioning rules).
+      if (this.savedCanvasStyle) {
+        canvas.setAttribute('style', this.savedCanvasStyle);
+      } else {
+        canvas.removeAttribute('style');
+      }
+      this.savedCanvasStyle = null;
     }
 
     requestAnimationFrame(() => {

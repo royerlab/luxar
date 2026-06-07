@@ -7,6 +7,7 @@
 import Stats from 'stats.js';
 import { config } from '../config';
 import { eventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
+import { getViewerContainer } from '../utils/viewer-container';
 
 /**
  * PerformanceMonitor manages real-time performance statistics display
@@ -111,7 +112,7 @@ export class PerformanceMonitor {
     // statsElement.setAttribute('tabindex', '0');
 
     // Inject into DOM - stats.js needs this to be in the document to function
-    document.body.appendChild(statsElement);
+    getViewerContainer().appendChild(statsElement);
   }
 
   /**

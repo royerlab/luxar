@@ -4,6 +4,10 @@ import { ThemeManager } from '../../../themes/theme-manager';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { disposeWorkerPool } from '../../../workers/worker-pool';
+import { disposeConsoleInterceptor } from '../../../utils/console-interceptor';
+import { clearNotifierBackend } from '../../../utils/cross-layer/notifier';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
+import { resetViewerContainer } from '../../../utils/viewer-container';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -151,6 +155,19 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   // App-level event listeners (focus, visibility, beforeunload,
   // open-dataset-browser, picking-system subscriptions).
   safeDispose('events', () => ports.events.dispose());
+
+  // Process-global singletons that hold cross-app state. Resetting them on
+  // dispose keeps a serial mount/unmount cycle clean (stale dim listeners,
+  // notifier backends bound to torn-down UI, and a patched host console must
+  // not survive into the next init). sceneDims listeners + the notifier
+  // backend are cleared before the scene/UI owners are fully gone.
+  safeDispose('sceneDimsManager', () => sceneDimsManager.reset());
+  safeDispose('notifierBackend', () => clearNotifierBackend());
+  safeDispose('consoleInterceptor', () => disposeConsoleInterceptor());
+  // Restore the viewer container to document.body and undo any
+  // containing-block styles applied to a custom container. Runs after UI
+  // teardown so the overlays detach from the (still valid) container first.
+  safeDispose('viewerContainer', () => resetViewerContainer());
 
   // Three-tier singleton teardown. Monitor first (factory wiring holds
   // loader refs); loader manager drops loaders + cache stores; worker
