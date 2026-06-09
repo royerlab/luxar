@@ -11,6 +11,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
+    from luxar.gsplats.tree import GSplatNode
 
 
 def _merge_lod_colors(
@@ -684,6 +685,48 @@ class GSplatData(_SplatArrayMixin):
                 f"[0, {level.n_additive_lods}) at substitutive level {substitutive}"
             )
         return level.additive_sublods[additive]
+
+    # ── Node-tree bridge (v3.0 unified representation) ──────
+
+    @property
+    def tree(self) -> "GSplatNode":
+        """This dataset as a :mod:`luxar.gsplats.tree` node subtree.
+
+        The tree is the unified representation behind the v3.0 ``.gsplats.zarr``
+        format and the scene gsplat-node subtree. For the historical
+        ``substitutive × additive`` matrix this is exactly one shape: a single
+        :class:`~luxar.gsplats.tree.GSplatLeaf` (one substitutive level) or a
+        :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (multiple levels,
+        finest first). Per-level provenance rides in each leaf's ``meta``.
+        """
+        from luxar.gsplats.tree import tree_from_substitutive_levels
+
+        return tree_from_substitutive_levels(
+            self.substitutive_levels, self.default_substitutive
+        )
+
+    @classmethod
+    def from_tree(
+        cls,
+        node: "GSplatNode",
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> "GSplatData":
+        """Construct a ``GSplatData`` from a matrix-shaped tree node.
+
+        Accepts a bare :class:`~luxar.gsplats.tree.GSplatLeaf` or a
+        :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (the inverse of
+        :attr:`tree`). Genuinely nested trees (partitions, or lod groups with
+        non-leaf children) have no flat ``GSplatData`` equivalent and raise —
+        they must be consumed through the tree directly.
+        """
+        from luxar.gsplats.tree import substitutive_levels_from_tree
+
+        levels, default = substitutive_levels_from_tree(node)
+        return cls(
+            substitutive_levels=levels,
+            stats=stats,
+            default_substitutive=default,
+        )
 
     # ── Filtering ───────────────────────────────────────────
 
