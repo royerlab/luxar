@@ -83,12 +83,16 @@ def make_ordering_ctx(ordering: str) -> OrderingCtx:
 def make_dataset_ctx(
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     *,
-    float16_allowed: bool = False,
     compressor: Optional[Any] = None,
 ) -> DatasetCtx:
-    """Build a standalone :class:`DatasetCtx` (encoder + mode + compressor)."""
+    """Build a standalone :class:`DatasetCtx` (encoder + mode + compressor).
+
+    float16 is intentionally disabled (``ArrayEncoder`` default): COORDINATE
+    centers must stay float32 for TypeScript/WebGL compatibility, and float16
+    on coordinates is a precision footgun.
+    """
     return DatasetCtx(
-        encoder=ArrayEncoder(float16_allowed=float16_allowed),
+        encoder=ArrayEncoder(),
         encoding_mode=encoding_mode,
         compressor=compressor,
     )
@@ -171,6 +175,11 @@ def _write_single_splat_set(
     else:
         leaf_attrs = dict(attrs or {})
         leaf_attrs.setdefault("truncation_radius", truncation_radius)
+        # Per-additive-sub-LOD stats (e.g. cumulative_psnr_db) — written here on
+        # the single-set fast path too, mirroring the lightweight ladder branch,
+        # so the reader's unconditional lod_stats read round-trips faithfully.
+        if sublod.stats and "lod_stats" not in leaf_attrs:
+            leaf_attrs["lod_stats"] = dict(sublod.stats)
         apply_gsplat_group_attrs(
             group,
             metadata,
@@ -343,6 +352,7 @@ def write_gsplat_node(
         group.attrs["kind"] = "lod"
         group.attrs["selector"] = "pixel_size"
         group.attrs["default_level"] = int(on_disk_default)
+        group.attrs["display_type"] = "gsplats"
         for k, v in (node.meta or {}).items():
             group.attrs[k] = v
         bounds = _union_bounds(child_bounds)

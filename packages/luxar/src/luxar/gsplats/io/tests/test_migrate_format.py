@@ -168,6 +168,37 @@ def _make_v2_0(path: Path, n: int) -> None:
     zarr.consolidate_metadata(store)
 
 
+def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
+    """Build a multi-substitutive v2.0 matrix (substitutive_<s>/additive_0).
+
+    Level 0 is finest (largest); coarser levels follow — the v2.0 convention.
+    """
+    store = zarr.DirectoryStore(str(path))
+    root = zarr.group(store=store, overwrite=True)
+    n_sub = len(level_sizes)
+    root.attrs.update(
+        {"format_version": "2.0", "format_type": "gsplats_zarr",
+         "n_substitutive": n_sub, "default_substitutive": 0}
+    )
+    splats = root.create_group("splats")
+    splats.attrs.update(
+        {"type": "gsplats", "n_substitutive": n_sub, "default_substitutive": 0,
+         "truncation_radius": 3.0}
+    )
+    rng = np.random.default_rng(0)
+    for s, n in enumerate(level_sizes):
+        sub = splats.create_group(f"substitutive_{s}")
+        sub.attrs.update({"n_additive_sublods": 1, "compression_factor": 4 ** s,
+                          "parent_method": "" if s == 0 else "kmeans_lloyd",
+                          "level_index": s})
+        add = sub.create_group("additive_0")
+        add.attrs.update({"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"})
+        add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+        add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
+        add.create_dataset("cholesky_factors", data=_identity_chol(n))
+    zarr.consolidate_metadata(store)
+
+
 def _make_substitutive_dir(dir_path: Path, level_sizes: list[int]) -> None:
     """Build a pre-v2.0 substitutive directory layout (level_<i>.gsplats.zarr + manifest.json)."""
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -407,6 +438,40 @@ class TestMigrateFormat:
         assert data.n_substitutive == 1
         assert data.n_additive_sublods == 1
 
+    def test_migrate_v2_0_multi_preserves_orientation(self, tmp_path: Path) -> None:
+        """Multi-substitutive v2.0 (finest=level0) migrates to v3.0 with the
+        finest level still at substitutive_levels[0] — the reversal trap must
+        round-trip through migrate → write (coarsest-first child_<i>) → read."""
+        legacy = tmp_path / "v2multi.gsplats.zarr"
+        _make_v2_0_multi(legacy, level_sizes=[64, 16, 4])  # finest..coarsest
+        out = tmp_path / "out.gsplats.zarr"
+        assert migrate_format(legacy, out) == "v2.0"
+        data = load_gsplats(out)
+        assert data.n_substitutive == 3
+        # Finest level (64 splats, compression 1) restored at index 0.
+        assert [s.n_splats_total for s in data.substitutive_levels] == [64, 16, 4]
+        assert [s.compression_factor for s in data.substitutive_levels] == [1, 4, 16]
+        assert data.n_splats == 64  # default view = finest
+
+    def test_migrate_compressed_zip_archive(self, tmp_path: Path) -> None:
+        """A .gsplats.zarr.zip legacy archive (the committed-demo shape) migrates
+        end-to-end (M3)."""
+        import zipfile
+
+        src_dir = tmp_path / "legacy.gsplats.zarr"
+        _make_v1_1(src_dir, lod_sizes=[8, 4])
+        archive = tmp_path / "legacy.gsplats.zarr.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            for f in src_dir.rglob("*"):
+                if f.is_file():
+                    zf.write(f, f.relative_to(src_dir.parent))
+
+        out = tmp_path / "out.gsplats.zarr"
+        assert migrate_format(archive, out) == "v1.1"
+        data = load_gsplats(out)
+        assert data.n_additive_sublods == 2
+        assert [s.n_splats for s in data.additive_sublods] == [8, 4]
+
     def test_migrate_refuses_v3_0_input(self, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
@@ -417,7 +482,7 @@ class TestMigrateFormat:
             cholesky_factors=_identity_chol(3),
         ).save(legacy)  # writes v3.0
         out = tmp_path / "out.gsplats.zarr"
-        with pytest.raises(ValueError, match="Unrecognised input layout"):
+        with pytest.raises(ValueError, match="already format v3.0"):
             migrate_format(legacy, out)
 
     def test_migrate_refuses_existing_output(self, tmp_path: Path) -> None:

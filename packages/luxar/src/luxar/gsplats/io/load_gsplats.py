@@ -97,6 +97,12 @@ def load_gsplats(
     Arrays are automatically decoded from their stored encoding (quantization,
     broadcasting, etc.) to float32.
 
+    Only **matrix-shaped** node trees map to a ``GSplatData`` — a leaf, or a
+    ``kind=lod`` group whose children are all leaves (the substitutive × additive
+    matrix). A genuinely nested tree (a ``kind=partition`` root, or a lod group
+    with non-leaf children) has no flat ``GSplatData`` equivalent and raises
+    ``ValueError``; consume those via the node tree directly (``read_gsplat_node``).
+
     Args:
         path: Path to .gsplats.zarr directory or compressed archive
         include_stats: Whether to include fitting/provenance metadata in stats
@@ -106,7 +112,8 @@ def load_gsplats(
 
     Raises:
         FileNotFoundError: If path doesn't exist
-        ValueError: If format is invalid or incompatible
+        ValueError: If the format is invalid/incompatible, or the file is a
+            non-matrix (partition/nested) tree.
     """
     path = Path(path)
     if not path.exists():

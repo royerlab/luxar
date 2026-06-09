@@ -98,7 +98,6 @@ def write_gsplats_tree(
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
-    float16_allowed: bool = False,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
@@ -115,9 +114,7 @@ def write_gsplats_tree(
     store = DirectoryStore(str(zarr_path))
     root = zarr.group(store=store, overwrite=True)
 
-    dataset_ctx = make_dataset_ctx(
-        encoding_mode, float16_allowed=float16_allowed, compressor=compressor
-    )
+    dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
     ordering_ctx = make_ordering_ctx(ordering)
     write_gsplat_node(
         root, node, dataset_ctx=dataset_ctx, ordering_ctx=ordering_ctx, store=root
@@ -158,7 +155,6 @@ def save_gsplats(
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
-    float16_allowed: bool = False,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
@@ -170,6 +166,9 @@ def save_gsplats(
     to :func:`write_gsplats_tree`. Colors are written via the shared COLOR helper,
     which auto-detects SDR vs HDR (values > 1) — there is no explicit ``color_mode``
     knob; amplitudes use the canonical POSITIVE_SCALAR encoding.
+
+    Empty input (``n_splats == 0``) raises — the shared writer validates against
+    empty splat sets, matching the scene writer's no-empty policy.
     """
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.tree import GSplatLeaf
@@ -194,7 +193,6 @@ def save_gsplats(
         fitting_config=fitting_config,
         provenance_info=provenance_info,
         description=description,
-        float16_allowed=float16_allowed,
         compress=compress,
         compressor=compressor,
         zip_deflate=zip_deflate,

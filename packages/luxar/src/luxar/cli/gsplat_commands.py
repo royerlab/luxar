@@ -4307,12 +4307,14 @@ def _validate_node_dir(node_dir: Path, label: str) -> str:
     import json
 
     zattrs_path = node_dir / ".zattrs"
-    attrs: dict = {}
-    if zattrs_path.exists():
-        try:
-            attrs = json.loads(zattrs_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return f"corrupt_zattrs@{label}"
+    if not zattrs_path.exists():
+        # Every node (root, child_<i>, part_<i>) must carry its .zattrs; a
+        # metadata-stripped node is corrupt, not a bare single-set leaf.
+        return f"no_zattrs@{label}"
+    try:
+        attrs = json.loads(zattrs_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return f"corrupt_zattrs@{label}"
 
     kind = attrs.get("kind")
     if kind in ("lod", "partition"):

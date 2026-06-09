@@ -117,6 +117,11 @@ def detect_legacy_format(input_path: Path) -> str:
                 fv = root.attrs.get("format_version")
                 if fv in ("1.0", "1.1", "2.0"):
                     return f"v{fv}"
+                if fv == "3.0":
+                    raise ValueError(
+                        f"Input {input_path} is already format v3.0 "
+                        f"(the current node-tree format); no migration needed."
+                    )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
                 shutil.rmtree(cleanup_temp, ignore_errors=True)

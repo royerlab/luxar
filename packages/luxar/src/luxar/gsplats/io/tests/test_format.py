@@ -207,3 +207,18 @@ class TestFormatCompliance:
             assert attrs["ordering"] == "none"
             assert "ordering_min" not in attrs
             assert "ordering_max" not in attrs
+
+    def test_chunk_bounds_count_matches_centers_chunks(self) -> None:
+        """§8 regression: the spatial index partition count and the centers
+        zarr chunk count must derive from the same chunk_size (one formula)."""
+        import math
+
+        n = 20_000  # large enough to span multiple chunks at the 64KB target
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.gsplats.zarr"
+            save_gsplats(path=path, **create_test_splats_3d(n), ordering="morton")
+            root = zarr.open_group(str(path), mode="r")
+            chunk_size = root.attrs["chunk_size"]
+            expected = math.ceil(n / chunk_size)
+            assert root["chunk_bounds"].shape[0] == expected
+            assert root["centers"].nchunks == expected

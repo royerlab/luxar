@@ -85,13 +85,13 @@ class TestSaveGsplats:
             save_gsplats(path=p_prec, **splats, encoding_mode=EncodingMode.PRECISION, ordering="none")
             assert zarr.open_group(str(p_prec), mode="r")["centers"].dtype == np.float32
 
+            # MEMORY mode must keep COORDINATE centers float32 (float16 is
+            # intentionally disabled — WebGL has no native float16 and float16
+            # on coordinates is a precision footgun).
             p_mem = Path(tmpdir) / "memory.gsplats.zarr"
-            save_gsplats(
-                path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY,
-                ordering="none", float16_allowed=True,
-            )
+            save_gsplats(path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none")
             enc = zarr.open_group(str(p_mem), mode="r")["centers"].attrs.get("encoding", {})
-            assert enc["name"] == "float16"  # float16_allowed=True
+            assert enc["name"] == "float32"
 
     def test_save_with_fitting_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -167,6 +167,31 @@ class TestLoadGsplats:
             root = zarr.open_group(str(path), mode="w")
             root.attrs["format_type"] = "wrong_format"
             with pytest.raises(ValueError, match="Invalid format_type"):
+                load_gsplats(path)
+
+    def test_load_partition_file_raises(self) -> None:
+        """A standalone partition/nested tree has no flat GSplatData equivalent;
+        load_gsplats() must raise clearly rather than silently mislead (TC-3)."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+        def _leaf(n, seed):
+            rng = np.random.default_rng(seed)
+            chol = np.zeros((n, 6), dtype=np.float32)
+            chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+            return GSplatLeaf(additive_sublods=[AdditiveSubLOD(
+                centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+                amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
+                cholesky_factors=chol)])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "part.gsplats.zarr"
+            write_gsplats_tree(
+                path, GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1)]),
+                ordering="none",
+            )
+            with pytest.raises(ValueError, match="(?i)matrix|partition|tree"):
                 load_gsplats(path)
 
     def test_load_rejects_legacy_version(self) -> None:

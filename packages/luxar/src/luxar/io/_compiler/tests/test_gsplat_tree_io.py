@@ -232,6 +232,49 @@ def test_hilbert_ordering_preserves_splat_set():
     )
 
 
+def test_single_leaf_sublod_stats_round_trip():
+    """A single-set leaf's AdditiveSubLOD.stats survive the round-trip (GT-1).
+
+    The single-additive write path must persist lod_stats just like the ladder
+    path, else lod_psnrs()/cumulative_psnr_db come back empty.
+    """
+    sub = AdditiveSubLOD(
+        centers=_sublod(20).centers,
+        amplitudes=_sublod(20).amplitudes,
+        cholesky_factors=_sublod(20).cholesky_factors,
+        stats={"cumulative_psnr_db": 42.5, "pass_index": 3},
+    )
+    _, out = _round_trip(GSplatLeaf(additive_sublods=[sub]))
+    assert out.additive_sublods[0].stats.get("cumulative_psnr_db") == 42.5
+    assert out.additive_sublods[0].stats.get("pass_index") == 3
+
+
+def test_lod_group_single_additive_children_keep_sublod_stats():
+    """Multi-substitutive pyramid (one additive sublod per level) keeps per-leaf
+    sublod stats — the dominant `lod substitutive` output shape (GT-1)."""
+
+    def _leaf_with_psnr(n, seed, psnr):
+        s = _sublod(n, seed=seed)
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=s.centers, amplitudes=s.amplitudes,
+                    cholesky_factors=s.cholesky_factors,
+                    stats={"cumulative_psnr_db": psnr},
+                )
+            ]
+        )
+
+    grp = GSplatLodGroup(
+        children=[_leaf_with_psnr(100, 0, 40.0), _leaf_with_psnr(20, 1, 30.0)],
+        default_level=0,
+    )
+    _, out = _round_trip(grp)
+    # finest-first restored; per-child sublod stats intact
+    assert out.children[0].additive_sublods[0].stats["cumulative_psnr_db"] == 40.0
+    assert out.children[1].additive_sublods[0].stats["cumulative_psnr_db"] == 30.0
+
+
 def test_every_node_has_position_bounds():
     tree = GSplatLodGroup(
         children=[
