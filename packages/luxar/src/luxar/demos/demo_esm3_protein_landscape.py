@@ -10,6 +10,10 @@ Run behavior:
   First run: Download Swiss-Prot, compute ESM embeddings, run UMAP (~5h)
   Subsequent runs: Load cached results instantly
 
+  Computing the ESM embeddings requires a CUDA GPU. On a machine without CUDA,
+  supply a complete precomputed embeddings cache (the demo validates it on load
+  and fails fast with guidance if it is missing/truncated).
+
 Data source: UniProt/Swiss-Prot (CC BY 4.0)
 Model: ESM-3 open (Hayes et al. 2025) or ESM C 300M (EvolutionaryScale)
 
@@ -319,16 +323,64 @@ def _compute_esm3_embeddings(
         cache_dir / f"embeddings_{model_name.replace('-', '_')}_checkpoint.npz"
     )
 
-    # Check for completed cache
+    # Per-model embedding dimension (mirrors the model-load block below), used
+    # to validate a precomputed/cached embeddings file before trusting it.
+    expected_dim = {"esmc-300m": 960, "esmc-600m": 1152}.get(model_name, 1536)
+    expected_shape = (len(sequences), expected_dim)
+
+    # Load and VALIDATE a completed cache. A truncated / incomplete / wrong-
+    # shaped or unreadable file (e.g. a partial download) is quarantined to
+    # `<name>.corrupt` and treated as absent, so the demo never silently
+    # proceeds with malformed embeddings.
+    quarantined_corrupt = False
     if embeddings_cache.exists():
         with asection("Loading cached ESM embeddings"):
-            embeddings = np.load(embeddings_cache)
-            aprint(
-                f"✓ Loaded {embeddings.shape[0]:,} × {embeddings.shape[1]}D embeddings"
+            try:
+                embeddings = np.load(embeddings_cache)
+            except Exception as exc:  # noqa: BLE001 - any read failure ⇒ quarantine
+                embeddings = None
+                aprint(f"⚠ Cached embeddings could not be read: {exc}")
+            if embeddings is not None and embeddings.shape == expected_shape:
+                aprint(
+                    f"✓ Loaded {embeddings.shape[0]:,} × {embeddings.shape[1]}D embeddings"
+                )
+                return embeddings
+            actual = "unreadable" if embeddings is None else f"shape {embeddings.shape}"
+            corrupt_path = embeddings_cache.with_name(
+                embeddings_cache.name + ".corrupt"
             )
-            return embeddings
+            embeddings_cache.rename(corrupt_path)
+            quarantined_corrupt = True
+            aprint(
+                f"⚠ Cached embeddings are invalid ({actual}, expected "
+                f"{expected_shape}); quarantined to {corrupt_path.name} — recomputing."
+            )
 
     import torch
+
+    # Computing ESM embeddings for ~572K proteins is only practical on a CUDA
+    # GPU. If no usable cache is present and no CUDA device is available, fail
+    # fast with an actionable message rather than downloading the model and then
+    # crashing on `.to("cuda")` (or grinding for many hours on CPU/MPS).
+    if not torch.cuda.is_available():
+        quarantine_note = (
+            "    A truncated/incomplete copy was quarantined to "
+            f"'{embeddings_cache.name}.corrupt' — re-fetch the full file and rerun.\n"
+            if quarantined_corrupt
+            else ""
+        )
+        raise RuntimeError(
+            "No usable cached embeddings were found and CUDA is not available, "
+            "so ESM embeddings cannot be (re)computed on this machine.\n"
+            "  • This demo computes embeddings only on an NVIDIA/CUDA GPU "
+            "(computing ~572K proteins on CPU/MPS is impractical).\n"
+            "  • Supply a complete precomputed embeddings file at:\n"
+            f"      {embeddings_cache}\n"
+            f"    (expected shape: {expected_shape}, float32).\n"
+            f"{quarantine_note}"
+            "  • Or run this demo on a CUDA GPU machine to compute it from "
+            "scratch."
+        )
 
     # Load model
     with asection(f"Loading ESM model: {model_name}"):
