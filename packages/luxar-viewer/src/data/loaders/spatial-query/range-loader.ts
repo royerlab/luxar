@@ -13,6 +13,7 @@ import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../../array-
 import type { LoadRange } from '../base-types';
 import {
   DEFAULT_RANGE_LOADER_CONFIG,
+  type DirectOutputBuffer,
   type RangeLoaderConfig,
   type ResolvedRangeLoaderConfig,
   type EncodingType,
@@ -31,6 +32,10 @@ export class RangeLoader {
   private decoder: ArrayDecoder;
   private config: ResolvedRangeLoaderConfig;
   private _verbose = true;
+  // Source of the owning loader's per-update abort signal. Resolved once at
+  // the top of each loadRanges call and forwarded into the worker-decode
+  // calls so a superseded update's LUT/quantized/broadcasted decode bails.
+  private _getSignal?: () => AbortSignal | null;
 
   constructor(refRegistry: ArrayRefRegistry, config: RangeLoaderConfig = {}) {
     this.decoder = new ArrayDecoder(refRegistry);
@@ -40,6 +45,32 @@ export class RangeLoader {
   /** Suppress detail logs after initial load */
   setVerbose(verbose: boolean): void {
     this._verbose = verbose;
+  }
+
+  /**
+   * Wire the owning loader's per-update abort signal source. The thunk reads
+   * the loader's transient `_activeSignal`, so worker decodes started by a
+   * superseded update bail before dispatch (see WorkerPool.runWithTimeout).
+   */
+  setSignalSource(getSignal: () => AbortSignal | null): void {
+    this._getSignal = getSignal;
+  }
+
+  /**
+   * Read direct (unencoded) ranges into a caller-allocated, natively-typed
+   * `output` buffer — the single entry point for direct reads that branch
+   * BEFORE encoding dispatch (Points non-color attributes, the direct/raw-RGB
+   * color path, Lines segments). Preserves `output`'s dtype (see `loadDirect`)
+   * and sources the per-update abort signal internally, so callers never
+   * thread a signal themselves.
+   */
+  async loadDirectTyped(
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
+    ranges: LoadRange[],
+    output: DirectOutputBuffer
+  ): Promise<number> {
+    const ctx = { config: this.config, verbose: this._verbose, signal: this._getSignal?.() };
+    return loadDirect(ctx, array, ranges, output);
   }
 
   /** Detect encoding type from array metadata */
@@ -60,7 +91,7 @@ export class RangeLoader {
     totalElements: number,
     elementsPerItem: number = 1
   ): Promise<number> {
-    const ctx = { config: this.config, verbose: this._verbose };
+    const ctx = { config: this.config, verbose: this._verbose, signal: this._getSignal?.() };
     switch (detectEncoding(attrs)) {
       case 'broadcasted':
         await loadBroadcasted(ctx, array, attrs!, output, totalElements, elementsPerItem);

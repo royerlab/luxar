@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get } from '../../../zarr';
+import { get, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -11,6 +11,8 @@ export interface LUTCtx {
   config: ResolvedRangeLoaderConfig;
   verbose: boolean;
   decoder: ArrayDecoder;
+  /** Per-update abort signal forwarded to the worker decode (see RangeLoader). */
+  signal?: AbortSignal | null;
 }
 
 export async function loadLUT(
@@ -43,19 +45,23 @@ export async function loadLUT(
 
   for (const range of ranges) {
     const sliceSpec = firstAxisRangeSlice(shape, range);
-    const chunkData = await get(array, sliceSpec);
+    const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
     const indices = chunkData.data as Uint8Array | Uint16Array;
 
     let decoded: Float32Array;
     if (shouldUseWorkers) {
       try {
-        decoded = await getWorkerPool().runWithTimeout('decodeLUT', 'decode', (api) =>
-          api.decodeLUT({
-            indices,
-            lut: flatLUT,
-            k: lutMetadata.k,
-            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
-          })
+        decoded = await getWorkerPool().runWithTimeout(
+          'decodeLUT',
+          'decode',
+          (api) =>
+            api.decodeLUT({
+              indices,
+              lut: flatLUT,
+              k: lutMetadata.k,
+              lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+            }),
+          ctx.signal ?? undefined
         );
       } catch (error) {
         if (error instanceof Error && error.name === 'WorkerAbortError') throw error;

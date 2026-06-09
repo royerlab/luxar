@@ -38,6 +38,8 @@ export interface PointsHandlerCtx {
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
   extendedToleranceCache: Map<string, number[]>;
+  /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -71,7 +73,7 @@ export async function loadAndStage(
     ctx.viewStateQueue.forgetPath(path);
     return null;
   }
-  const data = await loader.updateView(derived.viewState, session);
+  const data = await loader.updateView(derived.viewState, session, ctx.signal);
   ctx.clearFailure(path);
   if (!data) return null;
   if (ctx.currentVersion <= 1) {

@@ -7,12 +7,22 @@ small and each encoding independently testable.
 
 ## Overview
 
-`RangeLoader.loadRanges()` is the single entry point shared by the Points,
-Lines, and GSplats spatial-index loaders. It detects the encoding written by
-the Python `luxar.encoding` layer, then delegates to the matching `load*`
-function in this folder. Every loader writes its dequantized/decoded result
-into a caller-supplied `Float32Array` output buffer and reports how many
-elements it wrote.
+`RangeLoader` is the single entry point shared by the Points, Lines, and
+GSplats spatial-index loaders — **all** chunk reads for every geometry type go
+through it (plus the L0 `wrapWithCache` proxy), so there is one place that calls
+`zarr.get()` and one place the per-update abort signal lives:
+
+- **`loadRanges()` / `loadRangesResolvingRef()`** detect the encoding written by
+  the Python `luxar.encoding` layer and delegate to the matching `load*`
+  function below. Encoded decoders (lut/quantized/broadcasted) always produce a
+  `Float32Array`.
+- **`loadDirectTyped()`** is the direct-read entry for callers that allocate a
+  natively-typed output buffer and branch on encoding _before_ dispatch — Points
+  non-color attributes, the direct/`rgb_*` color path (`color-loader.ts`), and
+  the Lines `segments` connectivity array. It wraps `loadDirect`, which copies
+  **preserving** the output buffer's dtype (see `copyDirectChunk`).
+
+Both report how many elements were written.
 
 CPU-heavy decodes (broadcast replication, LUT lookup, dequantization) are
 offloaded to the worker pool when `config.dataLoading.performance.useWebWorkers`
@@ -24,9 +34,9 @@ is re-thrown rather than swallowed so cancelled loads propagate cleanly.
 
 ```
 range-loader/
-├── encoding-types.ts    # Shared types, config defaults, slice/convert helpers
+├── encoding-types.ts    # Shared types, config defaults, slice helper, copyDirectChunk
 ├── detect-encoding.ts   # ArrayMetadata → EncodingType (priority-ordered)
-├── direct.ts            # loadDirect    — raw values, dtype → Float32
+├── direct.ts            # loadDirect    — raw values, dtype-preserving copy
 ├── quantized.ts         # loadQuantized — uint8/uint16 → float (linear or log)
 ├── lut.ts               # loadLUT       — index → palette row/scalar lookup
 ├── broadcasted.ts       # loadBroadcasted — one value replicated to N items
@@ -46,21 +56,28 @@ Encoding detection follows the same priority order as the Python encoder
 | `array_ref`   | `loadArrayRef`    | reference to another array               | Must be pre-resolved upstream — reaching the loader throws.    |
 | `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode).       |
 | `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values        | Dequantize via bounds (linear) or `maxLog` (log-space).        |
-| `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, convert to `Float32Array`.         |
+| `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, copy preserving the output dtype.  |
 
 `direct` is also the fallback when an array has no `encoding` metadata.
 
 ## Loading model
 
-Every loader takes a `LoadRange[]` over the first axis (`{ start, end }`) and an
-output `Float32Array`. `firstAxisRangeSlice` (in `encoding-types.ts`) builds the
-zarr slice spec — a slice on axis 0 and full slices on the trailing axes — so a
-range over an `[N, D]` array fetches `[start:end, :]`. Each range is fetched
-through `zarr.get()`, decoded, written at the running `destOffset`, and the final
-offset is returned as the element count.
+Encoded loaders take a `LoadRange[]` over the first axis (`{ start, end }`) and a
+`Float32Array` output (decoding always produces floats). The direct reader
+(`loadDirect` / `loadDirectTyped`) takes a `DirectOutputBuffer` —
+`Float32Array | Float16Array | Uint8Array | Uint16Array | Uint32Array` — so the
+caller's allocated dtype is preserved. `firstAxisRangeSlice` (in
+`encoding-types.ts`) builds the zarr slice spec — a slice on axis 0 and full
+slices on the trailing axes — so a range over an `[N, D]` array fetches
+`[start:end, :]`. Each range is fetched through `zarr.get()` (with the abort
+signal), written at the running `destOffset`, and the final offset is returned.
 
-`numericArrayToFloat32` normalises any zarr dtype to `Float32Array`, including
-`BigUint64Array`/`BigInt64Array` (converted element-by-element via `Number()`).
+`copyDirectChunk` performs the dtype-preserving copy: a same-kind source is a
+zero-conversion `TypedArray.set`; a different numeric kind is converted by `set`
+(e.g. `Float32` output from a `Uint8` source — and crucially the reverse,
+keeping `uint8` colors as bytes for THREE.js 0–255→0–1 normalization); and
+`BigInt64Array`/`BigUint64Array` sources are widened element-by-element via
+`Number()` (a plain `set` of a BigInt array into a numeric buffer would throw).
 
 ## Array refs
 

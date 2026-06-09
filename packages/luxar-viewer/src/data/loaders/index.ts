@@ -49,6 +49,8 @@ export {
   type RangeLoaderConfig,
   type EncodingType,
 } from './spatial-query/range-loader';
+export { prefetchRangesIntoCache } from './spatial-query/prefetch-ranges';
+export { isAbortError } from './abort-error';
 export {
   getSharedRangeLoader,
   getSharedRefRegistry,
@@ -97,7 +99,6 @@ export {
   allocateColorBuffer,
   getExpectedColorType,
   colorBufferTypeMatches,
-  loadDirectColorRanges,
   restoreOriginalDtype,
   loadColorRanges,
   type ColorRange,

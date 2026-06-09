@@ -20,7 +20,6 @@
  */
 
 import * as zarr from '../zarr';
-import { get, slice } from '../zarr';
 import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import type { RangeLoader } from './spatial-query/range-loader';
 import type { LoadRange } from './base-types';
@@ -77,49 +76,6 @@ export function colorBufferTypeMatches(buffer: ColorBuffer, expected: ColorBuffe
 }
 
 /**
- * Stream unencoded color ranges directly into `output`, preserving the input
- * data's typed-array kind whenever it matches the output (no value conversion,
- * no buffer reinterpretation). When the kinds disagree we widen through
- * Float32, which is the correct fallback for the few legacy datasets where the
- * stored dtype no longer matches what the loader allocated.
- *
- * RGB layout is hard-coded (3 channels per item) to match the existing
- * loaders; widen this if a future dataset uses RGBA.
- */
-export async function loadDirectColorRanges(
-  array: zarr.Array<zarr.DataType, zarr.Readable>,
-  ranges: ColorRange[],
-  output: ColorBuffer
-): Promise<void> {
-  let destOffset = 0;
-  const shape = array.shape;
-
-  for (const range of ranges) {
-    const sliceSpec: zarr.Slice[] =
-      shape.length === 2
-        ? [slice(range.start, range.end), slice(null)]
-        : [slice(range.start, range.end)];
-
-    const chunkData = await get(array, sliceSpec);
-    const data = chunkData.data;
-
-    if (output instanceof Float32Array && data instanceof Float32Array) {
-      output.set(data, destOffset);
-    } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
-      output.set(data, destOffset);
-    } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
-      output.set(data, destOffset);
-    } else {
-      const float32Data =
-        data instanceof Float32Array ? data : new Float32Array(data as ArrayLike<number>);
-      (output as Float32Array).set(float32Data, destOffset);
-    }
-
-    destOffset += (range.end - range.start) * 3;
-  }
-}
-
-/**
  * Cast a freshly-decoded Float32 color buffer back to its `original_dtype`.
  * Returns the input buffer unchanged when no original dtype was recorded
  * (e.g. natively-float32 colors).
@@ -163,7 +119,7 @@ export function restoreOriginalDtype(
  *
  * Branches:
  * 1. Direct (unencoded, no array_ref): allocate or reuse a typed buffer of the
- *    right kind, stream raw values in via {@link loadDirectColorRanges}.
+ *    right kind, stream raw values in via {@link RangeLoader.loadDirectTyped}.
  * 2. `rgb_uint8` / `rgb_uint16` encoded colors with a target buffer of the
  *    matching kind: skip the decode pipeline and stream raw bytes directly
  *    (downstream renderer normalizes 0-255 → 0-1).
@@ -198,7 +154,9 @@ export async function loadColorRanges(
     ArrayDecoder.isBroadcasted(attrs);
   const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
-  // 1. Direct (unencoded) path — preserve native type.
+  // 1. Direct (unencoded) path — preserve native type. The unified
+  // RangeLoader.loadDirectTyped reader copies into the natively-typed output
+  // buffer (and sources the per-update abort signal internally).
   if (!isEncoded && !isArrayRef) {
     const dtype = String(array.dtype);
     const expectedType = getExpectedColorType(dtype);
@@ -206,18 +164,18 @@ export async function loadColorRanges(
       targetBuffer && colorBufferTypeMatches(targetBuffer, expectedType)
         ? targetBuffer
         : allocateColorBuffer(totalElements, false, dtype);
-    await loadDirectColorRanges(array, ranges, output);
+    await rangeLoader.loadDirectTyped(array, ranges as LoadRange[], output);
     return output;
   }
 
   // 2. rgb_uint8 / rgb_uint16 with matching target → skip decode, raw stream.
   const encName = attrs.encoding?.name;
   if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
-    await loadDirectColorRanges(array, ranges, targetBuffer);
+    await rangeLoader.loadDirectTyped(array, ranges as LoadRange[], targetBuffer);
     return targetBuffer;
   }
   if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
-    await loadDirectColorRanges(array, ranges, targetBuffer);
+    await rangeLoader.loadDirectTyped(array, ranges as LoadRange[], targetBuffer);
     return targetBuffer;
   }
 

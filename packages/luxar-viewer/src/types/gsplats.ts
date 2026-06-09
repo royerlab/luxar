@@ -220,8 +220,12 @@ export interface GSplatsDataLoader {
   /** Load gsplats data for the given view state */
   loadGSplats(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
 
-  /** Update existing data for a new view state */
-  updateView(viewState: GSplatsViewState, session?: UpdateSession): Promise<LoadedGSplatsData>;
+  /** Update existing data for a new view state (see DataLoader.updateView for `signal`). */
+  updateView(
+    viewState: GSplatsViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedGSplatsData>;
 
   /** Clean up resources */
   dispose(): void;

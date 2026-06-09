@@ -30,6 +30,8 @@ export interface UpdateCtxsInput {
   currentVersion: number;
   updateVersion: number;
   extendedToleranceCache: Map<string, number[]>;
+  /** Per-update abort signal; forwarded into each per-type handler ctx. */
+  signal?: AbortSignal;
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
@@ -52,6 +54,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     clearFailure: input.clearFailure,
     currentVersion: input.currentVersion,
     extendedToleranceCache: input.extendedToleranceCache,
+    signal: input.signal,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const linesCtx: LinesHandlerCtx = {
@@ -60,6 +63,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     clearFailure: input.clearFailure,
     currentVersion: input.currentVersion,
     updateVersion: input.updateVersion,
+    signal: input.signal,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   const gsplatsCtx: GSplatsHandlerCtx = {
@@ -69,6 +73,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     currentVersion: input.currentVersion,
     updateVersion: input.updateVersion,
     extendedToleranceCache: input.extendedToleranceCache,
+    signal: input.signal,
     deriveNodeViewState: input.deriveNodeViewState,
   };
   return { pointsCtx, linesCtx, gsplatsCtx };
