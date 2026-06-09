@@ -9,9 +9,7 @@ from typing import Any, Dict
 
 import zarr
 
-from luxar.encoding import ArrayDecoder
 from luxar.gsplats import GSplatData
-from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
 
 
 def _extract_compressed_zarr(compressed_path: Path) -> Path:
@@ -142,129 +140,34 @@ def load_gsplats(
             )
 
         format_version = root.attrs.get("format_version")
-        if format_version != "2.0":
+        if format_version != "3.0":
             raise ValueError(
                 f"Unsupported format_version: {format_version!r}. The on-disk "
-                f"format is now v2.0 (2-D substitutive × additive LOD). "
-                f"Convert legacy v1.0 / v1.1 files (and old substitutive "
-                f"directories) with `luxar gsplat migrate-format <input> "
-                f"<output.gsplats.zarr>`."
+                f"format is now v3.0 (a detached node-tree subtree). Convert "
+                f"legacy v1.x / v2.0 files (and old substitutive directories) "
+                f"with `luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
             )
 
-        # Get splats group
-        splats_group = root["splats"]
+        # Read the node-tree subtree rooted at the file.
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
 
-        # Create decoder
-        decoder = ArrayDecoder()
+        node = read_gsplat_node(root, root)
 
-        # Build root-level stats dictionary
+        # Gather root-level stats (fitting / provenance / header).
         stats: Dict[str, Any] = {}
         if include_stats:
-            # Add fitting info if present
             if "fitting" in root:
-                fitting_group = root["fitting"]
-                for key, value in fitting_group.attrs.items():
+                for key, value in root["fitting"].attrs.items():
                     stats[key] = value
-
-            # Add provenance info if present
             if "provenance" in root:
-                provenance_group = root["provenance"]
-                stats["provenance"] = dict(provenance_group.attrs)
-
-            # Add root metadata
+                stats["provenance"] = dict(root["provenance"].attrs)
             stats["format_version"] = format_version
             stats["timestamp"] = root.attrs.get("timestamp")
             stats["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
-
             if "description" in root.attrs:
                 stats["description"] = root.attrs["description"]
 
-        # Read truncation radius (default 3.0 if absent)
-        truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
-
-        # v2.0: 2-D substitutive × additive layout
-        n_substitutive = int(
-            root.attrs.get(
-                "n_substitutive", splats_group.attrs.get("n_substitutive", 1)
-            )
-        )
-        default_substitutive = int(
-            root.attrs.get(
-                "default_substitutive",
-                splats_group.attrs.get("default_substitutive", 0),
-            )
-        )
-
-        substitutive_levels = []
-        for s in range(n_substitutive):
-            sub_group = splats_group[f"substitutive_{s}"]
-            n_additive_sublods = int(sub_group.attrs.get("n_additive_sublods", 1))
-            compression_factor = int(sub_group.attrs.get("compression_factor", 1))
-            parent_method_raw = sub_group.attrs.get("parent_method", "")
-            parent_method = (
-                None if parent_method_raw in ("", None) else str(parent_method_raw)
-            )
-            level_index = int(sub_group.attrs.get("level_index", s))
-            # level_stats (e.g. n_splats_total) is small and cheap; read it
-            # unconditionally so the default load doesn't silently drop it.
-            ls_raw = sub_group.attrs.get("level_stats", {})
-            level_stats: Dict[str, Any] = (
-                dict(ls_raw) if isinstance(ls_raw, dict) else {}
-            )
-
-            additive_sublods = []
-            for a in range(n_additive_sublods):
-                add_group = sub_group[f"additive_{a}"]
-                add_centers = decoder.decode(add_group["centers"], root)
-                add_amplitudes = decoder.decode(add_group["amplitudes"], root)
-                add_cholesky = decoder.decode(add_group["cholesky_factors"], root)
-                add_colors = (
-                    decoder.decode(add_group["colors"], root)
-                    if "colors" in add_group
-                    else None
-                )
-                lod_stats: Dict[str, Any] = {}
-                if include_stats:
-                    lod_stats_raw = add_group.attrs.get("lod_stats", {})
-                    if isinstance(lod_stats_raw, dict):
-                        lod_stats = dict(lod_stats_raw)
-                    lod_stats["n_splats"] = add_group.attrs.get("n_splats")
-                    lod_stats["ndim"] = add_group.attrs.get("ndim")
-                    lod_stats["ordering"] = add_group.attrs.get("ordering", "none")
-                # Per-cell truncation_radius (the writer persists one per
-                # additive group); fall back to the top-level scalar for
-                # legacy files that only stored it once.
-                add_truncation_radius = float(
-                    add_group.attrs.get("truncation_radius", truncation_radius)
-                )
-                additive_sublods.append(
-                    AdditiveSubLOD(
-                        centers=add_centers,
-                        amplitudes=add_amplitudes,
-                        cholesky_factors=add_cholesky,
-                        colors=add_colors,
-                        stats=lod_stats,
-                        truncation_radius=add_truncation_radius,
-                    )
-                )
-
-            substitutive_levels.append(
-                SubstitutiveLevel(
-                    additive_sublods=additive_sublods,
-                    compression_factor=compression_factor,
-                    parent_method=parent_method,
-                    level_index=level_index,
-                    stats=level_stats,
-                )
-            )
-
-        data = GSplatData(
-            substitutive_levels=substitutive_levels,
-            stats=stats,
-            default_substitutive=default_substitutive,
-        )
-
-        return data
+        return GSplatData.from_tree(node, stats=stats)
 
     finally:
         # Cleanup temporary directory if we extracted a compressed archive

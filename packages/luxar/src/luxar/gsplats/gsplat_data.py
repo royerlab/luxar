@@ -1640,8 +1640,6 @@ class GSplatData(_SplatArrayMixin):
         path: str | Path,
         ordering: Literal["morton", "hilbert", "none"] = "hilbert",
         encoding_mode: Optional["EncodingMode"] = None,
-        positive_scalar_encoding: Literal["linear", "log"] = "linear",
-        color_mode: Optional[Literal["sdr", "hdr"]] = None,
         include_fitting_info: bool = True,
         include_provenance: bool = False,
         description: Optional[str] = None,
@@ -1655,8 +1653,6 @@ class GSplatData(_SplatArrayMixin):
             path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
             ordering: Spatial ordering method ("morton", "hilbert", or "none")
             encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
-            positive_scalar_encoding: Encoding for amplitudes ("linear" or "log")
-            color_mode: Required if colors are float32 ("sdr" or "hdr")
             include_fitting_info: Whether to include fitting statistics
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
@@ -1664,16 +1660,17 @@ class GSplatData(_SplatArrayMixin):
             zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
                 Useful when metadata overhead matters, e.g. for Git LFS storage.
 
+        Colors are written via the shared COLOR helper, which auto-detects SDR vs
+        HDR (values > 1) — there is no explicit ``color_mode`` knob.
+
         Example:
             >>> result = fit_gaussian_splats(image, n_iters=1000)
             >>> result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
-            >>> # With colors
-            >>> result_with_colors.save("colored.gsplats.zarr", color_mode="sdr")
             >>> # With compression for storage/git-lfs
             >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import save_gsplats
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
@@ -1731,217 +1728,21 @@ class GSplatData(_SplatArrayMixin):
             if "provenance" in self.stats:
                 provenance_info = self.stats["provenance"]
 
-        if self.n_substitutive == 1 and self.n_additive_sublods == 1:
-            # Trivial 1×1 case: route through save_gsplats for the simplest
-            # v2.0 layout (single substitutive level, single additive sub-LOD).
-            save_gsplats(
-                path=path,
-                centers=self.centers,
-                amplitudes=self.amplitudes,
-                cholesky_factors=self.cholesky_factors,
-                colors=self.colors,
-                ordering=ordering,
-                encoding_mode=encoding_mode,
-                color_mode=color_mode,
-                positive_scalar_encoding=positive_scalar_encoding,
-                fitting_info=fitting_info,
-                fitting_config=fitting_config,
-                provenance_info=provenance_info,
-                description=description,
-                compress=compress,
-                compressor=compressor,
-                zip_deflate=zip_deflate,
-                truncation_radius=self.truncation_radius,
-            )
-        else:
-            # 2-D matrix with N substitutive × M_i additive: write the full
-            # v2.0 substitutive_<s>/additive_<a> nested layout.
-            self._save_multi_lod(
-                path=path,
-                ordering=ordering,
-                encoding_mode=encoding_mode,
-                color_mode=color_mode,
-                positive_scalar_encoding=positive_scalar_encoding,
-                fitting_info=fitting_info,
-                fitting_config=fitting_config,
-                provenance_info=provenance_info,
-                description=description,
-                compress=compress,
-                compressor=compressor,
-                zip_deflate=zip_deflate,
-            )
-
-    def _save_multi_lod(
-        self,
-        path: str | Path,
-        ordering: Literal["morton", "hilbert", "none"],
-        encoding_mode: "EncodingMode",
-        color_mode: Optional[Literal["sdr", "hdr"]],
-        positive_scalar_encoding: Literal["linear", "log"],
-        fitting_info: Optional[Dict[str, Any]],
-        fitting_config: Optional[Dict[str, Any]],
-        provenance_info: Optional[Dict[str, Any]],
-        description: Optional[str],
-        compress: Optional[Literal["zip", "tar.gz"]],
-        compressor: Optional[Any] = None,
-        zip_deflate: bool = False,
-    ) -> None:
-        """Write the 2-D substitutive × additive matrix as v2.0 zarr format.
-
-        Layout::
-
-            <path>/.zattrs                       # format_version=2.0, n_substitutive,
-                                                 # default_substitutive, …
-            <path>/splats/.zattrs                # n_substitutive, default_substitutive
-            <path>/splats/substitutive_<s>/      # one per substitutive level
-                .zattrs                          # n_additive_sublods, compression_factor,
-                                                 # parent_method, level_index
-                additive_<a>/                    # one per additive sub-LOD
-                    centers, amplitudes,
-                    cholesky_factors, colors?,
-                    chunk_bounds
-                    .zattrs                      # lod_stats={…}
-        """
-        import datetime
-        import shutil
-        import tempfile
-
-        import zarr
-        from zarr.storage import DirectoryStore
-
-        from luxar.gsplats.io.save_gsplats import (  # type: ignore[attr-defined]
-            GSPLATS_VERSION,
-            _save_splat_arrays_to_group,
+        # One authoring path: serialize this dataset's node tree to v3.0 via the
+        # shared walker (the same machinery the scene compiler uses for leaves).
+        write_gsplats_tree(
+            path,
+            self.tree,
+            ordering=ordering,
+            encoding_mode=encoding_mode,
+            fitting_info=fitting_info,
+            fitting_config=fitting_config,
+            provenance_info=provenance_info,
+            description=description,
+            compress=compress,
+            compressor=compressor,
+            zip_deflate=zip_deflate,
         )
-
-        path = Path(path)
-
-        # Handle compression (same pattern as save_gsplats)
-        temp_dir = None
-        if compress:
-            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_save_"))
-            zarr_name = path.name
-            for suffix in [".zip", ".tar.gz", ".gz"]:
-                if zarr_name.endswith(suffix):
-                    zarr_name = zarr_name[: -len(suffix)]
-            if not zarr_name.endswith(".gsplats.zarr"):
-                zarr_name = zarr_name + ".gsplats.zarr"
-            zarr_path = temp_dir / zarr_name
-        else:
-            zarr_path = path
-
-        store = DirectoryStore(str(zarr_path))
-        root = zarr.group(store=store, overwrite=True)
-
-        # Root attributes (v2.0 — 2-D substitutive × additive)
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        root.attrs.update(
-            {
-                "format_version": "2.0",
-                "format_type": "gsplats_zarr",
-                "timestamp": timestamp,
-                "luxar_gsplats_version": GSPLATS_VERSION,
-                "n_substitutive": self.n_substitutive,
-                "default_substitutive": self.default_substitutive,
-            }
-        )
-        if description:
-            root.attrs["description"] = description
-
-        splats_group = root.create_group("splats")
-        splats_group.attrs.update(
-            {
-                "type": "gsplats",
-                "n_substitutive": self.n_substitutive,
-                "default_substitutive": self.default_substitutive,
-                "truncation_radius": self.truncation_radius,
-            }
-        )
-
-        # Iterate substitutive × additive matrix
-        for s, sub_level in enumerate(self.substitutive_levels):
-            sub_group = splats_group.create_group(f"substitutive_{s}")
-            sub_group.attrs.update(
-                {
-                    "n_additive_sublods": sub_level.n_additive_lods,
-                    "compression_factor": int(sub_level.compression_factor),
-                    "parent_method": sub_level.parent_method
-                    if sub_level.parent_method is not None
-                    else "",
-                    "level_index": int(sub_level.level_index),
-                }
-            )
-            # Serialize SubstitutiveLevel.stats that are JSON-safe
-            sub_stats = {
-                k: v
-                for k, v in sub_level.stats.items()
-                if isinstance(v, (int, float, str, bool, list))
-            }
-            if sub_stats:
-                sub_group.attrs["level_stats"] = sub_stats
-
-            for a, sublod in enumerate(sub_level.additive_sublods):
-                add_group = sub_group.create_group(f"additive_{a}")
-
-                # Serialize AdditiveSubLOD stats that are JSON-safe
-                lod_stats = {
-                    k: v
-                    for k, v in sublod.stats.items()
-                    if isinstance(v, (int, float, str, bool, list))
-                }
-
-                _save_splat_arrays_to_group(
-                    splats_group=add_group,
-                    centers=sublod.centers,
-                    amplitudes=sublod.amplitudes,
-                    cholesky_factors=sublod.cholesky_factors,
-                    colors=sublod.colors,
-                    ordering=ordering,
-                    encoding_mode=encoding_mode,
-                    color_mode=color_mode,
-                    positive_scalar_encoding=positive_scalar_encoding,
-                    float16_allowed=False,
-                    lod_stats=lod_stats,
-                    compressor=compressor,
-                    truncation_radius=sublod.truncation_radius,
-                )
-
-        # Write fitting info (optional, root level)
-        if fitting_info is not None:
-            fitting_group = root.create_group("fitting")
-            fitting_group.attrs.update(fitting_info)
-            if fitting_config is not None:
-                config_group = fitting_group.create_group("config")
-                config_group.attrs.update(fitting_config)
-
-        # Write provenance info (optional)
-        if provenance_info is not None:
-            prov_group = root.create_group("provenance")
-            prov_group.attrs.update(provenance_info)
-
-        zarr.consolidate_metadata(store)
-
-        # Compress if requested
-        if compress:
-            try:
-                import tarfile
-                import zipfile
-
-                if compress == "zip":
-                    zip_method = (
-                        zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
-                    )
-                    with zipfile.ZipFile(path, "w", zip_method) as zipf:
-                        for file_path in zarr_path.rglob("*"):
-                            if file_path.is_file():
-                                arcname = file_path.relative_to(zarr_path.parent)
-                                zipf.write(file_path, arcname)
-                elif compress == "tar.gz":
-                    with tarfile.open(path, "w:gz") as tarf:
-                        tarf.add(zarr_path, arcname=zarr_path.name)
-            finally:
-                if temp_dir is not None and temp_dir.exists():
-                    shutil.rmtree(temp_dir, ignore_errors=True)
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.

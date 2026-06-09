@@ -33,11 +33,18 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     if format_type != "gsplats_zarr":
         raise ValueError(f"Invalid format_type: {format_type}, expected 'gsplats_zarr'")
 
+    format_version = root.attrs.get("format_version")
+    if format_version != "3.0":
+        raise ValueError(
+            f"Unsupported format_version: {format_version!r} (expected '3.0'). "
+            f"Convert legacy files with `luxar gsplat migrate-format`."
+        )
+
     # Extract metadata
     info: Dict[str, Any] = {}
 
     # Root attributes
-    info["format_version"] = root.attrs.get("format_version")
+    info["format_version"] = format_version
     info["format_type"] = format_type
     info["timestamp"] = root.attrs.get("timestamp")
     info["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
@@ -45,26 +52,36 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     if "description" in root.attrs:
         info["description"] = root.attrs["description"]
 
-    # Splats group: v2.0 outer attrs (n_substitutive, default_substitutive,
-    # truncation_radius, type) live at /splats; per-cell attrs (n_splats, ndim,
-    # ordering, …) live at /splats/substitutive_<s>/additive_<a>/.  We surface
-    # the default-cell view for the legacy single-set fields.
-    splats_group = root["splats"]
-    info["n_substitutive"] = int(splats_group.attrs.get("n_substitutive", 1))
-    info["default_substitutive"] = int(
-        splats_group.attrs.get("default_substitutive", 0)
-    )
+    # v3.0: the file root IS the node. Describe the tree shape, then surface a
+    # representative leaf's data attrs for the at-a-glance summary fields.
+    info["kind"] = root.attrs.get("kind", "gsplats")
 
-    default_sub_idx = info["default_substitutive"]
-    default_cell = splats_group[f"substitutive_{default_sub_idx}"]["additive_0"]
-    splats_attrs = dict(default_cell.attrs)
+    def _representative_leaf_node(group: "zarr.Group") -> "zarr.Group":
+        """Descend through groups to a representative leaf NODE group."""
+        kind = group.attrs.get("kind")
+        if kind == "lod":
+            idx = int(group.attrs.get("default_level", 0))
+            key = f"child_{idx}" if f"child_{idx}" in group else "child_0"
+            return _representative_leaf_node(group[key])
+        if kind == "partition":
+            return _representative_leaf_node(group["part_0"])
+        return group
 
-    # Surface per-substitutive shape (how many additive sub-LODs the default
-    # level holds) — useful for users to spot multi-additive datasets at a glance.
-    default_sub_group = splats_group[f"substitutive_{default_sub_idx}"]
-    info["n_additive_sublods_default"] = int(
-        default_sub_group.attrs.get("n_additive_sublods", 1)
-    )
+    if info["kind"] == "lod":
+        info["n_substitutive"] = sum(1 for n in root if str(n).startswith("child_"))
+    elif info["kind"] == "partition":
+        info["n_parts"] = sum(1 for n in root if str(n).startswith("part_"))
+        info["n_substitutive"] = 1
+    else:
+        info["n_substitutive"] = 1
+    info["default_substitutive"] = int(root.attrs.get("default_level", 0))
+
+    leaf_node = _representative_leaf_node(root)
+    n_additive = int(leaf_node.attrs.get("n_additive_sublods", 1))
+    info["n_additive_sublods_default"] = n_additive
+    # Data attrs live on the leaf node (single set) or its additive_0 subgroup.
+    data_group = leaf_node["additive_0"] if n_additive > 1 else leaf_node
+    splats_attrs = dict(data_group.attrs)
 
     info["n_splats"] = splats_attrs.get("n_splats")
     info["ndim"] = splats_attrs.get("ndim")

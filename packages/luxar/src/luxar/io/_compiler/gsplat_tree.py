@@ -280,6 +280,16 @@ def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
     for key in _NODE_META_ATTR_KEYS:
         if key in node.meta and node.meta[key] is not None:
             out[key] = node.meta[key]
+    # Per-level (SubstitutiveLevel) stats ride as a JSON-safe ``level_stats`` attr.
+    stats = node.meta.get("stats")
+    if isinstance(stats, dict) and stats:
+        safe = {
+            k: v
+            for k, v in stats.items()
+            if isinstance(v, (int, float, str, bool, list))
+        }
+        if safe:
+            out["level_stats"] = safe
     return out
 
 
@@ -404,6 +414,9 @@ def _node_meta_from_attrs(group: zarr.Group) -> Dict[str, Any]:
         if key in group.attrs:
             val = group.attrs[key]
             out[key] = None if (key == "parent_method" and val == "") else val
+    if "level_stats" in group.attrs:
+        ls = group.attrs["level_stats"]
+        out["stats"] = dict(ls) if isinstance(ls, dict) else {}
     return out
 
 

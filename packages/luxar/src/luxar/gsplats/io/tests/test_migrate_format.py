@@ -1,4 +1,4 @@
-"""Tests for the `migrate_format` legacy → v2.0 conversion tool."""
+"""Tests for the `migrate_format` legacy → v3.0 conversion tool."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from luxar.gsplats.io import load_gsplats
 from luxar.gsplats.io.migrate import (
     _read_substitutive_directory,
     _read_v1_x_root,
+    _read_v2_0_root,
     detect_legacy_format,
     migrate_format,
 )
@@ -125,6 +126,48 @@ def _make_v1_1(path: Path, lod_sizes: list[int]) -> None:
     zarr.consolidate_metadata(store)
 
 
+def _make_v2_0(path: Path, n: int) -> None:
+    """Build a v2.0 `.gsplats.zarr` (substitutive_0/additive_0 matrix, [1, 1])."""
+    store = zarr.DirectoryStore(str(path))
+    root = zarr.group(store=store, overwrite=True)
+    root.attrs.update(
+        {
+            "format_version": "2.0",
+            "format_type": "gsplats_zarr",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "luxar_gsplats_version": "test",
+            "n_substitutive": 1,
+            "default_substitutive": 0,
+        }
+    )
+    splats = root.create_group("splats")
+    splats.attrs.update(
+        {
+            "type": "gsplats",
+            "n_substitutive": 1,
+            "default_substitutive": 0,
+            "truncation_radius": 3.0,
+        }
+    )
+    sub = splats.create_group("substitutive_0")
+    sub.attrs.update(
+        {
+            "n_additive_sublods": 1,
+            "compression_factor": 1,
+            "parent_method": "",
+            "level_index": 0,
+        }
+    )
+    add = sub.create_group("additive_0")
+    add.attrs.update({"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"})
+    rng = np.random.default_rng(0)
+    add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
+    add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
+    add.create_dataset("cholesky_factors", data=_identity_chol(n))
+    add.create_dataset("chunk_bounds", data=np.zeros((1, 3, 2), dtype=np.float32))
+    zarr.consolidate_metadata(store)
+
+
 def _make_substitutive_dir(dir_path: Path, level_sizes: list[int]) -> None:
     """Build a pre-v2.0 substitutive directory layout (level_<i>.gsplats.zarr + manifest.json)."""
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -170,17 +213,8 @@ class TestDetectLegacyFormat:
         assert detect_legacy_format(d) == "substitutive_dir"
 
     def test_detects_v2_0(self, tmp_path: Path) -> None:
-        from luxar.gsplats import GSplatData
-
         p = tmp_path / "v2.gsplats.zarr"
-        rng = np.random.default_rng(0)
-        n = 5
-        data = GSplatData(
-            centers=(rng.random((n, 3)) * 10).astype(np.float32),
-            amplitudes=rng.random(n).astype(np.float32),
-            cholesky_factors=_identity_chol(n),
-        )
-        data.save(p)
+        _make_v2_0(p, n=5)
         assert detect_legacy_format(p) == "v2.0"
 
     def test_raises_on_unknown_input(self, tmp_path: Path) -> None:
@@ -226,17 +260,21 @@ class TestReadLegacyRoots:
         assert [s.n_splats for s in data.additive_sublods] == [6, 4, 2]
 
     def test_read_v1_x_rejects_v2_0(self, tmp_path: Path) -> None:
-        from luxar.gsplats import GSplatData
-
         p = tmp_path / "v2.gsplats.zarr"
-        GSplatData(
-            centers=np.zeros((3, 3), dtype=np.float32),
-            amplitudes=np.ones(3, dtype=np.float32),
-            cholesky_factors=_identity_chol(3),
-        ).save(p)
+        _make_v2_0(p, n=3)
         root = zarr.open_group(str(p), mode="r")
         with pytest.raises(ValueError, match="format_version 1.0 or 1.1"):
             _read_v1_x_root(root)
+
+    def test_read_v2_0_root(self, tmp_path: Path) -> None:
+        p = tmp_path / "v2.gsplats.zarr"
+        _make_v2_0(p, n=9)
+        root = zarr.open_group(str(p), mode="r")
+        data, fitting, config, prov = _read_v2_0_root(root, include_stats=True)
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 1
+        assert data.n_splats == 9
+        assert data.ndim == 3
 
     def test_read_substitutive_directory(self, tmp_path: Path) -> None:
         d = tmp_path / "pyr"
@@ -299,16 +337,15 @@ class TestReadLegacyRoots:
 
 
 class TestMigrateFormat:
-    def test_migrate_v1_0_to_v2(self, tmp_path: Path) -> None:
+    def test_migrate_v1_0_to_v3(self, tmp_path: Path) -> None:
         legacy = tmp_path / "legacy.gsplats.zarr"
         _make_v1_0(legacy, n=10)
         out = tmp_path / "out.gsplats.zarr"
         detected = migrate_format(legacy, out)
         assert detected == "v1.0"
-        # Out is loadable as v2.0
+        # Out is a v3.0 node-tree leaf
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "2.0"
-        # Shape is [1, 1]
+        assert root.attrs["format_version"] == "3.0"
         data = load_gsplats(out)
         assert data.n_substitutive == 1
         assert data.n_additive_sublods == 1
@@ -357,17 +394,30 @@ class TestMigrateFormat:
         # compression_factor metadata round-trips
         assert [s.compression_factor for s in data.substitutive_levels] == [1, 4, 16]
 
-    def test_migrate_refuses_v2_0_input(self, tmp_path: Path) -> None:
+    def test_migrate_v2_0_to_v3(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "v2.gsplats.zarr"
+        _make_v2_0(legacy, n=12)
+        out = tmp_path / "out.gsplats.zarr"
+        detected = migrate_format(legacy, out)
+        assert detected == "v2.0"
+        root = zarr.open_group(str(out), mode="r")
+        assert root.attrs["format_version"] == "3.0"
+        data = load_gsplats(out)
+        assert data.n_splats == 12
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 1
+
+    def test_migrate_refuses_v3_0_input(self, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
-        legacy = tmp_path / "v2.gsplats.zarr"
+        legacy = tmp_path / "v3.gsplats.zarr"
         GSplatData(
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=_identity_chol(3),
-        ).save(legacy)
+        ).save(legacy)  # writes v3.0
         out = tmp_path / "out.gsplats.zarr"
-        with pytest.raises(ValueError, match="already format v2.0"):
+        with pytest.raises(ValueError, match="Unrecognised input layout"):
             migrate_format(legacy, out)
 
     def test_migrate_refuses_existing_output(self, tmp_path: Path) -> None:
@@ -428,24 +478,18 @@ class TestMigrateFormat:
         assert sub.amplitudes.shape == (1,)
         assert sub.cholesky_factors.shape == (1, 6)
 
-    # [P5] boundary: empty (n=0) was historically blocked by a
-    # ZeroDivisionError in compute_chunk_bounds_gsplats; both that crash
-    # and the empty migration round-trip are now exercised end-to-end.
-    def test_migrate_v1_0_empty_splats_roundtrip(self, tmp_path: Path) -> None:
-        """v1.0 with n=0 splats migrates to v2.0 preserving emptiness."""
+    def test_migrate_v1_0_empty_splats_rejected(self, tmp_path: Path) -> None:
+        """v1.0 with n=0 splats is rejected by the unified writer.
+
+        The v3.0 writer shares the scene's array validation, which refuses an
+        empty splat set (``fit`` always produces ≥1 splat). This aligns the
+        standalone format with the scene format's no-empty policy.
+        """
         legacy = tmp_path / "empty_v1_0.gsplats.zarr"
         _make_v1_0(legacy, n=0)
         out = tmp_path / "out.gsplats.zarr"
-        detected = migrate_format(legacy, out)
-        assert detected == "v1.0"
-        data = load_gsplats(out)
-        assert data.n_splats == 0
-        assert data.n_substitutive == 1
-        assert data.n_additive_sublods == 1
-        sub = data.additive_sublods[0]
-        assert sub.centers.shape == (0, 3)
-        assert sub.amplitudes.shape == (0,)
-        assert sub.cholesky_factors.shape == (0, 6)
+        with pytest.raises(Exception, match="(?i)empty"):
+            migrate_format(legacy, out)
 
     # [P1][P8] full numeric roundtrip for v1.0 (parallels v1.1 test above)
     def test_migrate_v1_0_numerical_equivalence(self, tmp_path: Path) -> None:

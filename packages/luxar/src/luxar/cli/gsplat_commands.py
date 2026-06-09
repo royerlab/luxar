@@ -1618,19 +1618,13 @@ def transform_dataset(
                     hi = data.centers[:, i].max()
                     aprint(f"  Dim {i}: [{lo:.4f}, {hi:.4f}]  range: {hi - lo:.4f}")
 
-            # Save
+            # Save (color SDR/HDR is auto-detected by the writer)
             with asection(f"Saving to {output_path.name}"):
-                # Auto-detect color_mode for float32 colors
-                color_mode: Optional[Literal["sdr", "hdr"]] = None
-                if data.colors is not None and data.colors.dtype.kind == "f":
-                    color_mode = "hdr"
-
                 data.save(
                     output_path,
                     encoding_mode=encoding_mode_obj,
                     include_fitting_info=True,
                     compress=compress,
-                    color_mode=color_mode,
                 )
                 aprint(f"Saved: {output_path}")
 
@@ -3078,21 +3072,11 @@ def merge_datasets(
                     merged = GSplatData.concatenate(datasets)
 
             with asection(f"Saving to {output_path.name}"):
-                # Determine color_mode for float32 colors
-                save_color_mode: Optional[Literal["sdr", "hdr"]] = None
-                if merged.colors is not None:
-                    import numpy as np
-
-                    if np.issubdtype(merged.colors.dtype, np.floating):
-                        save_color_mode = (
-                            "hdr" if np.any(merged.colors > 1.0) else "sdr"
-                        )
-
+                # Color SDR/HDR is auto-detected by the writer.
                 merged.save(
                     output_path,
                     encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
-                    color_mode=save_color_mode,
                 )
                 aprint(f"Saved {merged.n_splats:,} splats ({merged.ndim}D)")
 
@@ -4234,8 +4218,10 @@ def batch_validate_cmd(
         ok = 0
         missing = 0
         corrupt = 0
+        unmigrated = 0
         stale_tmp = 0
         corrupt_reasons: list[str] = []
+        unmigrated_reasons: list[str] = []
 
         for tile_name in expected_tiles:
             tile_path = tiles_dir / tile_name
@@ -4256,6 +4242,11 @@ def batch_validate_cmd(
             reason = _validate_tile(tile_path)
             if reason == "ok":
                 ok += 1
+            elif reason.startswith("unsupported_format_version"):
+                # Recoverable, NOT corrupt: an unmigrated legacy tile. Never
+                # delete it under --fix — it converts via `gsplat migrate-format`.
+                unmigrated += 1
+                unmigrated_reasons.append(f"  {tile_name}: {reason}")
             else:
                 corrupt += 1
                 corrupt_reasons.append(f"  {tile_name}: {reason}")
@@ -4265,10 +4256,11 @@ def batch_validate_cmd(
 
         # Summary
         aprint("")
-        aprint(f"  OK:        {ok}")
-        aprint(f"  MISSING:   {missing}")
-        aprint(f"  CORRUPT:   {corrupt}")
-        aprint(f"  STALE_TMP: {stale_tmp}")
+        aprint(f"  OK:         {ok}")
+        aprint(f"  MISSING:    {missing}")
+        aprint(f"  CORRUPT:    {corrupt}")
+        aprint(f"  UNMIGRATED: {unmigrated}")
+        aprint(f"  STALE_TMP:  {stale_tmp}")
 
         if corrupt_reasons and not fix:
             aprint("")
@@ -4277,6 +4269,14 @@ def batch_validate_cmd(
                 aprint(r)
             aprint("")
             aprint("Run with --fix to delete corrupt tiles.")
+
+        if unmigrated_reasons:
+            aprint("")
+            aprint("Unmigrated (legacy-format) tiles — NOT deleted:")
+            for r in unmigrated_reasons:
+                aprint(r)
+            aprint("")
+            aprint("Convert each with `luxar gsplat migrate-format <tile> <out>`.")
 
         if fix and (corrupt > 0 or stale_tmp > 0):
             aprint(f"\nFixed: deleted {corrupt} corrupt + {stale_tmp} stale .tmp")
@@ -4291,15 +4291,70 @@ def batch_validate_cmd(
         raise typer.Exit(1) from e
 
 
-def _validate_tile(tile_path: Path) -> str:
-    """Validate a single tile's integrity. Returns 'ok' or a reason string."""
+def _validate_leaf_arrays(node_dir: Path, label: str) -> str:
+    """Check a v3.0 gsplats leaf's required array sub-dirs (no decode)."""
+    for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+        arr_dir = node_dir / arr_name
+        if not arr_dir.is_dir():
+            return f"missing_{arr_name}@{label}"
+        if not (arr_dir / ".zarray").exists():
+            return f"no_zarray_{arr_name}@{label}"
+    return "ok"
+
+
+def _validate_node_dir(node_dir: Path, label: str) -> str:
+    """Structurally validate a v3.0 node subtree on disk (no array decode)."""
     import json
 
-    # Check .zmetadata (written last by consolidate_metadata — best completeness signal)
+    zattrs_path = node_dir / ".zattrs"
+    attrs: dict = {}
+    if zattrs_path.exists():
+        try:
+            attrs = json.loads(zattrs_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return f"corrupt_zattrs@{label}"
+
+    kind = attrs.get("kind")
+    if kind in ("lod", "partition"):
+        prefix = "child_" if kind == "lod" else "part_"
+        children = sorted(
+            d for d in node_dir.iterdir() if d.is_dir() and d.name.startswith(prefix)
+        )
+        if not children:
+            return f"{kind}_no_children@{label}"
+        for child in children:
+            reason = _validate_node_dir(child, f"{label}/{child.name}")
+            if reason != "ok":
+                return reason
+        return "ok"
+
+    # Leaf: a single splat set, or an additive ladder (additive_<i>/ subgroups).
+    n_additive = int(attrs.get("n_additive_sublods", 1))
+    if n_additive > 1:
+        for i in range(n_additive):
+            reason = _validate_leaf_arrays(
+                node_dir / f"additive_{i}", f"{label}/additive_{i}"
+            )
+            if reason != "ok":
+                return reason
+        return "ok"
+    return _validate_leaf_arrays(node_dir, label)
+
+
+def _validate_tile(tile_path: Path) -> str:
+    """Validate a single v3.0 tile's integrity. Returns 'ok' or a reason string.
+
+    Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
+    the consolidated metadata, the format header, and the presence of every
+    required array — without decoding any data. A non-v3.0 tile is reported (so
+    ``batch validate --fix`` never silently deletes an unmigrated tile).
+    """
+    import json
+
+    # .zmetadata is written last by consolidate_metadata — best completeness signal.
     if not (tile_path / ".zmetadata").exists():
         return "no_zmetadata (save incomplete)"
 
-    # Check root attrs
     zattrs_path = tile_path / ".zattrs"
     if not zattrs_path.exists():
         return "no_zattrs"
@@ -4311,35 +4366,13 @@ def _validate_tile(tile_path: Path) -> str:
     if attrs.get("format_type") != "gsplats_zarr":
         return f"bad_format_type: {attrs.get('format_type')}"
 
-    # Check splats group
-    if not (tile_path / "splats").is_dir():
-        return "no_splats_group"
+    version = attrs.get("format_version")
+    if version != "3.0":
+        # Not corrupt — just unmigrated. Surface it instead of classifying it as
+        # corrupt (which would let --fix delete a recoverable tile).
+        return f"unsupported_format_version: {version} (run gsplat migrate-format)"
 
-    # Check LOD arrays
-    n_lods = attrs.get("n_lods", 1)
-    version = attrs.get("format_version", "1.0")
-
-    if version == "1.1" and n_lods > 1:
-        for i in range(n_lods):
-            lod_dir = tile_path / "splats" / f"lod_{i}"
-            if not lod_dir.is_dir():
-                return f"missing_lod_{i}"
-            for arr_name in ("centers", "amplitudes", "cholesky_factors"):
-                arr_dir = lod_dir / arr_name
-                if not arr_dir.is_dir():
-                    return f"missing_{arr_name}_lod_{i}"
-                if not (arr_dir / ".zarray").exists():
-                    return f"no_zarray_{arr_name}_lod_{i}"
-    else:
-        splats_dir = tile_path / "splats"
-        for arr_name in ("centers", "amplitudes", "cholesky_factors"):
-            arr_dir = splats_dir / arr_name
-            if not arr_dir.is_dir():
-                return f"missing_{arr_name}"
-            if not (arr_dir / ".zarray").exists():
-                return f"no_zarray_{arr_name}"
-
-    return "ok"
+    return _validate_node_dir(tile_path, ".")
 
 
 @app_batch.command("cancel")
