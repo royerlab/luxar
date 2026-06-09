@@ -130,6 +130,18 @@ export async function readArray<D extends DataType, Store extends Readable>(
 
 export const get = readArray;
 
+/**
+ * Build a `GetOptions` carrying an `AbortSignal`, or `undefined` when there is
+ * no signal. Lets read sites forward a per-update abort signal into `get()`
+ * uniformly: `get(array, sel, abortOptions(signal))`. This makes zarrita honor
+ * the signal (`throwIfAborted` between chunks + `store.get(key, { signal })`)
+ * even for arrays NOT wrapped by the L0 `wrapWithCache` chokepoint — e.g. when
+ * L0 caching is disabled or for `array_ref` target arrays opened directly.
+ */
+export function abortOptions(signal?: AbortSignal | null): GetOptions | undefined {
+  return signal ? { signal } : undefined;
+}
+
 /** Build a slice selection. Pass `null` for an open start/end. */
 export function slice(start?: number | null, end?: number | null): Slice {
   return zarrita.slice(start ?? null, end ?? null);

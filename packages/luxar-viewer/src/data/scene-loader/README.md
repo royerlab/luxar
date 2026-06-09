@@ -16,7 +16,20 @@ The SceneLoader has three external entry points:
   GSplats LOD kick).
 - **`updateView(viewState)`** — slider / animation / keyboard nav. Runs
   the per-type async process step then the synchronous atomic commit,
-  serialized through a view-state queue with predictive prefetch.
+  serialized through a view-state queue with predictive prefetch. Each
+  cycle gets a fresh per-update `AbortController` (distinct from the
+  per-dataset one): when a newer view-state supersedes the in-flight
+  one, its signal is aborted so the superseded load's chunk reads/worker
+  decodes bail (an `AbortError`/`WorkerAbortError` is treated as
+  superseded, not a failure) and its atomic commit is skipped — the
+  winning view-state commits the correct frame. The signal flows from
+  `updateView` through the handler ctx and `loader.updateView` to two read
+  surfaces: the `wrapWithCache` L0 chokepoint (covers warm-cache hits), and
+  `RangeLoader` — the single owner of every demand chunk read for all three
+  geometry types, which threads the signal into both `get(array, …, { signal })`
+  (cold / L0-disabled / `array_ref`-target reads, regardless of wrapping) and
+  the worker decodes. The atomic commit-skip is the final, always-present
+  correctness backstop.
 - **`dispose()`** — release dataset-scoped resources before the next
   `loadScene`.
 

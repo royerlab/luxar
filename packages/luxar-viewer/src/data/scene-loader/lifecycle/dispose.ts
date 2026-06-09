@@ -35,6 +35,8 @@ import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
  */
 export interface DisposeCtx {
   datasetAbortController: AbortController | null;
+  /** Live per-update controller (if an updateView is in flight); aborted so its reads bail. */
+  updateAbortController: AbortController | null;
   registry: LoaderRegistry;
   gpuBufferPool: GPUBufferPool | null;
   cachingStore: MultiLevelCachingStore | null;
@@ -61,6 +63,11 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
   // signal from this disposed loader.
   if (ctx.datasetAbortController) {
     ctx.datasetAbortController.abort();
+  }
+  // Also abort the live per-update controller (if an updateView is in flight)
+  // so its chunk reads bail instead of resolving against a torn-down loader.
+  if (ctx.updateAbortController) {
+    ctx.updateAbortController.abort();
   }
   getWorkerPool().setAbortSignal(undefined);
 

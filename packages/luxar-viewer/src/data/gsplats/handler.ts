@@ -38,6 +38,8 @@ export interface GSplatsHandlerCtx {
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -71,7 +73,11 @@ export async function loadAndStage(
     return null;
   }
   const gsplatsViewState: GSplatsViewState = derived.viewState;
-  const data: LoadedGSplatsData | null = await loader.updateView(gsplatsViewState, session);
+  const data: LoadedGSplatsData | null = await loader.updateView(
+    gsplatsViewState,
+    session,
+    ctx.signal
+  );
   ctx.clearFailure(path);
   if (!data) return null;
   const staged = await processGSplatsData(

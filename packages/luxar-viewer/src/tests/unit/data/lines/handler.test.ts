@@ -93,7 +93,33 @@ describe('lines handler', () => {
       deriveNodeViewState: () => ({ skip: false, viewState }),
     });
     expect(loader.updateView).toHaveBeenCalledTimes(1);
-    expect(loader.updateView).toHaveBeenCalledWith(viewState, expect.anything());
+    // 3rd arg is the per-update signal (undefined when none is supplied).
+    expect(loader.updateView).toHaveBeenCalledWith(viewState, expect.anything(), undefined);
+  });
+
+  it('forwards the per-update abort signal to loader.updateView', async () => {
+    const viewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 1],
+    };
+    const updateView = vi.fn().mockResolvedValue(null);
+    const loader: LinesDataLoader = {
+      loadLines: vi.fn(),
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader;
+    const ac = new AbortController();
+    await loadAndStage('/l', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure: vi.fn(),
+      currentVersion: 1,
+      updateVersion: 1,
+      signal: ac.signal,
+      deriveNodeViewState: () => ({ skip: false, viewState }),
+    });
+    expect(updateView).toHaveBeenCalledWith(viewState, expect.anything(), ac.signal);
   });
 
   // data.md G2 symmetry [P8]: Points has a "returns the staged commit on a

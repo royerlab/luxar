@@ -176,11 +176,19 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return this._lastAllResident;
   }
 
-  async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    return this.updateView(viewState, session);
+  async loadLines(
+    viewState: LinesViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedLinesData> {
+    return this.updateView(viewState, session, signal);
   }
 
-  async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
+  async updateView(
+    viewState: LinesViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedLinesData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
       this.lastViewState = {
@@ -197,7 +205,8 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,
-        session
+        session,
+        signal
       );
       const elapsed = performance.now() - t0;
 

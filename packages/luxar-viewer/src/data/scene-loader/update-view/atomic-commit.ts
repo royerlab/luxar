@@ -32,6 +32,14 @@ export interface AtomicCommitCtx {
   gpuBufferPool: GPUBufferPool | null;
   /** Pickable-state invalidator (cached pick buffer goes stale on geometry change). */
   nodeFactory: NodeFactory;
+  /**
+   * Per-update abort signal. When `aborted`, this update was superseded:
+   * SKIP every geometry mutation (beginFrame / commits / markPickingDirty)
+   * so no stale or partial frame reaches the GPU — but STILL end every
+   * profiler session below (the sessions were opened in `runLoaderUpdates`
+   * and must be closed exactly once regardless of commit). See Guards G5/G6.
+   */
+  signal?: AbortSignal;
   /** Per-type commit callbacks routed through the orchestrator's delegates. */
   updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
   commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
@@ -64,30 +72,35 @@ export function runAtomicCommit(
   // the per-iteration end() calls that record accurate per-node timings
   // on the happy path. beginFrame() is inside the try so a future
   // throwing implementation can't leak the already-opened sessions.
+  // Superseded mid-flight: skip all geometry mutations, but the session-end
+  // sweep below MUST still run (G5/G6). `if (staged && !aborted)` keeps the
+  // skip all-or-nothing across the three geometry types.
+  const aborted = ctx.signal?.aborted ?? false;
+
   try {
     // Advance GPU buffer pool frame counter once per update cycle
     // (not per-acquire) so eviction timing reflects actual frames.
-    if (ctx.gpuBufferPool) {
+    if (ctx.gpuBufferPool && !aborted) {
       ctx.gpuBufferPool.beginFrame();
     }
 
     for (const { staged, session } of pointsStaged) {
       try {
-        if (staged) ctx.updatePointsGeometry(staged.path, staged.data, session);
+        if (staged && !aborted) ctx.updatePointsGeometry(staged.path, staged.data, session);
       } finally {
         session.end();
       }
     }
     for (const { staged, session } of linesStaged) {
       try {
-        if (staged) ctx.commitLinesGeometry(staged, session);
+        if (staged && !aborted) ctx.commitLinesGeometry(staged, session);
       } finally {
         session.end();
       }
     }
     for (const { staged, session } of gsplatsStaged) {
       try {
-        if (staged) ctx.commitGSplatsGeometry(staged, session);
+        if (staged && !aborted) ctx.commitGSplatsGeometry(staged, session);
       } finally {
         session.end();
       }
@@ -98,8 +111,9 @@ export function runAtomicCommit(
     for (const { session } of gsplatsStaged) session.end();
   }
 
-  // Invalidate cached pick buffer after geometry changes
-  if (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0) {
+  // Invalidate cached pick buffer after geometry changes (skip when aborted —
+  // nothing was committed, so the pick buffer is still valid for the prior frame).
+  if (!aborted && (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0)) {
     ctx.nodeFactory.markPickingDirty();
   }
 }

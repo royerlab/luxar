@@ -168,11 +168,19 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     return this._lastAllResident;
   }
 
-  async loadPoints(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-    return this.updateView(viewState, session);
+  async loadPoints(
+    viewState: PointsViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedPointsData> {
+    return this.updateView(viewState, session, signal);
   }
 
-  async updateView(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData> {
+  async updateView(
+    viewState: PointsViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedPointsData> {
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this.loadedLODs = [];
       this.lastViewState = {
@@ -189,7 +197,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,
-        session
+        session,
+        signal
       );
       const elapsed = performance.now() - t0;
 
