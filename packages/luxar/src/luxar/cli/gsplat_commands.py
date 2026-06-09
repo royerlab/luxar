@@ -2889,7 +2889,7 @@ def calibrate_command(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# migrate-format — Convert legacy v1.x layouts to format v2.0
+# migrate-format — Convert legacy layouts to the v3.0 node-tree format
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -2898,10 +2898,10 @@ def migrate_format_command(
     input_path: Path = typer.Argument(
         ...,
         exists=True,
-        help="Legacy .gsplats.zarr (v1.0 or v1.1), .gsplats.zarr.zip/.tar.gz, "
+        help="Legacy .gsplats.zarr (v1.0 / v1.1 / v2.0), .gsplats.zarr.zip/.tar.gz, "
         "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
     ),
-    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v2.0)."),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v3.0)."),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output if it exists."
     ),
@@ -2909,39 +2909,39 @@ def migrate_format_command(
         False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
     ),
 ) -> None:
-    """Convert a legacy .gsplats.zarr layout to format v2.0.
+    """Convert a legacy .gsplats.zarr layout to the v3.0 node-tree format.
 
-    Three input shapes are auto-detected:
+    Four input shapes are auto-detected:
 
     \b
     * v1.0  .gsplats.zarr (single flat splat set)
     * v1.1  .gsplats.zarr (multi-LOD additive, /splats/lod_<i>/ subgroups)
+    * v2.0  .gsplats.zarr (2-D substitutive_<s>/additive_<a> matrix)
     * substitutive directory (manifest.json + level_<i>.gsplats.zarr files)
 
-    All three migrate to a single v2.0 ``.gsplats.zarr`` with the
-    appropriate substitutive × additive shape.
+    All migrate to a single v3.0 ``.gsplats.zarr`` node subtree.
     """
     try:
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.migrate import migrate_format
 
-        with asection(f"Migrating {input_path.name} → v2.0"):
+        with asection(f"Migrating {input_path.name} → v3.0"):
             detected = migrate_format(input_path, output_path, overwrite=overwrite)
             aprint(f"Detected legacy format: {detected}")
 
-            # Post-write read-back: confirm the output is a loadable v2.0 file
+            # Post-write read-back: confirm the output is a loadable v3.0 file
             # rather than reporting success blind.
             import zarr
 
             verify = GSplatData.load(output_path, include_stats=False)
             out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
             fmt = out_attrs.get("format_version")
-            if fmt != "2.0":
-                aprint(f"❌ Migration produced format_version={fmt!r}, expected '2.0'")
+            if fmt != "3.0":
+                aprint(f"❌ Migration produced format_version={fmt!r}, expected '3.0'")
                 raise typer.Exit(1)
             if not quiet:
                 aprint(
-                    f"✓ Verified v2.0 output: {verify.n_splats:,} splats, "
+                    f"✓ Verified v3.0 output: {verify.n_splats:,} splats, "
                     f"{verify.n_substitutive} substitutive level(s) → "
                     f"{output_path}"
                 )
@@ -4898,8 +4898,8 @@ def lod_substitutive(
     output_path: Path = typer.Argument(
         ...,
         help=(
-            "Output .gsplats.zarr (v2.0) holding the full substitutive "
-            "hierarchy as ``splats/substitutive_<s>/additive_0/`` cells. "
+            "Output .gsplats.zarr (v3.0) holding the substitutive hierarchy as "
+            "a ``kind=lod`` group of ``child_<i>/`` leaves (coarsest→finest). "
             "Loadable with ``luxar gsplat info``."
         ),
     ),
@@ -4982,8 +4982,8 @@ def lod_substitutive(
 
     Each coarser substitutive level contains synthesised representative
     splats that *replace* the previous level (compression factor K per
-    step). The full hierarchy is written to a single v2.0 .gsplats.zarr
-    file (``splats/substitutive_<s>/additive_0/`` per cell), loadable
+    step). The full hierarchy is written to a single v3.0 .gsplats.zarr
+    file (a ``kind=lod`` group of ``child_<i>/`` leaves), loadable
     independently and renderable level-by-level by the viewer.
 
     Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
@@ -5126,8 +5126,9 @@ def lod_pyramid(
     output_path: Path = typer.Argument(
         ...,
         help=(
-            "Output .gsplats.zarr (v2.0) carrying the full 2-D pyramid: "
-            "``splats/substitutive_<s>/additive_<a>/`` per cell."
+            "Output .gsplats.zarr (v3.0) carrying the full 2-D pyramid: a "
+            "``kind=lod`` group of ``child_<i>/`` leaves, each with an "
+            "``additive_<a>/`` ladder."
         ),
     ),
     substitutive: str = typer.Option(
@@ -5226,7 +5227,7 @@ def lod_pyramid(
 
     Equivalent to running ``lod substitutive`` then ``lod additive
     --substitutive-level`` for every substitutive level, but written as
-    a single composite invocation that produces one v2.0 .gsplats.zarr
+    a single composite invocation that produces one v3.0 .gsplats.zarr
     file with shape ``[L+1, additive]``.
 
     \b
