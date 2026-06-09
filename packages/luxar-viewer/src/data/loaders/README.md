@@ -299,9 +299,16 @@ shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
 - **`color-loader.ts`** — shared color-range loader with native-dtype
   preservation. Exports `loadColorRanges()` (end-to-end load with direct /
   `rgb_uint8` shortcut / encoded-then-restored branches), `allocateColorBuffer`,
-  `restoreOriginalDtype`, `getExpectedColorType`, `colorBufferTypeMatches`,
-  `loadDirectColorRanges`, and the `ColorBuffer` / `ColorBufferKind` /
-  `ColorRange` types.
+  `restoreOriginalDtype`, `getExpectedColorType`, `colorBufferTypeMatches`, and
+  the `ColorBuffer` / `ColorBufferKind` / `ColorRange` types. Direct (unencoded)
+  reads are delegated to `RangeLoader.loadDirectTyped` — the single
+  dtype-preserving reader — so `color-loader.ts` keeps only the color-specific
+  concerns (RGB layout, `original_dtype` restoration).
+- **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays,
+ranges)`: shared cache-warming read for the three loaders' `prefetchChunks`.
+  Fires a `get()` per (array × range) and discards the result. Deliberately
+  separate from `RangeLoader.loadDirectTyped` — prefetch warms future frames,
+  so it allocates no typed output and carries no per-update abort signal.
 - **`extend-to-all-preflight.ts`** — `warnExtendToAllNoDimensions` (warns when
   `extend_to_all` is set but the view state has no resolved dimensions) +
   `announceExtendToAllOnce` (one-shot BROADCAST emoji log on first load).

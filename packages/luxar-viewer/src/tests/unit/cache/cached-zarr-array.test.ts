@@ -495,6 +495,61 @@ describe('cached-zarr-array', () => {
       expect(probe.touched).toBe(false);
     });
   });
+
+  describe('per-update abort chokepoint (getSignal)', () => {
+    it('throws (and never fetches) when the active signal is already aborted — miss path', async () => {
+      const mockArray = createMockZarrArray();
+      const ac = new AbortController();
+      ac.abort();
+      const wrapped = wrapWithCache(
+        mockArray,
+        cache,
+        '/points/positions',
+        undefined,
+        () => ac.signal
+      );
+
+      await expect(wrapped.getChunk([0, 0, 0])).rejects.toThrow();
+      // Bailed at the proxy entry — the underlying (Blosc) getChunk never ran.
+      expect(mockArray.getChunk).not.toHaveBeenCalled();
+    });
+
+    it('throws on the warm-cache HIT path too (chokepoint precedes the L0 lookup)', async () => {
+      const mockArray = createMockZarrArray();
+      let signal: AbortSignal | null = null;
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', undefined, () => signal);
+
+      // Prime L0 with a non-aborted call (same coords → same key).
+      await wrapped.getChunk([0, 0, 0]);
+
+      // Now abort and re-request the cached chunk: must still throw.
+      const ac = new AbortController();
+      ac.abort();
+      signal = ac.signal;
+      await expect(wrapped.getChunk([0, 0, 0])).rejects.toThrow();
+    });
+
+    it('does NOT throw when a signal is present but not aborted', async () => {
+      const mockArray = createMockZarrArray();
+      const ac = new AbortController(); // live
+      const wrapped = wrapWithCache(
+        mockArray,
+        cache,
+        '/points/positions',
+        undefined,
+        () => ac.signal
+      );
+
+      await expect(wrapped.getChunk([0, 0, 0])).resolves.toBeDefined();
+      expect(mockArray.getChunk).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a missing getSignal thunk (back-compat with 4-arg callers)', async () => {
+      const mockArray = createMockZarrArray();
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions');
+      await expect(wrapped.getChunk([0, 0, 0])).resolves.toBeDefined();
+    });
+  });
 });
 
 describe('ResidencyAccumulator', () => {

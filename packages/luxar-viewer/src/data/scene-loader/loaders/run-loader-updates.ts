@@ -12,6 +12,7 @@ import { log, Modules } from '../../../utils/log';
 import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { FailedLoaderInfo } from './loader-registry';
+import { isAbortError } from '../../loaders/abort-error';
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -47,6 +48,17 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       const staged = await updateFn(path, loader, session);
       return { staged, session };
     } catch (error) {
+      // Superseded, not failed: a newer view-state aborted this in-flight
+      // update (per-update AbortSignal). zarrita's chunk reads throw a
+      // DOMException named 'AbortError'; the worker pool throws
+      // 'WorkerAbortError'. Either way this path was abandoned on purpose —
+      // do NOT record a failure or drop the prefetch baseline. The winning
+      // update re-derives and reloads this path. Returning staged:null means
+      // the atomic commit leaves this node's geometry untouched.
+      if (isAbortError(error)) {
+        return { staged: null, session };
+      }
+
       // Predictive prefetch is keyed by the previous successful
       // derived view-state for this path. If the demand update
       // fails, discard that baseline so the next success

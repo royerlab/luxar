@@ -188,9 +188,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    */
   async loadGSplats(
     viewState: GSplatsViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
-    return this.updateView(viewState, session);
+    return this.updateView(viewState, session, signal);
   }
 
   /**
@@ -203,7 +204,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    */
   async updateView(
     viewState: GSplatsViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<LoadedGSplatsData> {
     // Reset if view state changed
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
@@ -223,7 +225,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       const t0 = performance.now();
       const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
         viewState,
-        session
+        session,
+        signal
       );
       const elapsed = performance.now() - t0;
 

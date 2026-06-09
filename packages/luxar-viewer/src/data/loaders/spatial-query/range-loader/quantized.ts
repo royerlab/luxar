@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get } from '../../../zarr';
+import { get, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -11,6 +11,8 @@ export interface QuantizedCtx {
   config: ResolvedRangeLoaderConfig;
   verbose: boolean;
   decoder: ArrayDecoder;
+  /** Per-update abort signal forwarded to the worker decode (see RangeLoader). */
+  signal?: AbortSignal | null;
 }
 
 export async function loadQuantized(
@@ -40,27 +42,35 @@ export async function loadQuantized(
 
   for (const range of ranges) {
     const sliceSpec = firstAxisRangeSlice(shape, range);
-    const chunkData = await get(array, sliceSpec);
+    const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
     const quantizedData = chunkData.data as Uint8Array | Uint16Array;
 
     let dequantized: Float32Array;
     if (shouldUseWorkers) {
       try {
         if (quantMetadata.isLogSpace) {
-          dequantized = await getWorkerPool().runWithTimeout('decodeLogScalar', 'decode', (api) =>
-            api.decodeLogScalar({
-              data: quantizedData,
-              maxLog: quantMetadata.bounds[1],
-              dtype: quantMetadata.dtype,
-            })
+          dequantized = await getWorkerPool().runWithTimeout(
+            'decodeLogScalar',
+            'decode',
+            (api) =>
+              api.decodeLogScalar({
+                data: quantizedData,
+                maxLog: quantMetadata.bounds[1],
+                dtype: quantMetadata.dtype,
+              }),
+            ctx.signal ?? undefined
           );
         } else {
-          dequantized = await getWorkerPool().runWithTimeout('decodeQuantized', 'decode', (api) =>
-            api.decodeQuantized({
-              data: quantizedData,
-              bounds: quantMetadata.bounds,
-              dtype: quantMetadata.dtype,
-            })
+          dequantized = await getWorkerPool().runWithTimeout(
+            'decodeQuantized',
+            'decode',
+            (api) =>
+              api.decodeQuantized({
+                data: quantizedData,
+                bounds: quantMetadata.bounds,
+                dtype: quantMetadata.dtype,
+              }),
+            ctx.signal ?? undefined
           );
         }
       } catch (error) {

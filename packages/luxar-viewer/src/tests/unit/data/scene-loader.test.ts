@@ -334,6 +334,93 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    });
+
+    // Three-geometry symmetry: the same supersede→abort contract must hold for
+    // Points, Lines, and GSplats. Each registers its fake loader in the
+    // matching registry map; the loader returns `null` on the winning pass so
+    // the handler short-circuits before any processX/commit (no real mesh).
+    const cases = [
+      { type: 'points', map: 'loaders' },
+      { type: 'lines', map: 'linesLoaders' },
+      { type: 'gsplats', map: 'gsplatLoaders' },
+    ] as const;
+
+    it.each(cases)(
+      'aborts the in-flight $type load when a newer view-state supersedes it; no false failure',
+      async ({ map }) => {
+        let capturedSignal: AbortSignal | undefined;
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        let calls = 0;
+
+        const mockLoader = {
+          loadPoints: vi.fn(),
+          loadLines: vi.fn(),
+          loadGSplats: vi.fn(),
+          updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+            calls += 1;
+            if (calls === 1) {
+              // In-flight (to-be-superseded) load: park until released, then
+              // bail exactly like zarrita's between-chunk throwIfAborted.
+              capturedSignal = signal;
+              await firstGate;
+              signal?.throwIfAborted();
+            }
+            return null; // winning pass: null → handler returns before commit
+          }),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as Record<string, Map<string, unknown>>)[map].set(
+          '/node',
+          mockLoader
+        );
+
+        const forgetPathSpy = vi.spyOn(
+          (sceneLoader as unknown as { viewStateQueue: { forgetPath: (p: string) => void } })
+            .viewStateQueue,
+          'forgetPath'
+        );
+
+        // First update runs synchronously into loader.updateView and parks on
+        // the gate (so _updateInProgress is true and the signal is captured).
+        const p1 = sceneLoader.updateView({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 1],
+          tolerance: [0, 0, 0, 0],
+        });
+        await Promise.resolve();
+
+        // Second update supersedes the in-flight one → must abort its signal.
+        await sceneLoader.updateView({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 2],
+          tolerance: [0, 0, 0, 0],
+        });
+
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        expect(capturedSignal?.aborted).toBe(true);
+
+        // Release the gated load; its AbortError must be classified as
+        // superseded — NOT recorded as a loader failure, and the prefetch
+        // baseline (forgetPath) must be left intact.
+        releaseFirst();
+        await p1;
+        // Let queueNext re-enter with the winning state and settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(sceneLoader.hasFailures()).toBe(false);
+        expect(sceneLoader.getFailedLoaders().size).toBe(0);
+        expect(forgetPathSpy).not.toHaveBeenCalledWith('/node');
+      }
+    );
+  });
+
   describe('resource management', () => {
     it('should dispose all resources properly', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');

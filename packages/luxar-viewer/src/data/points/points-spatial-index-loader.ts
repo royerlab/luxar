@@ -7,7 +7,6 @@
  */
 
 import * as zarr from '../zarr';
-import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import {
@@ -51,6 +50,8 @@ import {
   type BaseViewState,
   type LoadRange,
   loadColorRanges,
+  prefetchRangesIntoCache,
+  isAbortError,
   OnceInit,
   computeLoadLatency,
   recordLoadEvent,
@@ -67,11 +68,6 @@ import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
-
-type WritableNumericArray = {
-  length: number;
-  [index: number]: number;
-};
 
 /**
  * `PointsNodeAttrs` and `PointsChunkIndex` are now defined alongside the
@@ -135,6 +131,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // updateViewWithResidency() and read by the wrapped arrays' getChunk;
   // null at all other times (so prefetch traffic isn't recorded).
   private _activeProbe: ResidencyAccumulator | null = null;
+  // Per-update abort signal for the in-flight `updateView`. Set at the top of
+  // `updateView` and cleared in its `finally`; read by the `wrapWithCache` L0
+  // proxy (via the `() => this._activeSignal` thunk below) so a superseded
+  // update bails before fetch/decode. Mirrors `_activeProbe`'s lifetime.
+  private _activeSignal: AbortSignal | null = null;
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -162,6 +163,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
+    // Forward the per-update abort signal into worker decodes (LUT/quantized/
+    // broadcasted) so a superseded update's decode bails before dispatch.
+    this.rangeLoader.setSignalSource(() => this._activeSignal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
@@ -315,7 +319,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           positionsArray,
           this.l0Cache,
           `${this.node.path}/positions`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.positions = positionsArray;
@@ -334,7 +339,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           colorsArray,
           this.l0Cache,
           `${this.node.path}/colors`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.colors = colorsArray;
@@ -354,7 +360,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           radiiArray,
           this.l0Cache,
           `${this.node.path}/radii`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.radii = radiiArray;
@@ -376,7 +383,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           sharpnessArray,
           this.l0Cache,
           `${this.node.path}/sharpnesses`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.sharpness = sharpnessArray;
@@ -403,7 +411,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             scalarsArray,
             this.l0Cache,
             `${this.node.path}/scalars`,
-            () => this._activeProbe
+            () => this._activeProbe,
+            () => this._activeSignal
           );
         }
         this.arrays.scalars = scalarsArray;
@@ -705,25 +714,26 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       return result;
     } catch (error) {
-      // Handle errors
-      this.metrics.errors++;
-
-      // Update query status
-      const query = this.activeQueries.get(queryId);
-      if (query) {
-        query.status = 'error';
-        query.error = String(error);
+      // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
+      // classifies it as 'superseded' (not a failure), so don't inflate the
+      // error counter or flood the monitor's error stream with non-errors.
+      if (!isAbortError(error)) {
+        this.metrics.errors++;
+        const query = this.activeQueries.get(queryId);
+        if (query) {
+          query.status = 'error';
+          query.error = String(error);
+        }
+        this.emitEvent({
+          type: 'error',
+          loader: 'point-spatial-index',
+          timestamp: Date.now(),
+          data: {
+            path: this.node.path,
+            error: String(error),
+          },
+        });
       }
-
-      this.emitEvent({
-        type: 'error',
-        loader: 'point-spatial-index',
-        timestamp: Date.now(),
-        data: {
-          path: this.node.path,
-          error: String(error),
-        },
-      });
 
       this.activeQueries.delete(queryId);
       throw error;
@@ -740,13 +750,24 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * @param viewState - Current view state
    * @param session - Optional profiler session for nested timing
    */
-  async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-    const result = await this.loadPoints(viewState, session);
-    if (!this._initialLoadDone) {
-      this._initialLoadDone = true;
-      this.rangeLoader.setVerbose(false);
+  async updateView(
+    viewState: ViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedPointsData> {
+    // Publish the per-update signal for the L0 proxy chokepoint, then clear it
+    // in `finally` so a later cache hit/prefetch isn't seen as abortable.
+    this._activeSignal = signal ?? null;
+    try {
+      const result = await this.loadPoints(viewState, session);
+      if (!this._initialLoadDone) {
+        this._initialLoadDone = true;
+        this.rangeLoader.setVerbose(false);
+      }
+      return result;
+    } finally {
+      this._activeSignal = null;
     }
-    return result;
   }
 
   /**
@@ -758,12 +779,13 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   async updateViewWithResidency(
     viewState: ViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<{ data: LoadedPointsData; allResident: boolean }> {
     const probe = new ResidencyAccumulator();
     this._activeProbe = probe;
     try {
-      const data = await this.updateView(viewState, session);
+      const data = await this.updateView(viewState, session, signal);
       return { data, allResident: probe.allResident };
     } finally {
       this._activeProbe = null;
@@ -802,18 +824,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.arrays.sharpness,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
-    const fetches: Promise<unknown>[] = [];
-    for (const array of arrays) {
-      const shape = array.shape;
-      for (const range of ranges) {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        fetches.push(get(array, sliceSpec));
-      }
-    }
-    await Promise.all(fetches);
+    await prefetchRangesIntoCache(arrays, ranges);
   }
 
   /**
@@ -1023,51 +1034,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Load direct (unencoded) array ranges preserving native type.
-   *
-   * CRITICAL: This method preserves the native array type (Uint8Array, Float32Array, etc.)
-   * because the rendering pipeline depends on actual types:
-   * - Uint8Array colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
-   * - Float32Array colors: Expected to be 0-1, no normalization
-   */
-  private async loadDirectRanges(
-    array: zarr.Array<zarr.DataType, zarr.Readable>,
-    ranges: PointRange[],
-    output: Float32Array | Uint8Array | Uint16Array | Float16Array
-  ): Promise<void> {
-    const shape = array.shape;
-    let destOffset = 0;
-
-    for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
-
-      const chunkData = await get(array, sliceSpec);
-      const data = chunkData.data;
-
-      // Copy data preserving type (no conversion)
-      if (output instanceof Float32Array && data instanceof Float32Array) {
-        output.set(data, destOffset);
-      } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
-        output.set(data, destOffset);
-      } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
-        output.set(data, destOffset);
-      } else {
-        // Fallback: convert if types don't match (shouldn't happen with proper dtype detection)
-        const source = data as ArrayLike<number>;
-        const destination = output as WritableNumericArray;
-        for (let i = 0; i < source.length; i++) {
-          destination[destOffset + i] = source[i];
-        }
-      }
-
-      destOffset += (data as ArrayLike<number>).length;
-    }
-  }
-
-  /**
    * Load color ranges with multi-type support (preserves original_dtype).
    *
    * Delegates to the shared color-attribute helper used by the lines and
@@ -1212,7 +1178,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // Converting Uint8Array(255) to Float32Array(255.0) would make colors ~255x too bright!
     if (encoding === 'direct') {
       const output = this.allocateOutputBuffer(totalElements, false, array.dtype);
-      await this.loadDirectRanges(array, ranges, output);
+      await this.rangeLoader.loadDirectTyped(array, ranges as LoadRange[], output);
       this.recordLoadMetrics(arrayName, totalPoints, output);
       return output;
     }

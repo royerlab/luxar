@@ -1,8 +1,10 @@
 /**
  * Unit tests for the shared color-attribute helpers.
  *
- * The helpers are pure (no DOM, no THREE) except for `loadDirectColorRanges`,
- * which calls `zarr.get` against a supplied array — that is mocked here.
+ * The helpers are pure (no DOM, no THREE). Direct (unencoded) color reads now
+ * route through `RangeLoader.loadDirectTyped` (whose dtype-preserving copy core
+ * is `copyDirectChunk`, tested directly below); `loadColorRanges` orchestration
+ * is exercised against a fake RangeLoader.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -10,12 +12,15 @@ import {
   allocateColorBuffer,
   getExpectedColorType,
   colorBufferTypeMatches,
-  loadDirectColorRanges,
   restoreOriginalDtype,
   loadColorRanges,
   type ColorRange,
   type RangeLoader,
 } from '../../../../data/loaders';
+import {
+  copyDirectChunk,
+  type RangeNumericArray,
+} from '../../../../data/loaders/spatial-query/range-loader/encoding-types';
 
 vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');
@@ -165,48 +170,45 @@ describe('restoreOriginalDtype', () => {
   });
 });
 
-describe('loadDirectColorRanges', () => {
-  beforeEach(() => {
-    mockZarrGet.mockReset();
-  });
-
-  it('preserves uint8 type with zero conversion', async () => {
-    mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([10, 20, 30]) } as never);
+// `copyDirectChunk` is the dtype-preserving copy core shared by every direct
+// read (the unified RangeLoader.loadDirectTyped reader uses it). These pure
+// cases pin the type-preservation contract that color correctness depends on.
+describe('copyDirectChunk', () => {
+  it('preserves uint8 bytes with zero conversion (same-kind copy)', () => {
     const out = new Uint8Array(9);
-    const array = { dtype: 'uint8', shape: [10], attrs: {} } as never;
-    const ranges: ColorRange[] = [{ start: 0, end: 1 }];
-
-    await loadDirectColorRanges(array, ranges, out);
-    expect(Array.from(out.slice(0, 3))).toEqual([10, 20, 30]);
-    // Full-buffer check: only the first range is written; the untouched
-    // tail (indices 3..8 of the length-9 buffer) must remain zero.
+    const n = copyDirectChunk(out, new Uint8Array([10, 20, 30]), 0);
+    expect(n).toBe(3);
+    // Only the written prefix changes; the tail stays zero.
     expect(out).toEqual(new Uint8Array([10, 20, 30, 0, 0, 0, 0, 0, 0]));
   });
 
-  it('preserves Float32 type and concatenates multiple ranges', async () => {
-    mockZarrGet
-      .mockResolvedValueOnce({ data: new Float32Array([0.1, 0.2, 0.3]) } as never)
-      .mockResolvedValueOnce({ data: new Float32Array([0.4, 0.5, 0.6]) } as never);
+  it('preserves Float32 and accumulates at the given destOffset', () => {
     const out = new Float32Array(6);
-    const array = { dtype: 'float32', shape: [10, 3], attrs: {} } as never;
-    const ranges: ColorRange[] = [
-      { start: 0, end: 1 },
-      { start: 5, end: 6 },
-    ];
-
-    await loadDirectColorRanges(array, ranges, out);
+    let off = 0;
+    off += copyDirectChunk(out, new Float32Array([0.1, 0.2, 0.3]), off);
+    off += copyDirectChunk(out, new Float32Array([0.4, 0.5, 0.6]), off);
+    expect(off).toBe(6);
     expect(Array.from(out)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6].map((v) => Math.fround(v)));
   });
 
-  it('falls back to Float32 widening when source and output kinds disagree', async () => {
-    // Stored as Uint8 but caller allocated Float32 (e.g. legacy mismatch).
-    mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([10, 20, 30]) } as never);
+  it('widens a Uint8 source into a Float32 output (cross-kind conversion)', () => {
     const out = new Float32Array(3);
-    const array = { dtype: 'uint8', shape: [10], attrs: {} } as never;
-    const ranges: ColorRange[] = [{ start: 0, end: 1 }];
-
-    await loadDirectColorRanges(array, ranges, out);
+    copyDirectChunk(out, new Uint8Array([10, 20, 30]), 0);
     expect(Array.from(out)).toEqual([10, 20, 30]);
+  });
+
+  it('widens a BigInt64 source via Number() (int64 zarr arrays)', () => {
+    const out = new Float32Array(2);
+    const n = copyDirectChunk(out, new BigInt64Array([5n, 7n]) as RangeNumericArray, 0);
+    expect(n).toBe(2);
+    expect(Array.from(out)).toEqual([5, 7]);
+  });
+
+  it('preserves Uint32 for lines segments (same-kind copy)', () => {
+    const out = new Uint32Array(4);
+    copyDirectChunk(out, new Uint32Array([1, 2]), 0);
+    copyDirectChunk(out, new Uint32Array([3, 4]), 2);
+    expect(Array.from(out)).toEqual([1, 2, 3, 4]);
   });
 });
 
@@ -215,14 +217,33 @@ describe('loadColorRanges (orchestrator)', () => {
     mockZarrGet.mockReset();
   });
 
-  /** A RangeLoader stand-in whose `loadRangesResolvingRef` we can spy on. */
+  /**
+   * A RangeLoader stand-in. `loadRangesResolvingRef` (encoded path) is a spy;
+   * `loadDirectTyped` (direct path) mirrors the real reader — it consumes the
+   * queued `mockZarrGet` results and copies them into the caller's output via
+   * `copyDirectChunk`, so the existing `mockResolvedValueOnce({data})` setups
+   * still drive the direct-path tests and dtype-preservation is exercised.
+   */
   function makeFakeRangeLoader() {
     return {
       loadRangesResolvingRef: vi.fn(async (_array, _attrs, _ranges, _out, _total, _epi, _store) => {
         return 0;
       }),
+      loadDirectTyped: vi.fn(
+        async (_array: unknown, ranges: ColorRange[], output: RangeNumericArray) => {
+          let off = 0;
+          for (let i = 0; i < ranges.length; i++) {
+            const chunk = (await mockZarrGet(_array as never, [] as never)) as {
+              data: RangeNumericArray;
+            };
+            off += copyDirectChunk(output as never, chunk.data, off);
+          }
+          return off;
+        }
+      ),
     } as unknown as RangeLoader & {
       loadRangesResolvingRef: ReturnType<typeof vi.fn>;
+      loadDirectTyped: ReturnType<typeof vi.fn>;
     };
   }
 

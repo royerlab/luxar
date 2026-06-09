@@ -325,8 +325,12 @@ export interface LinesDataLoader {
   /** Load lines data for the given view state */
   loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData>;
 
-  /** Update existing data for a new view state */
-  updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData>;
+  /** Update existing data for a new view state (see DataLoader.updateView for `signal`). */
+  updateView(
+    viewState: LinesViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedLinesData>;
 
   /** Clean up resources */
   dispose(): void;

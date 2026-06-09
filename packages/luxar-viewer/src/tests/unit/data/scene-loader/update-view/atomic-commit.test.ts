@@ -304,3 +304,48 @@ describe('runAtomicCommit — session.end idempotency contract', () => {
     expect(calls.length).toBe(2);
   });
 });
+
+describe('runAtomicCommit — superseded (signal aborted)', () => {
+  it('skips beginFrame, all commits, and markPickingDirty but STILL ends every session (G5)', () => {
+    const points = makePointsStaged(3);
+    const lines = makeLinesStaged(2);
+    const gsplats = makeGSplatsStaged(1);
+    const ac = new AbortController();
+    ac.abort();
+    const ctx = makeCtx({ signal: ac.signal });
+
+    runAtomicCommit(points, lines, gsplats, ctx);
+
+    // No geometry mutation reaches the GPU for a superseded update.
+    expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
+    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
+
+    // G5: every opened profiler session is still closed exactly twice
+    // (per-iteration finally + outer sweep) — the commit-skip must never
+    // skip the session-end sweep, or sessions leak.
+    for (const p of points) {
+      expect((p.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    }
+    for (const l of lines) {
+      expect((l.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    }
+    for (const g of gsplats) {
+      expect((g.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    }
+  });
+
+  it('commits normally when the signal is present but NOT aborted', () => {
+    const points = makePointsStaged(2);
+    const ac = new AbortController(); // not aborted
+    const ctx = makeCtx({ signal: ac.signal });
+
+    runAtomicCommit(points, [], [], ctx);
+
+    expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(2);
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
+  });
+});

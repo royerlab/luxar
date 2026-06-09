@@ -75,8 +75,17 @@ export interface DataLoader {
   /** Load points data for the given view state */
   loadPoints(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData>;
 
-  /** Update existing data for a new view state */
-  updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData>;
+  /**
+   * Update existing data for a new view state.
+   * @param signal - Optional per-update abort signal. When it fires (a newer
+   *   view-state superseded this one), in-flight chunk reads/decodes bail with
+   *   an `AbortError` instead of running to completion.
+   */
+  updateView(
+    viewState: ViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedPointsData>;
 
   /** Clean up resources */
   dispose(): void;
