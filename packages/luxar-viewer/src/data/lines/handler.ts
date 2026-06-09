@@ -33,6 +33,8 @@ export interface LinesHandlerCtx {
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -66,7 +68,7 @@ export async function loadAndStage(
     return null;
   }
   const linesViewState: LinesViewState = derived.viewState;
-  const data: LoadedLinesData | null = await loader.updateView(linesViewState, session);
+  const data: LoadedLinesData | null = await loader.updateView(linesViewState, session, ctx.signal);
   ctx.clearFailure(path);
   if (!data) return null;
   if (ctx.currentVersion <= 1) {

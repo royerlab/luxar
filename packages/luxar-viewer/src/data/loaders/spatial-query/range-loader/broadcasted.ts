@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get } from '../../../zarr';
+import { get, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -9,6 +9,8 @@ import type { ResolvedRangeLoaderConfig } from './encoding-types';
 export interface BroadcastedCtx {
   config: ResolvedRangeLoaderConfig;
   verbose: boolean;
+  /** Per-update abort signal forwarded to the worker decode (see RangeLoader). */
+  signal?: AbortSignal | null;
 }
 
 export async function loadBroadcasted(
@@ -29,19 +31,23 @@ export async function loadBroadcasted(
     );
   }
 
-  const fullData = await get(array);
+  const fullData = await get(array, undefined, abortOptions(ctx.signal));
   const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
   const valueAsFloat32 =
     broadcastValue instanceof Float32Array ? broadcastValue : new Float32Array(broadcastValue);
 
   if (useWorkers && totalElements > ctx.config.workerThreshold) {
     try {
-      const decoded = await getWorkerPool().runWithTimeout('decodeBroadcasted', 'decode', (api) =>
-        api.decodeBroadcasted({
-          value: valueAsFloat32,
-          numPoints: totalElements,
-          elementsPerPoint: elementsPerItem,
-        })
+      const decoded = await getWorkerPool().runWithTimeout(
+        'decodeBroadcasted',
+        'decode',
+        (api) =>
+          api.decodeBroadcasted({
+            value: valueAsFloat32,
+            numPoints: totalElements,
+            elementsPerPoint: elementsPerItem,
+          }),
+        ctx.signal ?? undefined
       );
       output.set(decoded);
       return;

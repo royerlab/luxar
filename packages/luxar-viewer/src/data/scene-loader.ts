@@ -213,6 +213,20 @@ export class SceneLoader {
    */
   private _datasetAbortController: AbortController | null = null;
 
+  /**
+   * Per-update AbortController. Created at the start of each in-flight
+   * `updateView` and aborted in the supersede branch when a newer view-state
+   * arrives (and on `dispose`). Its signal is threaded into the per-type
+   * handler ctxs → `loader.updateView` → the L0 proxy chokepoint, so a
+   * superseded update's chunk reads/decodes bail with an `AbortError` instead
+   * of running to completion, and its geometry commit is skipped (the winning
+   * update commits the correct frame). DISTINCT from
+   * {@link _datasetAbortController}: it is per-update, NOT registered via
+   * `WorkerPool.setAbortSignal` (which replaces, not chains); it composes
+   * with the dataset signal through the worker pool's `combineSignals`.
+   */
+  private _updateAbortController: AbortController | null = null;
+
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
@@ -538,6 +552,12 @@ export class SceneLoader {
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
+      // Abort the in-flight update: it has now been superseded by this newer
+      // view-state, so its remaining chunk reads/decodes should bail rather
+      // than run to completion. Its commit is skipped (signal.aborted), and
+      // queueNext re-enters updateView with the pending (winning) state.
+      this._updateAbortController?.abort();
+
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
       // "v5 superseded v4, in flight v3" rather than three identical
@@ -563,6 +583,13 @@ export class SceneLoader {
     this._updateInProgress = true;
     this._updateVersion++;
     const currentVersion = this._updateVersion;
+
+    // Fresh per-update abort controller. A superseding updateView (the
+    // serialization branch above) aborts this; its signal flows to every
+    // chunk read so the superseded load bails, and its `aborted` flag gates
+    // the geometry commit below.
+    const updateController = new AbortController();
+    this._updateAbortController = updateController;
 
     try {
       // CRITICAL: Deep copy arrays to prevent mutation during async operations
@@ -611,6 +638,7 @@ export class SceneLoader {
         currentVersion,
         updateVersion: this._updateVersion,
         extendedToleranceCache,
+        signal: updateController.signal,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
@@ -650,27 +678,37 @@ export class SceneLoader {
       runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, {
         gpuBufferPool: this._gpuBufferPool,
         nodeFactory: this.nodeFactory,
+        // When this update was superseded mid-flight, skip the geometry
+        // commits so a stale/partial frame never reaches the GPU; profiler
+        // sessions are still ended inside runAtomicCommit regardless.
+        signal: updateController.signal,
         updatePointsGeometry: (path, data, session) =>
           this.updatePointsGeometry(path, data, session),
         commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
         commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
       });
 
-      // Update monitor with total visible segments across all lines nodes
-      this.updateVisibleCountsInMonitor();
+      // Post-commit bookkeeping is meaningful only for a committed frame. A
+      // superseded update committed nothing (and its loaders may have aborted
+      // mid-attribute) — skip the monitor refresh and the failed-loader
+      // warning; the winning update runs both with correct state.
+      if (!updateController.signal.aborted) {
+        // Update monitor with total visible segments across all lines nodes
+        this.updateVisibleCountsInMonitor();
 
-      // Warn user if any loaders failed
-      if (this.failedLoaders.size > 0) {
-        const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
-        log.warning(
-          Modules.SCENE_LOADER,
-          `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
-        );
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
-            'Check console output for details. Data may be incomplete.'
-        );
+        // Warn user if any loaders failed
+        if (this.failedLoaders.size > 0) {
+          const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
+          log.warning(
+            Modules.SCENE_LOADER,
+            `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
+          );
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
+              'Check console output for details. Data may be incomplete.'
+          );
+        }
       }
     } finally {
       // End profiling update cycle (always, even if errors)
@@ -1150,6 +1188,7 @@ export class SceneLoader {
     this._disposed = true;
     await disposeSceneLoader({
       datasetAbortController: this._datasetAbortController,
+      updateAbortController: this._updateAbortController,
       registry: this.registry,
       gpuBufferPool: this._gpuBufferPool,
       cachingStore: this.cachingStore,

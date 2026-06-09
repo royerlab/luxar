@@ -57,6 +57,14 @@ const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
  *   probe. Called on every `getChunk` to report hit/miss. Returning `null`
  *   (the default / when no load is in flight) disables reporting — this is
  *   how prefetch traffic is kept from contaminating a demand load's signal.
+ * @param getSignal - Optional accessor for the currently-active per-update
+ *   `AbortSignal`. Called on every `getChunk`; if it returns an aborted
+ *   signal the call throws (`AbortError`) BEFORE any L0 lookup, cache fetch,
+ *   or Blosc decode — so a superseded `updateView` bails on the warm-cache
+ *   hit path too (zarrita's own `throwIfAborted` only fires between chunks
+ *   of a multi-chunk selection). Mirrors the `getProbe` thunk lifetime: it
+ *   reads the owning loader's transient per-update field, so it is naturally
+ *   per-caller and never aborts a coalesced chunk another live caller awaits.
  * @returns Proxied zarr.Array with L0 caching enabled
  *
  * @example
@@ -77,7 +85,8 @@ export function wrapWithCache<D extends zarr.DataType>(
   array: zarr.Array<D, zarr.Readable>,
   cache: DecompressedChunkCache,
   arrayPath: string,
-  getProbe?: () => ResidencyProbe | null
+  getProbe?: () => ResidencyProbe | null,
+  getSignal?: () => AbortSignal | null
 ): zarr.Array<D, zarr.Readable> {
   // Don't double-wrap
   if (isCachedArray(array)) {
@@ -135,6 +144,16 @@ export function wrapWithCache<D extends zarr.DataType>(
           ...args: Parameters<typeof target.getChunk>
         ): Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }> {
           const [chunkCoords] = args;
+
+          // Per-update abort chokepoint: bail BEFORE the L0 lookup / fetch /
+          // Blosc decode if the owning load was superseded. This covers the
+          // warm-cache hit and coalesced-pending paths below, which
+          // short-circuit before zarrita's between-chunk throwIfAborted would
+          // run. `getSignal` reads the loader's transient per-update field, so
+          // it is per-caller — it never aborts the shared `pendingChunks`
+          // promise that a different, still-live caller may be awaiting.
+          getSignal?.()?.throwIfAborted();
+
           const key = DecompressedChunkCache.makeKey(arrayPath, chunkCoords);
 
           // Check L0 cache first

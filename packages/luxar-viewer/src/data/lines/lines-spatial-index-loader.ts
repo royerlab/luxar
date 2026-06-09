@@ -12,7 +12,6 @@
  */
 
 import * as zarr from '../zarr';
-import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import type {
   LinesMetadata,
@@ -30,6 +29,8 @@ import {
   type LoadRange,
   getExpectedColorType,
   loadColorRanges,
+  prefetchRangesIntoCache,
+  isAbortError,
   computeLoadLatency,
   recordLoadEvent,
   LoaderEventEmitter,
@@ -84,6 +85,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // Active cache-residency probe for the in-flight demand load (see
   // updateViewWithResidency); null at all other times.
   private _activeProbe: ResidencyAccumulator | null = null;
+  // Per-update abort signal for the in-flight `updateView`; set at its top and
+  // cleared in `finally`. Read by the `wrapWithCache` L0 proxy so a superseded
+  // update bails before fetch/decode. Mirrors `_activeProbe`'s lifetime.
+  private _activeSignal: AbortSignal | null = null;
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -119,6 +124,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
+    // Forward the per-update abort signal into worker decodes (LUT/quantized/
+    // broadcasted) so a superseded update's decode bails before dispatch.
+    this.rangeLoader.setSignalSource(() => this._activeSignal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     this.prefetcher = prefetcher || null;
@@ -198,13 +206,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           verticesArray,
           this.l0Cache,
           `${this.node.path}/vertices`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
         segmentsArray = wrapWithCache(
           segmentsArray,
           this.l0Cache,
           `${this.node.path}/segments`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.vertices = verticesArray;
@@ -223,7 +233,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           widthsArray,
           this.l0Cache,
           `${this.node.path}/widths`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.widths = widthsArray;
@@ -239,7 +250,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           colorsArray,
           this.l0Cache,
           `${this.node.path}/colors`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.colors = colorsArray;
@@ -257,7 +269,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           sharpnessArray,
           this.l0Cache,
           `${this.node.path}/sharpnesses`,
-          () => this._activeProbe
+          () => this._activeProbe,
+          () => this._activeSignal
         );
       }
       this.arrays.sharpness = sharpnessArray;
@@ -279,7 +292,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
             scalarsArray,
             this.l0Cache,
             `${this.node.path}/scalars`,
-            () => this._activeProbe
+            () => this._activeProbe,
+            () => this._activeSignal
           );
         }
         this.arrays.scalars = scalarsArray;
@@ -336,19 +350,25 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.finishQueryTracking(queryId, startTime, 'complete');
       return result;
     } catch (err) {
-      this.metrics.errors += 1;
+      // A superseded scrub aborts the in-flight read on purpose; runLoaderUpdates
+      // classifies it as 'superseded' (not a failure), so don't inflate the
+      // error counter or flood the monitor's error stream with non-errors.
+      // Still finish query tracking (removes the active query, records timing).
       this.finishQueryTracking(queryId, startTime, 'error');
-      // Emit a monitor 'error' event so event-driven dashboards /
-      // timelines see the failure. Mirrors the Points loader semantics.
-      this.emitEvent({
-        type: 'error',
-        loader: 'lines-spatial-index',
-        timestamp: Date.now(),
-        data: {
-          path: this.node.path,
-          error: String(err),
-        },
-      });
+      if (!isAbortError(err)) {
+        this.metrics.errors += 1;
+        // Emit a monitor 'error' event so event-driven dashboards /
+        // timelines see the failure. Mirrors the Points loader semantics.
+        this.emitEvent({
+          type: 'error',
+          loader: 'lines-spatial-index',
+          timestamp: Date.now(),
+          data: {
+            path: this.node.path,
+            error: String(err),
+          },
+        });
+      }
       throw err;
     }
   }
@@ -699,13 +719,24 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param viewState - Current view state
    * @param session - Optional profiler session for nested timing
    */
-  async updateView(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    const result = await this.loadLines(viewState, session);
-    if (!this._initialLoadDone) {
-      this._initialLoadDone = true;
-      this.rangeLoader.setVerbose(false);
+  async updateView(
+    viewState: LinesViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<LoadedLinesData> {
+    // Publish the per-update signal for the L0 proxy chokepoint, then clear it
+    // in `finally` so a later cache hit/prefetch isn't seen as abortable.
+    this._activeSignal = signal ?? null;
+    try {
+      const result = await this.loadLines(viewState, session);
+      if (!this._initialLoadDone) {
+        this._initialLoadDone = true;
+        this.rangeLoader.setVerbose(false);
+      }
+      return result;
+    } finally {
+      this._activeSignal = null;
     }
-    return result;
   }
 
   /**
@@ -714,12 +745,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   async updateViewWithResidency(
     viewState: LinesViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<{ data: LoadedLinesData; allResident: boolean }> {
     const probe = new ResidencyAccumulator();
     this._activeProbe = probe;
     try {
-      const data = await this.updateView(viewState, session);
+      const data = await this.updateView(viewState, session, signal);
       return { data, allResident: probe.allResident };
     } finally {
       this._activeProbe = null;
@@ -760,18 +792,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.arrays.sharpness,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
-    const fetches: Promise<unknown>[] = [];
-    for (const array of arrays) {
-      const shape = array.shape;
-      for (const range of ranges) {
-        const sliceSpec: zarr.Slice[] =
-          shape.length === 2
-            ? [slice(range.start, range.end), slice(null)]
-            : [slice(range.start, range.end)];
-        fetches.push(get(array, sliceSpec));
-      }
-    }
-    await Promise.all(fetches);
+    await prefetchRangesIntoCache(arrays, ranges);
   }
 
   /**
@@ -838,20 +859,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const totalSegments = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const output = new Uint32Array(totalSegments * 2);
 
-    let destOffset = 0;
-
-    for (const range of ranges) {
-      const sliceSpec = [slice(range.start, range.end), slice(null)] as zarr.Slice[];
-      const data = await get(this.arrays.segments, sliceSpec);
-      // Data can be typed array or ArrayBuffer-like, handle both
-      const segmentData =
-        data.data instanceof Uint32Array
-          ? data.data
-          : new Uint32Array(data.data as unknown as ArrayBufferLike);
-
-      output.set(segmentData, destOffset);
-      destOffset += segmentData.length;
-    }
+    // Segments are a direct (unencoded) Uint32 [N,2] connectivity array. Route
+    // through the unified RangeLoader reader: it preserves the Uint32 dtype and
+    // carries the per-update abort signal (sourced internally).
+    await this.rangeLoader.loadDirectTyped(this.arrays.segments, ranges as LoadRange[], output);
 
     this.recordLoadMetrics('segments', totalSegments, output);
     return output;

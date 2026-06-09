@@ -112,4 +112,34 @@ describe('points handler', () => {
     });
     expect(result).toEqual({ path: '/p', data: fakeData });
   });
+
+  it('forwards the per-update abort signal to loader.updateView', async () => {
+    const fakeData = {
+      positions: new Float32Array(),
+      colors: new Float32Array(),
+      radii: new Float32Array(),
+      sharpness: new Float32Array(),
+      pointCount: 0,
+      ndim: 3,
+      metadata: {
+        totalPoints: 0,
+        loadedPoints: 0,
+        bounds: new THREE.Box3(),
+        usedSpatialIndex: false,
+      },
+    };
+    const updateView = vi.fn().mockResolvedValue(fakeData);
+    const loader: DataLoader = { loadPoints: vi.fn(), updateView, dispose: vi.fn() };
+    const ac = new AbortController();
+    await loadAndStage('/p', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure: vi.fn(),
+      currentVersion: 5,
+      extendedToleranceCache: new Map(),
+      signal: ac.signal,
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+    });
+    expect(updateView).toHaveBeenCalledWith(baseViewState, expect.anything(), ac.signal);
+  });
 });
