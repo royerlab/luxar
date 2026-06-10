@@ -54,7 +54,9 @@ class TestSaveGsplats:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             colors = np.random.default_rng(1).random((50, 3)).astype(np.float32)
-            save_gsplats(path=path, **create_test_splats_3d(50), colors=colors, ordering="none")
+            save_gsplats(
+                path=path, **create_test_splats_3d(50), colors=colors, ordering="none"
+            )
             root = zarr.open_group(str(path), mode="r")
             assert "colors" in root
             assert root.attrs["has_colors"] is True
@@ -73,7 +75,9 @@ class TestSaveGsplats:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             try:
-                save_gsplats(path=path, **create_test_splats_3d(100), ordering="hilbert")
+                save_gsplats(
+                    path=path, **create_test_splats_3d(100), ordering="hilbert"
+                )
             except ImportError:
                 pytest.skip("hilbertcurve package not installed")
             assert zarr.open_group(str(path), mode="r").attrs["ordering"] == "hilbert"
@@ -82,24 +86,40 @@ class TestSaveGsplats:
         with tempfile.TemporaryDirectory() as tmpdir:
             splats = create_test_splats_3d(100)
             p_prec = Path(tmpdir) / "precision.gsplats.zarr"
-            save_gsplats(path=p_prec, **splats, encoding_mode=EncodingMode.PRECISION, ordering="none")
+            save_gsplats(
+                path=p_prec,
+                **splats,
+                encoding_mode=EncodingMode.PRECISION,
+                ordering="none",
+            )
             assert zarr.open_group(str(p_prec), mode="r")["centers"].dtype == np.float32
 
             # MEMORY mode must keep COORDINATE centers float32 (float16 is
             # intentionally disabled — WebGL has no native float16 and float16
             # on coordinates is a precision footgun).
             p_mem = Path(tmpdir) / "memory.gsplats.zarr"
-            save_gsplats(path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none")
-            enc = zarr.open_group(str(p_mem), mode="r")["centers"].attrs.get("encoding", {})
+            save_gsplats(
+                path=p_mem, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none"
+            )
+            enc = zarr.open_group(str(p_mem), mode="r")["centers"].attrs.get(
+                "encoding", {}
+            )
             assert enc["name"] == "float32"
 
     def test_save_with_fitting_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             save_gsplats(
-                path=path, **create_test_splats_3d(50),
-                fitting_info={"time_seconds": 45.3, "iterations": 850, "converged": True, "fitter_name": "t"},
-                fitting_config={"n_iters": 1000, "lr": 0.05}, ordering="none",
+                path=path,
+                **create_test_splats_3d(50),
+                fitting_info={
+                    "time_seconds": 45.3,
+                    "iterations": 850,
+                    "converged": True,
+                    "fitter_name": "t",
+                },
+                fitting_config={"n_iters": 1000, "lr": 0.05},
+                ordering="none",
             )
             root = zarr.open_group(str(path), mode="r")
             assert root["fitting"].attrs["time_seconds"] == 45.3
@@ -113,15 +133,20 @@ class TestSaveGsplats:
             # Mismatched amplitudes shape
             with pytest.raises(ValueError, match="[Aa]mplitudes shape"):
                 save_gsplats(
-                    path=path, centers=splats["centers"],
+                    path=path,
+                    centers=splats["centers"],
                     amplitudes=np.random.rand(50).astype(np.float32),
                     cholesky_factors=splats["cholesky_factors"],
                 )
             # Mismatched cholesky shape
             with pytest.raises(ValueError):
                 save_gsplats(
-                    path=path, centers=splats["centers"], amplitudes=splats["amplitudes"],
-                    cholesky_factors=np.random.rand(100, 3).astype(np.float32),  # wrong k
+                    path=path,
+                    centers=splats["centers"],
+                    amplitudes=splats["amplitudes"],
+                    cholesky_factors=np.random.rand(100, 3).astype(
+                        np.float32
+                    ),  # wrong k
                 )
 
 
@@ -140,7 +165,12 @@ class TestLoadGsplats:
     def test_load_with_encoding(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), encoding_mode=EncodingMode.MEMORY, ordering="none")
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                encoding_mode=EncodingMode.MEMORY,
+                ordering="none",
+            )
             result = load_gsplats(path)
             assert result.centers.dtype in (np.float32, np.float16)
             assert result.amplitudes.dtype in (np.float32, np.float16)
@@ -149,9 +179,11 @@ class TestLoadGsplats:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             save_gsplats(
-                path=path, **create_test_splats_3d(50),
+                path=path,
+                **create_test_splats_3d(50),
                 fitting_info={"time_seconds": 45.3, "iterations": 850},
-                description="Test dataset", ordering="none",
+                description="Test dataset",
+                ordering="none",
             )
             result = load_gsplats(path, include_stats=True)
             assert result.stats["time_seconds"] == 45.3
@@ -180,15 +212,21 @@ class TestLoadGsplats:
             rng = np.random.default_rng(seed)
             chol = np.zeros((n, 6), dtype=np.float32)
             chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
-            return GSplatLeaf(additive_sublods=[AdditiveSubLOD(
-                centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
-                amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
-                cholesky_factors=chol)])
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+                        amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "part.gsplats.zarr"
             write_gsplats_tree(
-                path, GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1)]),
+                path,
+                GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1)]),
                 ordering="none",
             )
             with pytest.raises(ValueError, match="(?i)matrix|partition|tree"):
@@ -209,7 +247,12 @@ class TestRoundTrip:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(100)
-            save_gsplats(path=path, **splats, ordering="none", encoding_mode=EncodingMode.PRECISION)
+            save_gsplats(
+                path=path,
+                **splats,
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+            )
             result = load_gsplats(path)
             assert np.allclose(result.centers, splats["centers"])
             assert np.allclose(result.amplitudes, splats["amplitudes"])
@@ -227,7 +270,9 @@ class TestRoundTrip:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(100)
-            save_gsplats(path=path, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none")
+            save_gsplats(
+                path=path, **splats, encoding_mode=EncodingMode.MEMORY, ordering="none"
+            )
             result = load_gsplats(path)
             assert np.allclose(result.centers, splats["centers"], atol=0.01)
             assert np.allclose(result.amplitudes, splats["amplitudes"], atol=0.05)
@@ -238,7 +283,9 @@ class TestGSplatDataMethods:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             splats = create_test_splats_3d(100)
-            result = GSplatData(**splats, stats={"time_seconds": 10.5, "iterations": 500})
+            result = GSplatData(
+                **splats, stats={"time_seconds": 10.5, "iterations": 500}
+            )
             result.save(path, include_fitting_info=True)
             assert path.exists()
             root = zarr.open_group(str(path), mode="r")
@@ -267,8 +314,13 @@ class TestColorRoundtrip:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             colors = np.random.default_rng(1).random((100, 3)).astype(np.float32)
-            save_gsplats(path=path, **create_test_splats_3d(100), colors=colors,
-                         ordering="none", encoding_mode=EncodingMode.PRECISION)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                colors=colors,
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+            )
             result = load_gsplats(path)
             assert result.colors is not None
             assert result.colors.shape == (100, 3)
@@ -277,8 +329,12 @@ class TestColorRoundtrip:
     def test_roundtrip_with_uint8_colors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            colors = np.random.default_rng(2).integers(0, 256, size=(50, 3), dtype=np.uint8)
-            save_gsplats(path=path, **create_test_splats_3d(50), colors=colors, ordering="none")
+            colors = np.random.default_rng(2).integers(
+                0, 256, size=(50, 3), dtype=np.uint8
+            )
+            save_gsplats(
+                path=path, **create_test_splats_3d(50), colors=colors, ordering="none"
+            )
             result = load_gsplats(path)
             assert result.colors is not None
             assert result.colors.shape == (50, 3)
@@ -289,8 +345,13 @@ class TestColorRoundtrip:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             colors = np.random.default_rng(3).random((75, 3)).astype(np.float32) * 5.0
-            save_gsplats(path=path, **create_test_splats_3d(75), colors=colors,
-                         ordering="none", encoding_mode=EncodingMode.PRECISION)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(75),
+                colors=colors,
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+            )
             result = load_gsplats(path)
             assert result.colors is not None
             assert np.allclose(result.colors, colors, atol=0.05)
@@ -305,7 +366,9 @@ class TestColorRoundtrip:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             colors = np.random.default_rng(4).random((100, 3)).astype(np.float32)
-            original = GSplatData(**create_test_splats_3d(100), colors=colors, stats={"test": "value"})
+            original = GSplatData(
+                **create_test_splats_3d(100), colors=colors, stats={"test": "value"}
+            )
             original.save(path, ordering="none")
             loaded = GSplatData.load(path)
             assert loaded.colors is not None
@@ -327,8 +390,12 @@ class TestInspectGsplats:
     def test_inspect_with_fitting(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(50),
-                         fitting_info={"time_seconds": 45.3, "iterations": 850}, ordering="none")
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(50),
+                fitting_info={"time_seconds": 45.3, "iterations": 850},
+                ordering="none",
+            )
             info = inspect_gsplats_zarr(path)
             assert info["fitting"]["time_seconds"] == 45.3
 
@@ -336,9 +403,16 @@ class TestInspectGsplats:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
             try:
-                save_gsplats(path=path, **create_test_splats_3d(100),
-                             fitting_info={"time_seconds": 45.3, "iterations": 850, "converged": True},
-                             ordering="hilbert")
+                save_gsplats(
+                    path=path,
+                    **create_test_splats_3d(100),
+                    fitting_info={
+                        "time_seconds": 45.3,
+                        "iterations": 850,
+                        "converged": True,
+                    },
+                    ordering="hilbert",
+                )
             except ImportError:
                 pytest.skip("hilbertcurve package not installed")
             formatted = format_gsplats_info(inspect_gsplats_zarr(path))
@@ -422,7 +496,9 @@ class TestCompression:
             g2 = GSplatData.load(path)
             np.testing.assert_allclose(g.centers, g2.centers, atol=1e-6)
             np.testing.assert_allclose(g.amplitudes, g2.amplitudes, atol=1e-6)
-            np.testing.assert_allclose(g.cholesky_factors, g2.cholesky_factors, atol=1e-6)
+            np.testing.assert_allclose(
+                g.cholesky_factors, g2.cholesky_factors, atol=1e-6
+            )
 
 
 class TestTruncationRadiusRoundtrip:
@@ -497,8 +573,17 @@ class TestTruncationRadiusRoundtrip:
             )
 
         levels = [
-            SubstitutiveLevel(additive_sublods=[_lod(8)], compression_factor=1, stats={"n_splats_total": 8}),
-            SubstitutiveLevel(additive_sublods=[_lod(2)], compression_factor=4, level_index=1, stats={"n_splats_total": 2}),
+            SubstitutiveLevel(
+                additive_sublods=[_lod(8)],
+                compression_factor=1,
+                stats={"n_splats_total": 8},
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[_lod(2)],
+                compression_factor=4,
+                level_index=1,
+                stats={"n_splats_total": 2},
+            ),
         ]
         g = GSplatData.from_substitutive_levels(levels)
         with tempfile.TemporaryDirectory() as tmp:

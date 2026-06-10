@@ -1208,7 +1208,14 @@ class TestPartitionCommand:
         out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
             app,
-            ["gsplat", "partition", str(sample_gsplats), str(out), "--max-elements", "2"],
+            [
+                "gsplat",
+                "partition",
+                str(sample_gsplats),
+                str(out),
+                "--max-elements",
+                "2",
+            ],
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"
         from luxar.gsplats.tree import iter_leaves
@@ -1225,8 +1232,14 @@ class TestPartitionCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "partition", str(sample_gsplats), str(out),
-                "--parts", "2", "--compress", "zip",
+                "gsplat",
+                "partition",
+                str(sample_gsplats),
+                str(out),
+                "--parts",
+                "2",
+                "--compress",
+                "zip",
             ],
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"

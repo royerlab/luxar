@@ -267,7 +267,9 @@ def _read_v2_0_root(
                 AdditiveSubLOD(
                     centers=decoder.decode(add_group["centers"], root),
                     amplitudes=decoder.decode(add_group["amplitudes"], root),
-                    cholesky_factors=decoder.decode(add_group["cholesky_factors"], root),
+                    cholesky_factors=decoder.decode(
+                        add_group["cholesky_factors"], root
+                    ),
                     colors=decoder.decode(add_group["colors"], root)
                     if "colors" in add_group
                     else None,

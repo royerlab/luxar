@@ -14,7 +14,9 @@ import pytest
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 
 
-def _sub(n: int, seed: int = 0, amp_lo: float = 0.1, amp_hi: float = 1.0) -> AdditiveSubLOD:
+def _sub(
+    n: int, seed: int = 0, amp_lo: float = 0.1, amp_hi: float = 1.0
+) -> AdditiveSubLOD:
     rng = np.random.default_rng(seed)
     chol = np.zeros((n, 6), dtype=np.float32)
     chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))

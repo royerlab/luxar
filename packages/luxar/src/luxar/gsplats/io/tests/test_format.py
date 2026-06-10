@@ -34,7 +34,9 @@ class TestFormatCompliance:
     def test_root_attributes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), description="Test dataset")
+            save_gsplats(
+                path=path, **create_test_splats_3d(100), description="Test dataset"
+            )
             root = zarr.open_group(str(path), mode="r")
 
             assert root.attrs["format_version"] == "3.0"
@@ -70,7 +72,9 @@ class TestFormatCompliance:
             assert "ordering_min" in attrs
             assert "ordering_max" in attrs
             assert "ordering_bits_per_dim" in attrs
-            assert "amplitude_range" in attrs and {"min", "max"} <= set(attrs["amplitude_range"])
+            assert "amplitude_range" in attrs and {"min", "max"} <= set(
+                attrs["amplitude_range"]
+            )
             cb = attrs["center_bounds"]
             assert len(cb["min"]) == 3 and len(cb["max"]) == 3
             # Blocker 2: every node carries position_bounds for framing-on-load.
@@ -79,7 +83,11 @@ class TestFormatCompliance:
     def test_array_shapes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), encoding_mode=EncodingMode.PRECISION)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                encoding_mode=EncodingMode.PRECISION,
+            )
             root = zarr.open_group(str(path), mode="r")
 
             assert root["centers"].shape[1] == 3
@@ -91,7 +99,11 @@ class TestFormatCompliance:
     def test_encoding_metadata_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), encoding_mode=EncodingMode.MEMORY)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                encoding_mode=EncodingMode.MEMORY,
+            )
             root = zarr.open_group(str(path), mode="r")
             for array_name in ("centers", "amplitudes", "cholesky_factors"):
                 enc = root[array_name].attrs.get("encoding")
@@ -161,7 +173,11 @@ class TestFormatCompliance:
     def test_3d_specific_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), encoding_mode=EncodingMode.PRECISION)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                encoding_mode=EncodingMode.PRECISION,
+            )
             root = zarr.open_group(str(path), mode="r")
             assert root["cholesky_factors"].shape[1] == 6
             assert root.attrs["ndim"] == 3
@@ -171,7 +187,11 @@ class TestFormatCompliance:
     def test_semantic_type_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_gsplats(path=path, **create_test_splats_3d(100), encoding_mode=EncodingMode.MEMORY)
+            save_gsplats(
+                path=path,
+                **create_test_splats_3d(100),
+                encoding_mode=EncodingMode.MEMORY,
+            )
             root = zarr.open_group(str(path), mode="r")
             # COORDINATE → float32 in MEMORY mode (float16_allowed=False default).
             assert root["centers"].attrs.get("encoding", {})["name"] == "float32"
@@ -179,7 +199,9 @@ class TestFormatCompliance:
     def test_colors_auto_detected_sdr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            colors = np.random.default_rng(1).random((50, 3)).astype(np.float32)  # in [0,1]
+            colors = (
+                np.random.default_rng(1).random((50, 3)).astype(np.float32)
+            )  # in [0,1]
             save_gsplats(path=path, **create_test_splats_3d(50), colors=colors)
             root = zarr.open_group(str(path), mode="r")
             assert "colors" in root

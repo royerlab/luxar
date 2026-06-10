@@ -66,15 +66,21 @@ def test_standalone_leaf_matches_scene_leaf():
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
-                "g", centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky,
+                "g",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
             )
         scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
 
         # 2) Standalone leaf via the shared walker (same hilbert ordering).
         std_path = tmp / "standalone.gsplats.zarr"
         save_gsplats(
-            path=std_path, centers=centers, amplitudes=amplitudes,
-            cholesky_factors=cholesky, ordering="hilbert",
+            path=std_path,
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            ordering="hilbert",
             encoding_mode=EncodingMode.PRECISION,
         )
         std_leaf = zarr.open_group(str(std_path), mode="r")
@@ -128,7 +134,9 @@ def test_scene_additive_ladder_matches_standalone():
 
         std_path = tmp / "standalone.gsplats.zarr"
         write_gsplats_tree(
-            std_path, data.tree, ordering="hilbert",
+            std_path,
+            data.tree,
+            ordering="hilbert",
             encoding_mode=EncodingMode.PRECISION,
         )
         std_leaf = zarr.open_group(str(std_path), mode="r")
@@ -174,7 +182,9 @@ def test_scene_lod_group_matches_standalone():
 
         std_path = tmp / "standalone.gsplats.zarr"
         write_gsplats_tree(
-            std_path, pyramid.tree, ordering="hilbert",
+            std_path,
+            pyramid.tree,
+            ordering="hilbert",
             encoding_mode=EncodingMode.PRECISION,
         )
         std_lod = zarr.open_group(str(std_path), mode="r")
@@ -204,8 +214,10 @@ def test_scene_partition_matches_standalone():
     rng = np.random.default_rng(7)
     # Two separated clusters so the BSP split is deterministic.
     a = rng.uniform(0, 10, size=(40, 3)).astype(np.float32)
-    b = (np.array([100.0, 100.0, 100.0], dtype=np.float32)
-         + rng.uniform(0, 10, size=(40, 3))).astype(np.float32)
+    b = (
+        np.array([100.0, 100.0, 100.0], dtype=np.float32)
+        + rng.uniform(0, 10, size=(40, 3))
+    ).astype(np.float32)
     centers = np.concatenate([a, b], axis=0)
     n = centers.shape[0]
     chol = np.zeros((n, 6), dtype=np.float32)
@@ -219,7 +231,10 @@ def test_scene_partition_matches_standalone():
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
-                "g", centers=centers, amplitudes=amplitudes, cholesky_factors=chol,
+                "g",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=chol,
                 partition={"max_elements": 40, "rule": "median"},
             )
         scene_part = zarr.open_group(str(scene_path), mode="r")["g"]
@@ -228,7 +243,8 @@ def test_scene_partition_matches_standalone():
         write_gsplats_tree(
             std_path,
             data.to_spatial_partition(max_elements=40, rule="median"),
-            ordering="hilbert", encoding_mode=EncodingMode.PRECISION,
+            ordering="hilbert",
+            encoding_mode=EncodingMode.PRECISION,
         )
         std_part = zarr.open_group(str(std_path), mode="r")
 
@@ -257,25 +273,41 @@ def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
-                "g", centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky,
-                colors=colors, ordering="hilbert",
+                "g",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+                ordering="hilbert",
             )
         scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
 
         std_path = tmp / "standalone.gsplats.zarr"
         save_gsplats(
-            path=std_path, centers=centers, amplitudes=amplitudes,
-            cholesky_factors=cholesky, colors=colors, ordering="hilbert",
+            path=std_path,
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            colors=colors,
+            ordering="hilbert",
             encoding_mode=EncodingMode.PRECISION,
         )
         std_leaf = zarr.open_group(str(std_path), mode="r")
 
         # Same ordering method → same Hilbert sort → identical arrays + chunking.
-        for arr in ("centers", "amplitudes", "cholesky_factors", "colors", "chunk_bounds"):
+        for arr in (
+            "centers",
+            "amplitudes",
+            "cholesky_factors",
+            "colors",
+            "chunk_bounds",
+        ):
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"
             )
         for arr in ("centers", "amplitudes", "cholesky_factors"):
-            assert std_leaf[arr].chunks == scene_leaf[arr].chunks, f"{arr} chunks differ"
+            assert std_leaf[arr].chunks == scene_leaf[arr].chunks, (
+                f"{arr} chunks differ"
+            )
         assert std_leaf.attrs["has_colors"] is True
         assert std_leaf.attrs["chunk_size"] == scene_leaf.attrs["chunk_size"]

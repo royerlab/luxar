@@ -114,9 +114,7 @@ def test_partition_requires_children():
 def test_iter_leaves_depth_first_nested():
     # partition( lod( leafA, leafB ), leafC )
     leaf_a, leaf_b, leaf_c = _leaf(1, seed=0), _leaf(2, seed=1), _leaf(3, seed=2)
-    tree = GSplatPartition(
-        children=[GSplatLodGroup(children=[leaf_a, leaf_b]), leaf_c]
-    )
+    tree = GSplatPartition(children=[GSplatLodGroup(children=[leaf_a, leaf_b]), leaf_c])
     leaves = list(iter_leaves(tree))
     assert leaves == [leaf_a, leaf_b, leaf_c]
 

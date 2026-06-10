@@ -48,8 +48,12 @@ def _make_v2_0_tile(path: Path, n: int = 5) -> None:
     store = zarr.DirectoryStore(str(path))
     root = zarr.group(store=store, overwrite=True)
     root.attrs.update(
-        {"format_version": "2.0", "format_type": "gsplats_zarr",
-         "n_substitutive": 1, "default_substitutive": 0}
+        {
+            "format_version": "2.0",
+            "format_type": "gsplats_zarr",
+            "n_substitutive": 1,
+            "default_substitutive": 0,
+        }
     )
     splats = root.create_group("splats")
     sub = splats.create_group("substitutive_0")
@@ -72,25 +76,38 @@ def test_v3_leaf_tile_ok(tmp_path):
 
 def test_v3_additive_ladder_tile_ok(tmp_path):
     p = tmp_path / "ladder.gsplats.zarr"
-    leaf = GSplatLeaf(additive_sublods=[AdditiveSubLOD(**_splats(30, 0)),
-                                        AdditiveSubLOD(**_splats(10, 1))])
+    leaf = GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(**_splats(30, 0)),
+            AdditiveSubLOD(**_splats(10, 1)),
+        ]
+    )
     write_gsplats_tree(p, leaf, ordering="none")
     assert _validate_tile(p) == "ok"
 
 
 def test_v3_lod_partition_nested_tiles_ok(tmp_path):
     lod = tmp_path / "lod.gsplats.zarr"
-    write_gsplats_tree(lod, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none")
+    write_gsplats_tree(
+        lod, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none"
+    )
     assert _validate_tile(lod) == "ok"
 
     part = tmp_path / "part.gsplats.zarr"
-    write_gsplats_tree(part, GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1)]), ordering="none")
+    write_gsplats_tree(
+        part, GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1)]), ordering="none"
+    )
     assert _validate_tile(part) == "ok"
 
     nested = tmp_path / "nested.gsplats.zarr"
     write_gsplats_tree(
         nested,
-        GSplatPartition(children=[GSplatLodGroup(children=[_leaf(40, 0), _leaf(6, 1)]), _leaf(15, 2)]),
+        GSplatPartition(
+            children=[
+                GSplatLodGroup(children=[_leaf(40, 0), _leaf(6, 1)]),
+                _leaf(15, 2),
+            ]
+        ),
         ordering="none",
     )
     assert _validate_tile(nested) == "ok"
@@ -139,7 +156,9 @@ def test_missing_centers_is_corrupt(tmp_path):
 
 def test_child_missing_zattrs_is_corrupt(tmp_path):
     p = tmp_path / "lod.gsplats.zarr"
-    write_gsplats_tree(p, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none")
+    write_gsplats_tree(
+        p, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none"
+    )
     (p / "child_0" / ".zattrs").unlink()
     assert _validate_tile(p).startswith("no_zattrs")
 

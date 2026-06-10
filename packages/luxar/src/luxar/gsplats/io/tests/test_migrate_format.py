@@ -159,7 +159,9 @@ def _make_v2_0(path: Path, n: int) -> None:
         }
     )
     add = sub.create_group("additive_0")
-    add.attrs.update({"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"})
+    add.attrs.update(
+        {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
+    )
     rng = np.random.default_rng(0)
     add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
     add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
@@ -177,22 +179,37 @@ def _make_v2_0_multi(path: Path, level_sizes: list[int]) -> None:
     root = zarr.group(store=store, overwrite=True)
     n_sub = len(level_sizes)
     root.attrs.update(
-        {"format_version": "2.0", "format_type": "gsplats_zarr",
-         "n_substitutive": n_sub, "default_substitutive": 0}
+        {
+            "format_version": "2.0",
+            "format_type": "gsplats_zarr",
+            "n_substitutive": n_sub,
+            "default_substitutive": 0,
+        }
     )
     splats = root.create_group("splats")
     splats.attrs.update(
-        {"type": "gsplats", "n_substitutive": n_sub, "default_substitutive": 0,
-         "truncation_radius": 3.0}
+        {
+            "type": "gsplats",
+            "n_substitutive": n_sub,
+            "default_substitutive": 0,
+            "truncation_radius": 3.0,
+        }
     )
     rng = np.random.default_rng(0)
     for s, n in enumerate(level_sizes):
         sub = splats.create_group(f"substitutive_{s}")
-        sub.attrs.update({"n_additive_sublods": 1, "compression_factor": 4 ** s,
-                          "parent_method": "" if s == 0 else "kmeans_lloyd",
-                          "level_index": s})
+        sub.attrs.update(
+            {
+                "n_additive_sublods": 1,
+                "compression_factor": 4**s,
+                "parent_method": "" if s == 0 else "kmeans_lloyd",
+                "level_index": s,
+            }
+        )
         add = sub.create_group("additive_0")
-        add.attrs.update({"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"})
+        add.attrs.update(
+            {"n_splats": n, "ndim": 3, "has_colors": False, "ordering": "none"}
+        )
         add.create_dataset("centers", data=(rng.random((n, 3)) * 10).astype(np.float32))
         add.create_dataset("amplitudes", data=rng.random(n).astype(np.float32))
         add.create_dataset("cholesky_factors", data=_identity_chol(n))

@@ -338,4 +338,3 @@ class TestChunkBounds:
         cholesky = np.zeros((0, 6), dtype=np.float32)
         bounds = compute_chunk_bounds_gsplats(centers, cholesky, chunk_size=0)
         assert bounds.shape == (0, 3, 2)
-

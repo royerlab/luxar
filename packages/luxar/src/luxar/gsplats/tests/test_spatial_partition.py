@@ -25,8 +25,10 @@ def _clustered(n_per: int = 30) -> GSplatData:
     """Two well-separated 3D clusters so a spatial split is unambiguous."""
     rng = np.random.default_rng(0)
     a = rng.uniform(0, 10, size=(n_per, 3)).astype(np.float32)
-    b = (np.array([100.0, 100.0, 100.0], dtype=np.float32)
-         + rng.uniform(0, 10, size=(n_per, 3))).astype(np.float32)
+    b = (
+        np.array([100.0, 100.0, 100.0], dtype=np.float32)
+        + rng.uniform(0, 10, size=(n_per, 3))
+    ).astype(np.float32)
     centers = np.concatenate([a, b], axis=0)
     n = centers.shape[0]
     chol = np.zeros((n, 6), dtype=np.float32)
@@ -63,8 +65,12 @@ def test_spatial_partition_round_trips_as_single_file():
     data = _clustered(40)
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "part.gsplats.zarr"
-        write_gsplats_tree(p, data.to_spatial_partition(max_elements=40),
-                           ordering="none", encoding_mode=EncodingMode.PRECISION)
+        write_gsplats_tree(
+            p,
+            data.to_spatial_partition(max_elements=40),
+            ordering="none",
+            encoding_mode=EncodingMode.PRECISION,
+        )
         root = zarr.open_group(str(p), mode="r")
         assert root.attrs["kind"] == "partition"
         assert root.attrs["display_type"] == "gsplats"
@@ -92,7 +98,9 @@ def test_gsplat_info_handles_partition_file():
     data = _clustered(40)
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "part.gsplats.zarr"
-        write_gsplats_tree(p, data.to_spatial_partition(max_elements=40), ordering="none")
+        write_gsplats_tree(
+            p, data.to_spatial_partition(max_elements=40), ordering="none"
+        )
         # Must not raise (previously GSplatData.load → ValueError crashed info).
         info_dataset(p, show_histograms=False, bins=40)
 
@@ -107,8 +115,9 @@ def test_partition_file_grafts_into_a_scene():
     data = _clustered(40)  # 80 splats, 2 clusters
     with tempfile.TemporaryDirectory() as tmp:
         part = Path(tmp) / "part.gsplats.zarr"
-        write_gsplats_tree(part, data.to_spatial_partition(max_elements=40),
-                           ordering="hilbert")
+        write_gsplats_tree(
+            part, data.to_spatial_partition(max_elements=40), ordering="hilbert"
+        )
 
         scene_path = Path(tmp) / "scene.zarr"
         with LuxarZarrCompiler(scene_path) as c:
@@ -133,13 +142,16 @@ def test_grafting_a_partition_rejects_dim_order():
     data = _clustered(40)
     with tempfile.TemporaryDirectory() as tmp:
         part = Path(tmp) / "part.gsplats.zarr"
-        write_gsplats_tree(part, data.to_spatial_partition(max_elements=40),
-                           ordering="hilbert")
+        write_gsplats_tree(
+            part, data.to_spatial_partition(max_elements=40), ordering="hilbert"
+        )
         scene_path = Path(tmp) / "scene.zarr"
         with LuxarZarrCompiler(scene_path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="dim_order / fill"):
-                scene.add_gsplats_from_file(name="g", path=part, dim_order=["z", "y", "x"])
+                scene.add_gsplats_from_file(
+                    name="g", path=part, dim_order=["z", "y", "x"]
+                )
 
 
 def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
@@ -172,8 +184,12 @@ def test_spatial_partition_warns_on_multi_substitutive():
         )
 
     pyr = GSplatData.from_substitutive_levels(
-        [SubstitutiveLevel(additive_sublods=[_sub(60, 0)], level_index=0),
-         SubstitutiveLevel(additive_sublods=[_sub(15, 1)], compression_factor=4, level_index=1)]
+        [
+            SubstitutiveLevel(additive_sublods=[_sub(60, 0)], level_index=0),
+            SubstitutiveLevel(
+                additive_sublods=[_sub(15, 1)], compression_factor=4, level_index=1
+            ),
+        ]
     )
     with pytest.warns(UserWarning, match="flattens LOD structure"):
         part = pyr.to_spatial_partition(max_elements=30)

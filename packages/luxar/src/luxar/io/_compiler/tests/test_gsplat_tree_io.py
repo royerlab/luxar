@@ -45,7 +45,9 @@ def _sublod(n: int, ndim: int = 3, seed: int = 0, base: float = 0.0) -> Additive
 
 
 def _leaf(n: int, seed: int = 0, base: float = 0.0, **meta) -> GSplatLeaf:
-    return GSplatLeaf(additive_sublods=[_sublod(n, seed=seed, base=base)], meta=dict(meta))
+    return GSplatLeaf(
+        additive_sublods=[_sublod(n, seed=seed, base=base)], meta=dict(meta)
+    )
 
 
 def _round_trip(node, ordering: str = "none"):
@@ -227,8 +229,13 @@ def test_lod_group_meta_does_not_clobber_structural_attrs():
 
 def test_min_pixel_size_and_provenance_round_trip():
     fine = _leaf(100, seed=0, min_pixel_size=0.0, compression_factor=1)
-    coarse = _leaf(10, seed=1, min_pixel_size=4.0, compression_factor=4,
-                   parent_method="kmeans_lloyd")
+    coarse = _leaf(
+        10,
+        seed=1,
+        min_pixel_size=4.0,
+        compression_factor=4,
+        parent_method="kmeans_lloyd",
+    )
     grp = GSplatLodGroup(children=[fine, coarse], default_level=0)
     z, out = _round_trip(grp)
     # coarse leaf is child_0 on disk; its selector threshold + provenance persisted
@@ -283,7 +290,8 @@ def test_lod_group_single_additive_children_keep_sublod_stats():
         return GSplatLeaf(
             additive_sublods=[
                 AdditiveSubLOD(
-                    centers=s.centers, amplitudes=s.amplitudes,
+                    centers=s.centers,
+                    amplitudes=s.amplitudes,
                     cholesky_factors=s.cholesky_factors,
                     stats={"cumulative_psnr_db": psnr},
                 )
