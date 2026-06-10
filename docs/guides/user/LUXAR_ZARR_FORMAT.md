@@ -240,6 +240,14 @@ gsplats, or themselves specialized groups (e.g. a Partition group inside an
 LOD group). The finest child's resolved `display_type` becomes the LOD
 group's `display_type`.
 
+**Standalone `.gsplats.zarr` root**: a `kind=lod` group is also a valid
+root of a standalone `.gsplats.zarr` file — the file root IS the node. The
+viewer opens such a file directly (`?src=<file>.gsplats.zarr`) and frames
+on its `position_bounds`. On-disk, children are `child_<i>/` in
+**coarsest→finest** order; `default_level` is 0-based in that same order
+(`default_level = (n-1) - default_substitutive`, so a finest-default
+`default_substitutive=0` maps to `default_level = n-1`).
+
 **Attributes (.zattrs):**
 ```json
 {
@@ -307,6 +315,12 @@ culling does the per-part culling).
 Children are **homogeneous**: every child's resolved `display_type`
 must match the wrapper's (you cannot decompose a single logical
 layer into mixed-type parts).
+
+**Standalone `.gsplats.zarr` root**: a `kind=partition` group is also a
+valid root of a standalone `.gsplats.zarr` file. The viewer opens it
+directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
+`luxar gsplat partition` CLI writes this shape via spatial BSP
+(`--parts` / `--max-elements` / `--rule median|midpoint|sah`).
 
 **Attributes (.zattrs):**
 ```json

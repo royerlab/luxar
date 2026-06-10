@@ -268,8 +268,9 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive | pyramid)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v2.0 (a 2-D
-# substitutive × additive LOD matrix) — see docs/specs/GSPLATS_ZARR_FORMAT.md.
+# to pick K* in a principled way. .gsplats.zarr is format v3.0 (a node tree —
+# a detached scene gsplat-node subtree the viewer loads directly) — see
+# docs/specs/GSPLATS_ZARR_FORMAT.md.
 
 # Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
 # Progressive fitting now returns a single flattened dataset; the LOD ladder is
@@ -289,8 +290,8 @@ luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level
 
 # Build a substitutive LOD hierarchy (synthesised representative splats per level)
 # Each coarser substitutive level has ceil(N/K^L) splats that REPLACE the previous
-# level. Output is a single v2.0 .gsplats.zarr (substitutive_<s>/additive_0 cells);
-# loadable with `luxar gsplat info`. The recommended workhorse `kmeans_lloyd`
+# level. Output is a single v3.0 .gsplats.zarr (a kind=lod group of child_<i> leaves,
+# coarsest→finest); loadable with `luxar gsplat info`. The recommended workhorse `kmeans_lloyd`
 # (O(N log N) Morton-partition warm-start + vectorised cost-increment Lloyd)
 # beats amplitude culling at every K on real anisotropic 3D data per supp-doc
 # Experiment C, and reduces 256K splats in seconds (was ~1hr). Greedy
@@ -303,17 +304,18 @@ luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \
 luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning small N
 luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --device cpu  # skip GPU
 
-# Build the full 2-D LOD pyramid (substitutive × additive) in one shot
+# Build the full LOD pyramid (a kind=lod group of additive-ladder leaves) in one shot
 luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
-    --substitutive K=4,L=3 --additive 4                                       # [4, 4] pyramid
+    --substitutive K=4,L=3 --additive 4                                       # 4 lod levels × 4-step ladders
 
-# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir) → v2.0
-luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr               # single file
-luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr                          # substitutive directory
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.0
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
+luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
-# Partition into parts
-luxar gsplat partition splats.gsplats.zarr output_dir/ --parts 4
-luxar gsplat partition splats.gsplats.zarr output_dir/ --indices "1000,5000"
+# Partition into a single kind=partition file via spatial BSP (--indices removed)
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4               # target part count
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah    # median|midpoint|sah
 
 # Merge multiple datasets
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
