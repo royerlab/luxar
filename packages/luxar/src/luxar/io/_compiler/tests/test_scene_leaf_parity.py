@@ -192,7 +192,11 @@ def test_scene_lod_group_matches_standalone():
         # Both are kind=lod with 2 children, coarsest=child_0.
         assert scene_lod.attrs["kind"] == "lod"
         assert std_lod.attrs["kind"] == "lod"
-        assert scene_lod.attrs["default_level"] == std_lod.attrs["default_level"]
+        # The viewer's initial level is the COARSEST child (child_0) on BOTH
+        # paths — a progressive-load hint. Loading the finest by default would
+        # render "backwards" (eager full-res). Lock it to 0, not just equal.
+        assert scene_lod.attrs["default_level"] == 0
+        assert std_lod.attrs["default_level"] == 0
         for i in range(2):
             sc, st = scene_lod[f"child_{i}"], std_lod[f"child_{i}"]
             assert sc.attrs["min_pixel_size"] == st.attrs["min_pixel_size"], (
