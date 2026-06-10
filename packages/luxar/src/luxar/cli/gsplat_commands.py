@@ -158,13 +158,24 @@ def info_dataset(
         with asection(f"Loading dataset: {path.name}"):
             try:
                 data = GSplatData.load(path, include_stats=True)
-            except ValueError as exc:
-                # Partition / nested trees have no flat GSplatData equivalent;
-                # report their tree shape instead of crashing (decision 5).
-                if any(k in str(exc) for k in ("matrix", "partition", "tree")):
-                    _print_gsplat_tree_summary(path)
-                    return
-                raise
+            except ValueError:
+                # GSplatData.load raises for two distinct reasons: (a) a valid
+                # v3.0 partition/nested tree that has no flat GSplatData form, or
+                # (b) a legacy/invalid file the v3.0 reader rejects. Disambiguate
+                # by probing the raw tree (instead of brittle substring matching
+                # on the message — the v3.0 rejection text contains "node-tree").
+                from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+                try:
+                    load_gsplat_node(path)  # succeeds only for a valid v3.0 tree
+                except ValueError as load_exc:
+                    # Legacy/invalid → surface the actionable message (which names
+                    # `luxar gsplat migrate-format`) without a traceback.
+                    aprint(f"❌ {load_exc}")
+                    raise typer.Exit(1) from None
+                # Valid v3.0 partition/nested tree → report its shape.
+                _print_gsplat_tree_summary(path)
+                return
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
 

@@ -124,9 +124,6 @@ def _write_single_splat_set(
     ``None`` for a standalone file) is threaded into
     :func:`apply_gsplat_group_attrs` so a scene leaf written through this path
     gets the same colormap-LUT tone handling as the compiler's own writer.
-
-    The metadata dict includes ``sort_order`` (the spatial-ordering permutation,
-    or ``None``) so a caller can reorder per-splat side arrays (labels) to match.
     """
     centers, amplitudes, cholesky, colors, n_splats, n_dims, chol_uniform = (
         validate_gsplat_inputs(
@@ -203,11 +200,6 @@ def _write_single_splat_set(
             scene_tone_mapping=scene_tone_mapping,
             lut_tone_mapping_warned=False,
         )
-    # Surface the spatial-ordering permutation so callers can reorder per-splat
-    # side arrays (e.g. scene labels) to match the written array order.
-    metadata["sort_order"] = (
-        ordering_data["sort_order"] if ordering_data is not None else None
-    )
     return metadata
 
 

@@ -113,7 +113,7 @@ def test_partition_file_grafts_into_a_scene():
         scene_path = Path(tmp) / "scene.zarr"
         with LuxarZarrCompiler(scene_path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
-            wrapper = scene.add_gsplats_from_file(name="g", path=part)
+            scene.add_gsplats_from_file(name="g", path=part)
 
         root = zarr.open_group(str(scene_path), mode="r")["g"]
         assert root.attrs["kind"] == "partition"
@@ -140,6 +140,24 @@ def test_grafting_a_partition_rejects_dim_order():
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="dim_order / fill"):
                 scene.add_gsplats_from_file(name="g", path=part, dim_order=["z", "y", "x"])
+
+
+def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
+    """`gsplat info` on a legacy (non-v3.0) file must surface the migrate-format
+    hint and exit cleanly — NOT route into the tree summary and crash (review
+    finding #5: the v3.0 rejection message contains 'node-tree', so the old
+    substring dispatch mis-routed legacy files)."""
+    import typer
+
+    from luxar.cli.gsplat_commands import info_dataset
+
+    with tempfile.TemporaryDirectory() as tmp:
+        legacy = Path(tmp) / "legacy.gsplats.zarr"
+        root = zarr.open_group(str(legacy), mode="w")
+        root.attrs["format_type"] = "gsplats_zarr"
+        root.attrs["format_version"] = "2.0"  # legacy matrix format
+        with pytest.raises(typer.Exit):
+            info_dataset(legacy, show_histograms=False, bins=40)
 
 
 def test_spatial_partition_warns_on_multi_substitutive():
