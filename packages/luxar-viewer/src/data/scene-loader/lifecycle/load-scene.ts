@@ -34,7 +34,7 @@ import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { getWorkerPool } from '../../../workers/worker-pool';
-import { ZarrSceneAttrs } from '../../../types/zarr';
+import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -112,6 +112,50 @@ export interface LoadSceneCtx {
 }
 
 /**
+ * Synthesize a default scene-dimensions set for a standalone *bare node*
+ * (a detached `.gsplats.zarr` carries no `scene_dimensions`). Derives the
+ * dimension count from the node's `ndim` (or its bounds) and per-dim ranges
+ * from `position_bounds`/`center_bounds` so framing and non-displayed-dim
+ * centering work. 3D-safe: the first three dims display; >3D still needs the
+ * producer to embed real dimension names/ranges for correct nD navigation.
+ *
+ * Returns ``undefined`` for a true scene root (no node ndim/bounds to derive
+ * from) so the caller falls through to the "no scene_dimensions" warning.
+ */
+function synthesizeSceneDimensionsFromNode(
+  attrs: ZarrSceneAttrs | undefined
+): SceneDimensionAttrs | undefined {
+  const a = attrs as Record<string, unknown> | undefined;
+  if (!a) return undefined;
+  const bounds = (a.position_bounds ?? a.center_bounds) as
+    | { min?: number[]; max?: number[] }
+    | undefined;
+  const ndim =
+    typeof a.ndim === 'number'
+      ? a.ndim
+      : Array.isArray(bounds?.min)
+        ? bounds!.min!.length
+        : undefined;
+  if (!ndim || ndim < 1) return undefined;
+
+  const SPATIAL_NAMES = ['X', 'Y', 'Z'];
+  const dimensions = Array.from({ length: ndim }, (_, i) => {
+    const lo = bounds?.min?.[i];
+    const hi = bounds?.max?.[i];
+    return {
+      name: i < SPATIAL_NAMES.length ? SPATIAL_NAMES[i] : `dim${i}`,
+      unit: 'px',
+      display: i < 3,
+      spatial: true,
+      ...(typeof lo === 'number' && typeof hi === 'number'
+        ? { range: [lo, hi] as [number, number] }
+        : {}),
+    };
+  });
+  return { dimensions };
+}
+
+/**
  * Execute the full initial-load sequence and return the populated root
  * THREE.Group. Mutates the orchestrator's resource references via the
  * ctx setters.
@@ -178,10 +222,34 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
-  // Initialize scene dimensions - CRITICAL for extend_to_all feature
-  if (sceneAttrs?.scene_dimensions) {
-    ctx.initializeSceneDimensions(sceneAttrs.scene_dimensions);
-    rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
+  // A stale (non-v3.0) standalone .gsplats.zarr opened directly won't render
+  // correctly — surface a migrate hint rather than failing silently.
+  const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
+  const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
+  if (fmtType === 'gsplats_zarr' && fmtVersion !== '3.0') {
+    notifier.toast(
+      `This .gsplats.zarr is format ${String(fmtVersion)} (expected 3.0). ` +
+        'Convert it with `luxar gsplat migrate-format <in> <out>`.',
+      6000
+    );
+  }
+
+  // Initialize scene dimensions - CRITICAL for extend_to_all feature.
+  // A standalone bare node carries no scene_dimensions; synthesize a default
+  // (3D-safe) set from the node's ndim + bounds so framing / slicing work.
+  const effectiveSceneDimensions =
+    sceneAttrs?.scene_dimensions ?? synthesizeSceneDimensionsFromNode(sceneAttrs);
+  if (effectiveSceneDimensions) {
+    if (!sceneAttrs?.scene_dimensions) {
+      log.info(
+        Modules.SCENE_LOADER,
+        'Synthesized scene_dimensions for a bare node ' +
+          `(${effectiveSceneDimensions.dimensions.length}D); ` +
+          'embed real dimensions for >3D navigation.'
+      );
+    }
+    ctx.initializeSceneDimensions(effectiveSceneDimensions);
+    rootGroup.userData.sceneDimensions = effectiveSceneDimensions;
 
     // Log dimension initialization status for debugging
     const vs = ctx.viewState();
@@ -221,14 +289,20 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     );
   }
 
-  // Store scene-level position bounds (from Python compiler)
-  // These bounds represent the full dataset extent, available immediately without loading points
-  if (sceneAttrs?.position_bounds) {
-    rootGroup.userData.positionBounds = sceneAttrs.position_bounds;
+  // Store scene-level position bounds (from Python compiler). A bare gsplats
+  // leaf root writes only `center_bounds`; fall back to it so auto-framing /
+  // clipping work immediately for a standalone file (no geometry load needed).
+  const rootBounds =
+    sceneAttrs?.position_bounds ??
+    ((sceneAttrs as Record<string, unknown>)?.center_bounds as
+      | typeof sceneAttrs.position_bounds
+      | undefined);
+  if (rootBounds) {
+    rootGroup.userData.positionBounds = rootBounds;
     log.info(
       Modules.SCENE_LOADER,
-      `Scene bounds loaded: min=[${sceneAttrs.position_bounds.min.join(', ')}], ` +
-        `max=[${sceneAttrs.position_bounds.max.join(', ')}]`
+      `Scene bounds loaded: min=[${rootBounds.min.join(', ')}], ` +
+        `max=[${rootBounds.max.join(', ')}]`
     );
   }
 
