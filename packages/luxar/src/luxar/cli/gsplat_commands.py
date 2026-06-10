@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -477,13 +476,18 @@ def quick_view(
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
-    This converts the .gsplats.zarr to Luxar's scene format, serves it,
-    and opens the viewer. The scene is created in a temporary directory.
+    The standalone ``.gsplats.zarr`` is a v3.0 node subtree — exactly what the
+    viewer renders inside a scene — so it is served **directly** (``?src=``) and
+    opened with no scene-compile round-trip. This works for every tree shape:
+    a single leaf, an additive ladder, a ``kind=lod`` substitutive hierarchy, a
+    ``kind=partition`` split, and arbitrary nestings. The viewer frames the
+    camera on the file's ``position_bounds``, so no centroid mutation is needed.
 
-    The dataset is automatically centered at its centroid for optimal viewing.
+    Compressed archives (``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``) are
+    extracted to a temporary directory before serving.
 
     Args:
-        path: Path to .gsplats.zarr or .gsplats.zarr.zip dataset
+        path: Path to .gsplats.zarr (or .zip/.tar.gz) dataset
         port: Port for data server
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
@@ -492,15 +496,13 @@ def quick_view(
     try:
         import threading
 
-        from luxar import Dimensions, LuxarZarrCompiler
         from luxar.cli.main import _serve_data, _serve_viewer
         from luxar.cli.utils import (
             build_viewer,
             check_viewer_built,
             find_available_port,
         )
-        from luxar.encoding import EncodingMode
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
 
         # Check viewer is built
         if not check_viewer_built():
@@ -510,74 +512,21 @@ def quick_view(
                 raise typer.Exit(1)
 
         with asection(f"Quick View: {path.name}"):
-            # Load gsplat data
-            with asection("Loading gsplat dataset"):
-                data = GSplatData.load(path, include_stats=False)
-                n_splats = len(data.amplitudes)
-                ndim = data.centers.shape[1]
-                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+            # Resolve to an on-disk .gsplats.zarr directory: extract archives to
+            # a temp dir, otherwise serve the directory in place. No GSplatData
+            # round-trip — the viewer consumes the node tree directly, which is
+            # the only path that supports partition/nested roots.
+            if str(path).endswith((".zip", ".tar.gz")):
+                aprint("Extracting compressed dataset...")
+                serve_target = _extract_compressed_zarr(path)
+                temp_dir = serve_target.parent
+            elif path.is_dir():
+                serve_target = path
+            else:
+                aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
+                raise typer.Exit(1)
 
-            # Center at origin for better default view
-            aprint("Centering at centroid for better view...")
-            data = data.center_at_centroid()
-
-            # Create temporary Luxar scene
-            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_view_"))
-            scene_path = temp_dir / "gsplat_scene.zarr"
-
-            with asection("Converting to Luxar scene"):
-                aprint(f"Output: {scene_path}")
-
-                # Determine dimensions (centered around origin after centering)
-
-                mins = data.centers.min(axis=0)
-                maxs = data.centers.max(axis=0)
-
-                if ndim == 3:
-                    dims = Dimensions.default_3d()
-                    # Update ranges to match actual centered data
-                    for i, dim in enumerate(dims.dimensions):
-                        dim.range = (float(mins[i]), float(maxs[i]))
-                elif ndim == 2:
-                    dims = Dimensions.default_2d()
-                    for i, dim in enumerate(dims.dimensions):
-                        dim.range = (float(mins[i]), float(maxs[i]))
-                else:
-                    # Create nD dimensions
-                    from luxar import Dimension
-
-                    dims_list = []
-                    for i in range(ndim):
-                        dims_list.append(
-                            Dimension(
-                                name=f"dim{i}",
-                                unit="voxel",
-                                range=(float(mins[i]), float(maxs[i])),
-                                step=1.0,
-                                display=(i < 3),  # Display first 3 dimensions
-                            )
-                        )
-                    dims = Dimensions(dimensions=dims_list)
-
-                with LuxarZarrCompiler(
-                    scene_path, encoding_mode=EncodingMode.MEMORY
-                ) as compiler:
-                    scene = compiler.create_scene(dimensions=dims)
-
-                    scene.attrs["title"] = f"GSplats: {path.name}"
-                    scene.attrs["description"] = (
-                        f"Quick view of Gaussian splat dataset from {path.name}"
-                    )
-
-                    # Add gsplats
-                    scene.add_gsplats_from_data(
-                        name="gsplats",
-                        result=data,
-                        opacity=1.0,
-                        blending_mode="additive",
-                    )
-
-                aprint(f"Scene created: {scene_path}")
+            aprint(f"Serving node tree directly: {serve_target.name}")
 
             # Find available ports
             actual_port = find_available_port(port)
@@ -592,7 +541,7 @@ def quick_view(
                 data_thread = threading.Thread(
                     target=_serve_data,
                     args=(
-                        scene_path,
+                        serve_target,
                         "127.0.0.1",
                         actual_port,
                         None,  # bandwidth_mbps
@@ -607,8 +556,8 @@ def quick_view(
                 data_thread.start()
                 time.sleep(1)
 
-                # Construct data URL
-                data_url = f"http://127.0.0.1:{actual_port}/{scene_path.name}"
+                # Construct data URL (no trailing slash — see CLAUDE.md gotcha)
+                data_url = f"http://127.0.0.1:{actual_port}/{serve_target.name}"
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")

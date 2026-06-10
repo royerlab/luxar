@@ -697,3 +697,127 @@ class TestBatchPlanRegression:
         script3 = generate_fit_sbatch(m, "# preamble\n")
         assert "--channel" in script3
         assert "--timepoint" in script3
+
+
+# ====================================================================
+# Merge orchestrator round-trip (post-v3.0-cutover)
+# ====================================================================
+
+
+class TestMergeOrchestrator:
+    """End-to-end `merge_batch_results` fan-in over v3.0 .gsplats.zarr tiles.
+
+    Exercises every level the orchestrator drives — Level 1 ``concatenate``,
+    Level 2 ``combine_as_new_dimension``, Level 3 ``merge_with_channel_colors``
+    — proving they all round-trip through the unified v3.0 node-tree writer.
+    """
+
+    def _tile(self, n: int, seed: int):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        return GSplatData(
+            centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+
+    def _write_tiles(self, tiles_dir: Path, n_t: int, n_c: int, n_k: int):
+        from luxar.gsplats.batch.manifest import output_filename
+
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        total = 0
+        seed = 0
+        for t in range(n_t):
+            for c in range(n_c):
+                for k in range(n_k):
+                    fname = output_filename(t, c, k, n_t, n_c, n_k)
+                    tile = self._tile(4, seed)
+                    tile.save(tiles_dir / fname)
+                    total += tile.n_splats
+                    seed += 1
+        return total
+
+    def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
+        """T=1, C=2, K=2: Level-1 concatenate then Level-3 channel-color merge."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=2, n_k=2)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=2, n_tiles=2)
+        final = merge_batch_results(
+            manifest,
+            out_dir,
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            verbose=False,
+        )
+        assert final.exists()
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total  # 1*2*2 tiles * 4 splats = 16
+        # channel colors were applied
+        assert merged.colors is not None
+
+    def test_stack_timepoints_round_trips(self, tmp_path: Path) -> None:
+        """T=2, C=1, K=1: Level-2 combine_as_new_dimension lifts 3D->4D."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=2, n_c=1, n_k=1)
+
+        manifest = BatchManifest(n_timepoints=2, n_channels=1, n_tiles=1)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        assert final.exists()
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total
+        assert merged.ndim == 4  # promoted by the timepoint stack
+
+    def test_concatenate_preserves_pyramid_per_cell(self, tmp_path: Path) -> None:
+        """Multi-substitutive concatenate keeps every (substitutive, additive)
+        cell — the orchestrator never silently flattens a pyramid."""
+        from luxar.gsplats.gsplat_data import (
+            AdditiveSubLOD,
+            GSplatData,
+            SubstitutiveLevel,
+        )
+
+        def _pyr(seed: int) -> GSplatData:
+            def _sub(n: int, s: int) -> AdditiveSubLOD:
+                rng = np.random.default_rng(s)
+                chol = np.zeros((n, 6), dtype=np.float32)
+                chol[:, [0, 2, 5]] = 1.0
+                return AdditiveSubLOD(
+                    centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=chol,
+                )
+
+            return GSplatData.from_substitutive_levels(
+                [
+                    SubstitutiveLevel(additive_sublods=[_sub(20, seed)], level_index=0),
+                    SubstitutiveLevel(
+                        additive_sublods=[_sub(5, seed + 100)],
+                        compression_factor=4,
+                        level_index=1,
+                    ),
+                ]
+            )
+
+        merged = GSplatData.concatenate([_pyr(0), _pyr(1)])
+        assert merged.n_substitutive == 2
+        assert merged.at_substitutive(0).n_splats == 40  # 20 + 20
+        assert merged.at_substitutive(1).n_splats == 10  # 5 + 5
+
+        # round-trips through v3.0
+        out = tmp_path / "pyr.gsplats.zarr"
+        merged.save(out)
+        reloaded = GSplatData.load(out)
+        assert reloaded.n_substitutive == 2
+        assert reloaded.at_substitutive(0).n_splats == 40
+        assert reloaded.at_substitutive(1).n_splats == 10

@@ -1248,6 +1248,61 @@ class TestPartitionCommand:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# View command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestViewCommand:
+    """`gsplat view` serves the .gsplats.zarr node tree directly (no scene
+    round-trip), so it works for every tree shape — including partition files
+    that `GSplatData.load` refuses (decision 5 gap)."""
+
+    def _invoke_view(self, runner: CliRunner, path: Path):
+        """Invoke `gsplat view` with all blocking/IO side effects mocked out."""
+        from unittest.mock import patch
+
+        captured: dict = {}
+
+        def _fake_serve_data(target, *args, **kwargs):
+            captured["serve_target"] = target
+
+        with (
+            patch("luxar.cli.utils.check_viewer_built", return_value=True),
+            patch("luxar.cli.utils.find_available_port", side_effect=lambda p: p),
+            patch("luxar.cli.main._serve_data", side_effect=_fake_serve_data),
+            patch("luxar.cli.main._serve_viewer"),
+            patch("luxar.cli.gsplat_commands.time.sleep"),
+        ):
+            result = runner.invoke(app, ["gsplat", "view", str(path), "--no-open"])
+        return result, captured
+
+    def test_view_leaf_serves_directly(
+        self, runner: CliRunner, sample_gsplats: Path
+    ) -> None:
+        result, captured = self._invoke_view(runner, sample_gsplats)
+        assert result.exit_code == 0, f"view failed: {result.stdout}"
+        # Served the file itself — no temp scene compile.
+        assert captured["serve_target"] == sample_gsplats
+
+    def test_view_partition_does_not_crash(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Previously `view` round-tripped via GSplatData.load → ValueError on a
+        partition tree. Serving directly must succeed."""
+        part = tmp_path / "part.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+            ).exit_code
+            == 0
+        )
+        result, captured = self._invoke_view(runner, part)
+        assert result.exit_code == 0, f"view on partition failed: {result.stdout}"
+        assert captured["serve_target"] == part
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Slice command tests
 # ═══════════════════════════════════════════════════════════════════════
 
