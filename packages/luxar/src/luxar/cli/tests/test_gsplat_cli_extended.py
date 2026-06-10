@@ -1152,126 +1152,99 @@ class TestFilterCommand:
 class TestPartitionCommand:
     """Tests for luxar gsplat partition CLI command."""
 
-    def test_partition_by_parts(
+    def _read_partition(self, path: Path):
+        """Read a kind=partition .gsplats.zarr → its tree node."""
+        import zarr
+
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+        root = zarr.open_group(str(path), mode="r")
+        return root, read_gsplat_node(root, root)
+
+    def test_partition_by_parts_single_file(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "partition_output"
+        out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
             app,
-            [
-                "gsplat",
-                "partition",
-                str(sample_gsplats),
-                str(out_dir),
-                "--parts",
-                "3",
-            ],
+            ["gsplat", "partition", str(sample_gsplats), str(out), "--parts", "3"],
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"
-        assert out_dir.exists()
+        # One self-contained kind=partition file (NOT a directory of N files).
+        assert out.is_dir()  # a zarr dir
+        from luxar.gsplats.tree import iter_leaves
 
-        from luxar.gsplats.gsplat_data import GSplatData
+        root, node = self._read_partition(out)
+        assert root.attrs["kind"] == "partition"
+        # all splats preserved across the spatial parts
+        assert sum(leaf.n_splats for leaf in iter_leaves(node)) == 5
 
-        parts = []
-        for i in range(3):
-            p = out_dir / f"part_{i:03d}.gsplats.zarr"
-            assert p.exists(), f"Missing {p.name}"
-            parts.append(GSplatData.load(p))
-
-        total = sum(p.n_splats for p in parts)
-        assert total == 5  # sample_gsplats has 5 splats
-
-    def test_partition_by_indices(
+    def test_partition_by_max_elements(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "partition_output"
+        out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
             app,
-            [
-                "gsplat",
-                "partition",
-                str(sample_gsplats),
-                str(out_dir),
-                "--indices",
-                "2,4",
-            ],
+            ["gsplat", "partition", str(sample_gsplats), str(out), "--max-elements", "2"],
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"
+        from luxar.gsplats.tree import iter_leaves
 
-        from luxar.gsplats.gsplat_data import GSplatData
-
-        parts = [
-            GSplatData.load(out_dir / f"part_{i:03d}.gsplats.zarr") for i in range(3)
-        ]
-        assert parts[0].n_splats == 2
-        assert parts[1].n_splats == 2
-        assert parts[2].n_splats == 1
+        _, node = self._read_partition(out)
+        leaves = list(iter_leaves(node))
+        assert all(leaf.n_splats <= 2 for leaf in leaves)
+        assert sum(leaf.n_splats for leaf in leaves) == 5
 
     def test_partition_with_compression(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out_dir = tmp_path / "partition_output"
+        out = tmp_path / "part.gsplats.zarr.zip"
         result = runner.invoke(
             app,
             [
-                "gsplat",
-                "partition",
-                str(sample_gsplats),
-                str(out_dir),
-                "--parts",
-                "2",
-                "--compress",
-                "zip",
+                "gsplat", "partition", str(sample_gsplats), str(out),
+                "--parts", "2", "--compress", "zip",
             ],
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"
-        assert out_dir.exists()
+        assert out.is_file()  # single compressed archive
 
     def test_partition_missing_mode(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        """Neither --parts nor --indices -> error."""
-        out_dir = tmp_path / "partition_output"
+        """Neither --max-elements nor --parts -> error."""
+        out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
-            app,
-            ["gsplat", "partition", str(sample_gsplats), str(out_dir)],
+            app, ["gsplat", "partition", str(sample_gsplats), str(out)]
         )
         assert result.exit_code == 1
 
-    def test_partition_roundtrip_with_merge(
+    def test_partition_indices_flag_removed(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        """Partition then merge should preserve total splat count."""
-        partition_dir = tmp_path / "partition_output"
+        """--indices was removed (BSP is spatial, not index-based)."""
+        out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
             app,
-            [
-                "gsplat",
-                "partition",
-                str(sample_gsplats),
-                str(partition_dir),
-                "--parts",
-                "2",
-            ],
+            ["gsplat", "partition", str(sample_gsplats), str(out), "--indices", "2,4"],
+        )
+        assert result.exit_code != 0  # unknown option
+
+    def test_partition_total_preserved(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Spatial partition preserves the total splat count in one file."""
+        out = tmp_path / "part.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "partition", str(sample_gsplats), str(out), "--parts", "2"]
         )
         assert result.exit_code == 0, f"partition failed: {result.stdout}"
-
-        # Merge back
-        merged = tmp_path / "merged.gsplats.zarr"
-        part_paths = [
-            str(partition_dir / f"part_{i:03d}.gsplats.zarr") for i in range(2)
-        ]
-        result = runner.invoke(
-            app,
-            ["gsplat", "merge"] + part_paths + ["-o", str(merged)],
-        )
-        assert result.exit_code == 0, f"merge failed: {result.stdout}"
-
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import iter_leaves
 
         original = GSplatData.load(sample_gsplats)
-        recombined = GSplatData.load(merged)
-        assert recombined.n_splats == original.n_splats
+        _, node = self._read_partition(out)
+        assert sum(leaf.n_splats for leaf in iter_leaves(node)) == original.n_splats
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2078,9 +2051,12 @@ class TestLODCommand:
         )
         assert result.exit_code == 0, f"quiet substitutive failed:\n{result.stdout}"
         assert out_path.is_dir()
-        # The per-level "level 0: ... splats" / "Wrote ..." lines are gated
+        # The per-level "level 0: ... splats" + "Wrote <output_path>" summary
+        # lines are gated by --quiet. (The shared array writer still logs a
+        # low-level "✓ Wrote amplitudes …" line unconditionally, so assert on
+        # the specific gated summary rather than the bare word "Wrote".)
         assert "level 0:" not in result.stdout
-        assert "Wrote" not in result.stdout
+        assert f"Wrote {out_path}" not in result.stdout
 
     def test_lod_pyramid_full_matrix(
         self,

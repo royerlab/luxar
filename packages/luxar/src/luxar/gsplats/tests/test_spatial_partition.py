@@ -84,6 +84,19 @@ def test_spatial_partition_validates_max_elements():
         _clustered(5).to_spatial_partition(max_elements=0)
 
 
+def test_gsplat_info_handles_partition_file():
+    """`gsplat info` must report a partition file's tree shape, not crash
+    (GSplatData.load raises on a non-matrix tree — decision 5 gap)."""
+    from luxar.cli.gsplat_commands import info_dataset
+
+    data = _clustered(40)
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "part.gsplats.zarr"
+        write_gsplats_tree(p, data.to_spatial_partition(max_elements=40), ordering="none")
+        # Must not raise (previously GSplatData.load → ValueError crashed info).
+        info_dataset(p, show_histograms=False, bins=40)
+
+
 def test_spatial_partition_warns_on_multi_substitutive():
     def _sub(n, seed):
         rng = np.random.default_rng(seed)

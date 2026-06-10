@@ -157,7 +157,15 @@ def info_dataset(
         from luxar.gsplats.gsplat_data import GSplatData
 
         with asection(f"Loading dataset: {path.name}"):
-            data = GSplatData.load(path, include_stats=True)
+            try:
+                data = GSplatData.load(path, include_stats=True)
+            except ValueError as exc:
+                # Partition / nested trees have no flat GSplatData equivalent;
+                # report their tree shape instead of crashing (decision 5).
+                if any(k in str(exc) for k in ("matrix", "partition", "tree")):
+                    _print_gsplat_tree_summary(path)
+                    return
+                raise
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
 
@@ -4289,6 +4297,60 @@ def batch_validate_cmd(
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
+
+
+def _print_gsplat_tree_summary(path: Path) -> None:
+    """Report the node-tree shape of a partition / nested .gsplats.zarr.
+
+    These have no flat ``GSplatData`` (``gsplat info``'s normal path), so we
+    walk the node tree and print its structure (kind, parts/levels, per-leaf
+    splat counts, total, ndim, bounds) instead of failing.
+    """
+    import shutil
+
+    import zarr
+
+    from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
+    from luxar.gsplats.tree import (
+        GSplatLodGroup,
+        GSplatPartition,
+        iter_leaves,
+        node_ndim,
+        total_splats,
+    )
+    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+    zarr_path = path
+    tmp = None
+    try:
+        if path.is_file():  # compressed archive
+            zarr_path = _extract_compressed_zarr(path)
+            tmp = zarr_path.parent
+        root = zarr.open_group(str(zarr_path), mode="r")
+        node = read_gsplat_node(root, root)
+
+        aprint("\n" + "═" * 70)
+        aprint("DATASET INFORMATION (node tree)")
+        aprint("═" * 70)
+        aprint(f"\nFile: {path.name}")
+        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        kind = "partition" if isinstance(node, GSplatPartition) else (
+            "lod" if isinstance(node, GSplatLodGroup) else "leaf"
+        )
+        aprint(f"\nRoot kind: {kind}")
+        aprint(f"Dimensions: {node_ndim(node)}D")
+        aprint(f"Total splats (all leaves): {total_splats(node):,}")
+        if isinstance(node, (GSplatPartition, GSplatLodGroup)):
+            child_word = "part" if isinstance(node, GSplatPartition) else "level"
+            aprint(f"{child_word.capitalize()}s: {len(node.children)}")
+            for i, leaf in enumerate(iter_leaves(node)):
+                aprint(f"  leaf {i}: {leaf.n_splats:,} splats")
+        pb = root.attrs.get("position_bounds")
+        if pb:
+            aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+    finally:
+        if tmp is not None and tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _validate_leaf_arrays(node_dir: Path, label: str) -> str:
