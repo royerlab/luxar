@@ -1142,17 +1142,26 @@ def partition_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
-    output_dir: Path = typer.Argument(
-        ..., help="Output directory for partitioned parts"
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (a single kind=partition file)"
     ),
-    # Partition mode (exactly one required)
+    max_elements: Optional[int] = typer.Option(
+        None,
+        "--max-elements",
+        "-m",
+        help="Max splats per spatial part (the BSP recurses until each part "
+        "is at or below this).",
+    ),
     parts: Optional[int] = typer.Option(
-        None, "--parts", "-n", help="Partition into N roughly equal parts"
+        None,
+        "--parts",
+        "-n",
+        help="Convenience: target ~N parts (sets --max-elements to "
+        "ceil(n_splats / N)).",
     ),
-    indices: Optional[str] = typer.Option(
-        None, "--indices", help="Partition at splat indices: '100,500,1000'"
+    rule: Literal["median", "midpoint", "sah"] = typer.Option(
+        "median", "--rule", help="BSP split rule (median | midpoint | sah)."
     ),
-    # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
         "auto", "--encoding", "-e", help="Encoding mode for output"
     ),
@@ -1160,84 +1169,75 @@ def partition_dataset(
         None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
     ),
 ) -> None:
-    """Partition a Gaussian splat dataset into multiple parts.
+    """Spatially partition a Gaussian splat dataset (BSP) into ONE
+    ``kind=partition`` ``.gsplats.zarr`` file.
 
-    Two modes (exactly one required):
-
-    1. Equal parts (--parts N): Partition into N roughly equal parts.
-
-    2. At indices (--indices): Partition at specific splat indices.
-
-    Output files are named part_000.gsplats.zarr, part_001.gsplats.zarr, etc.
-    in the specified output directory.
+    Recursively splits the splats by position so each ``part_<i>`` holds at
+    most ``--max-elements`` splats (each part carries its own ``position_bounds``
+    for per-part frustum culling in the viewer). Supply ``--max-elements``
+    directly, or ``--parts N`` to target ~N parts. The output is a single
+    self-contained partition file — open it with ``luxar gsplat view`` or embed
+    it in a scene.
 
     Examples:
-        # Partition into 4 equal parts
-        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 4
+        # At most 50k splats per spatial part
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr --max-elements 50000
 
-        # Partition at specific indices (produces 3 parts: [0:100], [100:500], [500:])
-        luxar gsplat partition input.gsplats.zarr output_dir/ --indices "100,500"
+        # Target ~4 parts
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr --parts 4
 
-        # Partition with compression
-        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 3 --compress zip
+        # Surface-area-heuristic splits, compressed
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr -m 50000 --rule sah -c zip
     """
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        import math
 
-        # Validate mode
-        if parts is None and indices is None:
-            aprint("❌ Error: Specify --parts N or --indices '100,500,...'")
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import iter_leaves
+
+        if max_elements is None and parts is None:
+            aprint("❌ Error: specify --max-elements N (or --parts N)")
             raise typer.Exit(1)
-        if parts is not None and indices is not None:
-            aprint("❌ Error: --parts and --indices are mutually exclusive")
+        if max_elements is not None and parts is not None:
+            aprint("❌ Error: --max-elements and --parts are mutually exclusive")
             raise typer.Exit(1)
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Partitioning: {input_path.name}"):
-            # Load
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
-            # Partition
-            with asection("Partitioning"):
-                if parts is not None:
-                    aprint(f"Mode: {parts} equal parts")
-                    out_parts = data.partition(parts)
-                else:
-                    assert (
-                        indices is not None
-                    )  # ensured by mutual exclusivity check above
-                    idx_list = [int(x.strip()) for x in indices.split(",")]
-                    aprint(f"Mode: partition at indices {idx_list}")
-                    out_parts = data.partition(idx_list)
+            # --parts N → target ~N parts via ceil(n / N).
+            resolved_max = (
+                max_elements
+                if max_elements is not None
+                else max(1, math.ceil(data.n_splats / int(parts)))  # type: ignore[arg-type]
+            )
 
-                aprint(f"Produced {len(out_parts)} parts:")
-                for i, part in enumerate(out_parts):
-                    aprint(f"  part_{i:03d}: {part.n_splats:,} splats")
+            with asection("Spatial BSP partition"):
+                partition_node = data.to_spatial_partition(
+                    max_elements=resolved_max, rule=rule
+                )
+                part_sizes = [leaf.n_splats for leaf in iter_leaves(partition_node)]
+                aprint(
+                    f"Produced {len(part_sizes)} spatial parts "
+                    f"(rule={rule}, max_elements={resolved_max:,}): sizes={part_sizes}"
+                )
 
-            # Filter out empty parts
-            nonempty_parts = [
-                (i, part) for i, part in enumerate(out_parts) if part.n_splats > 0
-            ]
-            if len(nonempty_parts) < len(out_parts):
-                n_empty = len(out_parts) - len(nonempty_parts)
-                aprint(f"  Skipping {n_empty} empty part(s)")
-
-            # Save
-            output_dir.mkdir(parents=True, exist_ok=True)
-            with asection(f"Saving to {output_dir}"):
-                ext = ".gsplats.zarr"
-                for i, part in nonempty_parts:
-                    out_path = output_dir / f"part_{i:03d}{ext}"
-                    part.save(
-                        out_path,
-                        encoding_mode=encoding_mode_obj,
-                        include_fitting_info=True,
-                        compress=compress,
-                    )
-                    aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
+            with asection(f"Saving to {output_path.name}"):
+                write_gsplats_tree(
+                    output_path,
+                    partition_node,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,
+                )
+                aprint(
+                    f"  Saved kind=partition file: {output_path} "
+                    f"({data.n_splats:,} splats in {len(part_sizes)} parts)"
+                )
 
     except typer.Exit:
         raise

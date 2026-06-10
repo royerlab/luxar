@@ -11,7 +11,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
-    from luxar.gsplats.tree import GSplatNode
+    from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 
 def _merge_lod_colors(
@@ -1353,6 +1353,78 @@ class GSplatData(_SplatArrayMixin):
                     )
                 )
         return results
+
+    def to_spatial_partition(
+        self,
+        *,
+        max_elements: int,
+        rule: Literal["median", "midpoint", "sah"] = "median",
+    ) -> "GSplatPartition":
+        """Spatially partition the splats into a ``kind=partition`` tree node.
+
+        Recursively BSP-splits the splat **centers** so each part holds at most
+        ``max_elements`` splats, using the shared splitters in
+        :mod:`luxar.core.group.partition` (the same machinery the scene uses).
+        Returns a :class:`~luxar.gsplats.tree.GSplatPartition` (a tree node, not
+        a ``GSplatData`` — a partition has no flat-matrix equivalent); write it
+        with ``write_gsplats_tree`` (one self-contained ``kind=partition`` file)
+        or embed it in a scene. Each part gets its own ``position_bounds`` at
+        write time so the viewer can frustum-cull per part.
+
+        A multi-LOD input is flattened to its default substitutive level first
+        (BSP partitions a single splat set), matching :meth:`partition`.
+        """
+        from luxar.core.group.partition import (
+            median_bsp_partition,
+            midpoint_bsp_partition,
+            sah_bsp_partition,
+        )
+
+        from .tree import GSplatLeaf, GSplatPartition
+
+        if max_elements < 1:
+            raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
+        src: GSplatData = self
+        if self.n_substitutive > 1 or self.n_additive_sublods > 1:
+            warnings.warn(
+                "to_spatial_partition() flattens LOD structure: input has "
+                f"n_substitutive={self.n_substitutive}, "
+                f"n_additive_sublods={self.n_additive_sublods}; coarser "
+                "substitutive levels and the additive ladder are collapsed "
+                "into a single level before partitioning.",
+                UserWarning,
+                stacklevel=2,
+            )
+            src = self.flattened()
+
+        centers = np.asarray(src.centers)
+        if rule == "median":
+            parts = median_bsp_partition(centers, max_elements)
+        elif rule == "midpoint":
+            parts = midpoint_bsp_partition(centers, max_elements)
+        elif rule == "sah":
+            parts = sah_bsp_partition(centers, max_elements)
+        else:
+            raise ValueError(
+                f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        children: List["GSplatNode"] = []
+        for idx in parts:
+            children.append(
+                GSplatLeaf(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=src.centers[idx],
+                            amplitudes=src.amplitudes[idx],
+                            cholesky_factors=src.cholesky_factors[idx],
+                            colors=src.colors[idx] if src.colors is not None else None,
+                            truncation_radius=src.truncation_radius,
+                        )
+                    ]
+                )
+            )
+        return GSplatPartition(children=children, max_elements=max_elements)
 
     def embed_dimension(
         self,
