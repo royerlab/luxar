@@ -215,11 +215,19 @@ describe('SceneLoader', () => {
     it('should detect and log extend_to_all dimensions', async () => {
       const consoleSpy = vi.spyOn(console, 'log');
 
-      // Setup node with extend_to_all
-      mockZarrGroup.attrs = {
-        type: 'points',
-        extend_to_all: ['time', 'channel'],
-      };
+      // The root is a SCENE container (its type is 'scene'/absent); the
+      // extend_to_all lives on the `/points` NODE. The root and node attrs
+      // must differ — a leaf `type` on the root would make buildSceneGraph
+      // (correctly) treat the file as a bare-leaf standalone node and skip
+      // the child. mockRootLoc is the root location; resolved sub-locations
+      // are the nodes.
+      (zarr.open as any).mockImplementation((loc: any) =>
+        Promise.resolve(
+          loc === mockRootLoc
+            ? mockZarrGroup // scene root (scene_dimensions, no leaf type)
+            : { attrs: { type: 'points', extend_to_all: ['time', 'channel'] } }
+        )
+      );
 
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
@@ -233,11 +241,16 @@ describe('SceneLoader', () => {
         { path: '/points', kind: 'group' },
       ]);
 
-      // Mock the open call to return points type
-      (zarr.open as any).mockImplementation((_loc: any, _opts: any) =>
-        Promise.resolve({
-          attrs: { type: 'points', n_points: 1000 },
-        })
+      // The root is a SCENE container; the `/points` NODE is the points leaf.
+      // Root and node attrs must differ — a leaf `type` on the root would make
+      // buildSceneGraph treat the file as a bare-leaf standalone node (marking
+      // the whole store internal) and skip the child. mockRootLoc is the root.
+      (zarr.open as any).mockImplementation((loc: any) =>
+        Promise.resolve(
+          loc === mockRootLoc
+            ? mockZarrGroup // scene root (scene_dimensions, no leaf type)
+            : { attrs: { type: 'points', n_points: 1000 } }
+        )
       );
 
       // Mock resolve to simulate missing spatial index
