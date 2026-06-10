@@ -285,6 +285,21 @@ export class ChunkPrefetcher {
    * @param chunks - Chunk sizes (e.g., [1024, 4])
    */
   registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void {
+    // Bounds registration is a BEST-EFFORT prefetch optimization: when present
+    // it lets getAdjacentChunks skip out-of-range indices (avoiding spurious
+    // 404s). It must NEVER abort a load. If shape/chunks are absent or malformed
+    // (a partial/streaming array, an unusual store, mismatched ranks, or a zero
+    // chunk size that would divide to Infinity), skip registration silently —
+    // the prefetcher simply runs without bounds.
+    if (
+      !Array.isArray(shape) ||
+      !Array.isArray(chunks) ||
+      shape.length === 0 ||
+      shape.length !== chunks.length ||
+      chunks.some((c) => !Number.isFinite(c) || c <= 0)
+    ) {
+      return;
+    }
     const maxIndices = shape.map((s, i) => Math.ceil(s / chunks[i]));
     // Normalize: register both with and without leading slash for robust lookup
     // (zarrita keys have leading '/', loader paths may not)
