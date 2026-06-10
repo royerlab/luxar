@@ -194,6 +194,59 @@ def test_scene_lod_group_matches_standalone():
                 )
 
 
+def test_scene_partition_matches_standalone():
+    """A scene kind=partition group (raw-array BSP wrapper) matches the standalone
+    one (GSplatData.to_spatial_partition -> tree walker): same part_<i> arrays,
+    same kind/max_elements. Same centers + same median BSP -> same parts."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    rng = np.random.default_rng(7)
+    # Two separated clusters so the BSP split is deterministic.
+    a = rng.uniform(0, 10, size=(40, 3)).astype(np.float32)
+    b = (np.array([100.0, 100.0, 100.0], dtype=np.float32)
+         + rng.uniform(0, 10, size=(40, 3))).astype(np.float32)
+    centers = np.concatenate([a, b], axis=0)
+    n = centers.shape[0]
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    amplitudes = np.ones(n, dtype=np.float32)
+    data = GSplatData(centers=centers, amplitudes=amplitudes, cholesky_factors=chol)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        scene_path = tmp / "scene.zarr"
+        with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats(
+                "g", centers=centers, amplitudes=amplitudes, cholesky_factors=chol,
+                partition={"max_elements": 40, "rule": "median"},
+            )
+        scene_part = zarr.open_group(str(scene_path), mode="r")["g"]
+
+        std_path = tmp / "standalone.gsplats.zarr"
+        write_gsplats_tree(
+            std_path,
+            data.to_spatial_partition(max_elements=40, rule="median"),
+            ordering="hilbert", encoding_mode=EncodingMode.PRECISION,
+        )
+        std_part = zarr.open_group(str(std_path), mode="r")
+
+        assert scene_part.attrs["kind"] == "partition"
+        assert std_part.attrs["kind"] == "partition"
+        assert scene_part.attrs["max_elements"] == std_part.attrs["max_elements"]
+        n_scene = sum(1 for k in scene_part if str(k).startswith("part_"))
+        n_std = sum(1 for k in std_part if str(k).startswith("part_"))
+        assert n_scene == n_std and n_scene >= 2
+        for i in range(n_scene):
+            for arr in ("centers", "amplitudes", "cholesky_factors"):
+                np.testing.assert_array_equal(
+                    std_part[f"part_{i}"][arr][:],
+                    scene_part[f"part_{i}"][arr][:],
+                    err_msg=f"part_{i}/{arr} differs",
+                )
+
+
 def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
     centers, amplitudes, cholesky = _splats(128, seed=3)
     colors = np.random.default_rng(9).uniform(0, 1, size=(128, 3)).astype(np.float32)
