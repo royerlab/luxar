@@ -97,6 +97,51 @@ def test_gsplat_info_handles_partition_file():
         info_dataset(p, show_histograms=False, bins=40)
 
 
+def test_partition_file_grafts_into_a_scene():
+    """A kind=partition .gsplats.zarr embeds into a scene as the identical
+    kind=partition subtree (review finding #2: convert/add_gsplats_from_file
+    used to crash on a partition root because GSplatData.load can't represent
+    it). The graft composes the scene's own builders."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    data = _clustered(40)  # 80 splats, 2 clusters
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "part.gsplats.zarr"
+        write_gsplats_tree(part, data.to_spatial_partition(max_elements=40),
+                           ordering="hilbert")
+
+        scene_path = Path(tmp) / "scene.zarr"
+        with LuxarZarrCompiler(scene_path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            wrapper = scene.add_gsplats_from_file(name="g", path=part)
+
+        root = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert root.attrs["kind"] == "partition"
+        assert root.attrs["display_type"] == "gsplats"
+        n_parts = sum(1 for k in root if str(k).startswith("part_"))
+        assert n_parts >= 2
+        total = sum(root[f"part_{i}"]["centers"].shape[0] for i in range(n_parts))
+        assert total == 80
+
+
+def test_grafting_a_partition_rejects_dim_order():
+    """A graft preserves the file's own coordinates — dim_order/fill cannot be
+    applied to a partition/nested file, and must raise clearly (not silently
+    no-op or crash deep in the writer)."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    data = _clustered(40)
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "part.gsplats.zarr"
+        write_gsplats_tree(part, data.to_spatial_partition(max_elements=40),
+                           ordering="hilbert")
+        scene_path = Path(tmp) / "scene.zarr"
+        with LuxarZarrCompiler(scene_path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="dim_order / fill"):
+                scene.add_gsplats_from_file(name="g", path=part, dim_order=["z", "y", "x"])
+
+
 def test_spatial_partition_warns_on_multi_substitutive():
     def _sub(n, seed):
         rng = np.random.default_rng(seed)

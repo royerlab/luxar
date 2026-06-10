@@ -461,6 +461,29 @@ class TestConvertCommand:
         )
         assert result.exit_code == 0
 
+    def test_convert_partition_file_grafts(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`gsplat convert` on a kind=partition file grafts the node tree into
+        the scene (review finding #2: it used to crash with a raw traceback
+        because GSplatData.load can't represent a partition root)."""
+        part = tmp_path / "part.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+            ).exit_code
+            == 0
+        )
+        out = tmp_path / "scene.zarr"
+        result = runner.invoke(app, ["gsplat", "convert", str(part), str(out)])
+        assert result.exit_code == 0, f"convert on partition failed: {result.stdout}"
+
+        import zarr
+
+        store = zarr.open_group(str(out), mode="r")
+        assert store["gsplats"].attrs["kind"] == "partition"
+
     def test_convert_with_scale_intensity(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:

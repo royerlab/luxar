@@ -31,25 +31,128 @@ def add_gsplats_from_file_impl(
     fill_sigma: Optional[Dict[str, float]] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
-    from luxar.gsplats.io.load_gsplats import load_gsplats
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import is_matrix_shaped
 
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"GSplats file not found: {path}")
 
-    result = load_gsplats(path)
+    # Read the v3.0 node tree once. A matrix-shaped tree (leaf / additive ladder
+    # / kind=lod of leaves) maps to a GSplatData and embeds via the normal data
+    # path (which applies dim_order / extend_to_all / fill). A genuinely nested
+    # tree (kind=partition root, or lod with non-leaf children) has no flat
+    # GSplatData equivalent, so it is GRAFTED node-for-node, reusing the scene's
+    # own builders — the same subtree the file already holds.
+    node, _stats = load_gsplat_node(path)
 
-    return add_gsplats_from_data_impl(
-        group,
-        name=name,
-        result=result,
-        parent=parent,
-        extend_to_all=extend_to_all,
-        dim_order=dim_order,
-        fill=fill,
-        fill_sigma=fill_sigma,
-        **attrs,
+    if is_matrix_shaped(node):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        return add_gsplats_from_data_impl(
+            group,
+            name=name,
+            result=GSplatData.from_tree(node),
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            **attrs,
+        )
+
+    if dim_order is not None or fill is not None or fill_sigma is not None:
+        raise ValueError(
+            "dim_order / fill / fill_sigma are not supported when grafting a "
+            "partition / nested .gsplats.zarr (the file is already a full node "
+            "subtree). Re-author the file in the target scene dims, or embed a "
+            "matrix-shaped (leaf / additive / kind=lod) file instead."
+        )
+    return graft_gsplat_node(
+        group, name=name, node=node, parent=parent, extend_to_all=extend_to_all, **attrs
     )
+
+
+def graft_gsplat_node(
+    group: "Group",
+    *,
+    name: str,
+    node: Any,  # luxar.gsplats.tree.GSplatNode
+    parent: Optional["Node"] = None,
+    extend_to_all: Optional[Union[List[str], str]] = None,
+    **attrs: Any,
+) -> Union["GSplats", "Group"]:
+    """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
+
+    Composes the scene's own builders — ``add_gsplats_from_data`` (leaf /
+    additive ladder), ``add_lod_group`` (kind=lod), ``add_partition_group``
+    (kind=partition) — so a standalone ``.gsplats.zarr`` of any shape (including
+    partition / nested) embeds as the identical subtree it holds on disk. The
+    per-child ``min_pixel_size`` selector thresholds ride from each child's
+    ``meta`` (so a nested lod combo stays selectable). Compositing attrs land on
+    a wrapper Group; the rest fall through to children.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    from ..compositing import COMPOSITING_ATTRS
+
+    if isinstance(node, GSplatLeaf):
+        # Matrix-shaped → the normal data path. A graft preserves the file's own
+        # coordinates, so no scene-embed transforms are applied here.
+        return add_gsplats_from_data_impl(
+            group,
+            name=name,
+            result=GSplatData.from_tree(node),
+            parent=parent,
+            extend_to_all=extend_to_all,
+            **attrs,
+        )
+
+    parent_node = parent or group
+    wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+    child_attrs.pop("min_pixel_size", None)
+
+    if isinstance(node, GSplatLodGroup):
+        wrapper_attrs.setdefault("display_type", "gsplats")
+        n = len(node.children)
+        # In-memory children are finest-first; add_lod_group wants coarsest→finest.
+        on_disk = list(reversed(node.children))
+        on_disk_default = (n - 1) - node.default_level
+        wrapper = parent_node.add_lod_group(
+            name, default_level=int(on_disk_default), **wrapper_attrs
+        )
+        for i, child in enumerate(on_disk):
+            mps = float((child.meta or {}).get("min_pixel_size", 0.0) or 0.0)
+            graft_gsplat_node(
+                wrapper,
+                name=f"child_{i}",
+                node=child,
+                extend_to_all=extend_to_all,
+                min_pixel_size=mps,
+                **child_attrs,
+            )
+        return wrapper
+
+    if isinstance(node, GSplatPartition):
+        wrapper = parent_node.add_partition_group(
+            name=name,
+            display_type="gsplats",
+            max_elements=int(node.max_elements),
+            **wrapper_attrs,
+        )
+        for i, child in enumerate(node.children):
+            graft_gsplat_node(
+                wrapper,
+                name=f"part_{i}",
+                node=child,
+                extend_to_all=extend_to_all,
+                **child_attrs,
+            )
+        return wrapper
+
+    raise TypeError(f"Cannot graft unknown gsplat node type: {type(node).__name__}")
 
 
 def add_gsplats_from_volume_impl(

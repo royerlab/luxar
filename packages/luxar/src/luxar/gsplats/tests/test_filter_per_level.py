@@ -59,6 +59,31 @@ def test_filter_by_preserves_all_substitutive_levels():
             assert c[:, 0].max() <= 50.0 + 1e-6
 
 
+def test_cull_preserves_all_substitutive_levels():
+    """cull() must apply per-level and preserve the pyramid (decision 6) —
+    not collapse to the default level via self.filter() (the regression the
+    review caught: cull's own warning text advertised it as pyramid-preserving
+    while it silently dropped coarser levels)."""
+    pyr = _pyramid()
+    assert pyr.n_substitutive == 3
+    out = pyr.cull(method="cumulative", retention=0.9)
+    # All three substitutive levels survive (was 1 before the fix).
+    assert out.n_substitutive == 3
+    # Per-level metadata is preserved.
+    assert [lvl.compression_factor for lvl in out.substitutive_levels] == [1, 4, 16]
+    assert [lvl.level_index for lvl in out.substitutive_levels] == [0, 1, 2]
+    # Each level was actually culled (cumulative keeps <= the source count).
+    for src, dst in zip(pyr.substitutive_levels, out.substitutive_levels):
+        assert 0 < dst.n_splats_total <= src.n_splats_total
+    assert out.stats.get("culled") is True
+
+
+def test_cull_single_substitutive_unchanged_shape():
+    single = GSplatData.from_additive_sublods([_sub(50, 0)])
+    out = single.cull(method="cumulative", retention=1.0)  # keep all amplitude
+    assert out.n_substitutive == 1
+
+
 def test_slice_by_preserves_pyramid():
     pyr = _pyramid()
     sliced = pyr.slice_by([slice(0, 50), slice(None, None), slice(None, None)])

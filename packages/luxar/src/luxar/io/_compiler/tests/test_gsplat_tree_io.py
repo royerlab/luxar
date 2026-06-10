@@ -196,6 +196,31 @@ def test_nested_lod_of_partition_round_trip():
     assert isinstance(out, GSplatLodGroup)
     assert isinstance(out.children[0], GSplatPartition)
 
+    # Review finding #3: EVERY lod child — including a non-leaf (Group) child —
+    # must carry a min_pixel_size selector threshold, else the viewer is stuck
+    # always-finest. The back-fill now covers the nested partition child.
+    assert "min_pixel_size" in z["child_0"].attrs  # coarsest leaf
+    assert "min_pixel_size" in z["child_1"].attrs  # the partition (non-leaf!)
+    # Monotonic increasing coarsest→finest; coarsest is 0.
+    assert z["child_0"].attrs["min_pixel_size"] == 0.0
+    assert z["child_1"].attrs["min_pixel_size"] > z["child_0"].attrs["min_pixel_size"]
+    # Structural attrs are authoritative (not clobbered by meta — finding #8).
+    assert z.attrs["kind"] == "lod" and z["child_1"].attrs["kind"] == "partition"
+
+
+def test_lod_group_meta_does_not_clobber_structural_attrs():
+    """Finding #8: a stray meta key colliding with a structural key must NOT
+    overwrite it — structural attrs are written last and win."""
+    lod = GSplatLodGroup(
+        children=[_leaf(20, seed=0), _leaf(5, seed=1)],
+        default_level=0,
+        meta={"kind": "garbage", "default_level": 999, "compression_factor": 4},
+    )
+    z, out = _round_trip(lod)
+    assert z.attrs["kind"] == "lod"  # not "garbage"
+    assert z.attrs["default_level"] != 999  # structural value wins
+    assert z.attrs["compression_factor"] == 4  # benign meta still rides through
+
 
 # ── Selector / provenance metadata on lod children ──────────────────────
 

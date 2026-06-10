@@ -115,6 +115,25 @@ def load_gsplats(
         ValueError: If the format is invalid/incompatible, or the file is a
             non-matrix (partition/nested) tree.
     """
+    node, stats = load_gsplat_node(path, include_stats=include_stats)
+    return GSplatData.from_tree(node, stats=stats)
+
+
+def load_gsplat_node(
+    path: str | Path,
+    include_stats: bool = False,
+) -> "tuple[Any, Dict[str, Any]]":
+    """Load the raw v3.0 node-tree (a :class:`~luxar.gsplats.tree.GSplatNode`).
+
+    Unlike :func:`load_gsplats`, this does NOT flatten to a ``GSplatData`` and so
+    works for **every** shape — including ``kind=partition`` roots and genuinely
+    nested trees that have no flat matrix equivalent. Use this to graft a
+    standalone ``.gsplats.zarr`` into a scene, or to inspect a partition/nested
+    file. Handles ``.zip`` / ``.tar.gz`` archives transparently.
+
+    Returns:
+        ``(node, stats)`` — the tree root and the (optional) root-level stats.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"GSplats zarr not found: {path}")
@@ -174,7 +193,7 @@ def load_gsplats(
             if "description" in root.attrs:
                 stats["description"] = root.attrs["description"]
 
-        return GSplatData.from_tree(node, stats=stats)
+        return node, stats
 
     finally:
         # Cleanup temporary directory if we extracted a compressed archive

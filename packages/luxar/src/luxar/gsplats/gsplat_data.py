@@ -925,7 +925,9 @@ class GSplatData(_SplatArrayMixin):
                 )
                 new_levels.append(
                     SubstitutiveLevel(
-                        additive_sublods=filtered.substitutive_levels[0].additive_sublods,
+                        additive_sublods=filtered.substitutive_levels[
+                            0
+                        ].additive_sublods,
                         compression_factor=src.compression_factor,
                         parent_method=src.parent_method,
                         level_index=src.level_index,
@@ -2078,6 +2080,56 @@ class GSplatData(_SplatArrayMixin):
                 method = "redundancy"
             else:
                 method = "cumulative"
+
+        # Multi-substitutive: cull EVERY substitutive level and rebuild the
+        # pyramid (decision 6) rather than collapsing to the default level via
+        # the single-level mask that the strategies below feed to self.filter().
+        # Each level is culled through the single-substitutive path (the same
+        # target volume reconstructs every level). Mirrors filter_by().
+        if self.n_substitutive > 1:
+            culled_levels: List[SubstitutiveLevel] = []
+            for s, src in enumerate(self.substitutive_levels):
+                culled_level = self.at_substitutive(s).cull(
+                    target,
+                    method=method,
+                    shape=shape,
+                    truncate=truncate,
+                    error_percentile=error_percentile,
+                    error_tolerance=error_tolerance,
+                    redundancy_threshold=redundancy_threshold,
+                    max_binary_search_iters=max_binary_search_iters,
+                    device=device,
+                    intensity_floor=intensity_floor,
+                    retention=retention,
+                    amplitude_percentile=amplitude_percentile,
+                    volume_percentile=volume_percentile,
+                    verbose=verbose,
+                )
+                culled_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=culled_level.substitutive_levels[
+                            0
+                        ].additive_sublods,
+                        compression_factor=src.compression_factor,
+                        parent_method=src.parent_method,
+                        level_index=src.level_index,
+                        stats=dict(src.stats),
+                    )
+                )
+            out = GSplatData.from_substitutive_levels(
+                culled_levels,
+                stats=dict(self.stats),
+                default_substitutive=self.default_substitutive,
+            )
+            out.stats.update(
+                {
+                    "culled": True,
+                    "culling_method": method,
+                    "n_original": self.n_splats,
+                    "n_culled": self.n_splats - out.n_splats,
+                }
+            )
+            return out
 
         # =================================================================
         # Heuristic methods (no rendering, CPU-only, fast)

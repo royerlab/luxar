@@ -358,10 +358,20 @@ def write_gsplat_node(
         )
 
     if isinstance(node, GSplatLodGroup):
+        from luxar.core.group.lod.group import derive_min_pixel_sizes
+        from luxar.gsplats.tree import total_splats
+
         # In-memory children are finest→coarsest; on disk child_0 = coarsest.
         on_disk = list(reversed(node.children))
         n = len(on_disk)
         on_disk_default = (n - 1) - node.default_level
+        # Derive a per-child selector threshold (coarsest→finest) from element
+        # counts so EVERY child — leaf OR nested Group — is viewer-selectable.
+        # A min_pixel_size already authored on the child (leaf meta / group meta)
+        # takes precedence over this derived value (applied via setdefault below /
+        # _leaf_child_attrs for leaves). Without this, a nested lod-of-Group child
+        # carried no threshold and the selector was stuck always-finest.
+        derived_mps = derive_min_pixel_sizes([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
             child_group = group.require_group(f"child_{i}")
@@ -372,16 +382,22 @@ def write_gsplat_node(
                 ordering_ctx=ordering_ctx,
                 store=store,
                 scene_tone_mapping=scene_tone_mapping,
+                attrs={"min_pixel_size": float(derived_mps[i])},
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
+        # Caller attrs (lowest precedence) → node.meta → structural (authoritative,
+        # never clobbered by a stray meta key — fixes the meta-clobbers-structural
+        # ordering risk).
+        for k, v in (attrs or {}).items():
+            group.attrs[k] = v
+        for k, v in (node.meta or {}).items():
+            group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
         group.attrs["selector"] = "pixel_size"
         group.attrs["default_level"] = int(on_disk_default)
         group.attrs["display_type"] = "gsplats"
-        for k, v in (node.meta or {}).items():
-            group.attrs[k] = v
         bounds = _union_bounds(child_bounds)
         meta: Dict[str, Any] = {"n_children": n}
         if bounds is not None:
@@ -403,12 +419,15 @@ def write_gsplat_node(
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
+        # Caller attrs → node.meta → structural last (authoritative).
+        for k, v in (attrs or {}).items():
+            group.attrs[k] = v
+        for k, v in (node.meta or {}).items():
+            group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "partition"
         group.attrs["display_type"] = "gsplats"
         group.attrs["max_elements"] = int(node.max_elements)
-        for k, v in (node.meta or {}).items():
-            group.attrs[k] = v
         bounds = _union_bounds(child_bounds)
         meta = {"n_children": len(node.children)}
         if bounds is not None:

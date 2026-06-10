@@ -2241,35 +2241,83 @@ def convert_to_scene(
         luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
     """
     try:
+        import numpy as np
+
         from luxar import LuxarZarrCompiler
         from luxar.cli.gsplat_config import build_dimensions_from_data
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import center_bounds, is_matrix_shaped
 
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(input_path, include_stats=False)
+                # Peek at the on-disk shape. A matrix-shaped tree (leaf / additive
+                # ladder / kind=lod of leaves) round-trips through GSplatData and
+                # supports --center / --scale-intensity. A partition / nested tree
+                # has no flat GSplatData equivalent: it is grafted node-for-node.
+                node, _ = load_gsplat_node(input_path)
+                matrix = is_matrix_shaped(node)
+
+            if matrix:
+                data = GSplatData.from_tree(node)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
-            if center:
-                aprint("Centering at amplitude-weighted centroid")
-                data = data.center_at_centroid()
+                if center:
+                    aprint("Centering at amplitude-weighted centroid")
+                    data = data.center_at_centroid()
+                if scale_intensity is not None:
+                    aprint(f"Scaling intensity by {scale_intensity}")
+                    data = data.scale_intensity(scale_intensity)
 
-            if scale_intensity is not None:
-                aprint(f"Scaling intensity by {scale_intensity}")
-                data = data.scale_intensity(scale_intensity)
-
-            with asection("Creating Luxar scene"):
-                dims = build_dimensions_from_data(data.centers)
-                with LuxarZarrCompiler(
-                    output_path, encoding_mode=_resolve_encoding_mode(encoding)
-                ) as compiler:
-                    scene = compiler.create_scene(dimensions=dims)
-                    scene.add_gsplats_from_data(
-                        name="gsplats",
-                        result=data,
-                        opacity=opacity,
-                        blending_mode=blending_mode,
+                with asection("Creating Luxar scene"):
+                    dims = build_dimensions_from_data(data.centers)
+                    with LuxarZarrCompiler(
+                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                    ) as compiler:
+                        scene = compiler.create_scene(dimensions=dims)
+                        scene.add_gsplats_from_data(
+                            name="gsplats",
+                            result=data,
+                            opacity=opacity,
+                            blending_mode=blending_mode,
+                        )
+            else:
+                kind = (
+                    "partition"
+                    if node.__class__.__name__ == "GSplatPartition"
+                    else "nested LOD"
+                )
+                aprint(f"Grafting a {kind} node tree (no flat-data transforms apply)")
+                if scale_intensity is not None:
+                    aprint(
+                        "⚠️  --scale-intensity is ignored for a partition/nested "
+                        "file (re-author intensity upstream with `gsplat transform`)."
                     )
+                # --center defaults True; it does not apply to a graft (the file's
+                # own coordinates are preserved), so note it rather than fail.
+                if center:
+                    aprint(
+                        "ℹ️  --center is ignored for a partition/nested file; the "
+                        "node tree keeps its authored coordinates."
+                    )
+                bounds = center_bounds(node)
+                if bounds is None:
+                    raise ValueError("Could not derive bounds from the node tree")
+                bmin, bmax = bounds
+                box = np.array([bmin, bmax], dtype=np.float32)
+
+                with asection("Creating Luxar scene"):
+                    dims = build_dimensions_from_data(box)
+                    with LuxarZarrCompiler(
+                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                    ) as compiler:
+                        scene = compiler.create_scene(dimensions=dims)
+                        scene.add_gsplats_from_file(
+                            name="gsplats",
+                            path=input_path,
+                            opacity=opacity,
+                            blending_mode=blending_mode,
+                        )
 
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
