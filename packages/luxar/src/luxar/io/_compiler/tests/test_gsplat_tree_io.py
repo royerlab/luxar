@@ -118,11 +118,12 @@ def test_lod_group_child_reversal_and_round_trip():
     assert z.attrs["kind"] == "lod"
     assert z["child_0"].attrs["n_splats"] == 6
     assert z["child_2"].attrs["n_splats"] == 100
-    # default_level=0 (finest) in memory → on disk reversed index n-1
-    assert z.attrs["default_level"] == 2
+    # The on-disk default_level is the viewer's INITIAL level = coarsest (child_0),
+    # a progressive-load hint decoupled from the data-model default. Always 0.
+    assert z.attrs["default_level"] == 0
     assert "position_bounds" in z.attrs
 
-    # Read back: finest-first restored, default 0
+    # Read back: finest-first restored; data-model default is the finest (index 0).
     assert isinstance(out, GSplatLodGroup)
     assert out.default_level == 0
     assert out.children[0].n_splats == 100

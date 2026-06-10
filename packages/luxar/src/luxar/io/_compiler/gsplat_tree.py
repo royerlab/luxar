@@ -371,7 +371,6 @@ def write_gsplat_node(
         # In-memory children are finest→coarsest; on disk child_0 = coarsest.
         on_disk = list(reversed(node.children))
         n = len(on_disk)
-        on_disk_default = (n - 1) - node.default_level
         # Derive a per-child selector threshold (coarsest→finest) from element
         # counts so EVERY child — leaf OR nested Group — is viewer-selectable.
         # A min_pixel_size already authored on the child (leaf meta / group meta)
@@ -403,7 +402,14 @@ def write_gsplat_node(
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
         group.attrs["selector"] = "pixel_size"
-        group.attrs["default_level"] = int(on_disk_default)
+        # The viewer's INITIAL level (before the pixel-size selector runs) — the
+        # COARSEST child (child_0). This is purely a progressive-load hint: it
+        # makes the scene appear instantly at low detail, then refine. It is
+        # deliberately NOT the data-model default (GSplatData.default_substitutive,
+        # which is the finest level the .centers accessor returns); defaulting the
+        # viewer to the finest would eager-load every lod group at full resolution
+        # (e.g. 100 embryos × 256K splats) and render "backwards".
+        group.attrs["default_level"] = 0
         group.attrs["display_type"] = "gsplats"
         bounds = _union_bounds(child_bounds)
         meta: Dict[str, Any] = {"n_children": n}
@@ -503,11 +509,14 @@ def read_gsplat_node(
         ]
         # On disk child_0 = coarsest; restore finest-first in memory.
         children = list(reversed(on_disk))
-        on_disk_default = int(group.attrs.get("default_level", 0))
-        default_level = (n - 1) - on_disk_default
+        # The on-disk ``default_level`` is the viewer's coarsest-first initial
+        # level (a progressive-load hint), NOT the data-model default. The tree /
+        # GSplatData default substitutive is the finest level (index 0 in the
+        # finest-first ordering), matching GSplatData.default_substitutive's
+        # convention — so we don't derive it from the viewer hint.
         return GSplatLodGroup(
             children=children,
-            default_level=default_level,
+            default_level=0,
             meta=_node_meta_from_attrs(group),
         )
 
