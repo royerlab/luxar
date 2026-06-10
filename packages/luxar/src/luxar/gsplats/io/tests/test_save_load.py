@@ -525,3 +525,28 @@ class TestTruncationRadiusRoundtrip:
             del attrs["truncation_radius"]
             root.attrs.put(attrs)
             assert GSplatData.load(path).truncation_radius == 3.0
+
+
+def test_save_explicit_none_compressor_disables_compression():
+    """GSplatData.save(compressor=None) must write UNCOMPRESSED arrays so a
+    cross-language (zarrita) reader can decode them. A plain None default used
+    to be coerced to Blosc — making uncompressed output impossible and producing
+    blosc-bitshuffle fixtures zarrita can't read (review full-suite finding)."""
+    n = 16
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=np.random.rand(n, 3).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        # Explicit None → no compression.
+        raw = Path(tmp) / "raw.gsplats.zarr"
+        data.save(raw, ordering="none", compressor=None)
+        assert zarr.open_group(str(raw), mode="r")["centers"].compressor is None
+
+        # Unspecified → default Blosc (compression still on by default).
+        comp = Path(tmp) / "comp.gsplats.zarr"
+        data.save(comp, ordering="none")
+        assert zarr.open_group(str(comp), mode="r")["centers"].compressor is not None

@@ -14,6 +14,13 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 
+#: Sentinel for ``GSplatData.save(compressor=...)`` distinguishing "not specified"
+#: (→ default Blosc) from an explicit ``compressor=None`` (→ no compression). A
+#: plain ``None`` default would conflate the two and make uncompressed output
+#: impossible (the bug that produced blosc-bitshuffle fixtures zarrita can't read).
+_USE_DEFAULT_COMPRESSOR = object()
+
+
 def _merge_lod_colors(
     lods: "list[AdditiveSubLOD]",
 ) -> "Optional[np.ndarray]":
@@ -1681,7 +1688,7 @@ class GSplatData(_SplatArrayMixin):
         include_provenance: bool = False,
         description: Optional[str] = None,
         compress: Optional[Literal["zip", "tar.gz"]] = None,
-        compressor: Optional[Any] = None,
+        compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
     ) -> None:
         """Save splats to .gsplats.zarr format.
@@ -1714,8 +1721,10 @@ class GSplatData(_SplatArrayMixin):
         if encoding_mode is None:
             encoding_mode = EncodingMode.AUTO
 
-        # Use Blosc(zstd) compression by default
-        if compressor is None:
+        # Use Blosc(zstd) by default; an EXPLICIT compressor=None disables
+        # compression (e.g. for raw, zarrita-readable cross-language fixtures).
+        # Only the sentinel "not specified" coerces to the default.
+        if compressor is _USE_DEFAULT_COMPRESSOR:
             compressor = DEFAULT_COMP
 
         # Extract fitting info from stats
