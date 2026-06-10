@@ -263,6 +263,11 @@ def tree_from_substitutive_levels(
       level, in the same order as ``levels`` (index 0 = finest), with
       ``default_level = default_substitutive``.
 
+    Each child of a multi-level lod group is back-filled with a derived
+    ``min_pixel_size`` selector threshold (the same ``√(N/N₀)`` heuristic the
+    scene path uses), so a standalone substitutive ``.gsplats.zarr`` selects
+    levels correctly in the viewer rather than being stuck at the finest level.
+
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
     """
@@ -270,10 +275,24 @@ def tree_from_substitutive_levels(
         raise ValueError("levels must contain at least one SubstitutiveLevel")
     if len(levels) == 1:
         return _leaf_from_substitutive_level(levels[0])
-    return GSplatLodGroup(
-        children=[_leaf_from_substitutive_level(lvl) for lvl in levels],
-        default_level=default_substitutive,
-    )
+
+    leaves: List[GSplatNode] = [_leaf_from_substitutive_level(lvl) for lvl in levels]
+
+    # Back-fill per-child min_pixel_size from per-level splat counts. The
+    # heuristic is single-sourced in core (coarsest child = 0.0, ascending);
+    # element_counts must be coarsest-first, and our leaves are finest-first.
+    from luxar.core.group.lod.group import derive_min_pixel_sizes
+
+    counts_finest_first = [
+        sum(sub.n_splats for sub in lvl.additive_sublods) for lvl in levels
+    ]
+    n = len(leaves)
+    thresholds_coarsest_first = derive_min_pixel_sizes(counts_finest_first[::-1])
+    for i, leaf in enumerate(leaves):
+        # finest-first index i ↔ coarsest-first index (n-1-i)
+        leaf.meta.setdefault("min_pixel_size", thresholds_coarsest_first[n - 1 - i])
+
+    return GSplatLodGroup(children=leaves, default_level=default_substitutive)
 
 
 def substitutive_levels_from_tree(

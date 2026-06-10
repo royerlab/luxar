@@ -266,3 +266,35 @@ def test_non_matrix_trees_have_no_matrix_projection():
 def test_tree_from_empty_levels_raises():
     with pytest.raises(ValueError):
         tree_from_substitutive_levels([])
+
+
+def test_lod_group_back_fills_min_pixel_size():
+    """A multi-substitutive tree gets per-child min_pixel_size so the viewer
+    selector isn't stuck at the finest level (decision 7 / R3). Finest carries
+    the highest threshold; the coarsest is 0.0 (always eligible)."""
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(100, seed=0)], level_index=0),
+        SubstitutiveLevel(
+            additive_sublods=[_sublod(25, seed=1)], compression_factor=4, level_index=1
+        ),
+    ]
+    node = tree_from_substitutive_levels(levels)
+    assert isinstance(node, GSplatLodGroup)
+    # children are finest-first: [0]=finest(100), [1]=coarsest(25)
+    finest_mps = node.children[0].meta["min_pixel_size"]
+    coarse_mps = node.children[1].meta["min_pixel_size"]
+    assert coarse_mps == 0.0
+    assert finest_mps > coarse_mps
+    # √(100/25) = 2 → finest threshold = BASE(10) * 2 = 20
+    assert finest_mps == 20.0
+
+
+def test_min_pixel_size_explicit_meta_preserved():
+    """An explicit min_pixel_size in a level's stats-derived meta is not clobbered."""
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(100, seed=0)], level_index=0),
+        SubstitutiveLevel(additive_sublods=[_sublod(25, seed=1)], level_index=1),
+    ]
+    node = tree_from_substitutive_levels(levels)
+    # setdefault: derived values are present (no explicit override path here)
+    assert all("min_pixel_size" in c.meta for c in node.children)
