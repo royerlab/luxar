@@ -95,6 +95,105 @@ def test_standalone_leaf_matches_scene_leaf():
             )
 
 
+def _sublod(n: int, seed: int):
+    """A full-array AdditiveSubLOD (3D, diagonal Cholesky)."""
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+    rng = np.random.default_rng(seed)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+    return AdditiveSubLOD(
+        centers=rng.uniform(0, 50, size=(n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, size=(n,)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def test_scene_additive_ladder_matches_standalone():
+    """A scene additive ladder (now written through the SAME walker as the
+    standalone writer) is byte-identical to the standalone one — child arrays,
+    chunking, attrs, and ``n_additive_sublods``."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    data = GSplatData(additive_sublods=[_sublod(80, 1), _sublod(30, 2)])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        scene_path = tmp / "scene.zarr"
+        with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("g", data)
+        scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
+
+        std_path = tmp / "standalone.gsplats.zarr"
+        write_gsplats_tree(
+            std_path, data.tree, ordering="hilbert",
+            encoding_mode=EncodingMode.PRECISION,
+        )
+        std_leaf = zarr.open_group(str(std_path), mode="r")
+
+        assert scene_leaf.attrs["n_additive_sublods"] == 2
+        assert std_leaf.attrs["n_additive_sublods"] == 2
+        for i in range(2):
+            for arr in ("centers", "amplitudes", "cholesky_factors"):
+                np.testing.assert_array_equal(
+                    std_leaf[f"additive_{i}"][arr][:],
+                    scene_leaf[f"additive_{i}"][arr][:],
+                    err_msg=f"additive_{i}/{arr} differs",
+                )
+
+
+def test_scene_lod_group_matches_standalone():
+    """A scene kind=lod group (built by the structural recursion) matches the
+    standalone kind=lod group (built by the tree walker): same child_<i> arrays,
+    same per-child ``min_pixel_size``, same group ``kind``/``default_level``.
+
+    The two are written by *different* code, so this guards real drift."""
+    from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    pyramid = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(additive_sublods=[_sublod(64, 10)], level_index=0),
+            SubstitutiveLevel(
+                additive_sublods=[_sublod(16, 11)],
+                compression_factor=4,
+                level_index=1,
+            ),
+        ]
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        scene_path = tmp / "scene.zarr"
+        with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("g", pyramid)
+        scene_lod = zarr.open_group(str(scene_path), mode="r")["g"]
+
+        std_path = tmp / "standalone.gsplats.zarr"
+        write_gsplats_tree(
+            std_path, pyramid.tree, ordering="hilbert",
+            encoding_mode=EncodingMode.PRECISION,
+        )
+        std_lod = zarr.open_group(str(std_path), mode="r")
+
+        # Both are kind=lod with 2 children, coarsest=child_0.
+        assert scene_lod.attrs["kind"] == "lod"
+        assert std_lod.attrs["kind"] == "lod"
+        assert scene_lod.attrs["default_level"] == std_lod.attrs["default_level"]
+        for i in range(2):
+            sc, st = scene_lod[f"child_{i}"], std_lod[f"child_{i}"]
+            assert sc.attrs["min_pixel_size"] == st.attrs["min_pixel_size"], (
+                f"child_{i} min_pixel_size differs"
+            )
+            for arr in ("centers", "amplitudes", "cholesky_factors"):
+                np.testing.assert_array_equal(
+                    st[arr][:], sc[arr][:], err_msg=f"child_{i}/{arr} differs"
+                )
+
+
 def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
     centers, amplitudes, cholesky = _splats(128, seed=3)
     colors = np.random.default_rng(9).uniform(0, 1, size=(128, 3)).astype(np.float32)

@@ -96,11 +96,18 @@ def add_gsplats_as_lod_group_impl(
     # ``display_type`` is unambiguously "gsplats". Set it here so the
     # on-disk attrs are self-describing.
     lod_attrs.setdefault("display_type", "gsplats")
+    # Honor the data's default_substitutive (finest-first index 0). Children
+    # are written coarsest→finest (child_0 = coarsest), so the on-disk default
+    # level is (n-1) - default_substitutive — the SAME mapping the standalone
+    # tree walker uses (gsplat_tree.write_gsplat_node), keeping scene and
+    # standalone kind=lod groups byte-identical.
+    on_disk_default_level = (n_sub - 1) - result.default_substitutive
     # Persist the base_pixel_size override on the wrapper (when set)
     # so downstream consumers can identify a non-default ladder
     # without re-deriving from min_pixel_sizes.
     lod_group_node = parent_node.add_lod_group(
         name,
+        default_level=on_disk_default_level,
         base_pixel_size=base_pixel_size,
         **lod_attrs,
     )
