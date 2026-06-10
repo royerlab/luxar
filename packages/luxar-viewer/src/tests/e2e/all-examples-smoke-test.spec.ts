@@ -90,6 +90,8 @@ const DATASETS_ALLOW_ZERO_POINTS = [
   'spatial_index_demo_example.zarr', // May have 0 points at initial position
   'lines_basic_example.zarr', // Lines geometry only - no point clouds
   'build_example_manual.zarr', // Simple 3D manual build - scene loaded without points sometimes
+  'gsplats_basic_example.zarr', // GSplats geometry only - no point clouds (totalPoints=0)
+  'gsplats_lod_example.zarr', // GSplats kind=lod - no point clouds (totalPoints=0)
 ];
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
