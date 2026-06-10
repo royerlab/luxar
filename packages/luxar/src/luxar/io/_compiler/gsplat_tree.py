@@ -293,18 +293,24 @@ def _union_bounds(
     }
 
 
-def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
-    """Per-child node attrs (selector + provenance) lifted from a leaf's ``meta``."""
-    from luxar.gsplats.tree import GSplatLeaf
+def _meta_to_node_attrs(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Project a node's ``meta`` to the exact attr set the reader recovers.
 
-    if not isinstance(node, GSplatLeaf):
+    This is the write-side inverse of :func:`_node_meta_from_attrs`: it emits
+    only the keys that round-trip (``_NODE_META_ATTR_KEYS`` + a JSON-safe
+    ``level_stats`` derived from ``stats``). Writing exactly this set — rather
+    than dumping the whole ``meta`` dict — keeps the write/read contract
+    symmetric, so a group's on-disk attrs never carry provenance keys that the
+    reader would silently drop (no lossy round-trip).
+    """
+    if not meta:
         return {}
     out: Dict[str, Any] = {}
     for key in _NODE_META_ATTR_KEYS:
-        if key in node.meta and node.meta[key] is not None:
-            out[key] = node.meta[key]
+        if key in meta and meta[key] is not None:
+            out[key] = meta[key]
     # Per-level (SubstitutiveLevel) stats ride as a JSON-safe ``level_stats`` attr.
-    stats = node.meta.get("stats")
+    stats = meta.get("stats")
     if isinstance(stats, dict) and stats:
         safe = {
             k: v
@@ -314,6 +320,15 @@ def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
         if safe:
             out["level_stats"] = safe
     return out
+
+
+def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
+    """Per-child node attrs (selector + provenance) lifted from a leaf's ``meta``."""
+    from luxar.gsplats.tree import GSplatLeaf
+
+    if not isinstance(node, GSplatLeaf):
+        return {}
+    return _meta_to_node_attrs(node.meta)
 
 
 def write_gsplat_node(
@@ -383,7 +398,7 @@ def write_gsplat_node(
         # ordering risk).
         for k, v in (attrs or {}).items():
             group.attrs[k] = v
-        for k, v in (node.meta or {}).items():
+        for k, v in _meta_to_node_attrs(node.meta).items():
             group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
@@ -414,7 +429,7 @@ def write_gsplat_node(
         # Caller attrs → node.meta → structural last (authoritative).
         for k, v in (attrs or {}).items():
             group.attrs[k] = v
-        for k, v in (node.meta or {}).items():
+        for k, v in _meta_to_node_attrs(node.meta).items():
             group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "partition"

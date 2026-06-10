@@ -126,6 +126,10 @@ def write_gsplats_tree(
     root.attrs["format_type"] = "gsplats_zarr"
     root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+    # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
+    # so expose the root in the viewer's Layers panel (the scene-embed graft uses
+    # the scene builders instead and does not carry this root attr).
+    root.attrs.setdefault("layer", True)
     if description:
         root.attrs["description"] = description
 
