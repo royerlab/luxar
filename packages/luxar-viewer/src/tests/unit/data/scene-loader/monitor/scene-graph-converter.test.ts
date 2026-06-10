@@ -21,6 +21,18 @@ describe('convertToSceneGraphNode — display name', () => {
     expect(convertToSceneGraphNode(makeNode({ path: '/' })).name).toBe('Scene');
   });
 
+  it('names a bare-node root by type/kind, not "Scene"', () => {
+    // A standalone .gsplats.zarr opened directly has a non-scene root.
+    expect(convertToSceneGraphNode(makeNode({ path: '/', type: 'gsplats' })).name).toBe('GSplats');
+    expect(
+      convertToSceneGraphNode(makeNode({ path: '/', type: 'group', attrs: { kind: 'lod' } })).name
+    ).toBe('LOD');
+    expect(
+      convertToSceneGraphNode(makeNode({ path: '/', type: 'group', attrs: { kind: 'partition' } }))
+        .name
+    ).toBe('Partition');
+  });
+
   it('takes the last path segment as the display name', () => {
     expect(convertToSceneGraphNode(makeNode({ path: '/a/b/c' })).name).toBe('c');
   });

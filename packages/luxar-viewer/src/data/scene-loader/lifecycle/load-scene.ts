@@ -116,8 +116,10 @@ export interface LoadSceneCtx {
  * (a detached `.gsplats.zarr` carries no `scene_dimensions`). Derives the
  * dimension count from the node's `ndim` (or its bounds) and per-dim ranges
  * from `position_bounds`/`center_bounds` so framing and non-displayed-dim
- * centering work. 3D-safe: the first three dims display; >3D still needs the
- * producer to embed real dimension names/ranges for correct nD navigation.
+ * centering work. The first three dims display as spatial; any axis >= 3 is
+ * synthesized as a discrete index (step 1) so the initial slice lands on a real
+ * frame rather than a continuous midpoint. A producer can still embed real
+ * dimension names/ranges for richer nD navigation.
  *
  * Returns ``undefined`` for a true scene root (no node ndim/bounds to derive
  * from) so the caller falls through to the "no scene_dimensions" warning.
@@ -142,11 +144,19 @@ function synthesizeSceneDimensionsFromNode(
   const dimensions = Array.from({ length: ndim }, (_, i) => {
     const lo = bounds?.min?.[i];
     const hi = bounds?.max?.[i];
+    // The first up-to-3 axes are the displayed spatial dims. Any axis >= 3 on
+    // a bare-node file is almost always a discrete index (time / channel), so
+    // mark it discrete with step 1 — that routes it through the "start at the
+    // floor with zero tolerance" slice path instead of being treated as a
+    // continuous axis centered at the range midpoint with a 0.1 window (which
+    // would silently miss integer frames and render a thin / empty slice).
+    const isSpatial = i < 3;
     return {
       name: i < SPATIAL_NAMES.length ? SPATIAL_NAMES[i] : `dim${i}`,
-      unit: 'px',
-      display: i < 3,
-      spatial: true,
+      unit: isSpatial ? 'px' : 'index',
+      display: isSpatial,
+      spatial: isSpatial,
+      ...(isSpatial ? {} : { discrete: true, step: 1 }),
       ...(typeof lo === 'number' && typeof hi === 'number'
         ? { range: [lo, hi] as [number, number] }
         : {}),
