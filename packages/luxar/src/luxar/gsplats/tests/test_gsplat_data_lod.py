@@ -516,6 +516,51 @@ class TestSubstitutivePreservation:
         with pytest.raises(ValueError, match="multi-substitutive"):
             data.with_colors(explicit)
 
+    def test_embed_dimension_scalar_preserves_pyramid(self):
+        data = self._make_pyramid()
+        out = data.embed_dimension(5.0, sigma=0.0)
+        assert out.n_substitutive == 3
+        assert out.ndim == 4
+        for s in range(3):
+            lvl = out.at_substitutive(s)
+            assert lvl.n_splats == data.at_substitutive(s).n_splats
+            np.testing.assert_allclose(lvl.centers[:, 3], 5.0)
+
+    def test_embed_dimension_per_splat_array_rejected_on_pyramid(self):
+        data = self._make_pyramid()
+        with pytest.raises(ValueError, match="multi-substitutive"):
+            data.embed_dimension(np.arange(data.n_splats, dtype=np.float32))
+
+    def test_combine_as_new_dimension_preserves_pyramid(self):
+        # `luxar gsplat merge --as-dimension` on pyramid inputs (calls
+        # embed_dimension per dataset) must keep every substitutive level.
+        d1 = self._make_pyramid(seed=1)
+        d2 = self._make_pyramid(seed=2)
+        out = GSplatData.combine_as_new_dimension([d1, d2], sigma=0.0)
+        assert out.n_substitutive == 3
+        assert out.ndim == 4
+        for s in range(3):
+            # each level gets both datasets' splats at that level
+            expected = d1.at_substitutive(s).n_splats + d2.at_substitutive(s).n_splats
+            assert out.at_substitutive(s).n_splats == expected
+
+    def test_merge_with_channel_colors_preserves_pyramid(self):
+        d1 = self._make_pyramid(seed=1)
+        d2 = self._make_pyramid(seed=2)
+        out = GSplatData.merge_with_channel_colors(
+            [d1, d2], channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        )
+        assert out.n_substitutive == 3
+        for s in range(3):
+            lvl = out.at_substitutive(s)
+            n1 = d1.at_substitutive(s).n_splats
+            assert lvl.n_splats == n1 + d2.at_substitutive(s).n_splats
+            assert lvl.colors is not None
+            np.testing.assert_allclose(lvl.colors[:n1], [[1.0, 0.0, 0.0]] * n1)
+            np.testing.assert_allclose(
+                lvl.colors[n1:], [[0.0, 1.0, 0.0]] * (lvl.n_splats - n1)
+            )
+
 
 # ── Sharpness removal regression tests ───────────────────────
 

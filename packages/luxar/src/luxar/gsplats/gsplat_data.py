@@ -1357,6 +1357,24 @@ class GSplatData(_SplatArrayMixin):
         n = self.n_splats
         d = self.ndim
 
+        # Multi-substitutive: embed every level and rebuild the pyramid. A scalar
+        # coordinate broadcasts cleanly to all levels; a per-splat array is sized
+        # to the finest level only and cannot map to coarser levels, so reject it
+        # (mirrors with_colors) rather than silently collapsing the ladder. The
+        # scalar path is the one the merge pipeline (combine_as_new_dimension)
+        # exercises on pyramid inputs.
+        if self.n_substitutive > 1:
+            if not np.isscalar(values):
+                raise ValueError(
+                    "embed_dimension with a per-splat values array is not "
+                    "supported on a multi-substitutive pyramid (each level has a "
+                    "different splat count). Pass a scalar coordinate to broadcast "
+                    "across all levels, or operate per level via at_substitutive()."
+                )
+            return self._map_substitutive(
+                lambda lvl: lvl.embed_dimension(values, sigma)
+            )
+
         # Multi-LOD path: embed each LOD independently
         if self.n_additive_sublods > 1:
             is_scalar = np.isscalar(values)
@@ -2444,6 +2462,37 @@ class GSplatData(_SplatArrayMixin):
         total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
+
+        # Multi-substitutive: merge per substitutive level and rebuild the
+        # pyramid (mirrors concatenate / the transform ops), never silently
+        # collapsing to the finest level. Reachable via `luxar gsplat merge
+        # --channel-colors` on kind=lod inputs. Each level merges the channels
+        # that HAVE that level (parallel to the additive max_lods path below).
+        max_sub = max(g.n_substitutive for g in gsplats_per_channel)
+        if max_sub > 1:
+            new_levels: List[SubstitutiveLevel] = []
+            for s in range(max_sub):
+                parts = [
+                    (g.at_substitutive(s), color)
+                    for g, color in zip(gsplats_per_channel, channel_colors)
+                    if s < g.n_substitutive
+                ]
+                merged_level = cls.merge_with_channel_colors(
+                    [view for view, _ in parts], [color for _, color in parts]
+                )
+                template = parts[0][0].substitutive_levels[0]
+                new_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=merged_level.substitutive_levels[
+                            0
+                        ].additive_sublods,
+                        compression_factor=template.compression_factor,
+                        parent_method=template.parent_method,
+                        level_index=template.level_index,
+                        stats=dict(template.stats),
+                    )
+                )
+            return cls.from_substitutive_levels(new_levels, stats=merged_stats)
 
         # Multi-LOD path: per-LOD channel color assignment
         max_lods = max(g.n_additive_sublods for g in gsplats_per_channel)
