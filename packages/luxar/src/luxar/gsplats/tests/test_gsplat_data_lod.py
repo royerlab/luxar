@@ -402,6 +402,121 @@ class TestLODPreservation:
         assert final.additive_sublod(1).n_splats == 40
 
 
+class TestSubstitutivePreservation:
+    """Spatial & intensity transforms must rebuild EVERY substitutive level,
+    not silently collapse the pyramid to the finest (mirrors filter_by/cull).
+    """
+
+    def _make_pyramid(self, counts=(100, 30, 10), ndim=3, seed=7):
+        rng = np.random.RandomState(seed)
+        tril = ndim * (ndim + 1) // 2
+        levels = []
+        for i, n in enumerate(counts):
+            chol = np.zeros((n, tril), dtype=np.float32)
+            k = 0
+            for row in range(ndim):
+                for col in range(row + 1):
+                    if row == col:
+                        chol[:, k] = 1.0
+                    k += 1
+            sub = AdditiveSubLOD(
+                centers=(rng.rand(n, ndim).astype(np.float32) * 100),
+                amplitudes=(rng.rand(n).astype(np.float32) + 0.1),
+                cholesky_factors=chol,
+            )
+            levels.append(
+                SubstitutiveLevel(
+                    additive_sublods=[sub],
+                    compression_factor=4**i,
+                    parent_method=None if i == 0 else "kmeans_lloyd",
+                    level_index=i,
+                )
+            )
+        return GSplatData.from_substitutive_levels(levels)
+
+    def test_transform_preserves_pyramid(self):
+        data = self._make_pyramid()
+        out = data.transform(np.eye(3) * 2.0)
+        assert out.n_substitutive == 3
+        for s in range(3):
+            np.testing.assert_allclose(
+                out.at_substitutive(s).centers,
+                data.at_substitutive(s).centers * 2.0,
+                atol=1e-4,
+            )
+
+    def test_translate_preserves_pyramid(self):
+        data = self._make_pyramid()
+        offset = np.array([10, 20, 30], dtype=np.float32)
+        out = data.translate(offset)
+        assert out.n_substitutive == 3
+        for s in range(3):
+            np.testing.assert_allclose(
+                out.at_substitutive(s).centers,
+                data.at_substitutive(s).centers + offset,
+                atol=1e-4,
+            )
+
+    def test_scale_intensity_preserves_pyramid(self):
+        data = self._make_pyramid()
+        out = data.scale_intensity(3.0)
+        assert out.n_substitutive == 3
+        for s in range(3):
+            np.testing.assert_allclose(
+                out.at_substitutive(s).amplitudes,
+                data.at_substitutive(s).amplitudes * 3.0,
+                atol=1e-5,
+            )
+
+    def test_affine_and_clamp_intensity_preserve_pyramid(self):
+        data = self._make_pyramid()
+        assert data.affine_intensity(2.0, 0.5).n_substitutive == 3
+        assert data.clamp_intensity(min=0.2, max=0.8).n_substitutive == 3
+
+    def test_normalize_intensity_preserves_pyramid_and_global_scale(self):
+        data = self._make_pyramid()
+        out = data.normalize_intensity(target_max=1.0)
+        assert out.n_substitutive == 3
+        # A single global factor (finest max) is applied uniformly to all levels.
+        factor = 1.0 / float(data.at_substitutive(0).amplitudes.max())
+        for s in range(3):
+            np.testing.assert_allclose(
+                out.at_substitutive(s).amplitudes,
+                data.at_substitutive(s).amplitudes * factor,
+                atol=1e-5,
+            )
+
+    def test_center_at_centroid_preserves_pyramid_with_uniform_shift(self):
+        data = self._make_pyramid()
+        out = data.center_at_centroid()
+        assert out.n_substitutive == 3
+        # The centroid is computed once from the finest level and the SAME shift
+        # is applied to every level (per-level centroids would shift levels apart).
+        finest = data.at_substitutive(0)
+        centroid = (finest.centers.T @ finest.amplitudes) / finest.amplitudes.sum()
+        for s in range(3):
+            np.testing.assert_allclose(
+                out.at_substitutive(s).centers,
+                data.at_substitutive(s).centers - centroid,
+                atol=1e-4,
+            )
+
+    def test_with_colors_broadcast_preserves_pyramid(self):
+        data = self._make_pyramid()
+        out = data.with_colors((1.0, 0.0, 0.0))
+        assert out.n_substitutive == 3
+        for s in range(3):
+            colors = out.at_substitutive(s).colors
+            assert colors is not None
+            np.testing.assert_allclose(colors, [[1.0, 0.0, 0.0]] * colors.shape[0])
+
+    def test_with_colors_explicit_array_rejected_on_pyramid(self):
+        data = self._make_pyramid()
+        explicit = np.ones((data.n_splats, 3), dtype=np.float32)
+        with pytest.raises(ValueError, match="multi-substitutive"):
+            data.with_colors(explicit)
+
+
 # ── Sharpness removal regression tests ───────────────────────
 
 
@@ -449,9 +564,9 @@ class TestGSplatsWithoutSharpness:
 
         sig = inspect.signature(Group.add_gsplats)
         params = list(sig.parameters.keys())
-        assert (
-            "sharpness" not in params
-        ), f"sharpness should not be in add_gsplats params: {params}"
+        assert "sharpness" not in params, (
+            f"sharpness should not be in add_gsplats params: {params}"
+        )
 
     def test_points_still_have_sharpness(self, tmp_path):
         """Points should still support the sharpness parameter."""
@@ -740,10 +855,15 @@ class TestGSplatData2DAccessors:
         assert data.n_substitutive == 2
         assert data.stats == {"hello": "world"}
 
-    def test_default_substitutive_out_of_range_rejected(self):
-        levels = [self._make_substitutive_level()]
-        with pytest.raises(ValueError, match="default_substitutive"):
-            GSplatData(substitutive_levels=levels, default_substitutive=5)
+    def test_default_substitutive_is_not_settable(self):
+        # The data-model default is fixed at the finest level (index 0) — it is
+        # not a settable, persistable concept, so the constructor no longer
+        # accepts the kwarg and the accessors always report the finest level.
+        levels = [self._make_substitutive_level(), self._make_substitutive_level()]
+        with pytest.raises(TypeError):
+            GSplatData(substitutive_levels=levels, default_substitutive=1)  # type: ignore[call-arg]
+        data = GSplatData(substitutive_levels=levels)
+        assert data.default_substitutive == 0
 
     def test_empty_substitutive_levels_rejected(self):
         with pytest.raises(ValueError, match="at least one SubstitutiveLevel"):

@@ -408,9 +408,7 @@ class TestMultiLODGSplats:
             compression_factor=5,
             level_index=1,
         )
-        data = GSplatData.from_substitutive_levels(
-            [finest, coarsest], default_substitutive=0
-        )
+        data = GSplatData.from_substitutive_levels([finest, coarsest])
         assert data.n_substitutive == 2  # sanity
 
         output_path = tmp_path / "test.zarr"
@@ -487,9 +485,7 @@ def _make_multi_substitutive_gsplat_data():
         compression_factor=4,
         level_index=1,
     )
-    return GSplatData.from_substitutive_levels(
-        [finest, coarsest], default_substitutive=0
-    )
+    return GSplatData.from_substitutive_levels([finest, coarsest])
 
 
 class TestLodGroupAxis:

@@ -60,9 +60,7 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
                         f"Zip member '{zip_member}' would escape extraction directory"
                     ) from exc
             zip_ref.extractall(temp_dir)
-    elif suffix == ".gz" or str(compressed_path).endswith(
-        (".tar.gz", ".gsplats.zarr.tar.gz")
-    ):
+    elif str(compressed_path).endswith(".tar.gz"):
         with tarfile.open(compressed_path, "r:gz") as tar_ref:
             for member in tar_ref.getmembers():
                 member_path = Path(temp_dir) / member.name
@@ -97,11 +95,7 @@ def detect_legacy_format(input_path: Path) -> str:
             return "substitutive_dir"
     # Otherwise treat as a .gsplats.zarr or compressed archive; sniff the
     # root .zattrs to read format_version
-    if (
-        input_path.is_dir()
-        or input_path.suffix in (".zip", ".gz")
-        or str(input_path).endswith((".gsplats.zarr.zip", ".gsplats.zarr.tar.gz"))
-    ):
+    if input_path.is_dir() or str(input_path).endswith((".zip", ".tar.gz")):
         zarr_path = input_path
         cleanup_temp = None
         try:
@@ -237,11 +231,11 @@ def _read_v2_0_root(
     n_substitutive = int(
         root.attrs.get("n_substitutive", splats_group.attrs.get("n_substitutive", 1))
     )
-    default_substitutive = int(
-        root.attrs.get(
-            "default_substitutive", splats_group.attrs.get("default_substitutive", 0)
-        )
-    )
+    # A legacy file's `default_substitutive` is intentionally NOT carried: the
+    # v3.0 data model fixes the default at the finest level (index 0), and the
+    # on-disk default_level is the viewer's separate coarsest-first render hint
+    # (stamped by the serializer). The substitutive order (finest at index 0) is
+    # preserved below, which is what actually matters.
 
     substitutive_levels: List[SubstitutiveLevel] = []
     for s in range(n_substitutive):
@@ -302,7 +296,6 @@ def _read_v2_0_root(
 
     data = GSplatData(
         substitutive_levels=substitutive_levels,
-        default_substitutive=default_substitutive,
     )
     return data, fitting_info, fitting_config, provenance_info
 

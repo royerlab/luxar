@@ -57,11 +57,21 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     info["kind"] = root.attrs.get("kind", "gsplats")
 
     def _representative_leaf_node(group: "zarr.Group") -> "zarr.Group":
-        """Descend through groups to a representative leaf NODE group."""
+        """Descend through groups to a representative leaf NODE group.
+
+        For a kind=lod group, descend into the FINEST child so the headline
+        stats (n_splats, ndim, bounds, …) match the data-model default
+        (``default_substitutive=0`` = finest) and the ``gsplat info`` CLI path
+        (which loads via ``GSplatData``). On disk children are coarsest-first
+        (``child_0`` = coarsest, ``child_{n-1}`` = finest), so we must NOT read
+        the on-disk ``default_level`` here — that is the viewer's COARSEST
+        render hint, a separate concept.
+        """
         kind = group.attrs.get("kind")
         if kind == "lod":
-            idx = int(group.attrs.get("default_level", 0))
-            key = f"child_{idx}" if f"child_{idx}" in group else "child_0"
+            n = sum(1 for c in group if str(c).startswith("child_"))
+            finest = max(n - 1, 0)
+            key = f"child_{finest}" if f"child_{finest}" in group else "child_0"
             return _representative_leaf_node(group[key])
         if kind == "partition":
             return _representative_leaf_node(group["part_0"])

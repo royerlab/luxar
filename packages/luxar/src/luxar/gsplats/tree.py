@@ -253,15 +253,16 @@ def _leaf_from_substitutive_level(level: "SubstitutiveLevel") -> GSplatLeaf:
 
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
-    default_substitutive: int = 0,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
     * A single substitutive level → a bare :class:`GSplatLeaf` (its additive
       ladder), carrying that level's provenance in ``meta``.
     * Multiple substitutive levels → a :class:`GSplatLodGroup` of one leaf per
-      level, in the same order as ``levels`` (index 0 = finest), with
-      ``default_level = default_substitutive``.
+      level, in the same order as ``levels`` (index 0 = finest). The in-memory
+      ``default_level`` is fixed at 0 — the persisted on-disk ``default_level``
+      is the viewer's coarsest-first render hint (stamped by the serializer),
+      not a settable data-model default.
 
     Each child of a multi-level lod group is back-filled with a derived
     ``min_pixel_size`` selector threshold (the same ``√(N/N₀)`` heuristic the
@@ -292,7 +293,7 @@ def tree_from_substitutive_levels(
         # finest-first index i ↔ coarsest-first index (n-1-i)
         leaf.meta.setdefault("min_pixel_size", thresholds_coarsest_first[n - 1 - i])
 
-    return GSplatLodGroup(children=leaves, default_level=default_substitutive)
+    return GSplatLodGroup(children=leaves, default_level=0)
 
 
 def substitutive_levels_from_tree(

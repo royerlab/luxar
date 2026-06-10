@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 import numpy as np
 
@@ -376,7 +376,6 @@ class GSplatData(_SplatArrayMixin):
         *,
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
         substitutive_levels: Optional[List[SubstitutiveLevel]] = None,
-        default_substitutive: int = 0,
         truncation_radius: float = 3.0,
     ) -> None:
         if substitutive_levels is not None:
@@ -391,18 +390,17 @@ class GSplatData(_SplatArrayMixin):
                         f"Each entry must be a SubstitutiveLevel, got "
                         f"{type(s).__name__}"
                     )
-            if not 0 <= default_substitutive < len(substitutive_levels):
-                raise ValueError(
-                    f"default_substitutive {default_substitutive} out of range "
-                    f"[0, {len(substitutive_levels)})"
-                )
             self.substitutive_levels: List[SubstitutiveLevel] = list(
                 substitutive_levels
             )
-            self.default_substitutive: int = default_substitutive
-            # Derived: the "primary" additive ladder is the default level's
+            # The data-model default is fixed at the FINEST level (index 0) — it
+            # is not a settable, persistable concept (the on-disk default_level
+            # is the viewer's separate coarsest-first render hint). Kept as a
+            # constant attribute so accessors document "return the finest".
+            self.default_substitutive: int = 0
+            # Derived: the "primary" additive ladder is the finest level's.
             self.additive_sublods: List[AdditiveSubLOD] = list(
-                self.substitutive_levels[default_substitutive].additive_sublods
+                self.substitutive_levels[0].additive_sublods
             )
         elif additive_sublods is not None:
             # Single-substitutive construction with explicit additive sub-LODs
@@ -604,20 +602,20 @@ class GSplatData(_SplatArrayMixin):
         cls,
         substitutive_levels: List[SubstitutiveLevel],
         stats: Optional[Dict[str, Any]] = None,
-        default_substitutive: int = 0,
     ) -> "GSplatData":
         """Construct a 2-D GSplatData from a list of substitutive levels.
 
         Each ``SubstitutiveLevel`` carries its own additive ladder (one or
         more :class:`AdditiveSubLOD`). The resulting ``GSplatData`` has
         ``n_substitutive == len(substitutive_levels)`` and represents the
-        full ``[N, M_i]`` matrix of splat sets.
+        full ``[N, M_i]`` matrix of splat sets. The accessors
+        (``.centers``/``.additive_sublods``/…) always return the FINEST level
+        (index 0) — the data-model default is fixed, not settable (see
+        ``__init__``).
 
         Args:
             substitutive_levels: Ordered list, finest at index 0.
             stats: Optional top-level statistics.
-            default_substitutive: Which level the ``additive_sublods`` /
-                ``n_additive_sublods`` accessors return (default: 0 = finest).
 
         Returns:
             New ``GSplatData`` with the given substitutive × additive matrix.
@@ -625,7 +623,6 @@ class GSplatData(_SplatArrayMixin):
         return cls(
             substitutive_levels=substitutive_levels,
             stats=stats,
-            default_substitutive=default_substitutive,
         )
 
     # ── 2-D substitutive × additive accessors ──────────────
@@ -708,9 +705,7 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.gsplats.tree import tree_from_substitutive_levels
 
-        return tree_from_substitutive_levels(
-            self.substitutive_levels, self.default_substitutive
-        )
+        return tree_from_substitutive_levels(self.substitutive_levels)
 
     @classmethod
     def from_tree(
@@ -728,11 +723,13 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.gsplats.tree import substitutive_levels_from_tree
 
-        levels, default = substitutive_levels_from_tree(node)
+        # The on-disk default_level is the viewer's coarsest-first render hint,
+        # not a data-model default — the accessors always return the finest
+        # level (index 0), so it is intentionally ignored here.
+        levels, _default = substitutive_levels_from_tree(node)
         return cls(
             substitutive_levels=levels,
             stats=stats,
-            default_substitutive=default,
         )
 
     # ── Filtering ───────────────────────────────────────────
@@ -944,7 +941,6 @@ class GSplatData(_SplatArrayMixin):
             out = GSplatData.from_substitutive_levels(
                 new_levels,
                 stats=dict(self.stats),
-                default_substitutive=self.default_substitutive,
             )
             out.stats.update(
                 {
@@ -1178,7 +1174,6 @@ class GSplatData(_SplatArrayMixin):
             return cls.from_substitutive_levels(
                 sub_levels,
                 stats=merged_stats,
-                default_substitutive=non_empty[0].default_substitutive,
             )
 
         # Single substitutive level: merge its additive ladder.
@@ -1431,6 +1426,32 @@ class GSplatData(_SplatArrayMixin):
 
     # ── Geometric transforms ────────────────────────────────
 
+    def _map_substitutive(
+        self, fn: "Callable[[GSplatData], GSplatData]"
+    ) -> "GSplatData":
+        """Apply a single-level transform to EVERY substitutive level, rebuild.
+
+        ``fn`` maps a single-substitutive-level view (``n_substitutive == 1``)
+        to a transformed single-level ``GSplatData``; per-level metadata
+        (compression_factor / parent_method / level_index / stats) is preserved.
+        Mirrors :meth:`filter_by`'s per-level rebuild (decision 6) so spatial
+        and intensity ops never silently collapse the substitutive LOD ladder
+        to the finest level. Callers guard with ``if self.n_substitutive > 1``.
+        """
+        new_levels: List[SubstitutiveLevel] = []
+        for s, src in enumerate(self.substitutive_levels):
+            out = fn(self.at_substitutive(s))
+            new_levels.append(
+                SubstitutiveLevel(
+                    additive_sublods=out.substitutive_levels[0].additive_sublods,
+                    compression_factor=src.compression_factor,
+                    parent_method=src.parent_method,
+                    level_index=src.level_index,
+                    stats=dict(src.stats),
+                )
+            )
+        return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
+
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
 
@@ -1454,6 +1475,11 @@ class GSplatData(_SplatArrayMixin):
             >>> transformed = data.transform(M)
         """
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+
+        # Multi-substitutive: transform every level and rebuild the pyramid
+        # (mirrors filter_by/cull) rather than collapsing to the finest level.
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.transform(matrix))
 
         matrix = np.asarray(matrix, dtype=np.float64)
         d = self.ndim
@@ -1595,11 +1621,33 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with the specified colors.
         """
-        if not isinstance(colors, np.ndarray):
-            colors = np.asarray(colors, dtype=np.float32)
-        if colors.ndim == 1 and colors.shape == (3,):
+        arr = (
+            colors
+            if isinstance(colors, np.ndarray)
+            else np.asarray(colors, dtype=np.float32)
+        )
+        is_broadcast = arr.ndim == 1 and arr.shape == (3,)
+
+        # Multi-substitutive: rebuild the pyramid. A single (r, g, b) broadcasts
+        # cleanly to every level; an explicit per-splat array cannot (each level
+        # has a different splat count), so reject it rather than silently
+        # collapse the ladder to the finest level.
+        if self.n_substitutive > 1:
+            if not is_broadcast:
+                raise ValueError(
+                    "with_colors with an explicit per-splat color array is not "
+                    "supported on a multi-substitutive pyramid (each level has a "
+                    "different splat count). Pass a single (r, g, b) to broadcast "
+                    "across all levels, or operate per level via at_substitutive()."
+                )
+            rgb = arr.astype(np.float32)
+            return self._map_substitutive(lambda lvl: lvl.with_colors(rgb))
+
+        if is_broadcast:
             # Broadcast single color to all splats
-            colors = np.tile(colors.astype(np.float32), (self.n_splats, 1))
+            colors = np.tile(arr.astype(np.float32), (self.n_splats, 1))
+        else:
+            colors = arr
         if colors.shape != (self.n_splats, 3):
             raise ValueError(
                 f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
@@ -1640,6 +1688,10 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with transformed amplitudes.
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(
+                lambda lvl: lvl.affine_intensity(scale, offset)
+            )
         return self._with_new_amplitudes(self.amplitudes * scale + offset)
 
     def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
@@ -1651,9 +1703,13 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData. Returns copy if all amplitudes are zero.
         """
+        # A single global factor (from the finest level's max) is applied
+        # uniformly to all substitutive levels via scale_intensity — which is
+        # itself pyramid-preserving — so the ladder is kept and levels stay
+        # consistently scaled (a per-level normalization would shift them apart).
         current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
         if current_max == 0:
-            return self._with_new_amplitudes(self.amplitudes.copy())
+            return self.scale_intensity(1.0)  # no-op, but preserves the pyramid
         return self.scale_intensity(target_max / current_max)
 
     def clamp_intensity(
@@ -1670,6 +1726,8 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with clamped amplitudes.
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.clamp_intensity(min, max))
         new_amps = self.amplitudes.copy()
         if min is not None:
             new_amps = np.maximum(new_amps, min)
@@ -1803,6 +1861,10 @@ class GSplatData(_SplatArrayMixin):
             >>> # Shift all splats by [10, 20, 30]
             >>> translated = data.translate(np.array([10, 20, 30]))
         """
+        # Multi-substitutive: translate every level and rebuild the pyramid.
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.translate(offset))
+
         # Multi-LOD path: translate each LOD independently
         if self.n_additive_sublods > 1:
             new_lods = [
@@ -1870,6 +1932,8 @@ class GSplatData(_SplatArrayMixin):
             >>> # Brighten by 2x
             >>> brightened = data.scale_intensity(2.0)
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.scale_intensity(factor))
         return self._with_new_amplitudes(self.amplitudes * factor)
 
     def cull(
@@ -2027,7 +2091,6 @@ class GSplatData(_SplatArrayMixin):
             out = GSplatData.from_substitutive_levels(
                 culled_levels,
                 stats=dict(self.stats),
-                default_substitutive=self.default_substitutive,
             )
             out.stats.update(
                 {

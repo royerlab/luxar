@@ -62,7 +62,7 @@ def test_multi_substitutive_tree_is_a_lod_group():
             level_index=1,
         ),
     ]
-    data = GSplatData.from_substitutive_levels(levels, default_substitutive=0)
+    data = GSplatData.from_substitutive_levels(levels)
     node = data.tree
     assert isinstance(node, GSplatLodGroup)
     assert node.n_children == 2
@@ -86,14 +86,13 @@ def test_round_trip_preserves_arrays_metadata_and_stats():
             stats={"psnr": 33.0},
         ),
     ]
-    data = GSplatData.from_substitutive_levels(
-        levels, stats={"source": "test"}, default_substitutive=1
-    )
+    data = GSplatData.from_substitutive_levels(levels, stats={"source": "test"})
 
     rebuilt = GSplatData.from_tree(data.tree, stats=dict(data.stats))
 
     assert rebuilt.n_substitutive == data.n_substitutive == 2
-    assert rebuilt.default_substitutive == data.default_substitutive == 1
+    # The data-model default is fixed at the finest level (index 0).
+    assert rebuilt.default_substitutive == data.default_substitutive == 0
     assert rebuilt.stats == {"source": "test"}
     for s in range(data.n_substitutive):
         src = data.substitutive_levels[s]

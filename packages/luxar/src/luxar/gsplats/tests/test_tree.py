@@ -175,7 +175,7 @@ def test_single_level_round_trips_to_bare_leaf():
         level_index=0,
         stats={"psnr": 42.0},
     )
-    node = tree_from_substitutive_levels([level], default_substitutive=0)
+    node = tree_from_substitutive_levels([level])
     assert isinstance(node, GSplatLeaf)
     assert is_matrix_shaped(node)
 
@@ -214,7 +214,7 @@ def test_multi_level_round_trips_through_lod_group():
             stats={"i": 2},
         ),
     ]
-    node = tree_from_substitutive_levels(levels_in, default_substitutive=0)
+    node = tree_from_substitutive_levels(levels_in)
     assert isinstance(node, GSplatLodGroup)
     assert node.n_children == 3
     assert node.default_level == 0
@@ -233,16 +233,20 @@ def test_multi_level_round_trips_through_lod_group():
         assert dst.n_splats_total == src.n_splats_total
 
 
-def test_default_substitutive_preserved_through_bridge():
+def test_bridge_default_level_is_fixed_at_finest():
+    # The data-model default is fixed at the FINEST level (index 0); it is not a
+    # settable, persistable concept. The in-memory bridge therefore always emits
+    # default_level=0 regardless of input ordering (the on-disk default_level is
+    # the viewer's separate coarsest-first render hint, stamped by the serializer).
     levels = [
         SubstitutiveLevel(additive_sublods=[_sublod(50, seed=i)], level_index=i)
         for i in range(3)
     ]
-    node = tree_from_substitutive_levels(levels, default_substitutive=2)
+    node = tree_from_substitutive_levels(levels)
     assert isinstance(node, GSplatLodGroup)
-    assert node.default_level == 2
+    assert node.default_level == 0
     _, default = substitutive_levels_from_tree(node)
-    assert default == 2
+    assert default == 0
 
 
 def test_non_matrix_trees_have_no_matrix_projection():

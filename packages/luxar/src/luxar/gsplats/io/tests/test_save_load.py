@@ -399,6 +399,44 @@ class TestInspectGsplats:
             info = inspect_gsplats_zarr(path)
             assert info["fitting"]["time_seconds"] == 45.3
 
+    def test_inspect_multi_level_pyramid_reports_finest_stats(self) -> None:
+        # For a kind=lod pyramid, inspect must descend into the FINEST leaf so
+        # its headline stats match the data-model default (finest, index 0) and
+        # the `gsplat info` CLI (which loads via GSplatData). On disk child_0 is
+        # the COARSEST, so reading default_level would report the wrong (coarsest)
+        # count — the data-default vs viewer-hint conflation.
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
+
+        def _level(n: int, seed: int) -> SubstitutiveLevel:
+            rng = np.random.RandomState(seed)
+            chol = np.zeros((n, 6), dtype=np.float32)
+            chol[:, [0, 3, 5]] = 1.0
+            return SubstitutiveLevel(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=rng.rand(n, 3).astype(np.float32) * 50,
+                        amplitudes=np.ones(n, dtype=np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "pyr.gsplats.zarr"
+            # finest=100 at index 0, coarsest=10 at index 2
+            data = GSplatData.from_substitutive_levels(
+                [_level(100, 0), _level(30, 1), _level(10, 2)]
+            )
+            data.save(path, ordering="none")
+
+            info = inspect_gsplats_zarr(path)
+            assert info["kind"] == "lod"
+            assert info["n_substitutive"] == 3
+            assert info["default_lod_level"] == 0  # on-disk viewer hint = coarsest
+            # Headline n_splats is the FINEST level, matching GSplatData.load.
+            assert info["n_splats"] == 100
+            assert info["n_splats"] == GSplatData.load(path).n_splats
+
     def test_inspect_format_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"

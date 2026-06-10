@@ -115,16 +115,26 @@ def graft_gsplat_node(
     child_attrs.pop("min_pixel_size", None)
 
     if isinstance(node, GSplatLodGroup):
+        from luxar.gsplats.tree import total_splats
+
+        from ..lod.group import derive_min_pixel_sizes
+
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are finest-first; add_lod_group wants coarsest→finest.
         on_disk = list(reversed(node.children))
+        # Per-child min_pixel_size selector thresholds: prefer each child's
+        # authored ``meta`` value, but derive from the per-child splat counts
+        # when absent — matching the standalone writer (gsplat_tree) and scene
+        # writer (lod_dispatch) so a meta-less grafted tree doesn't collapse to
+        # all-zero (non-ascending) thresholds the selector would reject.
+        derived_mps = derive_min_pixel_sizes([total_splats(c) for c in on_disk])
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
         # the finest by default would render "backwards".
         wrapper = parent_node.add_lod_group(name, **wrapper_attrs)
         for i, child in enumerate(on_disk):
-            mps = float((child.meta or {}).get("min_pixel_size", 0.0) or 0.0)
+            mps = float((child.meta or {}).get("min_pixel_size", derived_mps[i]))
             graft_gsplat_node(
                 wrapper,
                 name=f"child_{i}",
@@ -179,7 +189,26 @@ def add_gsplats_from_volume_impl(
     if progressive:
         from luxar.gsplats import fit_progressive_gaussian_splats
 
-        max_splats = seeds if isinstance(seeds, int) else 50000
+        # Resolve the max-splats budget honoring the documented `seeds` contract
+        # (int = exact count, float in (0, 1] = compression ratio). A float must
+        # not be silently dropped — convert it the same way the non-progressive
+        # fitter does. Only an unspecified seeds (None) falls back to the default.
+        if seeds is None:
+            max_splats = 50000
+        elif isinstance(seeds, bool):  # guard: bool is an int subclass
+            raise TypeError("seeds must be an int count or a float ratio, not bool")
+        elif isinstance(seeds, int):
+            max_splats = seeds
+        elif isinstance(seeds, float):
+            from luxar.gsplats.fitting.preprocessing import (
+                _compression_ratio_to_target_count,
+            )
+
+            max_splats = _compression_ratio_to_target_count(seeds, volume.shape)
+        else:
+            raise TypeError(
+                f"seeds must be an int count or float ratio, got {type(seeds).__name__}"
+            )
         result = fit_progressive_gaussian_splats(
             volume,
             max_splats=max_splats,
