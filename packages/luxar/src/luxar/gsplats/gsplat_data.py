@@ -749,6 +749,20 @@ class GSplatData(_SplatArrayMixin):
                 f"Mask shape {mask.shape} doesn't match splat count ({self.n_splats},)"
             )
 
+        # A raw boolean mask is sized to the default substitutive level, so it
+        # cannot be applied per-level — coarser substitutive levels are dropped.
+        # Warn loudly (never silent) and point at the criteria-based ops, which
+        # DO preserve the full pyramid (see filter_by / cull).
+        if self.n_substitutive > 1:
+            warnings.warn(
+                "filter(mask) keeps only the default substitutive level "
+                f"(n_substitutive={self.n_substitutive}); coarser levels are "
+                "dropped. Use filter_by(...) / cull(...) to filter every "
+                "substitutive level and preserve the pyramid.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Multi-LOD path: split mask across LODs
         if self.n_additive_sublods > 1:
             new_lods = []
@@ -882,6 +896,56 @@ class GSplatData(_SplatArrayMixin):
             raise ValueError(
                 f"sigma_axis={sigma_axis} out of range for {self.ndim}D data"
             )
+
+        # Multi-substitutive: apply the SAME criteria to every substitutive
+        # level and rebuild the pyramid (decision 6) rather than silently
+        # collapsing to the default level. Each level is filtered through the
+        # single-substitutive path below (a per-level view); thresholds with
+        # *_normalized resolve per-level (each level to its own range).
+        if self.n_substitutive > 1:
+            new_levels: List[SubstitutiveLevel] = []
+            for s, src in enumerate(self.substitutive_levels):
+                filtered = self.at_substitutive(s).filter_by(
+                    bbox=bbox,
+                    volume_min=volume_min,
+                    volume_max=volume_max,
+                    volume_normalized=volume_normalized,
+                    amplitude_min=amplitude_min,
+                    amplitude_max=amplitude_max,
+                    amplitude_normalized=amplitude_normalized,
+                    eccentricity_min=eccentricity_min,
+                    eccentricity_max=eccentricity_max,
+                    mass_min=mass_min,
+                    mass_max=mass_max,
+                    mass_normalized=mass_normalized,
+                    sigma_axis=sigma_axis,
+                    sigma_min=sigma_min,
+                    sigma_max=sigma_max,
+                    truncate=truncate,
+                )
+                new_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=filtered.substitutive_levels[0].additive_sublods,
+                        compression_factor=src.compression_factor,
+                        parent_method=src.parent_method,
+                        level_index=src.level_index,
+                        stats=dict(src.stats),
+                    )
+                )
+            out = GSplatData.from_substitutive_levels(
+                new_levels,
+                stats=dict(self.stats),
+                default_substitutive=self.default_substitutive,
+            )
+            out.stats.update(
+                {
+                    "filtered": True,
+                    "n_original": self.n_splats,
+                    "n_removed": self.n_splats - out.n_splats,
+                    "truncate": truncate,
+                }
+            )
+            return out
 
         mask = np.ones(self.n_splats, dtype=bool)
         criteria: dict[str, object] = {}
