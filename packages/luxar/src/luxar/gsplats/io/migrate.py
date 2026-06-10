@@ -19,7 +19,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal, Optional
 
 import zarr
 
@@ -367,9 +367,16 @@ def migrate_format(
     output_path: str | Path,
     *,
     overwrite: bool = False,
+    zip_deflate: bool = False,
 ) -> str:
     """Convert a legacy .gsplats.zarr (v1.0 / v1.1 / v2.0) or substitutive
     directory to the current v3.0 node-tree format.
+
+    The **container format is preserved from the output extension**: an
+    ``output_path`` ending in ``.zip`` / ``.tar.gz`` is written as a compressed
+    archive (so migrating a compressed legacy file in place stays compressed),
+    while a plain path is written as a ``.gsplats.zarr`` directory. ``zip_deflate``
+    selects DEFLATE vs the default STORED for ``.zip`` outputs.
 
     Returns the detected legacy format identifier (``"v1.0"``, ``"v1.1"``,
     ``"v2.0"``, or ``"substitutive_dir"``).
@@ -422,6 +429,16 @@ def migrate_format(
         else:
             output_path.unlink()
 
+    # Preserve the container format implied by the output extension: a .zip /
+    # .tar.gz output is written compressed (so an in-place migration of a
+    # compressed legacy file stays compressed), not a bare directory.
+    out_name = output_path.name
+    compress: Optional[Literal["zip", "tar.gz"]] = None
+    if out_name.endswith(".zip"):
+        compress = "zip"
+    elif out_name.endswith(".tar.gz"):
+        compress = "tar.gz"
+
     # Write via the single v3.0 node-tree writer. ordering="none" keeps the
     # migrated arrays byte-equivalent to the source (a pure rewrap); fitting /
     # provenance flow through as first-class write inputs (no post-hoc splice).
@@ -433,6 +450,8 @@ def migrate_format(
         fitting_config=fitting_config or None,
         provenance_info=provenance_info or None,
         description=f"Migrated from legacy format {detected}",
+        compress=compress,
+        zip_deflate=zip_deflate,
     )
 
     return detected

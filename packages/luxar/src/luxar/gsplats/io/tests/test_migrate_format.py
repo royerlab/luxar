@@ -455,6 +455,35 @@ class TestMigrateFormat:
         assert data.n_substitutive == 1
         assert data.n_additive_sublods == 1
 
+    def test_migrate_preserves_zip_container(self, tmp_path: Path) -> None:
+        """A ``.zip`` output is written as a compressed v3 archive (not a bare
+        directory) — so migrating a compressed legacy file stays compressed.
+        STORED by default; loadable as v3."""
+        import zipfile
+
+        legacy = tmp_path / "v2.gsplats.zarr"
+        _make_v2_0(legacy, n=10)
+        out = tmp_path / "migrated.gsplats.zarr.zip"
+        detected = migrate_format(legacy, out)
+        assert detected == "v2.0"
+        assert out.is_file()  # a zip FILE, not a directory
+        with zipfile.ZipFile(out) as z:
+            # default is STORED (matches the bundled demo archives)
+            assert all(i.compress_type == zipfile.ZIP_STORED for i in z.infolist())
+        data = load_gsplats(out)  # loader extracts + reads v3
+        assert data.n_splats == 10
+
+    def test_migrate_zip_deflate_flag(self, tmp_path: Path) -> None:
+        import zipfile
+
+        legacy = tmp_path / "v2.gsplats.zarr"
+        _make_v2_0(legacy, n=8)
+        out = tmp_path / "deflated.gsplats.zarr.zip"
+        migrate_format(legacy, out, zip_deflate=True)
+        with zipfile.ZipFile(out) as z:
+            assert any(i.compress_type == zipfile.ZIP_DEFLATED for i in z.infolist())
+        assert load_gsplats(out).n_splats == 8
+
     def test_migrate_v2_0_multi_preserves_orientation(self, tmp_path: Path) -> None:
         """Multi-substitutive v2.0 (finest=level0) migrates to v3.0 with the
         finest level still at substitutive_levels[0] — the reversal trap must
