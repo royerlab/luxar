@@ -562,6 +562,44 @@ class TestSubstitutivePreservation:
             )
 
 
+class TestDegenerateInputs:
+    """Edge-case hardening surfaced by the deep double-check."""
+
+    def _g(self, n=3):
+        rng = np.random.RandomState(0)
+        return GSplatData(
+            centers=rng.rand(n, 3).astype(np.float32) * 10,
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (n, 1)),
+        )
+
+    def test_embed_dimension_accepts_0d_array_as_scalar(self):
+        # A 0-d numpy array is semantically a scalar — it must broadcast, not be
+        # mistaken for a malformed per-splat array. (Pre-fix: np.isscalar(0-d) is
+        # False → ValueError "values shape () doesn't match splat count".)
+        g = self._g(4)
+        out = g.embed_dimension(np.array(7.0))
+        assert out.ndim == 4
+        assert out.n_splats == 4
+        np.testing.assert_allclose(out.centers[:, 3], 7.0)
+
+    def test_center_at_centroid_on_empty_emits_no_warning(self):
+        import warnings
+
+        empty = GSplatData(
+            centers=np.zeros((0, 3), np.float32),
+            amplitudes=np.zeros((0,), np.float32),
+            cholesky_factors=np.zeros((0, 6), np.float32),
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            out = empty.center_at_centroid()
+        assert out.n_splats == 0
+        assert not any("empty slice" in str(w.message).lower() for w in caught), [
+            str(w.message) for w in caught
+        ]
+
+
 # ── Sharpness removal regression tests ───────────────────────
 
 

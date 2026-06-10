@@ -1354,6 +1354,12 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.gsplats.utils.trils import embed_cholesky_packed
 
+        # A 0-d numpy array is semantically a scalar; unwrap it so the
+        # np.isscalar() branches below treat it as the broadcast coordinate it
+        # represents (rather than a malformed per-splat array of shape ()).
+        if isinstance(values, np.ndarray) and values.ndim == 0:
+            values = values.item()
+
         n = self.n_splats
         d = self.ndim
 
@@ -1922,6 +1928,12 @@ class GSplatData(_SplatArrayMixin):
             >>> # Amplitude-weighted centroid is now at origin
             >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
+        # Empty data: nothing to center. Return a structure-preserving copy
+        # (translate by zero) rather than computing mean() of an empty array,
+        # which would emit a spurious "Mean of empty slice" RuntimeWarning.
+        if self.n_splats == 0:
+            return self.translate(np.zeros(self.ndim, dtype=np.float64))
+
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
         if total_amplitude > 0:
