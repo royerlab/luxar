@@ -112,12 +112,21 @@ def _write_single_splat_set(
     lightweight: bool,
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
+    scene_tone_mapping: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Order + write one splat set's arrays into ``group``; return metadata.
 
     ``lightweight=True`` writes only the data attrs (used for ``additive_<i>``
     sub-LOD subgroups — no rendering defaults); ``False`` runs the full
     :func:`apply_gsplat_group_attrs` (rendering defaults + ``position_bounds``).
+
+    ``scene_tone_mapping`` (the scene's ``viewer_config.tone_mapping``, or
+    ``None`` for a standalone file) is threaded into
+    :func:`apply_gsplat_group_attrs` so a scene leaf written through this path
+    gets the same colormap-LUT tone handling as the compiler's own writer.
+
+    The metadata dict includes ``sort_order`` (the spatial-ordering permutation,
+    or ``None``) so a caller can reorder per-splat side arrays (labels) to match.
     """
     centers, amplitudes, cholesky, colors, n_splats, n_dims, chol_uniform = (
         validate_gsplat_inputs(
@@ -154,8 +163,9 @@ def _write_single_splat_set(
     )
 
     if lightweight:
-        # Per-additive-sub-LOD attrs (mirrors compiler.write_gsplats_multi_lod) —
-        # data only, no rendering defaults.
+        # Per-additive-sub-LOD attrs — data only, no rendering defaults. (Both
+        # the scene and standalone additive ladders are written here; there is
+        # no separate compiler multi-LOD writer.)
         group.attrs["type"] = "gsplats"
         group.attrs["n_splats"] = metadata["n_splats"]
         group.attrs["ndim"] = metadata["ndim"]
@@ -185,9 +195,14 @@ def _write_single_splat_set(
             metadata,
             leaf_attrs,
             store,
-            scene_tone_mapping=None,
+            scene_tone_mapping=scene_tone_mapping,
             lut_tone_mapping_warned=False,
         )
+    # Surface the spatial-ordering permutation so callers can reorder per-splat
+    # side arrays (e.g. scene labels) to match the written array order.
+    metadata["sort_order"] = (
+        ordering_data["sort_order"] if ordering_data is not None else None
+    )
     return metadata
 
 
@@ -199,6 +214,7 @@ def write_gsplat_leaf(
     ordering_ctx: OrderingCtx,
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
+    scene_tone_mapping: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``."""
     sublods = leaf.additive_sublods
@@ -211,6 +227,7 @@ def write_gsplat_leaf(
             lightweight=False,
             store=store,
             attrs=attrs,
+            scene_tone_mapping=scene_tone_mapping,
         )
 
     # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
@@ -258,7 +275,7 @@ def write_gsplat_leaf(
         agg_meta,
         parent_attrs,
         store,
-        scene_tone_mapping=None,
+        scene_tone_mapping=scene_tone_mapping,
         lut_tone_mapping_warned=False,
     )
     group.attrs["n_additive_sublods"] = len(sublods)
@@ -310,12 +327,15 @@ def write_gsplat_node(
     ordering_ctx: OrderingCtx,
     store: zarr.Group,
     attrs: Optional[Dict[str, Any]] = None,
+    scene_tone_mapping: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Recursively write any :class:`GSplatNode` into ``group``.
 
     Returns the node's metadata dict including a ``position_bounds`` entry
     (groups = union of children). ``attrs`` are extra node attrs (render
     defaults, selector thresholds, provenance) merged onto the node.
+    ``scene_tone_mapping`` (the scene's ``viewer_config.tone_mapping``, or
+    ``None`` for a standalone file) is threaded to leaf attr stamping.
     """
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -329,6 +349,7 @@ def write_gsplat_node(
             ordering_ctx=ordering_ctx,
             store=store,
             attrs=merged,
+            scene_tone_mapping=scene_tone_mapping,
         )
 
     if isinstance(node, GSplatLodGroup):
@@ -345,6 +366,7 @@ def write_gsplat_node(
                 dataset_ctx=dataset_ctx,
                 ordering_ctx=ordering_ctx,
                 store=store,
+                scene_tone_mapping=scene_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -372,6 +394,7 @@ def write_gsplat_node(
                 dataset_ctx=dataset_ctx,
                 ordering_ctx=ordering_ctx,
                 store=store,
+                scene_tone_mapping=scene_tone_mapping,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

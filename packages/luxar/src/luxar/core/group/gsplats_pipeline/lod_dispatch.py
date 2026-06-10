@@ -145,17 +145,24 @@ def add_gsplats_multi_lod_impl(
     fill_sigma: Optional[Dict[str, float]] = None,
     **attrs: Any,
 ) -> GSplats:
-    """Write multi-LOD GSplatData with per-LOD subgroups."""
+    """Write multi-additive-LOD GSplatData as a single leaf via the shared walker.
+
+    Builds a :class:`~luxar.gsplats.tree.GSplatLeaf` (additive ladder) — applying
+    ``dim_order`` per sub-LOD as a tree transform — and hands it to
+    :meth:`LuxarZarrCompiler.write_gsplat_leaf_subtree`, the single authoring path
+    shared with the standalone ``.gsplats.zarr`` writer. There is no parallel
+    additive-ladder writer.
+    """
     try:
+        from ....gsplats.gsplat_data import AdditiveSubLOD
+        from ....gsplats.tree import GSplatLeaf
+
         scene = group._find_scene()
         d_data = result.ndim
 
-        # Build per-LOD tuples, applying dim_order to each LOD
-        lod_tuples: List[
-            tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]
-        ] = []
-        lod_stats_list: List[Dict[str, Any]] = []
-
+        # Build per-sub-LOD AdditiveSubLODs, applying dim_order as a tree
+        # transform on each (centers + Cholesky reshaped/padded into scene dims).
+        sublods: List[AdditiveSubLOD] = []
         for lod in result.additive_sublods:
             ctr_arr = lod.centers.copy()
             chol_arr = lod.cholesky_factors.copy()
@@ -170,32 +177,35 @@ def add_gsplats_multi_lod_impl(
 
             scene._validate_data_dimensions(ctr_arr, name, data_type="centers")
 
-            lod_tuples.append(
-                (
-                    ctr_arr.astype(np.float32),
-                    lod.amplitudes,
-                    chol_arr,
-                    lod.colors,
+            sublods.append(
+                AdditiveSubLOD(
+                    centers=ctr_arr.astype(np.float32),
+                    amplitudes=lod.amplitudes,
+                    cholesky_factors=chol_arr,
+                    colors=lod.colors,
+                    stats=dict(lod.stats),
+                    truncation_radius=lod.truncation_radius,
                 )
             )
-            lod_stats_list.append(dict(lod.stats))
+
+        leaf = GSplatLeaf(additive_sublods=sublods)
 
         n_splats = result.n_splats
-        ndim = lod_tuples[0][0].shape[1]
+        ndim = sublods[0].centers.shape[1]
         aprint(
             f"Adding multi-LOD gsplats node '{name}' with "
             f"{n_splats:,} splats in {ndim}D ({result.n_additive_sublods} LODs)."
         )
 
         final_extend_dims = scene._resolve_extend_to_all(
-            extend_to_all, lod_tuples[0][0], "splats"
+            extend_to_all, sublods[0].centers, "splats"
         )
         if final_extend_dims:
             attrs["extend_to_all"] = final_extend_dims
             aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
         colormap = attrs.get("colormap")
-        if any(t[3] is not None for t in lod_tuples) and colormap is not None:
+        if any(s.colors is not None for s in sublods) and colormap is not None:
             raise ValueError(
                 "Cannot specify both 'colors' and 'colormap'. Use one or the other."
             )
@@ -204,10 +214,9 @@ def add_gsplats_multi_lod_impl(
         writer = group._require_scene_writer(scene)
         path = f"{parent_node.path}/{name}" if parent_node.path else name
 
-        metadata = writer.write_gsplats_multi_lod(  # type: ignore[attr-defined]
+        metadata = writer.write_gsplat_leaf_subtree(  # type: ignore[attr-defined]
             path,
-            lods=lod_tuples,
-            lod_stats=lod_stats_list,
+            leaf,
             **attrs,
         )
 

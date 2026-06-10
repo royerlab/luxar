@@ -1360,182 +1360,66 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return metadata
 
-    def write_gsplats_multi_lod(
+    def write_gsplat_leaf_subtree(
         self,
         path: NodePath,
-        lods: list[
-            Tuple[
-                NDArray[np.float32],
-                Union[NDArray[np.float32], float],
-                NDArray[np.float32],
-                Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
-            ]
-        ],
-        lod_stats: Optional[list[dict[str, Any]]] = None,
+        leaf: Any,  # luxar.gsplats.tree.GSplatLeaf
         **attrs: Any,
     ) -> dict[str, Any]:
-        """Write multi-additive-LOD Gaussian splats to Zarr.
+        """Write a ``GSplatLeaf`` (single set or additive ladder) into the scene.
 
-        Writes additive sub-LOD subgroups directly under the gsplats
-        node path:
+        This is the scene-side seam onto :func:`~luxar.io._compiler.gsplat_tree.\
+        write_gsplat_leaf` — the single authoring path also used by the
+        standalone ``.gsplats.zarr`` writer. There is **no** parallel
+        additive-ladder writer: the additive ``additive_<i>/`` subgroups, their
+        attrs, spatial ordering, chunking and ``position_bounds`` come from the
+        exact same code a standalone file uses, so a scene additive ladder is
+        byte-identical to a standalone one by construction.
 
-            <path>/additive_<i>/{centers, amplitudes, ...}
-
-        with ``n_additive_sublods=<n>`` on the splats group attrs. The
-        viewer streams these progressively (prefix-sum LODs).
-
-        Substitutive LODs (alternatives between which the viewer picks
-        one) are not represented in the scene format; assemble those at
-        scene-build time via the ``lod_group`` node type.
+        Used for ``GSplatData`` embeds, whose arrays are always full per-splat
+        (no uniform-Cholesky / scalar-amplitude / labels — those leaf-only
+        scene features stay on :meth:`write_gsplats`).
 
         Args:
-            path: Path for the gsplats node within the store
-            lods: List of (centers, amplitudes, cholesky_factors, colors)
-                tuples, one per additive sub-LOD (index 0 = coarsest).
-            lod_stats: Optional per-additive-sub-LOD statistics dicts.
-            **attrs: Additional node attributes (opacity, blending_mode, etc.)
+            path: Path for the gsplats node within the store.
+            leaf: A :class:`~luxar.gsplats.tree.GSplatLeaf` (1 sub-LOD → flat
+                leaf; >1 → additive ladder).
+            **attrs: Node attributes (opacity, blending_mode, colormap,
+                extend_to_all, truncation_radius, transform, ...).
 
         Returns:
-            Metadata dictionary about the written gsplats (aggregate).
+            Aggregate metadata dict (incl. ``position_bounds``).
         """
-        self._check_not_finalized("write_gsplats_multi_lod")
+        self._check_not_finalized("write_gsplat_leaf_subtree")
 
-        if not lods:
-            raise ValueError("lods must contain at least one LOD")
+        from ._compiler.gsplat_tree import write_gsplat_leaf
 
         path = path.lstrip("/")
         group = self.store.require_group(path)
-        n_lods = len(lods)
 
-        # Extract truncation_radius for spatial ordering (default 3.0)
-        truncation_radius = float(attrs.get("truncation_radius", 3.0))
+        scene_tone_mapping = None
+        if self._scene is not None and self._scene.viewer_config is not None:
+            scene_tone_mapping = self._scene.viewer_config.tone_mapping
 
-        # Validate all LODs and collect metadata
-        total_splats = 0
-        all_center_mins: list[list[float]] = []
-        all_center_maxs: list[list[float]] = []
-        all_amp_mins: list[float] = []
-        all_amp_maxs: list[float] = []
-        has_any_colors = False
-        n_dims: Optional[int] = None
-
-        for i, (ctr, amp, chol, col) in enumerate(lods):
-            (
-                ctr,
-                amp,
-                chol,
-                col,
-                ns,
-                nd,
-                chol_uniform,
-            ) = self._validate_gsplat_inputs(ctr, amp, chol, col)
-
-            if n_dims is None:
-                n_dims = nd
-            elif nd != n_dims:
-                raise ValueError(f"LOD {i} has {nd}D data but LOD 0 has {n_dims}D")
-
-            lod_group = group.require_group(f"additive_{i}")
-            aprint(f"📝 Writing additive sub-LOD {i}: {ns:,} gsplats ({nd}D)")
-
-            (
-                ctr,
-                amp,
-                chol,
-                col,
-                ordering_data,
-            ) = self._apply_gsplat_spatial_ordering(
-                ctr,
-                amp,
-                chol,
-                col,
-                ns,
-                nd,
-                chol_uniform,
-                coverage_sigma=truncation_radius,
-            )
-
-            lod_meta = self._write_gsplat_arrays(
-                lod_group,
-                ctr,
-                amp,
-                chol,
-                col,
-                ns,
-                nd,
-                chol_uniform,
-                ordering_data,
-            )
-
-            # Write per-LOD group attrs (lightweight — no rendering defaults)
-            lod_group.attrs["type"] = "gsplats"
-            lod_group.attrs["n_splats"] = ns
-            lod_group.attrs["ndim"] = nd
-            lod_group.attrs["has_colors"] = lod_meta["has_colors"]
-            lod_group.attrs["amplitude_range"] = lod_meta["amplitude_range"]
-            lod_group.attrs["center_bounds"] = lod_meta["center_bounds"]
-            lod_group.attrs["ordering"] = lod_meta["ordering"]
-            if lod_meta["ordering"] != "none":
-                for key in [
-                    "ordering_min",
-                    "ordering_max",
-                    "ordering_bits_per_dim",
-                    "chunk_size",
-                ]:
-                    if key in lod_meta:
-                        lod_group.attrs[key] = lod_meta[key]
-            else:
-                lod_group.attrs["chunk_size"] = min(1024, max(64, ns))
-
-            if lod_stats and i < len(lod_stats):
-                lod_group.attrs["lod_stats"] = lod_stats[i]
-
-            # Accumulate aggregate info
-            total_splats += ns
-            if lod_meta["has_colors"]:
-                has_any_colors = True
-            bounds = lod_meta["center_bounds"]
-            all_center_mins.append(bounds["min"])
-            all_center_maxs.append(bounds["max"])
-            amp_range = lod_meta["amplitude_range"]
-            all_amp_mins.append(amp_range["min"])
-            all_amp_maxs.append(amp_range["max"])
-
-        assert n_dims is not None  # guaranteed by non-empty lods
-
-        # Compute aggregate bounds
-        if all_center_mins:
-            agg_min = [min(m[d] for m in all_center_mins) for d in range(n_dims)]
-            agg_max = [max(m[d] for m in all_center_maxs) for d in range(n_dims)]
-        else:
-            agg_min = [0.0] * n_dims
-            agg_max = [0.0] * n_dims
-
-        metadata: dict[str, Any] = {
-            "n_splats": total_splats,
-            "ndim": n_dims,
-            "has_colors": has_any_colors,
-            "amplitude_range": {"min": min(all_amp_mins), "max": max(all_amp_maxs)},
-            "center_bounds": {"min": agg_min, "max": agg_max},
-            "ordering": "none",  # aggregate has no single ordering
-            "n_additive_sublods": n_lods,
-        }
-
-        # Apply group attrs (rendering defaults, transforms, etc.)
-        self._apply_gsplat_group_attrs(group, metadata, attrs)
-
-        group.attrs["n_additive_sublods"] = n_lods
-
-        # Update scene-level bounds
-        self._update_scene_bounds(metadata["position_bounds"])
-
-        self._metadata_cache[path] = metadata
-        aprint(
-            f"✅ Multi-LOD GSplats written to {path} ({n_lods} additive sub-LODs, "
-            f"{total_splats:,} total)"
+        metadata = write_gsplat_leaf(
+            group,
+            leaf,
+            dataset_ctx=self._make_dataset_ctx(),
+            ordering_ctx=self._make_ordering_ctx(),
+            store=self.store,
+            attrs=attrs,
+            scene_tone_mapping=scene_tone_mapping,
         )
 
+        self._update_scene_bounds(metadata["position_bounds"])
+        self._metadata_cache[path] = metadata
+        n_sub = metadata.get("n_additive_sublods", 1)
+        aprint(
+            f"✅ GSplats leaf written to {path} "
+            f"({metadata['n_splats']:,} splats, {n_sub} additive sub-LOD(s))"
+        )
         return metadata
+
 
     def create_resizable_dataset(
         self,
