@@ -74,7 +74,12 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
         info["n_substitutive"] = 1
     else:
         info["n_substitutive"] = 1
-    info["default_substitutive"] = int(root.attrs.get("default_level", 0))
+    # The data-model default substitutive level is the FINEST (index 0, the
+    # GSplatData.default_substitutive convention). Do NOT read the on-disk
+    # ``default_level`` here — that is the viewer's COARSEST initial-load hint,
+    # a separate concept (conflating the two is the kind=lod default_level bug).
+    info["default_substitutive"] = 0
+    info["default_lod_level"] = int(root.attrs.get("default_level", 0))
 
     leaf_node = _representative_leaf_node(root)
     n_additive = int(leaf_node.attrs.get("n_additive_sublods", 1))

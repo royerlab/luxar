@@ -116,13 +116,13 @@ def graft_gsplat_node(
 
     if isinstance(node, GSplatLodGroup):
         wrapper_attrs.setdefault("display_type", "gsplats")
-        n = len(node.children)
         # In-memory children are finest-first; add_lod_group wants coarsest→finest.
         on_disk = list(reversed(node.children))
-        on_disk_default = (n - 1) - node.default_level
-        wrapper = parent_node.add_lod_group(
-            name, default_level=int(on_disk_default), **wrapper_attrs
-        )
+        # default_level = 0 = the COARSEST child (child_0): the viewer's initial
+        # progressive-load level, decoupled from the data-model default (see
+        # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
+        # the finest by default would render "backwards".
+        wrapper = parent_node.add_lod_group(name, **wrapper_attrs)
         for i, child in enumerate(on_disk):
             mps = float((child.meta or {}).get("min_pixel_size", 0.0) or 0.0)
             graft_gsplat_node(

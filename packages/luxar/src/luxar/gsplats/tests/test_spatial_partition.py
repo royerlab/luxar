@@ -154,6 +154,45 @@ def test_grafting_a_partition_rejects_dim_order():
                 )
 
 
+def test_grafted_lod_uses_coarsest_default_level():
+    """Grafting a standalone kind=lod .gsplats.zarr into a scene must set the
+    viewer default_level to the COARSEST child (0) — a progressive-load hint —
+    NOT the finest. (Regression: graft_gsplat_node briefly carried the same
+    finest-default bug fixed in the scene + standalone writers.)"""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    def _sub(n, seed):
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        return AdditiveSubLOD(
+            centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        )
+
+    pyr = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(additive_sublods=[_sub(100, 0)], level_index=0),
+            SubstitutiveLevel(
+                additive_sublods=[_sub(10, 1)], compression_factor=4, level_index=1
+            ),
+        ]
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        std = Path(tmp) / "x.gsplats.zarr"
+        write_gsplats_tree(std, pyr.tree, ordering="none")
+        scene_path = Path(tmp) / "scene.zarr"
+        with LuxarZarrCompiler(scene_path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=std)
+        g = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert g.attrs["kind"] == "lod"
+        assert g.attrs["default_level"] == 0  # coarsest, NOT finest
+        # child_0 is the coarsest (10 splats), not the finest (100).
+        assert g["child_0"].attrs["n_splats"] == 10
+
+
 def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
     """`gsplat info` on a legacy (non-v3.0) file must surface the migrate-format
     hint and exit cleanly — NOT route into the tree summary and crash (review
