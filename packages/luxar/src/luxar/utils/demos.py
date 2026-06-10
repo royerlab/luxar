@@ -142,6 +142,24 @@ _DEMOS_DATA_DIR = Path(__file__).resolve().parent.parent / "demos" / "data"
 _DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
 
+def _cache_is_stale(cache_file: Path, source_file: Path) -> bool:
+    """True if ``cache_file`` should be refreshed from ``source_file``.
+
+    Stale when the cache is missing, its size differs from the source, or the
+    source is newer (``shutil.copy2`` preserves mtime, so a re-migrated /
+    re-checked-out source carries a newer one). This makes the demo cache
+    self-healing across a packaged-data re-migration (e.g. the gsplats v2.0 ->
+    v3.0 cutover) instead of pinning the first-seen copy forever. If the source
+    is absent (e.g. an unpulled LFS file) the existing cache is kept.
+    """
+    if not cache_file.exists():
+        return True
+    if not source_file.exists():
+        return False
+    cs, ss = cache_file.stat(), source_file.stat()
+    return cs.st_size != ss.st_size or ss.st_mtime > cs.st_mtime + 1e-6
+
+
 def is_lfs_pointer(path: Path) -> bool:
     """Check whether *path* is an unpulled Git LFS pointer file.
 
@@ -238,11 +256,16 @@ def load_precomputed_gsplats(
         # Ensure cache dir exists
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy any missing files from LFS source to cache
+        # Copy any missing OR STALE files from the LFS source to the cache.
+        # Staleness matters: when the packaged source is re-migrated (e.g. the
+        # v2.0 -> v3.0 format cutover) the cache must refresh, else demos load
+        # an outdated cached copy and fail against the v3.0-only reader. We treat
+        # the cache as stale when its size differs or the source is newer
+        # (``shutil.copy2`` preserves mtime, so a fresh source has a newer one).
         for fname in file_names:
             cache_file = cache_dir / fname
-            if not cache_file.exists():
-                lfs_file = lfs_dir / fname
+            lfs_file = lfs_dir / fname
+            if _cache_is_stale(cache_file, lfs_file):
                 _validate_lfs_files([lfs_file])
                 aprint(f"Copying {fname} from package data to cache")
                 shutil.copy2(lfs_file, cache_file)
@@ -291,8 +314,26 @@ def load_precomputed_bundle(
     with asection(f"Loading precomputed GSplats bundle ({demo_name})"):
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Check if all files already in cache
+        # Re-extract when a frame is missing OR the bundle source changed
+        # (e.g. a v2.0 -> v3.0 re-migration). A (size, mtime) stamp keyed on the
+        # bundle makes the extracted cache self-healing instead of pinning the
+        # first-seen extraction — otherwise demos load stale frames that fail
+        # against the v3.0-only reader.
+        stamp_file = cache_dir / f".{bundle_name}.stamp"
+        bundle_stamp = ""
+        if bundle_path.exists():
+            bs = bundle_path.stat()
+            bundle_stamp = f"{bs.st_size}:{int(bs.st_mtime)}"
+        stamp_ok = (
+            bundle_stamp != ""
+            and stamp_file.exists()
+            and stamp_file.read_text() == bundle_stamp
+        )
+
         missing = [f for f in file_names if not (cache_dir / f).exists()]
+        if not stamp_ok and bundle_stamp:
+            # Bundle differs from the cached extraction → re-extract all frames.
+            missing = list(file_names)
 
         if missing:
             # Extract from bundle
@@ -324,6 +365,10 @@ def load_precomputed_bundle(
                         cache_dir,
                         target_name=requested_path.as_posix(),
                     )
+            # Record the bundle stamp so a later run with the SAME bundle skips
+            # re-extraction, but a re-migrated bundle (new size/mtime) refreshes.
+            if bundle_stamp:
+                stamp_file.write_text(bundle_stamp)
 
         # Load all
         results = []

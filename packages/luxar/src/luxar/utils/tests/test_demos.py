@@ -379,3 +379,76 @@ class TestSafeZipExtraction:
                     cache_dir,
                     target_name="../escape.gsplats.zarr.zip",
                 )
+
+
+class TestCacheStaleness:
+    """The demo cache must self-heal when packaged data is re-migrated
+    (e.g. the gsplats v2.0 -> v3.0 cutover), not pin the first-seen copy."""
+
+    def test_cache_is_stale_detects_refresh_conditions(self, tmp_path: Path) -> None:
+        import os
+
+        from luxar.utils.demos import _cache_is_stale
+
+        cache = tmp_path / "cache.bin"
+        source = tmp_path / "source.bin"
+
+        # Missing cache → stale.
+        source.write_bytes(b"x" * 100)
+        assert _cache_is_stale(cache, source) is True
+
+        # Identical size + same mtime → fresh.
+        cache.write_bytes(b"x" * 100)
+        os.utime(cache, (source.stat().st_atime, source.stat().st_mtime))
+        assert _cache_is_stale(cache, source) is False
+
+        # Source larger (re-migration changed content) → stale.
+        source.write_bytes(b"x" * 250)
+        os.utime(cache, (source.stat().st_atime, source.stat().st_mtime))
+        assert _cache_is_stale(cache, source) is True
+
+        # Same size but source newer (in-place rewrite) → stale.
+        cache.write_bytes(b"y" * 250)
+        old = source.stat().st_mtime - 100
+        os.utime(cache, (old, old))
+        assert _cache_is_stale(cache, source) is True
+
+        # Source absent (unpulled LFS) → keep the cached copy.
+        source.unlink()
+        assert _cache_is_stale(cache, source) is False
+
+    def test_load_precomputed_refreshes_a_stale_cache(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A stale cached copy is replaced by the (changed) packaged source."""
+        import os
+
+        import luxar.utils.demos as demos
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        data_root = tmp_path / "data"
+        cache_root = tmp_path / "cache"
+        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", data_root)
+        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", cache_root)
+
+        n = 8
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        src_dir = data_root / "gsplats_x"
+        src_dir.mkdir(parents=True)
+        src = src_dir / "x.gsplats.zarr.zip"
+        GSplatData(
+            centers=np.random.rand(n, 3).astype(np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=chol,
+        ).save(src, ordering="none", compress="zip")
+
+        # Seed the cache with a STALE, unreadable copy (old mtime).
+        (cache_root / "gsplats_x").mkdir(parents=True)
+        stale = cache_root / "gsplats_x" / "x.gsplats.zarr.zip"
+        stale.write_bytes(b"stale-not-a-zarr")
+        os.utime(stale, (0, 0))  # far in the past → source is newer
+
+        out = demos.load_precomputed_gsplats("gsplats_x", ["x.gsplats.zarr.zip"])
+        # Refreshed from source and loaded (would raise on the stale bytes).
+        assert out is not None and out[0].n_splats == n
