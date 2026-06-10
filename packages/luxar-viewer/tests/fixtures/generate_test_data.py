@@ -76,6 +76,7 @@ FIXTURE_NAMES: list[str] = [
     "test_nd_transforms.zarr",
     "test_quantization.zarr",
     "test_sharpness_range.zarr",
+    "test_standalone_gsplats.gsplats.zarr",
     "test_uint16_quantization.zarr",
 ]
 
@@ -1555,6 +1556,55 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_standalone_gsplats_test() -> None:
+    """Standalone v3.0 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
+
+    Exercises the viewer's bare-node load path (Phase 4): opening this file via
+    ``?src=`` must dispatch the root as a gsplats leaf, auto-frame it, and
+    render it. The cluster is offset well away from the origin so a *working*
+    auto-frame is observable — if framing breaks, the camera stays at the
+    default origin and the offset cluster falls off-screen (black canvas).
+
+    Written node-safe (PRECISION float32, no blosc) like the other fixtures so
+    zarrita-js can read it; ``ordering="morton"`` exercises the spatial-index
+    path. There is no scene wrapper — the file root IS the gsplats node.
+    """
+    with asection("Generating Standalone GSplats Test"):
+        from luxar.gsplats import GSplatData
+
+        output = FIXTURES_DIR / "test_standalone_gsplats.gsplats.zarr"
+        rng = np.random.default_rng(0)
+        n = 40
+        # Cluster offset from the origin so auto-framing is observable.
+        centers = (
+            np.array([12.0, 8.0, 5.0], dtype=np.float32)
+            + rng.uniform(-2.0, 2.0, size=(n, 3))
+        ).astype(np.float32)
+        amplitudes = np.linspace(0.6, 1.5, n).astype(np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        sigma = 0.6
+        cholesky[:, 0] = sigma  # L11
+        cholesky[:, 2] = sigma  # L22
+        cholesky[:, 5] = sigma  # L33
+        colors = np.zeros((n, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(1.0, 0.0, n)
+        colors[:, 1] = np.linspace(0.0, 1.0, n)
+        colors[:, 2] = 0.6
+
+        GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            colors=colors,
+        ).save(
+            output,
+            ordering="morton",
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=COMPRESSOR_DISABLED,
+        )
+        aprint(f"  Created {output} ({n} splats, standalone v3.0 leaf)")
+
+
 def generate_lod_group_test() -> None:
     """Three-level ``lod_group`` fixture for the lod-group E2E spec.
 
@@ -1738,6 +1788,9 @@ def main() -> None:
         aprint("")
 
         generate_gsplats_test()
+        aprint("")
+
+        generate_standalone_gsplats_test()
         aprint("")
 
         generate_lod_group_test()
