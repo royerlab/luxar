@@ -1420,7 +1420,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
         return metadata
 
-
     def create_resizable_dataset(
         self,
         path: NodePath,

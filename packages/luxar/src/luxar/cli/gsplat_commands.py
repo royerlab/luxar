@@ -4283,8 +4283,10 @@ def _print_gsplat_tree_summary(path: Path) -> None:
         aprint("═" * 70)
         aprint(f"\nFile: {path.name}")
         aprint(f"Size: {format_memory_size(path.stat().st_size)}")
-        kind = "partition" if isinstance(node, GSplatPartition) else (
-            "lod" if isinstance(node, GSplatLodGroup) else "leaf"
+        kind = (
+            "partition"
+            if isinstance(node, GSplatPartition)
+            else ("lod" if isinstance(node, GSplatLodGroup) else "leaf")
         )
         aprint(f"\nRoot kind: {kind}")
         aprint(f"Dimensions: {node_ndim(node)}D")

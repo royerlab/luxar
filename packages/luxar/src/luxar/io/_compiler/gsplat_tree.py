@@ -174,7 +174,12 @@ def _write_single_splat_set(
         group.attrs["center_bounds"] = metadata["center_bounds"]
         group.attrs["ordering"] = metadata["ordering"]
         if metadata["ordering"] != "none":
-            for key in ("ordering_min", "ordering_max", "ordering_bits_per_dim", "chunk_size"):
+            for key in (
+                "ordering_min",
+                "ordering_max",
+                "ordering_bits_per_dim",
+                "chunk_size",
+            ):
                 if key in metadata:
                     group.attrs[key] = metadata[key]
         else:
@@ -453,7 +458,9 @@ def _node_meta_from_attrs(group: zarr.Group) -> Dict[str, Any]:
     return out
 
 
-def read_gsplat_node(group: zarr.Group, root: zarr.Group, decoder: Any = None) -> "GSplatNode":
+def read_gsplat_node(
+    group: zarr.Group, root: zarr.Group, decoder: Any = None
+) -> "GSplatNode":
     """Reconstruct a :class:`GSplatNode` subtree from a written zarr ``group``."""
     from luxar.encoding import ArrayDecoder
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
