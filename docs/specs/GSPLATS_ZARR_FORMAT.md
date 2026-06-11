@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 2.0.0
-**Last Updated**: 2026-05-20
+**Version**: 3.0.0
+**Last Updated**: 2026-06-09
 
 ## Purpose
 
@@ -12,16 +12,24 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 - [GSplats Dimension Mapping](GSPLATS_DIMENSION_MAPPING.md) — Dimension mapping for nD scenes
 - [nD Transforms](../guides/specs/ND_TRANSFORMS_SPEC.md) — nD navigation and transforms
 
-> **Scope note.** This format is a Python-side **processing artifact** —
-> the output of `luxar gsplat fit`, `lod additive`, `lod substitutive`,
-> `lod pyramid`, etc. The viewer never consumes a `.gsplats.zarr`
-> directly. When gsplats land in a **scene** (loadable by the viewer),
-> the substitutive axis is not carried inline as a 2-D matrix; instead a
-> multi-substitutive pyramid is **auto-lowered** at scene-write time into
-> a `kind=lod` Group (one gsplats child per substitutive level, with
-> per-child `min_pixel_size` thresholds), and each child still carries its
-> own additive ladder. Pass `lod_group=False` to collapse to the finest
-> substitutive level instead — see ``Group.add_gsplats_from_data``.
+> **Scope note (v3.0).** A `.gsplats.zarr` is a **detached scene-node subtree** —
+> structurally identical to the gsplats node a Luxar scene already contains, just
+> with the file root standing in for the scene root. The file root **is** the
+> node. There is no separate matrix format: the same three nestable primitives
+> the scene uses (a gsplats **leaf** with an optional `additive_<i>/` ladder; a
+> `kind=lod` Group; a `kind=partition` Group) express every LOD / partition
+> combination.
+>
+> Consequences of the unification:
+> - **The viewer consumes a `.gsplats.zarr` directly** — `?src=<file>.gsplats.zarr`
+>   loads it as a scene root and frames on its `position_bounds`.
+> - **Embedding into a scene is a graft, not a lowering.** A multi-substitutive
+>   pyramid is *already* a `kind=lod` Group on disk; the scene path no longer
+>   "auto-lowers" a matrix — it writes the same node tree, through the same
+>   serializer (`io/_compiler/gsplat_tree.write_gsplat_node`), so a standalone
+>   leaf / ladder / kind=lod / kind=partition subtree is byte-identical to the
+>   scene one. Pass `lod_group=False` to `Group.add_gsplats_from_data` to collapse
+>   to the finest substitutive level at embed time.
 
 ---
 
@@ -30,12 +38,15 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 1. **Save/Load fitted results** - Persist expensive fitting results for later use
 2. **Lightweight rendering** - Load only splat data for visualization
 3. **Provenance tracking** - Record what image/parameters produced the splats
-4. **2-D LOD storage** - Single self-describing file carrying any of:
-   - one splat set (trivial `[1, 1]` case)
-   - an additive ladder (`[1, M]` — same N splats sliced into prefix-sum levels)
-   - a substitutive pyramid (`[N, 1]` — synthesised representative splats per level)
-   - a full 2-D pyramid (`[N, M_i]` — substitutive levels each with their own additive ladder)
-5. **Future: Checkpoint/Resume** - Pause and resume fitting (deferred)
+4. **LOD / partition storage** - Single self-describing node tree carrying any of:
+   - one splat set (a bare leaf)
+   - an additive ladder (one leaf with `additive_<i>/` prefix-sum sub-LODs)
+   - a substitutive hierarchy (a `kind=lod` group of leaves, coarsest→finest)
+   - a full pyramid (a `kind=lod` group whose children are additive-ladder leaves)
+   - a spatial partition (a `kind=partition` group of `part_<i>/` leaves)
+   - any nesting of the above (e.g. a partition of LOD groups)
+5. **Direct viewing** - The viewer opens the file as a scene root (`?src=…`)
+6. **Future: Checkpoint/Resume** - Pause and resume fitting (deferred)
 
 ## Core Data Structure
 
@@ -66,115 +77,202 @@ Broadcasting uses the standard `luxar.encoding` format. When all elements share 
 }
 ```
 
-The `n_splats` attribute in `splats/.zattrs` always reflects the true count (N), regardless of broadcasting.
+The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N), regardless of broadcasting.
 
 ---
 
 ## Format Versions
 
-The current format is **v2.0**, a 2-D ``substitutive × additive`` layout.
-Earlier versions (v1.0 single-LOD; v1.1 additive multi-LOD; pre-v2.0 substitutive
-directory + manifest.json) are no longer read by the runtime — convert legacy
-files with ``luxar gsplat migrate-format <input> <output.gsplats.zarr>``.
+The current format is **v3.0**, a node tree (§ "On-disk grammar"). Earlier
+versions (v1.0 single-LOD; v1.1 additive multi-LOD; the pre-v2.0 substitutive
+directory + manifest.json; and the interim v2.0 `substitutive_<s>/additive_<a>/`
+matrix) are no longer read by the runtime — convert legacy files with
+``luxar gsplat migrate-format <input> <output.gsplats.zarr>``.
 
-A v2.0 file always carries at least one substitutive level and at least one
-additive sub-LOD per level. The four canonical shapes are:
+A v3.0 file is one of (each freely nestable):
 
-| Shape         | Meaning                                                      |
-|---------------|--------------------------------------------------------------|
-| `[1, 1]`      | One splat set (the "trivial" case — output of plain `fit`)   |
-| `[1, M]`      | One substitutive level with an M-step additive ladder        |
-| `[N, 1]`      | N substitutive levels, each a single flat splat set          |
-| `[N, M_i]`    | Full pyramid: N substitutive levels, each with its own ladder|
+| Shape            | On-disk form                                                       |
+|------------------|--------------------------------------------------------------------|
+| single leaf      | `centers`/`amplitudes`/`cholesky_factors`(/`colors`) at the root   |
+| additive ladder  | `additive_<i>/` sub-LOD subgroups + `n_additive_sublods`           |
+| substitutive lod | `type=group, kind=lod`; `child_<i>/` coarsest→finest + `min_pixel_size` |
+| full pyramid     | a `kind=lod` group whose `child_<i>/` are additive-ladder leaves   |
+| partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
+
+Every node carries `position_bounds`; the root additionally carries
+`format_version:"3.0"`, `format_type:"gsplats_zarr"`, `timestamp`, and
+`luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
+pyramid" shape expressed as a node tree.
 
 ---
 
-## Zarr Structure (v2.0 — 2-D substitutive × additive)
+## Zarr Structure (v3.0 — node tree)
+
+The file root IS the node. The same three primitives nest arbitrarily:
+
+### Shape 1 — bare leaf (single splat set)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs                                 # Format metadata: format_version: "2.0",
-│                                           # format_type, timestamp, luxar_gsplats_version,
-│                                           # description, n_substitutive, default_substitutive
-├── .zmetadata                              # Consolidated metadata for fast loading
-│
-├── splats/                                 # Splat container (always a substitutive_<s> hierarchy)
-│   ├── .zattrs                             # type: "gsplats", n_substitutive,
-│   │                                       # default_substitutive, truncation_radius, …
-│   │
-│   ├── substitutive_0/                     # Finest substitutive level (= the original/finest)
-│   │   ├── .zattrs                         # n_additive_sublods, compression_factor=1,
-│   │   │                                   # parent_method=null, level_index=0, level_stats?
-│   │   ├── additive_0/                     # Coarsest additive sub-LOD
-│   │   │   ├── centers                     # (N_{0,0}, d) float32, spatially ordered
-│   │   │   ├── amplitudes                  # (N_{0,0},) float32
-│   │   │   ├── cholesky_factors            # (N_{0,0}, k) float32
-│   │   │   ├── colors                      # (N_{0,0}, 3) float32/uint8, optional
-│   │   │   ├── chunk_bounds                # (num_chunks, d, 2) float32
-│   │   │   └── .zattrs                     # n_splats, ndim, ordering, lod_stats, …
-│   │   ├── additive_1/                     # Only present when M_0 > 1
-│   │   └── additive_{M_0-1}/
-│   │
-│   ├── substitutive_1/                     # K^1 splats (e.g. K=4)
-│   │   ├── .zattrs                         # compression_factor=K, parent_method, level_index
-│   │   └── additive_0/                     # Typically a single flat set; M_i can vary per level
-│   │
-│   └── substitutive_{N-1}/                 # K^(N-1) splats (coarsest)
-│
-├── fitting/                                # Optimization info (optional, unchanged from v1.x)
-│   ├── .zattrs                             # time_seconds, iterations, converged, psnr_db, …
-│   └── config/.zattrs                      # Fitter hyperparameters
-│
-└── provenance/                             # Image lineage (optional, unchanged from v1.x)
-    └── .zattrs                             # source_file, shape, dtype, normalization
+├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
+│                     # ordering_min/max/bits, chunk_size, amplitude_range,
+│                     # center_bounds, position_bounds, truncation_radius,
+│                     # opacity, gamma, intensity, offset, blending_mode,
+│                     # format_version: "3.0", format_type: "gsplats_zarr",
+│                     # timestamp, luxar_gsplats_version, description?
+├── .zmetadata        # Consolidated metadata for fast loading
+├── centers           # (N, d) float32, spatially ordered
+├── amplitudes        # (N,) float32
+├── cholesky_factors  # (N, k) float32  k = d*(d+1)/2
+├── colors            # (N, 3) float32/uint8  (optional)
+├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
+├── fitting/          # Optimization info (optional)
+│   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …
+│   └── config/.zattrs  # Fitter hyperparameters
+└── provenance/       # Image lineage (optional)
+    └── .zattrs       # source_file, shape, dtype, normalization
 ```
+
+### Shape 2 — additive ladder (prefix-sum LODs over the same N splats)
+
+```
+fitted.gsplats.zarr/
+├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
+│                     # position_bounds, format_version: "3.0", …
+├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
+│   ├── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+│   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
+├── additive_1/       # Only present when n_additive_sublods > 1
+│   └── …
+└── additive_{M-1}/   # Finest sub-LOD
+    └── …
+```
+
+`n_additive_sublods` on the parent leaf group declares the ladder depth.
+Sub-LOD groups carry lightweight attrs (no rendering defaults).
+
+### Shape 3 — substitutive LOD (`kind=lod` group)
+
+```
+fitted.gsplats.zarr/
+├── .zattrs           # type: "group", kind: "lod", selector: "pixel_size",
+│                     # default_level: <int>, display_type: "gsplats",
+│                     # position_bounds, format_version: "3.0", …
+├── child_0/          # Coarsest child (child_0 = coarsest on disk)
+│   ├── .zattrs       # min_pixel_size: 0.0, compression_factor, level_index, …
+│   ├── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+│   └── …
+├── child_1/
+│   ├── .zattrs       # min_pixel_size: <threshold>, …
+│   └── …
+└── child_{N-1}/      # Finest child (highest min_pixel_size threshold)
+    └── …
+```
+
+Children are written **coarsest→finest** on disk (child_0 = coarsest,
+child_{N-1} = finest). `default_level` is 0-based in the same coarsest-first
+order: `default_level = (n-1) - default_substitutive`, so `default_substitutive=0`
+(finest) maps to `default_level = n-1` (the last, finest, child). Each child
+carries `min_pixel_size`; the coarsest child conventionally has `min_pixel_size: 0`.
+Any node shape (bare leaf, additive ladder) is valid as a child.
+
+### Shape 4 — spatial partition (`kind=partition` group)
+
+```
+fitted.gsplats.zarr/
+├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
+│                     # max_elements: <int>, position_bounds, format_version: "3.0", …
+├── part_0/           # BSP part 0 (any node shape valid per part)
+│   ├── .zattrs       # position_bounds (per-part bounds for frustum culling)
+│   └── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+├── part_1/
+│   └── …
+└── part_{P-1}/
+    └── …
+```
+
+The viewer renders ALL parts simultaneously; THREE.js per-mesh frustum culling
+selects visible parts. The partition writer uses recursive BSP (`median`,
+`midpoint`, or `sah` rule) to build spatially balanced parts.
+
+### Shape 5 — full pyramid (substitutive × additive, nested)
+
+A `kind=lod` group whose children are additive-ladder leaves combines both axes:
+
+```
+fitted.gsplats.zarr/
+├── .zattrs           # type: "group", kind: "lod", …
+├── child_0/          # Coarsest substitutive level — additive ladder
+│   ├── .zattrs       # type: "gsplats", n_additive_sublods, …
+│   ├── additive_0/
+│   └── additive_{M-1}/
+└── child_{N-1}/      # Finest substitutive level — additive ladder
+    ├── additive_0/
+    └── additive_{M-1}/
+```
+
+Partitions of LOD groups (`kind=partition` whose parts are `kind=lod` nodes)
+are also valid and nest in the same way.
 
 ### Root Attributes (.zattrs)
 
+The root carries both the node-type attrs (stamped by the shared walker) and
+the self-identifying file header (stamped by `write_gsplats_tree`):
+
 ```json
 {
-  "format_version": "2.0",
+  "format_version": "3.0",
   "format_type": "gsplats_zarr",
-  "timestamp": "2026-05-20T10:00:00Z",
+  "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "X.Y.Z",
-  "description": "Optional user description",
-  "n_substitutive": 3,
-  "default_substitutive": 0
+  "description": "Optional user description"
 }
 ```
 
-**Note**: Core per-cell splat metadata (`n_splats`, `ndim`, `ordering`, …) lives
-on each `splats/substitutive_<s>/additive_<a>/.zattrs`. The outer
-`splats/.zattrs` carries pyramid-wide attributes (`n_substitutive`,
-`default_substitutive`, `truncation_radius`).
+For a bare-leaf root, the node attrs (`type`, `n_splats`, `ndim`, `ordering`,
+`position_bounds`, rendering defaults) live alongside these header keys on the
+same `.zattrs`. For a group root (`kind=lod` or `kind=partition`), the node
+attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
+`position_bounds`, and any group-level meta.
 
-### Per-Cell Splat Attributes (`substitutive_<s>/additive_<a>/.zattrs`)
-
-These attributes are written on each leaf cell group (not on the outer
-`splats/.zattrs`):
+### Per-Leaf Splat Attributes (`.zattrs` on a leaf group)
 
 ```json
 {
+  "type": "gsplats",
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "truncation_radius": 3.0,        // Gaussian truncation in sigmas (default 3.0 if absent)
-  "ordering": "morton",            // "morton", "hilbert", or "none"
-  "ordering_min": [0.0, 0.0, 0.0], // Bounds for ordering-curve normalization (all dimensions)
+  "truncation_radius": 3.0,
+  "ordering": "hilbert",
+  "ordering_min": [0.0, 0.0, 0.0],
   "ordering_max": [256.0, 256.0, 128.0],
-  "ordering_bits_per_dim": 21,     // Bits per dimension in the ordering code
-  "chunk_size": 2048,              // Elements per chunk
+  "ordering_bits_per_dim": 21,
+  "chunk_size": 2048,
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "center_bounds": {
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
-  }
+  },
+  "position_bounds": {
+    "min": [0.0, 0.0, 0.0],
+    "max": [256.0, 256.0, 128.0]
+  },
+  "opacity": 1.0,
+  "gamma": 1.0,
+  "intensity": 1.0,
+  "offset": 0.0,
+  "blending_mode": "additive"
 }
 ```
 
-**Bounds clarification**: Group attributes store **model constraints** (valid ranges). If arrays are quantized, the encoding metadata may store **tighter bounds** for better precision within the actual data range.
+**Bounds clarification**: `center_bounds` records the tight center AABB;
+`position_bounds` is the same value (centers only — chunk bounds widen per-chunk
+by the ellipsoidal extent). Encoding metadata on each array carries tighter
+per-array quantization bounds.
 
-**Note**: Broadcasting information is stored per-array via encoding metadata (see Broadcasting Convention above), not in the group attributes.
+**Note**: Broadcasting information is stored per-array via encoding metadata
+(see Broadcasting Convention above), not in the group attributes.
 
 ### Fitting Group Attributes (Fitter-Agnostic)
 
@@ -183,31 +281,30 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 **Common fields** (fitting/.zattrs):
 ```json
 {
-  "fitter_name": "luxar.gsplats",           // Identifier for the fitter
-  "fitter_version": "0.1.0",                // Version of the fitter
-  "time_seconds": 45.3,                     // Wall-clock fitting time
-  "iterations": 850,                        // Number of iterations
-  "converged": true,                        // Did it meet convergence criteria?
-  "timestamp": "2025-01-15T14:30:00Z"       // ISO 8601 format
+  "fitter_name": "luxar.gsplats",
+  "fitter_version": "0.1.0",
+  "time_seconds": 45.3,
+  "iterations": 850,
+  "converged": true,
+  "timestamp": "2025-01-15T14:30:00Z"
 }
 ```
 
 **Fitter-specific config** (fitting/config/.zattrs):
 ```json
 {
-  // Luxar gsplats fitter example:
   "n_iters": 1000,
   "lr": 0.01,
   "loss_type": "l1",
   "asymmetric_penalty": 1.0,
   "init_sigma_vox": 0.5,
   "seed_method": "auto",
-  "enable_dynamic_ops": true,
-  // ... any other fitter-specific parameters
+  "enable_dynamic_ops": true
 }
 ```
 
-**Design principle**: Other programs that produce gsplats can write their own `fitter_name` and custom config. Readers should:
+**Design principle**: Other programs that produce gsplats can write their own
+`fitter_name` and custom config. Readers should:
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
 
@@ -217,14 +314,14 @@ The `provenance/` group records information about the source image:
 
 ```json
 {
-  "source_file": "/path/to/image.tif",      // Original image path
-  "source_hash": "sha256:abc123...",        // Hash for verification (optional)
-  "shape": [128, 256, 256],                 // Image dimensions (ZYX or YX)
-  "dtype": "uint16",                        // Original image dtype
+  "source_file": "/path/to/image.tif",
+  "source_hash": "sha256:abc123...",
+  "shape": [128, 256, 256],
+  "dtype": "uint16",
   "normalization": {
-    "method": "percentile",                 // "minmax", "percentile", "none"
-    "low": 0.1,                             // Lower percentile (if applicable)
-    "high": 99.9                            // Upper percentile (if applicable)
+    "method": "percentile",
+    "low": 0.1,
+    "high": 99.9
   }
 }
 ```
@@ -262,7 +359,7 @@ chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
 chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
 ```
 
-**Ordering Metadata** (stored per cell in `substitutive_<s>/additive_<a>/.zattrs`):
+**Ordering Metadata** (stored on each leaf group's `.zattrs`):
 - `ordering`: "morton", "hilbert", or "none"
 - `ordering_min`, `ordering_max`: Coordinate bounds for normalization
 - `ordering_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
@@ -467,7 +564,7 @@ chunks = (chunk_elements,)
 chunks = (chunk_elements, n_cols)  # Keep all columns together
 ```
 
-**Stored in metadata**: `splats/.zattrs["chunk_size"]` records the **element count** for reference (typically computed from centers array).
+**Stored in metadata**: The leaf group's `.zattrs["chunk_size"]` records the **element count** for reference (typically computed from centers array).
 
 ---
 
@@ -555,11 +652,12 @@ result.save(
     "fitted.gsplats.zarr",
     ordering="morton",           # or "hilbert", "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
-    color_mode="sdr",            # Required if colors present and float32: "sdr" or "hdr"
     include_fitting_info=True,   # Store stats and config
     include_provenance=True,     # Store image metadata
     description="DAPI nuclei fitting",
 )
+# Colors: SDR (uint8) vs HDR (float32, values > 1) is auto-detected from the
+# color values and recorded in the color encoding metadata — no color_mode param.
 
 # Memory-optimized save (quantization enabled)
 result.save(
@@ -612,33 +710,37 @@ print(info)
 
 ## Standalone vs Embedded Formats
 
-There are two ways to store Gaussian splats, serving different purposes:
+In v3.0 the distinction between "standalone" and "embedded" is structural only,
+not semantic: a `.gsplats.zarr` IS a detached scene-node subtree, and embedding
+one into a scene is a graft of that subtree.
 
-### 1. Standalone Format (`.gsplats.zarr`)
+### Standalone Format (`.gsplats.zarr`)
 
-**Purpose**: Persist fitted results as independent files
+**Purpose**: Persist fitted results as independent, directly-loadable files.
 
-**Structure**: This specification
-- Root container with format metadata
-- `splats/` group with arrays
-- Optional `fitting/` and `provenance/` groups
-- Spatially ordered with `chunk_bounds`
+**Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
+self-identifying header (`format_version:"3.0"`, `format_type:"gsplats_zarr"`,
+`timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
+
+**Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene
+root. The viewer frames on `position_bounds` at the root group. No intermediate
+scene conversion is required.
 
 **Use cases**:
 - Save/load fitted results between sessions
 - Share fitted splats with others
-- Lightweight rendering without full scene
+- Serve directly to the viewer without wrapping in a scene
 - Archive expensive computation results
 
-### 2. Embedded Format (Luxar Scene)
+### Embedded Format (Luxar Scene)
 
-**Purpose**: Multi-object visualization with scene graph
+**Purpose**: Multi-object visualization with scene graph, transforms, and
+side-by-side geometry layers (Points, Lines, GSplats).
 
-**Structure**: See `packages/luxar/src/luxar/core/README.md`
-- GSplats as node in scene hierarchy
-- Same arrays: centers, amplitudes, cholesky_factors, colors
-- Spatially ordered with `chunk_bounds`
-- Inherits scene dimensions, transforms, rendering attributes
+**Structure**: See `packages/luxar/src/luxar/core/README.md`. The gsplat node
+subtree is BYTE-IDENTICAL to its standalone counterpart — both go through
+`io/_compiler/gsplat_tree.write_gsplat_node`. Scene dimensions, 4x4
+transforms, and rendering attributes are attached at the scene level.
 
 **Use cases**:
 - Visualize splats alongside other data (points, lines)
@@ -647,23 +749,21 @@ There are two ways to store Gaussian splats, serving different purposes:
 
 ### Relationship
 
-**Common Foundation**:
-- Both use same spatial ordering (Morton/Hilbert) via `luxar.io`
-- Both use same encoding system (`luxar.encoding`)
-- Both store `chunk_bounds` for spatial queries
-- Both use identical array structure and semantics
+**Unified authoring path**: Both write through the same
+`io/_compiler/gsplat_tree.write_gsplat_node` walker, backed by the shared
+`gsplat_assembly.py` leaf functions. A standalone leaf is byte-identical to
+a scene leaf (same arrays, chunking, ordering, attrs) — enforced by parity
+tests in `io/_compiler/tests/test_scene_leaf_parity.py`.
 
-**Key Difference**: Container structure
-- Standalone: Self-contained with provenance/fitting metadata
-- Embedded: Part of larger scene graph with inherited attributes
+**Common foundation**:
+- Same spatial ordering (Morton/Hilbert) via `luxar.io`
+- Same encoding system (`luxar.encoding`)
+- Same `chunk_bounds` for spatial queries
+- Identical array structure and semantics
 
-**Code Reuse**: The `luxar.io` package provides the shared implementation:
-- Spatial ordering functions
-- Chunk bounds calculation
-- Encoding application
-- Both formats call the same underlying functions
-
-**Scene Integration**: `scene.add_gsplats_from_file()` loads `.gsplats.zarr` files directly, preserving LOD structure for multi-LOD data.
+**Scene integration**: `scene.add_gsplats_from_file()` grafts a `.gsplats.zarr`
+node tree into the scene. `scene.add_gsplats_from_data()` converts a `GSplatData`
+through the same tree serializer.
 
 ---
 
@@ -701,12 +801,14 @@ with LuxarZarrCompiler("scene.zarr") as compiler:
     scene.add_gsplats_from_volume("nuclei", image, progressive=True)
 ```
 
-Multi-additive-LOD scene nodes use per-sub-LOD subgroups
-(``additive_0/``, ``additive_1/``, …) flat under the gsplats node —
-no substitutive wrapper. The viewer streams these progressively
-(prefix-sum LODs). Substitutive levels carried by a ``GSplatData``
-input are dropped at scene-write time; only the default substitutive
-level's additive ladder is written into the scene.
+Multi-additive-LOD gsplats nodes use per-sub-LOD subgroups
+(``additive_0/``, ``additive_1/``, …) under the leaf node —
+``n_additive_sublods`` on the parent declares the depth. The viewer streams
+these progressively (prefix-sum LODs). When the input ``GSplatData`` carries a
+substitutive pyramid, `add_gsplats_from_data` writes a ``kind=lod`` Group with
+one child per substitutive level (pass ``lod_group=False`` to collapse to the
+finest level instead). Both paths go through the shared
+``gsplat_tree.write_gsplat_node`` walker.
 
 ---
 
@@ -723,7 +825,7 @@ level's additive ladder is written into the scene.
 | Covariance storage | Cholesky (packed) | Already have it, compresses well |
 | Fitting info | Fitter-agnostic design | Allows other programs to use format |
 | Checkpoint/Resume | Deferred | Focus on basic I/O first |
-| 2-D LOD | v2.0 `substitutive_<s>/additive_<a>/` cells | Substitutive (replacement) and additive (extension) compose as a 2-D matrix in a single file |
+| Node-tree LOD | v3.0 nestable primitives (leaf / kind=lod / kind=partition) | Substitutive, additive, and partition axes compose freely as a tree rather than a fixed matrix |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc + BITSHUFFLE + zstd | Standard, well-supported |
 | Delta encoding | No | Blosc shuffle sufficient |
@@ -744,27 +846,33 @@ level's additive ladder is written into the scene.
 
 ## Changelog
 
-- **v3.0.0** (2026-05-20): `.gsplats.zarr` format v2.0 — 2-D LOD matrix
-  - On-disk format bumped to v2.0; legacy v1.0 / v1.1 / pre-v2.0 substitutive
-    directory layouts no longer read at runtime. Convert with
-    `luxar gsplat migrate-format <input> <output.gsplats.zarr>`.
-  - Splat container is now a `substitutive × additive` matrix laid out at
-    `splats/substitutive_<s>/additive_<a>/`. The four canonical pyramid shapes
-    `[1, 1]`, `[1, M]`, `[N, 1]`, `[N, M_i]` all live in a single self-describing
-    file (the pre-v2.0 substitutive directory + manifest.json layout is retired).
-  - Root attrs surface `n_substitutive` and `default_substitutive`. Per-
-    substitutive-level attrs (`compression_factor`, `parent_method`,
-    `level_index`, `n_additive_sublods`) live on the `substitutive_<s>/`
-    groups; per-cell attrs (`n_splats`, `ndim`, `ordering`, `lod_stats`, …)
-    live on the leaf `additive_<a>/` groups.
-  - Python: `GSplatLOD` renamed to `AdditiveSubLOD`; new `SubstitutiveLevel`
-    dataclass; `GSplatData` refactored around `substitutive_levels`. Scene
-    embedding writes the same layout (`splats/substitutive_0/additive_<i>/`).
-  - CLI: `lod substitutive` now writes a single v2.0 file (no more directory
-    + manifest.json); `lod additive` gains `--substitutive-level`; new
-    `lod pyramid` builds the full 2-D pyramid in one call.
-  - Viewer: TypeScript loader walks `substitutive_<defaultSub>/additive_<i>/`;
-    legacy v1.x reading path removed.
+- **v3.0.0** (2026-06-09): `.gsplats.zarr` on-disk format v3.0 — node tree
+  - On-disk format bumped to **v3.0**; the v2.0 `substitutive_<s>/additive_<a>/`
+    matrix and all earlier layouts (v1.0 flat, v1.1 lod_<i>, pre-v2.0
+    substitutive directory + manifest.json) are no longer read at runtime.
+    Convert with `luxar gsplat migrate-format <input> <output.gsplats.zarr>`.
+  - A `.gsplats.zarr` is now a **detached scene-node subtree**: the file root
+    IS the node. No `splats/` wrapper group. Three nestable primitives cover
+    every LOD / partition combination: a gsplats **leaf** (single set or
+    additive ladder), a `kind=lod` group (`child_<i>/` coarsest→finest), and
+    a `kind=partition` group (`part_<i>/`).
+  - **Viewer loads `.gsplats.zarr` directly**: `?src=<file>.gsplats.zarr`
+    opens the file as a scene root, framing on `position_bounds`.
+  - **Single authoring path**: standalone and scene writes go through the same
+    `io/_compiler/gsplat_tree.write_gsplat_node` walker; parity is enforced
+    by `io/_compiler/tests/test_scene_leaf_parity.py`.
+  - `LuxarZarrCompiler.write_gsplats_multi_lod` deleted (was a duplicate of
+    the additive-ladder writer); scene additive writes now go through
+    `write_gsplat_leaf_subtree` → the shared walker.
+  - Python: new `GSplatLeaf` / `GSplatLodGroup` / `GSplatPartition` node types
+    in `luxar.gsplats.tree`; `GSplatData` gains `.tree` / `GSplatData.from_tree`;
+    new `GSplatData.to_spatial_partition(max_elements, rule)`.
+  - `luxar gsplat partition` now writes a single `kind=partition` file via
+    spatial BSP (`--parts` / `--max-elements` / `--rule`); the old index-based
+    `--indices` flag is removed.
+  - Root attrs: `format_version:"3.0"`, `format_type:"gsplats_zarr"`,
+    `timestamp`, `luxar_gsplats_version`; the v2.0 root-level `n_substitutive`
+    / `default_substitutive` keys are gone.
 
 - **v2.0.0** (2026-03-27): Multi-LOD format (v1.1) and scene integration
   - Added format v1.1 with per-LOD subgroups (`splats/lod_0/`, `splats/lod_1/`, ...)

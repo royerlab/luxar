@@ -137,18 +137,18 @@ class TestChunkBoundsZarrAlignment:
             assert chunk_size > 0, "chunk_size metadata must be positive"
 
             # Every array's first chunk dimension must match chunk_size
-            assert (
-                g["centers"].chunks[0] == chunk_size
-            ), f"centers chunks[0]={g['centers'].chunks[0]} != chunk_size={chunk_size}"
-            assert (
-                g["amplitudes"].chunks[0] == chunk_size
-            ), f"amplitudes chunks[0]={g['amplitudes'].chunks[0]} != chunk_size={chunk_size}"
-            assert (
-                g["cholesky_factors"].chunks[0] == chunk_size
-            ), f"cholesky chunks[0]={g['cholesky_factors'].chunks[0]} != chunk_size={chunk_size}"
-            assert (
-                g["colors"].chunks[0] == chunk_size
-            ), f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"
+            assert g["centers"].chunks[0] == chunk_size, (
+                f"centers chunks[0]={g['centers'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["amplitudes"].chunks[0] == chunk_size, (
+                f"amplitudes chunks[0]={g['amplitudes'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["cholesky_factors"].chunks[0] == chunk_size, (
+                f"cholesky chunks[0]={g['cholesky_factors'].chunks[0]} != chunk_size={chunk_size}"
+            )
+            assert g["colors"].chunks[0] == chunk_size, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"
+            )
 
             # chunk_bounds partitions must match number of zarr chunks
             cb = np.array(g["chunk_bounds"])
@@ -160,9 +160,9 @@ class TestChunkBoundsZarrAlignment:
 
             # Zarr chunk count along first axis must equal partition count
             zarr_n_chunks = ceil(g["centers"].shape[0] / g["centers"].chunks[0])
-            assert (
-                zarr_n_chunks == cb.shape[0]
-            ), f"zarr has {zarr_n_chunks} chunks but chunk_bounds has {cb.shape[0]} partitions"
+            assert zarr_n_chunks == cb.shape[0], (
+                f"zarr has {zarr_n_chunks} chunks but chunk_bounds has {cb.shape[0]} partitions"
+            )
 
     def test_gsplats_small_dataset_single_chunk(self) -> None:
         """GSplats with fewer splats than chunk_size should produce 1 partition."""
@@ -201,16 +201,16 @@ class TestChunkBoundsZarrAlignment:
             chunk_size = g.attrs["chunk_size"]
 
             # chunk_size should be clamped to n_splats
-            assert (
-                chunk_size >= n_splats
-            ), f"chunk_size={chunk_size} should be >= n_splats={n_splats}"
+            assert chunk_size >= n_splats, (
+                f"chunk_size={chunk_size} should be >= n_splats={n_splats}"
+            )
 
             # Exactly 1 chunk_bounds partition and 1 zarr chunk
             cb = np.array(g["chunk_bounds"])
             assert cb.shape[0] == 1, f"Expected 1 partition, got {cb.shape[0]}"
-            assert (
-                g["centers"].chunks[0] >= n_splats
-            ), f"centers chunks[0]={g['centers'].chunks[0]} should contain all {n_splats} splats"
+            assert g["centers"].chunks[0] >= n_splats, (
+                f"centers chunks[0]={g['centers'].chunks[0]} should contain all {n_splats} splats"
+            )
 
     # -- Points alignment ----------------------------------------------------
 
@@ -254,27 +254,27 @@ class TestChunkBoundsZarrAlignment:
             pos_chunk0 = g["positions"].chunks[0]
 
             # Positions must match chunk_size
-            assert (
-                pos_chunk0 == chunk_size
-            ), f"positions chunks[0]={pos_chunk0} != chunk_size={chunk_size}"
+            assert pos_chunk0 == chunk_size, (
+                f"positions chunks[0]={pos_chunk0} != chunk_size={chunk_size}"
+            )
 
             # All attributes must match positions chunk[0]
-            assert (
-                g["colors"].chunks[0] == pos_chunk0
-            ), f"colors chunks[0]={g['colors'].chunks[0]} != positions chunks[0]={pos_chunk0}"
-            assert (
-                g["radii"].chunks[0] == pos_chunk0
-            ), f"radii chunks[0]={g['radii'].chunks[0]} != positions chunks[0]={pos_chunk0}"
-            assert (
-                g["sharpnesses"].chunks[0] == pos_chunk0
-            ), f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            assert g["colors"].chunks[0] == pos_chunk0, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
+            assert g["radii"].chunks[0] == pos_chunk0, (
+                f"radii chunks[0]={g['radii'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
+            assert g["sharpnesses"].chunks[0] == pos_chunk0, (
+                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != positions chunks[0]={pos_chunk0}"
+            )
 
             # chunk_bounds partitions == zarr chunk count
             cb = np.array(g["chunk_bounds"])
             expected = ceil(n_points / chunk_size)
-            assert (
-                cb.shape[0] == expected
-            ), f"chunk_bounds has {cb.shape[0]} partitions, expected {expected}"
+            assert cb.shape[0] == expected, (
+                f"chunk_bounds has {cb.shape[0]} partitions, expected {expected}"
+            )
 
     def test_points_4d_with_discrete_dim(self) -> None:
         """4D points with discrete time dim must also align all attributes."""
@@ -362,15 +362,15 @@ class TestChunkBoundsZarrAlignment:
             vtx_chunk0 = g["vertices"].chunks[0]
 
             # All vertex-indexed attributes must match
-            assert (
-                g["widths"].chunks[0] == vtx_chunk0
-            ), f"widths chunks[0]={g['widths'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
-            assert (
-                g["colors"].chunks[0] == vtx_chunk0
-            ), f"colors chunks[0]={g['colors'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
-            assert (
-                g["sharpnesses"].chunks[0] == vtx_chunk0
-            ), f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            assert g["widths"].chunks[0] == vtx_chunk0, (
+                f"widths chunks[0]={g['widths'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
+            assert g["colors"].chunks[0] == vtx_chunk0, (
+                f"colors chunks[0]={g['colors'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
+            assert g["sharpnesses"].chunks[0] == vtx_chunk0, (
+                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != vertices chunks[0]={vtx_chunk0}"
+            )
 
     # -- No spatial index (regression guard) ---------------------------------
 
@@ -906,9 +906,9 @@ class TestCalculateIntelligentChunksDtype:
             )
             # And close to the target — the heuristic is byte-targeted, not
             # element-targeted, so smaller dtypes get more rows per chunk.
-            assert (
-                chunk_bytes <= TARGET_CHUNK_BYTES
-            ), f"{dtype_str}: {chunk_bytes} > target {TARGET_CHUNK_BYTES}"
+            assert chunk_bytes <= TARGET_CHUNK_BYTES, (
+                f"{dtype_str}: {chunk_bytes} > target {TARGET_CHUNK_BYTES}"
+            )
 
     def test_default_dtype_is_float32(self) -> None:
         from luxar.io._compiler.chunking import calculate_intelligent_chunks

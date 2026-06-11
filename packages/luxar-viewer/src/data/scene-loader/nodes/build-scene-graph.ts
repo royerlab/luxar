@@ -35,10 +35,21 @@ export async function buildSceneGraph(
   // Enumerate all groups in the store
   const listing = await enumerateStore(store);
 
+  // A standalone .gsplats.zarr is a *detached node subtree* — the file root
+  // IS the node (a gsplats/points/lines leaf, or a kind=lod / kind=partition
+  // group), not a scene container. Adopt the real root type/kind so
+  // loadSceneNodes dispatches the root through the right leaf/group loader.
+  // A scene root (type 'scene' or absent) keeps the container behaviour.
+  const rootType = (rootAttrs as ZarrNodeAttrs)?.type;
+  const rootKind = (rootAttrs as ZarrNodeAttrs)?.kind;
+  const isBareLeafRoot = rootType === 'gsplats' || rootType === 'points' || rootType === 'lines';
+  const isBareGroupRoot = rootType === 'group' && (rootKind === 'lod' || rootKind === 'partition');
+  const isBareNodeRoot = isBareLeafRoot || isBareGroupRoot;
+
   // Build hierarchical structure
   const root: SceneNode = {
     path: '/',
-    type: 'scene',
+    type: isBareNodeRoot ? (rootType as string) : 'scene',
     attrs: rootAttrs,
     hasSpatialIndex: false,
     children: [],
@@ -57,6 +68,16 @@ export async function buildSceneGraph(
   // must not appear as scene-graph children. Currently only gsplats LOD
   // subgroups (`additive_<i>/`) — the gsplats loader walks them itself.
   const internalSubtreePrefixes: string[] = [];
+
+  // A bare LEAF root owns its entire subtree: its `additive_<i>/` ladder
+  // subgroups are handled by the leaf loader, not the scene graph. Marking
+  // the whole store internal leaves the root as a childless leaf node that
+  // loadSceneNodes dispatches via loadGSplatsNode/etc. (A bare lod/partition
+  // root keeps its `child_<i>/`/`part_<i>/` children — only its grandchildren
+  // are marked internal by the per-node logic below.)
+  if (isBareLeafRoot) {
+    internalSubtreePrefixes.push('/');
+  }
 
   for (const entry of sortedPaths) {
     // Skip overlays group — screen-space overlays are not part of the 3D scene graph

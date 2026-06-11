@@ -67,6 +67,14 @@ export interface GSplatsMetadata {
   /** Center coordinate bounds */
   center_bounds: CoordinateBounds;
 
+  /**
+   * Axis-aligned bounds stamped by the v3.0 writer on every node (a leaf's is
+   * its center bounds; a group's is the union of its children). Used for
+   * framing/clipping a bare-node file on load. Optional for back-compat with
+   * scene leaves that surfaced only `center_bounds`.
+   */
+  position_bounds?: CoordinateBounds;
+
   /** Spatial ordering method */
   ordering: 'morton' | 'hilbert' | 'none';
 

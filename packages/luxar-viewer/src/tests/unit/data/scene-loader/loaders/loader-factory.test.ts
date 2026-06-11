@@ -205,6 +205,14 @@ describe('createProgressiveGSplatsLoader', () => {
     // Plus the per-additive-sub-LOD raw zarr attrs (foo from our mock).
     expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
   });
+
+  it('synthesizes a clean additive path for a bare-node ROOT (no "//additive_0")', async () => {
+    // A standalone additive-ladder .gsplats.zarr opened directly has node.path "/".
+    const node = makeNode('/', 'gsplats');
+    await createProgressiveGSplatsLoader(node, 1, {} as SceneNode['attrs'], makeDeps());
+    const lodNode = gsplatsCtorArgs[0][1] as SceneNode;
+    expect(lodNode.path).toBe('/additive_0'); // not "//additive_0"
+  });
 });
 
 // Symmetry mirror of the gsplats progressive tests for Points + Lines.

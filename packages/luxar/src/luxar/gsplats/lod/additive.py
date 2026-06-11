@@ -674,5 +674,4 @@ def make_additive_lod(
     return GSplatData(
         substitutive_levels=new_sub_levels,
         stats=out_stats,
-        default_substitutive=data.default_substitutive,
     )

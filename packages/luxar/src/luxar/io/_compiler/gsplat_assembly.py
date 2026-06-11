@@ -1,9 +1,11 @@
 """GSplat assembly: validation, spatial ordering, array writes, group attrs.
 
-Private support module for :class:`~luxar.io.compiler.LuxarZarrCompiler`. Holds the
-gsplat-specific pipeline that the public ``write_gsplats`` / ``write_gsplats_multi_lod``
-orchestrators sequence: validate inputs, (optionally) spatially order, write the zarr
-arrays, then stamp the group attributes.
+Private support module shared by the scene compiler
+(:class:`~luxar.io.compiler.LuxarZarrCompiler`) and the root-agnostic node-tree
+writer (:mod:`luxar.io._compiler.gsplat_tree`). Holds the gsplat-specific pipeline
+both sequence: validate inputs, (optionally) spatially order, write the zarr
+arrays, then stamp the group attributes. Because both paths call these same four
+free functions, a scene leaf is byte-identical to a standalone one.
 """
 
 from __future__ import annotations

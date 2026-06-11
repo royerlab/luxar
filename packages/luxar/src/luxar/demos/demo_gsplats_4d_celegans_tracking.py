@@ -1514,7 +1514,6 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
             cache_file,
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
-            color_mode="sdr",
             compress="zip",
             zip_deflate=True,
         )
@@ -1604,7 +1603,6 @@ def filter_background_splats(
             cache_file,
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
-            color_mode="sdr",
             compress="zip",
             zip_deflate=True,
         )
