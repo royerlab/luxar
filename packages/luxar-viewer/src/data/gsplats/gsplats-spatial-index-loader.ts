@@ -680,8 +680,19 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   async prefetchChunks(viewState: GSplatsViewState): Promise<void> {
     await this._onceInit.ensure(() => this.initialize());
 
+    if (!this.arrays.centers) return;
+
     // Query which splat ranges are visible
-    const splatRanges = await this.queryVisibleSplatRanges(viewState);
+    let splatRanges: SplatRange[];
+    try {
+      splatRanges = await this.queryVisibleSplatRanges(viewState);
+    } catch {
+      // Spatial query failed (e.g. malformed viewState during an animation
+      // edge case). Skip the prefetch silently — production loadGSplats will
+      // surface the error on the next demand frame. Matches the points/lines
+      // prefetch siblings so this best-effort path is self-protecting.
+      return;
+    }
     if (splatRanges.length === 0) return;
 
     // Warm every array over the visible ranges. The reads populate L0/L1/L2 as

@@ -46,8 +46,8 @@ Luxar's gsplat LOD model has two orthogonal axes; the helpers here build both:
   `additive_lod=` kwarg. For gsplats it is applied per substitutive level
   (`resolve_additive_axis_gsplats`).
 
-See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the 2-D substitutive × additive LOD
-matrix the gsplat format stores.
+See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.0 node-tree grammar
+(leaf / kind=lod / kind=partition) the gsplat format stores.
 
 ## Geometry-agnostic machinery (`group.py`)
 
@@ -196,4 +196,4 @@ scene.add_gsplats_from_data(
   `resolve_display_type` from `group.py`
 - `luxar.gsplats.lod` — `make_substitutive_lod` / `make_additive_lod` builders
   the gsplats resolvers delegate to
-- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v2.0 substitutive × additive LOD matrix
+- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.0 node-tree format (leaf / kind=lod / kind=partition)

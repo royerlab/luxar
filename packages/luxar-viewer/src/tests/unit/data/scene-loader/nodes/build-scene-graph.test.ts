@@ -188,3 +188,104 @@ describe('buildSceneGraph — gsplats internal-subtree skip', () => {
     expect(root.children?.[0].children?.[0].children).toEqual([]);
   });
 });
+
+describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => {
+  it('a bare gsplats leaf root becomes a childless gsplats node', async () => {
+    // A single-set v3.0 standalone file: arrays live directly under root,
+    // there are no child GROUPS. The root IS the gsplats leaf.
+    enumerateStoreMock.mockResolvedValue([]);
+    const rootAttrs = {
+      type: 'gsplats',
+      format_type: 'gsplats_zarr',
+      format_version: '3.0',
+      n_splats: 100,
+      ndim: 3,
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.type).toBe('gsplats'); // not 'scene'
+    expect(root.path).toBe('/');
+    expect(root.children).toEqual([]);
+  });
+
+  it('a bare gsplats leaf root with an additive ladder hides additive_<i>', async () => {
+    // A v3.0 ladder leaf at the root: additive_<i>/ subgroups are internal
+    // to the gsplats loader and must NOT become scene-graph children.
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/additive_0', kind: 'group' },
+      { path: '/additive_1', kind: 'group' },
+    ]);
+    attrsByPath['/additive_0'] = { type: 'gsplats', n_splats: 30 };
+    attrsByPath['/additive_1'] = { type: 'gsplats', n_splats: 10 };
+    const rootAttrs = {
+      type: 'gsplats',
+      n_additive_sublods: 2,
+      ndim: 3,
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.type).toBe('gsplats');
+    expect(root.children).toEqual([]);
+    // additive subgroups never opened (the leaf loader walks them itself)
+    expect(openCalls).toEqual([]);
+  });
+
+  it('a bare kind=lod root keeps its child_<i> as lod-group children', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/child_0', kind: 'group' },
+      { path: '/child_1', kind: 'group' },
+    ]);
+    attrsByPath['/child_0'] = { type: 'gsplats', n_splats: 8 }; // coarsest
+    attrsByPath['/child_1'] = { type: 'gsplats', n_splats: 100 }; // finest
+    const rootAttrs = {
+      type: 'group',
+      kind: 'lod',
+      selector: 'pixel_size',
+      default_level: 1,
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.type).toBe('group');
+    expect((root.attrs as Record<string, unknown>).kind).toBe('lod');
+    expect(root.children?.map((c) => c.path).sort()).toEqual(['/child_0', '/child_1']);
+    expect(root.children?.every((c) => c.type === 'gsplats')).toBe(true);
+  });
+
+  it('a bare kind=partition root keeps its part_<i> as children', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/part_0', kind: 'group' },
+      { path: '/part_1', kind: 'group' },
+    ]);
+    attrsByPath['/part_0'] = { type: 'gsplats', n_splats: 20 };
+    attrsByPath['/part_1'] = { type: 'gsplats', n_splats: 20 };
+    const rootAttrs = {
+      type: 'group',
+      kind: 'partition',
+      display_type: 'gsplats',
+      max_elements: 25,
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.type).toBe('group');
+    expect((root.attrs as Record<string, unknown>).kind).toBe('partition');
+    expect(root.children?.map((c) => c.path).sort()).toEqual(['/part_0', '/part_1']);
+  });
+
+  it('a true scene root is still a scene container', async () => {
+    enumerateStoreMock.mockResolvedValue([{ path: '/g', kind: 'group' }]);
+    attrsByPath['/g'] = { type: 'gsplats', n_splats: 5 };
+    const rootAttrs = {
+      type: 'scene',
+      scene_dimensions: { dimensions: [] },
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.type).toBe('scene');
+    expect(root.children?.[0].path).toBe('/g');
+  });
+});

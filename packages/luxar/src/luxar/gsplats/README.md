@@ -730,13 +730,13 @@ matrix = make_lod_pyramid(
 ### CLI
 
 ```bash
-# Additive LOD ladder; single v2.0 .gsplats.zarr with [1, M] shape
+# Additive LOD ladder; v3.0 .gsplats.zarr leaf with additive_<i>/ subgroups
 luxar gsplat lod additive fit.gsplats.zarr additive.gsplats.zarr --n-lods 4
 luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr --method self_energy   # cheap O(N log N)
 luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
 luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level 1
 
-# Substitutive LOD pyramid; single v2.0 .gsplats.zarr with [L+1, 1] shape
+# Substitutive LOD pyramid; v3.0 .gsplats.zarr kind=lod group
 luxar gsplat lod substitutive fit.gsplats.zarr substitutive.gsplats.zarr --L 3 --K 4
 luxar gsplat lod substitutive fit.gsplats.zarr out.gsplats.zarr --method greedy --device cuda
 
@@ -744,8 +744,8 @@ luxar gsplat lod substitutive fit.gsplats.zarr out.gsplats.zarr --method greedy 
 luxar gsplat lod pyramid fit.gsplats.zarr pyramid.gsplats.zarr \
     --substitutive K=4,L=3 --additive 4
 
-# Migrate legacy v1.0 / v1.1 / pre-v2.0 substitutive-directory layouts → v2.0
-luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr
+# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.0
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
 ### Recommended Workflow
@@ -812,10 +812,10 @@ result = fit_gaussian_splats(image, n_iters=1000)
 
 # Save to file with spatial ordering for efficient access
 result.save('fitted.gsplats.zarr',
-           ordering='hilbert',  # or 'morton', 'none'
-           color_mode='sdr')    # 'sdr' (uint8) or 'hdr' (float32)
+           ordering='hilbert')  # or 'morton', 'none'
 
-# Colors are automatically saved if present in result
+# Colors are automatically saved if present; SDR (uint8) vs HDR (float32)
+# is auto-detected from the values — there is no explicit color_mode knob.
 ```
 
 ### Loading GSplatData
@@ -878,13 +878,14 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 > **Multi-substitutive input → `kind=lod` group.** When the `GSplatData`
 > carries more than one substitutive level (e.g. the output of
 > `luxar gsplat lod substitutive` / `pyramid`), `add_gsplats_from_data`
-> (and `add_gsplats_from_file`) **auto-lower** it by default into a
-> `kind=lod` scene group — one gsplats child per substitutive level, with
+> (and `add_gsplats_from_file`) route it by default into a `kind=lod`
+> scene group — one gsplats child per substitutive level, with
 > `min_pixel_size` thresholds derived from the per-level splat counts, so
-> the viewer view-switches between levels. No substitutive work is
-> discarded. Pass `lod_group=False` to collapse to the finest level, or
-> `lod_group=dict(min_pixel_sizes=[...])` to set the switch thresholds
-> explicitly.
+> the viewer view-switches between levels. In v3.0 a saved `.gsplats.zarr`
+> is already a `kind=lod` group on disk; scene embedding grafts that subtree
+> directly. No substitutive work is discarded. Pass `lod_group=False` to
+> collapse to the finest level, or `lod_group=dict(min_pixel_sizes=[...])`
+> to set the switch thresholds explicitly.
 
 ### Color Support
 
@@ -900,9 +901,9 @@ result = GSplatData(
     stats={}
 )
 
-# Colors are preserved during save/load
-result.save('colored.gsplats.zarr', color_mode='sdr')  # uint8 [0-255]
-result.save('hdr_colored.gsplats.zarr', color_mode='hdr')  # float32 HDR
+# Colors are preserved during save/load; SDR (uint8 [0-255]) vs HDR (float32,
+# values > 1) is auto-detected from the color values — no color_mode knob.
+result.save('colored.gsplats.zarr')
 
 # Load preserves colors
 loaded = load_gsplats('colored.gsplats.zarr')
@@ -1143,7 +1144,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / substitutive-dir layouts → v2.0
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.0
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management

@@ -158,7 +158,7 @@ export async function createProgressiveGSplatsLoader(
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
 
     const lodNode: SceneNode = {
-      path: `${node.path}/additive_${i}`,
+      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
       type: 'gsplats',
       attrs: {
         ...lodAttrs,
@@ -218,7 +218,7 @@ export async function createProgressivePointsLoader(
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
 
     const lodNode: SceneNode = {
-      path: `${node.path}/additive_${i}`,
+      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
       type: 'points',
       attrs: {
         ...lodAttrs,
@@ -274,7 +274,7 @@ export async function createProgressiveLinesLoader(
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
 
     const lodNode: SceneNode = {
-      path: `${node.path}/additive_${i}`,
+      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
       type: 'lines',
       attrs: {
         ...lodAttrs,

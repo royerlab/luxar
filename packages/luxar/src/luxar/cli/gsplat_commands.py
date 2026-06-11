@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -157,7 +156,26 @@ def info_dataset(
         from luxar.gsplats.gsplat_data import GSplatData
 
         with asection(f"Loading dataset: {path.name}"):
-            data = GSplatData.load(path, include_stats=True)
+            try:
+                data = GSplatData.load(path, include_stats=True)
+            except ValueError:
+                # GSplatData.load raises for two distinct reasons: (a) a valid
+                # v3.0 partition/nested tree that has no flat GSplatData form, or
+                # (b) a legacy/invalid file the v3.0 reader rejects. Disambiguate
+                # by probing the raw tree (instead of brittle substring matching
+                # on the message — the v3.0 rejection text contains "node-tree").
+                from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+                try:
+                    load_gsplat_node(path)  # succeeds only for a valid v3.0 tree
+                except ValueError as load_exc:
+                    # Legacy/invalid → surface the actionable message (which names
+                    # `luxar gsplat migrate-format`) without a traceback.
+                    aprint(f"❌ {load_exc}")
+                    raise typer.Exit(1) from None
+                # Valid v3.0 partition/nested tree → report its shape.
+                _print_gsplat_tree_summary(path)
+                return
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
 
@@ -469,13 +487,18 @@ def quick_view(
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
-    This converts the .gsplats.zarr to Luxar's scene format, serves it,
-    and opens the viewer. The scene is created in a temporary directory.
+    The standalone ``.gsplats.zarr`` is a v3.0 node subtree — exactly what the
+    viewer renders inside a scene — so it is served **directly** (``?src=``) and
+    opened with no scene-compile round-trip. This works for every tree shape:
+    a single leaf, an additive ladder, a ``kind=lod`` substitutive hierarchy, a
+    ``kind=partition`` split, and arbitrary nestings. The viewer frames the
+    camera on the file's ``position_bounds``, so no centroid mutation is needed.
 
-    The dataset is automatically centered at its centroid for optimal viewing.
+    Compressed archives (``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``) are
+    extracted to a temporary directory before serving.
 
     Args:
-        path: Path to .gsplats.zarr or .gsplats.zarr.zip dataset
+        path: Path to .gsplats.zarr (or .zip/.tar.gz) dataset
         port: Port for data server
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
@@ -484,15 +507,13 @@ def quick_view(
     try:
         import threading
 
-        from luxar import Dimensions, LuxarZarrCompiler
         from luxar.cli.main import _serve_data, _serve_viewer
         from luxar.cli.utils import (
             build_viewer,
             check_viewer_built,
             find_available_port,
         )
-        from luxar.encoding import EncodingMode
-        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
 
         # Check viewer is built
         if not check_viewer_built():
@@ -502,74 +523,21 @@ def quick_view(
                 raise typer.Exit(1)
 
         with asection(f"Quick View: {path.name}"):
-            # Load gsplat data
-            with asection("Loading gsplat dataset"):
-                data = GSplatData.load(path, include_stats=False)
-                n_splats = len(data.amplitudes)
-                ndim = data.centers.shape[1]
-                aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
+            # Resolve to an on-disk .gsplats.zarr directory: extract archives to
+            # a temp dir, otherwise serve the directory in place. No GSplatData
+            # round-trip — the viewer consumes the node tree directly, which is
+            # the only path that supports partition/nested roots.
+            if str(path).endswith((".zip", ".tar.gz")):
+                aprint("Extracting compressed dataset...")
+                serve_target = _extract_compressed_zarr(path)
+                temp_dir = serve_target.parent
+            elif path.is_dir():
+                serve_target = path
+            else:
+                aprint(f"❌ Not a .gsplats.zarr directory or archive: {path}")
+                raise typer.Exit(1)
 
-            # Center at origin for better default view
-            aprint("Centering at centroid for better view...")
-            data = data.center_at_centroid()
-
-            # Create temporary Luxar scene
-            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_view_"))
-            scene_path = temp_dir / "gsplat_scene.zarr"
-
-            with asection("Converting to Luxar scene"):
-                aprint(f"Output: {scene_path}")
-
-                # Determine dimensions (centered around origin after centering)
-
-                mins = data.centers.min(axis=0)
-                maxs = data.centers.max(axis=0)
-
-                if ndim == 3:
-                    dims = Dimensions.default_3d()
-                    # Update ranges to match actual centered data
-                    for i, dim in enumerate(dims.dimensions):
-                        dim.range = (float(mins[i]), float(maxs[i]))
-                elif ndim == 2:
-                    dims = Dimensions.default_2d()
-                    for i, dim in enumerate(dims.dimensions):
-                        dim.range = (float(mins[i]), float(maxs[i]))
-                else:
-                    # Create nD dimensions
-                    from luxar import Dimension
-
-                    dims_list = []
-                    for i in range(ndim):
-                        dims_list.append(
-                            Dimension(
-                                name=f"dim{i}",
-                                unit="voxel",
-                                range=(float(mins[i]), float(maxs[i])),
-                                step=1.0,
-                                display=(i < 3),  # Display first 3 dimensions
-                            )
-                        )
-                    dims = Dimensions(dimensions=dims_list)
-
-                with LuxarZarrCompiler(
-                    scene_path, encoding_mode=EncodingMode.MEMORY
-                ) as compiler:
-                    scene = compiler.create_scene(dimensions=dims)
-
-                    scene.attrs["title"] = f"GSplats: {path.name}"
-                    scene.attrs["description"] = (
-                        f"Quick view of Gaussian splat dataset from {path.name}"
-                    )
-
-                    # Add gsplats
-                    scene.add_gsplats_from_data(
-                        name="gsplats",
-                        result=data,
-                        opacity=1.0,
-                        blending_mode="additive",
-                    )
-
-                aprint(f"Scene created: {scene_path}")
+            aprint(f"Serving node tree directly: {serve_target.name}")
 
             # Find available ports
             actual_port = find_available_port(port)
@@ -584,7 +552,7 @@ def quick_view(
                 data_thread = threading.Thread(
                     target=_serve_data,
                     args=(
-                        scene_path,
+                        serve_target,
                         "127.0.0.1",
                         actual_port,
                         None,  # bandwidth_mbps
@@ -599,8 +567,8 @@ def quick_view(
                 data_thread.start()
                 time.sleep(1)
 
-                # Construct data URL
-                data_url = f"http://127.0.0.1:{actual_port}/{scene_path.name}"
+                # Construct data URL (no trailing slash — see CLAUDE.md gotcha)
+                data_url = f"http://127.0.0.1:{actual_port}/{serve_target.name}"
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")
@@ -1142,17 +1110,26 @@ def partition_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
-    output_dir: Path = typer.Argument(
-        ..., help="Output directory for partitioned parts"
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (a single kind=partition file)"
     ),
-    # Partition mode (exactly one required)
+    max_elements: Optional[int] = typer.Option(
+        None,
+        "--max-elements",
+        "-m",
+        help="Max splats per spatial part (the BSP recurses until each part "
+        "is at or below this).",
+    ),
     parts: Optional[int] = typer.Option(
-        None, "--parts", "-n", help="Partition into N roughly equal parts"
+        None,
+        "--parts",
+        "-n",
+        help="Convenience: target ~N parts (sets --max-elements to "
+        "ceil(n_splats / N)).",
     ),
-    indices: Optional[str] = typer.Option(
-        None, "--indices", help="Partition at splat indices: '100,500,1000'"
+    rule: Literal["median", "midpoint", "sah"] = typer.Option(
+        "median", "--rule", help="BSP split rule (median | midpoint | sah)."
     ),
-    # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
         "auto", "--encoding", "-e", help="Encoding mode for output"
     ),
@@ -1160,84 +1137,75 @@ def partition_dataset(
         None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
     ),
 ) -> None:
-    """Partition a Gaussian splat dataset into multiple parts.
+    """Spatially partition a Gaussian splat dataset (BSP) into ONE
+    ``kind=partition`` ``.gsplats.zarr`` file.
 
-    Two modes (exactly one required):
-
-    1. Equal parts (--parts N): Partition into N roughly equal parts.
-
-    2. At indices (--indices): Partition at specific splat indices.
-
-    Output files are named part_000.gsplats.zarr, part_001.gsplats.zarr, etc.
-    in the specified output directory.
+    Recursively splits the splats by position so each ``part_<i>`` holds at
+    most ``--max-elements`` splats (each part carries its own ``position_bounds``
+    for per-part frustum culling in the viewer). Supply ``--max-elements``
+    directly, or ``--parts N`` to target ~N parts. The output is a single
+    self-contained partition file — open it with ``luxar gsplat view`` or embed
+    it in a scene.
 
     Examples:
-        # Partition into 4 equal parts
-        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 4
+        # At most 50k splats per spatial part
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr --max-elements 50000
 
-        # Partition at specific indices (produces 3 parts: [0:100], [100:500], [500:])
-        luxar gsplat partition input.gsplats.zarr output_dir/ --indices "100,500"
+        # Target ~4 parts
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr --parts 4
 
-        # Partition with compression
-        luxar gsplat partition input.gsplats.zarr output_dir/ --parts 3 --compress zip
+        # Surface-area-heuristic splits, compressed
+        luxar gsplat partition input.gsplats.zarr out.gsplats.zarr -m 50000 --rule sah -c zip
     """
     try:
-        from luxar.gsplats.gsplat_data import GSplatData
+        import math
 
-        # Validate mode
-        if parts is None and indices is None:
-            aprint("❌ Error: Specify --parts N or --indices '100,500,...'")
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import iter_leaves
+
+        if max_elements is None and parts is None:
+            aprint("❌ Error: specify --max-elements N (or --parts N)")
             raise typer.Exit(1)
-        if parts is not None and indices is not None:
-            aprint("❌ Error: --parts and --indices are mutually exclusive")
+        if max_elements is not None and parts is not None:
+            aprint("❌ Error: --max-elements and --parts are mutually exclusive")
             raise typer.Exit(1)
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
         with asection(f"Partitioning: {input_path.name}"):
-            # Load
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
-            # Partition
-            with asection("Partitioning"):
-                if parts is not None:
-                    aprint(f"Mode: {parts} equal parts")
-                    out_parts = data.partition(parts)
-                else:
-                    assert (
-                        indices is not None
-                    )  # ensured by mutual exclusivity check above
-                    idx_list = [int(x.strip()) for x in indices.split(",")]
-                    aprint(f"Mode: partition at indices {idx_list}")
-                    out_parts = data.partition(idx_list)
+            # --parts N → target ~N parts via ceil(n / N).
+            resolved_max = (
+                max_elements
+                if max_elements is not None
+                else max(1, math.ceil(data.n_splats / int(parts)))  # type: ignore[arg-type]
+            )
 
-                aprint(f"Produced {len(out_parts)} parts:")
-                for i, part in enumerate(out_parts):
-                    aprint(f"  part_{i:03d}: {part.n_splats:,} splats")
+            with asection("Spatial BSP partition"):
+                partition_node = data.to_spatial_partition(
+                    max_elements=resolved_max, rule=rule
+                )
+                part_sizes = [leaf.n_splats for leaf in iter_leaves(partition_node)]
+                aprint(
+                    f"Produced {len(part_sizes)} spatial parts "
+                    f"(rule={rule}, max_elements={resolved_max:,}): sizes={part_sizes}"
+                )
 
-            # Filter out empty parts
-            nonempty_parts = [
-                (i, part) for i, part in enumerate(out_parts) if part.n_splats > 0
-            ]
-            if len(nonempty_parts) < len(out_parts):
-                n_empty = len(out_parts) - len(nonempty_parts)
-                aprint(f"  Skipping {n_empty} empty part(s)")
-
-            # Save
-            output_dir.mkdir(parents=True, exist_ok=True)
-            with asection(f"Saving to {output_dir}"):
-                ext = ".gsplats.zarr"
-                for i, part in nonempty_parts:
-                    out_path = output_dir / f"part_{i:03d}{ext}"
-                    part.save(
-                        out_path,
-                        encoding_mode=encoding_mode_obj,
-                        include_fitting_info=True,
-                        compress=compress,
-                    )
-                    aprint(f"  Saved {out_path.name} ({part.n_splats:,} splats)")
+            with asection(f"Saving to {output_path.name}"):
+                write_gsplats_tree(
+                    output_path,
+                    partition_node,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,
+                )
+                aprint(
+                    f"  Saved kind=partition file: {output_path} "
+                    f"({data.n_splats:,} splats in {len(part_sizes)} parts)"
+                )
 
     except typer.Exit:
         raise
@@ -1618,19 +1586,13 @@ def transform_dataset(
                     hi = data.centers[:, i].max()
                     aprint(f"  Dim {i}: [{lo:.4f}, {hi:.4f}]  range: {hi - lo:.4f}")
 
-            # Save
+            # Save (color SDR/HDR is auto-detected by the writer)
             with asection(f"Saving to {output_path.name}"):
-                # Auto-detect color_mode for float32 colors
-                color_mode: Optional[Literal["sdr", "hdr"]] = None
-                if data.colors is not None and data.colors.dtype.kind == "f":
-                    color_mode = "hdr"
-
                 data.save(
                     output_path,
                     encoding_mode=encoding_mode_obj,
                     include_fitting_info=True,
                     compress=compress,
-                    color_mode=color_mode,
                 )
                 aprint(f"Saved: {output_path}")
 
@@ -2290,35 +2252,83 @@ def convert_to_scene(
         luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
     """
     try:
+        import numpy as np
+
         from luxar import LuxarZarrCompiler
         from luxar.cli.gsplat_config import build_dimensions_from_data
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import center_bounds, is_matrix_shaped
 
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
             with asection("Loading gsplat dataset"):
-                data = GSplatData.load(input_path, include_stats=False)
+                # Peek at the on-disk shape. A matrix-shaped tree (leaf / additive
+                # ladder / kind=lod of leaves) round-trips through GSplatData and
+                # supports --center / --scale-intensity. A partition / nested tree
+                # has no flat GSplatData equivalent: it is grafted node-for-node.
+                node, _ = load_gsplat_node(input_path)
+                matrix = is_matrix_shaped(node)
+
+            if matrix:
+                data = GSplatData.from_tree(node)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
-            if center:
-                aprint("Centering at amplitude-weighted centroid")
-                data = data.center_at_centroid()
+                if center:
+                    aprint("Centering at amplitude-weighted centroid")
+                    data = data.center_at_centroid()
+                if scale_intensity is not None:
+                    aprint(f"Scaling intensity by {scale_intensity}")
+                    data = data.scale_intensity(scale_intensity)
 
-            if scale_intensity is not None:
-                aprint(f"Scaling intensity by {scale_intensity}")
-                data = data.scale_intensity(scale_intensity)
-
-            with asection("Creating Luxar scene"):
-                dims = build_dimensions_from_data(data.centers)
-                with LuxarZarrCompiler(
-                    output_path, encoding_mode=_resolve_encoding_mode(encoding)
-                ) as compiler:
-                    scene = compiler.create_scene(dimensions=dims)
-                    scene.add_gsplats_from_data(
-                        name="gsplats",
-                        result=data,
-                        opacity=opacity,
-                        blending_mode=blending_mode,
+                with asection("Creating Luxar scene"):
+                    dims = build_dimensions_from_data(data.centers)
+                    with LuxarZarrCompiler(
+                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                    ) as compiler:
+                        scene = compiler.create_scene(dimensions=dims)
+                        scene.add_gsplats_from_data(
+                            name="gsplats",
+                            result=data,
+                            opacity=opacity,
+                            blending_mode=blending_mode,
+                        )
+            else:
+                kind = (
+                    "partition"
+                    if node.__class__.__name__ == "GSplatPartition"
+                    else "nested LOD"
+                )
+                aprint(f"Grafting a {kind} node tree (no flat-data transforms apply)")
+                if scale_intensity is not None:
+                    aprint(
+                        "⚠️  --scale-intensity is ignored for a partition/nested "
+                        "file (re-author intensity upstream with `gsplat transform`)."
                     )
+                # --center defaults True; it does not apply to a graft (the file's
+                # own coordinates are preserved), so note it rather than fail.
+                if center:
+                    aprint(
+                        "ℹ️  --center is ignored for a partition/nested file; the "
+                        "node tree keeps its authored coordinates."
+                    )
+                bounds = center_bounds(node)
+                if bounds is None:
+                    raise ValueError("Could not derive bounds from the node tree")
+                bmin, bmax = bounds
+                box = np.array([bmin, bmax], dtype=np.float32)
+
+                with asection("Creating Luxar scene"):
+                    dims = build_dimensions_from_data(box)
+                    with LuxarZarrCompiler(
+                        output_path, encoding_mode=_resolve_encoding_mode(encoding)
+                    ) as compiler:
+                        scene = compiler.create_scene(dimensions=dims)
+                        scene.add_gsplats_from_file(
+                            name="gsplats",
+                            path=input_path,
+                            opacity=opacity,
+                            blending_mode=blending_mode,
+                        )
 
             aprint(f"\nScene saved: {output_path}")
             aprint(f"Serve with: luxar serve {output_path} --viewer")
@@ -2895,7 +2905,7 @@ def calibrate_command(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# migrate-format — Convert legacy v1.x layouts to format v2.0
+# migrate-format — Convert legacy layouts to the v3.0 node-tree format
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -2904,10 +2914,10 @@ def migrate_format_command(
     input_path: Path = typer.Argument(
         ...,
         exists=True,
-        help="Legacy .gsplats.zarr (v1.0 or v1.1), .gsplats.zarr.zip/.tar.gz, "
+        help="Legacy .gsplats.zarr (v1.0 / v1.1 / v2.0), .gsplats.zarr.zip/.tar.gz, "
         "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
     ),
-    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v2.0)."),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v3.0)."),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output if it exists."
     ),
@@ -2915,39 +2925,39 @@ def migrate_format_command(
         False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
     ),
 ) -> None:
-    """Convert a legacy .gsplats.zarr layout to format v2.0.
+    """Convert a legacy .gsplats.zarr layout to the v3.0 node-tree format.
 
-    Three input shapes are auto-detected:
+    Four input shapes are auto-detected:
 
     \b
     * v1.0  .gsplats.zarr (single flat splat set)
     * v1.1  .gsplats.zarr (multi-LOD additive, /splats/lod_<i>/ subgroups)
+    * v2.0  .gsplats.zarr (2-D substitutive_<s>/additive_<a> matrix)
     * substitutive directory (manifest.json + level_<i>.gsplats.zarr files)
 
-    All three migrate to a single v2.0 ``.gsplats.zarr`` with the
-    appropriate substitutive × additive shape.
+    All migrate to a single v3.0 ``.gsplats.zarr`` node subtree.
     """
     try:
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.migrate import migrate_format
 
-        with asection(f"Migrating {input_path.name} → v2.0"):
+        with asection(f"Migrating {input_path.name} → v3.0"):
             detected = migrate_format(input_path, output_path, overwrite=overwrite)
             aprint(f"Detected legacy format: {detected}")
 
-            # Post-write read-back: confirm the output is a loadable v2.0 file
+            # Post-write read-back: confirm the output is a loadable v3.0 file
             # rather than reporting success blind.
             import zarr
 
             verify = GSplatData.load(output_path, include_stats=False)
             out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
             fmt = out_attrs.get("format_version")
-            if fmt != "2.0":
-                aprint(f"❌ Migration produced format_version={fmt!r}, expected '2.0'")
+            if fmt != "3.0":
+                aprint(f"❌ Migration produced format_version={fmt!r}, expected '3.0'")
                 raise typer.Exit(1)
             if not quiet:
                 aprint(
-                    f"✓ Verified v2.0 output: {verify.n_splats:,} splats, "
+                    f"✓ Verified v3.0 output: {verify.n_splats:,} splats, "
                     f"{verify.n_substitutive} substitutive level(s) → "
                     f"{output_path}"
                 )
@@ -3078,21 +3088,11 @@ def merge_datasets(
                     merged = GSplatData.concatenate(datasets)
 
             with asection(f"Saving to {output_path.name}"):
-                # Determine color_mode for float32 colors
-                save_color_mode: Optional[Literal["sdr", "hdr"]] = None
-                if merged.colors is not None:
-                    import numpy as np
-
-                    if np.issubdtype(merged.colors.dtype, np.floating):
-                        save_color_mode = (
-                            "hdr" if np.any(merged.colors > 1.0) else "sdr"
-                        )
-
+                # Color SDR/HDR is auto-detected by the writer.
                 merged.save(
                     output_path,
                     encoding_mode=_resolve_encoding_mode(encoding),
                     compress=compress,
-                    color_mode=save_color_mode,
                 )
                 aprint(f"Saved {merged.n_splats:,} splats ({merged.ndim}D)")
 
@@ -4234,8 +4234,10 @@ def batch_validate_cmd(
         ok = 0
         missing = 0
         corrupt = 0
+        unmigrated = 0
         stale_tmp = 0
         corrupt_reasons: list[str] = []
+        unmigrated_reasons: list[str] = []
 
         for tile_name in expected_tiles:
             tile_path = tiles_dir / tile_name
@@ -4256,6 +4258,11 @@ def batch_validate_cmd(
             reason = _validate_tile(tile_path)
             if reason == "ok":
                 ok += 1
+            elif reason.startswith("unsupported_format_version"):
+                # Recoverable, NOT corrupt: an unmigrated legacy tile. Never
+                # delete it under --fix — it converts via `gsplat migrate-format`.
+                unmigrated += 1
+                unmigrated_reasons.append(f"  {tile_name}: {reason}")
             else:
                 corrupt += 1
                 corrupt_reasons.append(f"  {tile_name}: {reason}")
@@ -4265,10 +4272,11 @@ def batch_validate_cmd(
 
         # Summary
         aprint("")
-        aprint(f"  OK:        {ok}")
-        aprint(f"  MISSING:   {missing}")
-        aprint(f"  CORRUPT:   {corrupt}")
-        aprint(f"  STALE_TMP: {stale_tmp}")
+        aprint(f"  OK:         {ok}")
+        aprint(f"  MISSING:    {missing}")
+        aprint(f"  CORRUPT:    {corrupt}")
+        aprint(f"  UNMIGRATED: {unmigrated}")
+        aprint(f"  STALE_TMP:  {stale_tmp}")
 
         if corrupt_reasons and not fix:
             aprint("")
@@ -4277,6 +4285,14 @@ def batch_validate_cmd(
                 aprint(r)
             aprint("")
             aprint("Run with --fix to delete corrupt tiles.")
+
+        if unmigrated_reasons:
+            aprint("")
+            aprint("Unmigrated (legacy-format) tiles — NOT deleted:")
+            for r in unmigrated_reasons:
+                aprint(r)
+            aprint("")
+            aprint("Convert each with `luxar gsplat migrate-format <tile> <out>`.")
 
         if fix and (corrupt > 0 or stale_tmp > 0):
             aprint(f"\nFixed: deleted {corrupt} corrupt + {stale_tmp} stale .tmp")
@@ -4291,15 +4307,128 @@ def batch_validate_cmd(
         raise typer.Exit(1) from e
 
 
-def _validate_tile(tile_path: Path) -> str:
-    """Validate a single tile's integrity. Returns 'ok' or a reason string."""
+def _print_gsplat_tree_summary(path: Path) -> None:
+    """Report the node-tree shape of a partition / nested .gsplats.zarr.
+
+    These have no flat ``GSplatData`` (``gsplat info``'s normal path), so we
+    walk the node tree and print its structure (kind, parts/levels, per-leaf
+    splat counts, total, ndim, bounds) instead of failing.
+    """
+    import shutil
+
+    import zarr
+
+    from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
+    from luxar.gsplats.tree import (
+        GSplatLodGroup,
+        GSplatPartition,
+        iter_leaves,
+        node_ndim,
+        total_splats,
+    )
+    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+    zarr_path = path
+    tmp = None
+    try:
+        if path.is_file():  # compressed archive
+            zarr_path = _extract_compressed_zarr(path)
+            tmp = zarr_path.parent
+        root = zarr.open_group(str(zarr_path), mode="r")
+        node = read_gsplat_node(root, root)
+
+        aprint("\n" + "═" * 70)
+        aprint("DATASET INFORMATION (node tree)")
+        aprint("═" * 70)
+        aprint(f"\nFile: {path.name}")
+        aprint(f"Size: {format_memory_size(path.stat().st_size)}")
+        kind = (
+            "partition"
+            if isinstance(node, GSplatPartition)
+            else ("lod" if isinstance(node, GSplatLodGroup) else "leaf")
+        )
+        aprint(f"\nRoot kind: {kind}")
+        aprint(f"Dimensions: {node_ndim(node)}D")
+        aprint(f"Total splats (all leaves): {total_splats(node):,}")
+        if isinstance(node, (GSplatPartition, GSplatLodGroup)):
+            child_word = "part" if isinstance(node, GSplatPartition) else "level"
+            aprint(f"{child_word.capitalize()}s: {len(node.children)}")
+            for i, leaf in enumerate(iter_leaves(node)):
+                aprint(f"  leaf {i}: {leaf.n_splats:,} splats")
+        pb = root.attrs.get("position_bounds")
+        if pb:
+            aprint(f"Position bounds: min={pb.get('min')} max={pb.get('max')}")
+    finally:
+        if tmp is not None and tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _validate_leaf_arrays(node_dir: Path, label: str) -> str:
+    """Check a v3.0 gsplats leaf's required array sub-dirs (no decode)."""
+    for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+        arr_dir = node_dir / arr_name
+        if not arr_dir.is_dir():
+            return f"missing_{arr_name}@{label}"
+        if not (arr_dir / ".zarray").exists():
+            return f"no_zarray_{arr_name}@{label}"
+    return "ok"
+
+
+def _validate_node_dir(node_dir: Path, label: str) -> str:
+    """Structurally validate a v3.0 node subtree on disk (no array decode)."""
     import json
 
-    # Check .zmetadata (written last by consolidate_metadata — best completeness signal)
+    zattrs_path = node_dir / ".zattrs"
+    if not zattrs_path.exists():
+        # Every node (root, child_<i>, part_<i>) must carry its .zattrs; a
+        # metadata-stripped node is corrupt, not a bare single-set leaf.
+        return f"no_zattrs@{label}"
+    try:
+        attrs = json.loads(zattrs_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return f"corrupt_zattrs@{label}"
+
+    kind = attrs.get("kind")
+    if kind in ("lod", "partition"):
+        prefix = "child_" if kind == "lod" else "part_"
+        children = sorted(
+            d for d in node_dir.iterdir() if d.is_dir() and d.name.startswith(prefix)
+        )
+        if not children:
+            return f"{kind}_no_children@{label}"
+        for child in children:
+            reason = _validate_node_dir(child, f"{label}/{child.name}")
+            if reason != "ok":
+                return reason
+        return "ok"
+
+    # Leaf: a single splat set, or an additive ladder (additive_<i>/ subgroups).
+    n_additive = int(attrs.get("n_additive_sublods", 1))
+    if n_additive > 1:
+        for i in range(n_additive):
+            reason = _validate_leaf_arrays(
+                node_dir / f"additive_{i}", f"{label}/additive_{i}"
+            )
+            if reason != "ok":
+                return reason
+        return "ok"
+    return _validate_leaf_arrays(node_dir, label)
+
+
+def _validate_tile(tile_path: Path) -> str:
+    """Validate a single v3.0 tile's integrity. Returns 'ok' or a reason string.
+
+    Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
+    the consolidated metadata, the format header, and the presence of every
+    required array — without decoding any data. A non-v3.0 tile is reported (so
+    ``batch validate --fix`` never silently deletes an unmigrated tile).
+    """
+    import json
+
+    # .zmetadata is written last by consolidate_metadata — best completeness signal.
     if not (tile_path / ".zmetadata").exists():
         return "no_zmetadata (save incomplete)"
 
-    # Check root attrs
     zattrs_path = tile_path / ".zattrs"
     if not zattrs_path.exists():
         return "no_zattrs"
@@ -4311,35 +4440,13 @@ def _validate_tile(tile_path: Path) -> str:
     if attrs.get("format_type") != "gsplats_zarr":
         return f"bad_format_type: {attrs.get('format_type')}"
 
-    # Check splats group
-    if not (tile_path / "splats").is_dir():
-        return "no_splats_group"
+    version = attrs.get("format_version")
+    if version != "3.0":
+        # Not corrupt — just unmigrated. Surface it instead of classifying it as
+        # corrupt (which would let --fix delete a recoverable tile).
+        return f"unsupported_format_version: {version} (run gsplat migrate-format)"
 
-    # Check LOD arrays
-    n_lods = attrs.get("n_lods", 1)
-    version = attrs.get("format_version", "1.0")
-
-    if version == "1.1" and n_lods > 1:
-        for i in range(n_lods):
-            lod_dir = tile_path / "splats" / f"lod_{i}"
-            if not lod_dir.is_dir():
-                return f"missing_lod_{i}"
-            for arr_name in ("centers", "amplitudes", "cholesky_factors"):
-                arr_dir = lod_dir / arr_name
-                if not arr_dir.is_dir():
-                    return f"missing_{arr_name}_lod_{i}"
-                if not (arr_dir / ".zarray").exists():
-                    return f"no_zarray_{arr_name}_lod_{i}"
-    else:
-        splats_dir = tile_path / "splats"
-        for arr_name in ("centers", "amplitudes", "cholesky_factors"):
-            arr_dir = splats_dir / arr_name
-            if not arr_dir.is_dir():
-                return f"missing_{arr_name}"
-            if not (arr_dir / ".zarray").exists():
-                return f"no_zarray_{arr_name}"
-
-    return "ok"
+    return _validate_node_dir(tile_path, ".")
 
 
 @app_batch.command("cancel")
@@ -4865,8 +4972,8 @@ def lod_substitutive(
     output_path: Path = typer.Argument(
         ...,
         help=(
-            "Output .gsplats.zarr (v2.0) holding the full substitutive "
-            "hierarchy as ``splats/substitutive_<s>/additive_0/`` cells. "
+            "Output .gsplats.zarr (v3.0) holding the substitutive hierarchy as "
+            "a ``kind=lod`` group of ``child_<i>/`` leaves (coarsest→finest). "
             "Loadable with ``luxar gsplat info``."
         ),
     ),
@@ -4949,8 +5056,8 @@ def lod_substitutive(
 
     Each coarser substitutive level contains synthesised representative
     splats that *replace* the previous level (compression factor K per
-    step). The full hierarchy is written to a single v2.0 .gsplats.zarr
-    file (``splats/substitutive_<s>/additive_0/`` per cell), loadable
+    step). The full hierarchy is written to a single v3.0 .gsplats.zarr
+    file (a ``kind=lod`` group of ``child_<i>/`` leaves), loadable
     independently and renderable level-by-level by the viewer.
 
     Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
@@ -5093,8 +5200,9 @@ def lod_pyramid(
     output_path: Path = typer.Argument(
         ...,
         help=(
-            "Output .gsplats.zarr (v2.0) carrying the full 2-D pyramid: "
-            "``splats/substitutive_<s>/additive_<a>/`` per cell."
+            "Output .gsplats.zarr (v3.0) carrying the full 2-D pyramid: a "
+            "``kind=lod`` group of ``child_<i>/`` leaves, each with an "
+            "``additive_<a>/`` ladder."
         ),
     ),
     substitutive: str = typer.Option(
@@ -5193,7 +5301,7 @@ def lod_pyramid(
 
     Equivalent to running ``lod substitutive`` then ``lod additive
     --substitutive-level`` for every substitutive level, but written as
-    a single composite invocation that produces one v2.0 .gsplats.zarr
+    a single composite invocation that produces one v3.0 .gsplats.zarr
     file with shape ``[L+1, additive]``.
 
     \b
