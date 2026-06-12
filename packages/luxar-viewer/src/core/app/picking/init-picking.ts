@@ -25,6 +25,15 @@ export interface InitPickingPorts {
   pickingEvents: EventGroup;
   previous: InitPickingResult;
   getOverlayManager: () => OverlayManager | undefined;
+  /** Optional sink for the public `selection` embedder event. */
+  onSelection?: (sel: { nodeName: string; elementIndex: number } | null) => void;
+  /**
+   * Whether an embedder `selection` listener currently exists. Read at
+   * init time to provision the picking pipeline even for label-less
+   * datasets, and read LIVE inside the shouldPick gate so pick renders
+   * only run while someone consumes them.
+   */
+  hasSelectionConsumer?: () => boolean;
 }
 
 /**
@@ -81,7 +90,12 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       hasAnyImageLabels = true;
     }
   });
-  if (!hasAnyLabels && !hasAnyImageLabels) {
+  // Provision picking when the scene declares labels OR an embedder
+  // `selection` listener exists at load time. Without either there is no
+  // consumer, so skip the pick-mesh/GPU overhead entirely (keeps the
+  // bench-only synthetic scenes free of picking cost).
+  const wantsSelection = ports.hasSelectionConsumer?.() ?? false;
+  if (!hasAnyLabels && !hasAnyImageLabels && !wantsSelection) {
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }
 
@@ -91,15 +105,20 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }
 
-  // Create label loader using the scene loader's zarr store
+  // Create label loaders from the scene loader's zarr store. The loaders
+  // (tooltip content) need the store; selection events do not — so a
+  // missing store only aborts when labels were the sole reason to pick.
   const store = sceneLoader.zarrStore;
-  if (!store) {
+  let labelLoader: LabelLoader | undefined;
+  let imageLabelLoader: ImageLabelLoader | undefined;
+  if (store) {
+    const rootLoc = zarr.root(store);
+    labelLoader = hasAnyLabels ? new LabelLoader(store, rootLoc) : undefined;
+    imageLabelLoader = hasAnyImageLabels ? new ImageLabelLoader(store, rootLoc) : undefined;
+  } else if (!wantsSelection) {
     log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }
-  const rootLoc = zarr.root(store);
-  const labelLoader = hasAnyLabels ? new LabelLoader(store, rootLoc) : undefined;
-  const imageLabelLoader = hasAnyImageLabels ? new ImageLabelLoader(store, rootLoc) : undefined;
 
   // Create picking system with result callback. The handler closure
   // lives in `pick-result-handler.ts` so its branch logic (null /
@@ -113,6 +132,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       labelLoader,
       imageLabelLoader,
       overlayManager: ports.getOverlayManager(),
+      onSelection: ports.onSelection,
     })
   );
 
@@ -125,9 +145,14 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // Retroactively register already-loaded nodes (scene loads before picking init)
   sceneLoader.nodeFactory.registerExistingSceneNodes(root);
 
-  // Gate picks on overlay visibility — if no hover overlay is visible,
-  // there's no consumer for the pick result, so skip the work entirely.
-  pickingSystem.setShouldPick(() => ports.getOverlayManager()?.hasVisibleHoverOverlay() ?? false);
+  // Gate picks on having a consumer: a visible hover overlay (tooltips) OR
+  // a live embedder `selection` listener. Read LIVE so unsubscribing stops
+  // the pick renders without re-initialising the pipeline.
+  pickingSystem.setShouldPick(
+    () =>
+      (ports.getOverlayManager()?.hasVisibleHoverOverlay() ?? false) ||
+      (ports.hasSelectionConsumer?.() ?? false)
+  );
 
   // DOM events go through EventGroup.on(); Three.js EventDispatcher events
   // (controls, sceneManager) use add() with a manual remove closure since

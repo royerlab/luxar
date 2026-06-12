@@ -24,9 +24,14 @@ From `packages/luxar-viewer`:
 
 ```bash
 pnpm build:lib                       # builds dist/lib/{luxar-viewer.js,.css,types}
+pnpm test:generate-fixtures          # once: creates tests/fixtures/test_4d.zarr (the demo dataset)
 python -m http.server 8765           # serve from packages/luxar-viewer, NOT examples/embed
 open http://localhost:8765/examples/embed/
 ```
+
+The demo auto-loads the package-local 4D fixture
+(`tests/fixtures/test_4d.zarr`) so a scene appears immediately; edit
+`DEFAULT_SRC` in `embed.js` to point at your own zarr URL.
 
 Serve from `packages/luxar-viewer` (not from this directory): `index.html`
 loads the built library via `../../dist/lib/luxar-viewer.{js,css}`, so the
@@ -55,7 +60,7 @@ the host page survive each cycle.
   await app.init({
     canvas: document.getElementById('luxar-canvas'),
     src: 'https://example.com/data.zarr',
-    updateBrowserUrl: false,   // don't rewrite the host URL on dataset change
+    updateBrowserUrl: false, // don't rewrite the host URL on dataset change
   });
 
   // Later:
@@ -70,7 +75,7 @@ specifiers — no importmap or `/path/to/` URLs:
 
 ```ts
 import { LuxarApp } from 'luxar-viewer';
-import 'luxar-viewer/styles.css';   // component styles, scoped under .luxar-*
+import 'luxar-viewer/styles.css'; // component styles, scoped under .luxar-*
 
 const app = new LuxarApp();
 await app.init({ canvas, src: 'https://example.com/data.zarr', updateBrowserUrl: false });
@@ -78,16 +83,16 @@ await app.init({ canvas, src: 'https://example.com/data.zarr', updateBrowserUrl:
 
 ## Tested embed surface
 
-| Option           | Type             | Default | Why an embedder cares                                                 |
-| ---------------- | ---------------- | ------- | --------------------------------------------------------------------- |
-| `canvas`         | HTMLCanvasElement| —       | The canvas the viewer renders into. Required.                         |
-| `container`      | HTMLElement      | `document.body` | Host element all overlays/panels/toasts mount into. A non-`body` container is made a containing block so fixed overlays scope to it; restored on `dispose()`. This demo passes the framed box. |
-| `src`            | string           | config  | Initial Zarr URL.                                                     |
-| `debug`          | boolean          | false   | Exposes `window.__luxarDebug` for Playwright / dev console.           |
-| `loaderConfig`   | LoaderConfig     | —       | Cache and prefetch flags.                                             |
-| `updateBrowserUrl` | boolean        | false   | Already off by default for embed safety; the standalone bootstrap opts in to `true`. |
-| `wasmPath`       | string           | —       | Override for bundlers that don't resolve `import.meta.url` for WASM.  |
-| `workerPath`     | string           | —       | Same, but for the data worker.                                        |
+| Option             | Type              | Default         | Why an embedder cares                                                                                                                                                                          |
+| ------------------ | ----------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas`           | HTMLCanvasElement | —               | The canvas the viewer renders into. Required.                                                                                                                                                  |
+| `container`        | HTMLElement       | `document.body` | Host element all overlays/panels/toasts mount into. A non-`body` container is made a containing block so fixed overlays scope to it; restored on `dispose()`. This demo passes the framed box. |
+| `src`              | string            | config          | Initial Zarr URL.                                                                                                                                                                              |
+| `debug`            | boolean           | false           | Exposes `window.__luxarDebug` for Playwright / dev console.                                                                                                                                    |
+| `loaderConfig`     | LoaderConfig      | —               | Cache and prefetch flags.                                                                                                                                                                      |
+| `updateBrowserUrl` | boolean           | false           | Already off by default for embed safety; the standalone bootstrap opts in to `true`.                                                                                                           |
+| `wasmPath`         | string            | —               | Override for bundlers that don't resolve `import.meta.url` for WASM.                                                                                                                           |
+| `workerPath`       | string            | —               | Same, but for the data worker.                                                                                                                                                                 |
 
 ## Out of scope
 

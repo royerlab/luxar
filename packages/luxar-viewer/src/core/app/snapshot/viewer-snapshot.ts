@@ -88,6 +88,36 @@ export function captureSnapshot(sceneManager: SceneManager): ViewerSnapshot {
 }
 
 /**
+ * Write a {@link CameraSnapshot} back onto the live camera + controls.
+ *
+ * Position / up / near / far and the projection-specific parameter (fov for
+ * perspective, zoom for ortho) are applied in place; then the controls are
+ * re-targeted and re-initialised so subsequent orbit/fly updates don't snap
+ * the camera back. Shared by {@link restoreSnapshot} and the embedder API's
+ * `setCameraPose()`.
+ */
+export function restoreCamera(sceneManager: SceneManager, cam: CameraSnapshot): void {
+  const camera = sceneManager.camera;
+
+  camera.position.set(cam.position[0], cam.position[1], cam.position[2]);
+  camera.up.set(cam.up[0], cam.up[1], cam.up[2]);
+  camera.near = cam.near;
+  camera.far = cam.far;
+  if (isPerspectiveCamera(camera) && cam.fov !== undefined) {
+    camera.fov = cam.fov;
+  }
+  if (isOrthographicCamera(camera) && cam.zoom !== undefined) {
+    camera.zoom = cam.zoom;
+  }
+  camera.updateProjectionMatrix();
+
+  // setTarget mirrors the orbit/fly difference internally; reinitialize()
+  // re-derives orbit distance/orientation from the new (position, target).
+  sceneManager.controls.setTarget(new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]));
+  sceneManager.controls.reinitialize();
+}
+
+/**
  * Restore camera + dim state from a snapshot.
  *
  * - The camera position, target, up, near/far, and projection-specific
@@ -114,25 +144,7 @@ export function restoreSnapshot(
     return { cameraApplied: false, dimsApplied: false };
   }
 
-  const camera = sceneManager.camera;
-  const cam = snapshot.camera;
-
-  camera.position.set(cam.position[0], cam.position[1], cam.position[2]);
-  camera.up.set(cam.up[0], cam.up[1], cam.up[2]);
-  camera.near = cam.near;
-  camera.far = cam.far;
-  if (isPerspectiveCamera(camera) && cam.fov !== undefined) {
-    camera.fov = cam.fov;
-  }
-  if (isOrthographicCamera(camera) && cam.zoom !== undefined) {
-    camera.zoom = cam.zoom;
-  }
-  camera.updateProjectionMatrix();
-
-  // setTarget mirrors the orbit/fly difference internally; reinitialize()
-  // re-derives orbit distance/orientation from the new (position, target).
-  sceneManager.controls.setTarget(new THREE.Vector3(cam.target[0], cam.target[1], cam.target[2]));
-  sceneManager.controls.reinitialize();
+  restoreCamera(sceneManager, snapshot.camera);
 
   let dimsApplied = false;
   if (snapshot.dims) {

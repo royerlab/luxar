@@ -477,6 +477,91 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('resizeToCanvas (embedding-safe resize)', () => {
+    it('measures the canvas PARENT box first (host frame, not our own stamp)', async () => {
+      // Three stamps inline px on the canvas at every setSize, so the
+      // canvas's own client box reflects the last stamp. The parent (the
+      // embedder's frame) is the box that tracks host layout — it must win
+      // even when the canvas reports a different (stale) size.
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const spy = vi.spyOn(sm.resizer, 'resizeNow');
+      const canvas = sceneManager.renderer.domElement;
+      Object.defineProperty(canvas, 'clientWidth', { value: 1920, configurable: true });
+      Object.defineProperty(canvas, 'clientHeight', { value: 1080, configurable: true });
+      Object.defineProperty(canvas, 'parentElement', {
+        value: { clientWidth: 720, clientHeight: 480 },
+        configurable: true,
+      });
+
+      sceneManager.resizeToCanvas();
+
+      expect(spy).toHaveBeenLastCalledWith(720, 480, expect.anything());
+    });
+
+    it('uses WINDOW dims under fullscreen, ignoring the (smaller) container box', async () => {
+      // Regression: the fullscreen handler styles the canvas to 100vw/100vh
+      // while document.fullscreenElement is set, so the embed container's
+      // box no longer reflects the canvas's displayed (full-screen) size.
+      // Parent-first measurement would mis-size the renderer to the frame.
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const spy = vi.spyOn(sm.resizer, 'resizeNow');
+      const canvas = sceneManager.renderer.domElement;
+      Object.defineProperty(canvas, 'parentElement', {
+        value: { clientWidth: 720, clientHeight: 480 }, // small embed frame
+        configurable: true,
+      });
+      Object.defineProperty(document, 'fullscreenElement', {
+        value: { tagName: 'HTML' }, // truthy fullscreen element sentinel
+        configurable: true,
+      });
+      try {
+        sceneManager.resizeToCanvas();
+        expect(spy).toHaveBeenLastCalledWith(
+          window.innerWidth,
+          window.innerHeight,
+          expect.anything()
+        );
+      } finally {
+        Object.defineProperty(document, 'fullscreenElement', {
+          value: null,
+          configurable: true,
+        });
+      }
+    });
+
+    it('falls back to the canvas client box when there is no parent', async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const spy = vi.spyOn(sm.resizer, 'resizeNow');
+      const canvas = sceneManager.renderer.domElement;
+      Object.defineProperty(canvas, 'clientWidth', { value: 640, configurable: true });
+      Object.defineProperty(canvas, 'clientHeight', { value: 480, configurable: true });
+
+      sceneManager.resizeToCanvas();
+
+      expect(spy).toHaveBeenLastCalledWith(640, 480, expect.anything());
+    });
+
+    it('falls back to window dimensions when the canvas reports zero', async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+      const sm = sceneManager as unknown as { resizer: { resizeNow: () => void } };
+      const spy = vi.spyOn(sm.resizer, 'resizeNow');
+      const canvas = sceneManager.renderer.domElement;
+      Object.defineProperty(canvas, 'clientWidth', { value: 0, configurable: true });
+      Object.defineProperty(canvas, 'clientHeight', { value: 0, configurable: true });
+
+      sceneManager.resizeToCanvas();
+
+      expect(spy).toHaveBeenLastCalledWith(
+        window.innerWidth,
+        window.innerHeight,
+        expect.anything()
+      );
+    });
+  });
+
   describe('scene loading', () => {
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });

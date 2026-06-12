@@ -350,4 +350,81 @@ describe('buildPickResultHandler', () => {
     await expect(handle(makeResult('/Cells', 0))).resolves.toBeUndefined();
     expect(s.updateHoverContent).not.toHaveBeenCalled();
   });
+
+  describe('onSelection (public selection event sink)', () => {
+    it('emits the picked element regardless of tooltip content', async () => {
+      const s = makeStubs();
+      s.getLabel.mockResolvedValue(null);
+      s.getImageUrl.mockResolvedValue(null); // no tooltip content...
+      const onSelection = vi.fn();
+      const handle = buildPickResultHandler({
+        labelLoader: { getLabel: s.getLabel },
+        imageLabelLoader: { getImageUrl: s.getImageUrl },
+        overlayManager: { updateHoverContent: s.updateHoverContent },
+        onSelection,
+      });
+
+      await handle(makeResult('/Cells', 9));
+
+      // ...but selection still reports the picked element.
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith({ nodeName: '/Cells', elementIndex: 9 });
+      expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith(null);
+    });
+
+    it('emits null when the hover clears', async () => {
+      const onSelection = vi.fn();
+      const handle = buildPickResultHandler({
+        overlayManager: { updateHoverContent: vi.fn() },
+        onSelection,
+      });
+
+      await handle(null);
+
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith(null);
+    });
+
+    it('reports the outermost partition wrapper as the selection node', async () => {
+      const s = makeStubs();
+      s.getLabel.mockResolvedValue('Cell 42');
+      const onSelection = vi.fn();
+      const wrapper = new THREE.Group();
+      wrapper.name = '/Splat';
+      wrapper.userData.kind = 'partition';
+      const part = new THREE.Object3D();
+      part.name = '/Splat/part_3';
+      wrapper.add(part);
+
+      const handle = buildPickResultHandler({
+        labelLoader: { getLabel: s.getLabel },
+        overlayManager: { updateHoverContent: s.updateHoverContent },
+        onSelection,
+      });
+
+      await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith({ nodeName: '/Splat', elementIndex: 42 });
+    });
+
+    it('does not emit a superseded selection', async () => {
+      const s = makeStubs();
+      const labelGate = deferred<string | null>();
+      s.getLabel.mockReturnValue(labelGate.promise);
+      s.getImageUrl.mockResolvedValue(null);
+      const onSelection = vi.fn();
+      const handle = buildPickResultHandler({
+        labelLoader: { getLabel: s.getLabel },
+        imageLabelLoader: { getImageUrl: s.getImageUrl },
+        overlayManager: { updateHoverContent: s.updateHoverContent },
+        onSelection,
+      });
+
+      const stale = handle(makeResult('/Cells', 1)); // parks on label fetch
+      await handle(null); // newer fade → onSelection(null), bumps token
+      labelGate.resolve('Cell 1'); // stale resolves...
+      await stale;
+
+      // Only the null fade emitted; the superseded content pick was dropped.
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith(null);
+    });
+  });
 });

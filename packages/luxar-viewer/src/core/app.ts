@@ -4,8 +4,17 @@ import type { SceneManager } from '../scene/scene-manager';
 import {
   captureSnapshot as captureViewerSnapshot,
   restoreSnapshot as restoreViewerSnapshot,
+  restoreCamera,
   type ViewerSnapshot,
+  type CameraSnapshot,
 } from './app/snapshot/viewer-snapshot';
+import { createEventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
+import type {
+  LuxarEmbedderEventMap,
+  EmbedderDimensions,
+  ScreenshotOptions,
+} from './app/embedder/events';
+import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
@@ -106,6 +115,26 @@ export class LuxarApp {
    * `init()`, which assigns the field as its first action.
    */
   private options!: LuxarAppOptions;
+
+  /**
+   * Per-app emitter for the public embedder events ({@link on}). Deliberately
+   * a per-instance bus (not the global `eventBus` singleton) so the embedder
+   * surface stays decoupled from the internal frame/UI plumbing and is
+   * multi-instance-ready.
+   */
+  private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
+
+  /**
+   * Observes the canvas box so the viewer re-fits when the host container
+   * resizes (not just the window). Disconnected on dispose via {@link events}.
+   */
+  private resizeObserver?: ResizeObserver;
+
+  /**
+   * In-flight guard for {@link switchDataset}. `loadDataset` does a full
+   * teardown+reload, so overlapping switches would corrupt scene state.
+   */
+  private switchInFlight?: Promise<void>;
 
   /**
    * Initialize the complete Luxar application.
@@ -216,6 +245,7 @@ export class LuxarApp {
       this.setupDatasetBrowserShortcut();
       this.setupFocusHandling();
       this.setupDebugInterface();
+      this.setupEmbedderHooks(options.canvas);
 
       this.isInitialized = true;
     } catch (error) {
@@ -263,22 +293,68 @@ export class LuxarApp {
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
-    await loadDatasetImpl(src, {
-      inputHandler: this.inputHandler,
-      renderingControls: this.renderingControls,
-      sceneManager: this.sceneManager,
-      animationController: this.animationController,
-      layersPanel: this.layersPanel,
-      loaderConfig: this.options.loaderConfig,
-      openCacheStats: !!this.options.openCacheStats,
-      disposeOverlays: () => this.disposeOverlays(),
-      initScaleBar: () => this.initScaleBar(),
-      initColormapLegend: () => this.initColormapLegend(),
-      initOverlays: () => this.initOverlays(),
-      initPicking: () => this.initPicking(),
-      applyViewerConfigState: (config) => this.applyViewerConfigState(config),
-      openCacheStatsView: () => this.openCacheStatsView(),
-    });
+    try {
+      await loadDatasetImpl(src, {
+        inputHandler: this.inputHandler,
+        renderingControls: this.renderingControls,
+        sceneManager: this.sceneManager,
+        animationController: this.animationController,
+        layersPanel: this.layersPanel,
+        loaderConfig: this.options.loaderConfig,
+        openCacheStats: !!this.options.openCacheStats,
+        disposeOverlays: () => this.disposeOverlays(),
+        initScaleBar: () => this.initScaleBar(),
+        initColormapLegend: () => this.initColormapLegend(),
+        initOverlays: () => this.initOverlays(),
+        initPicking: () => this.initPicking(),
+        applyViewerConfigState: (config) => this.applyViewerConfigState(config),
+        openCacheStatsView: () => this.openCacheStatsView(),
+      });
+      // Public embedder event — fires for the initial load, the built-in
+      // dataset browser, and switchDataset() (all route through here).
+      this.embedderEvents.emit('dataset-loaded', { src });
+    } catch (error) {
+      this.embedderEvents.emit('dataset-error', {
+        src,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Wire the programmatic-embedder hooks: re-emit dimension changes as the
+   * public `dimensions-changed` event, and auto-resize to the canvas box via
+   * a ResizeObserver. Both are guarded by `isInitialized` so they no-op
+   * outside the live window, and both are torn down through {@link events}.
+   */
+  private setupEmbedderHooks(canvas: HTMLCanvasElement): void {
+    const dimsListener = (): void => {
+      if (this.isInitialized) {
+        this.embedderEvents.emit('dimensions-changed', this.getDimensions());
+      }
+    };
+    sceneDimsManager.addListener(dimsListener);
+    this.events.add(() => sceneDimsManager.removeListener(dimsListener));
+
+    // Guard on a real Element: ResizeObserver may be absent (some test
+    // environments) and observing a non-Element throws.
+    if (typeof ResizeObserver !== 'undefined' && canvas instanceof Element) {
+      // ResizeObserver callbacks are browser-batched (~once per frame), so a
+      // direct resizeToCanvas() (synchronous resizeNow) needs no extra debounce.
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.isInitialized) this.sceneManager.resizeToCanvas();
+      });
+      // Observe the canvas's PARENT, not the canvas: Three stamps inline px
+      // sizes on the canvas on every setSize, so the canvas's own box stops
+      // tracking host layout changes — the parent (the embedder's frame) is
+      // the box that actually resizes.
+      this.resizeObserver.observe(canvas.parentElement ?? canvas);
+      this.events.add(() => {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
+      });
+    }
   }
 
   /**
@@ -386,6 +462,8 @@ export class LuxarApp {
         imageLabelLoader: this.imageLabelLoader,
       },
       getOverlayManager: () => this.overlayManager,
+      onSelection: (sel) => this.embedderEvents.emit('selection', sel),
+      hasSelectionConsumer: () => this.embedderEvents.hasListeners('selection'),
     });
     this.pickingSystem = result.pickingSystem;
     this.labelLoader = result.labelLoader;
@@ -508,6 +586,190 @@ export class LuxarApp {
       throw new Error('LuxarApp.restoreSnapshot called before init()');
     }
     return restoreViewerSnapshot(this.sceneManager, snapshot);
+  }
+
+  // ==================== Programmatic embedder API ====================
+  // Flat, additive methods so a host page can drive the viewer without the
+  // built-in UI. All guard on `isInitialized` (mirroring captureSnapshot).
+
+  /**
+   * Subscribe to a public embedder event. Returns an unsubscribe function.
+   *
+   * Events: `dataset-loaded`, `dataset-error`, `dimensions-changed`,
+   * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
+   * `init()`; the per-app emitter outlives individual init/dispose cycles.
+   *
+   * @example
+   * ```ts
+   * const off = app.on('dataset-loaded', ({ src }) => console.log('loaded', src));
+   * // later: off();
+   * ```
+   */
+  on<K extends keyof LuxarEmbedderEventMap>(
+    event: K,
+    listener: (payload: LuxarEmbedderEventMap[K]) => void
+  ): Unsubscribe {
+    // Isolate embedder callbacks at the public boundary: the event bus does
+    // not catch listener errors, and some events (dataset-loaded,
+    // dimensions-changed, selection) are emitted from inside the viewer's
+    // own control flow. A throwing consumer listener must NOT corrupt that —
+    // e.g. without this guard a throwing `dataset-loaded` handler would
+    // propagate into loadDataset's catch, emit a spurious `dataset-error`,
+    // and reject switchDataset() on an otherwise-successful load.
+    const safe = (payload: LuxarEmbedderEventMap[K]): void => {
+      try {
+        listener(payload);
+      } catch (err) {
+        log.warning(Modules.APP, `embedder '${String(event)}' listener threw:`, err);
+      }
+    };
+    return this.embedderEvents.on(event, safe);
+  }
+
+  /**
+   * Load a different dataset into the running viewer, reusing the full
+   * teardown+reload path (the same one the built-in dataset browser uses).
+   * Resolves when the new scene is loaded; emits `dataset-loaded` /
+   * `dataset-error`.
+   *
+   * Rejects if a switch is already in progress (the reload does a full scene
+   * teardown — overlapping calls would corrupt state).
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  switchDataset(src: string): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.switchDataset called before init()');
+    }
+    if (this.switchInFlight) {
+      return Promise.reject(
+        new Error('LuxarApp.switchDataset: a dataset switch is already in progress')
+      );
+    }
+    this.options.src = src;
+    this.switchInFlight = this.loadDataset(src).finally(() => {
+      this.switchInFlight = undefined;
+    });
+    return this.switchInFlight;
+  }
+
+  /**
+   * Current nD dimension state (metadata + current slice positions + ranges).
+   * All array fields are cloned — safe to read without mutating internals;
+   * use {@link setDimensionValue} to change a slice.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getDimensions(): EmbedderDimensions {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.getDimensions called before init()');
+    }
+    const dims = sceneDimsManager.getDims();
+    if (!dims) {
+      return { ndim: 0, displayed: [], currentStep: [], metadata: [], ranges: [] };
+    }
+    const ranges = sceneDimsManager.getDimensionRanges() ?? [];
+    return {
+      ndim: dims.ndim,
+      displayed: [...dims.displayed],
+      currentStep: [...dims.currentStep],
+      // Deep-clone metadata: a spread alone would leave the nested `range`
+      // and `categories` arrays aliasing the scene-dims manager's internals,
+      // so an embedder mutating them would corrupt viewer state.
+      metadata: sceneDimsManager.getDimensionMetadata().map((m) => ({
+        ...m,
+        ...(m.range ? { range: [m.range[0], m.range[1]] as [number, number] } : {}),
+        ...(m.categories ? { categories: [...m.categories] } : {}),
+      })),
+      ranges: ranges.map((r) => [r[0], r[1]] as [number, number]),
+    };
+  }
+
+  /**
+   * Set the slice position of a single (non-displayed) dimension. Clamped and
+   * quantized by the scene-dims manager; triggers a data update and emits
+   * `dimensions-changed`. Await {@link awaitDimensionUpdate} for the load.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  setDimensionValue(index: number, value: number): void {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.setDimensionValue called before init()');
+    }
+    sceneDimsManager.setDimensionValue(index, value);
+  }
+
+  /** Resolve once any in-flight dimension data update has settled. */
+  awaitDimensionUpdate(): Promise<void> {
+    return sceneDimsManager.waitForUpdate();
+  }
+
+  /**
+   * Recenter/fit the camera on the loaded scene (the built-in `F`-key
+   * behaviour).
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  recenterCamera(): void {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.recenterCamera called before init()');
+    }
+    this.sceneManager.centerCameraOnScene();
+  }
+
+  /**
+   * Current camera pose (position, target, up, projection params) — the same
+   * `camera` block {@link captureSnapshot} produces.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  getCameraPose(): CameraSnapshot {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.getCameraPose called before init()');
+    }
+    return captureViewerSnapshot(this.sceneManager).camera;
+  }
+
+  /**
+   * Apply a camera pose previously obtained from {@link getCameraPose} (or a
+   * snapshot's `camera`). Controls are re-initialised so orbit/fly updates
+   * don't snap back.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  setCameraPose(pose: CameraSnapshot): void {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.setCameraPose called before init()');
+    }
+    restoreCamera(this.sceneManager, pose);
+  }
+
+  /**
+   * Resize the viewer to its canvas's current client box. Called
+   * automatically when the canvas resizes (via a ResizeObserver); expose it
+   * for explicit/programmatic relayout (e.g. right after toggling a host
+   * panel synchronously).
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  resize(): void {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.resize called before init()');
+    }
+    this.sceneManager.resizeToCanvas();
+  }
+
+  /**
+   * Render the current frame to an encoded image Blob (PNG by default).
+   * Async because the WebGPU readback path is async.
+   *
+   * @throws if the app has not been initialised yet, or if encoding fails.
+   */
+  screenshot(opts?: ScreenshotOptions): Promise<Blob> {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.screenshot called before init()');
+    }
+    return captureScreenshot(this.sceneManager, this.overlayManager ?? null, opts);
   }
 
   /**
