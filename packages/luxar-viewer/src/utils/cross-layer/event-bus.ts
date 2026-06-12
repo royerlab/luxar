@@ -109,6 +109,13 @@ export interface TypedEventBus<EventMap> {
   emit<K extends keyof EventMap>(type: K, payload: EventMap[K]): void;
 
   /**
+   * Whether at least one listener is currently subscribed to `type`.
+   * Lets producers gate expensive work behind "anyone consuming?"
+   * (e.g. GPU picking only runs when a `selection` listener exists).
+   */
+  hasListeners(type: keyof EventMap): boolean;
+
+  /**
    * Drop all subscribers (or just those for `type`). Used by tests
    * that share the singleton between cases. Production code should
    * use the per-subscription unsubscribe instead.
@@ -157,6 +164,10 @@ class EventBusImpl<EventMap> implements TypedEventBus<EventMap> {
     for (const listener of [...set]) {
       listener(payload);
     }
+  }
+
+  hasListeners(type: keyof EventMap): boolean {
+    return (this.listeners.get(type)?.size ?? 0) > 0;
   }
 
   clear(type?: keyof EventMap): void {

@@ -408,6 +408,94 @@ describe('initPicking', () => {
     });
   });
 
+  describe('selection-consumer provisioning (embedder API)', () => {
+    it('initializes picking for a LABEL-LESS scene when a selection consumer exists', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({})); // no has_labels / has_image_labels
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+        hasSelectionConsumer: () => true,
+      });
+
+      // Picking pipeline provisioned for the embedder, no tooltip loaders.
+      expect(result.pickingSystem).toBeDefined();
+      expect(result.labelLoader).toBeUndefined();
+      expect(result.imageLabelLoader).toBeUndefined();
+      expect(LabelLoader).not.toHaveBeenCalled();
+      expect(ImageLabelLoader).not.toHaveBeenCalled();
+    });
+
+    it('still skips picking for a label-less scene when nobody consumes selection', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({}));
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+        hasSelectionConsumer: () => false,
+      });
+
+      expect(result.pickingSystem).toBeUndefined();
+    });
+
+    it('shouldPick predicate ORs the LIVE selection-consumer state with overlay visibility', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({}));
+      let consuming = true;
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined, // no tooltip overlay at all
+        hasSelectionConsumer: () => consuming,
+      });
+
+      const ps = result.pickingSystem as unknown as { setShouldPick: ReturnType<typeof vi.fn> };
+      const predicate = ps.setShouldPick.mock.calls[0][0] as () => boolean;
+
+      expect(predicate()).toBe(true); // listener present → picks run
+      consuming = false; // embedder unsubscribed...
+      expect(predicate()).toBe(false); // ...pick renders stop (live read)
+    });
+
+    it('proceeds without tooltip loaders when the store is missing but selection is wanted', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: false })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabels: true })); // labels declared, but no store
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+        hasSelectionConsumer: () => true,
+      });
+
+      // Selection still works; only the (store-backed) tooltip loaders are skipped.
+      expect(result.pickingSystem).toBeDefined();
+      expect(result.labelLoader).toBeUndefined();
+      expect(result.imageLabelLoader).toBeUndefined();
+    });
+  });
+
   describe('success path — listener wiring', () => {
     it('registers mousemove + mouseleave on canvas + resize on window via pickingEvents', async () => {
       (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
