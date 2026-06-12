@@ -17,7 +17,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main():
     """Create a minimal scene with data-node layers, a group layer, and a hidden layer."""
-    output_path = get_examples_output_dir() / "layers_test_example.zarr"
+    output_path = get_examples_output_dir() / "layers_test_example.luxar.zarr"
     aprint(f"Generating layers test example at: {output_path}")
 
     np.random.seed(42)

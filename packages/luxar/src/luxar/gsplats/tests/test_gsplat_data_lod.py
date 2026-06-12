@@ -610,7 +610,7 @@ class TestGSplatsWithoutSharpness:
         """GSplats should round-trip through zarr without a sharpness attribute."""
         from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
 
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
@@ -655,7 +655,7 @@ class TestGSplatsWithoutSharpness:
         """Points should still support the sharpness parameter."""
         from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
 
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points(
@@ -674,7 +674,7 @@ class TestGSplatsWithoutSharpness:
         """Lines should still support the sharpness parameter."""
         from luxar import Dimensions, LuxarScene, LuxarZarrCompiler
 
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(

@@ -61,7 +61,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │ STORAGE LAYER (Zarr)                                                       │
 ├───────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  scene.zarr/                                                                │
+│  scene.luxar.zarr/                                                          │
 │  ├── .zattrs              Scene metadata (dimensions, units, transforms)   │
 │  ├── .zmetadata           Consolidated metadata                            │
 │  └── node_name/                                                            │
@@ -142,7 +142,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 ## Format Structure
 
 ```
-scene.zarr/
+scene.luxar.zarr/
 ├── .zattrs                  # Scene-level metadata
 ├── .zgroup                  # Zarr group marker
 ├── .zmetadata              # Consolidated metadata (optional, created by finalize())
@@ -1110,7 +1110,7 @@ dims = Dimensions([
     Dimension("time", unit="ms", display=False, discrete=True)
 ])
 
-with LuxarZarrCompiler("output.zarr") as compiler:
+with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add points
@@ -1137,7 +1137,7 @@ dims = Dimensions([
 ])
 
 # Enable spatial index for efficient nD slicing
-with LuxarZarrCompiler("output.zarr", enable_spatial_index=True) as compiler:
+with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Generate 4D points

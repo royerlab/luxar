@@ -4,6 +4,22 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### June 2026
+
+#### Changed — scenes use the canonical `.luxar.zarr` extension
+
+Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
+(previously the bare `.zarr`, which is indistinguishable from generic / OME-Zarr
+stores). Standalone gsplat files are **unchanged** (`.gsplats.zarr`). The scene
+compiler (`LuxarZarrCompiler`) auto-normalizes its output path —
+`foo` → `foo.luxar.zarr`, `foo.zarr` → `foo.luxar.zarr`, `foo.luxar.zarr`
+unchanged — and reports the final path via `store_path`; the CLI `luxar demo`
+default output and `luxar export`/`serve` examples follow suit. Reading is
+unaffected: format detection is attribute-based and every path check matches the
+`.zarr` suffix, so plain `.zarr` scenes still load. A new shared helper
+`luxar.utils.paths.normalize_zarr_path` enforces the canonical suffix for both
+scenes (`.luxar.zarr`) and standalone gsplats (`.gsplats.zarr`).
+
 ### May 2026
 
 #### Changed — `.gsplats.zarr` format v3.0 (node-tree, unified with the scene)

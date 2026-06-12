@@ -43,7 +43,7 @@ def runner() -> CliRunner:
 def sample_scene(tmp_path: Path) -> Path:
     from luxar.demos import create_lorenz_attractor
 
-    store_path = tmp_path / "demo_scene.zarr"
+    store_path = tmp_path / "demo_scene.luxar.zarr"
     create_lorenz_attractor(store_path, n_points=50, seed=1)
     return store_path
 

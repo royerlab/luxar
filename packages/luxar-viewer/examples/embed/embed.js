@@ -24,7 +24,7 @@ import { LuxarApp } from '../../dist/lib/luxar-viewer.js';
 // this module so it works wherever the package root is mounted. Generate it
 // once with `pnpm test:generate-fixtures` if missing; replace with your own
 // zarr URL (no trailing slash) for real data.
-const DEFAULT_SRC = new URL('../../tests/fixtures/test_4d.zarr', import.meta.url).href;
+const DEFAULT_SRC = new URL('../../tests/fixtures/test_4d.luxar.zarr', import.meta.url).href;
 
 const canvas = document.getElementById('luxar-canvas');
 const viewerFrame = document.getElementById('viewer-frame');

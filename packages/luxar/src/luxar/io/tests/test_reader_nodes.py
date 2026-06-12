@@ -30,7 +30,7 @@ class TestReaderNodeCollection:
 
     def test_nested_groups_no_duplicates(self, tmp_path: Path) -> None:
         """Test that nested groups don't cause duplicate node entries."""
-        output_path = tmp_path / "nested_groups.zarr"
+        output_path = tmp_path / "nested_groups.luxar.zarr"
 
         # Create nested structure: Root -> GroupA -> GroupB -> Points
         # Use full paths (not parent= kwarg which doesn't exist on write_points)
@@ -89,7 +89,7 @@ class TestReaderNodeCollection:
 
     def test_flat_structure_no_duplicates(self, tmp_path: Path) -> None:
         """Test that flat structure (no nesting) works correctly."""
-        output_path = tmp_path / "flat_structure.zarr"
+        output_path = tmp_path / "flat_structure.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -112,7 +112,7 @@ class TestReaderNodeCollection:
 
     def test_mixed_types_no_duplicates(self, tmp_path: Path) -> None:
         """Test mixed node types (groups, points, lines) without duplicates."""
-        output_path = tmp_path / "mixed_types.zarr"
+        output_path = tmp_path / "mixed_types.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -158,7 +158,7 @@ class TestReaderVersionCheck:
 
     def test_version_mismatch_warns(self, tmp_path: Path) -> None:
         """Loading a scene with a different version should emit a UserWarning."""
-        scene_path = tmp_path / "old.zarr"
+        scene_path = tmp_path / "old.luxar.zarr"
         self._create_scene_with_version(scene_path, "99.99")
 
         with warnings.catch_warnings(record=True) as w:
@@ -172,7 +172,7 @@ class TestReaderVersionCheck:
 
     def test_matching_version_no_warning(self, tmp_path: Path) -> None:
         """Loading a scene with the current version should not warn."""
-        scene_path = tmp_path / "current.zarr"
+        scene_path = tmp_path / "current.luxar.zarr"
         self._create_scene_with_version(scene_path, LUXAR_VERSION_CURRENT)
 
         with warnings.catch_warnings(record=True) as w:

@@ -16,7 +16,7 @@ class TestProgressiveWriting:
     def test_compiler_context_manager(self) -> None:
         """Test LuxarZarrCompiler as context manager."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
                 # Compiler should be initialized
@@ -40,7 +40,7 @@ class TestProgressiveWriting:
     def test_progressive_points_writing(self) -> None:
         """Test that points are written immediately without keeping in memory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create large array (but not too large for CI)
             n_points = 10000
@@ -73,7 +73,7 @@ class TestProgressiveWriting:
     def test_scene_with_dimensions(self) -> None:
         """Test scene creation with dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             from luxar import Dimension
 
@@ -100,7 +100,7 @@ class TestProgressiveWriting:
     def test_hierarchical_structure(self) -> None:
         """Test creating hierarchical structure with groups."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -122,7 +122,7 @@ class TestProgressiveWriting:
     def test_no_memory_accumulation(self) -> None:
         """Test that data is not kept in memory after writing."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -143,7 +143,7 @@ class TestProgressiveWriting:
     def test_compiler_without_context_manager(self) -> None:
         """Test using compiler without context manager."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             compiler = LuxarZarrCompiler(output_path)
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -162,7 +162,7 @@ class TestProgressiveWriting:
     def test_resizable_dataset_creation(self) -> None:
         """Test creating resizable datasets for streaming."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.zarr"
+            output_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(output_path) as compiler:
                 # Create resizable dataset

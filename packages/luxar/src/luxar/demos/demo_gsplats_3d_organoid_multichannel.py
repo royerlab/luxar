@@ -397,7 +397,9 @@ CHANNEL_COLORMAPS = ["magenta", "cyan"]
 def create_luxar_scene(gsplats_list, output_path: Path | None = None):
     """Create Luxar scene with per-channel gsplat layers."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_3d_organoid_multichannel.luxar.zarr"
+        )
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -559,7 +561,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_multichannel.luxar.zarr"
 
     # Serve only mode
     if SERVE_ONLY:

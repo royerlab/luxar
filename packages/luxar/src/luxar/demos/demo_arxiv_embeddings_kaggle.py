@@ -716,7 +716,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "arxiv_papers_kaggle.zarr"
+        output_path = get_demos_output_dir() / "arxiv_papers_kaggle.luxar.zarr"
         try:
             n_papers = generate_paper_landscape(
                 output_path,
@@ -738,7 +738,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_kaggle_") as tmpdir:
-        output_path = Path(tmpdir) / "arxiv_papers.zarr"
+        output_path = Path(tmpdir) / "arxiv_papers.luxar.zarr"
 
         try:
             n_papers = generate_paper_landscape(

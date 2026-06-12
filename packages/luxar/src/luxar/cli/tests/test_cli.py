@@ -21,7 +21,7 @@ def runner():
 @pytest.fixture
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
-    store_path = tmp_path / "test_scene.zarr"
+    store_path = tmp_path / "test_scene.luxar.zarr"
     from luxar.demos import create_lorenz_attractor
 
     create_lorenz_attractor(store_path, n_points=100, seed=42)
@@ -30,7 +30,7 @@ def sample_scene(tmp_path):
 
 def test_demo_command_no_serve_success(runner, tmp_path) -> None:
     """Test successful demo generation without serving."""
-    output_path = tmp_path / "demo_test.zarr"
+    output_path = tmp_path / "demo_test.luxar.zarr"
 
     result = runner.invoke(
         app,
@@ -59,7 +59,7 @@ def test_demo_command_no_serve_success(runner, tmp_path) -> None:
 
 def test_demo_command_no_serve_with_defaults(runner, tmp_path) -> None:
     """Test demo command without serving with default parameters."""
-    output_path = tmp_path / "default_demo.zarr"
+    output_path = tmp_path / "default_demo.luxar.zarr"
 
     result = runner.invoke(app, ["demo", "--no-serve", "--output", str(output_path)])
 
@@ -78,7 +78,7 @@ def test_demo_command_no_serve_with_defaults(runner, tmp_path) -> None:
 
 def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
     """Test demo command without serving using short option flags."""
-    output_path = tmp_path / "short_opts.zarr"
+    output_path = tmp_path / "short_opts.luxar.zarr"
 
     result = runner.invoke(
         app, ["demo", "--no-serve", "-o", str(output_path), "-n", "25"]
@@ -97,7 +97,7 @@ def test_demo_command_no_serve_short_options(runner, tmp_path) -> None:
 def test_demo_command_no_serve_failure(runner, tmp_path) -> None:
     """Test demo command when scene creation fails."""
     # Use invalid path to trigger failure
-    invalid_path = "/invalid/path/that/does/not/exist.zarr"
+    invalid_path = "/invalid/path/that/does/not/exist.luxar.zarr"
 
     result = runner.invoke(
         app, ["demo", "--no-serve", "--output", invalid_path, "--points", "10"]
@@ -138,7 +138,7 @@ def test_info_command_success(runner, sample_scene) -> None:
 
 def test_info_command_nonexistent_path(runner, tmp_path) -> None:
     """Test info command with non-existent path."""
-    nonexistent_path = tmp_path / "does_not_exist.zarr"
+    nonexistent_path = tmp_path / "does_not_exist.luxar.zarr"
 
     result = runner.invoke(app, ["info", str(nonexistent_path)])
 
@@ -148,7 +148,7 @@ def test_info_command_nonexistent_path(runner, tmp_path) -> None:
 
 def test_info_command_complex_hierarchy(runner, tmp_path) -> None:
     """Test info command with complex scene hierarchy."""
-    store_path = tmp_path / "complex_scene.zarr"
+    store_path = tmp_path / "complex_scene.luxar.zarr"
 
     with LuxarZarrCompiler(store_path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -202,7 +202,7 @@ def test_info_command_invalid_zarr_store(runner, tmp_path) -> None:
 # would leave behind.
 def test_info_command_empty_directory(runner, tmp_path) -> None:
     """Empty directory should fail with a clear error, not crash."""
-    empty_dir = tmp_path / "empty.zarr"
+    empty_dir = tmp_path / "empty.luxar.zarr"
     empty_dir.mkdir()
     result = runner.invoke(app, ["info", str(empty_dir)])
     assert result.exit_code == 1
@@ -219,7 +219,7 @@ def test_info_command_zarr_group_without_luxar_metadata(runner, tmp_path) -> Non
     actionable (mentions the path OR has the canonical 'Error' prefix)."""
     import zarr
 
-    bare_store = tmp_path / "bare.zarr"
+    bare_store = tmp_path / "bare.luxar.zarr"
     # Create a valid zarr group but with no Luxar data
     zarr.open_group(str(bare_store), mode="w")
 
@@ -235,7 +235,7 @@ def test_info_command_zarr_group_without_luxar_metadata(runner, tmp_path) -> Non
 
 def test_serve_command_nonexistent_store(runner, tmp_path) -> None:
     """Test serve command with non-existent store."""
-    nonexistent_path = tmp_path / "does_not_exist.zarr"
+    nonexistent_path = tmp_path / "does_not_exist.luxar.zarr"
 
     result = runner.invoke(app, ["serve", str(nonexistent_path)])
 
@@ -257,7 +257,7 @@ def test_serve_command_zip_store_error(runner, tmp_path) -> None:
 
 def test_dfs_single_group(tmp_path) -> None:
     """Test _dfs with single group."""
-    store_path = tmp_path / "single.zarr"
+    store_path = tmp_path / "single.luxar.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -271,7 +271,7 @@ def test_dfs_single_group(tmp_path) -> None:
 
 def test_dfs_nested_groups(tmp_path) -> None:
     """Test _dfs with nested group structure."""
-    store_path = tmp_path / "nested.zarr"
+    store_path = tmp_path / "nested.luxar.zarr"
     with LuxarZarrCompiler(store_path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -299,7 +299,7 @@ def test_dfs_nested_groups(tmp_path) -> None:
 
 def test_demo_then_info_workflow(runner, tmp_path) -> None:
     """Test complete workflow: generate demo scene then get info."""
-    store_path = tmp_path / "workflow.zarr"
+    store_path = tmp_path / "workflow.luxar.zarr"
 
     # Step 1: Generate demo scene without serving
     result1 = runner.invoke(
@@ -417,7 +417,7 @@ def test_info_detects_lines_objects(runner, tmp_path) -> None:
     """Test that info detects Lines geometry type (#9)."""
     import json
 
-    store_path = tmp_path / "lines_scene.zarr"
+    store_path = tmp_path / "lines_scene.luxar.zarr"
     root = zarr.open_group(store_path, mode="w")
     root.attrs["type"] = "scene"
     lines_group = root.create_group("my_lines")
@@ -439,7 +439,7 @@ def test_info_detects_gsplats_objects(runner, tmp_path) -> None:
     """Test that info detects GSplats geometry type (#9)."""
     import json
 
-    store_path = tmp_path / "gsplats_scene.zarr"
+    store_path = tmp_path / "gsplats_scene.luxar.zarr"
     root = zarr.open_group(store_path, mode="w")
     root.attrs["type"] = "scene"
     gs_group = root.create_group("my_gsplats")
@@ -464,7 +464,8 @@ def test_demo_no_serve_requires_output(runner) -> None:
 def test_demo_rejects_zero_points(runner, tmp_path) -> None:
     """Test that demo rejects --points 0 with clear message (#3)."""
     result = runner.invoke(
-        app, ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "0"]
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "0"],
     )
     assert result.exit_code == 1
     assert "must be positive" in result.stdout
@@ -473,7 +474,8 @@ def test_demo_rejects_zero_points(runner, tmp_path) -> None:
 def test_demo_rejects_negative_points(runner, tmp_path) -> None:
     """Test that demo rejects --points -1 with clear message (#4)."""
     result = runner.invoke(
-        app, ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "-1"]
+        app,
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "-1"],
     )
     assert result.exit_code == 1
     assert "must be positive" in result.stdout
@@ -489,7 +491,7 @@ def test_demo_rejects_float_points(runner, tmp_path) -> None:
     `n_points <= 0` runtime guard fires."""
     result = runner.invoke(
         app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "1.5"],
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "1.5"],
     )
     assert result.exit_code != 0
     # Click error path: combined output contains either "Invalid value"
@@ -506,7 +508,7 @@ def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:
     """`--points abc` is not numeric; Typer rejects at parse time."""
     result = runner.invoke(
         app,
-        ["demo", "--no-serve", "-o", str(tmp_path / "x.zarr"), "--points", "abc"],
+        ["demo", "--no-serve", "-o", str(tmp_path / "x.luxar.zarr"), "--points", "abc"],
     )
     assert result.exit_code != 0
     combined = (result.stdout or "") + (result.stderr or "")
@@ -515,7 +517,7 @@ def test_demo_rejects_non_numeric_points(runner, tmp_path) -> None:
 
 def test_info_tree_shows_lines_icon(runner, tmp_path) -> None:
     """Test that tree view shows correct icon for Lines (#9)."""
-    store_path = tmp_path / "lines_scene.zarr"
+    store_path = tmp_path / "lines_scene.luxar.zarr"
     root = zarr.open_group(store_path, mode="w")
     root.attrs["type"] = "scene"
     lines_group = root.create_group("my_lines")

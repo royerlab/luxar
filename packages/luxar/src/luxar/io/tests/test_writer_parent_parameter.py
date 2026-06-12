@@ -19,7 +19,7 @@ from luxar.core.dimensions import Dimensions
 
 def test_points_with_parent_creates_correct_hierarchy(tmp_path: Path) -> None:
     """Test that points added with parent are stored under parent in zarr."""
-    output_path = tmp_path / "hierarchy_test.zarr"
+    output_path = tmp_path / "hierarchy_test.luxar.zarr"
 
     # Create scene using compiler (recommended pattern)
     from luxar.io.compiler import LuxarZarrCompiler
@@ -77,7 +77,7 @@ def test_points_with_parent_creates_correct_hierarchy(tmp_path: Path) -> None:
 
 def test_reader_reflects_correct_hierarchy(tmp_path: Path) -> None:
     """Test that reader shows correct hierarchy for nested nodes."""
-    output_path = tmp_path / "reader_hierarchy.zarr"
+    output_path = tmp_path / "reader_hierarchy.luxar.zarr"
 
     # Create scene with hierarchy
     from luxar.io.compiler import LuxarZarrCompiler

@@ -31,7 +31,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main():
     """Demonstrate progressive writing with LuxarZarrCompiler."""
-    output_path = get_examples_output_dir() / "progressive_writing_example.zarr"
+    output_path = get_examples_output_dir() / "progressive_writing_example.luxar.zarr"
 
     with asection("Scene Setup and Dimensions"):
         # Define dimensions for the scene

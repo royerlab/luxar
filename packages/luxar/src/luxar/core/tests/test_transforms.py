@@ -495,7 +495,7 @@ class TestNodeTransformIntegration:
 
     def test_node_transform_validation(self, tmp_path) -> None:
         """Test that transforms are validated when creating nodes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Valid transform - pass numpy matrix directly (row-major)
@@ -513,7 +513,7 @@ class TestNodeTransformIntegration:
 
     def test_node_transform_property(self, tmp_path) -> None:
         """Test the transform property on nodes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("TestGroup")
 
@@ -540,7 +540,7 @@ class TestNodeTransformIntegration:
 
     def test_nested_transforms(self, tmp_path) -> None:
         """Test nested transform hierarchy."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create hierarchy with transforms (pass numpy matrices)
@@ -558,7 +558,7 @@ class TestNodeTransformIntegration:
 
     def test_transform_with_points(self, tmp_path) -> None:
         """Test transforms work with points."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create transformed group (pass numpy matrix directly)
@@ -577,7 +577,7 @@ class TestNodeTransformIntegration:
 
     def test_world_transform(self, tmp_path) -> None:
         """Test world_transform property composes parent chain correctly."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Node with no transform → identity
@@ -624,7 +624,7 @@ class TestNodeTransformIntegration:
 
     def test_world_transform_matches_manual_compose(self, tmp_path) -> None:
         """Test world_transform gives same result as manual point transformation."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             t1 = translate(10, 0, 0)
@@ -644,7 +644,7 @@ class TestNodeTransformIntegration:
 
     def test_transform_removal_persists_to_zarr(self, tmp_path) -> None:
         """Test that setting transform=None actually removes it from zarr store."""
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("TestGroup", transform=translate(1, 2, 3))

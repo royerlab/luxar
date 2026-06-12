@@ -49,7 +49,7 @@ from luxar import LuxarZarrCompiler, Dimensions
 
 # Create a scene
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("hdr_example.zarr") as compiler:
+with LuxarZarrCompiler("hdr_example.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # HDR colors (values > 1.0, float32)

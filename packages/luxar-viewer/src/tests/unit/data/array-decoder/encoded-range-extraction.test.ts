@@ -99,7 +99,10 @@ describe('Encoded Array Range Extraction', () => {
   describe('LUT Encoding - Critical Bug Fix', () => {
     it('should correctly extract ranges from LUT-encoded colors', async () => {
       // Load LUT-encoded colors (1000 points, 10 unique colors)
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       // Verify this is LUT encoding
       expect(attrs.encoding?.name).toBe('lut_uint8');
@@ -171,7 +174,10 @@ describe('Encoded Array Range Extraction', () => {
       // ranges from …" tests. This test only verifies the helper's
       // arithmetic — useful as documentation of the off-by-three bug
       // shape but does NOT guard the production fix.
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
       const decoded = await decoder.decode(array, attrs, 1000, rootLoc);
@@ -189,7 +195,7 @@ describe('Encoded Array Range Extraction', () => {
   describe('Broadcasting Encoding', () => {
     it('should correctly extract ranges from broadcasted colors', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_broadcasting.zarr',
+        'test_broadcasting.luxar.zarr',
         'points/colors'
       );
 
@@ -224,7 +230,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should correctly extract ranges from broadcasted radii', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_broadcasting.zarr',
+        'test_broadcasting.luxar.zarr',
         'points/radii'
       );
 
@@ -255,7 +261,7 @@ describe('Encoded Array Range Extraction', () => {
   describe('Quantization Encoding (rgb_uint8)', () => {
     it('should correctly extract ranges from quantized colors', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_quantization.zarr',
+        'test_quantization.luxar.zarr',
         'points/colors'
       );
 
@@ -298,7 +304,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should correctly extract ranges from radii (may be float32 or quantized)', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_quantization.zarr',
+        'test_quantization.luxar.zarr',
         'points/radii'
       );
 
@@ -330,14 +336,14 @@ describe('Encoded Array Range Extraction', () => {
     it('should correctly extract from multiple encoding modes in same scene', async () => {
       // Test uniform (broadcasting)
       const { array: uniformArray, attrs: uniformAttrs } = await loadArrayWithAttrs(
-        'test_mixed.zarr',
+        'test_mixed.luxar.zarr',
         'uniform/colors'
       );
       expect(uniformAttrs.encoding?.name).toBe('broadcasted');
 
       // Test LUT
       const { array: lutArray, attrs: lutAttrs } = await loadArrayWithAttrs(
-        'test_mixed.zarr',
+        'test_mixed.luxar.zarr',
         'lut/colors'
       );
       expect(lutAttrs.encoding?.name).toBe('lut_uint8');
@@ -367,7 +373,7 @@ describe('Encoded Array Range Extraction', () => {
 
   describe('Direct (Non-Encoded) Arrays - Positions', () => {
     it('should correctly extract ranges from non-encoded positions with data verification', async () => {
-      const { array, attrs } = await loadArrayWithAttrs('test_lut.zarr', 'points/positions');
+      const { array, attrs } = await loadArrayWithAttrs('test_lut.luxar.zarr', 'points/positions');
 
       // Positions should NOT be encoded
       expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
@@ -427,7 +433,7 @@ describe('Encoded Array Range Extraction', () => {
     });
 
     it('should handle positions with 4D data correctly', async () => {
-      const { array, attrs } = await loadArrayWithAttrs('test_4d.zarr', 'points/positions');
+      const { array, attrs } = await loadArrayWithAttrs('test_4d.luxar.zarr', 'points/positions');
 
       // 4D positions should have 4 elements per point
       expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
@@ -465,7 +471,7 @@ describe('Encoded Array Range Extraction', () => {
 
   describe('Array Reference (Deduplication) Encoding', () => {
     it('should correctly extract ranges from array_ref encoded colors', async () => {
-      // The test_array_refs.zarr has two point clouds with shared colors
+      // The test_array_refs.luxar.zarr has two point clouds with shared colors
       // Second one should have array_ref encoding pointing to first
 
       // First, check points1 colors
@@ -473,11 +479,11 @@ describe('Encoded Array Range Extraction', () => {
         array: colors1,
         attrs: attrs1,
         rootLoc,
-      } = await loadArrayWithAttrs('test_array_refs.zarr', 'points1/colors');
+      } = await loadArrayWithAttrs('test_array_refs.luxar.zarr', 'points1/colors');
 
       // Second, check points2 colors (may have array_ref)
       const { array: colors2, attrs: attrs2 } = await loadArrayWithAttrs(
-        'test_array_refs.zarr',
+        'test_array_refs.luxar.zarr',
         'points2/colors'
       );
 
@@ -532,7 +538,7 @@ describe('Encoded Array Range Extraction', () => {
   describe('Sharpness Encoding', () => {
     it('should correctly extract ranges from quantized sharpness', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_sharpness_range.zarr',
+        'test_sharpness_range.luxar.zarr',
         'sharpness_test/sharpnesses'
       );
 
@@ -574,7 +580,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should verify the full sharpness range [0, 1] is preserved after decoding', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_sharpness_range.zarr',
+        'test_sharpness_range.luxar.zarr',
         'sharpness_test/sharpnesses'
       );
 
@@ -613,7 +619,7 @@ describe('Encoded Array Range Extraction', () => {
   describe('Scalar LUT on 4D Positions (Quantum Orbitals Bug)', () => {
     it('should correctly identify scalar LUT mode and original_shape for 4D positions', async () => {
       const { array, attrs } = await loadArrayWithAttrs(
-        'test_4d_scalar_lut.zarr',
+        'test_4d_scalar_lut.luxar.zarr',
         'points/positions'
       );
 
@@ -635,7 +641,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should correctly decode full 4D positions array with scalar LUT', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_4d_scalar_lut.zarr',
+        'test_4d_scalar_lut.luxar.zarr',
         'points/positions'
       );
 
@@ -669,7 +675,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should correctly extract partial range from scalar LUT 4D positions', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_4d_scalar_lut.zarr',
+        'test_4d_scalar_lut.luxar.zarr',
         'points/positions'
       );
 
@@ -703,7 +709,7 @@ describe('Encoded Array Range Extraction', () => {
 
     it('should correctly extract multiple non-contiguous ranges from scalar LUT 4D positions', async () => {
       const { array, attrs, rootLoc } = await loadArrayWithAttrs(
-        'test_4d_scalar_lut.zarr',
+        'test_4d_scalar_lut.luxar.zarr',
         'points/positions'
       );
 
@@ -746,7 +752,10 @@ describe('Encoded Array Range Extraction', () => {
 
   describe('Edge Cases', () => {
     it('should handle single-point ranges', async () => {
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
       const decoded = await decoder.decode(array, attrs, 1000, rootLoc);
@@ -764,7 +773,10 @@ describe('Encoded Array Range Extraction', () => {
     });
 
     it('should handle empty ranges', async () => {
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
       const decoded = await decoder.decode(array, attrs, 1000, rootLoc);
@@ -778,7 +790,10 @@ describe('Encoded Array Range Extraction', () => {
     });
 
     it('should handle full array as single range', async () => {
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
       const decoded = await decoder.decode(array, attrs, 1000, rootLoc);
@@ -797,7 +812,10 @@ describe('Encoded Array Range Extraction', () => {
     });
 
     it('should handle many small ranges', async () => {
-      const { array, attrs, rootLoc } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
+      const { array, attrs, rootLoc } = await loadArrayWithAttrs(
+        'test_lut.luxar.zarr',
+        'points/colors'
+      );
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
       const decoded = await decoder.decode(array, attrs, 1000, rootLoc);

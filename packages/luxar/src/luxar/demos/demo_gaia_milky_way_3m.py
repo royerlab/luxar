@@ -379,7 +379,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
-    luxar_zarr_path = temp_dir / "galaxy_luxar.zarr"
+    luxar_zarr_path = temp_dir / "galaxy.luxar.zarr"
     load_and_convert_gaia_data(raw_zarr_path, luxar_zarr_path)
 
     return luxar_zarr_path
@@ -423,7 +423,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "galaxy_luxar.zarr"
+        output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
         try:
             with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
                 tmp_path = Path(tmpdir)

@@ -59,7 +59,7 @@ class TestSceneDimensionMetadata:
         from luxar import Dimension, Dimensions
 
         # Test scene with default 3D dimensions
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Should have 3D dimensions
             assert scene.dimensions is not None
@@ -74,7 +74,7 @@ class TestSceneDimensionMetadata:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test_with_dims.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test_with_dims.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Retrieve dimensions
@@ -86,12 +86,12 @@ class TestSceneDimensionMetadata:
             assert retrieved.dimensions[2].scale == 1.0
 
             # Check stored in zarr attrs.
-            store = zarr.open_group(tmp_path / "test_with_dims.zarr", mode="r")
+            store = zarr.open_group(tmp_path / "test_with_dims.luxar.zarr", mode="r")
             assert "scene_dimensions" in store.attrs
 
     def test_scene_dimension_persistence(self, tmp_path) -> None:
         """Test dimension metadata persists through save/load."""
-        zarr_path = tmp_path / "persist.zarr"
+        zarr_path = tmp_path / "persist.luxar.zarr"
 
         # Create scene with dimension metadata.
         dims = Dimensions(

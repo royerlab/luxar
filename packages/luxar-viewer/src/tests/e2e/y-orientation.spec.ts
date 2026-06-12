@@ -29,7 +29,7 @@
 import { test, expect, type Page } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 const N_BUCKETS = 32;
 /**

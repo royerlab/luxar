@@ -15,11 +15,11 @@ import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Test all example datasets for WebGL errors
 const DATASETS = [
-  'http://localhost:9000/datasets/examples/sharpness_showcase_example.zarr',
-  'http://localhost:9000/datasets/examples/build_example_structured.zarr',
-  'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
-  'http://localhost:9000/datasets/examples/hierarchy_example.zarr',
-  'http://localhost:9000/datasets/examples/transform_example.zarr',
+  'http://localhost:9000/datasets/examples/sharpness_showcase_example.luxar.zarr',
+  'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr',
+  'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
+  'http://localhost:9000/datasets/examples/hierarchy_example.luxar.zarr',
+  'http://localhost:9000/datasets/examples/transform_example.luxar.zarr',
 ];
 
 test.describe('WebGL Error Detection - Critical', () => {

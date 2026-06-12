@@ -24,11 +24,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_PATH = path.join(__dirname, '../../../points-rendering-perf.json');
 
 // Densest points-only example dataset shipped with the repo. The
-// other "dense" candidate (`dense_grid_5d_example.zarr`) is a 5-D
+// other "dense" candidate (`dense_grid_5d_example.luxar.zarr`) is a 5-D
 // scene where nD slicing reduces the visible point count to a small
 // subset — that doesn't stress the per-instance pipeline we care
 // about, so we benchmark the structured 3-D one.
-const DATASET = 'http://localhost:9000/datasets/examples/dense_cubic_gradient_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/dense_cubic_gradient_example.luxar.zarr';
 
 const SAMPLE_COUNT = 5;
 const SAMPLE_DURATION_MS = 2000;
@@ -82,7 +82,7 @@ test('points rendering: capture N=5 FPS samples on dense_cubic_gradient', async 
   const med = median(samples);
 
   const summary = {
-    dataset: 'dense_cubic_gradient_example.zarr',
+    dataset: 'dense_cubic_gradient_example.luxar.zarr',
     sampleCount: SAMPLE_COUNT,
     sampleDurationMs: SAMPLE_DURATION_MS,
     fps: { min, median: med, max, samples },

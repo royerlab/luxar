@@ -6,7 +6,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 
 def test_incremental_build(tmp_path) -> None:
     """Building the graph node‑by‑node flushes immediately to disk."""
-    store = tmp_path / "inc.zarr"
+    store = tmp_path / "inc.luxar.zarr"
 
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())

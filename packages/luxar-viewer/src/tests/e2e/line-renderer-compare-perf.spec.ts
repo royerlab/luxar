@@ -31,20 +31,20 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_PATH = path.join(__dirname, '../../../line-renderer-compare-perf.json');
 
-// Line-heavy demo. `lines_basic_example.zarr` is the universal
+// Line-heavy demo. `lines_basic_example.luxar.zarr` is the universal
 // fallback — small, always present, no nD navigation needed (lines
 // render at the default slice). For the actual Zebrahub regression
-// repro, swap to `zebrahub_velocity_streamlines_hifi.zarr` and
+// repro, swap to `zebrahub_velocity_streamlines_hifi.luxar.zarr` and
 // navigate to a populated timepoint inside the spec (the hifi set is
 // 4-D — lines aren't visible until you advance the time axis).
 const DATASETS = [
   {
-    name: 'lines_basic_example.zarr',
-    url: 'http://localhost:9000/datasets/examples/lines_basic_example.zarr',
+    name: 'lines_basic_example.luxar.zarr',
+    url: 'http://localhost:9000/datasets/examples/lines_basic_example.luxar.zarr',
   },
   {
-    name: 'zebrahub_velocity_streamlines_hifi.zarr',
-    url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.zarr',
+    name: 'zebrahub_velocity_streamlines_hifi.luxar.zarr',
+    url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.luxar.zarr',
   },
 ];
 

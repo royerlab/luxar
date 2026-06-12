@@ -32,7 +32,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main() -> None:
     """Draw an 8-spoke star using indexed line connectivity."""
-    output_path = get_examples_output_dir() / "lines_indexed_example.zarr"
+    output_path = get_examples_output_dir() / "lines_indexed_example.luxar.zarr"
     aprint(f"Writing indexed-lines example to {output_path}")
 
     # One center vertex + 8 outer vertices on a circle of radius 4.

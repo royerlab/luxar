@@ -567,7 +567,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "atp_synthase.zarr"
+        output_path = get_demos_output_dir() / "atp_synthase.luxar.zarr"
         try:
             generate_atp_synthase(
                 output_path,
@@ -588,7 +588,7 @@ def main() -> None:
 
     # Generate structure
     with tempfile.TemporaryDirectory(prefix="luxar_demo_atp_") as tmpdir:
-        output_path = Path(tmpdir) / "atp_synthase.zarr"
+        output_path = Path(tmpdir) / "atp_synthase.luxar.zarr"
 
         try:
             n_atoms = generate_atp_synthase(

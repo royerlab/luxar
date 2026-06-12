@@ -16,8 +16,8 @@ import {
   assertNoConsoleErrors,
 } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.zarr';
-const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/rendering_modes_example.luxar.zarr';
+const MULTI_DATASET = 'http://localhost:9000/datasets/examples/multiple_objects_example.luxar.zarr';
 
 test.describe('Blending Modes', () => {
   // The blending-mode datasets contain multiple groups (5+ point clouds) and

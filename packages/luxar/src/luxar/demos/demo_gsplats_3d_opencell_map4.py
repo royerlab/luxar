@@ -63,7 +63,7 @@ The TIFF is auto-downloaded from the OpenCell S3 bucket on first run.
 You can also provide a local path with: --data-path=<path_to_tiff>
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_3d_opencell_map4.zarr
+    - Scene saved to:  datasets/demos/gsplats_3d_opencell_map4.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -303,7 +303,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_opencell_map4.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_opencell_map4.luxar.zarr"
 
     with asection("Creating Luxar Scene (per-channel layers)"):
         aprint(f"Output: {output_path.name}")
@@ -504,7 +504,7 @@ def main():
     aprint("Per-channel fitting + Layers panel for per-channel control")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_3d_opencell_map4.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_opencell_map4.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

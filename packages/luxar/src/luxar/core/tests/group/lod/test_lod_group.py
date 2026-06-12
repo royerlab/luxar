@@ -51,7 +51,7 @@ class TestAddLodGroup:
 
     def test_add_lod_group_writes_node_with_defaults(self, tmp_path) -> None:
         """Bare add_lod_group writes type=group + kind=lod with defaults."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -70,7 +70,7 @@ class TestAddLodGroup:
 
     def test_add_lod_group_with_explicit_default_level(self, tmp_path) -> None:
         """The default_level kwarg lands on the zarr attrs."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -83,7 +83,7 @@ class TestAddLodGroup:
         self, tmp_path
     ) -> None:
         """Children added via inherited add_* methods carry min_pixel_size."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -114,7 +114,7 @@ class TestAddLodGroup:
 
     def test_add_lod_group_can_nest_under_a_group(self, tmp_path) -> None:
         """kind=lod groups can sit beneath a normal Group container."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -136,26 +136,26 @@ class TestLODGroupValidation:
     """Sad-path checks on the LOD-group builder and ``validate_lod_group``."""
 
     def test_unknown_selector_rejected(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="selector must be 'pixel_size'"):
                 scene.add_lod_group("multires", selector="distance")
 
     def test_negative_default_level_rejected(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="default_level must be >= 0"):
                 scene.add_lod_group("multires", default_level=-1)
 
     def test_validate_empty_children_raises(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("empty")
             with pytest.raises(ValueError, match="has no children"):
                 validate_lod_group(lod)
 
     def test_validate_missing_min_pixel_size_raises(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
             # Child added without min_pixel_size — validator should catch it.
@@ -166,7 +166,7 @@ class TestLODGroupValidation:
                 validate_lod_group(lod)
 
     def test_validate_non_monotonic_raises(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
             lod.add_gsplats(
@@ -187,7 +187,7 @@ class TestLODGroupValidation:
                 validate_lod_group(lod)
 
     def test_validate_passes_for_well_formed_group(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
             for i, mps in enumerate([0.0, 10.0, 50.0]):
@@ -213,7 +213,7 @@ class TestLODGroupValidation:
         check fires in ``validate_lod_group()``. Without it, a bad value
         sails into the on-disk zarr and only surfaces at viewer load time.
         """
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires", default_level=99)
             for i, mps in enumerate([0.0, 10.0]):
@@ -304,7 +304,7 @@ class TestDisplayTypeResolution:
     """
 
     def test_resolve_display_type_plain_leaf(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
             lod.add_points(
@@ -317,14 +317,14 @@ class TestDisplayTypeResolution:
     def test_resolve_display_type_specialized_group_uses_display_type(
         self, tmp_path
     ) -> None:
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires", display_type="custom_marker")
             assert resolve_display_type(lod) == "custom_marker"
 
     def test_compute_lod_display_type_uses_finest_child(self, tmp_path) -> None:
         """Heterogeneous children are allowed; the finest (last) child wins."""
-        with LuxarZarrCompiler(tmp_path / "x.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
             # Coarse level is points; fine level is gsplats — heterogeneous.

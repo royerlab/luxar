@@ -82,7 +82,7 @@ def tilted_cholesky(sx: float, sy: float, sz: float, off_xy: float) -> np.ndarra
 
 def main() -> None:
     """Build a scene with three hand-authored 3D Gaussian splats."""
-    output_path = get_examples_output_dir() / "gsplats_basic_example.zarr"
+    output_path = get_examples_output_dir() / "gsplats_basic_example.luxar.zarr"
     aprint(f"Writing hand-authored gsplat scene to {output_path}")
 
     centers = np.array(

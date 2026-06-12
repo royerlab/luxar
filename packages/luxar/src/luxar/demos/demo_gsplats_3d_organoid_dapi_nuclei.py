@@ -108,7 +108,7 @@ By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
-    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.zarr
+    - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
     - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi_gsplats.gsplats.zarr.zip
     - Automatically opens in browser at http://localhost:8000
 
@@ -331,7 +331,9 @@ def fit_dapi_gsplats(volume):
 def create_luxar_scene(gsplats_data, output_path: Path | None = None):
     """Create Luxar scene with gsplats."""
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
+        )
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -528,7 +530,7 @@ def main():
     aprint("")
 
     # Determine output path
-    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_organoid_dapi_nuclei.luxar.zarr"
 
     # Serve only mode
     if SERVE_ONLY:

@@ -228,7 +228,7 @@ class TestLoadVolume:
         import zarr
 
         vol = np.random.rand(8, 8, 8).astype(np.float32)
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         z = zarr.open(str(path), mode="w", shape=vol.shape, dtype=vol.dtype)
         z[:] = vol
         loaded = load_volume(path)
@@ -239,7 +239,7 @@ class TestLoadVolume:
 
         # Simulate 5D OME-ZARR (T=2, C=3, Z=4, Y=4, X=4)
         vol = np.random.rand(2, 3, 4, 4, 4).astype(np.float32)
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
         root.create_dataset("0", data=vol)
         loaded = load_volume(path, channel=1, timepoint=0)
@@ -271,7 +271,7 @@ class TestLoadVolume:
         import zarr
 
         vol = np.random.rand(4, 4, 4).astype(np.float32)
-        path = tmp_path / "test.zarr"
+        path = tmp_path / "test.luxar.zarr"
         root = zarr.open_group(str(path), mode="w")
         root.create_dataset("my_volume", data=vol)
         root.create_dataset("other_data", data=np.zeros(10))
@@ -438,7 +438,7 @@ class TestConvertCommand:
     def test_convert_basic(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out = tmp_path / "scene.zarr"
+        out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
             ["gsplat", "convert", str(sample_gsplats), str(out)],
@@ -454,7 +454,7 @@ class TestConvertCommand:
     def test_convert_no_center(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out = tmp_path / "scene.zarr"
+        out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
             ["gsplat", "convert", str(sample_gsplats), str(out), "--no-center"],
@@ -475,7 +475,7 @@ class TestConvertCommand:
             ).exit_code
             == 0
         )
-        out = tmp_path / "scene.zarr"
+        out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(app, ["gsplat", "convert", str(part), str(out)])
         assert result.exit_code == 0, f"convert on partition failed: {result.stdout}"
 
@@ -487,7 +487,7 @@ class TestConvertCommand:
     def test_convert_with_scale_intensity(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        out = tmp_path / "scene.zarr"
+        out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
             [
@@ -510,7 +510,7 @@ class TestConvertCommand:
         """Verify the converted scene has proper zarr structure."""
         import zarr
 
-        out = tmp_path / "scene.zarr"
+        out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
             ["gsplat", "convert", str(sample_gsplats), str(out)],
@@ -813,7 +813,7 @@ class TestEndToEndWorkflows:
         import zarr
 
         gsplats_path = tmp_path / "fitted.gsplats.zarr"
-        scene_path = tmp_path / "scene.zarr"
+        scene_path = tmp_path / "scene.luxar.zarr"
 
         # Step 1: Fit
         r1 = runner.invoke(
