@@ -58,6 +58,14 @@ export interface PickResultHandlerPorts {
       } | null
     ) => void;
   };
+  /**
+   * Optional sink for the public `selection` embedder event. Fires with the
+   * picked element on every (non-superseded) hover-pick, and `null` when the
+   * hover clears. Independent of whether a label/image tooltip exists —
+   * reports what is currently picked. Inline shape (not the embedder type) to
+   * keep this handler decoupled from the public event module.
+   */
+  onSelection?: (sel: { nodeName: string; elementIndex: number } | null) => void;
 }
 
 /**
@@ -95,6 +103,7 @@ export function buildPickResultHandler(
     try {
       if (!result) {
         ports.overlayManager?.updateHoverContent(null);
+        ports.onSelection?.(null);
         return;
       }
       // Partition-aware reporting: when the hit's leaf sits under a kind=partition
@@ -110,6 +119,9 @@ export function buildPickResultHandler(
       // A newer pick result (or a fade-to-null) arrived while we were
       // fetching — drop this stale one rather than clobber fresher state.
       if (seq !== latest) return;
+      // Selection reflects the picked element itself, independent of whether
+      // a label/image tooltip exists for it.
+      ports.onSelection?.({ nodeName: nodePath, elementIndex: result.elementId });
       const hasContent = label || imageUrl;
       ports.overlayManager?.updateHoverContent(
         hasContent ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId } : null
@@ -120,6 +132,7 @@ export function buildPickResultHandler(
       if (seq !== latest) return;
       log.warning(Modules.APP, `Picking callback error: ${err}`);
       ports.overlayManager?.updateHoverContent(null);
+      ports.onSelection?.(null);
     }
   };
 }

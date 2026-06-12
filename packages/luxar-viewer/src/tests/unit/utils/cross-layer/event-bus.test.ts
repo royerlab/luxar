@@ -160,6 +160,18 @@ describe('TypedEventBus', () => {
     expect(listener).not.toHaveBeenCalled(); // no cached value to replay
   });
 
+  it('hasListeners reflects live subscription state', () => {
+    const bus = createEventBus<TestMap>();
+    expect(bus.hasListeners('ping')).toBe(false);
+
+    const off = bus.on('ping', vi.fn());
+    expect(bus.hasListeners('ping')).toBe(true);
+    expect(bus.hasListeners('pong')).toBe(false); // per-type, not global
+
+    off();
+    expect(bus.hasListeners('ping')).toBe(false);
+  });
+
   it('singleton eventBus is shared across imports', async () => {
     // Spot-check: importing twice yields the same instance, and a
     // listener registered via one ref sees emits from the other.

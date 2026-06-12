@@ -38,6 +38,20 @@
 export { LuxarApp, type LuxarAppOptions } from './core/app';
 export { bootstrapStandalone, type BootstrapOptions } from './core/bootstrap';
 
+// Programmatic embedder API — value/event types for the LuxarApp methods
+// (switchDataset, getDimensions/setDimensionValue, camera, resize, screenshot)
+// and the on(event, listener) surface.
+export type {
+  LuxarEmbedderEventMap,
+  EmbedderDimensions,
+  ScreenshotOptions,
+  SelectionPayload,
+  CameraSnapshot,
+  DimensionMetadata,
+  Unsubscribe,
+} from './core/app/embedder/events';
+export type { ViewerSnapshot } from './core/app/snapshot/viewer-snapshot';
+
 // URL parsing — useful for embedders that want to honor a few of the
 // standalone-app's URL flags without taking the whole bootstrap path.
 export { normalizeDataSourceUrl, readUrlParams, type UrlParams } from './config/url-params';

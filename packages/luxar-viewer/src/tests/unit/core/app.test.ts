@@ -135,6 +135,7 @@ import { clearError as mockClearError } from '../../../ui/error-overlay';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
+import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -160,6 +161,9 @@ describe('LuxarApp', () => {
       camera: {},
       controls: {},
       postProcessing: {},
+      // Embedder-API delegation targets.
+      resizeToCanvas: vi.fn(),
+      centerCameraOnScene: vi.fn(),
     };
 
     mockAnimationController = {
@@ -1072,6 +1076,158 @@ describe('LuxarApp', () => {
       } catch (e) {
         expect((e as Error).message).not.toMatch(/before init/);
       }
+    });
+  });
+
+  describe('programmatic embedder API', () => {
+    const SRC = 'http://example.com/data.zarr';
+
+    it('emits dataset-loaded when switchDataset succeeds', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const onLoaded = vi.fn();
+      app.on('dataset-loaded', onLoaded);
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
+    });
+
+    it('emits dataset-error and rejects when a load fails', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockSceneManager.loadSceneData.mockRejectedValueOnce(new Error('boom'));
+      const onError = vi.fn();
+      app.on('dataset-error', onError);
+
+      await expect(app.switchDataset('http://example.com/bad.zarr')).rejects.toThrow('boom');
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError.mock.calls[0][0].src).toBe('http://example.com/bad.zarr');
+      expect(onError.mock.calls[0][0].error).toBeInstanceOf(Error);
+    });
+
+    it('isolates a throwing embedder listener (no spurious dataset-error, no rejection)', async () => {
+      // A buggy consumer 'dataset-loaded' handler must not corrupt the
+      // viewer's control flow: the event bus does not catch listener errors,
+      // so without isolation at on() the throw would propagate into
+      // loadDataset's catch, emit a spurious 'dataset-error', and reject the
+      // switch — on an otherwise-successful load.
+      await app.init({ canvas: mockCanvas, src: SRC });
+      app.on('dataset-loaded', () => {
+        throw new Error('listener boom');
+      });
+      const onError = vi.fn();
+      app.on('dataset-error', onError);
+
+      await expect(app.switchDataset('http://example.com/ok.zarr')).resolves.toBeUndefined();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('rejects a concurrent switchDataset while one is in flight', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      let release!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((r) => (release = r))
+      );
+
+      const first = app.switchDataset('http://example.com/a.zarr');
+      await expect(app.switchDataset('http://example.com/b.zarr')).rejects.toThrow(/in progress/);
+
+      release();
+      await first;
+    });
+
+    it('throws on the guarded methods before init()', () => {
+      expect(() => app.switchDataset('x')).toThrow(/before init/);
+      expect(() => app.getDimensions()).toThrow(/before init/);
+      expect(() => app.setDimensionValue(0, 1)).toThrow(/before init/);
+      expect(() => app.recenterCamera()).toThrow(/before init/);
+      expect(() => app.resize()).toThrow(/before init/);
+    });
+
+    it('registers a scene-dims listener on init and removes it on dispose', async () => {
+      const addSpy = vi.spyOn(SceneDimsManager.prototype, 'addListener');
+      const removeSpy = vi.spyOn(SceneDimsManager.prototype, 'removeListener');
+
+      await app.init({ canvas: mockCanvas, src: SRC });
+      expect(addSpy).toHaveBeenCalled();
+      const listener = addSpy.mock.calls.at(-1)![0];
+
+      app.dispose();
+      expect(removeSpy).toHaveBeenCalledWith(listener);
+    });
+
+    it('emits dimensions-changed when the dims listener fires', async () => {
+      const addSpy = vi.spyOn(SceneDimsManager.prototype, 'addListener');
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const listener = addSpy.mock.calls.at(-1)![0];
+      const onDims = vi.fn();
+      app.on('dimensions-changed', onDims);
+
+      listener(); // simulate a slice-position change notification
+
+      expect(onDims).toHaveBeenCalledTimes(1);
+      expect(onDims.mock.calls[0][0]).toMatchObject({ ndim: expect.any(Number) });
+    });
+
+    it('does not emit dimensions-changed after dispose', async () => {
+      const addSpy = vi.spyOn(SceneDimsManager.prototype, 'addListener');
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const listener = addSpy.mock.calls.at(-1)![0];
+      const onDims = vi.fn();
+      app.on('dimensions-changed', onDims);
+
+      app.dispose();
+      listener(); // isInitialized is false → guarded no-op
+
+      expect(onDims).not.toHaveBeenCalled();
+    });
+
+    it('getDimensions returns an empty shape when no scene is loaded', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      expect(app.getDimensions()).toEqual({
+        ndim: 0,
+        displayed: [],
+        currentStep: [],
+        metadata: [],
+        ranges: [],
+      });
+    });
+
+    it('getDimensions deep-clones nested metadata arrays (no aliasing of internals)', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      // A shallow `{ ...m }` spread would leave `range`/`categories` shared
+      // with the scene-dims manager — embedder mutation would corrupt state.
+      const internalRange: [number, number] = [0, 10];
+      const internalCategories = ['dapi', 'gfp'];
+      vi.spyOn(SceneDimsManager.prototype, 'getDims').mockReturnValue({
+        ndim: 1,
+        displayed: [0],
+        currentStep: [0],
+        metadata: [],
+      } as never);
+      vi.spyOn(SceneDimsManager.prototype, 'getDimensionRanges').mockReturnValue([internalRange]);
+      vi.spyOn(SceneDimsManager.prototype, 'getDimensionMetadata').mockReturnValue([
+        { name: 'ch', unit: '', scale: 1, range: internalRange, categories: internalCategories },
+      ]);
+
+      const dims = app.getDimensions();
+      dims.metadata[0].range![0] = 999;
+      dims.metadata[0].categories!.push('hacked');
+      dims.ranges[0][0] = 999;
+
+      expect(internalRange).toEqual([0, 10]);
+      expect(internalCategories).toEqual(['dapi', 'gfp']);
+    });
+
+    it('resize() delegates to sceneManager.resizeToCanvas()', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      app.resize();
+      expect(mockSceneManager.resizeToCanvas).toHaveBeenCalled();
+    });
+
+    it('recenterCamera() delegates to sceneManager.centerCameraOnScene()', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      app.recenterCamera();
+      expect(mockSceneManager.centerCameraOnScene).toHaveBeenCalled();
     });
   });
 });

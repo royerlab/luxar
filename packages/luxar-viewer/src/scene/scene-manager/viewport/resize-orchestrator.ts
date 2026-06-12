@@ -33,17 +33,24 @@ export class ResizeOrchestrator {
   resizeLocked = false;
 
   /**
-   * Schedule a resize to the current window size. Coalesces multiple
-   * synchronous resize events into a single rAF callback so a burst
-   * of ResizeObserver fires doesn't trigger N renderer resizes.
+   * Schedule a resize. Coalesces multiple synchronous resize events into a
+   * single rAF callback so a burst of ResizeObserver fires doesn't trigger
+   * N renderer resizes.
+   *
+   * Dimensions come from `getDims` (SceneManager passes its parent-first
+   * canvas measurement so embedded viewers track their host container);
+   * defaults to the window size for window-sized callers.
    */
-  scheduleResize(getCtx: () => ResizeCtx): void {
-    if (this.resizeLocked) return;
-
-    this.pendingResize = {
+  scheduleResize(
+    getCtx: () => ResizeCtx,
+    getDims: () => { width: number; height: number } = () => ({
       width: window.innerWidth,
       height: window.innerHeight,
-    };
+    })
+  ): void {
+    if (this.resizeLocked) return;
+
+    this.pendingResize = getDims();
 
     if (this.resizeRAF !== null) {
       cancelAnimationFrame(this.resizeRAF);
