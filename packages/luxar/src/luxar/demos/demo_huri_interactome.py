@@ -1031,7 +1031,7 @@ def main() -> None:
     corum_lookup = load_corum_lookup(corum_path)
 
     if "--no-serve" in argv:
-        output_path = get_demos_output_dir() / "huri_interactome.zarr"
+        output_path = get_demos_output_dir() / "huri_interactome.luxar.zarr"
         build_scene(
             output_path,
             nodes,
@@ -1047,7 +1047,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_huri_") as tmpdir:
-        output_path = Path(tmpdir) / "huri_interactome.zarr"
+        output_path = Path(tmpdir) / "huri_interactome.luxar.zarr"
         n_nodes, n_edges, n_comms = build_scene(
             output_path,
             nodes,

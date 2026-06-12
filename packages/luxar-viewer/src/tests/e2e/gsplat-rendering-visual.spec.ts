@@ -25,14 +25,14 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 
 test.describe('GSplats visual correctness', () => {
   test('test_gsplats fixture renders without shader errors', async ({ page }) => {
-    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);
   });
 
   test('GSplat output is non-black after a render', async ({ page }) => {
-    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
@@ -52,7 +52,7 @@ test.describe('GSplats visual correctness', () => {
     // The precision-based ray integral handles rotated anisotropic
     // covariance. Several camera rotations should produce no shader
     // errors and consistent (non-vanishing) output.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 

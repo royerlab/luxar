@@ -521,7 +521,7 @@ def create_storm_scene(
     """
     # Use provided path or save to demos directory
     if output_path is None:
-        output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
+        output_path = get_demos_output_dir() / "storm_3d_microtubules.luxar.zarr"
 
     with asection("Creating Luxar scene"):
         # 4D scene: VIEW (categorical) + X, Y, Z (spatial)
@@ -773,7 +773,7 @@ def main() -> None:
 
         # If --no-serve, generate and exit without launching viewer
         if "--no-serve" in sys.argv:
-            output_path = get_demos_output_dir() / "storm_3d_microtubules.zarr"
+            output_path = get_demos_output_dir() / "storm_3d_microtubules.luxar.zarr"
             scene_path = create_storm_scene(
                 centers_um, amplitudes, output_path=output_path
             )

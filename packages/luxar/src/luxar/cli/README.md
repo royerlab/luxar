@@ -11,10 +11,10 @@ Essential CLI commands in 3 steps:
 luxar demo
 
 # 2. Serve your own dataset with the viewer
-luxar serve my_data.zarr --viewer
+luxar serve my_data.luxar.zarr --viewer
 
 # 3. Get dataset information and statistics
-luxar info my_data.zarr --stats
+luxar info my_data.luxar.zarr --stats
 ```
 
 **What Each Does**:
@@ -50,15 +50,15 @@ Quick demo generation with automatic viewer launch.
 luxar demo                    # Generate demo and open in browser
 luxar demo --points 10000     # Custom point count
 luxar demo --no-open          # Don't open browser
-luxar demo --no-serve --output demo.zarr  # Generate demo without serving
-luxar demo --no-serve --output demo.zarr --points 100000  # Custom point count, no serve
+luxar demo --no-serve --output demo.luxar.zarr  # Generate demo without serving
+luxar demo --no-serve --output demo.luxar.zarr --points 100000  # Custom point count, no serve
 ```
 
 ### `luxar serve`
 Serve zarr datasets or directories via HTTP.
 ```bash
-luxar serve data.zarr         # Serve data
-luxar serve data.zarr --viewer # Serve with viewer
+luxar serve data.luxar.zarr         # Serve data
+luxar serve data.luxar.zarr --viewer # Serve with viewer
 luxar serve --viewer-only      # Serve only viewer
 ```
 
@@ -73,16 +73,16 @@ want any website to read the served data; wildcard mode disables credentials.
 Serve the Luxar viewer with optional data.
 ```bash
 luxar viewer                  # Serve viewer
-luxar viewer --data data.zarr # Serve viewer with data
+luxar viewer --data data.luxar.zarr # Serve viewer with data
 luxar viewer --no-open        # Don't open browser
 ```
 
 ### `luxar info`
 Display detailed information about zarr datasets.
 ```bash
-luxar info data.zarr          # Basic info with tree view
-luxar info data.zarr --stats  # Include detailed statistics
-luxar info data.zarr --format json # JSON output
+luxar info data.luxar.zarr          # Basic info with tree view
+luxar info data.luxar.zarr --stats  # Include detailed statistics
+luxar info data.luxar.zarr --format json # JSON output
 ```
 
 ### `luxar profiles`
@@ -99,10 +99,10 @@ Use these profiles with `serve`, `viewer`, or `demo` commands via the `--profile
 ### `luxar export`
 Export a zarr scene and the Luxar viewer as a standalone offline folder. The output is self-contained: anyone can view the scene with just Python 3 and a browser by running `serve.py`.
 ```bash
-luxar export my_scene.zarr -o my_export/              # Export scene + viewer
-luxar export my_scene.zarr -o my_export/ --overwrite   # Overwrite existing export
-luxar export my_scene.zarr -o my_export/ --open        # Export and serve in browser
-luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
+luxar export my_scene.luxar.zarr -o my_export/              # Export scene + viewer
+luxar export my_scene.luxar.zarr -o my_export/ --overwrite   # Overwrite existing export
+luxar export my_scene.luxar.zarr -o my_export/ --open        # Export and serve in browser
+luxar export my_scene.luxar.zarr -o my_export/ --open --port 9000  # Custom port
 ```
 
 **Options**: `--output/-o` (required), `--overwrite`, `--open` (serve and launch browser), `--port/-p` (port for local server, default 8000).
@@ -111,9 +111,9 @@ luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
 Produce a double-clickable native bundle instead of the Python `serve.py` folder. The bundle wraps the viewer + zarr around a Go-compiled launcher binary that opens an embedded WebView (WKWebView on macOS, WebKitGTK on Linux).
 
 ```bash
-luxar export my_scene.zarr -o out/ --native macos                       # macOS .app
-luxar export my_scene.zarr -o out/ --native linux-amd64                  # Linux folder (x86_64)
-luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
+luxar export my_scene.luxar.zarr -o out/ --native macos                       # macOS .app
+luxar export my_scene.luxar.zarr -o out/ --native linux-amd64                  # Linux folder (x86_64)
+luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
                                           --name MyScene                # All three at once
 ```
 
@@ -153,8 +153,8 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 #### `luxar gsplat convert`
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
-luxar gsplat convert fitted.gsplats.zarr scene.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
 ```
 
 #### `luxar gsplat render`

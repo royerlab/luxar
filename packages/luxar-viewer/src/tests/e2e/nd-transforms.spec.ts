@@ -4,7 +4,7 @@
  * Verifies that nd_transform on groups correctly shifts the viewer's
  * slice query so points appear at the right world-space time values.
  *
- * Test fixture: test_nd_transforms.zarr
+ * Test fixture: test_nd_transforms.luxar.zarr
  *   - GroupA: 50 red points at time=0 (no nd_transform)
  *   - GroupB: 50 blue points at local time=0, nd_transform={"Time": {"offset": 5}}
  *
@@ -19,7 +19,7 @@ import { waitForLuxarReady, getLuxarState, waitForDataLoaded, waitForNextRender 
 
 // Fixture URL — served by the Python HTTP server (port 9000) from project root
 const FIXTURE_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
-const DATASET = `${FIXTURE_BASE}/test_nd_transforms.zarr`;
+const DATASET = `${FIXTURE_BASE}/test_nd_transforms.luxar.zarr`;
 
 test.describe('nD Transforms', () => {
   test('should load scene with nd_transform groups', async ({ page }) => {

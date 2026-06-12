@@ -132,7 +132,7 @@ def create_4d_rainbow_colors(positions: np.ndarray) -> np.ndarray:
 
 def main():
     """Create and save a 4D spatial rainbow sphere."""
-    output_path = get_examples_output_dir() / "rainbow_sphere_4d_example.zarr"
+    output_path = get_examples_output_dir() / "rainbow_sphere_4d_example.luxar.zarr"
 
     aprint(f"├ Creating 4D spatial rainbow sphere at {output_path}")
     aprint("├ This example creates a true 4D hypersphere where:")

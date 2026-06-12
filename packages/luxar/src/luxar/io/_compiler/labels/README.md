@@ -97,7 +97,7 @@ import zarr
 from luxar.io._compiler.labels.text_labels import write_labels_csr
 from luxar.io._compiler.labels.image_labels import write_image_labels_csr
 
-group = zarr.open_group("scene.zarr/points/cloud", mode="a")
+group = zarr.open_group("scene.luxar.zarr/points/cloud", mode="a")
 
 write_labels_csr(
     group,

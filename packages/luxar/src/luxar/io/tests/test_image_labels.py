@@ -64,7 +64,7 @@ class TestImageLabelCSRRoundTrip:
 
     def test_basic_image_labels_bytes(self, tmp_path):
         """Pre-encoded byte blobs stored and retrieved correctly."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50), _make_fake_webp(80), _make_fake_png(60)]
 
@@ -78,7 +78,7 @@ class TestImageLabelCSRRoundTrip:
 
     def test_image_labels_bytearray(self, tmp_path):
         """bytearray inputs are accepted and stored correctly."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(2, 3).astype(np.float32)
         blobs = [bytearray(_make_fake_jpeg(40)), bytearray(_make_fake_webp(60))]
 
@@ -95,7 +95,7 @@ class TestImageLabelCSRRoundTrip:
         pytest.importorskip("PIL")
         from PIL import Image
 
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(2, 3).astype(np.float32)
         images = [
             Image.fromarray(np.random.randint(0, 255, (10, 10, 3), dtype=np.uint8)),
@@ -117,7 +117,7 @@ class TestImageLabelCSRRoundTrip:
         """Numpy arrays (H,W,C) uint8 are auto-encoded to WebP."""
         pytest.importorskip("PIL")
 
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(2, 3).astype(np.float32)
         arrays = [
             np.random.randint(0, 255, (10, 10, 3), dtype=np.uint8),
@@ -135,7 +135,7 @@ class TestImageLabelCSRRoundTrip:
 
     def test_image_labels_from_paths(self, tmp_path):
         """File paths are read and stored as raw bytes."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(2, 3).astype(np.float32)
 
         # Write fake images to temp files
@@ -155,7 +155,7 @@ class TestImageLabelCSRRoundTrip:
 
     def test_image_labels_from_str_paths(self, tmp_path):
         """String paths are read and stored as raw bytes."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(1, 3).astype(np.float32)
 
         img_path = tmp_path / "img.png"
@@ -175,7 +175,7 @@ class TestSparseImageLabels:
 
     def test_sparse_image_labels(self, tmp_path):
         """Dict input creates sparse CSR — missing indices have empty blobs."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(5, 3).astype(np.float32)
         blob_a = _make_fake_jpeg(30)
         blob_c = _make_fake_webp(50)
@@ -193,7 +193,7 @@ class TestSparseImageLabels:
 
     def test_sparse_out_of_range_raises(self, tmp_path):
         """Dict with out-of-range index raises ValueError."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
@@ -207,7 +207,7 @@ class TestImageLabelValidation:
 
     def test_length_mismatch_raises(self, tmp_path):
         """List length != n_elements raises ValueError."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
@@ -221,7 +221,7 @@ class TestImageLabelValidation:
 
     def test_unsupported_type_raises(self, tmp_path):
         """Unsupported input type raises TypeError."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(1, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
@@ -235,7 +235,7 @@ class TestImageLabelZarrProperties:
 
     def test_no_compression_on_image_bytes(self, tmp_path):
         """image_label_bytes array has compressor=None."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
 
@@ -249,7 +249,7 @@ class TestImageLabelZarrProperties:
 
     def test_offsets_has_compression(self, tmp_path):
         """image_label_offsets array uses default compression."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
 
@@ -263,7 +263,7 @@ class TestImageLabelZarrProperties:
 
     def test_has_image_labels_metadata(self, tmp_path):
         """has_image_labels flag set in .zattrs."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
 
@@ -276,7 +276,7 @@ class TestImageLabelZarrProperties:
 
     def test_no_image_labels_no_flag(self, tmp_path):
         """Without image_labels, has_image_labels is not set."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
@@ -292,7 +292,7 @@ class TestImageLabelAutoInject:
 
     def test_auto_inject_html_overlay_image_only(self, tmp_path):
         """Image labels only → auto-injects overlay_html with {hover_image_label}."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
 
@@ -308,7 +308,7 @@ class TestImageLabelAutoInject:
 
     def test_auto_inject_combined_text_and_image(self, tmp_path):
         """Both labels and image_labels → separate image and text hover overlays."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         blobs = [_make_fake_jpeg(50)] * 3
         labels = ["A", "B", "C"]
@@ -327,7 +327,7 @@ class TestImageLabelAutoInject:
 
     def test_auto_inject_text_only_unchanged(self, tmp_path):
         """Text labels only → overlay_text with {hover_label} (existing behavior)."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         labels = ["A", "B", "C"]
 
@@ -346,7 +346,7 @@ class TestImageLabelSpatialOrdering:
 
     def test_image_labels_with_spatial_ordering(self, tmp_path):
         """Image labels are reordered when spatial ordering is enabled."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         # Use well-separated positions so ordering actually reorders
         positions = np.array(
             [
@@ -381,7 +381,7 @@ class TestImageLabelOnLinesAndGSplats:
 
     def test_lines_image_labels(self, tmp_path):
         """Image labels on lines nodes."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         vertices = np.array(
             [
                 [0.0, 0.0, 0.0],
@@ -402,7 +402,7 @@ class TestImageLabelOnLinesAndGSplats:
 
     def test_gsplats_image_labels(self, tmp_path):
         """Image labels on gsplats nodes."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         centers = np.array(
             [
                 [0.0, 0.0, 0.0],

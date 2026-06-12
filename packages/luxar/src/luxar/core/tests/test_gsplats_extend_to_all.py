@@ -38,7 +38,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # All splats at Time=0 - would normally trigger warning
@@ -57,7 +57,7 @@ class TestGSplatsExtendToAll:
                 )
 
         # Check that extend_to_all is not in attributes
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" not in store["gsplats"].attrs
 
     def test_warning_when_none_and_candidates_detected(self, tmp_path) -> None:
@@ -71,7 +71,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # All splats at Time=0, but Time range is [0, 10]
@@ -90,7 +90,7 @@ class TestGSplatsExtendToAll:
                 )  # extend_to_all=None (default)
 
         # Should still write without extension
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" not in store["gsplats"].attrs
 
     def test_no_warning_when_multiple_values_in_dimension(self, tmp_path) -> None:
@@ -104,7 +104,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Splats at different Time values - not a candidate for extension
@@ -135,7 +135,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Splats only at Time=0, Channel=0 but extend to all times/channels
@@ -151,7 +151,7 @@ class TestGSplatsExtendToAll:
             )
 
         # Check that extend_to_all is saved in attributes
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" in store["extended_gsplats"].attrs
         assert store["extended_gsplats"].attrs["extend_to_all"] == ["Time", "Channel"]
 
@@ -167,7 +167,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             centers = np.array([[1, 2, 3, 0, 0]], dtype=np.float32)
@@ -182,7 +182,7 @@ class TestGSplatsExtendToAll:
             )
 
         # Check that all non-displayed dimensions are extended
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" in store["extend_all"].attrs
         # Should include both Time and Channel
         extend_dims = store["extend_all"].attrs["extend_to_all"]
@@ -191,7 +191,7 @@ class TestGSplatsExtendToAll:
 
     def test_invalid_extend_to_all_value(self, tmp_path) -> None:
         """Test that invalid extend_to_all value raises error."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             centers = np.array([[0, 0, 0]], dtype=np.float32)
@@ -217,7 +217,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             centers = np.array([[1, 2, 3, 0]], dtype=np.float32)
@@ -243,7 +243,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             centers = np.array([[1, 2, 3, 0]], dtype=np.float32)
@@ -260,7 +260,7 @@ class TestGSplatsExtendToAll:
             )
 
         # Check the data was written correctly
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" in store["colored_extended"].attrs
         assert store["colored_extended"].attrs["extend_to_all"] == ["Time"]
 
@@ -281,7 +281,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # This is correct - includes Time dimension even though extending
@@ -297,7 +297,7 @@ class TestGSplatsExtendToAll:
             )
 
             # Center array should have 4 dimensions (X, Y, Z, Time)
-            store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+            store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
             assert store["correct/centers"].shape == (1, 4)
 
     def test_no_warning_without_range(self, tmp_path) -> None:
@@ -311,7 +311,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # All at Time=0, but no range defined so no warning
@@ -340,7 +340,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Create GSplatData
@@ -359,7 +359,7 @@ class TestGSplatsExtendToAll:
             scene.add_gsplats_from_data("from_data", result, extend_to_all=["Time"])
 
         # Check that extend_to_all was applied
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "extend_to_all" in store["from_data"].attrs
         assert store["from_data"].attrs["extend_to_all"] == ["Time"]
 
@@ -375,7 +375,7 @@ class TestGSplatsExtendToAll:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             centers = np.array([[1, 2, 3, 0, 0]], dtype=np.float32)
@@ -418,7 +418,7 @@ class TestGSplatsExtendToAll:
             )
 
         # Verify each has correct extension settings
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
 
         assert store["time_extended"].attrs["extend_to_all"] == ["Time"]
         assert store["channel_extended"].attrs["extend_to_all"] == ["Channel"]

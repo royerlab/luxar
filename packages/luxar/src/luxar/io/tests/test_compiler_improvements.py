@@ -18,7 +18,7 @@ class TestVersionUpdate:
     def test_compiler_writes_correct_version(self) -> None:
         """Verify compiler writes version 0.1 to zarr attributes."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -37,7 +37,7 @@ class TestChunkAlignment:
     def test_chunk_alignment_with_spatial_ordering(self) -> None:
         """Verify chunks are aligned with spatial ordering when available."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create dataset with spatial ordering
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
@@ -67,7 +67,7 @@ class TestChunkAlignment:
     def test_chunk_calculation_without_spatial_index(self) -> None:
         """Verify standard chunking when spatial index is disabled."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -102,7 +102,7 @@ class TestChunkBoundsZarrAlignment:
         from luxar.gsplats.utils.trils import tril_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             n_splats = 2500
             ndim = 4
@@ -170,7 +170,7 @@ class TestChunkBoundsZarrAlignment:
         from luxar.gsplats.utils.trils import tril_size
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             n_splats = 100
             ndim = 3
@@ -221,7 +221,7 @@ class TestChunkBoundsZarrAlignment:
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             n_points = 10000
 
@@ -281,7 +281,7 @@ class TestChunkBoundsZarrAlignment:
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             n_points = 5000
 
@@ -324,7 +324,7 @@ class TestChunkBoundsZarrAlignment:
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             n_vertices = 5000
 
@@ -377,7 +377,7 @@ class TestChunkBoundsZarrAlignment:
     def test_no_spatial_index_still_works(self) -> None:
         """Without spatial ordering, standard chunking should still work."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
                 dims = Dimensions.default_3d()
@@ -539,7 +539,7 @@ class TestTransformCentralization:
     def test_transform_in_compiler(self) -> None:
         """Test that compiler uses centralized transform conversion."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -561,7 +561,7 @@ class TestTransformCentralization:
     def test_delete_group_attr_missing_path_no_group_created(self) -> None:
         """Deleting attributes from missing groups should not create groups."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 compiler.delete_group_attr("missing/group", "transform")
@@ -577,7 +577,7 @@ class TestSpatialOrdering:
     def test_spatial_ordering_in_compiler(self) -> None:
         """Test that compiler applies spatial ordering."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(
                 zarr_path, enable_spatial_index=True, ordering_method="morton"
@@ -669,7 +669,7 @@ class TestHDRColorRanges:
     def test_sdr_colors_accepted(self) -> None:
         """Test that SDR colors (0-1) are accepted."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -684,7 +684,7 @@ class TestHDRColorRanges:
     def test_hdr_colors_warning(self) -> None:
         """Test that extreme HDR colors trigger warning."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with pytest.warns(UserWarning, match="HDR colors"):
                 with LuxarZarrCompiler(zarr_path) as compiler:
@@ -698,7 +698,7 @@ class TestHDRColorRanges:
     def test_negative_colors_rejected(self) -> None:
         """Test that negative colors are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Scene wraps ValidationError in ValueError
             with pytest.raises(ValueError, match="cannot be negative"):
@@ -717,7 +717,7 @@ class TestEmptyDatasets:
     def test_empty_positions_rejected(self) -> None:
         """Test that empty positions are properly rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Scene wraps ValidationError in ValueError
             with pytest.raises(ValueError, match="Cannot write empty"):
@@ -733,7 +733,7 @@ class TestPositionBounds:
     def test_single_node_bounds(self) -> None:
         """Test that position_bounds is computed correctly for a single node."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create simple positions with known bounds
             positions = np.array(
@@ -765,7 +765,7 @@ class TestPositionBounds:
     def test_multiple_nodes_bounds_union(self) -> None:
         """Test that scene bounds are the union of all node bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create two sets of positions with different bounds
             positions1 = np.array(
@@ -810,7 +810,7 @@ class TestPositionBounds:
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create 5D positions
             positions = np.array(
@@ -852,7 +852,7 @@ class TestPositionBounds:
     def test_bounds_with_spatial_ordering(self) -> None:
         """Test that bounds are computed correctly even with spatial reordering."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create positions - they will be reordered by spatial index
             np.random.seed(42)
@@ -928,7 +928,7 @@ class TestFinalizeGuards:
 
     def test_write_points_after_finalize_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             compiler = LuxarZarrCompiler(zarr_path)
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -940,7 +940,7 @@ class TestFinalizeGuards:
 
     def test_create_scene_after_finalize_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             compiler = LuxarZarrCompiler(zarr_path)
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -951,7 +951,7 @@ class TestFinalizeGuards:
 
     def test_write_group_after_finalize_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             compiler = LuxarZarrCompiler(zarr_path)
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -963,7 +963,7 @@ class TestFinalizeGuards:
     def test_writes_inside_context_still_work(self) -> None:
         """Sanity check: the guard only fires after finalize, not at context entry."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())

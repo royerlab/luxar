@@ -43,7 +43,7 @@ Example::
    import numpy as np
 
    dims = Dimensions.default_3d()
-   with LuxarZarrCompiler('scene.zarr') as compiler:
+   with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
        scene = compiler.create_scene(dimensions=dims)
 
        # Add root-level points
@@ -75,7 +75,7 @@ Example::
    from luxar.io import LuxarScene
 
    # Load scene (metadata only)
-   scene = LuxarScene.load('scene.zarr')
+   scene = LuxarScene.load('scene.luxar.zarr')
 
    # List available nodes
    print(scene.list_points())

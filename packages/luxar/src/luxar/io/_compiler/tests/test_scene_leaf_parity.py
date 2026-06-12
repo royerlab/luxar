@@ -62,7 +62,7 @@ def test_standalone_leaf_matches_scene_leaf():
         # 1) Scene leaf via the compiler (the production scene write path).
         #    The compiler spatially orders by default (hilbert); match that on
         #    the standalone side so the row order — and thus arrays — coincide.
-        scene_path = tmp / "scene.zarr"
+        scene_path = tmp / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
@@ -126,7 +126,7 @@ def test_scene_additive_ladder_matches_standalone():
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        scene_path = tmp / "scene.zarr"
+        scene_path = tmp / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats_from_data("g", data)
@@ -174,7 +174,7 @@ def test_scene_lod_group_matches_standalone():
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        scene_path = tmp / "scene.zarr"
+        scene_path = tmp / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats_from_data("g", pyramid)
@@ -231,7 +231,7 @@ def test_scene_partition_matches_standalone():
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        scene_path = tmp / "scene.zarr"
+        scene_path = tmp / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
@@ -273,7 +273,7 @@ def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        scene_path = tmp / "scene.zarr"
+        scene_path = tmp / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(

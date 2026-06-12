@@ -17,13 +17,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Required datasets for E2E tests
 const REQUIRED_DATASETS = [
-  'simple_nd_example.zarr',
-  'build_example_manual.zarr',
-  'build_example_structured.zarr',
-  'dimension_navigation_example.zarr',
-  'dimension_sliders_5d_example.zarr',
-  'dense_grid_5d_example.zarr',
-  'layers_test_example.zarr',
+  'simple_nd_example.luxar.zarr',
+  'build_example_manual.luxar.zarr',
+  'build_example_structured.luxar.zarr',
+  'dimension_navigation_example.luxar.zarr',
+  'dimension_sliders_5d_example.luxar.zarr',
+  'dense_grid_5d_example.luxar.zarr',
+  'layers_test_example.luxar.zarr',
 ];
 
 export default async function globalSetup() {

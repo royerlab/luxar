@@ -428,7 +428,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "quasicrystal.zarr"
+        output_path = get_demos_output_dir() / "quasicrystal.luxar.zarr"
         actual_points = generate_quasicrystal_3d(
             output_path,
             target_points=target_points,
@@ -442,7 +442,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_quasicrystal_") as tmpdir:
-        output_path = Path(tmpdir) / "quasicrystal.zarr"
+        output_path = Path(tmpdir) / "quasicrystal.luxar.zarr"
 
         # Generate with scaled parameters
         actual_points = generate_quasicrystal_3d(

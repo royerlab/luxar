@@ -397,7 +397,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
@@ -426,7 +426,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
@@ -462,7 +462,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path, ordering_method="morton") as compiler:
             scene = compiler.create_scene(
@@ -510,7 +510,7 @@ class TestIntegration:
             "segments": (10, 5),  # 10 verts -> 5 segs
         }
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
@@ -534,7 +534,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
@@ -567,7 +567,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path, enable_spatial_index=False) as compiler:
             scene = compiler.create_scene(
@@ -595,7 +595,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(
@@ -661,7 +661,7 @@ class TestIntegration:
 
         from luxar import LuxarZarrCompiler
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(

@@ -273,7 +273,7 @@ def test_uniform_cholesky_accepted(tmp_path) -> None:
 
 def test_valid_gsplats(tmp_path) -> None:
     """Valid GSplats round-trip end to end with no errors."""
-    store = tmp_path / "valid_gsplats.zarr"
+    store = tmp_path / "valid_gsplats.luxar.zarr"
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:

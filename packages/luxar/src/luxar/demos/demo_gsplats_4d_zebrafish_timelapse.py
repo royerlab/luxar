@@ -63,7 +63,7 @@ Options:
     --downsample-xy=N:   XY downsample factor (default: 2)
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_4d_zebrafish_timelapse.zarr
+    - Scene saved to:  datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -414,7 +414,9 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
+        output_path = (
+            get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.luxar.zarr"
+        )
 
     n_timepoints = len(gsplats_list)
 
@@ -653,7 +655,7 @@ def main():
     aprint("Per-timepoint 3D fitting -> 4D scene with dim_order + fill")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.zarr"
+    output_path = get_demos_output_dir() / "gsplats_4d_zebrafish_timelapse.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

@@ -33,7 +33,7 @@ dims = Dimensions([
     Dimension("Z", display=True),
 ])
 
-with LuxarZarrCompiler("output.zarr") as compiler:
+with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_points("points", np.random.randn(10000, 3).astype(np.float32))
 
@@ -101,7 +101,7 @@ driven by `_notify_labels_added` / `_notify_image_labels_added`).
 ### Export
 
 ```python
-scene.to_zarr("export.zarr")
+scene.to_zarr("export.luxar.zarr")
 ```
 
 `to_zarr(path)` finalizes the backing writer and atomically copies the on-disk

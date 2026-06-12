@@ -171,7 +171,7 @@ vc = ViewerConfig(
     bloom_strength=0.3,
 )
 
-with LuxarZarrCompiler("output.zarr") as compiler:
+with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
 
     # Per-node controls (applied in shaders)

@@ -1441,7 +1441,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "earthquakes.zarr"
+        output_path = get_demos_output_dir() / "earthquakes.luxar.zarr"
         try:
             total_points, total_clouds, total_lines = generate_earthquake_scene(
                 output_path, days=days, min_magnitude=min_mag
@@ -1457,7 +1457,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_earthquakes_") as tmpdir:
-        output_path = Path(tmpdir) / "earthquakes.zarr"
+        output_path = Path(tmpdir) / "earthquakes.luxar.zarr"
 
         try:
             total_points, total_clouds, total_lines = generate_earthquake_scene(

@@ -1153,10 +1153,10 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "💡 Use '$(HATCH) shell' to activate the Python environment"
 
 # Demo and serving
-demo:  ## Generate a demo dataset (datasets/demos/demo.zarr with 100k points)
+demo:  ## Generate a demo dataset (datasets/demos/demo.luxar.zarr with 100k points)
 	@mkdir -p datasets/demos
-	$(HATCH) run luxar demo --no-serve --output datasets/demos/demo.zarr --points 100000
-	@echo "✅ Demo dataset created at datasets/demos/demo.zarr"
+	$(HATCH) run luxar demo --no-serve --output datasets/demos/demo.luxar.zarr --points 100000
+	@echo "✅ Demo dataset created at datasets/demos/demo.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
 	@echo "🚀 Running all examples to generate zarr files..."
@@ -1235,15 +1235,15 @@ generate-readme-demos:  ## Generate only the demo datasets needed for README scr
 	@echo "🚀 Generating README demo datasets..."
 	@mkdir -p datasets/demos
 	@echo "[1/5] 🌀 Lorenz Attractor..."
-	@if [ -d "datasets/demos/lorenz.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/lorenz.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[2/5] 🔮 Mandelbulb..."
-	@if [ -d "datasets/demos/mandelbulb.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/mandelbulb.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[3/5] 🌌 Spiral Galaxy..."
-	@if [ -d "datasets/demos/spiral_galaxy.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/spiral_galaxy.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[4/5] 🧬 Zebrahub Multiome UMAP..."
-	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "[5/5] 🌈 Rainbow Sphere..."
-	@if [ -d "datasets/demos/rainbow_sphere.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
+	@if [ -d "datasets/demos/rainbow_sphere.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "✅ README demos ready!"
 
 generate-readme-images: generate-readme-demos  ## Generate README screenshots using Playwright
@@ -1324,11 +1324,11 @@ serve-examples:  ## Serve the datasets directory for browsing generated datasets
 	$(HATCH) run luxar serve datasets/ -p 8000
 
 # Default values for serve-dataset (override with: make serve-dataset DATASET=path/to/data.zarr PORT=8080)
-DATASET ?= datasets/demos/demo.zarr
+DATASET ?= datasets/demos/demo.luxar.zarr
 PORT ?= 8000
 
-serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.zarr, port: 8000)
-	@if [ ! -d "datasets/demos/demo.zarr" ]; then \
+serve-dataset:  ## Serve a dataset (default: datasets/demos/demo.luxar.zarr, port: 8000)
+	@if [ ! -d "datasets/demos/demo.luxar.zarr" ]; then \
 		echo "No demo dataset found. Creating one..."; \
 		$(MAKE) demo; \
 	fi

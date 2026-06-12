@@ -16,7 +16,7 @@ test('my test', async ({ page }) => {
     logs.push(msg.text());
   });
 
-  await page.goto('/?src=/data.zarr&debug');
+  await page.goto('/?src=/data.luxar.zarr&debug');
 
   // Analyze logs
   const errors = logs.filter(log => log.includes('Error'));
@@ -48,9 +48,9 @@ Use the viewer's `src` parameter for every dataset URL and add `debug` when test
 need `window.__luxarDebug`:
 
 ```text
-✅ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.zarr&debug
-❌ http://localhost:5173/?data=http://127.0.0.1:8000/datasets/test.zarr&debug
-❌ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.zarr/&debug
+✅ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.luxar.zarr&debug
+❌ http://localhost:5173/?data=http://127.0.0.1:8000/datasets/test.luxar.zarr&debug
+❌ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.luxar.zarr/&debug
 ```
 
 Best practices:
@@ -78,7 +78,7 @@ Key test suites include:
 | **controls-interaction.spec.ts** | Keyboard, mouse, camera |
 | **custom-gui-library.spec.ts** | Custom GUI panel testing |
 | **data-monitor-metrics.spec.ts** | Performance monitoring |
-| **demo-validation.spec.ts** | Python script syntax + .zarr output checks |
+| **demo-validation.spec.ts** | Python script syntax + `.luxar.zarr` output checks |
 | **dimension-animation.spec.ts** | Dimension animation playback |
 | **dimension-initialization.spec.ts** | nD dimension setup |
 | **error-recovery.spec.ts** | ⭐ Error handling |
@@ -90,7 +90,7 @@ Key test suites include:
 | **performance-tracking-perf-bench.spec.ts** | ⭐ Regression detection + memory/FPS (opt-in: `pnpm test:perf:e2e`) |
 | **position-bounds-clipping.spec.ts** | Boundary testing |
 | **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
-| **real-dataset-loading.spec.ts** | Real .zarr files + dataset switching |
+| **real-dataset-loading.spec.ts** | Real `.luxar.zarr` files + dataset switching |
 | **recording-panel.spec.ts** | Screenshot/video capture panel |
 | **rendering-controls.spec.ts** | Rendering panel, FOV, controls |
 | **spatial-index-accuracy.spec.ts** | Query accuracy, caching |
@@ -190,7 +190,7 @@ import { waitForLuxarReady, getLuxarState, waitForSpatialQuery } from './helpers
 // Use `?src=` URL params (NOT `/data/...`) — that's the production
 // convention. Datasets live under `/datasets/examples/...` on the
 // dev server and are referenced via the src query parameter.
-const DATASET = 'http://localhost:9000/datasets/examples/my_dataset.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/my_dataset.luxar.zarr';
 
 test.describe('My Feature Tests', () => {
   test('should do something', async ({ page }) => {

@@ -729,7 +729,7 @@ def main() -> None:
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "esm3_protein_landscape.zarr"
+        output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
         try:
             n = generate_esm3_landscape(
                 output_path,
@@ -750,7 +750,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_esm3_") as tmpdir:
-        output_path = Path(tmpdir) / "esm3_protein_landscape.zarr"
+        output_path = Path(tmpdir) / "esm3_protein_landscape.luxar.zarr"
 
         try:
             n = generate_esm3_landscape(

@@ -1161,7 +1161,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "collision_animated.zarr"
+        output_path = get_demos_output_dir() / "collision_animated.luxar.zarr"
         with asection("Generating animated detector scene"):
             total_segments, total_points = generate_animated_detector_scene(
                 output_path,
@@ -1177,7 +1177,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_collision_anim_") as tmpdir:
-        output_path = Path(tmpdir) / "collision_animated.zarr"
+        output_path = Path(tmpdir) / "collision_animated.luxar.zarr"
 
         with asection("Generating animated detector scene"):
             total_segments, total_points = generate_animated_detector_scene(

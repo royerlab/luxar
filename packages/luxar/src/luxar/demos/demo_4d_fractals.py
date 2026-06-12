@@ -567,14 +567,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "fractals_4d.zarr"
+        output_path = get_demos_output_dir() / "fractals_4d.luxar.zarr"
         generate_4d_fractal_dataset(output_path, grid_size=grid_size)
         aprint(f"Dataset generated at {output_path}")
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_4d_fractals_") as tmpdir:
-        output_path = Path(tmpdir) / "fractals_4d.zarr"
+        output_path = Path(tmpdir) / "fractals_4d.luxar.zarr"
 
         # Generate all fractals
         generate_4d_fractal_dataset(output_path, grid_size=grid_size)

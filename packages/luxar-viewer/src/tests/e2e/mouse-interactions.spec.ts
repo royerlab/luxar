@@ -7,7 +7,7 @@
  * - Shift+scroll rotates the view
  * - Modifier key state does not interfere with subsequent keyboard shortcuts
  *
- * Dataset: build_example_structured.zarr (3D, reliable point count)
+ * Dataset: build_example_structured.luxar.zarr (3D, reliable point count)
  */
 
 import { test, expect } from './fixtures';
@@ -21,7 +21,7 @@ import {
   assertNoConsoleErrors,
 } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 test.describe('Mouse Interactions', () => {
   test.beforeEach(async ({ page }) => {

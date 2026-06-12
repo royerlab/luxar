@@ -76,7 +76,7 @@ Options:
     --method=NAME: auto (default) | kmeans_lloyd | greedy_lloyd | kmeans | greedy
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_lod_embryo_line.zarr
+    - Scene saved to:  datasets/demos/gsplats_lod_embryo_line.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -380,7 +380,7 @@ def main() -> None:
     )
     aprint("=" * 70)
 
-    output_path = get_demos_output_dir() / "gsplats_lod_embryo_line.zarr"
+    output_path = get_demos_output_dir() / "gsplats_lod_embryo_line.luxar.zarr"
 
     if SERVE_ONLY:
         if output_path.exists():

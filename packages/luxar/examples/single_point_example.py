@@ -18,7 +18,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main():
     """Create the simplest possible Luxar scene with a single point."""
-    output_path = get_examples_output_dir() / "single_point_example.zarr"
+    output_path = get_examples_output_dir() / "single_point_example.luxar.zarr"
 
     aprint(f"Creating single point example at {output_path}")
     aprint("This is the simplest possible Luxar scene!")

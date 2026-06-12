@@ -82,7 +82,7 @@ def make_thumbnail(hue: float, size: int = 48) -> bytes:
 
 def main() -> None:
     """Build a small scene with hover-driven text and image overlays."""
-    output_path = get_examples_output_dir() / "hover_labels_example.zarr"
+    output_path = get_examples_output_dir() / "hover_labels_example.luxar.zarr"
     aprint(f"Writing hover-labels example to {output_path}")
 
     n_points = 8

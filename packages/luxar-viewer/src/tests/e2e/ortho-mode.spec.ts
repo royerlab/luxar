@@ -9,7 +9,7 @@
  * - Scale bar updates on zoom
  * - Clean round-trip back to orbit mode
  *
- * Dataset: scene_dimensions_example.zarr (has physical units: um)
+ * Dataset: scene_dimensions_example.luxar.zarr (has physical units: um)
  */
 
 import { test, expect } from './fixtures';
@@ -23,7 +23,7 @@ import {
   assertNoConsoleErrors,
 } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/scene_dimensions_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/scene_dimensions_example.luxar.zarr';
 
 test.describe('Orthographic Camera Mode', () => {
   test.beforeEach(async ({ page }) => {

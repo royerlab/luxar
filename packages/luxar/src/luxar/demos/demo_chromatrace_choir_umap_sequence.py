@@ -600,7 +600,9 @@ def main() -> None:
         palette_order.extend(grp.get("cell_types", []))
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "chromatrace_choir_umap_sequence.zarr"
+        output_path = (
+            get_demos_output_dir() / "chromatrace_choir_umap_sequence.luxar.zarr"
+        )
         n = build_sequence_scene(
             output_path,
             coords,
@@ -615,7 +617,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_chromatrace_seq_") as tmpdir:
-        output_path = Path(tmpdir) / "chromatrace_choir_umap_sequence.zarr"
+        output_path = Path(tmpdir) / "chromatrace_choir_umap_sequence.luxar.zarr"
         n = build_sequence_scene(
             output_path,
             coords,

@@ -80,7 +80,7 @@ By default, the demo works at full resolution (46,000 x 32,914 pixels)
 using tiled fitting.
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_2d_cmu1_pathology.zarr
+    - Scene saved to:  datasets/demos/gsplats_2d_cmu1_pathology.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -402,7 +402,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.zarr"
+        output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.luxar.zarr"
 
     # Channel -> colormap mapping
     CHANNEL_COLORMAPS = ["red", "green", "blue"]
@@ -610,7 +610,7 @@ def main():
     )
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.zarr"
+    output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

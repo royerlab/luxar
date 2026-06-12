@@ -41,7 +41,7 @@ class Scene(Group):
         ...     Dimension("Y", display=True),
         ...     Dimension("Z", display=True),
         ... ])
-        >>> with LuxarZarrCompiler('output.zarr') as compiler:
+        >>> with LuxarZarrCompiler('output.luxar.zarr') as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     scene.add_points('points', huge_array)  # Written immediately
         ...

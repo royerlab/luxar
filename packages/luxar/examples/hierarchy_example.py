@@ -68,7 +68,7 @@ def create_ring_points(n_points: int, radius: float, height: float = 0.0) -> np.
 
 def main():
     """Create a scene demonstrating hierarchical relationships."""
-    output_path = get_examples_output_dir() / "hierarchy_example.zarr"
+    output_path = get_examples_output_dir() / "hierarchy_example.luxar.zarr"
 
     with asection("Hierarchy Example Setup"):
         aprint(f"Creating hierarchy demonstration at {output_path}")

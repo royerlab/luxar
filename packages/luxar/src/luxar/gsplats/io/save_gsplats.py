@@ -31,6 +31,7 @@ from luxar.io._compiler.gsplat_tree import (
     write_gsplat_node,
 )
 from luxar.io.reader import DEFAULT_COMP
+from luxar.utils.paths import normalize_zarr_path
 
 # Get luxar.gsplats version
 try:
@@ -55,8 +56,10 @@ def _resolve_zarr_path(
     for suffix in (".zip", ".tar.gz", ".gz"):
         if zarr_name.endswith(suffix):
             zarr_name = zarr_name[: -len(suffix)]
-    if not zarr_name.endswith(".gsplats.zarr"):
-        zarr_name = zarr_name + ".gsplats.zarr"
+            break
+    # Enforce the canonical standalone suffix on the inner store name (shared
+    # with the scene compiler's ``.luxar.zarr`` normalization).
+    zarr_name = normalize_zarr_path(zarr_name, ".gsplats.zarr").name
     return temp_dir, temp_dir / zarr_name
 
 

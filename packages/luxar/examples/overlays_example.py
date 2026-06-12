@@ -46,7 +46,7 @@ def make_inline_image(width: int = 64, height: int = 64) -> np.ndarray:
 
 def main() -> None:
     """Build a tiny scene with text, image, and HTML overlays."""
-    output_path = get_examples_output_dir() / "overlays_example.zarr"
+    output_path = get_examples_output_dir() / "overlays_example.luxar.zarr"
     aprint(f"Writing overlays example to {output_path}")
 
     positions = np.array(

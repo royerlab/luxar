@@ -10,7 +10,7 @@ class TestNodeRenderingAttributes:
 
     def test_default_rendering_attributes(self, tmp_path) -> None:
         """Test that nodes have correct default rendering attributes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -20,7 +20,7 @@ class TestNodeRenderingAttributes:
 
     def test_opacity_getter_setter(self, tmp_path) -> None:
         """Test opacity property getter and setter (mutations inside context)."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -45,7 +45,7 @@ class TestNodeRenderingAttributes:
 
     def test_opacity_validation(self, tmp_path) -> None:
         """Test opacity validation."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -61,7 +61,7 @@ class TestNodeRenderingAttributes:
 
     def test_gamma_getter_setter(self, tmp_path) -> None:
         """Test gamma property getter and setter (mutations inside context)."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -86,7 +86,7 @@ class TestNodeRenderingAttributes:
 
     def test_gamma_validation(self, tmp_path) -> None:
         """Test gamma validation."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -102,7 +102,7 @@ class TestNodeRenderingAttributes:
 
     def test_blending_mode_getter_setter(self, tmp_path) -> None:
         """Test blending_mode property getter and setter (mutations inside context)."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -114,7 +114,7 @@ class TestNodeRenderingAttributes:
 
     def test_blending_mode_validation(self, tmp_path) -> None:
         """Test blending mode validation."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
@@ -132,7 +132,7 @@ class TestNodeRenderingAttributes:
         """Test that rendering attributes are persisted to zarr attrs."""
         import zarr
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
 
         # Create scene and set attributes within context
         with LuxarZarrCompiler(store_path) as compiler:
@@ -153,7 +153,7 @@ class TestNodeRenderingAttributes:
         import numpy as np
         import zarr
 
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -172,7 +172,7 @@ class TestNodeRenderingAttributes:
 
     def test_rendering_attributes_inheritance(self, tmp_path) -> None:
         """Test that child nodes can access parent rendering attributes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create parent with custom attributes (CL-2: inside the context).
