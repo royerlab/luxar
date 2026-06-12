@@ -20,10 +20,10 @@ import {
 
 // Test datasets (served from Python HTTP server on port 9000)
 const DATASETS = {
-  nav4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
-  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',
-  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
-  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.zarr',
+  nav4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.luxar.zarr',
+  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr',
+  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
+  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.luxar.zarr',
 };
 
 test.describe('nD Navigation - Dimension Selection', () => {

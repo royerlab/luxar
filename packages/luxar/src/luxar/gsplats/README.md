@@ -851,7 +851,7 @@ image = np.random.rand(100, 100).astype(np.float32)
 result = fit_gaussian_splats(image, n_iters=1000)
 
 # Add directly to scene
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('fitted', result)
     print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
@@ -863,7 +863,7 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 result.save('fitted.gsplats.zarr', ordering='hilbert')
 
 # Later, load into a scene
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_file('loaded', 'fitted.gsplats.zarr')
     print(f"Loaded {gsplats.n_splats} splats")
@@ -911,7 +911,7 @@ assert loaded.colors is not None
 assert loaded.colors.shape == (n_splats, 3)
 
 # Scene integration preserves colors
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('colored', result)
     assert gsplats.has_colors == True

@@ -40,7 +40,7 @@ import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import * as zarr from '../data/zarr';
 
 // Create caching store
-const store = new MultiLevelCachingStore('https://example.com/dataset.zarr', {
+const store = new MultiLevelCachingStore('https://example.com/dataset.luxar.zarr', {
   l1MaxSize: 100 * 1024 * 1024, // 100MB (optional)
   l2MaxSize: 2 * 1024 * 1024 * 1024, // 2GB (optional)
   debug: false, // Set true for verbose logging (optional)
@@ -74,7 +74,7 @@ Override cache behavior via URL parameters:
 Example:
 
 ```
-http://localhost:5173/?src=http://example.com/data.zarr&cache-debug&prefetch-debug
+http://localhost:5173/?src=http://example.com/data.luxar.zarr&cache-debug&prefetch-debug
 ```
 
 ## Cache invariants and lifecycle
@@ -485,7 +485,7 @@ List all cached datasets in OPFS:
 ```typescript
 [
   {
-    url: "https://example.com/dataset.zarr",
+    url: "https://example.com/dataset.luxar.zarr",
     hash: "8649296f56b76790",
     size: 52428800,  // bytes
     count: 1234      // number of cached chunks

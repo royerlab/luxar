@@ -224,7 +224,7 @@ def main() -> None:
             aprint(f"❌ Error: Data file not found: {DATA_FILE}")
             aprint("Expected: packages/luxar/src/luxar/demos/data/gaia_small.zarr.zip")
             sys.exit(1)
-        output_path = get_demos_output_dir() / "gaia_small_luxar.zarr"
+        output_path = get_demos_output_dir() / "gaia_small.luxar.zarr"
         with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_small_") as tmpdir:
             tmp_path = Path(tmpdir)
             load_and_convert_gaia_small(DATA_FILE, tmp_path, output_path)
@@ -244,7 +244,7 @@ def main() -> None:
                 sys.exit(1)
 
             # Convert to Luxar format
-            luxar_zarr_path = tmp_path / "gaia_small_luxar.zarr"
+            luxar_zarr_path = tmp_path / "gaia_small.luxar.zarr"
             n_stars = load_and_convert_gaia_small(DATA_FILE, tmp_path, luxar_zarr_path)
 
             aprint("")

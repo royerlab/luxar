@@ -112,7 +112,7 @@ def calculate_point_radius(n_points: int, sphere_radius: float) -> float:
 
 def main():
     """Create a dense rainbow sphere with spiral point distribution."""
-    output_path = get_examples_output_dir() / "rainbow_sphere_spiral_example.zarr"
+    output_path = get_examples_output_dir() / "rainbow_sphere_spiral_example.luxar.zarr"
 
     aprint(f"Creating dense rainbow sphere spiral at {output_path}")
     aprint("This example creates a high-density sphere with:")

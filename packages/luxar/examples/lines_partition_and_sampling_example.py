@@ -74,7 +74,7 @@ def make_skewed_bundle(n_segments: int, seed: int = 0):
 
 def main() -> None:
     output_path = (
-        get_examples_output_dir() / "lines_partition_and_sampling_example.zarr"
+        get_examples_output_dir() / "lines_partition_and_sampling_example.luxar.zarr"
     )
 
     with LuxarZarrCompiler(str(output_path)) as compiler:

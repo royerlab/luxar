@@ -89,7 +89,7 @@ Step 4: Create Scene and Write Data
 .. code-block:: python
 
    with LuxarZarrCompiler(
-       'tutorial_scene.zarr',
+       'tutorial_scene.luxar.zarr',
        encoding_mode=EncodingMode.AUTO,  # Let Luxar choose encoding
        ordering_method="hilbert",        # Hilbert space-filling curve (best locality)
        enable_spatial_index=True,        # Calculate chunk bounds (CRITICAL for performance)
@@ -136,7 +136,7 @@ Step 5: Verify and View
 
    # Check what was created
    import zarr
-   store = zarr.open('tutorial_scene.zarr', mode='r')
+   store = zarr.open('tutorial_scene.luxar.zarr', mode='r')
    print(f"Scene dimensions: {store.attrs['scene_dimensions']}")
    print(f"Nodes: {list(store.group_keys())}")
 
@@ -150,7 +150,7 @@ Then serve with the viewer:
 
 .. code-block:: bash
 
-   luxar serve tutorial_scene.zarr --viewer
+   luxar serve tutorial_scene.luxar.zarr --viewer
 
 .. image:: ../images/docs/basic-3d-pointcloud.png
    :alt: Luxar viewer showing a 3D point cloud
@@ -201,7 +201,7 @@ Progressive Writing
 .. code-block:: python
 
    dims = Dimensions.default_3d()
-   with LuxarZarrCompiler('scene.zarr') as compiler:
+   with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
        scene = compiler.create_scene(dimensions=dims)
 
        # This writes to disk NOW, not at context exit

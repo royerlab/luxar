@@ -93,7 +93,7 @@ Then in the viewer:
 ```python
 import zarr, numpy as np
 
-store = zarr.open('datasets/demos/gsplats_4d_zebrafish_timelapse.zarr', 'r')
+store = zarr.open('datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr', 'r')
 
 for name in ['gsplats_t0000', 'gsplats_t0032', 'gsplats_t0063']:
     g = store[name]

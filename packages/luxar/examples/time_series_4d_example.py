@@ -73,7 +73,7 @@ def create_rotating_spiral(
 
 def main():
     """Create a 4D time series example with a rotating spiral."""
-    output_path = get_examples_output_dir() / "time_series_4d_example.zarr"
+    output_path = get_examples_output_dir() / "time_series_4d_example.luxar.zarr"
     aprint(f"Creating 4D time series example at {output_path}")
 
     # Parameters

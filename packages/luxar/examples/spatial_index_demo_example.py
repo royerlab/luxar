@@ -120,7 +120,9 @@ def main():
 
     # Output filename based on whether spatial index is enabled
     suffix = "_no_index" if args.no_spatial_index else ""
-    output_path = get_examples_output_dir() / f"spatial_index_demo{suffix}_example.zarr"
+    output_path = (
+        get_examples_output_dir() / f"spatial_index_demo{suffix}_example.luxar.zarr"
+    )
 
     # Clean up existing file if present
     if output_path.exists():

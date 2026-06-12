@@ -88,7 +88,7 @@ def make_constellation(
 
 
 def main() -> None:
-    output_path = get_examples_output_dir() / "energy_breakpoints_example.zarr"
+    output_path = get_examples_output_dir() / "energy_breakpoints_example.luxar.zarr"
 
     with LuxarZarrCompiler(str(output_path)) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())

@@ -134,10 +134,10 @@ class TestAddPointsPartition:
         """``partition=None`` (default) writes a plain Points node."""
         rng = np.random.RandomState(0)
         pos = rng.rand(50, 3).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos)
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["pts"].attrs["type"] == "points"
         assert store["pts"].attrs["n_points"] == 50
         # Return value is the leaf type when no partitionting happened.
@@ -147,10 +147,10 @@ class TestAddPointsPartition:
         """``partition=True`` on a small input stays as a single Points node."""
         rng = np.random.RandomState(1)
         pos = rng.rand(50, 3).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos, partition=True)
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         # Default cap is 1M; 50 points → single part, no wrapper.
         assert store["pts"].attrs["type"] == "points"
         assert type(node).__name__ == "Points"
@@ -159,7 +159,7 @@ class TestAddPointsPartition:
         """L2: coincident data that can't be split below the cap is written as
         one oversized part WITH a warning (was silent)."""
         pos = np.zeros((300, 3), dtype=np.float32)  # all coincident
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos, partition=dict(max_elements=120))
         # Single oversized leaf (no wrapper), but the cap violation is surfaced.
@@ -171,13 +171,13 @@ class TestAddPointsPartition:
         """``partition=dict(max_elements=N)`` over the cap produces a wrapper Group."""
         rng = np.random.RandomState(2)
         pos = rng.rand(300, 3).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos, partition=dict(max_elements=120))
             assert isinstance(node, Group)
             assert node.attrs.get("kind") == "partition"
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
         assert grp.attrs["type"] == "group"
         assert grp.attrs["kind"] == "partition"
@@ -195,11 +195,11 @@ class TestAddPointsPartition:
         """Wrapper's position_bounds spans every child's bbox."""
         rng = np.random.RandomState(3)
         pos = rng.uniform(-10, 10, (250, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points("pts", pos, partition=dict(max_elements=100))
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
         parent_pb = grp.attrs["position_bounds"]
         # The parent bbox should contain every data point.
@@ -211,11 +211,11 @@ class TestAddPointsPartition:
         """``layer=True`` rides onto the wrapper, not each part."""
         rng = np.random.RandomState(4)
         pos = rng.rand(300, 3).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points("pts", pos, partition=dict(max_elements=120), layer=True)
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
         assert grp.attrs.get("layer") is True
         # Each part should NOT carry layer=true.
@@ -231,7 +231,7 @@ class TestAddPointsPartition:
         # quantization makes exact-value comparisons brittle; rely on
         # per-part counts and total).
         scalars = rng.rand(n).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points(
                 "pts",
@@ -241,7 +241,7 @@ class TestAddPointsPartition:
                 colormap="viridis",
             )
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
         total = 0
         for child in sorted(grp.keys()):
@@ -253,7 +253,7 @@ class TestAddPointsPartition:
         """image_labels alongside partition= raises (sparse-dict slicing untrivial)."""
         rng = np.random.RandomState(6)
         pos = rng.rand(300, 3).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="image_labels is not supported"):
                 scene.add_points(
@@ -270,7 +270,7 @@ class TestAddPointsPartition:
         the underlying ``TypeError`` is the chained cause.
         """
         pos = np.zeros((300, 3), dtype=np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="partition must be None"):
                 scene.add_points("pts", pos, partition="auto")  # type: ignore[arg-type]
@@ -293,7 +293,7 @@ class TestAddGSplatsPartition:
 
     def test_over_cap_creates_partition_wrapper(self, tmp_path) -> None:
         c, a, ch = self._make_gsplats(n=300)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats(
                 "splats",
@@ -305,7 +305,7 @@ class TestAddGSplatsPartition:
             assert isinstance(node, Group)
             assert node.attrs.get("kind") == "partition"
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["splats"]
         assert grp.attrs["display_type"] == "gsplats"
         total = sum(int(grp[c].attrs["n_splats"]) for c in grp.keys())
@@ -319,7 +319,7 @@ class TestAddGSplatsPartition:
         counts + total instead.
         """
         c, a, ch = self._make_gsplats(n=300, seed=10)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats(
                 "splats",
@@ -329,7 +329,7 @@ class TestAddGSplatsPartition:
                 partition=dict(max_elements=120),
             )
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["splats"]
         total_amps = 0
         for child in sorted(grp.keys()):
@@ -348,7 +348,7 @@ class TestAddGSplatsPartition:
 
 class TestAddPartitionGroup:
     def test_builder_writes_kind_partition(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             grp = scene.add_partition_group(
                 "manual",
@@ -360,13 +360,13 @@ class TestAddPartitionGroup:
             assert grp.attrs["display_type"] == "points"
             assert grp.attrs["max_elements"] == 500
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         attrs = store["manual"].attrs
         assert attrs["type"] == "group"
         assert attrs["kind"] == "partition"
 
     def test_invalid_display_type_rejected(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="display_type for a partition"):
                 scene.add_partition_group(
@@ -376,13 +376,13 @@ class TestAddPartitionGroup:
                 )
 
     def test_invalid_max_elements_rejected(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="max_elements must be"):
                 scene.add_partition_group("bad", display_type="points", max_elements=0)
 
     def test_validate_empty_children_raises(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             grp = scene.add_partition_group(
                 "empty", display_type="points", max_elements=100
@@ -392,7 +392,7 @@ class TestAddPartitionGroup:
 
     def test_validate_homogeneous_children_passes(self, tmp_path) -> None:
         c, a, ch = TestAddGSplatsPartition._make_gsplats(n=10)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             grp = scene.add_partition_group(
                 "homog", display_type="gsplats", max_elements=100
@@ -405,7 +405,7 @@ class TestAddPartitionGroup:
         """A child whose resolved display_type differs from the parent must fail."""
         c, a, ch = TestAddGSplatsPartition._make_gsplats(n=10)
         pos = np.zeros((5, 3), dtype=np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             grp = scene.add_partition_group(
                 "bad", display_type="gsplats", max_elements=100
@@ -433,26 +433,26 @@ class TestCompilerAutoPartition:
     def test_below_threshold_writes_single_leaf(self, tmp_path) -> None:
         pos = np.random.RandomState(0).uniform(-10, 10, (50, 3)).astype(np.float32)
         with LuxarZarrCompiler(
-            tmp_path / "t.zarr", auto_partition_max_elements=100
+            tmp_path / "t.luxar.zarr", auto_partition_max_elements=100
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos)
         # Single leaf (no wrapper)
         assert node.attrs.get("kind") != "partition"
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["pts"].attrs["type"] == "points"
 
     def test_above_threshold_wraps_in_partition(self, tmp_path) -> None:
         pos = np.random.RandomState(1).uniform(-10, 10, (300, 3)).astype(np.float32)
         with LuxarZarrCompiler(
-            tmp_path / "t.zarr", auto_partition_max_elements=100
+            tmp_path / "t.luxar.zarr", auto_partition_max_elements=100
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos)
         assert isinstance(node, Group)
         assert node.attrs["kind"] == "partition"
         assert node.attrs["display_type"] == "points"
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
         total = sum(int(grp[c].attrs["n_points"]) for c in grp.keys())
         assert total == 300
@@ -461,14 +461,14 @@ class TestCompilerAutoPartition:
         """User-explicit ``partition=`` always wins, even with smaller threshold."""
         pos = np.random.RandomState(2).uniform(-10, 10, (300, 3)).astype(np.float32)
         with LuxarZarrCompiler(
-            tmp_path / "t.zarr", auto_partition_max_elements=50
+            tmp_path / "t.luxar.zarr", auto_partition_max_elements=50
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # User says 200 → cap of 200. Compiler threshold (50) is
             # ignored — auto-partition would otherwise produce many more
             # leaves.
             scene.add_points("pts", pos, partition=dict(max_elements=200))
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
 
         # Walk to leaf points nodes (the BSP recurses, so leaves can be
@@ -499,7 +499,7 @@ class TestCompilerAutoPartition:
     def test_auto_partition_applies_to_gsplats(self, tmp_path) -> None:
         c, a, ch = TestAddGSplatsPartition._make_gsplats(n=300)
         with LuxarZarrCompiler(
-            tmp_path / "t.zarr", auto_partition_max_elements=120
+            tmp_path / "t.luxar.zarr", auto_partition_max_elements=120
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats(
@@ -511,13 +511,17 @@ class TestCompilerAutoPartition:
     def test_default_none_disables_auto_partition(self, tmp_path) -> None:
         """No threshold = no partition, regardless of size."""
         pos = np.random.RandomState(3).uniform(-10, 10, (5000, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos)
         assert node.attrs.get("kind") != "partition"
 
     def test_invalid_threshold_raises(self, tmp_path) -> None:
         with pytest.raises(ValueError, match="must be positive"):
-            LuxarZarrCompiler(tmp_path / "bad.zarr", auto_partition_max_elements=0)
+            LuxarZarrCompiler(
+                tmp_path / "bad.luxar.zarr", auto_partition_max_elements=0
+            )
         with pytest.raises(ValueError, match="must be positive"):
-            LuxarZarrCompiler(tmp_path / "bad2.zarr", auto_partition_max_elements=-1)
+            LuxarZarrCompiler(
+                tmp_path / "bad2.luxar.zarr", auto_partition_max_elements=-1
+            )

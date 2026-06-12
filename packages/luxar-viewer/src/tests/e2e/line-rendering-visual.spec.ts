@@ -23,7 +23,7 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 
 test.describe('Lines visual correctness', () => {
   test('test_lines fixture renders without shader errors', async ({ page }) => {
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);
@@ -34,7 +34,7 @@ test.describe('Lines visual correctness', () => {
     // pixels from the line body. Exact brightness is left to a synthetic
     // single-line fixture and screenshot baseline; this test asserts the
     // documented formula produces positive visible intensity.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
@@ -53,7 +53,7 @@ test.describe('Lines visual correctness', () => {
     // The line shader degenerates segments where both endpoints fall
     // behind uNearCull and clamps screen-space pixel width so a single
     // near-camera segment cannot paint the entire viewport.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 

@@ -1170,7 +1170,8 @@ def main() -> None:
 
     if args.no_serve:
         output_path = (
-            get_demos_output_dir() / f"zebrahub_velocity_streamlines_{preset.name}.zarr"
+            get_demos_output_dir()
+            / f"zebrahub_velocity_streamlines_{preset.name}.luxar.zarr"
         )
         data, _flow, streamlines = generate_zebrahub_scene(
             output_path,
@@ -1187,7 +1188,9 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_velocity_") as tmpdir:
-        output_path = Path(tmpdir) / f"zebrahub_velocity_streamlines_{preset.name}.zarr"
+        output_path = (
+            Path(tmpdir) / f"zebrahub_velocity_streamlines_{preset.name}.luxar.zarr"
+        )
         data, _flow, streamlines = generate_zebrahub_scene(
             output_path,
             cache_dir,

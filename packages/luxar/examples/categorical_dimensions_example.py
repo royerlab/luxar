@@ -33,7 +33,9 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main() -> None:
     """Author a small scene with a categorical non-displayed dimension."""
-    output_path = get_examples_output_dir() / "categorical_dimensions_example.zarr"
+    output_path = (
+        get_examples_output_dir() / "categorical_dimensions_example.luxar.zarr"
+    )
     aprint(f"Writing categorical-dimensions example to {output_path}")
 
     rng = np.random.default_rng(seed=0)

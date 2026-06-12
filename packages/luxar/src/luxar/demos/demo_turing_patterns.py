@@ -352,7 +352,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "turing_patterns.zarr"
+        output_path = get_demos_output_dir() / "turing_patterns.luxar.zarr"
         generate_turing_patterns(
             output_path,
             grid_size=grid_size,
@@ -363,7 +363,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_turing_") as tmpdir:
-        output_path = Path(tmpdir) / "turing_patterns.zarr"
+        output_path = Path(tmpdir) / "turing_patterns.luxar.zarr"
 
         # Generate patterns
         generate_turing_patterns(

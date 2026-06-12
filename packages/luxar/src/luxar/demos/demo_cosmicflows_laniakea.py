@@ -772,7 +772,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.no_serve:
         output_path = args.output or (
-            get_demos_output_dir() / f"cosmicflows_laniakea_{args.preset}.zarr"
+            get_demos_output_dir() / f"cosmicflows_laniakea_{args.preset}.luxar.zarr"
         )
         generate_cosmicflows_laniakea(
             output_path, preset_name=args.preset, cache_dir=args.cache_dir
@@ -781,7 +781,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_laniakea_") as tmpdir:
-        output_path = args.output or Path(tmpdir) / "cosmicflows_laniakea.zarr"
+        output_path = args.output or Path(tmpdir) / "cosmicflows_laniakea.luxar.zarr"
         generate_cosmicflows_laniakea(
             output_path, preset_name=args.preset, cache_dir=args.cache_dir
         )

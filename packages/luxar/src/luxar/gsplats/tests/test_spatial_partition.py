@@ -119,7 +119,7 @@ def test_partition_file_grafts_into_a_scene():
             part, data.to_spatial_partition(max_elements=40), ordering="hilbert"
         )
 
-        scene_path = Path(tmp) / "scene.zarr"
+        scene_path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats_from_file(name="g", path=part)
@@ -145,7 +145,7 @@ def test_grafting_a_partition_rejects_dim_order():
         write_gsplats_tree(
             part, data.to_spatial_partition(max_elements=40), ordering="hilbert"
         )
-        scene_path = Path(tmp) / "scene.zarr"
+        scene_path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="dim_order / fill"):
@@ -182,7 +182,7 @@ def test_grafted_lod_uses_coarsest_default_level():
     with tempfile.TemporaryDirectory() as tmp:
         std = Path(tmp) / "x.gsplats.zarr"
         write_gsplats_tree(std, pyr.tree, ordering="none")
-        scene_path = Path(tmp) / "scene.zarr"
+        scene_path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
             scene.add_gsplats_from_file(name="g", path=std)

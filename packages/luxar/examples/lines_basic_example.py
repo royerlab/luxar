@@ -100,7 +100,7 @@ def create_star_burst(
 
 def main():
     """Create lines example scene with segments, polylines, and loops."""
-    output_path = get_examples_output_dir() / "lines_basic_example.zarr"
+    output_path = get_examples_output_dir() / "lines_basic_example.luxar.zarr"
     aprint(f"Creating lines example at {output_path}")
 
     with LuxarZarrCompiler(output_path) as compiler:

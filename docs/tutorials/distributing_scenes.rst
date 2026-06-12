@@ -39,7 +39,7 @@ a ``README.txt``:
 
 .. code-block:: bash
 
-   luxar export my_scene.zarr -o my_export/
+   luxar export my_scene.luxar.zarr -o my_export/
 
 Output:
 
@@ -65,7 +65,7 @@ on your end immediately:
 
 .. code-block:: bash
 
-   luxar export my_scene.zarr -o my_export/ --open
+   luxar export my_scene.luxar.zarr -o my_export/ --open
 
 
 Native bundles (no Python dependency at all)
@@ -80,13 +80,13 @@ Linux) and serves the bundled zarr internally:
 .. code-block:: bash
 
    # macOS .app
-   luxar export my_scene.zarr -o out/ --native macos
+   luxar export my_scene.luxar.zarr -o out/ --native macos
 
    # Linux portable folder for x86_64
-   luxar export my_scene.zarr -o out/ --native linux-amd64
+   luxar export my_scene.luxar.zarr -o out/ --native linux-amd64
 
    # All three platforms at once, with a custom name
-   luxar export my_scene.zarr -o out/ \
+   luxar export my_scene.luxar.zarr -o out/ \
        --native macos,linux-amd64,linux-arm64 \
        --name MyScene
 

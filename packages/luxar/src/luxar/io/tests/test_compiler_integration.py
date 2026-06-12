@@ -17,7 +17,7 @@ class TestCompilerIntegration:
 
     def test_simple_scene_creation(self, tmp_path) -> None:
         """Test basic scene creation."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -37,7 +37,7 @@ class TestCompilerIntegration:
 
     def test_hierarchical_scene_with_transforms(self, tmp_path) -> None:
         """Test building hierarchical scenes with transforms."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -65,7 +65,7 @@ class TestCompilerIntegration:
 
     def test_scene_with_dimensions(self, tmp_path) -> None:
         """Test scene with dimension specifications."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         # Create 5D dimensions
         dims = Dimensions(
@@ -94,7 +94,7 @@ class TestCompilerIntegration:
 
     def test_array_ref_positions_keep_logical_broadcast_counts(self, tmp_path) -> None:
         """Scalar attrs must broadcast to logical count when positions are array_ref."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         positions = np.array(
             [
                 [0.0, 0.0, 0.0],
@@ -158,7 +158,7 @@ class TestCompilerIntegration:
 
     def test_hdr_colors_and_attributes(self, tmp_path) -> None:
         """Test HDR colors and rendering attributes."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -189,7 +189,7 @@ class TestCompilerIntegration:
 
     def test_write_lines_rendering_attribute_defaults(self, tmp_path) -> None:
         """Test that write_lines sets default rendering attributes (opacity, gamma, blending_mode)."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -208,7 +208,7 @@ class TestCompilerIntegration:
 
     def test_memory_efficiency(self, tmp_path) -> None:
         """Test that large data doesn't accumulate in memory."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -236,7 +236,7 @@ class TestCompilerIntegration:
 
     def test_error_handling_in_context(self, tmp_path) -> None:
         """Test error handling with context manager."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with pytest.raises(ValueError):
             with LuxarZarrCompiler(output_path) as compiler:
@@ -262,7 +262,7 @@ _DIMS_2D = Dimensions(
 class TestLayerOnNode:
     def test_layer_true_persisted(self, tmp_path) -> None:
         """layer=True flows through add_points and is stored in attrs."""
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             pts = scene.add_points(
                 "ch0",
@@ -273,7 +273,7 @@ class TestLayerOnNode:
             assert pts.attrs["layer"] is True
 
     def test_layer_false_persisted(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             pts = scene.add_points(
                 "ch0",
@@ -283,7 +283,7 @@ class TestLayerOnNode:
             assert pts.layer is False
 
     def test_layer_default_false(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             pts = scene.add_points(
                 "ch0",
@@ -292,13 +292,13 @@ class TestLayerOnNode:
             assert pts.layer is False
 
     def test_layer_on_group(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             grp = scene.add_group("overlay", layer=True)
             assert grp.layer is True
 
     def test_layer_on_lines(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             verts = np.array([[0, 0], [5, 5], [10, 10]], dtype=np.float32)
             widths = np.array([0.1, 0.1, 0.1], dtype=np.float32)
@@ -308,7 +308,7 @@ class TestLayerOnNode:
             assert lines.layer is True
 
     def test_layer_invalid_type_raises(self, tmp_path) -> None:
-        with LuxarZarrCompiler(tmp_path / "scene.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "scene.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             with pytest.raises((TypeError, ValueError)):
                 scene.add_points(
@@ -324,7 +324,7 @@ class TestLayerOnNode:
 class TestColorDataRange:
     def test_color_data_range_written(self, tmp_path) -> None:
         """color_data_range should be written to zarr attrs when colors are provided."""
-        zarr_path = tmp_path / "scene.zarr"
+        zarr_path = tmp_path / "scene.luxar.zarr"
         with LuxarZarrCompiler(zarr_path) as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             colors = np.array([[0.1, 0.2, 0.3], [0.8, 0.9, 1.0]], dtype=np.float32)
@@ -344,7 +344,7 @@ class TestColorDataRange:
 
     def test_no_color_data_range_without_colors(self, tmp_path) -> None:
         """color_data_range should not be present when no colors are provided."""
-        zarr_path = tmp_path / "scene.zarr"
+        zarr_path = tmp_path / "scene.luxar.zarr"
         with LuxarZarrCompiler(zarr_path) as compiler:
             scene = compiler.create_scene(dimensions=_DIMS_2D)
             scene.add_points(

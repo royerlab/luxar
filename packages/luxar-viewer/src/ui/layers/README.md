@@ -48,7 +48,7 @@ new active level paints even when the camera and slice are idle.
 ```python
 from luxar import LuxarZarrCompiler, Dimensions
 
-with LuxarZarrCompiler("scene.zarr") as c:
+with LuxarZarrCompiler("scene.luxar.zarr") as c:
     scene = c.create_scene(dimensions=dims)
     scene.add_points("GFP", positions=..., colors=..., layer=True)
     scene.add_points("mCherry", positions=..., colors=..., layer=True)

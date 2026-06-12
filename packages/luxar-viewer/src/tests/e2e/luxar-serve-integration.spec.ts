@@ -23,7 +23,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SERVE_PORT = 8005;
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
-const DATASET_PATH = path.join(PROJECT_ROOT, 'datasets/examples/build_example_structured.zarr');
+const DATASET_PATH = path.join(
+  PROJECT_ROOT,
+  'datasets/examples/build_example_structured.luxar.zarr'
+);
 
 /** Check if hatch CLI is available */
 function isHatchAvailable(): boolean {

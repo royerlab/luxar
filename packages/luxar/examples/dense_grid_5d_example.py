@@ -27,7 +27,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main():
     """Create a dense 5D grid scene with time and channel dimensions."""
-    scene_path = get_examples_output_dir() / "dense_grid_5d_example.zarr"
+    scene_path = get_examples_output_dir() / "dense_grid_5d_example.luxar.zarr"
 
     # Create a 5D scene (X, Y, Z, Time, Channel)
     dimensions = luxar.Dimensions(

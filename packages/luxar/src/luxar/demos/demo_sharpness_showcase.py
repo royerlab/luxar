@@ -381,7 +381,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "sharpness_showcase.zarr"
+        output_path = get_demos_output_dir() / "sharpness_showcase.luxar.zarr"
         generate_sharpness_showcase(
             output_path,
             gradient_points=gradient_points,
@@ -393,7 +393,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_sharpness_") as tmpdir:
-        output_path = Path(tmpdir) / "sharpness_showcase.zarr"
+        output_path = Path(tmpdir) / "sharpness_showcase.luxar.zarr"
 
         # Generate the dataset (all code in this file!)
         generate_sharpness_showcase(

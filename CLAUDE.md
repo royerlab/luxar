@@ -193,14 +193,14 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 ### Luxar CLI
 ```bash
 luxar demo                       # Quick demo with viewer
-luxar serve <data.zarr> --viewer # Serve with viewer
-luxar info <data.zarr> --stats   # Dataset info
+luxar serve <data.luxar.zarr> --viewer # Serve with viewer
+luxar info <data.luxar.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
-luxar export scene.zarr -o my_export/             # Export scene + viewer as standalone offline folder
-luxar export scene.zarr -o my_export/ --open      # Export and serve in browser
-luxar export scene.zarr -o my_export/ --overwrite # Overwrite existing export
-luxar export scene.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
-luxar export scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
+luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
+luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
+luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
+luxar export scene.luxar.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
+luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
@@ -244,7 +244,7 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 
 # Convert .gsplats.zarr to Luxar scene for web viewer
-luxar gsplat convert splats.gsplats.zarr scene.zarr --center
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
@@ -792,7 +792,7 @@ Before PR/merge:
 8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action. **ALWAYS use the `AskUserQuestion` interactive tool** for any decision point — never pose choices as inline prose. If the tool isn't loaded, load it via `ToolSearch` first.
 
 ### Naming Conventions
-- Example files: `*_example.py` or `*_example.zarr`
+- Example files: `*_example.py` or `*_example.luxar.zarr`
 - Temp files: Put in `delme/` directory
 - Example outputs: Generated to `datasets/examples/` (via `get_examples_output_dir()`)
 - Demo outputs: Generated to `datasets/demos/` (via `get_demos_output_dir()`)

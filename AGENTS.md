@@ -190,7 +190,7 @@ luxar gsplat view splats.gsplats.zarr
 - Use `utils/log` (`import { log } from '../utils/log'`) for viewer logging; format messages as `[emoji] [Module] message`.
 
 ### Naming and Generated Files
-- Tests: `test_*.py`; examples: `*_example.py` or `*_example.zarr`.
+- Tests: `test_*.py`; examples: `*_example.py` or `*_example.luxar.zarr`.
 - Put temporary files in `delme/`.
 - Example outputs go to `datasets/examples/` via `get_examples_output_dir()`.
 - Demo outputs go to `datasets/demos/` via `get_demos_output_dir()`.
