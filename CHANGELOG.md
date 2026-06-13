@@ -29,6 +29,11 @@ underlying `make_additive_lod` / `make_substitutive_lod` / `make_lod_pyramid`
 Python builders are unchanged; output stays a standalone v3.0 `.gsplats.zarr` to
 graft into a scene via `add_gsplats_from_file` / `gsplat convert`.
 
+The niche `lod additive --substitutive-level N` flag (build an additive ladder on
+one substitutive level of an existing pyramid) is dropped from the CLI — recipes
+take a fitted/flat input. The capability remains in the Python API
+(`make_additive_lod(..., substitutive_level=N)`).
+
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 
 Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension

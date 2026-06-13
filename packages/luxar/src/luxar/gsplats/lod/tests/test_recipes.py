@@ -153,12 +153,22 @@ def test_additive_recipe_matches_make_additive_lod():
         data.flattened(), n_lods=4, method="self_energy", seed=None
     )
     assert via_recipe.n_additive_sublods == direct.n_additive_sublods
-    got = [
-        via_recipe.additive_sublod(i).n_splats
-        for i in range(via_recipe.n_additive_sublods)
-    ]
-    exp = [direct.additive_sublod(i).n_splats for i in range(direct.n_additive_sublods)]
-    assert got == exp
+    # Compare the actual ORDERED content of each sub-LOD, not just counts: with
+    # equal-count breakpoints the per-level counts are method-independent, so a
+    # counts-only check would pass even if the recipe dropped the `method` /
+    # `seed` forwarding. Centers reflect the ordering -> this catches that.
+    for i in range(via_recipe.n_additive_sublods):
+        np.testing.assert_array_equal(
+            via_recipe.additive_sublod(i).centers,
+            direct.additive_sublod(i).centers,
+        )
+
+    # Guard the guard: a different method must actually change the ordering,
+    # otherwise the comparison above is not method-sensitive.
+    other = make_additive_lod(data.flattened(), n_lods=4, method="greedy", seed=None)
+    assert not np.array_equal(
+        direct.additive_sublod(0).centers, other.additive_sublod(0).centers
+    )
 
 
 def test_substitutive_recipe_matches_make_substitutive_lod():
