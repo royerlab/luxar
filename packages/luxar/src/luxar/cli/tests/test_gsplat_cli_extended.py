@@ -2389,6 +2389,82 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert "--substitutive-method" in self._io(result)
 
+    def test_count_growing_recipe_fitting_count_matches_leaves(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`fitting/n_splats` must equal the file's true leaf total, not the
+        (smaller) source-fit count — multiscale synthesises an extra coarse cap.
+        """
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import total_splats
+
+        n = 600
+        rng = np.random.default_rng(0)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, (n, 3))
+        src = tmp_path / "fitted.gsplats.zarr"
+        GSplatData(
+            centers=rng.uniform(0, 100, (n, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=chol,
+            stats={"n_splats": n, "psnr_db": 31.5},  # source-fit provenance
+        ).save(src)
+
+        out = tmp_path / "ms.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--max-elements",
+                "150",
+                "-K",
+                "4",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        leaf_total = total_splats(node)
+        assert leaf_total > n, "multiscale should grow the splat count (coarse cap)"
+        root = zarr.open_group(str(out), mode="r")
+        persisted = root["fitting"].attrs.get("n_splats")
+        assert persisted == leaf_total, (
+            f"stale fitting/n_splats {persisted} != true leaf total {leaf_total}"
+        )
+
+    @pytest.mark.parametrize("breakpoints", ["energy:1.5", "counts:999999"])
+    def test_breakpoints_out_of_range_clean_error(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, breakpoints: str
+    ) -> None:
+        """Out-of-range --breakpoints error cleanly, not via a raw traceback."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--breakpoints",
+                breakpoints,
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+        assert "Traceback" not in self._io(result)
+
 
 class TestMigrateFormatCommand:
     """`luxar gsplat migrate-format` end-to-end CLI tests.

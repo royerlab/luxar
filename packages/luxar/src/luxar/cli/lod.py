@@ -90,6 +90,10 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
             ) from e
         if not values_int:
             raise typer.BadParameter("counts breakpoints list is empty")
+        if any(v <= 0 for v in values_int):
+            raise typer.BadParameter(
+                f"counts breakpoints must be positive; got {values_int}"
+            )
         return values_int
     if s.startswith("energy:"):
         body = s[len("energy:") :]
@@ -101,6 +105,11 @@ def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
             ) from e
         if not values_flt:
             raise typer.BadParameter("energy breakpoints list is empty")
+        # Energy fractions are cumulative in (0, 1] — checkable here (no N needed).
+        if any(not (0.0 < v <= 1.0) for v in values_flt):
+            raise typer.BadParameter(
+                f"energy breakpoints must lie in (0, 1]; got {values_flt}"
+            )
         return values_flt
     raise typer.BadParameter(
         f"breakpoints must be 'equal-count', 'counts:...', or 'energy:...'; "
@@ -407,7 +416,13 @@ def lod_recipe(
             )
 
             with asection(f"Building '{recipe}'"):
-                result = build_recipe(data, recipe, params)  # type: ignore[arg-type]
+                try:
+                    result = build_recipe(data, recipe, params)  # type: ignore[arg-type]
+                except ValueError as e:
+                    # Builders raise ValueError for input-driven mistakes that
+                    # depend on the data (e.g. a counts breakpoint exceeding N);
+                    # surface these as a clean BadParameter rather than a traceback.
+                    raise typer.BadParameter(str(e)) from e
 
             with asection("Saving"):
                 if output_path.exists() and overwrite:

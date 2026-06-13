@@ -195,6 +195,15 @@ def write_gsplats_tree(
         root.attrs["description"] = description
 
     if fitting_info is not None:
+        # `n_splats` denotes the count of splats in THIS artifact (see
+        # fitting/results.py). Stats are inherited from the source fit, so for
+        # count-changing operations (substitutive / multiscale LOD synthesise
+        # extra representative splats) the inherited value is stale and would
+        # contradict the file's own leaf arrays. Correct it to the true total.
+        if "n_splats" in fitting_info:
+            from luxar.gsplats.tree import total_splats
+
+            fitting_info = {**fitting_info, "n_splats": int(total_splats(node))}
         fitting_group = root.create_group("fitting")
         fitting_group.attrs.update(fitting_info)
         if fitting_config is not None:
