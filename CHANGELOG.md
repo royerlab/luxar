@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Changed — `gsplat lod` is now a single `--recipe` command
+
+`luxar gsplat lod` is now one command driven by a required `--recipe` flag
+instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
+**partitioned**, **multiscale**, plus the **substitutive** and **pyramid**
+primitives (which absorb the former `lod substitutive` / `lod pyramid`
+subcommands; `lod additive` becomes `--recipe additive`). Two topologies are new
+and were previously unbuildable from the CLI:
+
+- **partitioned** — a spatial BSP `kind=partition` where *each part carries its
+  own additive ladder* (the old `partition` collapsed parts to a single level).
+- **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
+  substitutive cap for the far view above a `partitioned` fine branch, so detail
+  structure exists only where you look closely.
+
+The recipe builders are pure functions in `luxar.gsplats.lod.recipes`
+(`build_recipe`); the CLI wrapper lives in `luxar/cli/lod.py` (keeping the
+already-large `gsplat_commands.py` from growing). Options irrelevant to the
+chosen recipe are rejected with a clear error. The `.gsplats.zarr` format and the
+underlying `make_additive_lod` / `make_substitutive_lod` / `make_lod_pyramid`
+Python builders are unchanged; output stays a standalone v3.0 `.gsplats.zarr` to
+graft into a scene via `add_gsplats_from_file` / `gsplat convert`.
+
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 
 Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
