@@ -170,6 +170,7 @@ def lod_recipe(
     max_elements: Optional[int] = typer.Option(
         None,
         "--max-elements",
+        min=1,
         help="Per-part splat cap for the BSP partition (default 1,000,000). "
         "Mutually exclusive with --parts.",
     ),
@@ -295,10 +296,15 @@ def lod_recipe(
             if value is not None and _OPTION_TOKENS[flag] not in allowed
         ]
         if irrelevant:
-            raise typer.BadParameter(
+            msg = (
                 f"option(s) {', '.join(sorted(irrelevant))} are not used by "
                 f"--recipe {recipe}."
             )
+            # The substitutive *algorithm* moved to --substitutive-method; -m/--method
+            # now means the additive ordering. Point substitutive/pyramid users there.
+            if "--method" in irrelevant and recipe == "substitutive":
+                msg += " (for the substitutive algorithm use --substitutive-method)"
+            raise typer.BadParameter(msg)
 
         # ── validate values ──
         method_norm = (method or "greedy").strip().replace("-", "_")
@@ -321,6 +327,10 @@ def lod_recipe(
         if compress not in (None, "zip", "tar.gz"):
             raise typer.BadParameter(
                 f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
+            )
+        if ordering not in ("hilbert", "morton", "none"):
+            raise typer.BadParameter(
+                f"--ordering must be hilbert|morton|none; got {ordering!r}"
             )
         if parts is not None and max_elements is not None:
             raise typer.BadParameter(
@@ -348,6 +358,15 @@ def lod_recipe(
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
             if recipe in ("partitioned", "multiscale"):
+                # BSP partitioning needs >= 3 spatial dims; fail cleanly (the
+                # rest of the command's validation style) rather than letting
+                # the deeper ValueError surface as a raw traceback.
+                if data.ndim < 3:
+                    raise typer.BadParameter(
+                        f"recipe '{recipe}' requires >=3 spatial dimensions for "
+                        f"BSP partitioning; got {data.ndim}D. Use --recipe "
+                        f"additive/substitutive/pyramid for {data.ndim}D data."
+                    )
                 if parts is not None:
                     eff_max_elements = -(-data.n_splats // parts)  # ceil
                     aprint(

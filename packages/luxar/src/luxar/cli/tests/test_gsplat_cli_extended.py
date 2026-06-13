@@ -2268,6 +2268,127 @@ class TestLODCommand:
         )
         assert ok.exit_code == 0, f"overwrite failed:\n{ok.stdout}"
 
+    @staticmethod
+    def _io(result) -> str:
+        """Combined stdout+stderr (click 8.3 captures them separately; typer
+        BadParameter messages and tracebacks land on stderr)."""
+        out = result.stdout or ""
+        try:
+            err = result.stderr or ""
+        except (ValueError, AttributeError):
+            err = ""
+        return out + err
+
+    @staticmethod
+    def _make_2d_gsplats(path: Path) -> Path:
+        """A 2D (ndim=2) fitted .gsplats.zarr — BSP partitioning needs >=3 dims."""
+        import numpy as np
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n = 30
+        rng = np.random.default_rng(0)
+        chol = np.zeros((n, 3), dtype=np.float32)
+        chol[:, [0, 2]] = 1.0  # packed lower-tri diagonal for 2D
+        GSplatData(
+            centers=rng.uniform(0, 50, (n, 2)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=chol,
+        ).save(path)
+        return path
+
+    @pytest.mark.parametrize("recipe", ["partitioned", "multiscale"])
+    def test_2d_input_partition_recipes_clean_error(
+        self, runner: CliRunner, tmp_path: Path, recipe: str
+    ) -> None:
+        """2D input to a partition-based recipe errors cleanly, not via traceback."""
+        src = self._make_2d_gsplats(tmp_path / "in2d.gsplats.zarr")
+        out = tmp_path / "out2d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                recipe,
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+        # Clean BadParameter, NOT a raw stack trace (the pre-fix behavior).
+        io = self._io(result)
+        assert "Traceback" not in io
+        assert "spatial dimensions" in io
+
+    def test_2d_input_matrix_recipe_still_works(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The matrix recipes have no >=3D requirement — 2D additive succeeds."""
+        src = self._make_2d_gsplats(tmp_path / "in2d.gsplats.zarr")
+        out = tmp_path / "out2d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "additive",
+                "--n-lods",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, f"2D additive failed:\n{result.stdout}"
+
+    def test_invalid_ordering_clean_error(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A bad --ordering errors cleanly up front, not via a deep traceback."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "flat",
+                "--ordering",
+                "bogus",
+            ],
+        )
+        assert result.exit_code != 0
+        io = self._io(result)
+        assert "Traceback" not in io
+        assert "ordering" in io.lower()
+
+    def test_substitutive_method_short_flag_hint(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`--recipe substitutive -m ...` points the user to --substitutive-method."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "-m",
+                "kmeans",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--substitutive-method" in self._io(result)
+
 
 class TestMigrateFormatCommand:
     """`luxar gsplat migrate-format` end-to-end CLI tests.

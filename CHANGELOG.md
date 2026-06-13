@@ -34,6 +34,12 @@ one substitutive level of an existing pyramid) is dropped from the CLI — recip
 take a fitted/flat input. The capability remains in the Python API
 (`make_additive_lod(..., substitutive_level=N)`).
 
+Flag-name note for scripted users: under `--recipe`, `-m`/`--method` is the
+**additive ordering** method (greedy/self_energy/…); the **substitutive
+algorithm** (kmeans_lloyd/greedy/…) — formerly `lod substitutive -m`/`--method`
+— is now the long-only `--substitutive-method` for `--recipe substitutive` /
+`pyramid`.
+
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 
 Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
