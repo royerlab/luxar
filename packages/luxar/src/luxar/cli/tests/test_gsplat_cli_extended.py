@@ -5,6 +5,7 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -2268,16 +2269,23 @@ class TestLODCommand:
         )
         assert ok.exit_code == 0, f"overwrite failed:\n{ok.stdout}"
 
-    @staticmethod
-    def _io(result) -> str:
-        """Combined stdout+stderr (click 8.3 captures them separately; typer
-        BadParameter messages and tracebacks land on stderr)."""
+    # CSI escape sequences (Rich colourises error panels; under FORCE_COLOR — as
+    # in CI — a flag like ``--substitutive-method`` is split across per-segment
+    # SGR codes, so a raw substring check would miss it). Strip them so message
+    # assertions are colour-agnostic across local (no-TTY) and CI (forced-colour).
+    _ANSI_CSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+    @classmethod
+    def _io(cls, result) -> str:
+        """Combined stdout+stderr with ANSI codes stripped (click 8.3 captures
+        them separately; typer BadParameter messages and tracebacks land on
+        stderr, and Rich may colourise them)."""
         out = result.stdout or ""
         try:
             err = result.stderr or ""
         except (ValueError, AttributeError):
             err = ""
-        return out + err
+        return cls._ANSI_CSI.sub("", out + err)
 
     @staticmethod
     def _make_2d_gsplats(path: Path) -> Path:
