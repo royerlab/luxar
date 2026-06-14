@@ -29,6 +29,17 @@ vi.mock('../../../../../data/scene-loader/nodes/load-gsplats-node', () => ({
   loadGSplatsNodeExpensive: loadGSplatsNodeExpensiveMock,
 }));
 
+// Points deferral mirrors gsplats: mock the points cheap/expensive split so the
+// lazy-points path can be exercised without the real spatial-index loader.
+const { loadPointsNodeCheapMock, loadPointsNodeExpensiveMock } = vi.hoisted(() => ({
+  loadPointsNodeCheapMock: vi.fn(),
+  loadPointsNodeExpensiveMock: vi.fn(),
+}));
+vi.mock('../../../../../data/scene-loader/nodes/load-points-node', () => ({
+  loadPointsNodeCheap: loadPointsNodeCheapMock,
+  loadPointsNodeExpensive: loadPointsNodeExpensiveMock,
+}));
+
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
@@ -38,16 +49,21 @@ beforeEach(() => {
   loadSceneNodesMock.mockReset();
   loadGSplatsNodeCheapMock.mockReset();
   loadGSplatsNodeExpensiveMock.mockReset();
+  loadPointsNodeCheapMock.mockReset();
+  loadPointsNodeExpensiveMock.mockReset();
   // Default cheap-attach: attach a stub mesh named after the node path
   // (so getObjectByName / visibility toggles work) and return a
   // placeholder + dummy loader. Expensive defaults to a no-op resolve.
-  loadGSplatsNodeCheapMock.mockImplementation(async (node: SceneNode, parent: THREE.Object3D) => {
+  const cheapImpl = async (node: SceneNode, parent: THREE.Object3D) => {
     const mesh = new THREE.Mesh();
     mesh.name = node.path;
     parent.add(mesh);
     return { placeholder: mesh, loader: {} as never };
-  });
+  };
+  loadGSplatsNodeCheapMock.mockImplementation(cheapImpl);
   loadGSplatsNodeExpensiveMock.mockResolvedValue(undefined);
+  loadPointsNodeCheapMock.mockImplementation(cheapImpl);
+  loadPointsNodeExpensiveMock.mockResolvedValue(undefined);
 });
 
 function makeChildNode(
@@ -65,6 +81,25 @@ function makeChildNode(
       type: 'gsplats',
       min_pixel_size: minPixelSize,
       ...(positionBounds ? { position_bounds: positionBounds } : {}),
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
+/** A ``points`` leaf child (the finest level of a points-substitutive ladder). */
+function makePointsChildNode(
+  path: string,
+  minPixelSize: number,
+  positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
+): SceneNode {
+  return {
+    path,
+    type: 'points',
+    attrs: {
+      type: 'points',
+      min_pixel_size: minPixelSize,
+      position_bounds: positionBounds,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
     children: [],
@@ -99,7 +134,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
   } as unknown as NodeBuildCtx['nodeFactory'];
 
   return {
-    registry: { registerGSplatsLoader: vi.fn() } as never,
+    registry: { registerGSplatsLoader: vi.fn(), registerPointsLoader: vi.fn() } as never,
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
@@ -393,6 +428,106 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Lazy loading: a points finest child (points-substitutive ladder) defers too
+// ────────────────────────────────────────────────────────────────────────
+
+describe('loadLodGroupNode — lazy points level loading', () => {
+  function makeReg(): LODGroupRegistry {
+    return new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+  }
+
+  it('defers a non-default points child via the points cheap split (not eager)', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    // A points-substitutive ladder: coarse gsplat default + finest points child.
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0), // coarsest gsplat (default/eager)
+        makeChildNode('/lod/child_1', 100), // mid gsplat
+        makePointsChildNode('/lod/child_2', 500), // finest = points
+      ],
+      { default_level: 0, display_type: 'points' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    // The eager default (child_0) recurses; child_1 (gsplats) + child_2 (points)
+    // both cheap-attach. The points child must NOT take the eager loadSceneNodes
+    // path (which would fetch the full cloud up front).
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1);
+    expect(loadGSplatsNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadPointsNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadPointsNodeExpensiveMock).not.toHaveBeenCalled();
+
+    const pts = reg.get('/lod')!.children[2];
+    expect(pts.ready).toBe(false);
+    expect(typeof pts.ensureLoaded).toBe('function');
+  });
+
+  it('ensureLoaded loads the points level and registers the points loader', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'points' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const pts = reg.get('/lod')!.children[1];
+    pts.ensureLoaded!();
+    await vi.waitFor(() => expect(pts.ready).toBe(true));
+
+    expect(loadPointsNodeExpensiveMock).toHaveBeenCalledTimes(1);
+    expect(ctx.registry.registerPointsLoader).toHaveBeenCalledWith(
+      '/lod/child_1',
+      expect.anything()
+    );
+    expect(pts.loading).toBe(false);
+  });
+
+  it('does not register the points level when the dataset is switched mid-load', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'points' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const pts = reg.get('/lod')!.children[1];
+    ctx.isDatasetLive = () => false;
+    pts.ensureLoaded!();
+    await vi.waitFor(() => expect(pts.loading).toBe(false));
+
+    expect(ctx.registry.registerPointsLoader).not.toHaveBeenCalled();
+    expect(pts.ready).toBe(false);
+  });
+
+  it('gives a deferred points level NO release thunk (no points eviction pool)', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'points' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(reg.get('/lod')!.children[1].release).toBeUndefined();
   });
 });
 
