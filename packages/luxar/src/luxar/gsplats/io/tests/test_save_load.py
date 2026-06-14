@@ -673,3 +673,41 @@ def test_save_explicit_none_compressor_disables_compression():
         comp = Path(tmp) / "comp.gsplats.zarr"
         data.save(comp, ordering="none")
         assert zarr.open_group(str(comp), mode="r")["centers"].compressor is not None
+
+
+class TestCompressedLoadSecurity:
+    """Path-safety of the compressed-archive loader (``_extract_compressed_zarr``)."""
+
+    def test_targz_symlink_escape_rejected(self, tmp_path: Path) -> None:
+        """A tar.gz with a symlink escaping the extraction dir must be rejected
+        BEFORE any file is written (CVE-2007-4559-style symlink escape).
+
+        Pre-fix: the loader validated only ``member.name`` (which resolves inside
+        the temp dir) and then ``extractall`` recreated the symlink, so a file
+        member written "through" it landed outside the extraction dir.
+        """
+        import io
+        import tarfile
+
+        from luxar.gsplats.io.load_gsplats import _extract_compressed_zarr
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "PWNED.txt"
+        assert not target.exists()
+
+        evil = tmp_path / "evil.gsplats.zarr.tar.gz"
+        with tarfile.open(evil, "w:gz") as tar:
+            link = tarfile.TarInfo("d")  # symlink 'd' -> the outside dir
+            link.type = tarfile.SYMTYPE
+            link.linkname = str(outside)
+            tar.addfile(link)
+            payload = b"arbitrary write outside extraction dir"
+            f = tarfile.TarInfo("d/PWNED.txt")  # writes through the symlink
+            f.size = len(payload)
+            tar.addfile(f, io.BytesIO(payload))
+
+        with pytest.raises(ValueError, match="link|escape"):
+            _extract_compressed_zarr(evil)
+        # The decisive assertion: nothing was written outside the extraction dir.
+        assert not target.exists(), "symlink escape wrote a file outside the temp dir"
