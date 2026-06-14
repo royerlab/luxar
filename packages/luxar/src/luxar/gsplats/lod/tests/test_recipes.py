@@ -9,6 +9,7 @@ structurally identical to calling the underlying ``make_*_lod`` builders directl
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import make_additive_lod
@@ -57,7 +58,37 @@ def test_all_recipe_names_build():
     data = _make_random_gsplat()
     for recipe in RECIPE_NAMES:
         result = build_recipe(data, recipe, _params())
-        assert result is not None, recipe
+        # Strong: the build must carry the full splat set, not merely be non-None.
+        # Matrix recipes return GSplatData (count == N); composed recipes return a
+        # node tree whose leaves total >= N (multiscale adds a coarse cap).
+        if isinstance(result, GSplatData):
+            assert result.flattened().n_splats == 400, recipe
+        else:
+            assert total_splats(result) >= 400, recipe
+
+
+@pytest.mark.parametrize("ndim", [2, 4])
+def test_matrix_recipes_are_dimension_agnostic(ndim: int):
+    """flat/additive/substitutive/pyramid work at any dimensionality (boundary:
+    ndim != 3) and conserve the splat count."""
+    data = _make_random_gsplat(n=120, ndim=ndim)
+    for recipe in ("flat", "additive", "substitutive", "pyramid"):
+        res = build_recipe(data, recipe, _params())
+        assert isinstance(res, GSplatData), recipe
+        assert res.ndim == ndim, recipe
+        assert res.flattened().n_splats == 120, recipe
+
+
+def test_partition_recipes_support_4d():
+    """partitioned/multiscale require >=3 dims (BSP); 4D must build and conserve."""
+    data = _make_random_gsplat(n=400, ndim=4)
+    part = build_recipe(data, "partitioned", _params(max_elements=120))
+    assert isinstance(part, GSplatPartition)
+    assert total_splats(part) == 400
+    assert all(leaf.ndim == 4 for leaf in iter_leaves(part))
+    ms = build_recipe(data, "multiscale", _params(max_elements=120))
+    assert isinstance(ms, GSplatLodGroup)
+    assert all(leaf.ndim == 4 for leaf in iter_leaves(ms))
 
 
 def test_flat_is_single_leaf():
