@@ -5,6 +5,7 @@ Also tests the config system (presets, YAML loading, dump) and volume loader.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -1992,13 +1993,66 @@ def medium_gsplats(tmp_path: Path) -> Path:
 
 
 class TestLODCommand:
-    def test_lod_additive_basic(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
+    """`luxar gsplat lod --recipe ...` — the unified recipe command."""
+
+    def test_recipe_required(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`lod additive` produces a valid multi-LOD .gsplats.zarr."""
+        """Omitting --recipe errors cleanly and writes nothing."""
+        out = tmp_path / "none.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "lod", str(medium_gsplats), str(out)])
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_unknown_recipe_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "bad.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "bogus"]
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_irrelevant_option_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A partition option is rejected for the `additive` recipe."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--max-elements",
+                "100",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_recipe_flat(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "flat"]
+        )
+        assert result.exit_code == 0, f"flat failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        assert loaded.n_substitutive == 1
+        assert loaded.n_additive_sublods == 1
+        assert loaded.n_splats == 32
+
+    def test_recipe_additive(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
         from luxar.gsplats.gsplat_data import GSplatData
 
         out = tmp_path / "ladder.gsplats.zarr"
@@ -2007,266 +2061,417 @@ class TestLODCommand:
             [
                 "gsplat",
                 "lod",
-                "additive",
                 str(medium_gsplats),
                 str(out),
+                "--recipe",
+                "additive",
                 "--n-lods",
                 "2",
                 "--method",
-                "self_energy",  # cheap, avoids dense Gram on tiny inputs
+                "self_energy",
             ],
         )
-        assert result.exit_code == 0, f"lod additive failed:\n{result.stdout}"
-        assert out.exists()
+        assert result.exit_code == 0, f"additive failed:\n{result.stdout}"
         ladder = GSplatData.load(out)
-        # Multi-LOD with 2 levels; sum of per-level counts equals total
         assert ladder.n_additive_sublods == 2
         per_level = [
             ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)
         ]
         assert sum(per_level) == ladder.n_splats == 32
 
-    def test_lod_additive_quiet_suppresses_per_lod_lines(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
+    def test_recipe_substitutive(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--quiet` suppresses 'LOD 0: ... splats' progress lines."""
-        out_loud = tmp_path / "loud.gsplats.zarr"
-        out_quiet = tmp_path / "quiet.gsplats.zarr"
-
-        loud = runner.invoke(
-            app,
-            [
-                "gsplat",
-                "lod",
-                "additive",
-                str(medium_gsplats),
-                str(out_loud),
-                "--n-lods",
-                "2",
-                "--method",
-                "self_energy",
-            ],
-        )
-        assert loud.exit_code == 0, f"loud invocation failed:\n{loud.stdout}"
-
-        quiet = runner.invoke(
-            app,
-            [
-                "gsplat",
-                "lod",
-                "additive",
-                str(medium_gsplats),
-                str(out_quiet),
-                "--n-lods",
-                "2",
-                "--method",
-                "self_energy",
-                "--quiet",
-            ],
-        )
-        assert quiet.exit_code == 0, f"quiet invocation failed:\n{quiet.stdout}"
-
-        # The per-LOD enumeration "LOD 0:" / "LOD 1:" appears in loud only
-        assert "LOD 0" in loud.stdout or "LOD 1" in loud.stdout
-        assert "LOD 0" not in quiet.stdout
-        assert "LOD 1" not in quiet.stdout
-
-    def test_lod_substitutive_basic(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
-    ) -> None:
-        """`lod substitutive` produces a single v2.0 .gsplats.zarr."""
         from luxar.gsplats import GSplatData
 
-        out_path = tmp_path / "hierarchy.gsplats.zarr"
+        out = tmp_path / "hierarchy.gsplats.zarr"
         result = runner.invoke(
             app,
             [
                 "gsplat",
                 "lod",
-                "substitutive",
                 str(medium_gsplats),
-                str(out_path),
-                "--K",
+                str(out),
+                "--recipe",
+                "substitutive",
+                "-K",
                 "2",
-                "--L",
+                "-L",
                 "2",
                 "--device",
                 "cpu",
             ],
         )
-        assert result.exit_code == 0, f"lod substitutive failed:\n{result.stdout}"
-        assert out_path.is_dir()
-        loaded = GSplatData.load(out_path)
-        # n_substitutive = levels + 1 (= 3 for L=2)
-        assert loaded.n_substitutive == 3
-        # Each substitutive level is a single additive sub-LOD
-        for lev in loaded.substitutive_levels:
-            assert lev.n_additive_lods == 1
-        # compression_factor = K^level_index = 2^s
+        assert result.exit_code == 0, f"substitutive failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
+        assert loaded.n_substitutive == 3  # L + 1
         assert [lev.compression_factor for lev in loaded.substitutive_levels] == [
             1,
             2,
             4,
         ]
 
-    def test_lod_substitutive_quiet_suppresses_per_level_lines(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
+    def test_recipe_pyramid(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--quiet` suppresses per-level enumeration."""
-        out_path = tmp_path / "hierarchy_quiet.gsplats.zarr"
-        result = runner.invoke(
-            app,
-            [
-                "gsplat",
-                "lod",
-                "substitutive",
-                str(medium_gsplats),
-                str(out_path),
-                "--K",
-                "2",
-                "--L",
-                "1",
-                "--device",
-                "cpu",
-                "--quiet",
-            ],
-        )
-        assert result.exit_code == 0, f"quiet substitutive failed:\n{result.stdout}"
-        assert out_path.is_dir()
-        # The per-level "level 0: ... splats" + "Wrote <output_path>" summary
-        # lines are gated by --quiet. (The shared array writer still logs a
-        # low-level "✓ Wrote amplitudes …" line unconditionally, so assert on
-        # the specific gated summary rather than the bare word "Wrote".)
-        assert "level 0:" not in result.stdout
-        assert f"Wrote {out_path}" not in result.stdout
-
-    def test_lod_pyramid_full_matrix(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
-    ) -> None:
-        """`lod pyramid` builds the full [N, M] LOD matrix in one shot."""
         from luxar.gsplats import GSplatData
 
-        out_path = tmp_path / "pyramid.gsplats.zarr"
+        out = tmp_path / "pyramid.gsplats.zarr"
         result = runner.invoke(
             app,
             [
                 "gsplat",
                 "lod",
-                "pyramid",
                 str(medium_gsplats),
-                str(out_path),
-                "--substitutive",
-                "K=2,L=2",
-                "--additive",
+                str(out),
+                "--recipe",
+                "pyramid",
+                "-K",
                 "2",
-                "--additive-method",
+                "-L",
+                "2",
+                "--n-lods",
+                "2",
+                "--method",
                 "self_energy",
                 "--device",
                 "cpu",
             ],
         )
-        assert result.exit_code == 0, f"lod pyramid failed:\n{result.stdout}"
-        loaded = GSplatData.load(out_path)
+        assert result.exit_code == 0, f"pyramid failed:\n{result.stdout}"
+        loaded = GSplatData.load(out)
         assert loaded.n_substitutive == 3
-        # Each substitutive level has its own additive ladder (<= 2; may clamp on tiny levels)
         for lev in loaded.substitutive_levels:
             assert 1 <= lev.n_additive_lods <= 2
 
-    def test_lod_additive_substitutive_level_kwarg(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
+    def test_recipe_partitioned(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`lod additive --substitutive-level` targets a specific level of a pyramid."""
-        from luxar.gsplats import GSplatData
-
-        # First build a 3-level substitutive pyramid (M_i = 1 each).
-        pyramid_path = tmp_path / "pyramid.gsplats.zarr"
-        r1 = runner.invoke(
-            app,
-            [
-                "gsplat",
-                "lod",
-                "substitutive",
-                str(medium_gsplats),
-                str(pyramid_path),
-                "--K",
-                "2",
-                "--L",
-                "2",
-                "--device",
-                "cpu",
-            ],
+        """`partitioned` writes a kind=partition tree of per-part additive ladders."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import (
+            GSplatLeaf,
+            GSplatPartition,
+            iter_leaves,
+            total_splats,
         )
-        assert r1.exit_code == 0, f"substitutive prep failed:\n{r1.stdout}"
 
-        # Now add an additive ladder on substitutive level 1 only.
-        ladder_path = tmp_path / "ladder.gsplats.zarr"
-        r2 = runner.invoke(
-            app,
-            [
-                "gsplat",
-                "lod",
-                "additive",
-                str(pyramid_path),
-                str(ladder_path),
-                "--n-lods",
-                "2",
-                "--method",
-                "self_energy",
-                "--substitutive-level",
-                "1",
-            ],
-        )
-        assert r2.exit_code == 0, f"additive on level 1 failed:\n{r2.stdout}"
-
-        loaded = GSplatData.load(ladder_path)
-        assert loaded.n_substitutive == 3
-        # Level 0 and 2 carried over unchanged: still M=1
-        assert loaded.substitutive_levels[0].n_additive_lods == 1
-        assert loaded.substitutive_levels[2].n_additive_lods == 1
-        # Level 1 now has additive ladder
-        assert loaded.substitutive_levels[1].n_additive_lods >= 1
-
-    def test_lod_additive_substitutive_level_out_of_bounds(
-        self,
-        runner: CliRunner,
-        medium_gsplats: Path,
-        tmp_path: Path,
-    ) -> None:
-        """Out-of-bounds --substitutive-level should error cleanly."""
-        out_path = tmp_path / "fail.gsplats.zarr"
+        out = tmp_path / "part.gsplats.zarr"
         result = runner.invoke(
             app,
             [
                 "gsplat",
                 "lod",
-                "additive",
                 str(medium_gsplats),
-                str(out_path),
+                str(out),
+                "--recipe",
+                "partitioned",
+                "--max-elements",
+                "12",
+                "--n-lods",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, f"partitioned failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children >= 2
+        for leaf in iter_leaves(node):
+            assert isinstance(leaf, GSplatLeaf)
+        assert total_splats(node) == 32
+
+    def test_recipe_multiscale(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`multiscale` writes an unbalanced lod(coarse leaf + partition fine)."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import (
+            GSplatLeaf,
+            GSplatLodGroup,
+            GSplatPartition,
+            total_splats,
+        )
+
+        out = tmp_path / "ms.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--max-elements",
+                "12",
+                "--n-lods",
+                "2",
+                "-K",
+                "2",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert isinstance(node, GSplatLodGroup)
+        assert node.n_children == 2
+        fine, coarse = node.children
+        assert isinstance(fine, GSplatPartition)
+        assert isinstance(coarse, GSplatLeaf)
+        assert total_splats(fine) == 32
+        assert coarse.n_splats < 32
+
+    def test_quiet_suppresses_saved_line(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "quiet.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
                 "--n-lods",
                 "2",
                 "--method",
                 "self_energy",
-                "--substitutive-level",
-                "5",
+                "--quiet",
+            ],
+        )
+        assert result.exit_code == 0, f"quiet failed:\n{result.stdout}"
+        assert f"Saved to {out}" not in result.stdout
+
+    def test_overwrite_required_for_existing_output(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "exists.gsplats.zarr"
+        out.mkdir()
+        result = runner.invoke(
+            app,
+            ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe", "flat"],
+        )
+        assert result.exit_code != 0
+        ok = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "flat",
+                "--overwrite",
+            ],
+        )
+        assert ok.exit_code == 0, f"overwrite failed:\n{ok.stdout}"
+
+    # CSI escape sequences (Rich colourises error panels; under FORCE_COLOR — as
+    # in CI — a flag like ``--substitutive-method`` is split across per-segment
+    # SGR codes, so a raw substring check would miss it). Strip them so message
+    # assertions are colour-agnostic across local (no-TTY) and CI (forced-colour).
+    _ANSI_CSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+    @classmethod
+    def _io(cls, result) -> str:
+        """Combined stdout+stderr with ANSI codes stripped (click 8.3 captures
+        them separately; typer BadParameter messages and tracebacks land on
+        stderr, and Rich may colourise them)."""
+        out = result.stdout or ""
+        try:
+            err = result.stderr or ""
+        except (ValueError, AttributeError):
+            err = ""
+        return cls._ANSI_CSI.sub("", out + err)
+
+    @staticmethod
+    def _make_2d_gsplats(path: Path) -> Path:
+        """A 2D (ndim=2) fitted .gsplats.zarr — BSP partitioning needs >=3 dims."""
+        import numpy as np
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n = 30
+        rng = np.random.default_rng(0)
+        chol = np.zeros((n, 3), dtype=np.float32)
+        chol[:, [0, 2]] = 1.0  # packed lower-tri diagonal for 2D
+        GSplatData(
+            centers=rng.uniform(0, 50, (n, 2)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=chol,
+        ).save(path)
+        return path
+
+    @pytest.mark.parametrize("recipe", ["partitioned", "multiscale"])
+    def test_2d_input_partition_recipes_clean_error(
+        self, runner: CliRunner, tmp_path: Path, recipe: str
+    ) -> None:
+        """2D input to a partition-based recipe errors cleanly, not via traceback."""
+        src = self._make_2d_gsplats(tmp_path / "in2d.gsplats.zarr")
+        out = tmp_path / "out2d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                recipe,
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code != 0
-        assert not out_path.exists()
+        assert not out.exists()
+        # Clean BadParameter, NOT a raw stack trace (the pre-fix behavior).
+        io = self._io(result)
+        assert "Traceback" not in io
+        assert "spatial dimensions" in io
+
+    def test_2d_input_matrix_recipe_still_works(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The matrix recipes have no >=3D requirement — 2D additive succeeds."""
+        src = self._make_2d_gsplats(tmp_path / "in2d.gsplats.zarr")
+        out = tmp_path / "out2d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "additive",
+                "--n-lods",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, f"2D additive failed:\n{result.stdout}"
+
+    def test_invalid_ordering_clean_error(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A bad --ordering errors cleanly up front, not via a deep traceback."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "flat",
+                "--ordering",
+                "bogus",
+            ],
+        )
+        assert result.exit_code != 0
+        io = self._io(result)
+        assert "Traceback" not in io
+        assert "ordering" in io.lower()
+
+    def test_substitutive_method_short_flag_hint(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`--recipe substitutive -m ...` points the user to --substitutive-method."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "-m",
+                "kmeans",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--substitutive-method" in self._io(result)
+
+    def test_count_growing_recipe_fitting_count_matches_leaves(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`fitting/n_splats` must equal the file's true leaf total, not the
+        (smaller) source-fit count — multiscale synthesises an extra coarse cap.
+        """
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import total_splats
+
+        n = 600
+        rng = np.random.default_rng(0)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, (n, 3))
+        src = tmp_path / "fitted.gsplats.zarr"
+        GSplatData(
+            centers=rng.uniform(0, 100, (n, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=chol,
+            stats={"n_splats": n, "psnr_db": 31.5},  # source-fit provenance
+        ).save(src)
+
+        out = tmp_path / "ms.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--max-elements",
+                "150",
+                "-K",
+                "4",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        leaf_total = total_splats(node)
+        assert leaf_total > n, "multiscale should grow the splat count (coarse cap)"
+        root = zarr.open_group(str(out), mode="r")
+        persisted = root["fitting"].attrs.get("n_splats")
+        assert persisted == leaf_total, (
+            f"stale fitting/n_splats {persisted} != true leaf total {leaf_total}"
+        )
+
+    @pytest.mark.parametrize("breakpoints", ["energy:1.5", "counts:999999"])
+    def test_breakpoints_out_of_range_clean_error(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, breakpoints: str
+    ) -> None:
+        """Out-of-range --breakpoints error cleanly, not via a raw traceback."""
+        out = tmp_path / "o.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--breakpoints",
+                breakpoints,
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+        assert "Traceback" not in self._io(result)
 
 
 class TestMigrateFormatCommand:

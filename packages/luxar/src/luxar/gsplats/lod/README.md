@@ -35,7 +35,7 @@ in CPython).
 
 > **Upstream step**: use `luxar gsplat cal` to pick a principled splat
 > budget K\* before fitting. The canonical end-to-end pipeline is
-> **`cal` → `fit --seeds K*` → `lod additive` (or `lod substitutive`)**.
+> **`cal` → `fit --seeds K*` → `lod --recipe additive` (or `partitioned` / `multiscale`)**.
 > See `gsplats/calibration.py` and the "Calibration (Blind-Spot CV)"
 > section in the parent `gsplats/README.md`.
 
