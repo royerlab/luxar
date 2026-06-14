@@ -5,11 +5,12 @@ from __future__ import annotations
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 from arbol import aprint, asection
 
+from .gsplat_ops.encoding import _resolve_encoding_mode
 from .utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
 if TYPE_CHECKING:
@@ -17,19 +18,9 @@ if TYPE_CHECKING:
 
 app_gsplat = typer.Typer(help="Gaussian splat tools")
 
-
-def _resolve_encoding_mode(
-    mode: str,
-) -> Any:
-    """Convert a string encoding mode to an EncodingMode enum value."""
-    from luxar.encoding import EncodingMode
-
-    _ENCODING_MAP = {
-        "auto": EncodingMode.AUTO,
-        "precision": EncodingMode.PRECISION,
-        "memory": EncodingMode.MEMORY,
-    }
-    return _ENCODING_MAP[mode]
+# `_resolve_encoding_mode` is re-exported (imported above) for any callers that
+# referenced it from this module before the gsplat_ops/ split.
+__all__ = ["app_gsplat", "_resolve_encoding_mode"]
 
 
 def _ascii_histogram(
