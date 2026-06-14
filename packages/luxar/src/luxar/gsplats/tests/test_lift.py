@@ -119,6 +119,52 @@ def test_zero_radius_points_dropped():
     assert data.n_splats == 2  # the two zero-radius points are dropped
 
 
+def test_uint8_colors_normalized_to_unit_range():
+    # CRITICAL regression: uint8 RGB (0..255) must be scaled to float [0,1] so the
+    # gsplat colour writer treats coarse LOD levels as SDR (not HDR -> ~255x too
+    # bright). Pre-fix the lift cast uint8 -> float32 preserving 0..255.
+    pos = np.zeros((4, 3), np.float32)
+    colors_u8 = np.array(
+        [[255, 128, 0], [0, 255, 255], [10, 20, 30], [200, 200, 200]], dtype=np.uint8
+    )
+    data = lift_points_to_gsplats(pos, 1.0, colors=colors_u8)
+    c = np.asarray(data.flattened().colors)
+    assert c.dtype == np.float32
+    assert c.max() <= 1.0 + 1e-6
+    np.testing.assert_allclose(c[0], [1.0, 128 / 255, 0.0], atol=1e-6)
+
+
+def test_float_colors_passed_through_unchanged():
+    # Float colours (already 0..1 or HDR) must NOT be divided — only integers are.
+    pos = np.zeros((2, 3), np.float32)
+    colors_f = np.array([[0.5, 0.25, 1.0], [2.0, 0.1, 0.0]], dtype=np.float32)  # HDR ok
+    c = np.asarray(lift_points_to_gsplats(pos, 1.0, colors=colors_f).flattened().colors)
+    np.testing.assert_allclose(c, colors_f, atol=1e-6)
+
+
+def test_render_light_anisotropic_uses_det():
+    # render_light must use |det(L)| (= product of the triangular diagonal), not a
+    # sum or an isotropic shortcut. Construct an anisotropic gaussian and pin it.
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.utils.trils import pack_tril
+
+    s = np.array([2.0, 3.0, 0.5])
+    L = np.diag(s).astype(np.float32)[None]  # (1,3,3) lower-tri (diagonal)
+    chol = pack_tril(L).astype(np.float32)
+    a = np.array([1.5], np.float32)
+    data = GSplatData(
+        centers=np.zeros((1, 3), np.float32), amplitudes=a, cholesky_factors=chol
+    )
+    assert render_light(data) == pytest.approx(1.5 * (2.0 * 3.0 * 0.5))  # a * det(L)
+
+
+def test_compute_ray_integral_factor_rejects_nonpositive_T():
+    with pytest.raises(ValueError):
+        compute_ray_integral_factor(0.0)
+    with pytest.raises(ValueError):
+        compute_ray_integral_factor(-1.0)
+
+
 def test_render_light_isotropic_formula():
     # render_light = sum a * sigma^3 for isotropic d=3.
     T = 3.0

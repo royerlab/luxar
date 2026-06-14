@@ -67,6 +67,12 @@ def add_points_impl(
             "strategies for Points (append vs replace on the same LOD axis); "
             "pass only one."
         )
+    if substitutive_lod is not None and partition is not None:
+        raise ValueError(
+            "partition= and substitutive_lod= cannot be combined yet "
+            "(partition-of-substitutive — a kind=partition of per-part gsplat "
+            "LOD ladders — is not implemented). Use one or the other."
+        )
     try:
         scene = group._find_scene()
 
@@ -85,6 +91,37 @@ def add_points_impl(
 
         n_points = pos_arr.shape[0]
         ndim = pos_arr.shape[1]
+
+        # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
+        # point lifted to an isotropic Gaussian, then reduced by the gsplat
+        # substitutive pipeline) under a kind=lod Group whose finest child is the
+        # original Points node. Fires BEFORE (auto-)partition so substitutive
+        # takes precedence over the opt-in auto-partition heuristic; explicit
+        # partition= is rejected up front (mutually exclusive, checked above).
+        # ``pos_arr`` is already dim_order-transformed, so children are written
+        # with dim_order=None/fill=None to avoid double application.
+        if substitutive_lod is not None and n_points > 0:
+            from ..lod.points import resolve_substitutive_axis_points
+
+            substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
+            if substitutive_spec is not None:
+                return add_points_substitutive_lod_wrapper_impl(
+                    group,
+                    name=name,
+                    pos_arr=pos_arr,
+                    n_points=n_points,
+                    colors=colors,
+                    radii=radii,
+                    sharpness=sharpness,
+                    scalars=scalars,
+                    labels=labels,
+                    image_labels=image_labels,
+                    parent=parent,
+                    extend_to_all=extend_to_all,
+                    grid_shape=grid_shape,
+                    spec=substitutive_spec,
+                    **attrs,
+                )
 
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off) before evaluating the partition branch. User-explicit
@@ -226,37 +263,6 @@ def add_points_impl(
                         **attrs,
                     )
                 # 1 level (degenerate) → fall through to single-leaf.
-
-        # Substitutive-LOD branch — coarse levels are synthesised gsplats
-        # (each point lifted to an isotropic Gaussian, then reduced by the
-        # gsplat substitutive pipeline) under a kind=lod Group whose finest
-        # child is the original Points node. Fires after the partition
-        # fall-through, mutually exclusive with additive_lod (checked above).
-        # ``pos_arr`` is already dim_order-transformed, so children are written
-        # with dim_order=None/fill=None to avoid double application.
-        if substitutive_lod is not None:
-            from ..lod.points import resolve_substitutive_axis_points
-
-            substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
-            if substitutive_spec is not None:
-                return add_points_substitutive_lod_wrapper_impl(
-                    group,
-                    name=name,
-                    pos_arr=pos_arr,
-                    n_points=n_points,
-                    colors=colors,
-                    radii=radii,
-                    sharpness=sharpness,
-                    scalars=scalars,
-                    labels=labels,
-                    parent=parent,
-                    extend_to_all=extend_to_all,
-                    grid_shape=grid_shape,
-                    dim_order=None,
-                    fill=None,
-                    spec=substitutive_spec,
-                    **attrs,
-                )
 
         aprint(f"Adding points node '{name}' with {n_points:,} points in {ndim}D.")
 
@@ -491,11 +497,10 @@ def add_points_substitutive_lod_wrapper_impl(
     sharpness: Any,
     scalars: Any,
     labels: Any,
+    image_labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     grid_shape: Optional[Tuple[int, ...]],
-    dim_order: Optional[List[str]],
-    fill: Optional[Dict[str, float]],
     spec: Dict[str, Any],
     **attrs: Any,
 ) -> Union["Group", Points]:
@@ -541,8 +546,11 @@ def add_points_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
     )
 
-    # Degenerate input (too few points to reduce) — no coarse levels. Fall back
-    # to a plain flat Points node rather than a one-child LOD group.
+    # Degenerate input (too few points to reduce, or every coarse level failed
+    # to actually shrink) — no usable coarse levels. Fall back to a plain flat
+    # Points node rather than a one-child LOD group. ``pos_arr`` is already
+    # dim_order-transformed, so dim_order/fill are None and partition is
+    # disabled (the cloud is tiny by definition here).
     if not coarse:
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
@@ -550,9 +558,9 @@ def add_points_substitutive_lod_wrapper_impl(
         )
         return add_points_impl(
             group, name=name, positions=pos_arr, colors=colors, radii=radii,
-            sharpness=sharpness, scalars=scalars, labels=labels, parent=parent,
-            extend_to_all=extend_to_all, grid_shape=grid_shape, dim_order=dim_order,
-            fill=fill, **attrs,
+            sharpness=sharpness, scalars=scalars, labels=labels,
+            image_labels=image_labels, parent=parent, extend_to_all=extend_to_all,
+            grid_shape=grid_shape, partition=False, **attrs,
         )
 
     # Children coarsest -> finest: [coarsest gsplat .. finest gsplat, points].
@@ -587,21 +595,23 @@ def add_points_substitutive_lod_wrapper_impl(
         name, base_pixel_size=spec.get("base_pixel_size"), **lod_attrs
     )
 
-    # Coarse gsplat children (coarsest first).
+    # Coarse gsplat children (coarsest first). pos_arr is already
+    # dim_order-transformed, so children use dim_order=None/fill=None.
     for idx, lvl_data in enumerate(coarse_first):
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
             result=lvl_data,
             extend_to_all=extend_to_all,
-            dim_order=dim_order,
-            fill=fill,
+            dim_order=None,
+            fill=None,
             lod_group=None,
             additive_lod=None,
             min_pixel_size=min_pixel_sizes[idx],
             **child_attrs,
         )
 
-    # Finest child: the original Points node.
+    # Finest child: the original Points node (carries all N points + image_labels;
+    # partition=False so the auto-partition heuristic cannot split it underneath).
     lod_group_node.add_points(
         f"child_{len(coarse_first)}",
         pos_arr,
@@ -610,11 +620,12 @@ def add_points_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
         extend_to_all=extend_to_all,
         grid_shape=grid_shape,
-        dim_order=dim_order,
-        fill=fill,
-        partition=None,
+        dim_order=None,
+        fill=None,
+        partition=False,
         additive_lod=None,
         substitutive_lod=None,
         min_pixel_size=min_pixel_sizes[-1],

@@ -61,6 +61,10 @@ class TestResolveSubstitutiveAxisPoints:
         with pytest.raises(ValueError, match="unrecognized keys"):
             resolve_substitutive_axis_points(dict(bogus=1))
 
+    def test_non_ascending_min_pixel_sizes_raises(self) -> None:
+        with pytest.raises(ValueError, match="strictly increasing"):
+            resolve_substitutive_axis_points(dict(min_pixel_sizes=[0.0, 50.0, 10.0]))
+
     def test_bad_values_raise(self) -> None:
         with pytest.raises(ValueError):
             resolve_substitutive_axis_points(dict(compression_factor=1))
@@ -164,6 +168,76 @@ class TestAddPointsSubstitutiveLod:
         mps = [float(grp[f"child_{i}"].attrs["min_pixel_size"]) for i in range(4)]
         assert mps == [0.0, 5.0, 25.0, 100.0]
 
+    def test_uint8_colors_render_sdr_on_coarse_levels(self, tmp_path) -> None:
+        # CRITICAL regression: uint8 colors must NOT become HDR on the coarse
+        # gsplat levels (which would render ~255x too bright vs the SDR points
+        # child at the LOD seam). Post-fix the gsplat child colors are SDR (uint8
+        # encoding) and no HDR warning fires.
+        import warnings
+
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
+        colors_u8 = rng.integers(0, 256, (6000, 3)).astype(np.uint8)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("cloud", pos, colors=colors_u8, radii=1.0,
+                                 substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            hdr = [w for w in caught if "HDR" in str(w.message)]
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        # child_0 is a coarse gsplat level; its colors must be SDR (uint8), not
+        # the blown-out float32-HDR the pre-fix lift produced.
+        assert np.asarray(grp["child_0"]["colors"]).dtype == np.uint8
+        assert len(hdr) == 0, f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+
+    def test_opacity_rides_on_group_not_baked_into_amplitudes(self, tmp_path) -> None:
+        # opacity is a compositing attr on the kind=lod group; the lift always uses
+        # opacity=1, so the baked gsplat amplitudes are INDEPENDENT of the node
+        # opacity (it is applied once, at composite, to all children — not twice).
+        def build(op):
+            out = tmp_path / f"op{op}.luxar.zarr"
+            rng = np.random.default_rng(0)
+            pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("cloud", pos, radii=1.0, opacity=op,
+                                 substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            return zarr.open(str(out), mode="r")["cloud"]
+
+        g_half, g_full = build(0.5), build(1.0)
+        assert float(g_half.attrs["opacity"]) == pytest.approx(0.5)
+        assert float(g_full.attrs["opacity"]) == pytest.approx(1.0)
+        # Amplitudes (and their stored range) must be identical regardless of opacity.
+        a_half = np.asarray(g_half["child_0"]["amplitudes"])
+        a_full = np.asarray(g_full["child_0"]["amplitudes"])
+        np.testing.assert_array_equal(a_half, a_full)
+        assert (g_half["child_0"].attrs["amplitude_range"]["max"]
+                == pytest.approx(g_full["child_0"].attrs["amplitude_range"]["max"]))
+
+    def test_render_light_survives_writer_quantization(self, tmp_path) -> None:
+        # End-to-end: the render-light rescale must survive the writer's uint16
+        # amplitude quantization (each level stores its own amplitude_range, so a
+        # per-level scalar rescale is preserved through encode+decode).
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        grp, _ = _build(tmp_path, levels=3)
+        lights = []
+        for i in range(3):  # gsplat children
+            child = grp[f"child_{i}"]
+            u_raw = np.asarray(child["amplitudes"])
+            amax = float(child.attrs["amplitude_range"]["max"])
+            # The encoder adaptively picks uint8 OR uint16 per node; dequantize
+            # against the stored array's own dtype max (writer: u = a/max*dtype_max).
+            qmax = float(np.iinfo(u_raw.dtype).max)
+            a = u_raw.astype(np.float64) / qmax * amax
+            L = unpack_tril(np.asarray(child["cholesky_factors"], dtype=np.float64), 3)
+            det = np.abs(np.linalg.det(L))
+            lights.append(float(np.sum(a * det)))
+        for li in lights[1:]:
+            assert li == pytest.approx(lights[0], rel=0.03)
+
 
 class TestSubstitutiveLodGuards:
     def test_mutually_exclusive_with_additive(self, tmp_path) -> None:
@@ -175,6 +249,29 @@ class TestSubstitutiveLodGuards:
                 scene.add_points(
                     "pts", pos, additive_lod=True, substitutive_lod=True
                 )
+
+    def test_partition_and_substitutive_raises(self, tmp_path) -> None:
+        # Must not silently drop the substitutive ladder when partition= is set.
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="partition.*substitutive_lod"):
+                scene.add_points("pts", pos, partition=True, substitutive_lod=True)
+
+    def test_substitutive_takes_precedence_over_auto_partition(self, tmp_path) -> None:
+        # With compiler auto-partition enabled, substitutive_lod must still win
+        # (build the LOD group, not silently get auto-partitioned away).
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out, auto_partition_max_elements=2000) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("cloud", pos, radii=1.0,
+                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "points"
 
     def test_scalars_without_colors_raises(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
@@ -188,6 +285,37 @@ class TestSubstitutiveLodGuards:
                     "pts", pos, scalars=scalars, colormap="viridis",
                     substitutive_lod=True,
                 )
+
+    def test_image_labels_forwarded_to_finest_points_child(self, tmp_path) -> None:
+        # image_labels must NOT be silently dropped on the substitutive path; they
+        # ride to the finest Points child (the real N-point node).
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (3000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("cloud", pos, radii=1.0, image_labels=[b"x"] * 3000,
+                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        children = sorted(k for k in grp.keys() if k.startswith("child_"))
+        finest = grp[children[-1]]
+        assert finest.attrs["type"] == "points"
+        assert finest.attrs.get("has_image_labels") is True
+
+    def test_empty_cloud_falls_through_to_canonical_path(self, tmp_path) -> None:
+        # N=0 must not produce a confusing 'coarsest child' error from the
+        # substitutive builder — the n_points>0 guard routes it to the normal path.
+        out = tmp_path / "t.luxar.zarr"
+        empty = np.zeros((0, 3), np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            # Whatever the canonical empty-points behavior is, it must NOT be the
+            # substitutive builder's internal 'coarsest child must have >=1' error.
+            try:
+                scene.add_points("pts", empty, radii=1.0,
+                                 substitutive_lod=dict(levels=2, device="cpu"))
+            except Exception as e:  # noqa: BLE001
+                assert "coarsest child" not in str(e)
 
     def test_tiny_input_builds_valid_group_without_crashing(self, tmp_path) -> None:
         # Very small N still reduces (each coarse level may be 1 splat); the

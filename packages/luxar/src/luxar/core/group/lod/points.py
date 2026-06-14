@@ -127,6 +127,14 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
     if min_pixel_sizes is not None:
         min_pixel_sizes = [float(m) for m in min_pixel_sizes]
+        # Same strict-ascending (coarsest=0.0) contract the LOD group requires —
+        # validate here so a malformed override fails loudly, matching the
+        # gsplats substitutive resolver.
+        from .group import _assert_strict_ascending
+
+        _assert_strict_ascending(
+            min_pixel_sizes, "substitutive_lod=dict(min_pixel_sizes=...)"
+        )
 
     if kwargs:
         raise ValueError(

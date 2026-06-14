@@ -43,6 +43,14 @@ badly; ``sigma = 2 R / T`` is the right footprint-preserving choice for all
 sharpness. The single-point seam mismatch for non-default sharpness is hidden in
 practice because the finest LOD level is the real Points node and coarse levels
 merge many points (per-point shape washes out).
+
+nD note: a point radius is a single isotropic spatial scalar, so the lift assigns
+``sigma = 2 R / T`` to **every** axis of ``positions``. For a 3D cloud that is
+exactly right. For an nD scene where a non-spatial axis (e.g. a continuous time
+coordinate filled in via ``dim_order``) is part of ``positions``, the lifted
+Gaussian gains a spurious extent along that axis — the coarse gsplat levels then
+blur across it. Use ``extend_to_all`` for such axes (the common case), or restrict
+``positions`` to the spatial subspace, until a dim-aware lift lands.
 """
 
 from __future__ import annotations
@@ -53,7 +61,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .gsplat_data import GSplatData
-from .utils.trils import unpack_tril
 
 __all__ = [
     "coarse_substitutive_levels",
@@ -72,6 +79,8 @@ def compute_ray_integral_factor(truncation_radius: float) -> float:
     ``sqrt(2 pi) * erf(T / sqrt 2) - 2 T * exp(-T^2 / 2)`` (≈ 2.433 at ``T = 3``).
     """
     T = float(truncation_radius)
+    if T <= 0:
+        raise ValueError(f"truncation_radius must be > 0; got {T}")
     sqrt_2pi = np.sqrt(2.0 * np.pi)
     x = T / np.sqrt(2.0)
     t = 1.0 / (1.0 + 0.3275911 * abs(x))
@@ -150,18 +159,39 @@ def lift_points_to_gsplats(
             colors = np.asarray(colors)[valid]
     n = pos.shape[0]
 
-    # Peak match: a = opacity / (uRIF * sigma).
+    # Peak match: a = opacity / (uRIF * sigma). Surface non-finite amplitudes
+    # (a float32 overflow only happens for absurdly tiny radii, < ~1e-39) rather
+    # than silently writing inf into the gsplat.
     uRIF = compute_ray_integral_factor(T)
     amplitudes = (float(opacity) / (uRIF * sigma)).astype(np.float32)
+    if n and not np.all(np.isfinite(amplitudes)):
+        raise ValueError(
+            "lift_points_to_gsplats produced non-finite amplitudes — some radii "
+            "are too small (sigma underflow). Filter or clamp tiny radii first."
+        )
 
-    # Isotropic Cholesky L = sigma * I, packed lower-triangular.
-    eye = np.eye(d, dtype=np.float64)
-    chol_full = np.einsum("n,ij->nij", sigma, eye)
-    from .utils.trils import pack_tril
+    # Isotropic Cholesky L = sigma * I, packed lower-triangular directly (no
+    # dense (N, d, d) intermediate — that is ~d^2/((d+1)/2) larger and mostly
+    # zeros, a real memory hazard at the 10M-splat scale). pack_tril order is
+    # [L00, L10, L11, ...]; np.tril_indices yields (row, col) in that same order,
+    # so the diagonal entries (row == col) carry sigma and the rest stay zero.
+    k = d * (d + 1) // 2
+    rows, cols = np.tril_indices(d)
+    cholesky_factors = np.zeros((n, k), dtype=np.float32)
+    cholesky_factors[:, rows == cols] = sigma[:, None].astype(np.float32)
 
-    cholesky_factors = pack_tril(chol_full).astype(np.float32)
-
-    colors_arr = None if colors is None else np.asarray(colors, dtype=np.float32)
+    # Colour dtype normalisation — mirror the point shader's radiusScale/dtype
+    # handling: integer RGB (uint8 0..255, uint16 0..65535) must be scaled to
+    # float [0, 1], otherwise the gsplat colour writer classifies values > 1 as
+    # HDR and the coarse gsplat LOD levels render ~255x too bright (an SDR/HDR
+    # flip across the LOD seam vs the SDR-decoded uint8 Points node).
+    colors_arr: Optional[NDArray] = None
+    if colors is not None:
+        c = np.asarray(colors)
+        if np.issubdtype(c.dtype, np.integer):
+            colors_arr = c.astype(np.float32) / float(np.iinfo(c.dtype).max)
+        else:
+            colors_arr = c.astype(np.float32)
 
     return GSplatData(
         centers=pos,
@@ -188,8 +218,8 @@ def coarse_substitutive_levels(
     is the finest LOD level, so a 1:1 gsplat copy would double-render at the
     seam), and **rescales each remaining level's amplitudes** so its
     :func:`render_light` equals the finest (lifted) level's. The substitutive
-    L2-optimal amplitude otherwise undershoots total light by ~10-20% over a few
-    levels, which would read as zoom-out dimming; the rescale removes it.
+    L2-optimal amplitude otherwise undershoots total light (~9% over 3 levels at
+    K=4), which would read as zoom-out dimming; the rescale removes it.
 
     Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
     each a flat :class:`GSplatData`. Empty if the pyramid has no coarser level.
@@ -236,6 +266,10 @@ def render_light(data: GSplatData) -> float:
     geometric-mean sigma. Used by the points-substitutive builder to rescale each
     coarse level's amplitudes so total light is conserved across LOD levels (the
     substitutive L2-optimal amplitude otherwise undershoots by ~9% over 3 levels).
+
+    ``sigma_geo^D == |det(L)|`` and ``L`` is lower-triangular, so the determinant
+    is the product of the packed diagonal — no ``unpack_tril`` or general LU
+    needed (avoids a second dense ``(N, d, d)`` transient at scale).
     """
     flat = data.flattened()
     amps = np.asarray(flat.amplitudes, dtype=np.float64)
@@ -243,6 +277,7 @@ def render_light(data: GSplatData) -> float:
     if amps.size == 0:
         return 0.0
     d = int(flat.ndim)
-    L = unpack_tril(chol, d)
-    sigma_geo = np.abs(np.linalg.det(L)) ** (1.0 / d)
-    return float(np.sum(amps * sigma_geo**d))
+    # Packed lower-tri diagonal positions: [0, 2, 5, ...] = cumsum(1..d) - 1.
+    diag_idx = np.cumsum(np.arange(1, d + 1)) - 1
+    det = np.abs(np.prod(chol[:, diag_idx], axis=1))  # |det(L)| == sigma_geo^D
+    return float(np.sum(amps * det))
