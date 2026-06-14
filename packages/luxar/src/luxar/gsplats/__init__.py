@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
     from luxar.gsplats.lift import (
+        coarse_substitutive_levels,
         compute_ray_integral_factor,
         lift_points_to_gsplats,
         render_light,
@@ -72,6 +73,7 @@ else:
             SubstitutiveLevel,
         )
         from luxar.gsplats.lift import (
+            coarse_substitutive_levels,
             compute_ray_integral_factor,
             lift_points_to_gsplats,
             render_light,
@@ -214,6 +216,9 @@ else:
             _raise_gsplats_import_error()
 
         # Lift (luxar.gsplats.lift) — points -> gsplats
+        def coarse_substitutive_levels(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
         def compute_ray_integral_factor(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
@@ -265,6 +270,7 @@ __all__ = [
     "make_lod_pyramid",
     "make_substitutive_lod",
     # Lift (points -> gsplats)
+    "coarse_substitutive_levels",
     "compute_ray_integral_factor",
     "lift_points_to_gsplats",
     "render_light",

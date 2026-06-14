@@ -47,7 +47,7 @@ merge many points (per-point shape washes out).
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Any, List, Optional, Union, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -56,6 +56,7 @@ from .gsplat_data import GSplatData
 from .utils.trils import unpack_tril
 
 __all__ = [
+    "coarse_substitutive_levels",
     "compute_ray_integral_factor",
     "lift_points_to_gsplats",
     "render_light",
@@ -169,6 +170,60 @@ def lift_points_to_gsplats(
         colors=colors_arr,
         truncation_radius=T,
     )
+
+
+def coarse_substitutive_levels(
+    lifted: GSplatData,
+    *,
+    compression_factor: int = 4,
+    levels: int = 3,
+    method: str = "auto",
+    device: Any = "auto",
+    seed: Optional[int] = None,
+) -> "List[GSplatData]":
+    """Coarse substitutive levels of a lifted point cloud (render-light conserved).
+
+    Runs :func:`luxar.gsplats.lod.substitutive.make_substitutive_lod` on
+    ``lifted``, **drops level 0** (the 1:1 lifted set — the original Points node
+    is the finest LOD level, so a 1:1 gsplat copy would double-render at the
+    seam), and **rescales each remaining level's amplitudes** so its
+    :func:`render_light` equals the finest (lifted) level's. The substitutive
+    L2-optimal amplitude otherwise undershoots total light by ~10-20% over a few
+    levels, which would read as zoom-out dimming; the rescale removes it.
+
+    Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
+    each a flat :class:`GSplatData`. Empty if the pyramid has no coarser level.
+    """
+    from .lod.substitutive import make_substitutive_lod
+
+    pyramid = make_substitutive_lod(
+        lifted,
+        compression_factor=int(compression_factor),
+        levels=int(levels),
+        method=cast(Any, str(method)),
+        device=device,
+        seed=seed,
+    )
+    light0 = render_light(pyramid.at_substitutive(0))
+    out: List[GSplatData] = []
+    for s in range(1, pyramid.n_substitutive):
+        lvl = pyramid.at_substitutive(s).flattened()
+        ls = render_light(lvl)
+        scale = (light0 / ls) if ls > 0 else 1.0
+        out.append(
+            GSplatData(
+                centers=np.asarray(lvl.centers, dtype=np.float32),
+                amplitudes=(
+                    np.asarray(lvl.amplitudes, dtype=np.float64) * scale
+                ).astype(np.float32),
+                cholesky_factors=np.asarray(lvl.cholesky_factors, dtype=np.float32),
+                colors=(
+                    None if lvl.colors is None else np.asarray(lvl.colors, np.float32)
+                ),
+                truncation_radius=float(lifted.truncation_radius),
+            )
+        )
+    return out
 
 
 def render_light(data: GSplatData) -> float:
