@@ -24,6 +24,11 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+    from luxar.gsplats.lift import (
+        compute_ray_integral_factor,
+        lift_points_to_gsplats,
+        render_light,
+    )
     from luxar.gsplats.lod import (
         compute_additive_order,
         make_additive_lod,
@@ -65,6 +70,11 @@ else:
             AdditiveSubLOD,
             GSplatData,
             SubstitutiveLevel,
+        )
+        from luxar.gsplats.lift import (
+            compute_ray_integral_factor,
+            lift_points_to_gsplats,
+            render_light,
         )
         from luxar.gsplats.lod import (
             compute_additive_order,
@@ -203,6 +213,16 @@ else:
         def make_lod_pyramid(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
+        # Lift (luxar.gsplats.lift) — points -> gsplats
+        def compute_ray_integral_factor(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def lift_points_to_gsplats(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def render_light(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
 
 __all__ = [
     # Culling
@@ -244,6 +264,10 @@ __all__ = [
     "make_additive_lod",
     "make_lod_pyramid",
     "make_substitutive_lod",
+    # Lift (points -> gsplats)
+    "compute_ray_integral_factor",
+    "lift_points_to_gsplats",
+    "render_light",
     # Submodules
     "seeds",
     "clahe",
