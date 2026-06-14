@@ -364,34 +364,38 @@ Building Streaming LOD Ladders
 -------------------------------
 
 A fitted ``.gsplats.zarr`` is a single flat container of N splats. For
-progressive streaming and view-dependent rendering, build an LOD ladder
-on top with ``luxar gsplat lod``.
+progressive streaming and view-dependent rendering, build a representation
+topology on top with ``luxar gsplat lod --recipe ...`` (the ``--recipe`` flag
+is required). Recipes are ordered by dataset scale:
 
-Two complementary operators are available:
+* **flat** — a single leaf (no LOD, no partition).
+* **additive** — same N splats, *reordered* so the prefix sum at any k splats
+  is the best L² approximation of the full scene (streaming-friendly).
+* **partitioned** — a spatial BSP partition where each part carries its own
+  additive ladder (frustum-cull off-screen parts; stream detail in view).
+* **multiscale** — an unbalanced ``kind=lod``: a coarse substitutive cap for
+  the far view plus a ``partitioned`` fine branch for close-up.
 
-* **Additive** — same N splats, *reordered* so that the prefix sum at any
-  k splats is the best L² approximation of the full scene. Use this when
-  you want a streaming-friendly file the viewer can stop loading at any
-  point.
-* **Substitutive** — synthesise M < N representative splats per coarser
-  level via Gaussian mixture reduction. Use this when you want fixed-budget
-  coarse mip-levels for view-dependent rendering.
+plus the lower-level primitives ``substitutive`` (synthesise M < N
+representative splats per coarser level) and ``pyramid`` (the balanced
+substitutive × additive matrix).
 
 .. code-block:: bash
 
-   # Canonical end-to-end pipeline: cal → fit → lod
+   # Canonical end-to-end pipeline: cal → fit → lod --recipe
    luxar gsplat cal volume.tiff cal.json --device cuda
    luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 
-   # Additive ([1, M] shape in a single v2.0 .gsplats.zarr)
-   luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
+   # additive — a streaming prefix ladder
+   luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe additive --n-lods 4
 
-   # Substitutive ([L+1, 1] shape; single file, no more directory + manifest.json)
-   luxar gsplat lod substitutive fitted.gsplats.zarr scene.gsplats.zarr --L 3 --K 4
+   # partitioned / multiscale — the large-data topologies
+   luxar gsplat lod fitted.gsplats.zarr part.gsplats.zarr --recipe partitioned --max-elements 250000
+   luxar gsplat lod fitted.gsplats.zarr ms.gsplats.zarr --recipe multiscale --compression-factor 8
 
-   # Full 2-D pyramid ([L+1, M_i]) in one shot
-   luxar gsplat lod pyramid fitted.gsplats.zarr pyramid.gsplats.zarr \
-       --substitutive K=4,L=3 --additive 4
+   # substitutive / pyramid primitives
+   luxar gsplat lod fitted.gsplats.zarr substitutive.gsplats.zarr --recipe substitutive -L 3 -K 4
+   luxar gsplat lod fitted.gsplats.zarr pyramid.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 
 Programmatically:
 

@@ -33,7 +33,8 @@ luxar info my_data.luxar.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch` group: plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess; and the `lod` group: additive/substitutive/pyramid)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch` group: plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
@@ -235,25 +236,33 @@ luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr             # substitutive 
 **Options**: `--overwrite`, `--quiet/-q`.
 
 #### `luxar gsplat lod`
-Build LOD (level-of-detail) representations from a pre-fitted `.gsplats.zarr`. Three subcommands produce the dimensions of the v2.0 substitutive × additive LOD matrix.
+Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
+required `--recipe` flag. Recipes are scale-ordered: `flat`, `additive`,
+`partitioned`, `multiscale`, plus the `substitutive` and `pyramid` primitives.
+Output is a standalone v3.0 `.gsplats.zarr` (graft into a scene from Python via
+`add_gsplats_from_file` / `gsplat convert`).
 
 ```bash
-# Additive ladder (post-fit ordering; coarser levels are subsets of finer ones)
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                # 4 equal-count levels
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+# flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
     --breakpoints energy:0.5,0.9,0.99,1.0                                  # cumulative energy fractions
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
 
-# Substitutive hierarchy (synthesised representative splats that REPLACE the finer level)
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr            # K=4, L=3, method=auto
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method kmeans-lloyd --lloyd-iters 5
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning, small N
+# partitioned / multiscale — BSP parts each with an additive ladder; multiscale
+# adds a coarse substitutive cap (far view) above the partitioned fine branch
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8
 
-# Full 2-D pyramid (substitutive × additive) in one shot
-luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
-    --substitutive K=4,L=3 --additive 4
+# substitutive / pyramid primitives (synthesised representative levels)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
+    --substitutive-method kmeans-lloyd --lloyd-iters 5
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 ```
+
+An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe additive`) is rejected with a clear error.
 
 #### Tiled Fitting
 For large volumes, use tiled fitting with Hann cosine apodization:

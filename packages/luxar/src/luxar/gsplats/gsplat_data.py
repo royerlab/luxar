@@ -1796,7 +1796,7 @@ class GSplatData(_SplatArrayMixin):
             >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
@@ -1809,52 +1809,12 @@ class GSplatData(_SplatArrayMixin):
         if compressor is _USE_DEFAULT_COMPRESSOR:
             compressor = DEFAULT_COMP
 
-        # Extract fitting info from stats
-        fitting_info = None
-        fitting_config = None
-        provenance_info = None
-
-        if include_fitting_info and self.stats:
-            # Extract common fitting fields (quality metrics, culling/filtering stats)
-            fitting_info = {
-                k: v
-                for k, v in self.stats.items()
-                if k
-                in [
-                    "time_seconds",
-                    "iterations",
-                    "converged",
-                    "early_stopped",
-                    "best_iteration",
-                    "final_loss",
-                    "final_max_abs_error",
-                    "final_rel_l2",
-                    "n_splats",
-                    "n_culled",
-                    "fitter_name",
-                    "fitter_version",
-                    "timestamp",
-                    "culled",
-                    "culling_method",
-                    "n_original",
-                    "n_removed",
-                    "amplitude_retention",
-                    "filtered",
-                    "filter_criteria",
-                    "truncate",
-                    "psnr_db",
-                    "ssim",
-                    "mse",
-                ]
-            }
-
-            # Extract fitting config if present
-            if "config" in self.stats:
-                fitting_config = self.stats["config"]
-
-        if include_provenance and self.stats:
-            if "provenance" in self.stats:
-                provenance_info = self.stats["provenance"]
+        # Extract fitting/provenance groups from stats (single-sourced helper).
+        fitting_info, fitting_config, provenance_info = split_fitting_info(
+            self.stats,
+            include_fitting_info=include_fitting_info,
+            include_provenance=include_provenance,
+        )
 
         # One authoring path: serialize this dataset's node tree to v3.0 via the
         # shared walker (the same machinery the scene compiler uses for leaves).

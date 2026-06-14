@@ -53,10 +53,23 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
     ):
         # TAR.GZ extraction (with path traversal protection)
         with tarfile.open(compressed_path, "r:gz") as tar_ref:
-            # Validate no path traversal (CVE-2007-4559)
+            temp_dir_resolved = Path(temp_dir).resolve()
+            # Validate every member BEFORE extracting anything, so a malicious
+            # archive cannot write a single byte (CVE-2007-4559 + symlink escape).
             for member in tar_ref.getmembers():
+                # A legitimate .gsplats.zarr archive is only regular files and
+                # directories — never links. Reject sym/hard links outright:
+                # otherwise a symlink member pointing outside temp_dir followed
+                # by a file member written "through" it escapes the extraction
+                # dir (name-only validation does not catch this — the file's own
+                # name resolves inside temp_dir).
+                if member.issym() or member.islnk():
+                    raise ValueError(
+                        f"Tar member '{member.name}' is a link; refusing "
+                        "(gsplats archives must contain only regular files)"
+                    )
                 member_path = Path(temp_dir) / member.name
-                if not member_path.resolve().is_relative_to(Path(temp_dir).resolve()):
+                if not member_path.resolve().is_relative_to(temp_dir_resolved):
                     raise ValueError(
                         f"Tar member '{member.name}' would escape extraction directory"
                     )
