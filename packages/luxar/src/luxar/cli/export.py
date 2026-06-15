@@ -7,7 +7,7 @@ The exported folder contains everything needed to view the scene:
 - A README.txt with usage instructions
 
 Usage:
-    luxar export my_scene.zarr -o my_export/
+    luxar export my_scene.luxar.zarr -o my_export/
     cd my_export && python serve.py
 """
 

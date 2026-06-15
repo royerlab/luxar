@@ -573,7 +573,7 @@ export class DatasetBrowser {
           type="text"
           id="manual-path"
           class="luxar-dataset-browser__manual-entry-input"
-          placeholder="e.g., datasets/example.zarr"
+          placeholder="e.g., datasets/example.luxar.zarr"
           aria-label="Dataset path"
         />
         <div>

@@ -52,7 +52,7 @@ def make_long_strip(n_points: int, seed: int = 0) -> np.ndarray:
 
 def main() -> None:
     """Author two partition-only layers (auto and manual)."""
-    output_path = get_examples_output_dir() / "partition_only_example.zarr"
+    output_path = get_examples_output_dir() / "partition_only_example.luxar.zarr"
     aprint(f"Writing partition-only example to {output_path}")
 
     # auto_partition_max_elements caps a single Points node at 8k elements.

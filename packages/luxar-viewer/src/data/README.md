@@ -551,7 +551,7 @@ See `src/wasm/rust/README.md` for WASM details.
 Expected Zarr store structure:
 
 ```
-dataset.zarr/
+dataset.luxar.zarr/
 ├── .zattrs                # Scene metadata
 ├── .zgroup                # Zarr group marker
 ├── .zmetadata            # Consolidated metadata (recommended)
@@ -751,7 +751,7 @@ For very large datasets:
 import { loadScene, updateView } from 'luxar-viewer/data';
 
 // Load a Zarr dataset (point spatial index required)
-const scene = await loadScene('http://server.com/data/points.zarr');
+const scene = await loadScene('http://server.com/data/points.luxar.zarr');
 
 // Add to THREE.js scene
 threeScene.add(scene);
@@ -771,7 +771,7 @@ import { loadScene, updateSceneForDimensions } from 'luxar-viewer/data';
 import type { SimpleDims } from '@luxar/player/types';
 
 // Load 5D dataset (x, y, z, time, channel)
-const scene = await loadScene('http://server.com/data/5d-points.zarr');
+const scene = await loadScene('http://server.com/data/5d-points.luxar.zarr');
 
 // Dimensions are stored ONLY at scene level (single source of truth)
 // Individual nodes (Points, Lines, Splats) access dims via ViewState
@@ -820,8 +820,8 @@ if (selected) {
 import { loadScene, updateView, dispose } from 'luxar-viewer/data';
 
 // Create multiple independent loaders for different datasets
-const scene1 = await loadScene('http://server.com/data1.zarr', config, 'loader1');
-const scene2 = await loadScene('http://server.com/data2.zarr', config, 'loader2');
+const scene1 = await loadScene('http://server.com/data1.luxar.zarr', config, 'loader1');
+const scene2 = await loadScene('http://server.com/data2.luxar.zarr', config, 'loader2');
 
 // Update each loader independently
 await updateView(viewState1, 'loader1');

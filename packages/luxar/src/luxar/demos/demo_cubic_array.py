@@ -225,14 +225,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "cubic_array.zarr"
+        output_path = get_demos_output_dir() / "cubic_array.luxar.zarr"
         generate_cubic_array(output_path)
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
     # Create temporary directory for the demo (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_cubic_") as tmpdir:
-        output_path = Path(tmpdir) / "cubic_array.zarr"
+        output_path = Path(tmpdir) / "cubic_array.luxar.zarr"
 
         # Generate the dataset (all generation code above)
         generate_cubic_array(output_path)

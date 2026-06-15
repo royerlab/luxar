@@ -82,7 +82,7 @@ dims = Dimensions([
 ])
 
 # Create and save visualization
-with LuxarZarrCompiler("my_data.zarr") as compiler:
+with LuxarZarrCompiler("my_data.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Your data as NumPy arrays
@@ -93,7 +93,7 @@ with LuxarZarrCompiler("my_data.zarr") as compiler:
 
 # View it
 # Terminal 1: make viewer
-# Terminal 2: luxar serve my_data.zarr --viewer
+# Terminal 2: luxar serve my_data.luxar.zarr --viewer
 # Browser: http://localhost:5173/?src=http://localhost:8000
 ```
 
@@ -104,13 +104,13 @@ with LuxarZarrCompiler("my_data.zarr") as compiler:
 luxar demo
 
 # Serve your own data
-luxar serve my_data.zarr --viewer --open
+luxar serve my_data.luxar.zarr --viewer --open
 
 # Dataset information
-luxar info my_data.zarr --stats
+luxar info my_data.luxar.zarr --stats
 
 # Network simulation for performance testing
-luxar serve my_data.zarr --profile 3g --viewer
+luxar serve my_data.luxar.zarr --profile 3g --viewer
 ```
 
 ---
@@ -322,7 +322,7 @@ arm.transform = transforms.rotate_y(45)  # Relative to parent
 Luxar uses Zarr for chunked, compressed storage optimized for streaming.
 
 ```
-scene.zarr/
+scene.luxar.zarr/
 ├── .zattrs                 # Scene metadata (dimensions, version)
 ├── .zmetadata              # Consolidated metadata for fast loading
 └── node_name/
@@ -442,7 +442,7 @@ make build-wasm    # Build WASM module
 from luxar import LuxarZarrCompiler, Dimensions, Dimension, transforms
 
 # Create compiler
-with LuxarZarrCompiler("output.zarr") as compiler:
+with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add geometry

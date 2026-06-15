@@ -48,7 +48,7 @@ class TestLabelCSRRoundTrip:
     """Test CSR label encoding round-trip."""
 
     def test_basic_labels(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(5, 3).astype(np.float32)
         labels = ["Cell A", "Cell B", "Neuron 1", "Glial", "Astrocyte"]
 
@@ -62,7 +62,7 @@ class TestLabelCSRRoundTrip:
         assert decoded == labels
 
     def test_empty_labels(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         labels = ["", "has label", ""]
 
@@ -74,7 +74,7 @@ class TestLabelCSRRoundTrip:
         assert decoded == labels
 
     def test_unicode_labels(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         labels = ["Hello", "细胞", "🧬"]
 
@@ -87,7 +87,7 @@ class TestLabelCSRRoundTrip:
 
     def test_labels_with_spatial_ordering(self, tmp_path):
         """Labels should be reordered to match spatial ordering."""
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.array([[0, 0, 0], [10, 10, 10], [5, 5, 5]], dtype=np.float32)
         labels = ["origin", "far", "middle"]
 
@@ -102,7 +102,7 @@ class TestLabelCSRRoundTrip:
         assert len(decoded) == 3
 
     def test_label_length_mismatch_raises(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(5, 3).astype(np.float32)
         labels = ["A", "B"]  # Only 2 labels for 5 points
 
@@ -112,7 +112,7 @@ class TestLabelCSRRoundTrip:
                 scene.add_points("pts", positions, labels=labels)
 
     def test_no_labels_by_default(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(5, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path) as compiler:
@@ -124,7 +124,7 @@ class TestLabelCSRRoundTrip:
         assert "label_offsets" not in store["pts"]
 
     def test_labels_on_lines(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         vertices = np.random.rand(4, 3).astype(np.float32)
         widths = np.full(4, 0.1, dtype=np.float32)
         labels = ["v0", "v1", "v2", "v3"]
@@ -142,7 +142,7 @@ class TestHoverOverlayAutoInjection:
     """Test auto-injection of hover overlay when labels exist."""
 
     def test_auto_injects_when_labels_present(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         labels = ["A", "B", "C"]
 
@@ -159,7 +159,7 @@ class TestHoverOverlayAutoInjection:
         assert hover_attrs["text"] == "{hover_label}"
 
     def test_no_injection_without_labels(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
 
         with LuxarZarrCompiler(path) as compiler:
@@ -172,7 +172,7 @@ class TestHoverOverlayAutoInjection:
         )
 
     def test_no_injection_when_user_provides_hover_overlay(self, tmp_path):
-        path = str(tmp_path / "test.zarr")
+        path = str(tmp_path / "test.luxar.zarr")
         positions = np.random.rand(3, 3).astype(np.float32)
         labels = ["A", "B", "C"]
 

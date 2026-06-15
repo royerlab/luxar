@@ -433,7 +433,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // branch later in this file.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const totalPoints = this.chunkIndex?.metadata.total_points || this.totalPointsNoIndex || 0;
-      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.positions?.shape[1] || 3;
+      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.positions?.shape?.[1] || 3;
       const initialCapacity = Math.min(
         appConfig.dataLoading.performance.initialAccumulatorCapacity,
         Math.max(1024, Math.ceil(totalPoints / 10)) // At least 1024, or ~10% of total

@@ -52,26 +52,26 @@ expectations.
 
 | Fixture | Exercises |
 |---------|-----------|
-| `test_broadcasting.zarr` | Broadcasted (uniform) per-point values — `(1, 3)` color and `(1,)` radius expand to N points. |
-| `test_lut.zarr` | LUT encoding for color arrays with ≤256 unique values (10 distinct colors over 1000 points). |
-| `test_quantization.zarr` | uint8 quantization of bounded scalar attributes (radii in `[0.1, 2.0]`, colors in `[0, 1]`). |
-| `test_array_refs.zarr` | Array-reference deduplication — two groups sharing identical positions/colors collapse to one stored array. |
-| `test_array_ref_broadcasting.zarr` | Mix of `array_ref` positions with scalar/broadcast attributes in the same scene. |
-| `test_encoding_edge_cases.zarr` | Raw `ArrayEncoder` outputs covering edge cases that bypass scene-level validation. |
-| `test_encoding_contract_matrix.zarr` | Declarative cross-product of encodings × dtypes × shapes × semantic types — the broadest single fixture, used to drive the contract-matrix tests. |
-| `test_mixed.zarr` | Multiple encoding modes (raw, quantized, broadcast, LUT) coexisting within a single scene. |
-| `test_4d.zarr` | 4D data with a time dimension — exercises nD slicing in the viewer and the `extend_to_all` path. |
-| `test_hierarchical_transforms.zarr` | Nested groups with per-node 4x4 transforms — verifies composition order and the row/column-major guard. |
-| `test_integer_colors.zarr` | Direct uint8 / uint16 SDR color arrays (no quantization round-trip). |
-| `test_hdr_colors.zarr` | HDR colors with values > 1.0 — verifies float32 color preservation through the pipeline. |
-| `test_log_scalar.zarr` | Wide-dynamic-range radii encoded as log-scalar uint8/uint16. |
-| `test_4d_scalar_lut.zarr` | 4D positions combined with scalar LUT encoding. |
-| `test_uint16_quantization.zarr` | uint16 quantization for attributes whose dynamic range exceeds uint8 precision. |
-| `test_sharpness_range.zarr` | 32 points sampling the full normalized `[0, 1]` sharpness knob range — verifies decoded sharpness handling. |
-| `test_nd_transforms.zarr` | `nd_transform` metadata on non-displayed dimensions — exercises the viewer's inverse-query path. |
-| `test_lines.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
-| `test_gsplats.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |
-| `test_labelled_points.zarr` | Small labelled-points dataset used by the `hover-tooltip.spec.ts` E2E spec. |
+| `test_broadcasting.luxar.zarr` | Broadcasted (uniform) per-point values — `(1, 3)` color and `(1,)` radius expand to N points. |
+| `test_lut.luxar.zarr` | LUT encoding for color arrays with ≤256 unique values (10 distinct colors over 1000 points). |
+| `test_quantization.luxar.zarr` | uint8 quantization of bounded scalar attributes (radii in `[0.1, 2.0]`, colors in `[0, 1]`). |
+| `test_array_refs.luxar.zarr` | Array-reference deduplication — two groups sharing identical positions/colors collapse to one stored array. |
+| `test_array_ref_broadcasting.luxar.zarr` | Mix of `array_ref` positions with scalar/broadcast attributes in the same scene. |
+| `test_encoding_edge_cases.luxar.zarr` | Raw `ArrayEncoder` outputs covering edge cases that bypass scene-level validation. |
+| `test_encoding_contract_matrix.luxar.zarr` | Declarative cross-product of encodings × dtypes × shapes × semantic types — the broadest single fixture, used to drive the contract-matrix tests. |
+| `test_mixed.luxar.zarr` | Multiple encoding modes (raw, quantized, broadcast, LUT) coexisting within a single scene. |
+| `test_4d.luxar.zarr` | 4D data with a time dimension — exercises nD slicing in the viewer and the `extend_to_all` path. |
+| `test_hierarchical_transforms.luxar.zarr` | Nested groups with per-node 4x4 transforms — verifies composition order and the row/column-major guard. |
+| `test_integer_colors.luxar.zarr` | Direct uint8 / uint16 SDR color arrays (no quantization round-trip). |
+| `test_hdr_colors.luxar.zarr` | HDR colors with values > 1.0 — verifies float32 color preservation through the pipeline. |
+| `test_log_scalar.luxar.zarr` | Wide-dynamic-range radii encoded as log-scalar uint8/uint16. |
+| `test_4d_scalar_lut.luxar.zarr` | 4D positions combined with scalar LUT encoding. |
+| `test_uint16_quantization.luxar.zarr` | uint16 quantization for attributes whose dynamic range exceeds uint8 precision. |
+| `test_sharpness_range.luxar.zarr` | 32 points sampling the full normalized `[0, 1]` sharpness knob range — verifies decoded sharpness handling. |
+| `test_nd_transforms.luxar.zarr` | `nd_transform` metadata on non-displayed dimensions — exercises the viewer's inverse-query path. |
+| `test_lines.luxar.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
+| `test_gsplats.luxar.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |
+| `test_labelled_points.luxar.zarr` | Small labelled-points dataset used by the `hover-tooltip.spec.ts` E2E spec. |
 
 ## Files
 

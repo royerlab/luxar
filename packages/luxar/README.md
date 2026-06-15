@@ -40,7 +40,7 @@ dimensions = Dimensions([
     Dimension("time", unit="s", range=(0, 10), step=0.1, display=False)
 ])
 
-with LuxarZarrCompiler("my_dataset.zarr") as compiler:
+with LuxarZarrCompiler("my_dataset.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dimensions)
 
     # Add 4D points data (time + xyz)
@@ -57,7 +57,7 @@ with LuxarZarrCompiler("my_dataset.zarr") as compiler:
 # Context manager handles finalization automatically
 
 # Serve for visualization
-# luxar serve my_dataset.zarr
+# luxar serve my_dataset.luxar.zarr
 ```
 
 ## 🏗️ Architecture
@@ -102,7 +102,7 @@ Each node can have:
 Luxar uses Zarr v2 format for maximum compatibility:
 
 ```
-dataset.zarr/
+dataset.luxar.zarr/
 ├── .zattrs                    # Scene metadata
 ├── .zgroup                    # Zarr group marker
 ├── node_name/
@@ -137,7 +137,7 @@ dimensions = Dimensions([
     Dimension("depth", unit="μm", range=(-20, 20), display=False)
 ])
 
-with LuxarZarrCompiler("multidimensional.zarr") as compiler:
+with LuxarZarrCompiler("multidimensional.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dimensions)
     # ... add data to scene ...
 ```
@@ -399,24 +399,24 @@ class Dimension:
 Luxar provides a CLI for common operations:
 
 ```bash
-# Serve a Zarr dataset for visualization
-luxar serve dataset.zarr
+# Serve a Luxar scene for visualization
+luxar serve dataset.luxar.zarr
 
 # Create a demo dataset without serving
-luxar demo --no-serve --output demo.zarr --points 100000
+luxar demo --no-serve --output demo.luxar.zarr --points 100000
 
 # Get information about a dataset
-luxar info dataset.zarr
+luxar info dataset.luxar.zarr
 ```
 
 **Serving datasets:**
-- `luxar serve <path.zarr>` - Start HTTP server for dataset
+- `luxar serve <path.luxar.zarr>` - Start HTTP server for dataset
 - Use `--port` to specify port (default: 8000)
 - Use `--host` to bind to specific interface
 
 **Creating demo data:**
 - `luxar demo` - Create and serve demo with viewer (opens browser)
-- `luxar demo --no-serve --output <path.zarr>` - Create demo without serving
+- `luxar demo --no-serve --output <path.luxar.zarr>` - Create demo without serving
 - Use `--points` to specify number of points (default: 10,000)
 - Use `--seed` for reproducible results
 
@@ -428,7 +428,7 @@ Control the visual appearance of nodes with rendering attributes:
 from luxar import LuxarZarrCompiler, Dimensions
 
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("styled_scene.zarr") as compiler:
+with LuxarZarrCompiler("styled_scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add points with custom rendering attributes
@@ -469,7 +469,7 @@ positions = np.random.randn(10_000_000, 3).astype(np.float32)
 colors = np.random.rand(10_000_000, 3).astype(np.uint8)
 
 # Luxar automatically handles chunking and spatial ordering
-with LuxarZarrCompiler("large_dataset.zarr") as compiler:
+with LuxarZarrCompiler("large_dataset.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_points("LargeCloud", positions, colors)
 ```
@@ -480,7 +480,7 @@ with LuxarZarrCompiler("large_dataset.zarr") as compiler:
 from luxar import LuxarZarrCompiler, Dimensions
 
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("experiment.zarr") as compiler:
+with LuxarZarrCompiler("experiment.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Time series organization
@@ -506,7 +506,7 @@ Luxar provides comprehensive transform utilities for 3D scene manipulation:
 from luxar import LuxarZarrCompiler, Dimensions, transforms
 
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("transformed_scene.zarr") as compiler:
+with LuxarZarrCompiler("transformed_scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Basic transforms
@@ -544,7 +544,7 @@ Lines and Gaussian splats are first-class geometry types alongside points:
 from luxar import LuxarZarrCompiler, Dimensions
 
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add line geometry
@@ -583,7 +583,7 @@ balanced_compressor = Blosc(cname='zstd', clevel=3, shuffle=Blosc.SHUFFLE)
 compact_compressor = Blosc(cname='zstd', clevel=9, shuffle=Blosc.SHUFFLE)
 
 dims = Dimensions.default_3d()
-with LuxarZarrCompiler("data.zarr", compressor=balanced_compressor) as compiler:
+with LuxarZarrCompiler("data.luxar.zarr", compressor=balanced_compressor) as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_points("cloud", positions, colors)
 ```

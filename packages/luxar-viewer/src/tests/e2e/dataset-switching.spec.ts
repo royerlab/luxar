@@ -24,9 +24,9 @@ import {
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
 // Dataset URLs
-const DATASET_A = `${EXAMPLES_BASE}/sharpness_showcase_example.zarr`;
-const DATASET_B = `${EXAMPLES_BASE}/multiple_objects_example.zarr`;
-const DATASET_LINES = `${EXAMPLES_BASE}/lines_basic_example.zarr`;
+const DATASET_A = `${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr`;
+const DATASET_B = `${EXAMPLES_BASE}/multiple_objects_example.luxar.zarr`;
+const DATASET_LINES = `${EXAMPLES_BASE}/lines_basic_example.luxar.zarr`;
 
 test.describe('Dataset Switching', () => {
   // Each switching test performs 2–3 full `page.goto()` cycles. With even a

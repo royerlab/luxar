@@ -14,9 +14,9 @@ import { waitForLuxarReady, getLuxarState, assertNoConsoleErrors } from './helpe
 
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
-const POINTS_DATASET = `${EXAMPLES_BASE}/radius_basic_example.zarr`;
-const LINES_DATASET = `${EXAMPLES_BASE}/lines_basic_example.zarr`;
-const POINTS_4D_DATASET = `${FIXTURES_BASE}/test_4d.zarr`;
+const POINTS_DATASET = `${EXAMPLES_BASE}/radius_basic_example.luxar.zarr`;
+const LINES_DATASET = `${EXAMPLES_BASE}/lines_basic_example.luxar.zarr`;
+const POINTS_4D_DATASET = `${FIXTURES_BASE}/test_4d.luxar.zarr`;
 
 test.describe('Cache hardening — debug snapshot diagnostics', () => {
   test('getStats() exposes network, demand, prefetch, and health fields', async ({ page }) => {

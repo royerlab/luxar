@@ -97,7 +97,7 @@ def create_some_data(param: int) -> np.ndarray:
 ```python
 def main():
     """Create [description of what this example creates]."""
-    output_path = get_examples_output_dir() / "example_name_example.zarr"
+    output_path = get_examples_output_dir() / "example_name_example.luxar.zarr"
 
     # Initial descriptive output using arbol
     aprint(f"Creating [example name] at {output_path}")
@@ -146,7 +146,7 @@ Viewing tips:
     # Final instructions
     aprint("\n" + "=" * 60)
     aprint("VIEWING INSTRUCTIONS:")
-    aprint("1. Run: luxar serve example_name_example.zarr")
+    aprint("1. Run: luxar serve example_name_example.luxar.zarr")
     aprint("2. [Specific viewing instructions]")
     aprint("3. [What to look for]")
     aprint("=" * 60)
@@ -425,7 +425,7 @@ Before committing an example, verify:
 ### Functionality
 - [ ] Actually runs without errors
 - [ ] Generates the described output
-- [ ] Output path follows convention (`example_name_example.zarr`)
+- [ ] Output path follows convention (`example_name_example.luxar.zarr`)
 - [ ] Scene contains what the docstring claims
 - [ ] Viewing instructions are accurate
 
@@ -513,7 +513,7 @@ def create_example_data(n_points: int) -> tuple[np.ndarray, np.ndarray]:
 
 def main():
     """Create an example demonstrating [specific feature]."""
-    output_path = get_examples_output_dir() / "example_name_example.zarr"
+    output_path = get_examples_output_dir() / "example_name_example.luxar.zarr"
 
     aprint(f"Creating example at {output_path}")
     aprint("This example demonstrates [key concept]")
@@ -552,7 +552,7 @@ def main():
     # Viewing instructions
     aprint("\n" + "=" * 60)
     aprint("VIEWING INSTRUCTIONS:")
-    aprint("1. Run: luxar serve example_name_example.zarr")
+    aprint("1. Run: luxar serve example_name_example.luxar.zarr")
     aprint("2. [Specific viewing instructions]")
     aprint("3. [What to observe or test]")
     aprint("")

@@ -1627,7 +1627,9 @@ def main() -> None:
         return
 
     if args.no_serve:
-        output_path = get_demos_output_dir() / f"ppi_flow_field_{preset.name}.zarr"
+        output_path = (
+            get_demos_output_dir() / f"ppi_flow_field_{preset.name}.luxar.zarr"
+        )
         stats = generate_ppi_flow_field_scene(
             output_path,
             args.cache_dir.expanduser(),
@@ -1645,7 +1647,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_ppi_flow_") as tmpdir:
-        output_path = Path(tmpdir) / f"ppi_flow_field_{preset.name}.zarr"
+        output_path = Path(tmpdir) / f"ppi_flow_field_{preset.name}.luxar.zarr"
         stats = generate_ppi_flow_field_scene(
             output_path,
             args.cache_dir.expanduser(),

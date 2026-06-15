@@ -71,7 +71,7 @@ dims = Dimensions([
     Dimension("x", display=True), Dimension("y", display=True),
     Dimension("z", display=True), Dimension("time", display=False),
 ])
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     scene.add_gsplats(
@@ -97,7 +97,7 @@ dims = Dimensions([
     Dimension("x", display=True), Dimension("y", display=True),
     Dimension("z", display=True), Dimension("time", display=False),
 ])
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     scene.add_gsplats(
@@ -119,7 +119,7 @@ dims = Dimensions([
     Dimension("z", display=True), Dimension("time", display=False),
     Dimension("channel", display=False),
 ])
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     result = fit_gaussian_splats(volume_3d, num_splats=5000)
@@ -143,7 +143,7 @@ dims = Dimensions([
     Dimension("x", display=True), Dimension("y", display=True),
     Dimension("z", display=True), Dimension("time", display=False),
 ])
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Centers are in [z, y, x] order from fitting

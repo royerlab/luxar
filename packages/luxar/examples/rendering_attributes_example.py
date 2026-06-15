@@ -47,7 +47,7 @@ def create_grid_positions(n_points: int, spacing: float = 1.0) -> np.ndarray:
 
 def main():
     """Create a scene demonstrating rendering attributes and their modifications."""
-    output_path = get_examples_output_dir() / "rendering_attributes_example.zarr"
+    output_path = get_examples_output_dir() / "rendering_attributes_example.luxar.zarr"
 
     with asection("Scene Setup and Initialization"):
         aprint(f"Creating rendering attributes demonstration at {output_path}")

@@ -693,7 +693,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "protein_landscape.zarr"
+        output_path = get_demos_output_dir() / "protein_landscape.luxar.zarr"
         try:
             n_proteins = generate_protein_landscape(
                 output_path,
@@ -713,7 +713,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_proteins_") as tmpdir:
-        output_path = Path(tmpdir) / "protein_landscape.zarr"
+        output_path = Path(tmpdir) / "protein_landscape.luxar.zarr"
 
         try:
             n_proteins = generate_protein_landscape(

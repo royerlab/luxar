@@ -22,11 +22,11 @@ validate_array_shape(positions, (100, 3), name="positions")  # Passes
 
 # 3. Generate demo data for testing
 create_lorenz_attractor(
-    'lorenz_demo.zarr',
+    'lorenz_demo.luxar.zarr',
     n_points=10000,
     seed=42  # Reproducible
 )
-print("Demo scene created at lorenz_demo.zarr")
+print("Demo scene created at lorenz_demo.luxar.zarr")
 ```
 
 **Key Use Cases**:
@@ -159,7 +159,7 @@ from luxar.utils import create_lorenz_attractor
 
 # Generate Lorenz attractor
 create_lorenz_attractor(
-    store_path='lorenz.zarr',
+    store_path='lorenz.luxar.zarr',
     n_points=50000,
     seed=42
 )

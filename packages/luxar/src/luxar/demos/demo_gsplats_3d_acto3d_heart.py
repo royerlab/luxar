@@ -67,7 +67,7 @@ By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_3d_acto3d_heart.zarr
+    - Scene saved to:  datasets/demos/gsplats_3d_acto3d_heart.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -507,7 +507,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_acto3d_heart.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_acto3d_heart.luxar.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -700,7 +700,7 @@ def main():
     aprint("Per-channel fitting + layer-based rendering + Web visualisation")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_3d_acto3d_heart.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_acto3d_heart.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

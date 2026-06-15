@@ -106,7 +106,7 @@ API:
 ```python
 from luxar import LuxarZarrCompiler, Dimensions
 
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
     # Fit a volume and add in one step

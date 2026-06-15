@@ -29,7 +29,7 @@ class TestCreateLorenzAttractor:
     def test_basic_creation(self) -> None:
         """Test basic Lorenz attractor creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "lorenz.zarr"
+            store_path = Path(tmpdir) / "lorenz.luxar.zarr"
             create_lorenz_attractor(store_path, n_points=100)
 
             # Verify zarr store was created
@@ -48,8 +48,8 @@ class TestCreateLorenzAttractor:
     def test_with_seed_reproducibility(self) -> None:
         """Test that seed produces reproducible results."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path1 = Path(tmpdir) / "lorenz1.zarr"
-            store_path2 = Path(tmpdir) / "lorenz2.zarr"
+            store_path1 = Path(tmpdir) / "lorenz1.luxar.zarr"
+            store_path2 = Path(tmpdir) / "lorenz2.luxar.zarr"
 
             create_lorenz_attractor(store_path1, n_points=50, seed=42)
             create_lorenz_attractor(store_path2, n_points=50, seed=42)
@@ -65,7 +65,7 @@ class TestCreateLorenzAttractor:
     def test_has_colors_and_radii(self) -> None:
         """Test that colors and radii are included."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "lorenz.zarr"
+            store_path = Path(tmpdir) / "lorenz.luxar.zarr"
             create_lorenz_attractor(store_path, n_points=100)
 
             store = zarr.open(store_path, mode="r")
@@ -82,7 +82,7 @@ class TestCreateLorenzAttractor:
         """Test creation with different point counts."""
         with tempfile.TemporaryDirectory() as tmpdir:
             for n in [10, 100, 1000]:
-                store_path = Path(tmpdir) / f"lorenz_{n}.zarr"
+                store_path = Path(tmpdir) / f"lorenz_{n}.luxar.zarr"
                 create_lorenz_attractor(store_path, n_points=n)
 
                 store = zarr.open(store_path, mode="r")
@@ -96,7 +96,7 @@ class TestCreateRandomSpheres:
     def test_basic_creation(self) -> None:
         """Test basic random spheres creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "spheres.zarr"
+            store_path = Path(tmpdir) / "spheres.luxar.zarr"
             create_random_spheres(
                 store_path, n_spheres=5, points_per_sphere=50, seed=42
             )
@@ -113,7 +113,7 @@ class TestCreateRandomSpheres:
     def test_sphere_point_counts(self) -> None:
         """Test that each sphere has correct number of points."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "spheres.zarr"
+            store_path = Path(tmpdir) / "spheres.luxar.zarr"
             n_spheres = 3
             points_per_sphere = 100
 
@@ -133,8 +133,8 @@ class TestCreateRandomSpheres:
     def test_seed_reproducibility(self) -> None:
         """Test that seed produces reproducible spheres."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path1 = Path(tmpdir) / "spheres1.zarr"
-            store_path2 = Path(tmpdir) / "spheres2.zarr"
+            store_path1 = Path(tmpdir) / "spheres1.luxar.zarr"
+            store_path2 = Path(tmpdir) / "spheres2.luxar.zarr"
 
             create_random_spheres(
                 store_path1, n_spheres=3, points_per_sphere=50, seed=123
@@ -154,7 +154,7 @@ class TestCreateRandomSpheres:
     def test_3d_positions(self) -> None:
         """Test that sphere positions are 3D."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "spheres.zarr"
+            store_path = Path(tmpdir) / "spheres.luxar.zarr"
             create_random_spheres(
                 store_path, n_spheres=1, points_per_sphere=100, seed=42
             )
@@ -170,7 +170,7 @@ class TestCreateTimeSeriesDemo:
     def test_basic_creation(self) -> None:
         """Test basic time series demo creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             create_time_series_demo(
                 store_path, n_timepoints=5, n_points_per_time=50, seed=42
             )
@@ -185,7 +185,7 @@ class TestCreateTimeSeriesDemo:
     def test_4d_positions(self) -> None:
         """Test that positions are 4D (x, y, z, time)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             create_time_series_demo(
                 store_path, n_timepoints=5, n_points_per_time=50, seed=42
             )
@@ -197,7 +197,7 @@ class TestCreateTimeSeriesDemo:
     def test_total_point_count(self) -> None:
         """Test that total points = n_timepoints * n_points_per_time."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             n_timepoints = 5
             n_points_per_time = 100
 
@@ -216,7 +216,7 @@ class TestCreateTimeSeriesDemo:
     def test_time_dimension_values(self) -> None:
         """Test that time dimension has correct integer values."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             n_timepoints = 5
             n_points_per_time = 50
 
@@ -244,8 +244,8 @@ class TestCreateTimeSeriesDemo:
     def test_seed_reproducibility(self) -> None:
         """Test that seed produces reproducible time series."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path1 = Path(tmpdir) / "ts1.zarr"
-            store_path2 = Path(tmpdir) / "ts2.zarr"
+            store_path1 = Path(tmpdir) / "ts1.luxar.zarr"
+            store_path2 = Path(tmpdir) / "ts2.luxar.zarr"
 
             create_time_series_demo(
                 store_path1, n_timepoints=3, n_points_per_time=50, seed=456
@@ -264,7 +264,7 @@ class TestCreateTimeSeriesDemo:
     def test_has_colors(self) -> None:
         """Test that colors are included."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             create_time_series_demo(
                 store_path, n_timepoints=5, n_points_per_time=50, seed=42
             )
@@ -281,7 +281,7 @@ class TestCreateTimeSeriesDemo:
     def test_scene_dimensions(self) -> None:
         """Test that scene has 4D dimensions defined."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             create_time_series_demo(
                 store_path, n_timepoints=5, n_points_per_time=50, seed=42
             )
@@ -297,7 +297,7 @@ class TestEdgeCases:
     def test_single_point_lorenz(self) -> None:
         """Test Lorenz with single point."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "lorenz.zarr"
+            store_path = Path(tmpdir) / "lorenz.luxar.zarr"
             create_lorenz_attractor(store_path, n_points=1)
 
             store = zarr.open(store_path, mode="r")
@@ -307,7 +307,7 @@ class TestEdgeCases:
     def test_single_sphere(self) -> None:
         """Test random spheres with single sphere."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "spheres.zarr"
+            store_path = Path(tmpdir) / "spheres.luxar.zarr"
             create_random_spheres(
                 store_path, n_spheres=1, points_per_sphere=10, seed=42
             )
@@ -318,7 +318,7 @@ class TestEdgeCases:
     def test_single_timepoint_becomes_two(self) -> None:
         """Test time series with single timepoint gets adjusted to 2."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "timeseries.zarr"
+            store_path = Path(tmpdir) / "timeseries.luxar.zarr"
             # Requesting 1 timepoint should be adjusted to 2
             create_time_series_demo(
                 store_path, n_timepoints=1, n_points_per_time=50, seed=42

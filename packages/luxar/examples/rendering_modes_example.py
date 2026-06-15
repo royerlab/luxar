@@ -48,7 +48,7 @@ def create_sphere_positions(n_points: int = 5000, radius: float = 1.0) -> np.nda
 
 def main():
     """Create a scene demonstrating different rendering modes and effects."""
-    output_path = get_examples_output_dir() / "rendering_modes_example.zarr"
+    output_path = get_examples_output_dir() / "rendering_modes_example.luxar.zarr"
 
     aprint(f"Creating rendering modes demonstration at {output_path}")
     aprint("This example shows:")

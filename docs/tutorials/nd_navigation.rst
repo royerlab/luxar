@@ -81,7 +81,7 @@ Example: Time-Series Cell Tracking
    n_cells = 100
    n_timepoints = 50
 
-   with LuxarZarrCompiler('cells_4d.zarr') as compiler:
+   with LuxarZarrCompiler('cells_4d.luxar.zarr') as compiler:
        scene = compiler.create_scene(dimensions=dims)
 
        for t in range(n_timepoints):

@@ -5,7 +5,7 @@ from luxar.utils.demos import create_lorenz_attractor
 
 
 def test_compressor_and_format(tmp_path) -> None:
-    store = tmp_path / "meta.zarr"
+    store = tmp_path / "meta.luxar.zarr"
     create_lorenz_attractor(store, n_points=100)
 
     root = zarr.open_group(store, "r")

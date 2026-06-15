@@ -11,10 +11,10 @@ Essential CLI commands in 3 steps:
 luxar demo
 
 # 2. Serve your own dataset with the viewer
-luxar serve my_data.zarr --viewer
+luxar serve my_data.luxar.zarr --viewer
 
 # 3. Get dataset information and statistics
-luxar info my_data.zarr --stats
+luxar info my_data.luxar.zarr --stats
 ```
 
 **What Each Does**:
@@ -33,7 +33,8 @@ luxar info my_data.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch` group: plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess; and the `lod` group: additive/substitutive/pyramid)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch` group: plan/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
@@ -50,15 +51,15 @@ Quick demo generation with automatic viewer launch.
 luxar demo                    # Generate demo and open in browser
 luxar demo --points 10000     # Custom point count
 luxar demo --no-open          # Don't open browser
-luxar demo --no-serve --output demo.zarr  # Generate demo without serving
-luxar demo --no-serve --output demo.zarr --points 100000  # Custom point count, no serve
+luxar demo --no-serve --output demo.luxar.zarr  # Generate demo without serving
+luxar demo --no-serve --output demo.luxar.zarr --points 100000  # Custom point count, no serve
 ```
 
 ### `luxar serve`
 Serve zarr datasets or directories via HTTP.
 ```bash
-luxar serve data.zarr         # Serve data
-luxar serve data.zarr --viewer # Serve with viewer
+luxar serve data.luxar.zarr         # Serve data
+luxar serve data.luxar.zarr --viewer # Serve with viewer
 luxar serve --viewer-only      # Serve only viewer
 ```
 
@@ -73,16 +74,16 @@ want any website to read the served data; wildcard mode disables credentials.
 Serve the Luxar viewer with optional data.
 ```bash
 luxar viewer                  # Serve viewer
-luxar viewer --data data.zarr # Serve viewer with data
+luxar viewer --data data.luxar.zarr # Serve viewer with data
 luxar viewer --no-open        # Don't open browser
 ```
 
 ### `luxar info`
 Display detailed information about zarr datasets.
 ```bash
-luxar info data.zarr          # Basic info with tree view
-luxar info data.zarr --stats  # Include detailed statistics
-luxar info data.zarr --format json # JSON output
+luxar info data.luxar.zarr          # Basic info with tree view
+luxar info data.luxar.zarr --stats  # Include detailed statistics
+luxar info data.luxar.zarr --format json # JSON output
 ```
 
 ### `luxar profiles`
@@ -99,10 +100,10 @@ Use these profiles with `serve`, `viewer`, or `demo` commands via the `--profile
 ### `luxar export`
 Export a zarr scene and the Luxar viewer as a standalone offline folder. The output is self-contained: anyone can view the scene with just Python 3 and a browser by running `serve.py`.
 ```bash
-luxar export my_scene.zarr -o my_export/              # Export scene + viewer
-luxar export my_scene.zarr -o my_export/ --overwrite   # Overwrite existing export
-luxar export my_scene.zarr -o my_export/ --open        # Export and serve in browser
-luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
+luxar export my_scene.luxar.zarr -o my_export/              # Export scene + viewer
+luxar export my_scene.luxar.zarr -o my_export/ --overwrite   # Overwrite existing export
+luxar export my_scene.luxar.zarr -o my_export/ --open        # Export and serve in browser
+luxar export my_scene.luxar.zarr -o my_export/ --open --port 9000  # Custom port
 ```
 
 **Options**: `--output/-o` (required), `--overwrite`, `--open` (serve and launch browser), `--port/-p` (port for local server, default 8000).
@@ -111,9 +112,9 @@ luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
 Produce a double-clickable native bundle instead of the Python `serve.py` folder. The bundle wraps the viewer + zarr around a Go-compiled launcher binary that opens an embedded WebView (WKWebView on macOS, WebKitGTK on Linux).
 
 ```bash
-luxar export my_scene.zarr -o out/ --native macos                       # macOS .app
-luxar export my_scene.zarr -o out/ --native linux-amd64                  # Linux folder (x86_64)
-luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
+luxar export my_scene.luxar.zarr -o out/ --native macos                       # macOS .app
+luxar export my_scene.luxar.zarr -o out/ --native linux-amd64                  # Linux folder (x86_64)
+luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
                                           --name MyScene                # All three at once
 ```
 
@@ -153,8 +154,8 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 #### `luxar gsplat convert`
 Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
-luxar gsplat convert fitted.gsplats.zarr scene.zarr --center
-luxar gsplat convert fitted.gsplats.zarr scene.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
 ```
 
 #### `luxar gsplat render`
@@ -235,25 +236,33 @@ luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr             # substitutive 
 **Options**: `--overwrite`, `--quiet/-q`.
 
 #### `luxar gsplat lod`
-Build LOD (level-of-detail) representations from a pre-fitted `.gsplats.zarr`. Three subcommands produce the dimensions of the v2.0 substitutive × additive LOD matrix.
+Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
+required `--recipe` flag. Recipes are scale-ordered: `flat`, `additive`,
+`partitioned`, `multiscale`, plus the `substitutive` and `pyramid` primitives.
+Output is a standalone v3.0 `.gsplats.zarr` (graft into a scene from Python via
+`add_gsplats_from_file` / `gsplat convert`).
 
 ```bash
-# Additive ladder (post-fit ordering; coarser levels are subsets of finer ones)
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                # 4 equal-count levels
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+# flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
     --breakpoints energy:0.5,0.9,0.99,1.0                                  # cumulative energy fractions
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
 
-# Substitutive hierarchy (synthesised representative splats that REPLACE the finer level)
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr            # K=4, L=3, method=auto
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method kmeans-lloyd --lloyd-iters 5
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning, small N
+# partitioned / multiscale — BSP parts each with an additive ladder; multiscale
+# adds a coarse substitutive cap (far view) above the partitioned fine branch
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8
 
-# Full 2-D pyramid (substitutive × additive) in one shot
-luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
-    --substitutive K=4,L=3 --additive 4
+# substitutive / pyramid primitives (synthesised representative levels)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
+    --substitutive-method kmeans-lloyd --lloyd-iters 5
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 ```
+
+An option irrelevant to the chosen recipe (e.g. `--max-elements` with `--recipe additive`) is rejected with a clear error.
 
 #### Tiled Fitting
 For large volumes, use tiled fitting with Hann cosine apodization:

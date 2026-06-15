@@ -118,7 +118,7 @@ import zarr
 
 # Too many options confuse beginners
 with LuxarZarrCompiler(
-    'scene.zarr',
+    'scene.luxar.zarr',
     encoding_mode=EncodingMode.AUTO,
     ordering_method="hilbert",
     enable_spatial_index=True,
@@ -136,7 +136,7 @@ with LuxarZarrCompiler(
 ```python
 from luxar.io import LuxarZarrCompiler
 
-with LuxarZarrCompiler('scene.zarr') as c:
+with LuxarZarrCompiler('scene.luxar.zarr') as c:
     s = c.create_scene()
     s.add_points('p', pos, col, r)
 ```

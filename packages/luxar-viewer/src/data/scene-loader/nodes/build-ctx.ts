@@ -80,6 +80,23 @@ export interface NodeBuildCtx {
    */
   releaseLazyGSplats(path: string): void;
 
+  /**
+   * Release a lazily-loaded points level's GPU geometry back to the evictable
+   * buffer pool and unregister its loader. Peer of :meth:`releaseLazyGSplats`
+   * for points lod-group children (the finest level of a points-substitutive
+   * ladder). Raw chunks remain in the decompressed cache, so re-selection
+   * re-projects cheaply.
+   */
+  releaseLazyPoints(path: string): void;
+
+  /**
+   * Release a lazily-loaded lines level's GPU geometry back to the evictable
+   * buffer pool and unregister its loader. Peer of :meth:`releaseLazyPoints` /
+   * :meth:`releaseLazyGSplats` for lines lod-group children (the finest level of
+   * a lines-substitutive ladder).
+   */
+  releaseLazyLines(path: string): void;
+
   // Per-type commit callbacks — each leaf only uses the one for its type.
   updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
   processLinesData(

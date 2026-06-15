@@ -23,7 +23,7 @@ import {
 } from './helpers';
 
 // Test dataset with multiple dimensions for animation
-const DATASET = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr';
 
 /**
  * Helper to get dimension animation state

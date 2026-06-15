@@ -35,7 +35,7 @@ application with CORS headers and a health endpoint already configured.
    import uvicorn
 
    # Create a FastAPI app serving a single Zarr dataset
-   app = create_server_app("/path/to/scene.zarr", serve_viewer=False)
+   app = create_server_app("/path/to/scene.luxar.zarr", serve_viewer=False)
 
    # Start the server
    uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -187,8 +187,8 @@ respective names. The root path returns a JSON directory listing.
    from luxar.cli.main import create_server_app
 
    # Assume /data/ contains:
-   #   /data/neurons.zarr/
-   #   /data/vasculature.zarr/
+   #   /data/neurons.luxar.zarr/
+   #   /data/vasculature.luxar.zarr/
    app = create_server_app("/data", serve_viewer=False)
 
    # After starting the server on port 8000 (see above for the threading
@@ -197,16 +197,16 @@ respective names. The root path returns a JSON directory listing.
    listing = resp.json()
    # listing == {
    #     "entries": [
-   #         {"name": "neurons.zarr", "type": "zarr", "size": 4096},
-   #         {"name": "vasculature.zarr", "type": "zarr", "size": 8192},
+   #         {"name": "neurons.luxar.zarr", "type": "zarr", "size": 4096},
+   #         {"name": "vasculature.luxar.zarr", "type": "zarr", "size": 8192},
    #     ]
    # }
 
    # Each dataset is served at its own subpath:
-   resp = requests.get("http://127.0.0.1:8000/neurons.zarr/.zattrs")
+   resp = requests.get("http://127.0.0.1:8000/neurons.luxar.zarr/.zattrs")
    assert resp.status_code == 200
 
-   resp = requests.get("http://127.0.0.1:8000/vasculature.zarr/.zattrs")
+   resp = requests.get("http://127.0.0.1:8000/vasculature.luxar.zarr/.zattrs")
    assert resp.status_code == 200
 
 The directory listing JSON structure uses three possible values for the
@@ -221,8 +221,8 @@ common parent and pass that parent to ``create_server_app()``.
 
    When connecting the Luxar viewer to a dataset served this way, remember
    that the URL must **not** end with a trailing slash. For example, use
-   ``http://127.0.0.1:8000/neurons.zarr`` rather than
-   ``http://127.0.0.1:8000/neurons.zarr/``. A trailing slash causes the
+   ``http://127.0.0.1:8000/neurons.luxar.zarr`` rather than
+   ``http://127.0.0.1:8000/neurons.luxar.zarr/``. A trailing slash causes the
    Zarr loader to misinterpret path components, resulting in 404 errors.
 
 
@@ -256,7 +256,7 @@ authentication middleware, or other services.
    # - GET /api/experiments      -> your custom endpoint
    # - GET /data/health          -> Luxar health check
    # - GET /data/.zattrs         -> Zarr metadata
-   # - GET /data/neurons.zarr/   -> dataset files (if /data/scenes/ is a directory)
+   # - GET /data/neurons.luxar.zarr/   -> dataset files (if /data/scenes/ is a directory)
    # - GET /data/                -> Luxar viewer (serve_viewer=True)
 
 You can also mount multiple independent Luxar apps at different paths:
@@ -269,8 +269,8 @@ You can also mount multiple independent Luxar apps at different paths:
    main_app = FastAPI()
 
    # Each dataset gets its own isolated server
-   main_app.mount("/neurons", create_server_app("/data/neurons.zarr"))
-   main_app.mount("/vessels", create_server_app("/data/vasculature.zarr"))
+   main_app.mount("/neurons", create_server_app("/data/neurons.luxar.zarr"))
+   main_app.mount("/vessels", create_server_app("/data/vasculature.luxar.zarr"))
 
    # GET /neurons/health   -> {"status": "ok"}
    # GET /neurons/.zattrs  -> neuron scene metadata

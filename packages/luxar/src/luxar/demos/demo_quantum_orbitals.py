@@ -364,14 +364,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "quantum_orbitals.zarr"
+        output_path = get_demos_output_dir() / "quantum_orbitals.luxar.zarr"
         generate_quantum_orbitals(output_path, grid_size=grid_size)
         aprint(f"Dataset generated at {output_path}")
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_quantum_") as tmpdir:
-        output_path = Path(tmpdir) / "quantum_orbitals.zarr"
+        output_path = Path(tmpdir) / "quantum_orbitals.luxar.zarr"
 
         # Generate orbitals
         generate_quantum_orbitals(output_path, grid_size=grid_size)

@@ -44,7 +44,7 @@ const DEFAULT_EXPOSURE = 1.0;
 const DEMOS: DemoConfig[] = [
   {
     name: 'Lorenz Attractor',
-    datasetPath: 'datasets/demos/lorenz.zarr',
+    datasetPath: 'datasets/demos/lorenz.luxar.zarr',
     filename: 'lorenz-demo.png',
     zoomClicks: 3, // Zoom out
     extraWaitMs: 1000,
@@ -52,7 +52,7 @@ const DEMOS: DemoConfig[] = [
   },
   {
     name: 'Mandelbulb',
-    datasetPath: 'datasets/demos/mandelbulb.zarr',
+    datasetPath: 'datasets/demos/mandelbulb.luxar.zarr',
     filename: 'mandelbulb-demo.png',
     zoomClicks: -22, // Zoom IN 2x more
     extraWaitMs: 2000,
@@ -60,7 +60,7 @@ const DEMOS: DemoConfig[] = [
   },
   {
     name: 'Spiral Galaxy',
-    datasetPath: 'datasets/demos/spiral_galaxy.zarr',
+    datasetPath: 'datasets/demos/spiral_galaxy.luxar.zarr',
     filename: 'spiral-galaxy-demo.png',
     zoomClicks: 4, // Zoom out
     extraWaitMs: 1500,
@@ -68,7 +68,7 @@ const DEMOS: DemoConfig[] = [
   },
   {
     name: 'Zebrahub Multiome UMAP',
-    datasetPath: 'datasets/demos/zebrahub_multiome_peak_umap.zarr',
+    datasetPath: 'datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr',
     filename: 'zebrahub-umap-demo.png',
     zoomClicks: 0,
     extraWaitMs: 2000,
@@ -76,7 +76,7 @@ const DEMOS: DemoConfig[] = [
   },
   {
     name: 'Rainbow Sphere',
-    datasetPath: 'datasets/demos/rainbow_sphere.zarr',
+    datasetPath: 'datasets/demos/rainbow_sphere.luxar.zarr',
     filename: 'rainbow-sphere-demo.png',
     zoomClicks: 17, // Zoom out more to see full sphere
     extraWaitMs: 1500,

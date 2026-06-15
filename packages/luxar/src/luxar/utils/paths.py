@@ -68,3 +68,42 @@ def get_demos_output_dir() -> Path:
     demos_dir = get_datasets_dir() / "demos"
     demos_dir.mkdir(exist_ok=True)
     return demos_dir
+
+
+# Recognized Luxar zarr suffixes, longest-first so the more specific compound
+# suffixes are matched before the bare ``.zarr``.
+_ZARR_SUFFIXES = (".luxar.zarr", ".gsplats.zarr", ".zarr")
+
+
+def normalize_zarr_path(path: str | Path, canonical_suffix: str) -> Path:
+    """Ensure ``path`` ends in ``canonical_suffix``.
+
+    Strips any existing recognized zarr suffix (``.luxar.zarr`` /
+    ``.gsplats.zarr`` / ``.zarr``) from the filename and re-appends
+    ``canonical_suffix``. Used to enforce the canonical extension for full
+    scenes (``.luxar.zarr``) and standalone gsplat files (``.gsplats.zarr``).
+
+    Compression suffixes (``.zip`` / ``.tar.gz`` / ``.gz``) are NOT handled
+    here — callers that support compression strip those first and pass the
+    inner store name (see ``save_gsplats._resolve_zarr_path``).
+
+    Args:
+        path: The output path whose extension should be normalized.
+        canonical_suffix: The suffix to enforce, e.g. ``".luxar.zarr"``.
+
+    Returns:
+        A new ``Path`` with the canonical suffix. Paths that already end in
+        ``canonical_suffix`` are returned unchanged.
+
+    Raises:
+        ValueError: If ``path`` has no filename component (e.g. ``"."``).
+    """
+    p = Path(path)
+    name = p.name
+    if not name:
+        raise ValueError(f"Cannot normalize a path with no filename: {path!r}")
+    for suffix in _ZARR_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return p.with_name(name + canonical_suffix)

@@ -282,7 +282,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "spiral_galaxy_5d.zarr"
+        output_path = get_demos_output_dir() / "spiral_galaxy_5d.luxar.zarr"
         generate_5d_spiral_galaxy(
             output_path,
             n_points_per_arm=n_points,
@@ -295,7 +295,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_5d_galaxy_") as tmpdir:
-        output_path = Path(tmpdir) / "spiral_galaxy_5d.zarr"
+        output_path = Path(tmpdir) / "spiral_galaxy_5d.luxar.zarr"
 
         # Generate the dataset
         generate_5d_spiral_galaxy(

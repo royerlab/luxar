@@ -41,7 +41,7 @@ class TestAddPointsInputHandling:
     def test_add_points_1d_positions_error(self) -> None:
         """Test add_points with 1D positions raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -54,7 +54,7 @@ class TestAddPointsInputHandling:
     def test_add_points_list_input(self) -> None:
         """Test add_points with list input (converted to array)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -72,7 +72,7 @@ class TestAddLinesValidation:
     def test_add_lines_1d_vertices_error(self) -> None:
         """Test add_lines with 1D vertices raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -85,7 +85,7 @@ class TestAddLinesValidation:
     def test_add_lines_list_input(self) -> None:
         """Test add_lines with list input (converted to array)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -103,7 +103,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_with_string_all(self) -> None:
         """Test add_lines with extend_to_all='all'."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -144,7 +144,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_explicit_list(self) -> None:
         """Test add_lines with explicit extend_to_all list."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -184,7 +184,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_empty_list_no_attrs(self) -> None:
         """Test add_lines with extend_to_all=[] doesn't store attr."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -221,7 +221,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_invalid_value(self) -> None:
         """Test add_lines with invalid extend_to_all value."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -245,7 +245,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_with_warning_for_candidates(self) -> None:
         """Test add_lines warns when extend_to_all candidates exist but not specified."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -282,7 +282,7 @@ class TestAddLinesExtendToAll:
     def test_extend_to_all_multiple_dimensions(self) -> None:
         """Test add_lines with extend_to_all for multiple dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -327,7 +327,7 @@ class TestAddGSplatsValidation:
     def test_add_gsplats_1d_centers_error(self) -> None:
         """Test add_gsplats with 1D centers raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -346,7 +346,7 @@ class TestAddGSplatsValidation:
     def test_add_gsplats_list_input(self) -> None:
         """Test add_gsplats with list input (converted to array)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -373,7 +373,7 @@ class TestAnalyzeExtendCandidates:
     def test_analyze_no_dimensions(self) -> None:
         """Test analyze returns empty when scene has only displayed dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -387,7 +387,7 @@ class TestAnalyzeExtendCandidates:
     def test_analyze_multiple_values_no_candidate(self) -> None:
         """Test analyze returns empty when dimension has multiple values."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -420,7 +420,7 @@ class TestAnalyzeExtendCandidates:
     def test_analyze_single_value_with_range_is_candidate(self) -> None:
         """Test analyze detects single-value dimension with larger range."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -447,7 +447,7 @@ class TestAnalyzeExtendCandidates:
     def test_analyze_no_range_not_candidate(self) -> None:
         """Test analyze doesn't flag dimension without defined range."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -475,7 +475,7 @@ class TestDimensionsProperty:
     def test_dimensions_setter_none(self) -> None:
         """Test that setting dimensions to None raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -496,7 +496,7 @@ class TestDimensionsProperty:
     def test_dimensions_setter_new_dims(self) -> None:
         """Test setting new dimensions."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -528,8 +528,8 @@ class TestToZarr:
         this test pins down the smoke-level happy path.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
-            export_path = Path(tmpdir) / "export.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
+            export_path = Path(tmpdir) / "export.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -547,7 +547,7 @@ class TestGetStorePath:
     def test_get_store_path_returns_path(self) -> None:
         """Test that get_store_path returns the store path."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "test.zarr"
+            store_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())

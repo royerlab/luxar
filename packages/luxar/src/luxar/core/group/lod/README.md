@@ -38,9 +38,13 @@ Luxar's gsplat LOD model has two orthogonal axes; the helpers here build both:
 
 - **Substitutive** — coarser levels *replace* finer ones (fewer, larger
   elements). A multi-substitutive dataset becomes a `kind=lod` `Group` whose
-  children are the levels in coarsest→finest order. Only gsplats carry a stored
-  substitutive pyramid; `gsplats.py::resolve_substitutive_axis_gsplats` resolves
-  the `lod_group=` kwarg against it.
+  children are the levels in coarsest→finest order. GSplats carry a stored
+  substitutive pyramid (`gsplats.py::resolve_substitutive_axis_gsplats` resolves
+  the `lod_group=` kwarg). **Points** synthesise one on demand via the
+  `substitutive_lod=` kwarg: each point is *lifted* to an isotropic Gaussian and
+  the gsplat substitutive pipeline coarsens it — so the coarse levels are
+  mass-preserving gsplats while the finest child stays the original Points node
+  (a heterogeneous `kind=lod` group). See "Points substitutive" below.
 - **Additive** — finer levels *add to* coarser ones (a streaming prefix of
   elements). All three geometries support an additive ladder via the
   `additive_lod=` kwarg. For gsplats it is applied per substitutive level
@@ -100,6 +104,38 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
 
 `DEFAULT_METHOD` is `random`; `DEFAULT_N_LODS` is `4`.
 
+#### Points substitutive (lift to gsplats)
+
+`resolve_substitutive_axis_points(spec)` normalizes the `substitutive_lod=`
+kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
+method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
+`method`, `base_pixel_size`, `truncation_radius`, `device`, `seed`,
+`min_pixel_sizes`). `add_points_substitutive_lod_wrapper_impl`
+(`adders/points.py`) then:
+
+1. **Lifts** each point to an isotropic Gaussian
+   (`gsplats.lift.lift_points_to_gsplats`): `σ = 2R/T`, `a = opacity/(uRIF·σ)`
+   — calibrated against the viewer shaders so a single lifted splat renders like
+   its point (peak ratio 1.0, profile rel-L2 0.45% at the default `T=3`).
+2. **Coarsens** via `gsplats.lift.coarse_substitutive_levels` →
+   `make_substitutive_lod`, drops the 1:1 level 0 (the Points node is the finest
+   level), and **rescales** each coarse level's amplitudes to conserve
+   render-light (`Σ a·σ³`) so the LOD seam does not dim on zoom-out.
+3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
+   the original Points node as the finest child; `display_type="points"`.
+
+Mutually exclusive with `additive_lod` (append vs replace on the same axis).
+The lift is strictly isotropic (brightness stays view-independent). Scalar +
+colormap points are supported by **baking** `scalars`→RGB through the colormap
+LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
+and lifting with those colours; the finest Points child keeps `scalars`+`colormap`
+(native). Caveats: a *live* colormap change in the viewer re-colours only the
+finest child, not the baked coarse gsplat levels; and a node `gamma` ≠ 1 is not
+reproduced on the coarse levels (colormap mode applies gamma to the scalar
+*pre-LUT* on the finest child, whereas the baked-colour gsplats get gamma applied
+to RGB — fundamentally different, so they diverge at `gamma` ≠ 1). (`scalars`
+without a `colormap` still raises.)
+
 ### Lines (`lines.py`)
 
 Mirrors Points in shape but operates **per-polyline**: each LOD level carries
@@ -121,6 +157,41 @@ during partial loads.
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
   resolver.
+
+#### Lines substitutive (lift to gsplats)
+
+`resolve_substitutive_axis_lines(spec)` is the `add_lines(..., substitutive_lod=...)`
+resolver — a thin wrapper over the shared
+`group.resolve_substitutive_axis(spec, "Lines")` (one body, shared with Points,
+so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
+(`adders/lines.py`) then:
+
+1. **Lifts** each segment to a string of isotropic **bead** Gaussians
+   (`gsplats.lift.lift_lines_to_gsplats`): beads spaced `σ_perp = 2w/T` along the
+   segment, each isotropic. Beads (not one elongated anisotropic Gaussian) because
+   the gsplat ray-integral is *view-dependent* for anisotropic covariances (a
+   single elongated Gaussian is ~`L/(4w)` brighter end-on than broadside);
+   isotropic beads are view-independent and sum to a smooth tube. Per-bead
+   amplitude divides by the Gaussian-comb overlap `√(2π)` so the tube centreline
+   = `opacity`.
+2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
+   rescale) — identical to Points.
+3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
+   the original Lines node as the finest child; `display_type="lines"`. The finest
+   "count" for `derive_min_pixel_sizes` is the full lifted **bead** count (not
+   vertex count) so the ladder thresholds stay on one scale.
+
+Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
+mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
+the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
+Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
+Degenerate-width segments are dropped; bead allocation is bounded both
+per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
+(`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a
+zero/tiny-width line — or a large set of long thin ones — degrades the tube
+rather than OOMing. The viewer
+lazily defers + evicts the finest Lines lod child (like `gsplats`/`points`) via
+`loadLinesNodeCheap`/`loadLinesNodeExpensive` + `releaseLazyLines`.
 
 ### GSplats (`gsplats.py`)
 

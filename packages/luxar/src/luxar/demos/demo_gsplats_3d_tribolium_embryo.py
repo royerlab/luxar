@@ -65,7 +65,7 @@ By default, precomputed GSplats are loaded from package data (Git LFS).
 Use --recompute to re-fit from scratch (requires network + GPU).
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.zarr
+    - Scene saved to:  datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -346,7 +346,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.zarr"
+        output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.luxar.zarr"
 
     with asection("Creating 3D Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -504,7 +504,7 @@ def main():
     aprint("Large isotropic 3D volume -> Gaussian splatting visualisation")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.zarr"
+    output_path = get_demos_output_dir() / "gsplats_3d_tribolium_embryo.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

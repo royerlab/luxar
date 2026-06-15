@@ -106,7 +106,7 @@ _ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
 def redirected_examples_dir(tmp_path, monkeypatch):
     """Redirect ``get_examples_output_dir`` for the duration of one test.
 
-    Each example writes ``<output_dir>/<name>_example.zarr``; routing to
+    Each example writes ``<output_dir>/<name>_example.luxar.zarr``; routing to
     ``tmp_path`` keeps tests hermetic and parallel-safe.
     """
     monkeypatch.setattr(luxar_paths, "get_examples_output_dir", lambda: tmp_path)
@@ -125,12 +125,12 @@ def redirected_examples_dir(tmp_path, monkeypatch):
 def test_example_runs_and_writes_zarr(stem, redirected_examples_dir, monkeypatch):
     """Each example's ``main()`` runs without exception and produces a zarr.
 
-    A handful of historical examples don't follow the ``<stem>.zarr``
-    naming convention (``build_example`` emits ``build_example_manual.zarr``
-    + ``build_example_structured.zarr``; ``memory_optimization_example``
+    A handful of historical examples don't follow the ``<stem>.luxar.zarr``
+    naming convention (``build_example`` emits ``build_example_manual.luxar.zarr``
+    + ``build_example_structured.luxar.zarr``; ``memory_optimization_example``
     emits three encoding-mode variants). To keep this test useful as a
     smoke check across the full example surface, we assert only that at
-    least one ``*.zarr`` was created — the stricter naming contract is
+    least one ``*.luxar.zarr`` was created — the stricter naming contract is
     a separate concern documented in ``TEMPLATE.md``.
     """
     if "CI" in os.environ and stem in SLOW_EXAMPLES:
@@ -146,9 +146,9 @@ def test_example_runs_and_writes_zarr(stem, redirected_examples_dir, monkeypatch
 
     module.main()
 
-    zarrs = sorted(redirected_examples_dir.glob("*.zarr"))
+    zarrs = sorted(redirected_examples_dir.glob("*.luxar.zarr"))
     assert zarrs, (
-        f"Expected at least one *.zarr in {redirected_examples_dir} after "
+        f"Expected at least one *.luxar.zarr in {redirected_examples_dir} after "
         f"running {stem}.main(); directory contents: "
         f"{list(redirected_examples_dir.iterdir())}"
     )

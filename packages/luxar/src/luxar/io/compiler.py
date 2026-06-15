@@ -101,7 +101,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     Examples:
         Basic usage with context manager:
         >>> dims = Dimensions.default_3d()
-        >>> with LuxarZarrCompiler('output.zarr') as compiler:
+        >>> with LuxarZarrCompiler('output.luxar.zarr') as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     positions = np.random.randn(10000, 3).astype(np.float32)
         ...     scene.add_points('points', positions)
@@ -112,7 +112,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         ...     Dimension('y', unit='um'),
         ...     Dimension('z', unit='um')
         ... ])
-        >>> with LuxarZarrCompiler('scene.zarr') as compiler:
+        >>> with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     # HDR colors with values > 1.0
         ...     colors = np.random.rand(1000, 3).astype(np.float32) * 5.0
@@ -120,7 +120,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Large datasets (partitioned into multiple nodes):
         >>> dims = Dimensions.default_3d()
-        >>> with LuxarZarrCompiler('huge.zarr', ordering_method="hilbert") as compiler:
+        >>> with LuxarZarrCompiler('huge.luxar.zarr', ordering_method="hilbert") as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     # Process chunks one at a time, each becomes a separate node
         ...     for i in range(100):
@@ -163,14 +163,27 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             system when calling create_scene(dimensions=...). This provides more
             flexibility for multi-dimensional data.
         """
-        # Handle store path
+        # Handle store path. Full scenes use the canonical ``.luxar.zarr``
+        # extension; the path is normalized so callers that pass a bare name or
+        # a plain ``.zarr`` still produce a canonically-named scene. Callers
+        # should read back the final path via the ``store_path`` property.
+        # Local import to avoid a module-load cycle
+        # (luxar.utils.__init__ → demos → io.compiler).
+        from ..utils.paths import normalize_zarr_path
+
         self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
         if store_path is None:
             self._tmpdir = tempfile.TemporaryDirectory()
-            self._store_path = Path(self._tmpdir.name) / "scene.zarr"
+            self._store_path = Path(self._tmpdir.name) / "scene.luxar.zarr"
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
-            self._store_path = Path(store_path)
+            requested = Path(store_path)
+            self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
+            if self._store_path.name != requested.name:
+                aprint(
+                    f"📁 Normalized scene path to canonical extension: "
+                    f"{requested.name} → {self._store_path.name}"
+                )
             aprint(f"📁 Creating scene at: {self._store_path}")
 
         # Store spatial ordering configuration

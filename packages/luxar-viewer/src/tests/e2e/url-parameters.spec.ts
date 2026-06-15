@@ -11,7 +11,7 @@
 import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 test.describe('URL Parameters', () => {
   test('should apply light theme from ?theme=light', async ({ page }) => {

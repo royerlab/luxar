@@ -50,7 +50,7 @@ def spiral(n_points: int, x_offset: float) -> tuple[np.ndarray, np.ndarray]:
 
 def main() -> None:
     """Render three identical spirals with three different colormaps."""
-    output_path = get_examples_output_dir() / "scalars_and_colormap_example.zarr"
+    output_path = get_examples_output_dir() / "scalars_and_colormap_example.luxar.zarr"
     aprint(f"Writing scalars + colormap example to {output_path}")
     aprint(f"Built-in colormaps available: {', '.join(BUILTIN_COLORMAP_NAMES)}")
 

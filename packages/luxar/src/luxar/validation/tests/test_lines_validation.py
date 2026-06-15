@@ -34,7 +34,7 @@ def _polyline_vertices(n: int) -> np.ndarray:
 
 def test_bad_vertices_shape(tmp_path) -> None:
     """Vertices must be 2D array with shape (N, ndim) — mirrors test_bad_positions_shape."""
-    store = tmp_path / "bad.zarr"
+    store = tmp_path / "bad.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         with pytest.raises((ValueError, ValidationError)):
@@ -43,7 +43,7 @@ def test_bad_vertices_shape(tmp_path) -> None:
 
 def test_mismatched_colors(tmp_path) -> None:
     """Colors array length must match vertices — mirrors points equivalent."""
-    store = tmp_path / "bad_colors.zarr"
+    store = tmp_path / "bad_colors.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(10)
@@ -86,7 +86,7 @@ def test_non_finite_line_attributes_rejected(
     Mirror of test_non_finite_point_attributes_rejected — both rely on
     the shared validation in `luxar.validation.base`.
     """
-    store = tmp_path / f"bad_{field}.zarr"
+    store = tmp_path / f"bad_{field}.luxar.zarr"
     vertices = kwargs.pop(
         "vertices", np.array([[0.0, 1.0, 2.0], [1.0, 1.0, 1.0]], dtype=np.float32)
     )
@@ -139,7 +139,7 @@ def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
 )
 def test_invalid_widths(tmp_path, widths_factory, error_pattern, test_id) -> None:
     """Various invalid widths configurations raise ValueError."""
-    store = tmp_path / f"invalid_widths_{test_id}.zarr"
+    store = tmp_path / f"invalid_widths_{test_id}.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(100)
@@ -149,7 +149,7 @@ def test_invalid_widths(tmp_path, widths_factory, error_pattern, test_id) -> Non
 
 def test_scalar_width_zero_rejected(tmp_path) -> None:
     """Scalar width must be > 0 — pin the boundary."""
-    store = tmp_path / "scalar_zero_width.zarr"
+    store = tmp_path / "scalar_zero_width.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(50)
@@ -159,7 +159,7 @@ def test_scalar_width_zero_rejected(tmp_path) -> None:
 
 def test_scalar_width_negative_rejected(tmp_path) -> None:
     """Scalar negative width rejected."""
-    store = tmp_path / "scalar_neg_width.zarr"
+    store = tmp_path / "scalar_neg_width.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(50)
@@ -169,7 +169,7 @@ def test_scalar_width_negative_rejected(tmp_path) -> None:
 
 def test_valid_widths(tmp_path) -> None:
     """Valid widths are accepted and stored correctly."""
-    store = tmp_path / "widths_test.zarr"
+    store = tmp_path / "widths_test.luxar.zarr"
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
@@ -214,7 +214,7 @@ def test_valid_widths(tmp_path) -> None:
 )
 def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) -> None:
     """Lines sharpness rejection mirrors Points."""
-    store = tmp_path / f"invalid_sharpness_{test_id}.zarr"
+    store = tmp_path / f"invalid_sharpness_{test_id}.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(100)
@@ -227,7 +227,7 @@ def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) 
 
 def test_valid_sharpness(tmp_path) -> None:
     """Valid sharpness values stored correctly for lines."""
-    store = tmp_path / "lines_sharp_test.zarr"
+    store = tmp_path / "lines_sharp_test.luxar.zarr"
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
@@ -247,7 +247,7 @@ def test_valid_sharpness(tmp_path) -> None:
 
 def test_sharpness_out_of_range_rejected(tmp_path) -> None:
     """Out-of-range sharpness for lines is rejected the same way as Points."""
-    store = tmp_path / "lines_sharp_reject.zarr"
+    store = tmp_path / "lines_sharp_reject.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         vertices = _polyline_vertices(100)

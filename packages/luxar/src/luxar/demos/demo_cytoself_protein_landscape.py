@@ -897,7 +897,7 @@ def main() -> None:
     )
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "cytoself_protein_landscape.zarr"
+        output_path = get_demos_output_dir() / "cytoself_protein_landscape.luxar.zarr"
         _n_points = create_cytoself_scene(
             output_path,
             coordinates,
@@ -909,7 +909,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_cytoself_") as tmpdir:
-        output_path = Path(tmpdir) / "cytoself_landscape.zarr"
+        output_path = Path(tmpdir) / "cytoself_landscape.luxar.zarr"
 
         _n_points = create_cytoself_scene(
             output_path,

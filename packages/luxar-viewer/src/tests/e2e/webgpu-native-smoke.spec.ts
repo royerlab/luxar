@@ -20,7 +20,7 @@
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 const SKIP_REASON =
   'native-WebGPU smoke spec requires a real WebGPU adapter; ' +

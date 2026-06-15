@@ -4,6 +4,56 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### June 2026
+
+#### Changed — `gsplat lod` is now a single `--recipe` command
+
+`luxar gsplat lod` is now one command driven by a required `--recipe` flag
+instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
+**partitioned**, **multiscale**, plus the **substitutive** and **pyramid**
+primitives (which absorb the former `lod substitutive` / `lod pyramid`
+subcommands; `lod additive` becomes `--recipe additive`). Two topologies are new
+and were previously unbuildable from the CLI:
+
+- **partitioned** — a spatial BSP `kind=partition` where *each part carries its
+  own additive ladder* (the old `partition` collapsed parts to a single level).
+- **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
+  substitutive cap for the far view above a `partitioned` fine branch, so detail
+  structure exists only where you look closely.
+
+The recipe builders are pure functions in `luxar.gsplats.lod.recipes`
+(`build_recipe`); the CLI wrapper lives in `luxar/cli/lod.py` (keeping the
+already-large `gsplat_commands.py` from growing). Options irrelevant to the
+chosen recipe are rejected with a clear error. The `.gsplats.zarr` format and the
+underlying `make_additive_lod` / `make_substitutive_lod` / `make_lod_pyramid`
+Python builders are unchanged; output stays a standalone v3.0 `.gsplats.zarr` to
+graft into a scene via `add_gsplats_from_file` / `gsplat convert`.
+
+The niche `lod additive --substitutive-level N` flag (build an additive ladder on
+one substitutive level of an existing pyramid) is dropped from the CLI — recipes
+take a fitted/flat input. The capability remains in the Python API
+(`make_additive_lod(..., substitutive_level=N)`).
+
+Flag-name note for scripted users: under `--recipe`, `-m`/`--method` is the
+**additive ordering** method (greedy/self_energy/…); the **substitutive
+algorithm** (kmeans_lloyd/greedy/…) — formerly `lod substitutive -m`/`--method`
+— is now the long-only `--substitutive-method` for `--recipe substitutive` /
+`pyramid`.
+
+#### Changed — scenes use the canonical `.luxar.zarr` extension
+
+Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
+(previously the bare `.zarr`, which is indistinguishable from generic / OME-Zarr
+stores). Standalone gsplat files are **unchanged** (`.gsplats.zarr`). The scene
+compiler (`LuxarZarrCompiler`) auto-normalizes its output path —
+`foo` → `foo.luxar.zarr`, `foo.zarr` → `foo.luxar.zarr`, `foo.luxar.zarr`
+unchanged — and reports the final path via `store_path`; the CLI `luxar demo`
+default output and `luxar export`/`serve` examples follow suit. Reading is
+unaffected: format detection is attribute-based and every path check matches the
+`.zarr` suffix, so plain `.zarr` scenes still load. A new shared helper
+`luxar.utils.paths.normalize_zarr_path` enforces the canonical suffix for both
+scenes (`.luxar.zarr`) and standalone gsplats (`.gsplats.zarr`).
+
 ### May 2026
 
 #### Changed — `.gsplats.zarr` format v3.0 (node-tree, unified with the scene)

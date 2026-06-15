@@ -37,7 +37,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main() -> None:
     """Author a tiny scene with a curated viewer configuration."""
-    output_path = get_examples_output_dir() / "viewer_config_example.zarr"
+    output_path = get_examples_output_dir() / "viewer_config_example.luxar.zarr"
     aprint(f"Writing viewer-config example to {output_path}")
 
     # A simple lit blob the camera config will target by name.

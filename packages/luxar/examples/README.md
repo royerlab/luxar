@@ -1,7 +1,7 @@
 # Luxar Examples
 
 Short, didactic scripts demonstrating individual Luxar features on synthetic data.
-Each script writes a `*_example.zarr` you can open in the viewer.
+Each script writes a `*_example.luxar.zarr` you can open in the viewer.
 
 > **Note — examples are also test fixtures.** Most of these files are
 > referenced by the viewer's E2E suite (`packages/luxar-viewer/src/tests/e2e/`).
@@ -128,7 +128,7 @@ Each script prints the absolute output path on completion. Defaults to
 
 See [`TEMPLATE.md`](TEMPLATE.md) for the full template. Highlights:
 
-- File name: `<feature>_example.py`. Output: `<feature>_example.zarr`.
+- File name: `<feature>_example.py`. Output: `<feature>_example.luxar.zarr`.
 - Use `get_examples_output_dir()` for the output path.
 - Add one house-style **explainer card** per scene via
   `from _overlay_style import add_explainer` (title → explanation →

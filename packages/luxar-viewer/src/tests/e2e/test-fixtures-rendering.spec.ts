@@ -23,12 +23,12 @@ import {
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
 
 const FIXTURES = {
-  sharpness: `${FIXTURES_BASE}/test_sharpness_range.zarr`,
-  hdr: `${FIXTURES_BASE}/test_hdr_colors.zarr`,
-  hierarchy: `${FIXTURES_BASE}/test_hierarchical_transforms.zarr`,
-  nd4d: `${FIXTURES_BASE}/test_4d.zarr`,
-  broadcasting: `${FIXTURES_BASE}/test_broadcasting.zarr`,
-  lut: `${FIXTURES_BASE}/test_lut.zarr`,
+  sharpness: `${FIXTURES_BASE}/test_sharpness_range.luxar.zarr`,
+  hdr: `${FIXTURES_BASE}/test_hdr_colors.luxar.zarr`,
+  hierarchy: `${FIXTURES_BASE}/test_hierarchical_transforms.luxar.zarr`,
+  nd4d: `${FIXTURES_BASE}/test_4d.luxar.zarr`,
+  broadcasting: `${FIXTURES_BASE}/test_broadcasting.luxar.zarr`,
+  lut: `${FIXTURES_BASE}/test_lut.luxar.zarr`,
 };
 
 test.describe('Test Fixture Rendering', () => {
