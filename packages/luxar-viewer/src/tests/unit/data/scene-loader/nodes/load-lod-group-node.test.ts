@@ -134,13 +134,18 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
   } as unknown as NodeBuildCtx['nodeFactory'];
 
   return {
-    registry: { registerGSplatsLoader: vi.fn(), registerPointsLoader: vi.fn() } as never,
+    registry: {
+      registerGSplatsLoader: vi.fn(),
+      registerPointsLoader: vi.fn(),
+      unregisterPointsLoader: vi.fn(),
+    } as never,
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
     factoryDeps: {} as never,
     isDatasetLive: () => true,
     releaseLazyGSplats: vi.fn(),
+    releaseLazyPoints: vi.fn(),
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
@@ -516,7 +521,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     expect(pts.ready).toBe(false);
   });
 
-  it('gives a deferred points level NO release thunk (no points eviction pool)', async () => {
+  it('gives a deferred points level a release thunk that evicts + resets readiness', async () => {
     attachStubChildren();
     const reg = makeReg();
     const ctx = makeCtx(reg);
@@ -527,7 +532,18 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
-    expect(reg.get('/lod')!.children[1].release).toBeUndefined();
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ready = true; // simulate a completed load
+    deferred.failed = true;
+    deferred.failedTick = 42;
+    expect(typeof deferred.release).toBe('function');
+
+    deferred.release!();
+    expect(vi.mocked(ctx.releaseLazyPoints)).toHaveBeenCalledWith('/lod/child_1');
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+    expect(deferred.failed).toBe(false);
+    expect(deferred.failedTick).toBeUndefined();
   });
 });
 

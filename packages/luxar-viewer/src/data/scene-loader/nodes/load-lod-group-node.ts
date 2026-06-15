@@ -272,16 +272,14 @@ export async function loadLodGroupNode(
           childLoc,
           ctx
         );
-        // No release thunk for points: there is no points GPU-eviction pool yet
-        // (the win here is lazy *loading*, not eviction). Once loaded the level
-        // stays resident — a deliberate, documented v1 limitation.
         entryChild = attachLazyChild(
           placeholder,
           lazyChild,
           minPixelSize,
           ctx,
           () => loadPointsNodeExpensive(lazyChild, ctx, loader),
-          () => ctx.registry.registerPointsLoader(lazyChild.path, loader)
+          () => ctx.registry.registerPointsLoader(lazyChild.path, loader),
+          () => ctx.releaseLazyPoints(lazyChild.path)
         );
       }
       registryChildren.push(entryChild);
