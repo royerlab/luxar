@@ -246,6 +246,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         additive_lod: Any = None,
+        substitutive_lod: Any = None,
         partition: Any = None,
         **attrs: Any,
     ) -> Union[Lines, "Group"]:
@@ -267,6 +268,15 @@ class Group(Node):
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed values for unmapped dimensions when using dim_order
+            substitutive_lod: Substitutive-LOD control (peer of Points'). ``None``
+                /``False`` write no substitutive ladder. ``True``/``dict()``
+                synthesise coarse LOD levels as Gaussian splats: each segment is
+                lifted to isotropic "bead" gaussians and reduced by the gsplat
+                substitutive pipeline, assembled as a ``kind="lod"`` Group whose
+                finest child is the original Lines node. Same dict vocabulary as
+                Points; ``scalars``+``colormap`` are baked for the coarse levels.
+                Mutually exclusive with ``additive_lod`` and ``partition``. See
+                :func:`luxar.core.group.lod.lines.resolve_substitutive_axis_lines`.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -298,6 +308,7 @@ class Group(Node):
             dim_order=dim_order,
             fill=fill,
             additive_lod=additive_lod,
+            substitutive_lod=substitutive_lod,
             partition=partition,
             **attrs,
         )

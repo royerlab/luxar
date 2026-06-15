@@ -284,6 +284,19 @@ class TestSubstitutiveLodGuards:
             with pytest.raises(ValueError, match="colormap"):
                 scene.add_points("pts", pos, scalars=scalars, substitutive_lod=True)
 
+    def test_uniform_scalar_plus_colormap_broadcasts(self, tmp_path) -> None:
+        # A scalar-valued (uniform) `scalars` must broadcast to n_points, not crash
+        # with a 'Colors count 1 doesn't match centers count N' error.
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("cloud", pos, scalars=0.5, colormap="viridis",
+                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        assert grp.attrs["kind"] == "lod"
+
     def test_scalars_plus_colormap_bakes_colors_on_coarse_levels(self, tmp_path) -> None:
         # scalars+colormap now WORKS: coarse gsplat levels carry baked SDR colours
         # from the colormap; the finest Points child keeps scalars+colormap.

@@ -539,7 +539,12 @@ def add_points_substitutive_lod_wrapper_impl(
             )
         from ....colormaps import scalars_to_colors
 
-        colors_for_lift = scalars_to_colors(np.asarray(scalars), colormap)
+        # Broadcast a scalar / size-1 `scalars` to per-point length so the baked
+        # colours array matches n_points (a uniform scalar is a documented input).
+        s = np.broadcast_to(
+            np.asarray(scalars, dtype=np.float64).reshape(-1), (n_points,)
+        )
+        colors_for_lift = scalars_to_colors(s, colormap)
 
     radii_for_lift = DEFAULT_POINT_RADIUS if radii is None else radii
     lifted = lift_points_to_gsplats(

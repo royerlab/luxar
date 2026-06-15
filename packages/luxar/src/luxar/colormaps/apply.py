@@ -29,8 +29,11 @@ def scalars_to_colors(
     """Map a scalar array to per-element RGB via a colormap LUT.
 
     Replicates the viewer's render-time normalisation so baked colours match what
-    a scalar-driven node would display: normalise ``scalars`` to [0, 1] over
-    ``[vmin, vmax]``, clamp, index a ``(256, 3)`` LUT.
+    a scalar-driven node would display *to within one LUT cell*: normalise
+    ``scalars`` to [0, 1] over ``[vmin, vmax]``, clamp, index a ``(256, 3)`` LUT
+    with nearest rounding. (The viewer samples the LUT texture with linear
+    filtering, so interior colours can differ by up to half a LUT cell — sub-
+    perceptual; a constant ``gamma`` on the node is also not baked, see callers.)
 
     Parameters
     ----------
@@ -52,15 +55,30 @@ def scalars_to_colors(
     s = np.asarray(scalars, dtype=np.float64).reshape(-1)
     lut = resolve_colormap(colormap).astype(np.float64) / 255.0  # (256, 3) in [0,1]
 
-    lo = float(np.min(s)) if vmin is None else float(vmin)
-    hi = float(np.max(s)) if vmax is None else float(vmax)
+    # Default bounds from the FINITE data only (matching the writer's
+    # scalar_data_range, which is finite) — np.isfinite excludes both NaN and
+    # Inf, so neither poisons the range; non-finite scalars below map to LUT[0].
+    finite = np.isfinite(s)
+    s_finite = s[finite]
+    if vmin is None:
+        lo = float(s_finite.min()) if s_finite.size else 0.0
+    else:
+        lo = float(vmin)
+    if vmax is None:
+        hi = float(s_finite.max()) if s_finite.size else 0.0
+    else:
+        hi = float(vmax)
     rng = hi - lo
     if rng <= 0.0:
-        # Degenerate range (all-equal scalars): map everything to the LUT centre,
-        # matching a 0-width range that the viewer would render as a flat colour.
-        norm = np.full(s.shape, 0.5, dtype=np.float64)
+        # Degenerate range (all-equal scalars): the viewer normalises with
+        # uScalarScale = 1/max(1e-10, max-min) → t = clamp((s-min)*scale, 0, 1)
+        # = 0 → it samples LUT[0]. Match that (NOT the LUT centre) so the baked
+        # coarse levels agree with the finest scalar-driven node.
+        norm = np.zeros(s.shape, dtype=np.float64)
     else:
         norm = np.clip((s - lo) / rng, 0.0, 1.0)
+    # Non-finite scalars (NaN/Inf) → LUT[0] (defined, not garbage).
+    norm = np.where(finite, norm, 0.0)
 
     n_lut = lut.shape[0]
     idx = np.minimum((norm * (n_lut - 1)).round().astype(np.intp), n_lut - 1)

@@ -129,9 +129,12 @@ The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
 LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
 and lifting with those colours; the finest Points child keeps `scalars`+`colormap`
-(native). Caveat: a *live* colormap change in the viewer re-colours only the
-finest child, not the baked coarse gsplat levels. (`scalars` without a `colormap`
-still raises.)
+(native). Caveats: a *live* colormap change in the viewer re-colours only the
+finest child, not the baked coarse gsplat levels; and a node `gamma` ≠ 1 is not
+reproduced on the coarse levels (colormap mode applies gamma to the scalar
+*pre-LUT* on the finest child, whereas the baked-colour gsplats get gamma applied
+to RGB — fundamentally different, so they diverge at `gamma` ≠ 1). (`scalars`
+without a `colormap` still raises.)
 
 ### Lines (`lines.py`)
 
@@ -154,6 +157,38 @@ during partial loads.
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
   resolver.
+
+#### Lines substitutive (lift to gsplats)
+
+`resolve_substitutive_axis_lines(spec)` is the `add_lines(..., substitutive_lod=...)`
+resolver — a thin wrapper over the shared
+`group.resolve_substitutive_axis(spec, "Lines")` (one body, shared with Points,
+so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
+(`adders/lines.py`) then:
+
+1. **Lifts** each segment to a string of isotropic **bead** Gaussians
+   (`gsplats.lift.lift_lines_to_gsplats`): beads spaced `σ_perp = 2w/T` along the
+   segment, each isotropic. Beads (not one elongated anisotropic Gaussian) because
+   the gsplat ray-integral is *view-dependent* for anisotropic covariances (a
+   single elongated Gaussian is ~`L/(4w)` brighter end-on than broadside);
+   isotropic beads are view-independent and sum to a smooth tube. Per-bead
+   amplitude divides by the Gaussian-comb overlap `√(2π)` so the tube centreline
+   = `opacity`.
+2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
+   rescale) — identical to Points.
+3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
+   the original Lines node as the finest child; `display_type="lines"`. The finest
+   "count" for `derive_min_pixel_sizes` is the full lifted **bead** count (not
+   vertex count) so the ladder thresholds stay on one scale.
+
+Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
+mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
+the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
+Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
+Degenerate-width segments are dropped and per-segment beads are capped
+(`lift.MAX_BEADS_PER_SEGMENT`) so a zero/tiny-width line can't OOM. *Follow-up:*
+the finest Lines child loads eagerly — the viewer defers `gsplats`/`points` lod
+children lazily but not `lines` yet (no `loadLinesNodeCheap` split / eviction).
 
 ### GSplats (`gsplats.py`)
 
