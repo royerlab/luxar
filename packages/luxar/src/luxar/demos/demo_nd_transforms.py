@@ -353,7 +353,7 @@ def main() -> None:
     aprint("  - Combined spatial transform + nd_transform on same group")
     aprint("")
 
-    output_path = get_demos_output_dir() / "nd_transforms_observatory.zarr"
+    output_path = get_demos_output_dir() / "nd_transforms_observatory.luxar.zarr"
 
     total_points = generate_demo(output_path)
 

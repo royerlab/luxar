@@ -193,7 +193,7 @@ def _validate_lod(out_path: Path, expected_total: int) -> Tuple[bool, str]:
 
 
 def _make_breakpoints(n_splats: int) -> Tuple[str, List[int]]:
-    """Build a deduplicated breakpoints arg for ``luxar gsplat lod additive``.
+    """Build a deduplicated breakpoints arg for ``luxar gsplat lod --recipe additive``.
 
     Returns (cli_arg, levels). ``cli_arg`` is "counts:c1,c2,...,N" (cumulative
     splat budgets) with duplicates collapsed; ``levels`` is the underlying
@@ -222,7 +222,7 @@ def _ordering_method(n_splats: int) -> str:
 
 
 def _run_lod_cli(in_path: Path, out_path: Path, n_splats: int) -> List[int]:
-    """Subprocess ``luxar gsplat lod additive`` for one file. Returns the
+    """Subprocess ``luxar gsplat lod --recipe additive`` for one file. Returns the
     breakpoint integer list (for logging).
 
     Note: ``--compress zip`` is required to actually produce a .zip file;
@@ -238,9 +238,10 @@ def _run_lod_cli(in_path: Path, out_path: Path, n_splats: int) -> List[int]:
         "luxar",
         "gsplat",
         "lod",
-        "additive",
         str(in_path),
         str(out_path),
+        "--recipe",
+        "additive",
         "--breakpoints",
         bp_arg,
         "--method",

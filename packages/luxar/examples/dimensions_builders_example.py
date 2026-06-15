@@ -47,7 +47,7 @@ def show(name: str, dims: Dimensions) -> None:
 
 def main() -> None:
     """Write four small scenes, one per Dimensions builder."""
-    output_path = get_examples_output_dir() / "dimensions_builders_example.zarr"
+    output_path = get_examples_output_dir() / "dimensions_builders_example.luxar.zarr"
     aprint(f"Writing dimensions-builders example to {output_path}")
 
     # Show what each builder produces.

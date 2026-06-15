@@ -443,7 +443,7 @@ const canvas = document.getElementById('app') as HTMLCanvasElement;
 const app = new LuxarApp();
 
 // Start with specific dataset
-await app.init({ canvas, src: '/data/my-dataset.zarr' });
+await app.init({ canvas, src: '/data/my-dataset.luxar.zarr' });
 
 // Start with directory browser (trailing slash → browser)
 await app.init({ canvas, src: '/data/' });
@@ -458,7 +458,7 @@ await app.init({ canvas });
 // Standalone callers use `bootstrapStandalone` (which calls `readUrlParams`).
 // Embedders typically parse URL params themselves and pass the result:
 const params = new URLSearchParams(window.location.search);
-const datasetURL = params.get('src') ?? '/data/default.zarr';
+const datasetURL = params.get('src') ?? '/data/default.luxar.zarr';
 
 const app = new LuxarApp();
 await app.init({ canvas, src: datasetURL });

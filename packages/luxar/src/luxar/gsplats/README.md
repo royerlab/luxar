@@ -730,19 +730,20 @@ matrix = make_lod_pyramid(
 ### CLI
 
 ```bash
-# Additive LOD ladder; v3.0 .gsplats.zarr leaf with additive_<i>/ subgroups
-luxar gsplat lod additive fit.gsplats.zarr additive.gsplats.zarr --n-lods 4
-luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr --method self_energy   # cheap O(N log N)
-luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
-luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level 1
+# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.0 .gsplats.zarr.
+# flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
+luxar gsplat lod fit.gsplats.zarr additive.gsplats.zarr --recipe additive --n-lods 4
+luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy   # cheap O(N log N)
+luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive -m mass -b counts:500,2000,10000
 
-# Substitutive LOD pyramid; v3.0 .gsplats.zarr kind=lod group
-luxar gsplat lod substitutive fit.gsplats.zarr substitutive.gsplats.zarr --L 3 --K 4
-luxar gsplat lod substitutive fit.gsplats.zarr out.gsplats.zarr --method greedy --device cuda
+# partitioned / multiscale — BSP parts each with an additive ladder (large data);
+# multiscale adds a coarse substitutive cap above the partitioned fine branch
+luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe partitioned --max-elements 250000
+luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe multiscale --compression-factor 8
 
-# Full 2-D pyramid (substitutive × additive) in one shot
-luxar gsplat lod pyramid fit.gsplats.zarr pyramid.gsplats.zarr \
-    --substitutive K=4,L=3 --additive 4
+# substitutive / pyramid primitives; v3.0 kind=lod group
+luxar gsplat lod fit.gsplats.zarr substitutive.gsplats.zarr --recipe substitutive -L 3 -K 4
+luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 
 # Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.0
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
@@ -759,8 +760,8 @@ luxar gsplat cal volume.tiff cal.json
 # 2. Fit at the recommended K* (read from cal.json or its stdout)
 luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 
-# 3. Build a streaming LOD ladder
-luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
+# 3. Build a streaming LOD ladder (pick a recipe by dataset scale)
+luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe additive --n-lods 4
 ```
 
 See `lod/README.md` for algorithm details (greedy vs self-energy vs mass vs amplitude ordering, breakpoint specs, performance notes, and the mathematical derivations / complexity analyses).
@@ -851,7 +852,7 @@ image = np.random.rand(100, 100).astype(np.float32)
 result = fit_gaussian_splats(image, n_iters=1000)
 
 # Add directly to scene
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('fitted', result)
     print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
@@ -863,7 +864,7 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 result.save('fitted.gsplats.zarr', ordering='hilbert')
 
 # Later, load into a scene
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_file('loaded', 'fitted.gsplats.zarr')
     print(f"Loaded {gsplats.n_splats} splats")
@@ -877,7 +878,7 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 
 > **Multi-substitutive input → `kind=lod` group.** When the `GSplatData`
 > carries more than one substitutive level (e.g. the output of
-> `luxar gsplat lod substitutive` / `pyramid`), `add_gsplats_from_data`
+> `luxar gsplat lod --recipe substitutive` / `pyramid`), `add_gsplats_from_data`
 > (and `add_gsplats_from_file`) route it by default into a `kind=lod`
 > scene group — one gsplats child per substitutive level, with
 > `min_pixel_size` thresholds derived from the per-level splat counts, so
@@ -911,7 +912,7 @@ assert loaded.colors is not None
 assert loaded.colors.shape == (n_splats, 3)
 
 # Scene integration preserves colors
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('colored', result)
     assert gsplats.has_colors == True

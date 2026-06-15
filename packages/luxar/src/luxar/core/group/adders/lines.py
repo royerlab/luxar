@@ -52,9 +52,21 @@ def add_lines_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     additive_lod: Any = None,
+    substitutive_lod: Any = None,
     partition: Any = None,
     **attrs: Any,
 ) -> Union[Lines, "Group"]:
+    if additive_lod is not None and substitutive_lod is not None:
+        raise ValueError(
+            "additive_lod and substitutive_lod are mutually exclusive coarsening "
+            "strategies for Lines (append vs replace on the same LOD axis); "
+            "pass only one."
+        )
+    if substitutive_lod is not None and partition is not None:
+        raise ValueError(
+            "partition= and substitutive_lod= cannot be combined yet "
+            "(partition-of-substitutive is not implemented). Use one or the other."
+        )
     try:
         scene = group._find_scene()
 
@@ -74,10 +86,46 @@ def add_lines_impl(
         n_vertices = vert_arr.shape[0]
         ndim = vert_arr.shape[1]
 
-        # NOTE: compiler-level auto-partition heuristic is a separate PR
-        # (β); add_lines honors user-explicit ``partition=`` here and
-        # will pick up the auto-partition path automatically once β
-        # merges. Until then, ``partition=`` is opt-in via the call site.
+        # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
+        # segment lifted to isotropic "bead" Gaussians, then reduced by the
+        # gsplat substitutive pipeline) under a kind=lod Group whose finest
+        # child is the original Lines node. Fires before partition; mutually
+        # exclusive with additive_lod/partition (checked above). ``vert_arr`` is
+        # already dim_order-transformed, so children use dim_order=None/fill=None.
+        if substitutive_lod is not None and n_vertices > 0:
+            from ..lod.lines import resolve_substitutive_axis_lines
+
+            substitutive_spec = resolve_substitutive_axis_lines(substitutive_lod)
+            if substitutive_spec is not None:
+                return add_lines_substitutive_lod_wrapper_impl(
+                    group,
+                    name=name,
+                    vert_arr=vert_arr,
+                    widths=widths,
+                    colors=colors,
+                    sharpness=sharpness,
+                    scalars=scalars,
+                    labels=labels,
+                    image_labels=image_labels,
+                    indices=indices,
+                    line_type=line_type,
+                    parent=parent,
+                    extend_to_all=extend_to_all,
+                    spec=substitutive_spec,
+                    **attrs,
+                )
+
+        # NOTE: add_lines has no compiler-level auto-partition heuristic — only a
+        # user-explicit ``partition=`` is honored (Points additionally auto-
+        # partitions large clouds; Lines do not).
+
+        # ``partition=False`` is an explicit no-partition bypass (the same
+        # sentinel resolve_auto_partition normalises for Points), used by the
+        # substitutive finest-child + degenerate fallback so a nested add_lines
+        # can't re-partition. Normalise it to None here (lines does not yet wire
+        # the auto-partition heuristic, so there is nothing else to resolve).
+        if partition is False:
+            partition = None
 
         # Partition branch — polyline-aware BSP. Whole polylines are
         # atomic; the BSP runs over per-polyline centroids and assigns
@@ -583,3 +631,164 @@ def add_lines_multi_lod_wrapper_impl(
         writer=writer,
         **attrs,
     )
+
+
+def add_lines_substitutive_lod_wrapper_impl(
+    group: "Group",
+    *,
+    name: str,
+    vert_arr: np.ndarray,
+    widths: Any,
+    colors: Any,
+    sharpness: Any,
+    scalars: Any,
+    labels: Any,
+    image_labels: Any,
+    indices: Optional[np.ndarray],
+    line_type: str,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    spec: Dict[str, Any],
+    **attrs: Any,
+) -> Union["Group", Lines]:
+    """Write a Lines node whose coarse LOD levels are synthesised gsplats.
+
+    Each segment is lifted to a string of isotropic "bead" Gaussians (see
+    :func:`luxar.gsplats.lift.lift_lines_to_gsplats` — beads are view-independent
+    and sum to a smooth tube, unlike one elongated anisotropic Gaussian), the
+    gsplat substitutive pipeline synthesises fewer-but-larger representative
+    levels, and those become the coarse children of a ``kind=lod`` Group whose
+    **finest** child is the original Lines node. Mirrors
+    :func:`add_points_substitutive_lod_wrapper_impl`.
+    """
+    from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
+    from ..lod.group import derive_min_pixel_sizes
+
+    # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
+    # interpolates the scalar per bead then maps it through the LUT (matching the
+    # line shader's interpolate-then-LUT order — important for non-linear
+    # colormaps). The finest Lines child keeps scalars+colormap natively.
+    scalars_for_lift = None
+    colors_for_lift = colors
+    if scalars is not None and colors is None:
+        if attrs.get("colormap") is None:
+            raise ValueError(
+                "substitutive_lod on Lines with scalars requires a colormap "
+                "(scalars map to colour via a colormap LUT). Pass colormap=..., "
+                "or provide explicit per-vertex colors."
+            )
+        scalars_for_lift = scalars
+
+    lifted = lift_lines_to_gsplats(
+        vert_arr,
+        widths,
+        line_type=line_type,
+        indices=indices,
+        colors=colors_for_lift,
+        scalars=scalars_for_lift,
+        colormap=attrs.get("colormap") if scalars_for_lift is not None else None,
+        opacity=1.0,
+        truncation_radius=float(spec["truncation_radius"]),
+    )
+
+    # Synthesise coarse gsplat levels (level 0 dropped, render-light conserved).
+    coarse = coarse_substitutive_levels(
+        lifted,
+        compression_factor=int(spec["compression_factor"]),
+        levels=int(spec["levels"]),
+        method=str(spec["method"]),
+        device=spec.get("device", "auto"),
+        seed=spec.get("seed"),
+    )
+
+    # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an
+    # edge-less / all-zero-width set (the lift yields 0 beads, so every coarse
+    # level is empty: coarse[-1] is the coarsest). vert_arr is already
+    # dim_order-transformed; partition=False so auto-partition can't re-fire.
+    if not coarse or int(coarse[-1].n_splats) == 0:
+        aprint(
+            f"  ⚠ substitutive_lod '{name}': no liftable segments / too small to "
+            "synthesise coarse levels; writing a flat Lines node."
+        )
+        return add_lines_impl(
+            group, name=name, vertices=vert_arr, widths=widths, colors=colors,
+            sharpness=sharpness, scalars=scalars, labels=labels,
+            image_labels=image_labels, indices=indices, line_type=line_type,
+            parent=parent, extend_to_all=extend_to_all, partition=False, **attrs,
+        )
+
+    coarse_first = list(reversed(coarse))  # coarsest first
+    # Finest "count" is the full lifted BEAD count, not n_vertices: the coarse
+    # gsplat children are bead reductions (N_beads/K^l), so measuring the finest
+    # in the same bead currency keeps the ladder counts strictly ascending and
+    # gives the real Lines node the highest switch threshold (a vertex count is
+    # a different, much smaller scale and would collapse the top thresholds).
+    counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
+    explicit = spec.get("min_pixel_sizes")
+    if explicit is not None:
+        if len(explicit) != len(counts):
+            raise ValueError(
+                f"min_pixel_sizes has {len(explicit)} entries but the LOD ladder "
+                f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 lines)"
+            )
+        min_pixel_sizes = list(explicit)
+    else:
+        min_pixel_sizes = derive_min_pixel_sizes(
+            counts, base_pixel_size=spec.get("base_pixel_size")
+        )
+
+    lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+    child_attrs.pop("min_pixel_size", None)
+    lod_attrs.setdefault("display_type", "lines")  # finest child is lines
+    # Coarse gsplat children carry baked per-splat colours, so they must NOT also
+    # receive `colormap` (gsplats reject colors+colormap); it stays on the finest
+    # Lines child only.
+    gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
+
+    parent_node = parent or group
+    aprint(
+        f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + lines "
+        f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
+    )
+    lod_group_node = parent_node.add_lod_group(
+        name, base_pixel_size=spec.get("base_pixel_size"), **lod_attrs
+    )
+
+    # Coarse gsplat children (coarsest first). vert_arr already dim_order-applied.
+    for idx, lvl_data in enumerate(coarse_first):
+        lod_group_node.add_gsplats_from_data(
+            name=f"child_{idx}",
+            result=lvl_data,
+            extend_to_all=extend_to_all,
+            dim_order=None,
+            fill=None,
+            lod_group=None,
+            additive_lod=None,
+            min_pixel_size=min_pixel_sizes[idx],
+            **gsplat_child_attrs,
+        )
+
+    # Finest child: the original Lines node (carries all vertices + image_labels).
+    lod_group_node.add_lines(
+        name=f"child_{len(coarse_first)}",
+        vertices=vert_arr,
+        widths=widths,
+        colors=colors,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+        image_labels=image_labels,
+        indices=indices,
+        line_type=line_type,
+        extend_to_all=extend_to_all,
+        dim_order=None,
+        fill=None,
+        additive_lod=None,
+        substitutive_lod=None,
+        partition=False,
+        min_pixel_size=min_pixel_sizes[-1],
+        **child_attrs,
+    )
+
+    return lod_group_node

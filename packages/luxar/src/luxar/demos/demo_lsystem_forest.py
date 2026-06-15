@@ -804,7 +804,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "forest.zarr"
+        output_path = get_demos_output_dir() / "forest.luxar.zarr"
         with asection("Generating forest"):
             generate_forest(output_path, iterations=iterations, n_trees=n_trees)
         aprint(f"Dataset generated at {output_path}")
@@ -812,7 +812,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_forest_") as tmpdir:
-        output_path = Path(tmpdir) / "forest.zarr"
+        output_path = Path(tmpdir) / "forest.luxar.zarr"
 
         with asection("Generating forest"):
             total_segments = generate_forest(

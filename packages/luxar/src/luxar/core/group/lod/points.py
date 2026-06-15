@@ -17,13 +17,12 @@ The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
 
 * ``n_lods: int`` — equal-count split into this many LODs.
-* ``counts: list[int]`` — cumulative element-count breakpoints (the
-  shape PR #301 used for HTTP-range-streaming-sized gsplats demos).
+* ``counts: list[int]`` — cumulative element-count breakpoints (sized for
+  HTTP-range-streaming the coarsest levels first).
 
 If both are passed, ``counts`` wins. If the dataset has fewer elements
 than the requested ``n_lods``, the writer emits ``min(n_lods, n)``
-non-empty levels and the trailing levels are dropped (silent — matches
-the user's preference in the plan).
+non-empty levels and silently drops the trailing (empty) levels.
 """
 
 from __future__ import annotations
@@ -43,6 +42,31 @@ PointsMethodName = Literal["random", "salience", "spatial-uniform", "poisson-dis
 # Default for ``additive_lod=True`` and ``additive_lod=dict()``.
 DEFAULT_N_LODS: int = 4
 DEFAULT_METHOD: PointsMethodName = "random"
+
+# Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — the
+# coarse levels are synthesised gsplats (each point lifted to an isotropic
+# Gaussian, then reduced by the gsplat substitutive pipeline). The substitutive
+# vocabulary/defaults are shared with Lines — see
+# :func:`luxar.core.group.lod.group.resolve_substitutive_axis`.
+
+
+def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
+    """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
+
+    The substitutive axis coarsens a point cloud by **synthesising gsplats**:
+    each point is lifted to an isotropic Gaussian and the gsplat substitutive
+    pipeline builds fewer-but-larger representative levels (mass-preserving),
+    which become the coarse levels of a points LOD ladder (the finest level
+    stays the original Points node).
+
+    Thin wrapper over the shared
+    :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
+    implementation shared with Lines so the two can't drift). See it for the
+    full value vocabulary.
+    """
+    from .group import resolve_substitutive_axis
+
+    return resolve_substitutive_axis(spec, "Points")
 
 
 # ─────────────────────────────────────────────────────────────────────

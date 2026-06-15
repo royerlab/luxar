@@ -31,6 +31,7 @@ from luxar.io._compiler.gsplat_tree import (
     write_gsplat_node,
 )
 from luxar.io.reader import DEFAULT_COMP
+from luxar.utils.paths import normalize_zarr_path
 
 # Get luxar.gsplats version
 try:
@@ -42,6 +43,64 @@ except ImportError:
 
 #: On-disk format version for the node-tree ``.gsplats.zarr`` layout.
 FORMAT_VERSION = "3.0"
+
+#: ``stats`` keys lifted into the ``fitting/`` group on save (quality metrics,
+#: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``
+#: and the ``lod --recipe`` CLI) selects the same fields.
+_FITTING_INFO_KEYS = (
+    "time_seconds",
+    "iterations",
+    "converged",
+    "early_stopped",
+    "best_iteration",
+    "final_loss",
+    "final_max_abs_error",
+    "final_rel_l2",
+    "n_splats",
+    "n_culled",
+    "fitter_name",
+    "fitter_version",
+    "timestamp",
+    "culled",
+    "culling_method",
+    "n_original",
+    "n_removed",
+    "amplitude_retention",
+    "filtered",
+    "filter_criteria",
+    "truncate",
+    "psnr_db",
+    "ssim",
+    "mse",
+)
+
+
+def split_fitting_info(
+    stats: Optional[Dict[str, Any]],
+    *,
+    include_fitting_info: bool = True,
+    include_provenance: bool = False,
+) -> tuple[
+    Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]
+]:
+    """Split a ``stats`` dict into ``(fitting_info, fitting_config, provenance_info)``.
+
+    Mirrors the extraction done by :meth:`GSplatData.save` so the standalone
+    node-tree writers (e.g. the ``lod --recipe`` composed recipes, which have no
+    flat ``GSplatData``) attach the same ``fitting/`` / ``provenance/`` groups.
+    """
+    if not stats:
+        return None, None, None
+    fitting_info: Optional[Dict[str, Any]] = None
+    fitting_config: Optional[Dict[str, Any]] = None
+    provenance_info: Optional[Dict[str, Any]] = None
+    if include_fitting_info:
+        fitting_info = {k: v for k, v in stats.items() if k in _FITTING_INFO_KEYS}
+        if "config" in stats:
+            fitting_config = stats["config"]
+    if include_provenance and "provenance" in stats:
+        provenance_info = stats["provenance"]
+    return fitting_info, fitting_config, provenance_info
 
 
 def _resolve_zarr_path(
@@ -55,8 +114,10 @@ def _resolve_zarr_path(
     for suffix in (".zip", ".tar.gz", ".gz"):
         if zarr_name.endswith(suffix):
             zarr_name = zarr_name[: -len(suffix)]
-    if not zarr_name.endswith(".gsplats.zarr"):
-        zarr_name = zarr_name + ".gsplats.zarr"
+            break
+    # Enforce the canonical standalone suffix on the inner store name (shared
+    # with the scene compiler's ``.luxar.zarr`` normalization).
+    zarr_name = normalize_zarr_path(zarr_name, ".gsplats.zarr").name
     return temp_dir, temp_dir / zarr_name
 
 
@@ -134,6 +195,15 @@ def write_gsplats_tree(
         root.attrs["description"] = description
 
     if fitting_info is not None:
+        # `n_splats` denotes the count of splats in THIS artifact (see
+        # fitting/results.py). Stats are inherited from the source fit, so for
+        # count-changing operations (substitutive / multiscale LOD synthesise
+        # extra representative splats) the inherited value is stale and would
+        # contradict the file's own leaf arrays. Correct it to the true total.
+        if "n_splats" in fitting_info:
+            from luxar.gsplats.tree import total_splats
+
+            fitting_info = {**fitting_info, "n_splats": int(total_splats(node))}
         fitting_group = root.create_group("fitting")
         fitting_group.attrs.update(fitting_info)
         if fitting_config is not None:

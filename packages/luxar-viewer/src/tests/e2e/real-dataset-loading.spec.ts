@@ -13,16 +13,16 @@ import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers
 
 // Dataset paths (served from Python HTTP server on port 9000)
 const DATASETS = {
-  dimensionNav: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
-  dimSliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',
-  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
-  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.zarr',
-  buildManual: 'http://localhost:9000/datasets/examples/build_example_manual.zarr',
-  buildStructured: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
+  dimensionNav: 'http://localhost:9000/datasets/examples/dimension_navigation_example.luxar.zarr',
+  dimSliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr',
+  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
+  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.luxar.zarr',
+  buildManual: 'http://localhost:9000/datasets/examples/build_example_manual.luxar.zarr',
+  buildStructured: 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr',
 };
 
 test.describe('Real Dataset Loading', () => {
-  test('should load dimension_navigation_example.zarr successfully', async ({ page }) => {
+  test('should load dimension_navigation_example.luxar.zarr successfully', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
@@ -140,7 +140,7 @@ test.describe('Real Dataset Loading', () => {
     expect(state.initialized).toBe(true);
 
     // This dataset may load with 0 points due to known loading issues with
-    // build_example_manual.zarr. The key assertion is that the app initializes
+    // build_example_manual.luxar.zarr. The key assertion is that the app initializes
     // without crashing, even without a spatial index.
     expect(state.totalPoints).toBeGreaterThanOrEqual(0);
   });
@@ -220,7 +220,7 @@ test.describe('Real Dataset Loading', () => {
 
   test('should load rendering properties from dataset', async ({ page }) => {
     const RENDERING_DATASET =
-      'http://localhost:9000/datasets/examples/rendering_attributes_example.zarr';
+      'http://localhost:9000/datasets/examples/rendering_attributes_example.luxar.zarr';
     await page.goto(`/?src=${RENDERING_DATASET}&debug`);
     await waitForLuxarReady(page);
 

@@ -13,7 +13,7 @@ class TestHDRColorSupport:
     def test_standard_sdr_colors(self, tmp_path) -> None:
         """Test standard SDR colors (0-1 range)."""
         with LuxarZarrCompiler(
-            tmp_path / "sdr.zarr", enable_spatial_index=False
+            tmp_path / "sdr.luxar.zarr", enable_spatial_index=False
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -24,7 +24,7 @@ class TestHDRColorSupport:
 
         # Verify colors are stored correctly
         # With AUTO mode, SDR colors should be converted to uint8 for efficiency
-        store = zarr.open_group(tmp_path / "sdr.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "sdr.luxar.zarr", mode="r")
         stored_colors = store["sdr_points/colors"][:]
         assert stored_colors.dtype == np.uint8  # AUTO mode converts SDR to uint8
         assert np.all(stored_colors >= 0)
@@ -35,7 +35,7 @@ class TestHDRColorSupport:
     def test_hdr_colors_moderate(self, tmp_path) -> None:
         """Test moderate HDR colors (1-5 range)."""
         with LuxarZarrCompiler(
-            tmp_path / "hdr_moderate.zarr", enable_spatial_index=False
+            tmp_path / "hdr_moderate.luxar.zarr", enable_spatial_index=False
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -45,7 +45,7 @@ class TestHDRColorSupport:
             scene.add_points("hdr_points", positions, colors=colors)
 
         # Verify HDR colors are preserved
-        store = zarr.open_group(tmp_path / "hdr_moderate.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "hdr_moderate.luxar.zarr", mode="r")
         stored_colors = store["hdr_points/colors"][:]
         assert stored_colors.dtype == np.float32
         assert np.max(stored_colors) > 1.0  # HDR values
@@ -55,7 +55,7 @@ class TestHDRColorSupport:
     def test_hdr_colors_extreme(self, tmp_path) -> None:
         """Test extreme HDR colors with warnings."""
         with LuxarZarrCompiler(
-            tmp_path / "hdr_extreme.zarr", enable_spatial_index=False
+            tmp_path / "hdr_extreme.luxar.zarr", enable_spatial_index=False
         ) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -67,7 +67,7 @@ class TestHDRColorSupport:
                 compiler.write_points("extreme_hdr", positions, colors=colors)
 
         # Verify extreme values are preserved
-        store = zarr.open_group(tmp_path / "hdr_extreme.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "hdr_extreme.luxar.zarr", mode="r")
         stored_colors = store["extreme_hdr/colors"][:]
         assert np.max(stored_colors) > 10.0  # Extreme HDR
         np.testing.assert_array_almost_equal(stored_colors, colors, decimal=2)
@@ -75,7 +75,7 @@ class TestHDRColorSupport:
     def test_mixed_hdr_sdr_colors(self, tmp_path) -> None:
         """Test mixed HDR and SDR values in same array."""
         with LuxarZarrCompiler(
-            tmp_path / "mixed.zarr", enable_spatial_index=False
+            tmp_path / "mixed.luxar.zarr", enable_spatial_index=False
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -87,7 +87,7 @@ class TestHDRColorSupport:
             scene.add_points("mixed_points", positions, colors=colors)
 
         # Verify mixed values are preserved
-        store = zarr.open_group(tmp_path / "mixed.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "mixed.luxar.zarr", mode="r")
         stored_colors = store["mixed_points/colors"][:]
 
         # Check SDR points
@@ -102,7 +102,7 @@ class TestHDRColorSupport:
 
     def test_zero_colors(self, tmp_path) -> None:
         """Test all-zero colors (black points)."""
-        with LuxarZarrCompiler(tmp_path / "black.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "black.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -111,13 +111,13 @@ class TestHDRColorSupport:
             scene.add_points("black_points", positions, colors=colors)
 
         # Verify zeros are preserved
-        store = zarr.open_group(tmp_path / "black.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "black.luxar.zarr", mode="r")
         stored_colors = store["black_points/colors"][:]
         assert np.all(stored_colors == 0)
 
     def test_single_hdr_color_broadcast(self, tmp_path) -> None:
         """Test broadcasting a single HDR color to all points."""
-        with LuxarZarrCompiler(tmp_path / "broadcast_hdr.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "broadcast_hdr.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -126,7 +126,7 @@ class TestHDRColorSupport:
             scene.add_points("broadcast_points", positions, colors=single_hdr_color)
 
         # Verify broadcast HDR color (NEW: encoder detects uniform and uses broadcasting)
-        store = zarr.open_group(tmp_path / "broadcast_hdr.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "broadcast_hdr.luxar.zarr", mode="r")
         colors_arr = store["broadcast_points/colors"]
         stored_colors = colors_arr[:]
 
@@ -148,7 +148,7 @@ class TestHDRColorSupport:
     def test_color_precision(self, tmp_path) -> None:
         """Test that float32 precision is maintained."""
         with LuxarZarrCompiler(
-            tmp_path / "precision.zarr", enable_spatial_index=False
+            tmp_path / "precision.luxar.zarr", enable_spatial_index=False
         ) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
@@ -172,7 +172,7 @@ class TestHDRColorSupport:
         # Use ArrayDecoder to properly decode (may be LUT/broadcasted/etc)
         from luxar.encoding import ArrayDecoder
 
-        store = zarr.open_group(tmp_path / "precision.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "precision.luxar.zarr", mode="r")
         decoder = ArrayDecoder()
         stored_colors = decoder.decode(store["precision_points/colors"], store)
 
@@ -181,7 +181,7 @@ class TestHDRColorSupport:
 
     def test_negative_color_rejection(self, tmp_path) -> None:
         """Test that negative colors are properly rejected."""
-        with LuxarZarrCompiler(tmp_path / "negative.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "negative.luxar.zarr") as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -195,7 +195,7 @@ class TestHDRColorSupport:
 
     def test_color_channel_count(self, tmp_path) -> None:
         """Test that only RGB (3 channels) is accepted."""
-        with LuxarZarrCompiler(tmp_path / "channels.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "channels.luxar.zarr") as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -214,7 +214,7 @@ class TestHDRColorSupport:
 
     def test_no_colors_allowed(self, tmp_path) -> None:
         """Test that points without colors are allowed."""
-        with LuxarZarrCompiler(tmp_path / "no_colors.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "no_colors.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(100, 3).astype(np.float32)
@@ -222,6 +222,6 @@ class TestHDRColorSupport:
             scene.add_points("no_color_points", positions)
 
         # Verify no colors dataset was created
-        store = zarr.open_group(tmp_path / "no_colors.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "no_colors.luxar.zarr", mode="r")
         assert "no_color_points/positions" in store
         assert "no_color_points/colors" not in store

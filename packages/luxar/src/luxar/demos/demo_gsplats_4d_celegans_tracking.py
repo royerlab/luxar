@@ -79,7 +79,7 @@ Requirements:
     - PyTorch for NLM denoising (included in luxar[gsplats])
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_4d_celegans_tracking.zarr
+    - Scene saved to:  datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -1632,7 +1632,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
+        output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.luxar.zarr"
 
     # Infer number of timepoints from the time coordinate (last column)
     time_coords = combined_4d.centers[:, -1]
@@ -1762,7 +1762,7 @@ def main():
     aprint("Volume rendering (GSplats) + cell lineage tracks (Lines)")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.zarr"
+    output_path = get_demos_output_dir() / "gsplats_4d_celegans_tracking.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

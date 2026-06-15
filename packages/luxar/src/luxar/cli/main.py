@@ -397,16 +397,16 @@ def serve(
 
     Examples:
         # Simulate 3G mobile connection
-        luxar serve data.zarr --profile 3g --viewer
+        luxar serve data.luxar.zarr --profile 3g --viewer
 
         # Simulate custom slow connection
-        luxar serve data.zarr --bandwidth 500kbps --latency 200ms
+        luxar serve data.luxar.zarr --bandwidth 500kbps --latency 200ms
 
         # Use 4G profile with custom latency
-        luxar serve data.zarr --profile 4g --latency 300ms
+        luxar serve data.luxar.zarr --profile 4g --latency 300ms
 
         # Test packet loss
-        luxar serve data.zarr --bandwidth 10mbps --packet-loss 5%
+        luxar serve data.luxar.zarr --bandwidth 10mbps --packet-loss 5%
 
     Args:
         path (Path, optional): Path to directory or Zarr dataset to serve.
@@ -683,7 +683,7 @@ def viewer(
 
     Examples:
         # Serve viewer with data using 3G simulation
-        luxar viewer --data foo.zarr --profile 3g
+        luxar viewer --data foo.luxar.zarr --profile 3g
 
         # Serve viewer only (no simulation applies)
         luxar viewer
@@ -920,7 +920,7 @@ def demo(
         luxar demo --profile 3g
 
         # Just generate without serving
-        luxar demo --no-serve --output my_demo.zarr
+        luxar demo --no-serve --output my_demo.luxar.zarr
 
         # Generate with specific parameters and simulate slow network
         luxar demo --points 100000 --bandwidth 500kbps --latency 200ms
@@ -959,8 +959,14 @@ def demo(
                 # serve=True and output=None: use a temp directory
                 _temp_dir_ctx = tempfile.TemporaryDirectory(prefix="luxar_demo_")
                 temp_dir = Path(_temp_dir_ctx.__enter__())
-                output = temp_dir / f"{demo_type}_demo.zarr"
+                output = temp_dir / f"{demo_type}_demo.luxar.zarr"
                 aprint(f"📂 Using temporary directory: {temp_dir}")
+            else:
+                # Enforce the canonical scene extension so the served/reported
+                # path matches what the compiler actually writes.
+                from luxar.utils.paths import normalize_zarr_path
+
+                output = normalize_zarr_path(output, ".luxar.zarr")
 
             # Generate demo
             aprint(f"🎲 Generating {demo_type} demo with {n_points:,} points...")
@@ -1310,11 +1316,11 @@ def export(
     run first.
 
     Examples:
-        luxar export my_scene.zarr -o my_export/
-        luxar export my_scene.zarr -o my_export/ --overwrite
-        luxar export my_scene.zarr -o my_export/ --open
-        luxar export my_scene.zarr -o out/ --native macos
-        luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64
+        luxar export my_scene.luxar.zarr -o my_export/
+        luxar export my_scene.luxar.zarr -o my_export/ --overwrite
+        luxar export my_scene.luxar.zarr -o my_export/ --open
+        luxar export my_scene.luxar.zarr -o out/ --native macos
+        luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64
     """
     try:
         if native:
@@ -1425,8 +1431,15 @@ def _run_native_export(
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
 
-    # source.stem already drops the .zarr suffix; no replace needed.
-    bundle_name = name or source.stem or "LuxarScene"
+    # Strip the full (possibly compound) zarr suffix for the bundle name —
+    # Path.stem only drops the last suffix, so ``foo.luxar.zarr`` would yield
+    # ``foo.luxar`` rather than ``foo``.
+    _bundle_stem = source.name
+    for _suf in (".luxar.zarr", ".gsplats.zarr", ".zarr"):
+        if _bundle_stem.endswith(_suf):
+            _bundle_stem = _bundle_stem[: -len(_suf)]
+            break
+    bundle_name = name or _bundle_stem or "LuxarScene"
     viewer_dist = get_viewer_dist_path()
 
     with asection(f"Luxar Export (native: {', '.join(requested)})"):
@@ -1481,9 +1494,9 @@ def profiles() -> None:
         aprint(f"    Description: {profile['description']}")
         aprint("")
 
-    aprint("Usage: luxar serve data.zarr --profile <profile-name>")
+    aprint("Usage: luxar serve data.luxar.zarr --profile <profile-name>")
     aprint("       luxar demo --profile 3g")
-    aprint("       luxar viewer --data data.zarr --profile satellite")
+    aprint("       luxar viewer --data data.luxar.zarr --profile satellite")
 
 
 # ────────────────────────────────────────────────────────────────────────────

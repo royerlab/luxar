@@ -34,7 +34,7 @@ Key Functions
       import uvicorn
 
       # Create server app
-      app = create_server_app("/path/to/data.zarr", serve_viewer=False)
+      app = create_server_app("/path/to/data.luxar.zarr", serve_viewer=False)
 
       # Run with uvicorn
       uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -75,13 +75,13 @@ The network simulation supports several built-in profiles that simulate real-wor
 Example usage::
 
    # Simulate 3G connection
-   luxar serve data.zarr --profile 3g --viewer
+   luxar serve data.luxar.zarr --profile 3g --viewer
 
    # Custom slow connection
-   luxar serve data.zarr --bandwidth 500kbps --latency 200ms --packet-loss 2%
+   luxar serve data.luxar.zarr --bandwidth 500kbps --latency 200ms --packet-loss 2%
 
    # Override profile settings
-   luxar serve data.zarr --profile 4g --latency 300ms
+   luxar serve data.luxar.zarr --profile 4g --latency 300ms
 
 See the :doc:`../guides/developer/NETWORK_SIMULATION_SPEC` for detailed specifications.
 

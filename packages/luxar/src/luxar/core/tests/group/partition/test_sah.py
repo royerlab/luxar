@@ -109,7 +109,7 @@ class TestSahBspPartition:
 class TestSahRuleEndToEnd:
     def test_add_points_sah_rule(self, tmp_path):
         pos = np.random.RandomState(0).uniform(-10, 10, (400, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points(
                 "pts", pos, partition=dict(max_elements=150, rule="sah")
@@ -119,7 +119,7 @@ class TestSahRuleEndToEnd:
 
     def test_add_points_invalid_rule_raises(self, tmp_path):
         pos = np.random.RandomState(0).uniform(-10, 10, (100, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="partition rule"):
                 scene.add_points(
@@ -131,7 +131,7 @@ class TestSahRuleEndToEnd:
         c = rng.uniform(-10, 10, (200, 3)).astype(np.float32)
         a = rng.uniform(0.1, 1.0, 200).astype(np.float32)
         ch = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (200, 1))
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats(
                 "splats",
@@ -149,10 +149,10 @@ class TestSahRuleEndToEnd:
         # Median is the default partition rule — omitting rule= must match
         # median_bsp_partition (and NOT the old midpoint baseline).
         median_parts = median_bsp_partition(pos, max_elements=120)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_points("pts", pos, partition=dict(max_elements=120))
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["pts"]
 
         def collect(g, out):

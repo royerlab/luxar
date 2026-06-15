@@ -190,7 +190,7 @@ class TestResolveAdditiveAxisPoints:
 
 class TestAddPointsAdditiveLod:
     def test_default_true_writes_4_levels(self, tmp_path) -> None:
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         positions = rng.rand(200, 3).astype(np.float32)
 
@@ -210,7 +210,7 @@ class TestAddPointsAdditiveLod:
         assert total == 200
 
     def test_dict_with_explicit_n_lods(self, tmp_path) -> None:
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(1)
         positions = rng.rand(60, 3).astype(np.float32)
 
@@ -225,7 +225,7 @@ class TestAddPointsAdditiveLod:
         assert grp.attrs["n_additive_sublods"] == 3
 
     def test_counts_breakpoints_via_kwarg(self, tmp_path) -> None:
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(2)
         positions = rng.rand(100, 3).astype(np.float32)
 
@@ -245,7 +245,7 @@ class TestAddPointsAdditiveLod:
         assert sizes == [10, 20, 40, 30]
 
     def test_default_method_lands_on_parent_attrs(self, tmp_path) -> None:
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(3)
         positions = rng.rand(40, 3).astype(np.float32)
 
@@ -259,7 +259,7 @@ class TestAddPointsAdditiveLod:
 
     def test_single_shot_path_still_works(self, tmp_path) -> None:
         """No ``additive_lod=`` → existing single-LOD layout."""
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(4)
         positions = rng.rand(50, 3).astype(np.float32)
 
@@ -277,7 +277,7 @@ class TestAddPointsAdditiveLod:
 
     def test_layer_flag_lands_on_parent(self, tmp_path) -> None:
         """``layer=True`` rides onto the parent multi-LOD node."""
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(5)
         positions = rng.rand(100, 3).astype(np.float32)
 

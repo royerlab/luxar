@@ -198,17 +198,17 @@ def main():
         configs = [
             (
                 EncodingMode.PRECISION,
-                "memory_precision_example.zarr",
+                "memory_precision_example.luxar.zarr",
                 "Maximum Precision (float32 for all arrays)",
             ),
             (
                 EncodingMode.MEMORY,
-                "memory_efficient_example.zarr",
+                "memory_efficient_example.luxar.zarr",
                 "Memory Efficient (aggressive quantization)",
             ),
             (
                 EncodingMode.AUTO,
-                "memory_auto_example.zarr",
+                "memory_auto_example.luxar.zarr",
                 "Auto-detected encoding",
             ),
         ]
@@ -271,7 +271,7 @@ def main():
 
         # Serve the most memory-efficient example
         aprint("To view the memory-efficient example, run:")
-        aprint(f"  luxar serve {output_dir}/memory_efficient_example.zarr")
+        aprint(f"  luxar serve {output_dir}/memory_efficient_example.luxar.zarr")
 
 
 if __name__ == "__main__":

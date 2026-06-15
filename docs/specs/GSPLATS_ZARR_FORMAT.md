@@ -780,23 +780,23 @@ dims = Dimensions.default_3d()
 
 # Single-pass fitting → flat gsplats node
 result = fit_gaussian_splats(image, n_iters=1000)
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_data("nuclei", result)
 
 # Progressive fitting → multi-LOD gsplats node (per-LOD subgroups)
 result = fit_progressive_gaussian_splats(image, max_splats=50000)
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_data("nuclei", result)  # auto-detects multi-LOD
 
 # From saved .gsplats.zarr file (preserves LOD structure)
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_file("nuclei", "fitted.gsplats.zarr")
 
 # Fit-and-add in one step (supports progressive=True)
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_gsplats_from_volume("nuclei", image, progressive=True)
 ```

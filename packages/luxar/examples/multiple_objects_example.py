@@ -136,7 +136,7 @@ def create_ring_system(
 
 def main():
     """Create a scene with multiple different points objects."""
-    output_path = get_examples_output_dir() / "multiple_objects_example.zarr"
+    output_path = get_examples_output_dir() / "multiple_objects_example.luxar.zarr"
 
     with asection("Multiple Objects Example Setup"):
         aprint(f"Creating multiple objects demonstration at {output_path}")

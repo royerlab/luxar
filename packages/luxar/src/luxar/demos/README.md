@@ -653,7 +653,7 @@ def generate_my_data(output_path: Path, **params) -> None:
 def main():
     """Entry point - generate and serve."""
     with tempfile.TemporaryDirectory(prefix="luxar_demo_") as tmpdir:
-        output_path = Path(tmpdir) / "demo.zarr"
+        output_path = Path(tmpdir) / "demo.luxar.zarr"
 
         # Generate
         generate_my_data(output_path)
@@ -698,7 +698,7 @@ Always use `tempfile.TemporaryDirectory()` to ensure cleanup:
 
 ```python
 with tempfile.TemporaryDirectory(prefix="luxar_demo_myname_") as tmpdir:
-    output = Path(tmpdir) / "data.zarr"
+    output = Path(tmpdir) / "data.luxar.zarr"
     generate_data(output)
     serve_and_view(output)
 # Automatic cleanup when context exits
@@ -906,7 +906,7 @@ pnpm build
 The CLI automatically finds available ports, but if issues persist, try specifying a different port:
 ```bash
 # Won't work with subprocess.run in demos currently
-# For manual testing: luxar serve data.zarr --viewer --port 8001 --viewer-port 5174
+# For manual testing: luxar serve data.luxar.zarr --viewer --port 8001 --viewer-port 5174
 ```
 
 ## Philosophy

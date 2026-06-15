@@ -188,14 +188,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "rainbow_sphere.zarr"
+        output_path = get_demos_output_dir() / "rainbow_sphere.luxar.zarr"
         generate_rainbow_sphere(output_path, n_points=n_points)
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
     # Use temporary directory for demo data (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_rainbow_") as tmpdir:
-        output_path = Path(tmpdir) / "rainbow_sphere.zarr"
+        output_path = Path(tmpdir) / "rainbow_sphere.luxar.zarr"
 
         # Generate the dataset (all code in this file!)
         generate_rainbow_sphere(output_path, n_points=n_points)

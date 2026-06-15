@@ -12,13 +12,13 @@ There are three common ways to open the viewer:
 
 ```bash
 # Serve a dataset and open the viewer in one step
-luxar serve scene.zarr --viewer
+luxar serve scene.luxar.zarr --viewer
 
 # Run the built-in demo
 luxar demo
 
 # Export a self-contained offline viewer
-luxar export scene.zarr -o my_export/ --open
+luxar export scene.luxar.zarr -o my_export/ --open
 ```
 
 You can also start the viewer development server directly:
@@ -340,7 +340,7 @@ vc = luxar.ViewerConfig(
     auto_rotate=True,
 )
 
-with luxar.LuxarZarrCompiler("output.zarr") as compiler:
+with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
     # ... add geometry to scene
 ```
@@ -354,7 +354,7 @@ file, then reload it in Python:
 vc = luxar.ViewerConfig.from_file("my_view.json")
 vc.bloom_strength = 0.8  # tweak as needed
 
-with luxar.LuxarZarrCompiler("output.zarr") as compiler:
+with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(viewer_config=vc)
     # ... add geometry to scene
 ```

@@ -4,7 +4,7 @@
  * Tests the napari-inspired per-layer control panel that opens with the L key.
  * Covers: visibility toggle, selection, blending mode, gamma, and panel lifecycle.
  *
- * Dataset: sharpness_showcase_example.zarr (8+ point cloud nodes with layer=True)
+ * Dataset: sharpness_showcase_example.luxar.zarr (8+ point cloud nodes with layer=True)
  */
 
 import { test, expect } from './fixtures';
@@ -19,7 +19,7 @@ import {
 } from './helpers';
 
 // Must use a dataset with layer=True on nodes — the layers panel refuses to open without layers
-const DATASET = 'http://localhost:9000/datasets/examples/layers_test_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/layers_test_example.luxar.zarr';
 
 test.describe('Layers Panel', () => {
   test.beforeEach(async ({ page }) => {

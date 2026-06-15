@@ -19,8 +19,8 @@ import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
 const DATASETS = {
-  basic: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
-  nD5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
+  basic: 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr',
+  nD5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
 };
 
 test.describe('Python→TypeScript Integration', () => {

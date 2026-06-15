@@ -64,14 +64,14 @@ Optimization 1: Chunk Size Selection
 .. code-block:: python
 
    # For static 3D data (no time dimension)
-   compiler = LuxarZarrCompiler('scene.zarr')
+   compiler = LuxarZarrCompiler('scene.luxar.zarr')
 
    # For time-series (4D with time animation)
-   compiler = LuxarZarrCompiler('timeseries.zarr')
+   compiler = LuxarZarrCompiler('timeseries.luxar.zarr')
 
    # For massive static datasets with best compression
    compiler = LuxarZarrCompiler(
-       'huge.zarr',
+       'huge.luxar.zarr',
        ordering_method="hilbert",  # Better compression for large datasets
    )
 
@@ -110,10 +110,10 @@ Optimization 2: Spatial Ordering Strategy
 .. code-block:: python
 
    # Default: Hilbert curve (best spatial locality, recommended)
-   compiler = LuxarZarrCompiler('scene.zarr')  # ordering_method="hilbert" by default
+   compiler = LuxarZarrCompiler('scene.luxar.zarr')  # ordering_method="hilbert" by default
 
    # Alternative: Morton curve (faster to compute, slightly worse locality)
-   compiler = LuxarZarrCompiler('scene.zarr', ordering_method="morton")
+   compiler = LuxarZarrCompiler('scene.luxar.zarr', ordering_method="morton")
 
 **Measured Impact**:
 
@@ -132,7 +132,7 @@ Analyzes data and chooses optimal encoding:
 
    from luxar.encoding import EncodingMode
 
-   compiler = LuxarZarrCompiler('scene.zarr', encoding_mode=EncodingMode.AUTO)
+   compiler = LuxarZarrCompiler('scene.luxar.zarr', encoding_mode=EncodingMode.AUTO)
 
    # Positions: Analyzes range, uses uint16 if |max-min| < 65536
    # Colors: uint8 for SDR, float32 for HDR
@@ -144,7 +144,7 @@ Keeps float32 for everything:
 
 .. code-block:: python
 
-   compiler = LuxarZarrCompiler('scene.zarr', encoding_mode=EncodingMode.PRECISION)
+   compiler = LuxarZarrCompiler('scene.luxar.zarr', encoding_mode=EncodingMode.PRECISION)
 
    # Positions: float32 (no quantization)
    # Colors: float32 (full HDR range)
@@ -158,7 +158,7 @@ Maximum compression:
 
 .. code-block:: python
 
-   compiler = LuxarZarrCompiler('scene.zarr', encoding_mode=EncodingMode.MEMORY)
+   compiler = LuxarZarrCompiler('scene.luxar.zarr', encoding_mode=EncodingMode.MEMORY)
 
    # Positions: uint16 or uint8 (aggressive quantization)
    # Colors: uint8 (SDR only)
@@ -192,9 +192,9 @@ Optimization 4: Prefetching Configuration
 
 .. code-block:: text
 
-   ?src=data.zarr                # Prefetching enabled by default
-   ?src=data.zarr&no-prefetch    # Disable prefetching (debugging)
-   ?src=data.zarr&prefetch-debug # Enable prefetch debug logging
+   ?src=data.luxar.zarr                # Prefetching enabled by default
+   ?src=data.luxar.zarr&no-prefetch    # Disable prefetching (debugging)
+   ?src=data.luxar.zarr&prefetch-debug # Enable prefetch debug logging
 
 **Impact**:
 
@@ -216,10 +216,10 @@ The viewer applies several optimizations automatically:
 
 .. code-block:: text
 
-   ?src=data.zarr                # Default: all caching enabled
-   ?src=data.zarr&no-cache       # Disable L0/L1/L2 caching
-   ?src=data.zarr&clear-cache    # Clear all caches on startup
-   ?src=data.zarr&cache-debug    # Enable cache debug logging
+   ?src=data.luxar.zarr                # Default: all caching enabled
+   ?src=data.luxar.zarr&no-cache       # Disable L0/L1/L2 caching
+   ?src=data.luxar.zarr&clear-cache    # Clear all caches on startup
+   ?src=data.luxar.zarr&cache-debug    # Enable cache debug logging
 
 **Rendering Configuration** can be controlled via ``viewer_config`` in the Zarr scene metadata
 (set at write time in Python) or interactively via the rendering controls panel (press **R**).
@@ -242,7 +242,7 @@ Billion-Point Dataset Strategy
 .. code-block:: python
 
    with LuxarZarrCompiler(
-       'billion_points.zarr',
+       'billion_points.luxar.zarr',
        encoding_mode=EncodingMode.MEMORY,  # Aggressive compression
        ordering_method="hilbert",  # Best compression
    ) as compiler:
@@ -326,7 +326,7 @@ Profiling Tools
 
    dims = Dimensions.default_3d()
    start = time.time()
-   with LuxarZarrCompiler('scene.zarr') as compiler:
+   with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
        scene = compiler.create_scene(dimensions=dims)
        scene.add_points("data", positions, colors)
    elapsed = time.time() - start
@@ -414,13 +414,13 @@ Issue: Slow Initial Load
 
    # Ensure spatial indexing enabled
    compiler = LuxarZarrCompiler(
-       'scene.zarr',
+       'scene.luxar.zarr',
        enable_spatial_index=True,  # CRITICAL!
        ordering_method="hilbert",  # Default, best locality
    )
 
    # Use spatial ordering for best query performance
-   compiler = LuxarZarrCompiler('scene.zarr')  # Hilbert by default
+   compiler = LuxarZarrCompiler('scene.luxar.zarr')  # Hilbert by default
 
 Issue: Low FPS During Navigation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

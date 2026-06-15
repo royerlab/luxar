@@ -622,7 +622,7 @@ The build system uses these environment variables:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `NVM_DIR` | nvm installation directory | `~/.nvm` |
-| `DATASET` | Dataset path for `make serve-dataset` | `datasets/demos/demo.zarr` |
+| `DATASET` | Dataset path for `make serve-dataset` | `datasets/demos/demo.luxar.zarr` |
 | `PORT` | Server port for data serving | `8000` |
 | `SLURM` | Set to `1` to build CUDA on a GPU node via Slurm | `0` |
 | `SLURM_PARTITION` | Slurm partition for GPU builds | `gpu` |

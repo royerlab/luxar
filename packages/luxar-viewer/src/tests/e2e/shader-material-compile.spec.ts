@@ -42,11 +42,11 @@ interface Variant {
  */
 const VARIANTS: Variant[] = [
   // Points: colormap (4D scalar fixture exercises USE_COLORMAP).
-  { name: 'Point colormap', src: 'test_4d_scalar_lut.zarr', expectColored: true },
+  { name: 'Point colormap', src: 'test_4d_scalar_lut.luxar.zarr', expectColored: true },
   // Lines: direct colors.
-  { name: 'Line direct color', src: 'test_lines.zarr', expectColored: true },
+  { name: 'Line direct color', src: 'test_lines.luxar.zarr', expectColored: true },
   // GSplats: direct color (gsplats use aAmplitude as colormap source).
-  { name: 'GSplat direct color', src: 'test_gsplats.zarr', expectColored: true },
+  { name: 'GSplat direct color', src: 'test_gsplats.luxar.zarr', expectColored: true },
 ];
 
 const VISIBLE_PIXEL_THRESHOLD = 10;
@@ -80,7 +80,7 @@ test.describe('browser-real shader compile + pixel smoke', () => {
   test('Lines + GSplats simultaneously: no shader errors', async ({ page }) => {
     // Both geometry types in one scene exercises material-cache reuse
     // and confirms no cross-material shader-link failures.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);

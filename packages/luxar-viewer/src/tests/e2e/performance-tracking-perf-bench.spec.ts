@@ -91,7 +91,7 @@ function saveBaselines(metrics: Partial<PerformanceBaselines>) {
   fs.writeFileSync(BASELINE_FILE, JSON.stringify(updated, null, 2));
 }
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 test.describe('Performance Regression Tracking', () => {
   // Force serial execution: saveBaselines() does non-atomic read-modify-write
@@ -158,7 +158,7 @@ test.describe('Performance Regression Tracking', () => {
   });
 
   test('should track navigation responsiveness', async ({ page }) => {
-    const NAV_DATASET = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr';
+    const NAV_DATASET = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr';
 
     await page.goto(`/?src=${NAV_DATASET}&debug`);
     await waitForLuxarReady(page);

@@ -93,7 +93,7 @@ test.beforeAll(async () => {
 test('Basic 3D point cloud', async ({ page }, testInfo) => {
   // First test bears Vite dev server cold-start compilation cost — warm up first
   testInfo.setTimeout(240000);
-  const dataUrl = `${DATA_SERVER}/datasets/demos/lorenz.zarr`;
+  const dataUrl = `${DATA_SERVER}/datasets/demos/lorenz.luxar.zarr`;
 
   // Warm up the Vite dev server by loading the page once (first load triggers module compilation)
   await page.goto(`${VIEWER_URL}/?debug`, { waitUntil: 'networkidle', timeout: 120000 });
@@ -117,7 +117,7 @@ test('Basic 3D point cloud', async ({ page }, testInfo) => {
  * 2. Viewer UI overview — all panels visible
  */
 test('Viewer UI overview', async ({ page }) => {
-  const dataUrl = `${DATA_SERVER}/datasets/demos/lorenz.zarr`;
+  const dataUrl = `${DATA_SERVER}/datasets/demos/lorenz.luxar.zarr`;
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);
@@ -145,7 +145,7 @@ test('Viewer UI overview', async ({ page }) => {
 test('nD navigation with sliders', async ({ page }) => {
   // Use the 5D observatory dataset (X,Y,Z + Time + Channel) — lightweight Points-based,
   // renders reliably in headless Chrome without blocking the main thread
-  const dataUrl = `${DATA_SERVER}/datasets/demos/nd_transforms_observatory.zarr`;
+  const dataUrl = `${DATA_SERVER}/datasets/demos/nd_transforms_observatory.luxar.zarr`;
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);
@@ -176,7 +176,7 @@ test('nD navigation with sliders', async ({ page }) => {
  */
 test('Gaussian splats scene', async ({ page }, testInfo) => {
   testInfo.setTimeout(180000); // GSplat datasets need more time in headless Chrome
-  const dataUrl = `${DATA_SERVER}/datasets/demos/gsplats_3d_tribolium_embryo.zarr`;
+  const dataUrl = `${DATA_SERVER}/datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr`;
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);
