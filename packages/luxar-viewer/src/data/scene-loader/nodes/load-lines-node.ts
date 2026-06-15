@@ -53,16 +53,30 @@ async function createProgressiveLinesLoader(
   return loader;
 }
 
+/** Result of the cheap half of Lines node loading. */
+export interface LinesCheapLoad {
+  /** The empty placeholder mesh, already attached to the parent. */
+  placeholder: THREE.Mesh;
+  /** The constructed loader (NOT yet registered — the caller registers it). */
+  loader: LinesDataLoader;
+}
+
 /**
- * Load a single Lines node on initial scene construction. See
- * `load-points-node.ts` for the shared placeholder + commit rationale.
+ * Cheap half of Lines node loading: build the spatial-index loader and attach an
+ * empty placeholder mesh — no array fetch, no commit, **no registry
+ * registration**. Splitting this from the expensive half lets
+ * `load-lod-group-node.ts` defer a Lines lod-group child (the finest level of a
+ * lines-substitutive ladder), mirroring the points/gsplats loaders. The caller
+ * owns registration: the combined `loadLinesNode` registers immediately; the
+ * lod_group thunk registers after the load completes (so an unloaded lazy level
+ * doesn't join the scene-wide `updateView` sweep and defeat the deferral).
  */
-export async function loadLinesNode(
+export async function loadLinesNodeCheap(
   node: SceneNode,
   parentThree: THREE.Object3D,
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
-): Promise<THREE.Mesh | null> {
+): Promise<LinesCheapLoad> {
   log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
 
   const attrs = node.attrs as unknown as LinesMetadata;
@@ -82,9 +96,6 @@ export async function loadLinesNode(
       ? await createProgressiveLinesLoader(node, nAdditive, ctx)
       : createLinesLoader(node, loc, ctx);
 
-  // Store loader for updates (route through registry).
-  ctx.registry.registerLinesLoader(node.path, loader);
-
   // Construct + attach empty placeholder before fetching.
   // processLinesData / commitLinesGeometry look up the mesh by name
   // and populate it on success; on failure the placeholder remains
@@ -97,11 +108,25 @@ export async function loadLinesNode(
   );
   parentThree.add(placeholder);
 
+  return { placeholder, loader };
+}
+
+/**
+ * Expensive half of Lines node loading: derive the view state, fetch the line
+ * segments, project, and commit geometry into the placeholder (found by name).
+ * Safe to call after initial scene load returns (lazy lod_group levels) — it
+ * checks `isDatasetLive()` before committing so a deferred load still in flight
+ * when the user switches datasets never writes into a disposed/replaced scene.
+ */
+export async function loadLinesNodeExpensive(
+  node: SceneNode,
+  ctx: NodeBuildCtx,
+  loader: LinesDataLoader
+): Promise<void> {
+  const attrs = node.attrs as unknown as LinesMetadata;
   try {
-    // Lines path does not apply the partial-extend tolerance override
-    // during the data fetch (only during clipping below), so
-    // applyPartialExtendTolerance=false. This call still validates
-    // extend_to_all dim names and applies the inverse nd_transform.
+    // Lines path does not apply the partial-extend tolerance override during the
+    // data fetch (only during clipping), so applyPartialExtendTolerance=false.
     const derivedLines = ctx.deriveNodeViewState(node.path, attrs, {
       applyPartialExtendTolerance: false,
     });
@@ -118,19 +143,36 @@ export async function loadLinesNode(
       );
     }
 
-    // Project + commit through the same helpers used by every update
-    // and retry. processLinesData reads the placeholder's userData
-    // (extend_to_all etc.) and finds the mesh by name; commit step
-    // writes into the existing geometry.
     const staged = await ctx.processLinesData(node.path, data, linesViewState);
+    // Liveness gate: a deferred (lazy lod_group) load may resolve after the
+    // dataset was switched/disposed; committing then would write into a stale
+    // root group. Drop silently (no commit, no success log) — the abort-discard
+    // policy, matching loadPointsNodeExpensive / loadGSplatsNodeExpensive's
+    // early return.
+    if (!ctx.isDatasetLive()) return;
     if (staged) ctx.commitLinesGeometry(staged);
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
-
-    return placeholder;
   } catch (error) {
-    // See loadPoints catch — same record-failure-then-throw shape.
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
+}
+
+/**
+ * Load a single Lines node on initial scene construction. Composition of the
+ * cheap (placeholder + loader) and expensive (fetch + commit) halves; the non-LOD
+ * dispatch path uses this combined form so its behaviour is unchanged. Registers
+ * the loader immediately — this node loads eagerly. See `load-points-node.ts`.
+ */
+export async function loadLinesNode(
+  node: SceneNode,
+  parentThree: THREE.Object3D,
+  loc: zarr.Location<zarr.Readable>,
+  ctx: NodeBuildCtx
+): Promise<THREE.Mesh | null> {
+  const { placeholder, loader } = await loadLinesNodeCheap(node, parentThree, loc, ctx);
+  ctx.registry.registerLinesLoader(node.path, loader);
+  await loadLinesNodeExpensive(node, ctx, loader);
+  return placeholder;
 }

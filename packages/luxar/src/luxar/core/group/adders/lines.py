@@ -115,10 +115,9 @@ def add_lines_impl(
                     **attrs,
                 )
 
-        # NOTE: compiler-level auto-partition heuristic is a separate PR
-        # (β); add_lines honors user-explicit ``partition=`` here and
-        # will pick up the auto-partition path automatically once β
-        # merges. Until then, ``partition=`` is opt-in via the call site.
+        # NOTE: add_lines has no compiler-level auto-partition heuristic — only a
+        # user-explicit ``partition=`` is honored (Points additionally auto-
+        # partitions large clouds; Lines do not).
 
         # ``partition=False`` is an explicit no-partition bypass (the same
         # sentinel resolve_auto_partition normalises for Points), used by the

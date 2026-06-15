@@ -338,3 +338,101 @@ def test_lines_scalars_interpolate_then_lut():
     # first bead (t≈small) near LUT low end, last near LUT high end
     assert np.linalg.norm(c[0] - lut[0]) < np.linalg.norm(c[0] - lut[255])
     assert np.linalg.norm(c[-1] - lut[255]) < np.linalg.norm(c[-1] - lut[0])
+
+
+# ── lift hardening (colours, degenerate inputs, bead budget) ────────────────
+
+
+def test_rgba_colors_rejected():
+    # gsplats carry no alpha — (N, 4) RGBA must fail loudly at lift time, not
+    # silently emit a 4-channel "colour" the writer mishandles.
+    pos = np.zeros((2, 3), np.float32)
+    rgba = np.array([[1.0, 0.0, 0.0, 0.5], [0.0, 1.0, 0.0, 0.5]], np.float32)
+    with pytest.raises(ValueError, match="RGB"):
+        lift_points_to_gsplats(pos, 1.0, colors=rgba)
+    # 1-D grayscale is equally invalid (no channel axis).
+    with pytest.raises(ValueError, match="RGB"):
+        lift_points_to_gsplats(pos, 1.0, colors=np.array([0.5, 0.5], np.float32))
+
+
+def test_lift_points_degenerate_drops_matching_colours():
+    # The zero-radius drop must carry colours along with it: the surviving splats'
+    # colours must be exactly the colours of the surviving (non-zero-radius) points.
+    pos = np.arange(12, dtype=np.float32).reshape(4, 3)
+    radii = np.array([1.0, 0.0, 2.0, 0.0], np.float32)  # keep rows 0 and 2
+    colors = np.array(
+        [[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]], np.uint8
+    )
+    data = lift_points_to_gsplats(pos, radii, colors=colors)
+    assert data.n_splats == 2
+    c = np.asarray(data.flattened().colors, np.float64) * 255.0
+    np.testing.assert_allclose(c[0], [10, 20, 30], atol=1e-3)
+    np.testing.assert_allclose(c[1], [70, 80, 90], atol=1e-3)
+
+
+def test_lift_points_nonfinite_amplitude_raises():
+    # Absurdly tiny radii underflow sigma -> amplitude overflows float32 to inf;
+    # the lift must surface this rather than write inf into the gsplat.
+    with pytest.raises(ValueError, match="non-finite amplitudes"):
+        lift_points_to_gsplats(np.zeros((1, 3), np.float32), 1e-40, colors=None)
+
+
+def test_lines_radius_scale_applied():
+    # radius_scale mirrors the point lift: a uint8-style width with radius_scale
+    # = 1/255 gives the same bead sigma as the equivalent float width at scale 1.
+    v = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    d_scaled = lift_lines_to_gsplats(v, 255.0, line_type="segments",
+                                     radius_scale=1.0 / 255.0)
+    d_plain = lift_lines_to_gsplats(v, 1.0, line_type="segments")
+    assert _bead_sigma(d_scaled) == pytest.approx(_bead_sigma(d_plain), rel=1e-4)
+
+
+def test_lines_input_validation_raises():
+    v2 = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    with pytest.raises(ValueError, match=r"\(N, d\)"):  # 1-D vertices
+        lift_lines_to_gsplats(np.zeros(3, np.float32), 1.0, line_type="segments")
+    with pytest.raises(ValueError, match="truncation_radius"):
+        lift_lines_to_gsplats(v2, 1.0, line_type="segments", truncation_radius=0.0)
+    with pytest.raises(ValueError, match="line_type"):
+        lift_lines_to_gsplats(v2, 1.0, line_type="bogus")
+
+
+def test_bead_spacing_factor_scales_bead_count():
+    # Wider spacing -> fewer beads (spacing = factor * sigma); halving it doubles.
+    v = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
+    base = lift_lines_to_gsplats(v, 1.0, line_type="segments").n_splats
+    sparse = lift_lines_to_gsplats(v, 1.0, line_type="segments",
+                                   bead_spacing_factor=2.0).n_splats
+    dense = lift_lines_to_gsplats(v, 1.0, line_type="segments",
+                                  bead_spacing_factor=0.5).n_splats
+    assert sparse == pytest.approx(base / 2, abs=1)
+    assert dense == pytest.approx(base * 2, abs=1)
+
+
+def test_lines_per_segment_clamp_warns():
+    # A tiny-but-positive width over a long segment exceeds MAX_BEADS_PER_SEGMENT;
+    # the clamp must fire AND warn (the doc promises it), not silently truncate.
+    v = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    with pytest.warns(UserWarning, match="MAX_BEADS_PER_SEGMENT"):
+        data = lift_lines_to_gsplats(v, 1e-6, line_type="segments")
+    assert 0 < data.n_splats <= 4096
+
+
+def test_lines_total_bead_cap(monkeypatch):
+    # Many segments, each individually under the per-segment cap, can still SUM to
+    # an OOM. With a lowered total budget the lift must widen spacing to fit AND
+    # warn — never allocate beyond the budget.
+    from luxar.gsplats import lift as lift_mod
+
+    monkeypatch.setattr(lift_mod, "MAX_TOTAL_BEADS", 200)
+    # 100 segments of length 20, width 1 -> ~30 beads each = ~3000 raw beads >> 200.
+    n_seg = 100
+    verts = np.zeros((n_seg * 2, 3), np.float32)
+    verts[1::2, 0] = 20.0
+    verts[0::2, 1] = np.arange(n_seg)  # offset each segment so they're distinct
+    verts[1::2, 1] = np.arange(n_seg)
+    with pytest.warns(UserWarning, match="MAX_TOTAL_BEADS"):
+        data = lift_lines_to_gsplats(verts, 1.0, line_type="segments")
+    # >=1 bead per segment is the floor, so the total can't drop below n_seg, but
+    # it must be near the budget — and crucially far below the ~3000 raw count.
+    assert n_seg <= data.n_splats <= 400

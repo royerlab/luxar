@@ -930,6 +930,11 @@ export class SceneLoader {
         this._gpuBufferPool?.releasePointsGeometry(path);
         this.registry.unregisterPointsLoader(path);
       },
+      releaseLazyLines: (path) => {
+        // Lines peer of releaseLazyGSplats/releaseLazyPoints.
+        this._gpuBufferPool?.releaseLinesGeometry(path);
+        this.registry.unregisterLinesLoader(path);
+      },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),

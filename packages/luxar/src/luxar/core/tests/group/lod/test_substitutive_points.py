@@ -79,6 +79,13 @@ class TestResolveSubstitutiveAxisPoints:
         with pytest.raises(TypeError):
             resolve_substitutive_axis_points(5)
 
+    def test_base_pixel_size(self) -> None:
+        assert resolve_substitutive_axis_points(dict(base_pixel_size=25.0))[
+            "base_pixel_size"
+        ] == 25.0
+        with pytest.raises(ValueError, match="base_pixel_size"):
+            resolve_substitutive_axis_points(dict(base_pixel_size=0.0))
+
 
 # ────────────────────────────────────────────────────────────────────────
 # End-to-end through the writer
@@ -339,19 +346,33 @@ class TestSubstitutiveLodGuards:
         assert finest.attrs.get("has_image_labels") is True
 
     def test_empty_cloud_falls_through_to_canonical_path(self, tmp_path) -> None:
-        # N=0 must not produce a confusing 'coarsest child' error from the
-        # substitutive builder — the n_points>0 guard routes it to the normal path.
+        # N=0 must route through the canonical path (the n_points>0 guard), which
+        # rejects empty input with its normal "empty points" error — NOT a
+        # confusing substitutive-internal 'coarsest child must have >=1' error.
         out = tmp_path / "t.luxar.zarr"
         empty = np.zeros((0, 3), np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            # Whatever the canonical empty-points behavior is, it must NOT be the
-            # substitutive builder's internal 'coarsest child must have >=1' error.
-            try:
+            with pytest.raises(ValueError, match="empty points") as exc:
                 scene.add_points("pts", empty, radii=1.0,
                                  substitutive_lod=dict(levels=2, device="cpu"))
-            except Exception as e:  # noqa: BLE001
-                assert "coarsest child" not in str(e)
+            assert "coarsest child" not in str(exc.value)
+
+    def test_all_zero_radius_falls_through_to_flat_points(self, tmp_path) -> None:
+        # Regression: an all-zero-radius cloud lifts to 0 splats, so every coarse
+        # level is empty (coarse[-1].n_splats == 0). The degenerate guard must
+        # route this to a flat Points node — pre-fix, `if not coarse:` missed the
+        # reachable empty-coarsest case and crashed building a 0-element gsplat
+        # child ('coarsest child must have at least 1 element, got 0').
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).normal(0, 20, (4000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("pts", pos, radii=0.0,  # every point degenerate
+                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["pts"]
+        assert grp.attrs.get("kind") != "lod"  # flat fallback, not a 1-child LOD
+        assert grp.attrs.get("type") == "points"
 
     def test_tiny_input_builds_valid_group_without_crashing(self, tmp_path) -> None:
         # Very small N still reduces (each coarse level may be 1 splat); the

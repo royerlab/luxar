@@ -34,8 +34,9 @@ so a single lifted Gaussian renders like the point it came from:
 
 The lift is **strictly isotropic** on purpose: ``sigmaRay`` equals ``sigma_world``
 only for isotropic covariances, so anisotropy would make brightness view-dependent
-and break the seam match. (Lines, which lift to anisotropic Gaussians, are a
-separate future problem.)
+and break the seam match. (Lines lift to a *string of isotropic beads* for the very
+same reason — never one elongated anisotropic Gaussian — see
+:func:`lift_lines_to_gsplats` below.)
 
 Sharpness/``beta`` is intentionally NOT used: the point kernel is a *truncated*
 super-Gaussian, and an (untruncated) moment-match to ``beta = 2`` overspreads it
@@ -55,6 +56,7 @@ blur across it. Use ``extend_to_all`` for such axes (the common case), or restri
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, List, Optional, Union, cast
 
 import numpy as np
@@ -189,6 +191,11 @@ def lift_points_to_gsplats(
     colors_arr: Optional[NDArray] = None
     if colors is not None:
         c = np.asarray(colors)
+        if c.ndim != 2 or c.shape[1] != 3:
+            raise ValueError(
+                "colors must be (N, 3) RGB; gsplats carry no alpha channel — got "
+                f"shape {c.shape}. Pass RGB (drop the alpha column) before lifting."
+            )
         if np.issubdtype(c.dtype, np.integer):
             colors_arr = c.astype(np.float32) / float(np.iinfo(c.dtype).max)
         else:
@@ -231,8 +238,17 @@ def _segment_pairs(
 #: (tiny-width) or zero-width segment can't explode ``ceil(L/σ)`` into an OOM.
 #: A segment longer than ``MAX_BEADS_PER_SEGMENT * σ`` is under-sampled (beads
 #: spaced > σ → a slightly gappy tube), which is acceptable for such extreme
-#: aspect ratios and is warned about.
+#: aspect ratios; a ``UserWarning`` is emitted when the clamp fires.
 MAX_BEADS_PER_SEGMENT: int = 4096
+
+#: Max beads synthesised across the WHOLE line set in one lift — a hard ceiling
+#: on the total allocation. Each segment is individually capped by
+#: ``MAX_BEADS_PER_SEGMENT``, but their *sum* is not: many long, thin segments
+#: could still sum to an OOM. When the requested total exceeds this, bead spacing
+#: is widened uniformly to fit the budget (a slightly gappier tube) and a
+#: ``UserWarning`` is emitted. 8M keeps the pre-reduction cloud within the
+#: project's 10M-element interactive scale target.
+MAX_TOTAL_BEADS: int = 8_000_000
 
 
 def lift_lines_to_gsplats(
@@ -314,10 +330,33 @@ def lift_lines_to_gsplats(
 
     # Bead count per segment, CAPPED so a tiny-but-positive width can't OOM.
     spacing = float(bead_spacing_factor) * sigma
-    n_i = np.minimum(
-        np.maximum(1, np.ceil(seg_len / spacing).astype(np.intp)),
-        MAX_BEADS_PER_SEGMENT,
-    )  # (E,)
+    raw_n = np.maximum(1, np.ceil(seg_len / spacing).astype(np.intp))
+    n_i = np.minimum(raw_n, MAX_BEADS_PER_SEGMENT)  # (E,)
+    n_clamped = int(np.count_nonzero(raw_n > MAX_BEADS_PER_SEGMENT))
+    if n_clamped:
+        warnings.warn(
+            f"{n_clamped} segment(s) exceed MAX_BEADS_PER_SEGMENT="
+            f"{MAX_BEADS_PER_SEGMENT} (extreme length:width ratio) and were "
+            "under-sampled; their tube may look slightly gappy.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # TOTAL bead budget: even with each segment individually capped, a large edge
+    # count can sum to an OOM. If the total exceeds MAX_TOTAL_BEADS, widen spacing
+    # uniformly (thin every segment proportionally, >=1 bead each) so the
+    # allocation fits — a slightly gappier tube, never an OOM.
+    total = int(n_i.sum())
+    if total > MAX_TOTAL_BEADS:
+        factor = total / MAX_TOTAL_BEADS
+        n_i = np.maximum(1, (n_i / factor).astype(np.intp))
+        warnings.warn(
+            f"line lift requested {total} beads (> MAX_TOTAL_BEADS="
+            f"{MAX_TOTAL_BEADS}); bead spacing widened ~{factor:.1f}x to fit the "
+            "budget. Partition or coarsen the line set for full bead resolution.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Ragged expansion: one row per bead, at interval centres t=(k+0.5)/n_i.
     n_seg = pairs.shape[0]
@@ -410,7 +449,10 @@ def coarse_substitutive_levels(
     K=4), which would read as zoom-out dimming; the rescale removes it.
 
     Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
-    each a flat :class:`GSplatData`. Empty if the pyramid has no coarser level.
+    each a flat :class:`GSplatData` — one entry per synthesised coarser level.
+    Empty only if the pyramid collapsed to level 0 alone; for degenerate input
+    the coarsest entry (``[-1]``) may itself have ``n_splats == 0`` (callers
+    treat both as "no usable coarse levels" — see the adders' degenerate guards).
     """
     from .lod.substitutive import make_substitutive_lod
 
@@ -461,11 +503,13 @@ def render_light(data: GSplatData) -> float:
     """
     flat = data.flattened()
     amps = np.asarray(flat.amplitudes, dtype=np.float64)
-    chol = np.asarray(flat.cholesky_factors, dtype=np.float64)
     if amps.size == 0:
         return 0.0
     d = int(flat.ndim)
     # Packed lower-tri diagonal positions: [0, 2, 5, ...] = cumsum(1..d) - 1.
+    # Index the diagonal columns on the float32 source FIRST, then widen only
+    # that (N, d) slice — avoids casting the whole packed (N, k) array to float64.
     diag_idx = np.cumsum(np.arange(1, d + 1)) - 1
-    det = np.abs(np.prod(chol[:, diag_idx], axis=1))  # |det(L)| == sigma_geo^D
+    chol_diag = np.asarray(flat.cholesky_factors)[:, diag_idx].astype(np.float64)
+    det = np.abs(np.prod(chol_diag, axis=1))  # |det(L)| == sigma_geo^D
     return float(np.sum(amps * det))

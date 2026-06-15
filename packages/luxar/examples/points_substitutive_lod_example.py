@@ -9,8 +9,8 @@ fewer-but-larger representatives. The finest LOD child stays the original Points
 node; coarser children are gsplats, assembled as one ``kind=lod`` Group.
 
 Why it looks seamless:
-- The point kernel (PR #362) at the default sharpness is a true Gaussian — the
-  same shape as the gsplat kernel — so there is no "pop" at the LOD transition.
+- The point kernel at the default sharpness is a true Gaussian — the same shape
+  as the gsplat kernel — so there is no "pop" at the LOD transition.
 - The lift is calibrated (σ = 2R/T, amplitude = peak-matched) so a single lifted
   splat renders like its point, and coarse-level amplitudes are rescaled to
   conserve total render-light → no brightness change on zoom-out.
