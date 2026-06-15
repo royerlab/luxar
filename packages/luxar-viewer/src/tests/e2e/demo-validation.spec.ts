@@ -74,9 +74,9 @@ const SLOW_SCRIPTS = [
 function getZarrName(scriptName: string): string {
   const baseName = scriptName.replace('.py', '');
   if (scriptName === 'build_example.py') {
-    return 'build_example_manual.zarr';
+    return 'build_example_manual.luxar.zarr';
   }
-  return `${baseName}.zarr`;
+  return `${baseName}.luxar.zarr`;
 }
 
 test.describe('Demo Script Validation', () => {

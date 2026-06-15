@@ -52,7 +52,7 @@ def make_grid(t_values, c_values, rng: np.random.Generator) -> np.ndarray:
 
 def main() -> None:
     """Show two instruments aligned into a common world frame via nd_transform."""
-    output_path = get_examples_output_dir() / "nd_transform_example.zarr"
+    output_path = get_examples_output_dir() / "nd_transform_example.luxar.zarr"
     aprint(f"Writing nd_transform example to {output_path}")
 
     # World coordinate system: 10 timepoints, 3 categorical channels

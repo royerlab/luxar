@@ -57,19 +57,32 @@ async function createProgressivePointsLoader(
   return loader;
 }
 
+/** Result of the cheap half of Points node loading. */
+export interface PointsCheapLoad {
+  /** The empty placeholder mesh, already attached to the parent. */
+  placeholder: THREE.Mesh;
+  /** The constructed loader (NOT yet registered — the caller registers it). */
+  loader: DataLoader;
+}
+
 /**
- * Load a single Points node on initial scene construction. Returns the
- * placeholder mesh once data has been committed (or empty when no
- * points are currently visible — the slice-update path will populate
- * it later). Throws `LoaderError` on failure so `loadLeafNode` can
- * dispatch by kind and keep the rest of the scene alive.
+ * Cheap half of Points node loading: build the spatial-index loader and
+ * attach an empty placeholder mesh — no array fetch, no commit, and
+ * crucially **no registry registration**. Splitting this from the
+ * expensive half lets `load-lod-group-node.ts` attach a deferred Points
+ * level's placeholder up front while deferring the costly geometry load
+ * to `loadPointsNodeExpensive` (per-level lazy loading), exactly as the
+ * gsplats loader does. Registering an unloaded lazy level would pull it
+ * into the scene-wide `updateView` sweep and defeat the deferral, so the
+ * caller owns registration: the combined `loadPointsNode` registers
+ * immediately; the lod_group thunk registers after the load completes.
  */
-export async function loadPointsNode(
+export async function loadPointsNodeCheap(
   node: SceneNode,
   parentThree: THREE.Object3D,
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
-): Promise<THREE.Mesh | null> {
+): Promise<PointsCheapLoad> {
   log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
   log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
   log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
@@ -90,10 +103,6 @@ export async function loadPointsNode(
       ? ((await createProgressivePointsLoader(node, nAdditive, ctx)) as DataLoader)
       : createPointsLoader(node, loc, ctx);
 
-  // Store loader for updates (route through the registry's
-  // register* methods rather than mutating its internal map).
-  ctx.registry.registerPointsLoader(node.path, loader);
-
   // Construct + attach an empty placeholder before fetching data, so an
   // initial-load failure leaves a recoverable scene state.
   // commit-points-geometry finds the placeholder by name and populates
@@ -105,35 +114,35 @@ export async function loadPointsNode(
   const placeholder = ctx.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
   parentThree.add(placeholder);
 
-  try {
-    log.info(Modules.SCENE_LOADER, 'Initial ViewState for loading:');
-    log.info(Modules.SCENE_LOADER, `  displayDims: [${ctx.viewState.displayDims.join(', ')}]`);
-    log.info(Modules.SCENE_LOADER, `  slicePosition: [${ctx.viewState.slicePosition.join(', ')}]`);
-    log.info(Modules.SCENE_LOADER, `  tolerance: [${ctx.viewState.tolerance.join(', ')}]`);
+  return { placeholder, loader };
+}
 
+/**
+ * Expensive half of Points node loading: derive the view state, fetch
+ * the points via the loader, and commit geometry into the placeholder
+ * (found by name). Safe to call after initial scene load returns (lazy
+ * lod_group levels) — it checks `isDatasetLive()` before committing so a
+ * deferred load still in flight when the user switches datasets never
+ * writes into a disposed/replaced scene.
+ */
+export async function loadPointsNodeExpensive(
+  node: SceneNode,
+  ctx: NodeBuildCtx,
+  loader: DataLoader
+): Promise<void> {
+  try {
     // Route initial load through deriveNodeViewState (same helper as
     // the main update path and retry) so initial / update / retry can
-    // never silently load different query regions. Initial load doesn't
-    // apply the full-extend skip — we still want to construct the THREE
-    // node so future slice changes can populate it; the skip return only
-    // happens on update/retry where there's an existing node to leave
-    // alone.
+    // never silently load different query regions.
     const derived = ctx.deriveNodeViewState(node.path, node.attrs, {
       applyPartialExtendTolerance: true,
     });
-    let pointsViewState: ViewState;
-    if (derived.skip) {
-      // Full-extend on initial load: behave as if extend_to_all
-      // weren't set (load with the base view state) so the empty
-      // node still gets constructed.
-      pointsViewState = ctx.viewState;
-    } else {
-      pointsViewState = derived.viewState;
-    }
+    // Full-extend on initial load: behave as if extend_to_all weren't set
+    // (load with the base view state) so the empty node still populates.
+    const pointsViewState: ViewState = derived.skip ? ctx.viewState : derived.viewState;
 
-    const data = await loader.loadPoints(pointsViewState);
+    const data = await (loader as PointsDataLoader).loadPoints(pointsViewState);
 
-    // Log if no initial points are visible (this is normal for nD slicing)
     if (data.pointCount === 0) {
       log.info(
         Modules.SCENE_LOADER,
@@ -141,19 +150,44 @@ export async function loadPointsNode(
       );
     }
 
+    // Liveness gate: a deferred (lazy lod_group) load may resolve after the
+    // dataset was switched/disposed; committing then would write into a stale
+    // root group. Drop the commit silently — the abort-discard policy, matching
+    // loadGSplatsNodeExpensive.
+    if (!ctx.isDatasetLive()) return;
+
     // Commit data into the placeholder via the same path future
-    // updateView() / retry calls use. Unifies initial-load and update
-    // through one geometry-commit code path.
+    // updateView() / retry calls use.
     ctx.updatePointsGeometry(node.path, data);
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
-
-    return placeholder;
   } catch (error) {
-    // Record the failure so `retryFailedLoader(path)` can target this
-    // node. The placeholder stays attached to the scene (added before
-    // this try/catch), so retry can populate it.
+    // Record the failure so `retryFailedLoader(path)` can target this node.
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
+}
+
+/**
+ * Load a single Points node on initial scene construction. Returns the
+ * placeholder mesh once data has been committed (or empty when no
+ * points are currently visible — the slice-update path will populate
+ * it later). Throws `LoaderError` on failure so `loadLeafNode` can
+ * dispatch by kind and keep the rest of the scene alive.
+ *
+ * Composition of the cheap (placeholder + loader) and expensive (fetch +
+ * commit) halves; the non-LOD dispatch path uses this combined form so its
+ * behaviour is unchanged. Registers the loader immediately — this node loads
+ * eagerly and should join subsequent `updateView` sweeps right away.
+ */
+export async function loadPointsNode(
+  node: SceneNode,
+  parentThree: THREE.Object3D,
+  loc: zarr.Location<zarr.Readable>,
+  ctx: NodeBuildCtx
+): Promise<THREE.Mesh | null> {
+  const { placeholder, loader } = await loadPointsNodeCheap(node, parentThree, loc, ctx);
+  ctx.registry.registerPointsLoader(node.path, loader);
+  await loadPointsNodeExpensive(node, ctx, loader);
+  return placeholder;
 }

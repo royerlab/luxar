@@ -111,7 +111,7 @@ def colorize_levels(ladder: GSplatData) -> GSplatData:
 
 def main() -> None:
     """Fit a tiny volume and ship it as a colored substitutive LOD pyramid."""
-    output_path = get_examples_output_dir() / "gsplats_lod_example.zarr"
+    output_path = get_examples_output_dir() / "gsplats_lod_example.luxar.zarr"
     aprint(f"Writing substitutive-LOD example to {output_path}")
 
     volume = make_synthetic_volume(size=48, seed=0)

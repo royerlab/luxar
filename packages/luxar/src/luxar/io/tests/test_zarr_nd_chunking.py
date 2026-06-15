@@ -12,7 +12,7 @@ class TestZarrNDChunking:
 
     def test_4d_data_chunking_optimization(self, tmp_path) -> None:
         """Test that 4D data is chunked appropriately for temporal slicing."""
-        store = tmp_path / "4d_chunked.zarr"
+        store = tmp_path / "4d_chunked.luxar.zarr"
 
         # Create 4D data: 1000 time steps, 1000 points per step
         n_timesteps = 1000
@@ -56,7 +56,7 @@ class TestZarrNDChunking:
 
     def test_nd_generic_handling(self, tmp_path) -> None:
         """Test that the system handles arbitrary nD data generically."""
-        store = tmp_path / "nd_generic.zarr"
+        store = tmp_path / "nd_generic.luxar.zarr"
 
         # Test with 5D data (x, y, z, t, channel)
         n_points = 10000
@@ -77,7 +77,7 @@ class TestZarrNDChunking:
 
     def test_chunk_boundary_alignment(self, tmp_path) -> None:
         """Test that chunking aligns well with typical access patterns."""
-        store = tmp_path / "chunk_aligned.zarr"
+        store = tmp_path / "chunk_aligned.luxar.zarr"
 
         # Create data that doesn't align perfectly with default chunks
         n_points = 123456  # Not a nice round number
@@ -101,7 +101,7 @@ class TestZarrNDChunking:
 
     def test_memory_efficient_slicing(self, tmp_path) -> None:
         """Test that slicing large datasets is memory efficient."""
-        store = tmp_path / "memory_efficient.zarr"
+        store = tmp_path / "memory_efficient.luxar.zarr"
 
         # Create large dataset
         n_slices = 100
@@ -137,7 +137,7 @@ class TestZarrNDChunking:
 
     def test_no_hardcoded_dimensions(self, tmp_path) -> None:
         """Ensure the system doesn't assume specific dimension meanings."""
-        store = tmp_path / "no_hardcoded.zarr"
+        store = tmp_path / "no_hardcoded.luxar.zarr"
 
         # Create data with unusual dimension count
         for n_dims in [2, 3, 4, 7, 10]:
@@ -145,7 +145,7 @@ class TestZarrNDChunking:
             positions = np.random.randn(n_points, n_dims).astype(np.float32)
 
             # Save with unique name
-            dim_store = store / f"dims_{n_dims}.zarr"
+            dim_store = store / f"dims_{n_dims}.luxar.zarr"
             # Disable spatial index to preserve order for this test
             with LuxarZarrCompiler(dim_store, enable_spatial_index=False) as compiler:
                 compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -160,7 +160,7 @@ class TestZarrNDChunking:
 
     def test_optimal_chunk_cache_interaction(self, tmp_path) -> None:
         """Test that chunk sizes work well with typical cache sizes."""
-        store = tmp_path / "cache_optimized.zarr"
+        store = tmp_path / "cache_optimized.luxar.zarr"
 
         # Create dataset sized to test cache behavior
         n_points = 1_000_000
@@ -189,7 +189,7 @@ class TestZarrNDChunking:
 
     def test_sparse_data_efficiency(self, tmp_path) -> None:
         """Test that sparse nD data is handled efficiently."""
-        store = tmp_path / "sparse.zarr"
+        store = tmp_path / "sparse.luxar.zarr"
 
         # Create sparse 4D data where most time slices are empty
         _ = 1000  # Total timesteps (most are empty)

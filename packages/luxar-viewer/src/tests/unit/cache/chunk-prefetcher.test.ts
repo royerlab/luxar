@@ -914,4 +914,31 @@ describe('ChunkPrefetcher - Integration Tests', () => {
     // Verify prefetcher tried to fetch chunks
     expect(mockIntegrationStore.getResult).toHaveBeenCalled();
   });
+
+  describe('registerArrayBounds — best-effort (never aborts a load)', () => {
+    // Bounds registration is a prefetch OPTIMIZATION. A real zarr.Array always
+    // carries shape/chunks, but a partial/streaming array or an unusual store
+    // may not — and registration throwing there would abort the whole load.
+    // It must instead skip silently. These pin that contract.
+    it.each([
+      ['undefined shape', undefined as unknown as number[], [1024, 4]],
+      ['undefined chunks', [2048, 4], undefined as unknown as number[]],
+      ['empty shape', [], []],
+      ['rank mismatch', [2048, 4], [1024]],
+      ['zero chunk size (would divide to Infinity)', [2048, 4], [0, 4]],
+      ['negative chunk size', [2048, 4], [-1, 4]],
+    ])('does not throw and registers nothing on %s', (_label, shape, chunks) => {
+      const p = new ChunkPrefetcher({} as any, { enabled: true });
+      expect(() => p.registerArrayBounds('bad/array', shape, chunks)).not.toThrow();
+      // No bounds registered → getAdjacentChunks falls back to "no bounds known"
+      // rather than using a corrupt maxIndices entry.
+      expect((p as any).maxChunkIndices.has('bad/array')).toBe(false);
+    });
+
+    it('still registers valid bounds normally', () => {
+      const p = new ChunkPrefetcher({} as any, { enabled: true });
+      p.registerArrayBounds('good/array', [2048, 4], [1024, 4]);
+      expect((p as any).maxChunkIndices.get('good/array')).toEqual([2, 1]);
+    });
+  });
 });

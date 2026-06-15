@@ -1055,7 +1055,7 @@ def main() -> None:
     degrees = _node_degrees(nodes, edges)
 
     if "--no-serve" in argv:
-        output_path = get_demos_output_dir() / "caida_as_topology.zarr"
+        output_path = get_demos_output_dir() / "caida_as_topology.luxar.zarr"
         build_scene(
             output_path,
             nodes,
@@ -1071,7 +1071,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_caida_") as tmpdir:
-        output_path = Path(tmpdir) / "caida_as_topology.zarr"
+        output_path = Path(tmpdir) / "caida_as_topology.luxar.zarr"
         n_nodes, n_edges, n_comms, n_tier1 = build_scene(
             output_path,
             nodes,

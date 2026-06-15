@@ -24,13 +24,13 @@ From `packages/luxar-viewer`:
 
 ```bash
 pnpm build:lib                       # builds dist/lib/{luxar-viewer.js,.css,types}
-pnpm test:generate-fixtures          # once: creates tests/fixtures/test_4d.zarr (the demo dataset)
+pnpm test:generate-fixtures          # once: creates tests/fixtures/test_4d.luxar.zarr (the demo dataset)
 python -m http.server 8765           # serve from packages/luxar-viewer, NOT examples/embed
 open http://localhost:8765/examples/embed/
 ```
 
 The demo auto-loads the package-local 4D fixture
-(`tests/fixtures/test_4d.zarr`) so a scene appears immediately; edit
+(`tests/fixtures/test_4d.luxar.zarr`) so a scene appears immediately; edit
 `DEFAULT_SRC` in `embed.js` to point at your own zarr URL.
 
 Serve from `packages/luxar-viewer` (not from this directory): `index.html`

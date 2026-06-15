@@ -71,7 +71,9 @@ def make_polyline_bundle(n_polylines: int = 800, vertices_per: int = 8, seed: in
 
 
 def main() -> None:
-    output_path = get_examples_output_dir() / "progressive_points_lines_example.zarr"
+    output_path = (
+        get_examples_output_dir() / "progressive_points_lines_example.luxar.zarr"
+    )
 
     with LuxarZarrCompiler(str(output_path)) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())

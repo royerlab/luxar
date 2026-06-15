@@ -22,7 +22,7 @@ class TestScalarInputBasics:
     def test_float_scalar_with_n_elements(self) -> None:
         """Test encoding a float scalar with n_elements."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             # Encode scalar
@@ -47,7 +47,7 @@ class TestScalarInputBasics:
     def test_int_scalar_with_n_elements(self) -> None:
         """Test encoding an int scalar (converted to float)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -66,7 +66,7 @@ class TestScalarInputBasics:
     def test_color_tuple_with_n_elements(self) -> None:
         """Test encoding a color tuple (R, G, B)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -86,7 +86,7 @@ class TestScalarInputBasics:
     def test_color_list_with_n_elements(self) -> None:
         """Test encoding a color list [R, G, B]."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -109,7 +109,7 @@ class TestScalarInputErrors:
     def test_scalar_without_n_elements_raises(self) -> None:
         """Test that scalar input without n_elements raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             with pytest.raises(ValueError, match="Scalar input requires n_elements"):
@@ -123,7 +123,7 @@ class TestScalarInputErrors:
     def test_coordinate_scalar_raises(self) -> None:
         """Test that COORDINATE type blocks scalar input."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             with pytest.raises(
@@ -140,7 +140,7 @@ class TestScalarInputErrors:
     def test_color_tuple_wrong_length_raises(self) -> None:
         """Test that color tuple with wrong length raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             with pytest.raises(ValueError, match="must have 3 or 4 elements"):
@@ -156,7 +156,7 @@ class TestScalarInputErrors:
     def test_tuple_for_non_color_raises(self) -> None:
         """Test that tuple input only works for COLOR semantic type."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             with pytest.raises(ValueError, match="only supported for COLOR"):
@@ -171,7 +171,7 @@ class TestScalarInputErrors:
     def test_array_with_wrong_n_elements_raises(self) -> None:
         """Test that providing mismatched n_elements raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             data = np.array([1.0, 2.0, 3.0], dtype=np.float32)
@@ -188,7 +188,7 @@ class TestScalarInputErrors:
     def test_array_with_n_elements_non_uniform_raises(self) -> None:
         """Test that full array with n_elements must be uniform."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             # Non-uniform array
@@ -208,7 +208,7 @@ class TestScalarInputErrors:
     def test_uniform_array_with_n_elements_works(self) -> None:
         """Test that uniform array with n_elements is accepted."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             # Uniform array - all same value
@@ -235,7 +235,7 @@ class TestScalarInputSemanticTypes:
     def test_positive_scalar(self) -> None:
         """Test POSITIVE_SCALAR with scalar input."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -253,7 +253,7 @@ class TestScalarInputSemanticTypes:
     def test_bounded_scalar(self) -> None:
         """Test BOUNDED_SCALAR with scalar input."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -272,7 +272,7 @@ class TestScalarInputSemanticTypes:
     def test_color_sdr_tuple(self) -> None:
         """Test COLOR SDR with tuple input."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -291,7 +291,7 @@ class TestScalarInputSemanticTypes:
     def test_color_rgba_tuple(self) -> None:
         """Test COLOR with RGBA tuple (4 elements)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -314,7 +314,7 @@ class TestScalarInputEncodingModes:
     def test_auto_mode(self) -> None:
         """Test scalar with AUTO mode."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -332,7 +332,7 @@ class TestScalarInputEncodingModes:
     def test_precision_mode(self) -> None:
         """Test scalar with PRECISION mode."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -351,7 +351,7 @@ class TestScalarInputEncodingModes:
     def test_memory_mode(self) -> None:
         """Test scalar with MEMORY mode."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(
@@ -374,7 +374,7 @@ class TestScalarInputValidation:
     def test_negative_positive_scalar_raises(self) -> None:
         """Test that negative value for POSITIVE_SCALAR raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             # This should be caught by encoder's validation
@@ -391,7 +391,7 @@ class TestScalarInputValidation:
     def test_color_without_mode_raises(self) -> None:
         """Test that float color tuple without color_mode raises error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             with pytest.raises(ValueError, match="color_mode"):
@@ -412,7 +412,7 @@ class TestScalarVsArrayConsistency:
         """Test that radii=0.5 produces same result as uniform array."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Scalar path
-            store1 = zarr.open_group(Path(tmpdir) / "scalar.zarr", mode="w")
+            store1 = zarr.open_group(Path(tmpdir) / "scalar.luxar.zarr", mode="w")
             encoder1 = ArrayEncoder()
             encoder1.encode(
                 data=0.5,
@@ -423,7 +423,7 @@ class TestScalarVsArrayConsistency:
             )
 
             # Array path
-            store2 = zarr.open_group(Path(tmpdir) / "array.zarr", mode="w")
+            store2 = zarr.open_group(Path(tmpdir) / "array.luxar.zarr", mode="w")
             encoder2 = ArrayEncoder()
             encoder2.encode(
                 data=np.full(100, 0.5, dtype=np.float32),
@@ -447,7 +447,7 @@ class TestScalarVsArrayConsistency:
         """Test that color tuple produces same result as uniform color array."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Scalar path
-            store1 = zarr.open_group(Path(tmpdir) / "scalar.zarr", mode="w")
+            store1 = zarr.open_group(Path(tmpdir) / "scalar.luxar.zarr", mode="w")
             encoder1 = ArrayEncoder()
             encoder1.encode(
                 data=(1.0, 0.0, 0.0),
@@ -459,7 +459,7 @@ class TestScalarVsArrayConsistency:
             )
 
             # Array path
-            store2 = zarr.open_group(Path(tmpdir) / "array.zarr", mode="w")
+            store2 = zarr.open_group(Path(tmpdir) / "array.luxar.zarr", mode="w")
             encoder2 = ArrayEncoder()
             encoder2.encode(
                 data=np.full((200, 3), [1.0, 0.0, 0.0], dtype=np.float32),
@@ -487,7 +487,7 @@ class TestScalarInputIntegration:
         from luxar import Dimensions, LuxarZarrCompiler
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -517,7 +517,7 @@ class TestScalarInputIntegration:
         from luxar import Dimensions, LuxarZarrCompiler
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path, enable_spatial_index=False) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -548,7 +548,7 @@ class TestScalarNoIntermediateArrays:
         This is a conceptual test - we verify the storage is minimal.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             # Large n_elements - if intermediate array was created, would use 4MB
@@ -570,7 +570,7 @@ class TestScalarNoIntermediateArrays:
     def test_color_tuple_no_intermediate(self) -> None:
         """Verify color tuples don't create intermediate arrays."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="w")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="w")
             encoder = ArrayEncoder()
 
             encoder.encode(

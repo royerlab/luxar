@@ -38,7 +38,7 @@ from luxar.io.compiler import LuxarZarrCompiler
 class TestDisplayTypeBackfill:
     def test_explicit_lod_group_gets_display_type_filled(self, tmp_path):
         """User-built lod_group without display_type → compiler fills it."""
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("hand_built")
             # All children are points → expected display_type is 'points'.
@@ -47,18 +47,18 @@ class TestDisplayTypeBackfill:
             lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
             lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["hand_built"].attrs["display_type"] == "points"
 
     def test_explicit_user_display_type_not_overwritten(self, tmp_path):
         """If user authored display_type, the compiler must not touch it."""
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("with_explicit", display_type="custom_marker")
             pos = np.random.RandomState(0).rand(50, 3).astype(np.float32)
             lod.add_points("level_0", pos, min_pixel_size=0.0)
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["with_explicit"].attrs["display_type"] == "custom_marker", (
             "user-authored display_type must not be overwritten"
         )
@@ -73,7 +73,7 @@ class TestPositionBoundsBackfill:
 
     def test_lod_group_gets_position_bounds_filled(self, tmp_path):
         """Standard lod_group with leaf children: union spans every leaf."""
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("ladder")
             # Coarse child: small bbox at origin.
@@ -83,7 +83,7 @@ class TestPositionBoundsBackfill:
             lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
             lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         pb = store["ladder"].attrs["position_bounds"]
         # Union of [(0,0,0)-(1,1,1)] and [(-2,0,0)-(5,4,3)].
         assert pb["min"] == [-2.0, 0.0, 0.0]
@@ -96,7 +96,7 @@ class TestPositionBoundsBackfill:
         back-fill, the outer group's child reads ``position_bounds = {}``
         and the registry skips that whole branch in projection.
         """
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             outer = scene.add_lod_group("outer")
             # Outer level 0: a single leaf bounded at (0..1)^3.
@@ -119,7 +119,7 @@ class TestPositionBoundsBackfill:
                 min_pixel_size=100.0,
             )
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         # Inner kind=lod gets its own union from its two leaves.
         inner_pb = store["outer/nested_fine"].attrs["position_bounds"]
         assert inner_pb["min"] == [-3.0, -3.0, -3.0]
@@ -131,7 +131,7 @@ class TestPositionBoundsBackfill:
 
     def test_authored_position_bounds_not_overwritten(self, tmp_path):
         """User-authored position_bounds on the lod_group survives."""
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group(
                 "with_explicit_pb",
@@ -143,7 +143,7 @@ class TestPositionBoundsBackfill:
             pos = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
             lod.add_points("level_0", pos, min_pixel_size=0.0)
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         pb = store["with_explicit_pb"].attrs["position_bounds"]
         assert pb["min"] == [-100.0, -100.0, -100.0]
         assert pb["max"] == [100.0, 100.0, 100.0]
@@ -173,14 +173,14 @@ class TestBasePixelSizeKnob:
             derive_min_pixel_sizes([100, 200], base_pixel_size=-5.0)
 
     def test_add_lod_group_kwarg_stored_on_attrs(self, tmp_path):
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lod_group("custom_bps", base_pixel_size=25.0)
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["custom_bps"].attrs["base_pixel_size"] == 25.0
 
     def test_add_lod_group_rejects_non_positive(self, tmp_path):
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="base_pixel_size"):
                 scene.add_lod_group("bad", base_pixel_size=0.0)

@@ -23,9 +23,9 @@ import {
 
 // Dataset paths (served from Python HTTP server on port 9000)
 const DATASETS = {
-  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr',
-  nav4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.zarr',
-  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.zarr',
+  denseGrid5D: 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr',
+  nav4D: 'http://localhost:9000/datasets/examples/dimension_navigation_example.luxar.zarr',
+  broadcast: 'http://localhost:9000/datasets/examples/simple_nd_example.luxar.zarr',
 };
 
 // Known properties of the dense_grid_5d dataset:

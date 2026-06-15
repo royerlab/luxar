@@ -395,7 +395,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "spiral_galaxy.zarr"
+        output_path = get_demos_output_dir() / "spiral_galaxy.luxar.zarr"
         generate_spiral_galaxy(
             output_path,
             n_stars=n_stars,
@@ -409,7 +409,7 @@ def main() -> None:
 
     # Use temporary directory (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_galaxy_") as tmpdir:
-        output_path = Path(tmpdir) / "spiral_galaxy.zarr"
+        output_path = Path(tmpdir) / "spiral_galaxy.luxar.zarr"
 
         # Generate galaxy
         generate_spiral_galaxy(

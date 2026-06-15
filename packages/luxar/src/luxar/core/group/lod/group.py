@@ -31,7 +31,7 @@ This module hosts:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -221,3 +221,104 @@ def validate_lod_group(group: "Node") -> None:
                 f"previous child's {prev}"
             )
         prev = value
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Shared substitutive-LOD axis resolver (Points + Lines)
+# ─────────────────────────────────────────────────────────────────────
+#
+# Both geometries coarsen by lifting elements to gsplats and running the gsplat
+# substitutive pipeline, so the ``substitutive_lod=`` kwarg vocabulary is
+# identical. Keep ONE implementation here so the per-geometry resolvers
+# (``resolve_substitutive_axis_points`` / ``resolve_substitutive_axis_lines``)
+# can never drift.
+
+#: Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — mirror
+#: the gsplat substitutive defaults (compression_factor=4, levels=3, auto method).
+DEFAULT_SUBSTITUTIVE_K: int = 4
+DEFAULT_SUBSTITUTIVE_LEVELS: int = 3
+DEFAULT_SUBSTITUTIVE_METHOD: str = "auto"
+#: Accepted substitutive reduction methods (passed to make_substitutive_lod).
+SUBSTITUTIVE_METHODS = frozenset(
+    {"auto", "kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"}
+)
+
+
+def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, Any]]:
+    """Normalize the ``substitutive_lod=`` kwarg into a spec dict (or ``None``).
+
+    Geometry-agnostic — ``geometry`` ("Points"/"Lines") only flavours the error
+    message. Vocabulary:
+
+    * ``None`` / ``False`` → no-op (caller writes a flat / additive node).
+    * ``True`` / ``dict()`` → defaults (K=4, levels=3, method="auto").
+    * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
+      (alias ``n_lods``), ``method``, ``base_pixel_size``, ``truncation_radius``,
+      ``device``, ``seed``, ``min_pixel_sizes`` (explicit, strict-ascending).
+      Unrecognized keys raise.
+    """
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        raise TypeError(
+            f"substitutive_lod must be None, bool, or dict; got {type(spec).__name__}"
+        )
+    kwargs = dict(spec)
+
+    compression_factor = int(
+        kwargs.pop("compression_factor", kwargs.pop("K", DEFAULT_SUBSTITUTIVE_K))
+    )
+    if compression_factor < 2:
+        raise ValueError(f"compression_factor must be >= 2, got {compression_factor}")
+
+    levels = int(kwargs.pop("levels", kwargs.pop("n_lods", DEFAULT_SUBSTITUTIVE_LEVELS)))
+    if levels < 1:
+        raise ValueError(f"levels must be >= 1, got {levels}")
+
+    method = str(kwargs.pop("method", DEFAULT_SUBSTITUTIVE_METHOD)).replace("-", "_")
+    if method not in SUBSTITUTIVE_METHODS:
+        raise ValueError(
+            f"method must be one of {sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
+        )
+
+    base_pixel_size = kwargs.pop("base_pixel_size", None)
+    if base_pixel_size is not None:
+        base_pixel_size = float(base_pixel_size)
+        if base_pixel_size <= 0:
+            raise ValueError(f"base_pixel_size must be positive, got {base_pixel_size}")
+
+    truncation_radius = float(kwargs.pop("truncation_radius", 3.0))
+    if truncation_radius <= 0:
+        raise ValueError(f"truncation_radius must be > 0, got {truncation_radius}")
+
+    device = kwargs.pop("device", "auto")
+    seed = kwargs.pop("seed", None)
+    if seed is not None:
+        seed = int(seed)
+
+    min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
+    if min_pixel_sizes is not None:
+        min_pixel_sizes = [float(m) for m in min_pixel_sizes]
+        _assert_strict_ascending(
+            min_pixel_sizes, "substitutive_lod=dict(min_pixel_sizes=...)"
+        )
+
+    if kwargs:
+        raise ValueError(
+            f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
+            "Valid keys: compression_factor (K), levels (n_lods), method, "
+            "base_pixel_size, truncation_radius, device, seed, min_pixel_sizes."
+        )
+
+    return {
+        "compression_factor": compression_factor,
+        "levels": levels,
+        "method": method,
+        "base_pixel_size": base_pixel_size,
+        "truncation_radius": truncation_radius,
+        "device": device,
+        "seed": seed,
+        "min_pixel_sizes": min_pixel_sizes,
+    }

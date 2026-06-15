@@ -57,7 +57,7 @@ def main():
     )
 
     # Create scene with dimensions
-    output_path = get_examples_output_dir() / "scene_dimensions_example.zarr"
+    output_path = get_examples_output_dir() / "scene_dimensions_example.luxar.zarr"
     with LuxarZarrCompiler(output_path) as compiler:
         scene = compiler.create_scene(dimensions=dims)
 
@@ -143,7 +143,7 @@ def main():
             )
 
         aprint("\nNavigation Instructions:")
-        aprint("1. Start server: luxar serve scene_dimensions_example.zarr")
+        aprint("1. Start server: luxar serve scene_dimensions_example.luxar.zarr")
         aprint("2. Open viewer in browser")
         aprint("\nKeyboard controls:")
         aprint("  - Press '1' to control time (steps of 0.5s)")

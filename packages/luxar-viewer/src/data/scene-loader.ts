@@ -923,6 +923,18 @@ export class SceneLoader {
         this._gpuBufferPool?.releaseGSplatsGeometry(path);
         this.registry.unregisterGSplatsLoader(path);
       },
+      releaseLazyPoints: (path) => {
+        // Points peer of releaseLazyGSplats: return the level's GPU buffer to
+        // the evictable pool and drop its loader. Re-selection reloads via the
+        // lod_group's ensureLoaded thunk (cheap re-projection from cached chunks).
+        this._gpuBufferPool?.releasePointsGeometry(path);
+        this.registry.unregisterPointsLoader(path);
+      },
+      releaseLazyLines: (path) => {
+        // Lines peer of releaseLazyGSplats/releaseLazyPoints.
+        this._gpuBufferPool?.releaseLinesGeometry(path);
+        this.registry.unregisterLinesLoader(path);
+      },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),

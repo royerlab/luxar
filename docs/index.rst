@@ -35,12 +35,12 @@ Create and visualize a scene with points:
    dims = Dimensions.default_3d()
 
    # Write to zarr
-   with LuxarZarrCompiler('scene.zarr') as compiler:
+   with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
        scene = compiler.create_scene(dimensions=dims)
        scene.add_points('cloud', positions, colors, radii=0.1)
 
    # Serve with viewer
-   # Terminal: luxar serve scene.zarr --viewer
+   # Terminal: luxar serve scene.luxar.zarr --viewer
 
 .. image:: images/docs/basic-3d-pointcloud.png
    :alt: Luxar viewer showing a 3D point cloud

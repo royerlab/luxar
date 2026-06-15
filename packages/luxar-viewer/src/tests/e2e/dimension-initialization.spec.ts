@@ -24,7 +24,7 @@ import {
 // Test datasets with different dimension types
 const DATASETS = {
   // 5D dataset with discrete channel dimension
-  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',
+  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr',
 };
 
 test.describe('Dimension Initialization - Policy Compliance', () => {

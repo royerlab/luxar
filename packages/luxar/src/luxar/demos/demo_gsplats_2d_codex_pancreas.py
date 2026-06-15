@@ -82,7 +82,7 @@ using tiled fitting. Each channel is fitted and cached independently,
 so interrupted runs can resume from where they left off.
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_2d_codex_pancreas.zarr
+    - Scene saved to:  datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -447,7 +447,7 @@ def create_luxar_scene(
         Path to saved scene.
     """
     if output_path is None:
-        output_path = get_demos_output_dir() / "gsplats_2d_codex_pancreas.zarr"
+        output_path = get_demos_output_dir() / "gsplats_2d_codex_pancreas.luxar.zarr"
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -662,7 +662,7 @@ def main():
     )
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_2d_codex_pancreas.zarr"
+    output_path = get_demos_output_dir() / "gsplats_2d_codex_pancreas.luxar.zarr"
 
     # Serve-only mode
     if SERVE_ONLY:

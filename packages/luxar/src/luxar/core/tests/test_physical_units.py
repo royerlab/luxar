@@ -27,7 +27,7 @@ class TestPhysicalUnits:
     )
     def test_unit_acceptance(self, unit, tmp_path) -> None:
         """Test that each physical unit is accepted in Dimensions."""
-        scene_path = tmp_path / f"test_{unit}.zarr"
+        scene_path = tmp_path / f"test_{unit}.luxar.zarr"
 
         # Create dimensions with this unit
         dims = Dimensions(
@@ -71,7 +71,7 @@ class TestPhysicalUnits:
 
     def test_dimensions_with_mixed_units(self, tmp_path) -> None:
         """Test that different dimensions can have different units."""
-        scene_path = tmp_path / "test_mixed.zarr"
+        scene_path = tmp_path / "test_mixed.luxar.zarr"
 
         dims = Dimensions(
             [

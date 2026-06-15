@@ -197,13 +197,13 @@ preflight checks:
    viewer-initialization, test-fixtures, geometry-types) don't need
    the examples.
 2. **Required datasets** — checks for the seven required `*.zarr`
-   directories (`simple_nd_example.zarr`,
-   `build_example_manual.zarr`,
-   `build_example_structured.zarr`,
-   `dimension_navigation_example.zarr`,
-   `dimension_sliders_5d_example.zarr`,
-   `dense_grid_5d_example.zarr`,
-   `layers_test_example.zarr`) and logs which are missing.
+   directories (`simple_nd_example.luxar.zarr`,
+   `build_example_manual.luxar.zarr`,
+   `build_example_structured.luxar.zarr`,
+   `dimension_navigation_example.luxar.zarr`,
+   `dimension_sliders_5d_example.luxar.zarr`,
+   `dense_grid_5d_example.luxar.zarr`,
+   `layers_test_example.luxar.zarr`) and logs which are missing.
 3. **Output directories** — creates `test-results/` and
    `test-results/debug/` (the latter for `pnpm agent:debug`
    screenshots) if they don't exist.

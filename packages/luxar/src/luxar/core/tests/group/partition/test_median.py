@@ -173,7 +173,7 @@ class TestMedianBspPolylines:
 class TestMedianDefaultEndToEnd:
     def test_add_points_default_is_median(self, tmp_path) -> None:
         pos = np.random.RandomState(2).uniform(-10, 10, (300, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points("pts", pos, partition=dict(max_elements=120))
         # Over cap → wrapper produced.
@@ -181,7 +181,7 @@ class TestMedianDefaultEndToEnd:
 
     def test_explicit_median_rule(self, tmp_path) -> None:
         pos = np.random.RandomState(4).uniform(-10, 10, (300, 3)).astype(np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_points(
                 "pts", pos, partition=dict(max_elements=120, rule="median")
@@ -206,7 +206,7 @@ class TestMedianDefaultEndToEnd:
             int(p.size) for p in median_bsp_partition(c, max_elements=120)
         )
 
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_gsplats(
                 "splats",
@@ -217,7 +217,7 @@ class TestMedianDefaultEndToEnd:
             )
         assert node.attrs.get("kind") == "partition"
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
 
         def collect(g, out):
             for k in g.keys():

@@ -11,7 +11,7 @@
  *     swaps which child mesh is visible. ``auto`` mode resumes
  *     view-driven selection.
  *
- * Uses the ``test_lod_group.zarr`` fixture (3 levels, splat counts
+ * Uses the ``test_lod_group.luxar.zarr`` fixture (3 levels, splat counts
  * 8 / 32 / 128, thresholds 0 / 50 / 200 px) — small enough to render
  * instantly, large enough that the registry's selector picks a
  * meaningful level on a default-zoom view.
@@ -27,7 +27,8 @@ import {
   focusCanvas,
 } from './helpers';
 
-const FIXTURE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lod_group.zarr';
+const FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lod_group.luxar.zarr';
 
 test.describe('lod_group node', () => {
   test.beforeEach(async ({ page }) => {

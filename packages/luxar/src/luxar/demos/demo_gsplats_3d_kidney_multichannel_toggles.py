@@ -118,7 +118,7 @@ Options:
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volumes
 
 Output:
-    - Scene saved to: demos/gsplats_6d_kidney_multichannel_toggles.zarr
+    - Scene saved to: demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr
     - Automatically opens in browser at http://localhost:8000
 
 """
@@ -374,7 +374,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
     """
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.zarr"
+            get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.luxar.zarr"
         )
 
     # Map each channel to its dimension name
@@ -599,7 +599,9 @@ def main():
     aprint("Dataset: Mouse kidney — DAPI (nuclei) + WGA (tubules) + Phalloidin (actin)")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_6d_kidney_multichannel_toggles.luxar.zarr"
+    )
 
     # Serve-only mode
     if SERVE_ONLY:

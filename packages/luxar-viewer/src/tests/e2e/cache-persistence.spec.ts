@@ -11,7 +11,7 @@
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForCacheStable } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/radius_basic_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/radius_basic_example.luxar.zarr';
 
 test.describe('L2 persistence across page reload (R7)', () => {
   test('L2 entries survive a full page reload (Chromium real OPFS)', async ({

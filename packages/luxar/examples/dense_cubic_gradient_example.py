@@ -98,7 +98,7 @@ def create_cubic_array(
 
 def main():
     """Create a dense cubic gradient visualization scene."""
-    output_path = get_examples_output_dir() / "dense_cubic_gradient_example.zarr"
+    output_path = get_examples_output_dir() / "dense_cubic_gradient_example.luxar.zarr"
 
     aprint(f"Creating dense cubic gradient at {output_path}")
     aprint("This example creates a stunning 100×100×100 grid visualization")
@@ -232,7 +232,7 @@ Performance notes:
 
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")
-        aprint("1. Run: luxar serve dense_cubic_gradient_example.zarr --viewer")
+        aprint("1. Run: luxar serve dense_cubic_gradient_example.luxar.zarr --viewer")
         aprint("2. Observe the beautiful depth gradient (warm → cool)")
         aprint("3. Press 'C' to switch to fly controls")
         aprint("4. Use WASD to fly through the crystalline cube")

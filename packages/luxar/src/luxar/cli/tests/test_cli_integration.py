@@ -46,7 +46,7 @@ def available_port():
 @pytest.fixture
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
-    store_path = tmp_path / "test_scene.zarr"
+    store_path = tmp_path / "test_scene.luxar.zarr"
     create_lorenz_attractor(store_path, n_points=100, seed=42)
     return store_path
 
@@ -267,7 +267,7 @@ class TestServeIntegration:
         monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
         monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
 
-        out = tmp_path / "demo.zarr"
+        out = tmp_path / "demo.luxar.zarr"
         result = CliRunner().invoke(
             app,
             [
@@ -454,7 +454,7 @@ class TestInfoCommand:
         from luxar.cli import app
 
         runner = CliRunner()
-        result = runner.invoke(app, ["info", "/nonexistent/path.zarr"])
+        result = runner.invoke(app, ["info", "/nonexistent/path.luxar.zarr"])
 
         assert result.exit_code != 0
         assert "Error" in result.stdout or "not found" in result.stdout.lower()
@@ -501,7 +501,7 @@ class TestDemoCommand:
 
         from luxar.cli import app
 
-        output_path = tmp_path / "demo_output.zarr"
+        output_path = tmp_path / "demo_output.luxar.zarr"
         runner = CliRunner()
 
         # Run demo with --no-serve and --output flags
@@ -527,8 +527,8 @@ class TestDemoCommand:
 
         from luxar.cli import app
 
-        output1 = tmp_path / "demo1.zarr"
-        output2 = tmp_path / "demo2.zarr"
+        output1 = tmp_path / "demo1.luxar.zarr"
+        output2 = tmp_path / "demo2.luxar.zarr"
 
         runner = CliRunner()
 
@@ -633,7 +633,7 @@ class TestServePerformance:
     def test_large_dataset_serve(self, tmp_path, available_port):
         """Test serving a larger dataset."""
         # Create a larger scene
-        store_path = tmp_path / "large_scene.zarr"
+        store_path = tmp_path / "large_scene.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             _scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             positions = np.random.rand(10000, 3).astype(np.float32)

@@ -138,7 +138,7 @@ The Luxar viewer is designed to work with datasets served over HTTP, potentially
 **Example**:
 ```bash
 # This throttles the ZARR DATA, not the viewer HTML
-luxar viewer --data foo.zarr --bandwidth 1mbps --latency 200ms
+luxar viewer --data foo.luxar.zarr --bandwidth 1mbps --latency 200ms
 
 # User expects:
 # - Viewer HTML loads quickly (normal speed)
@@ -272,13 +272,13 @@ NetworkProfile = TypedDict('NetworkProfile', {
 **Example**:
 ```bash
 # Use 3G profile as-is
-luxar serve data.zarr --profile 3g
+luxar serve data.luxar.zarr --profile 3g
 
 # Use 4G profile but increase latency
-luxar serve data.zarr --profile 4g --latency 200ms
+luxar serve data.luxar.zarr --profile 4g --latency 200ms
 
 # Use satellite profile but disable packet loss
-luxar serve data.zarr --profile satellite --packet-loss 0
+luxar serve data.luxar.zarr --profile satellite --packet-loss 0
 ```
 
 ---
@@ -829,16 +829,16 @@ def serve(
 
     Examples:
         # Simulate 3G mobile connection
-        luxar serve data.zarr --profile 3g --viewer
+        luxar serve data.luxar.zarr --profile 3g --viewer
 
         # Simulate custom slow connection
-        luxar serve data.zarr --bandwidth 500kbps --latency 200ms
+        luxar serve data.luxar.zarr --bandwidth 500kbps --latency 200ms
 
         # Use 4G profile with custom latency
-        luxar serve data.zarr --profile 4g --latency 300ms
+        luxar serve data.luxar.zarr --profile 4g --latency 300ms
 
         # Test packet loss
-        luxar serve data.zarr --bandwidth 10mbps --packet-loss 5%
+        luxar serve data.luxar.zarr --bandwidth 10mbps --packet-loss 5%
     """
 ```
 
@@ -932,7 +932,7 @@ def profiles() -> None:
         aprint(f"    Description: {profile['description']}")
         aprint("")
 
-    aprint("Usage: luxar serve data.zarr --profile <profile-name>")
+    aprint("Usage: luxar serve data.luxar.zarr --profile <profile-name>")
 ```
 
 ---
@@ -1184,11 +1184,11 @@ def test_serve_with_profile(cli_runner, tmp_path):
 
 ### Manual Testing Checklist
 
-- [ ] `luxar serve data.zarr --profile 3g --viewer` - loads slowly, UI responsive
-- [ ] `luxar serve data.zarr --bandwidth 100kbps` - very slow loading
-- [ ] `luxar serve data.zarr --latency 1s` - noticeable delay before each response
-- [ ] `luxar serve data.zarr --packet-loss 10%` - occasional failed requests
-- [ ] `luxar serve data.zarr --profile satellite --latency 1s` - override works
+- [ ] `luxar serve data.luxar.zarr --profile 3g --viewer` - loads slowly, UI responsive
+- [ ] `luxar serve data.luxar.zarr --bandwidth 100kbps` - very slow loading
+- [ ] `luxar serve data.luxar.zarr --latency 1s` - noticeable delay before each response
+- [ ] `luxar serve data.luxar.zarr --packet-loss 10%` - occasional failed requests
+- [ ] `luxar serve data.luxar.zarr --profile satellite --latency 1s` - override works
 - [ ] `luxar profiles` - shows all profiles with parameters
 - [ ] `luxar serve --profile invalid` - shows error with available profiles
 - [ ] Browser DevTools Network tab shows throttled speeds matching settings
@@ -1199,7 +1199,7 @@ def test_serve_with_profile(cli_runner, tmp_path):
 
 ### Example 1: Test 3G Mobile Performance
 ```bash
-luxar serve examples/lorenz_attractor.zarr --profile 3g --viewer --open
+luxar serve examples/lorenz_attractor.luxar.zarr --profile 3g --viewer --open
 ```
 
 **Expected Behavior**:
@@ -1222,7 +1222,7 @@ luxar demo --profile satellite --open
 
 ### Example 3: Custom Worst-Case Scenario
 ```bash
-luxar serve data.zarr --bandwidth 100kbps --latency 500ms --jitter 50% --packet-loss 5% --viewer
+luxar serve data.luxar.zarr --bandwidth 100kbps --latency 500ms --jitter 50% --packet-loss 5% --viewer
 ```
 
 **Expected Behavior**:
@@ -1233,7 +1233,7 @@ luxar serve data.zarr --bandwidth 100kbps --latency 500ms --jitter 50% --packet-
 
 ### Example 4: Test Only Latency
 ```bash
-luxar serve data.zarr --latency 200ms --jitter 10% --viewer
+luxar serve data.luxar.zarr --latency 200ms --jitter 10% --viewer
 ```
 
 **Expected Behavior**:
@@ -1243,7 +1243,7 @@ luxar serve data.zarr --latency 200ms --jitter 10% --viewer
 
 ### Example 5: Broadband Override
 ```bash
-luxar serve data.zarr --profile broadband --packet-loss 2% --viewer
+luxar serve data.luxar.zarr --profile broadband --packet-loss 2% --viewer
 ```
 
 **Expected Behavior**:
@@ -1292,7 +1292,7 @@ Different throttling for small vs large responses:
 Suggest profile based on detected dataset characteristics:
 ```python
 # If dataset is large (>1GB), suggest testing with slow profiles
-luxar serve huge.zarr
+luxar serve huge.luxar.zarr
 # Suggestion: "Large dataset detected. Consider testing with --profile 3g"
 ```
 
@@ -1303,13 +1303,13 @@ Record real network conditions and replay them:
 luxar record-network --output network-trace.json
 
 # Replay recorded trace
-luxar serve data.zarr --replay network-trace.json
+luxar serve data.luxar.zarr --replay network-trace.json
 ```
 
 ### 7. Statistics and Reporting
 Generate report of simulated network performance:
 ```bash
-luxar serve data.zarr --profile 3g --report network-stats.json
+luxar serve data.luxar.zarr --profile 3g --report network-stats.json
 # After session, generates report:
 # - Total bytes served
 # - Number of requests

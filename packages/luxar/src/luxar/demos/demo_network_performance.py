@@ -316,14 +316,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if no_serve:
-        output_path = get_demos_output_dir() / "performance_test.zarr"
+        output_path = get_demos_output_dir() / "performance_test.luxar.zarr"
         generate_performance_test_dataset(output_path, n_points=n_points)
         aprint(f"Dataset generated at {output_path}")
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_network_perf_") as tmpdir:
-        output_path = Path(tmpdir) / "performance_test.zarr"
+        output_path = Path(tmpdir) / "performance_test.luxar.zarr"
 
         # Generate the dataset
         generate_performance_test_dataset(output_path, n_points=n_points)

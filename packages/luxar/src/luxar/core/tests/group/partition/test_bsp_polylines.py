@@ -110,7 +110,7 @@ class TestAddLinesPartition:
 
     def test_over_cap_creates_partition_wrapper(self, tmp_path):
         v, w = self._segments_data(200, seed=0)  # 400 vertices total
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "lines",
@@ -126,7 +126,7 @@ class TestAddLinesPartition:
     def test_polylines_atomic_at_write_time(self, tmp_path):
         """All segments are preserved; total vertex count matches input."""
         v, w = self._segments_data(150, seed=1)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(
                 "lines",
@@ -135,7 +135,7 @@ class TestAddLinesPartition:
                 line_type="segments",
                 partition=dict(max_elements=100),
             )
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         grp = store["lines"]
 
         def collect(g):
@@ -157,7 +157,7 @@ class TestAddLinesPartition:
     def test_partition_under_cap_falls_through(self, tmp_path):
         """partition= with input under the cap → no wrapper."""
         v, w = self._segments_data(5, seed=2)  # 10 vertices
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "lines",
@@ -175,7 +175,7 @@ class TestAddLinesPartition:
         # to fall through to a single-leaf write.
         v = np.random.RandomState(3).uniform(-10, 10, (200, 3)).astype(np.float32)
         w = np.full(200, 0.05, dtype=np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "lines",
@@ -188,7 +188,7 @@ class TestAddLinesPartition:
 
     def test_invalid_partition_rule_raises(self, tmp_path):
         v, w = self._segments_data(50, seed=4)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="partition rule"):
                 scene.add_lines(
@@ -201,7 +201,7 @@ class TestAddLinesPartition:
 
     def test_sah_rule_produces_partition(self, tmp_path):
         v, w = self._segments_data(200, seed=5)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "lines",
@@ -215,7 +215,7 @@ class TestAddLinesPartition:
 
     def test_image_labels_alongside_partition_raises(self, tmp_path):
         v, w = self._segments_data(100, seed=6)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="image_labels.*partition"):
                 scene.add_lines(
@@ -232,7 +232,7 @@ class TestAddLinesPartition:
         each spatial part builds its own additive LOD ladder instead of the
         ladder being silently dropped."""
         v, w = self._segments_data(300, seed=7)  # 600 vertices
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "lines",
@@ -244,7 +244,7 @@ class TestAddLinesPartition:
             )
             assert node.attrs.get("kind") == "partition"
 
-        store = zarr.open(str(tmp_path / "t.zarr"), mode="r")
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         # Lines additive-LOD is a single node carrying n_additive_sublods > 1
         # (with additive_<i>/ subgroups), not a kind=lod group.
         found_ladder: list = []
@@ -340,7 +340,7 @@ class TestIndexedPartitionTopology:
 
     def test_indexed_partition_preserves_all_edges(self, tmp_path):
         widths = np.full(self._VERTS.shape[0], 0.05, dtype=np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_lines(
                 "graph",
@@ -352,7 +352,7 @@ class TestIndexedPartitionTopology:
             )
             assert node.attrs.get("kind") == "partition"  # actually split
 
-        leaves = self._collect_leaf_segment_arrays(tmp_path / "t.zarr")
+        leaves = self._collect_leaf_segment_arrays(tmp_path / "t.luxar.zarr")
         assert len(leaves) >= 2  # genuinely partitioned
         # No edge dropped or fabricated: total segment count is preserved.
         total_segments = sum(seg.shape[0] for _, seg in leaves)
@@ -370,7 +370,7 @@ class TestIndexedPartitionTopology:
         verts = self._VERTS[8:].copy()  # the 3 triangle vertices
         edges = np.array([0, 1, 1, 2, 2, 0], dtype=np.intp)  # flat (2E,)
         widths = np.full(3, 0.05, dtype=np.float32)
-        with LuxarZarrCompiler(tmp_path / "t.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             # Single component → can't split below cap → single leaf, no crash.
             scene.add_lines(

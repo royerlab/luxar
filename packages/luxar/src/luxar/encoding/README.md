@@ -614,7 +614,7 @@ from luxar.encoding import EncodingMode
 # Create compiler with encoding mode
 dims = Dimensions.default_3d()
 with LuxarZarrCompiler(
-    "output.zarr",
+    "output.luxar.zarr",
     encoding_mode=EncodingMode.MEMORY  # Use aggressive compression
 ) as compiler:
     scene = compiler.create_scene(dimensions=dims)
@@ -842,11 +842,11 @@ from luxar import LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 # For web/TypeScript compatibility (default)
-compiler = LuxarZarrCompiler("data.zarr", encoding_mode=EncodingMode.MEMORY)
+compiler = LuxarZarrCompiler("data.luxar.zarr", encoding_mode=EncodingMode.MEMORY)
 
 # For maximum memory efficiency (Python-only)
 compiler = LuxarZarrCompiler(
-    "data.zarr",
+    "data.luxar.zarr",
     encoding_mode=EncodingMode.MEMORY,
     float16_allowed=True
 )

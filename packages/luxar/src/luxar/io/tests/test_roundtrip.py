@@ -32,7 +32,7 @@ class TestBasicRoundTrip:
     # neighbours and the median-split has nothing to split) that the
     # bulk tests never reach.
     def test_single_point_roundtrip(self, tmp_path) -> None:
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         positions = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
         colors = np.array([[1.0, 0.0, 0.5]], dtype=np.float32)
         radii = np.array([0.5], dtype=np.float32)
@@ -53,7 +53,7 @@ class TestBasicRoundTrip:
 
     def test_positions_only(self, tmp_path) -> None:
         """Test round-trip with positions only."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 1000
 
         # Generate test data
@@ -96,7 +96,7 @@ class TestBasicRoundTrip:
 
     def test_positions_and_colors(self, tmp_path) -> None:
         """Test round-trip with positions and colors."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 500
 
         rng = np.random.RandomState(123)
@@ -134,7 +134,7 @@ class TestBasicRoundTrip:
 
     def test_full_point_attributes(self, tmp_path) -> None:
         """Test round-trip with all point attributes."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 200
 
         rng = np.random.RandomState(42)
@@ -203,7 +203,7 @@ class TestHDRColors:
 
     def test_hdr_colors_preserved(self, tmp_path) -> None:
         """Test that HDR colors (values > 1.0) are preserved."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 100
 
         positions = np.random.randn(n_points, 3).astype(np.float32)
@@ -228,7 +228,7 @@ class TestSceneDimensions:
 
     def test_3d_scene_dimensions(self, tmp_path) -> None:
         """Test round-trip with explicit 3D dimensions."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -254,7 +254,7 @@ class TestSceneDimensions:
 
     def test_5d_scene_dimensions(self, tmp_path) -> None:
         """Test round-trip with 5D dimensions (time, channel, xyz)."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -317,7 +317,7 @@ class TestSceneDimensions:
         """Round-trip with 4D dimensions (time + xyz) — added to fill the
         4D gap between test_3d_scene_dimensions and test_5d_scene_dimensions.
         """
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -357,7 +357,7 @@ class TestSceneDimensions:
 
     def test_categorical_dimensions(self, tmp_path) -> None:
         """Test round-trip with categorical dimensions."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -392,7 +392,7 @@ class TestTransforms:
 
     def test_points_with_transform(self, tmp_path) -> None:
         """Test round-trip with transform on points."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         positions = np.random.randn(100, 3).astype(np.float32)
         transform = transforms.translate(10, 20, 30)
@@ -413,7 +413,7 @@ class TestTransforms:
 
     def test_hierarchical_transforms(self, tmp_path) -> None:
         """Test round-trip with hierarchical group transforms."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         positions = np.random.randn(50, 3).astype(np.float32)
         group_transform = transforms.translate(100, 0, 0)
@@ -448,7 +448,7 @@ class TestRenderingAttributes:
 
     def test_opacity_gamma_blending(self, tmp_path) -> None:
         """Test round-trip of rendering attributes."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         positions = np.random.randn(50, 3).astype(np.float32)
 
@@ -471,7 +471,7 @@ class TestRenderingAttributes:
 
     def test_normal_blending_mode(self, tmp_path) -> None:
         """Test round-trip with normal blending mode."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         positions = np.random.randn(50, 3).astype(np.float32)
 
@@ -494,7 +494,7 @@ class TestEncodingDecoding:
 
     def test_uniform_color_broadcast(self, tmp_path) -> None:
         """Test that uniform colors are broadcast and decoded correctly."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 1000
 
         positions = np.random.randn(n_points, 3).astype(np.float32)
@@ -517,7 +517,7 @@ class TestEncodingDecoding:
 
     def test_uniform_radii_broadcast(self, tmp_path) -> None:
         """Test that uniform radii are broadcast and decoded correctly."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 500
 
         positions = np.random.randn(n_points, 3).astype(np.float32)
@@ -537,7 +537,7 @@ class TestEncodingDecoding:
 
     def test_uint8_color_quantization(self, tmp_path) -> None:
         """Test that SDR colors are quantized to uint8 and decoded correctly."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 100
 
         positions = np.random.randn(n_points, 3).astype(np.float32)
@@ -562,7 +562,7 @@ class TestSceneAPI:
 
     def test_list_nodes(self, tmp_path) -> None:
         """Test node listing methods."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -588,7 +588,7 @@ class TestSceneAPI:
 
     def test_has_node(self, tmp_path) -> None:
         """Test has_node method."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -601,7 +601,7 @@ class TestSceneAPI:
 
     def test_get_node_type(self, tmp_path) -> None:
         """Test get_node_type method."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -617,7 +617,7 @@ class TestSceneAPI:
 
     def test_get_node_metadata(self, tmp_path) -> None:
         """Test get_node_metadata method."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -636,7 +636,7 @@ class TestSceneAPI:
 
     def test_scene_version(self, tmp_path) -> None:
         """Test that scene version is stored and retrieved."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -649,7 +649,7 @@ class TestSceneAPI:
 
     def test_scene_path_property(self, tmp_path) -> None:
         """Test that scene.path returns the correct path."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -662,7 +662,7 @@ class TestSceneAPI:
 
     def test_scene_root_attrs(self, tmp_path) -> None:
         """Test that scene.root_attrs returns all root attributes."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -679,7 +679,7 @@ class TestSceneAPI:
 
     def test_scene_with_minimal_dimensions(self, tmp_path) -> None:
         """Test that scene with minimal dimensions works correctly."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         # Create scene with minimal 3D dimensions
         dims = Dimensions.default_3d()
@@ -700,14 +700,14 @@ class TestErrorHandling:
     def test_file_not_found(self, tmp_path) -> None:
         """Test error when file doesn't exist."""
         with pytest.raises(FileNotFoundError):
-            LuxarScene.load(tmp_path / "nonexistent.zarr")
+            LuxarScene.load(tmp_path / "nonexistent.luxar.zarr")
 
     def test_not_a_luxar_scene(self, tmp_path) -> None:
         """Test error when zarr is not a Luxar scene."""
         import zarr
 
         # Create a generic zarr store
-        output_path = tmp_path / "generic.zarr"
+        output_path = tmp_path / "generic.luxar.zarr"
         root = zarr.open_group(output_path, mode="w")
         root.attrs["not_a_scene"] = True
 
@@ -716,7 +716,7 @@ class TestErrorHandling:
 
     def test_get_points_wrong_type(self, tmp_path) -> None:
         """Test error when getting points from non-points node."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene_node = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -729,7 +729,7 @@ class TestErrorHandling:
 
     def test_get_nonexistent_node(self, tmp_path) -> None:
         """Test error when node doesn't exist."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -741,7 +741,7 @@ class TestErrorHandling:
 
     def test_get_node_type_not_found(self, tmp_path) -> None:
         """Test error when get_node_type is called with nonexistent node."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -753,7 +753,7 @@ class TestErrorHandling:
 
     def test_get_node_metadata_not_found(self, tmp_path) -> None:
         """Test error when get_node_metadata is called with nonexistent node."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -769,7 +769,7 @@ class TestSpatialOrdering:
 
     def test_spatial_ordering_metadata(self, tmp_path) -> None:
         """Test that spatial ordering metadata is preserved when dimensions are provided."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 1000
 
         # Create scene with explicit dimensions (required for spatial ordering)
@@ -803,7 +803,7 @@ class TestSpatialOrdering:
 
     def test_chunk_bounds_present(self, tmp_path) -> None:
         """Test that chunk bounds are stored for ordered data."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 10000  # Need enough points for multiple chunks
 
         # Create scene with explicit dimensions (required for spatial ordering)
@@ -838,7 +838,7 @@ class TestMultiplePointGroups:
 
     def test_multiple_point_groups(self, tmp_path) -> None:
         """Test round-trip with multiple point groups."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -863,7 +863,7 @@ class TestMultiplePointGroups:
 
     def test_mixed_attributes_per_group(self, tmp_path) -> None:
         """Test groups with different attribute combinations."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -909,7 +909,7 @@ class TestGSplatsRoundTrip:
 
     def test_basic_gsplats(self, tmp_path) -> None:
         """Test round-trip with basic GSplats data."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_splats = 100
 
         # Generate test data
@@ -945,7 +945,7 @@ class TestGSplatsRoundTrip:
 
     def test_gsplats_with_transform(self, tmp_path) -> None:
         """Test GSplats with transform."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_splats = 50
 
         centers = np.random.randn(n_splats, 3).astype(np.float32)
@@ -971,7 +971,7 @@ class TestGSplatsRoundTrip:
 
     def test_list_gsplats(self, tmp_path) -> None:
         """Test list_gsplats method."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         centers = np.random.randn(20, 3).astype(np.float32)
         amplitudes = np.ones(20, dtype=np.float32)
@@ -991,7 +991,7 @@ class TestGSplatsRoundTrip:
 
     def test_get_gsplats_wrong_type(self, tmp_path) -> None:
         """Test error when getting gsplats from non-gsplats node."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1006,7 +1006,7 @@ class TestGSplatsRoundTrip:
 
     def test_get_gsplats_not_found(self, tmp_path) -> None:
         """Test error when gsplats node doesn't exist."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1023,7 +1023,7 @@ class TestGSplatsRoundTrip:
         ordering and chunk_size were in the
         internal metadata dict but NOT written to group.attrs, causing viewer errors.
         """
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_splats = 100
 
         centers = np.random.randn(n_splats, 3).astype(np.float32)
@@ -1085,7 +1085,7 @@ class TestGSplatsRoundTrip:
 
     def test_gsplats_metadata_without_optional_arrays(self, tmp_path) -> None:
         """Test metadata completeness when colors and sharpness are not provided."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_splats = 50
 
         centers = np.random.randn(n_splats, 3).astype(np.float32)
@@ -1117,7 +1117,7 @@ class TestLinesRoundTrip:
 
     def test_basic_lines(self, tmp_path) -> None:
         """Test round-trip with basic Lines data."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_vertices = 100
 
         # Generate test data for line segments
@@ -1152,7 +1152,7 @@ class TestLinesRoundTrip:
 
     def test_lines_with_transform(self, tmp_path) -> None:
         """Test Lines with transform."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_vertices = 50
 
         vertices = np.random.randn(n_vertices, 3).astype(np.float32)
@@ -1176,7 +1176,7 @@ class TestLinesRoundTrip:
 
     def test_list_lines(self, tmp_path) -> None:
         """Test list_lines method."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         vertices = np.random.randn(20, 3).astype(np.float32)
         widths = np.ones(20, dtype=np.float32) * 0.1
@@ -1195,7 +1195,7 @@ class TestLinesRoundTrip:
 
     def test_nodes_metadata_flags(self, tmp_path) -> None:
         """Test nodes metadata flags for lines and points."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         positions = np.random.randn(5, 3).astype(np.float32)
         sharpness = np.ones(5, dtype=np.float32) * 0.5
@@ -1215,7 +1215,7 @@ class TestLinesRoundTrip:
 
     def test_get_lines_wrong_type(self, tmp_path) -> None:
         """Test error when getting lines from non-lines node."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1230,7 +1230,7 @@ class TestLinesRoundTrip:
 
     def test_get_lines_not_found(self, tmp_path) -> None:
         """Test error when lines node doesn't exist."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1246,7 +1246,7 @@ class TestBroadcastedArraysRoundTrip:
 
     def test_points_broadcasted_arrays(self, tmp_path) -> None:
         """Broadcasted point attributes should decode to full length."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_points = 25
 
         positions = np.random.randn(n_points, 3).astype(np.float32)
@@ -1273,7 +1273,7 @@ class TestBroadcastedArraysRoundTrip:
 
     def test_lines_broadcasted_arrays(self, tmp_path) -> None:
         """Broadcasted line attributes should decode to full length."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_vertices = 10
 
         vertices = np.random.randn(n_vertices, 3).astype(np.float32)
@@ -1300,7 +1300,7 @@ class TestBroadcastedArraysRoundTrip:
 
     def test_gsplats_broadcasted_arrays(self, tmp_path) -> None:
         """Broadcasted gsplats attributes should decode to full length."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         n_splats = 8
 
         centers = np.random.randn(n_splats, 3).astype(np.float32)
@@ -1332,7 +1332,7 @@ class TestReaderGroupTransforms:
 
     def test_get_group_with_transform(self, tmp_path) -> None:
         """Test that get_group() returns parsed transform."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         t = transforms.translate(10, 20, 30)
 
         with LuxarZarrCompiler(output_path) as compiler:
@@ -1349,7 +1349,7 @@ class TestReaderGroupTransforms:
 
     def test_get_group_without_transform(self, tmp_path) -> None:
         """Test that get_group() works for groups without transforms."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1362,7 +1362,7 @@ class TestReaderGroupTransforms:
 
     def test_get_group_type_check(self, tmp_path) -> None:
         """Test that get_group() rejects non-group nodes."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -1375,7 +1375,7 @@ class TestReaderGroupTransforms:
 
     def test_collect_nodes_includes_transforms(self, tmp_path) -> None:
         """Test that .nodes property includes transforms for all node types."""
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
         t_group = transforms.translate(1, 0, 0)
         t_points = transforms.scale(2, 2, 2)
 

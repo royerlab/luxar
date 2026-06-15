@@ -23,7 +23,7 @@ def runner():
 @pytest.fixture
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
-    store_path = tmp_path / "test_scene.zarr"
+    store_path = tmp_path / "test_scene.luxar.zarr"
     from luxar.utils.demos import create_lorenz_attractor
 
     create_lorenz_attractor(store_path, n_points=100, seed=42)
@@ -33,7 +33,7 @@ def sample_scene(tmp_path):
 @pytest.fixture
 def complex_scene(tmp_path):
     """Create a complex scene with hierarchy for testing."""
-    store_path = tmp_path / "complex_scene.zarr"
+    store_path = tmp_path / "complex_scene.luxar.zarr"
 
     with LuxarZarrCompiler(store_path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -122,7 +122,7 @@ class TestDemoCommand:
 
     def test_demo_with_output(self, runner, tmp_path) -> None:
         """Test demo with specified output."""
-        output = tmp_path / "my_demo.zarr"
+        output = tmp_path / "my_demo.luxar.zarr"
 
         with patch("luxar.cli.main.check_viewer_built", return_value=True):
             with patch("luxar.cli.main._serve_viewer"):
@@ -271,7 +271,7 @@ class TestCLIIntegration:
 
     def test_demo_no_serve_then_info_workflow(self, runner, tmp_path) -> None:
         """Test generating demo data without serving then viewing info."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
 
         # Generate
         result1 = runner.invoke(

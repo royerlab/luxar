@@ -98,7 +98,7 @@ def create_cube_points(size: float = 1.0, density: int = 5) -> np.ndarray:
 
 def main():
     """Create a scene demonstrating various transformations."""
-    output_path = get_examples_output_dir() / "transform_example.zarr"
+    output_path = get_examples_output_dir() / "transform_example.luxar.zarr"
 
     aprint(f"Creating transform system demonstration at {output_path}")
     aprint("This example shows:")

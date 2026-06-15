@@ -30,7 +30,7 @@ class TestNdTransformBoundsExpansion:
     def test_bounds_expansion_affine(self) -> None:
         """Affine nd_transform should transform non-displayed dim bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -81,7 +81,7 @@ class TestNdTransformBoundsExpansion:
     def test_bounds_expansion_hierarchical(self) -> None:
         """Parent group nd_transform should compose with child for bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -121,7 +121,7 @@ class TestNdTransformBoundsExpansion:
     def test_bounds_expansion_no_transform_unchanged(self) -> None:
         """Without nd_transform, bounds should be identical to local space."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -154,7 +154,7 @@ class TestNdTransformBoundsExpansion:
     def test_bounds_expansion_multiple_nodes(self) -> None:
         """Multiple nodes with different nd_transforms: union of world bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -201,7 +201,7 @@ class TestNdTransformBoundsExpansion:
     def test_bounds_expansion_negative_scale(self) -> None:
         """Negative scale should correctly flip min/max."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [
@@ -257,7 +257,7 @@ class TestSpatialTransformBoundsExpansion:
     def test_translation_shifts_displayed_bounds(self) -> None:
         """A translated node must report world-space (shifted) scene bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -288,7 +288,7 @@ class TestSpatialTransformBoundsExpansion:
         rotated box — this asserts the 8-corner transform is used.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -311,7 +311,7 @@ class TestSpatialTransformBoundsExpansion:
     def test_hierarchical_transform_composition(self) -> None:
         """A parent-group transform must compose with the child's."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -334,7 +334,7 @@ class TestSpatialTransformBoundsExpansion:
     def test_multiple_nodes_union_world_bounds(self) -> None:
         """Scene bounds are the union of every node's world-space box."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -355,7 +355,7 @@ class TestSpatialTransformBoundsExpansion:
     def test_no_transform_bounds_unchanged(self) -> None:
         """Without any transform, scene bounds equal the local union exactly."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             positions = np.array(
                 [[0.0, 0.0, 0.0], [10.0, 20.0, 30.0]], dtype=np.float32
@@ -373,7 +373,7 @@ class TestSpatialTransformBoundsExpansion:
         """Spatial 4x4 (displayed dims) and nd_transform (non-displayed dim)
         must both be applied to the same node's bounds."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             dims = Dimensions(
                 [

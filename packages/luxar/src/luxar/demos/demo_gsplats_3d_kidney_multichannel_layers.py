@@ -119,7 +119,7 @@ Options:
     --show-roundtrip: Show matplotlib comparison of original vs reconstructed volumes
 
 Output:
-    - Scene saved to: demos/gsplats_3d_kidney_multichannel_layers.zarr
+    - Scene saved to: demos/gsplats_3d_kidney_multichannel_layers.luxar.zarr
     - Automatically opens in browser at http://localhost:8000
 
 """
@@ -366,7 +366,7 @@ def create_luxar_scene(gsplats_list, output_path=None):
     """
     if output_path is None:
         output_path = (
-            get_demos_output_dir() / "gsplats_3d_kidney_multichannel_layers.zarr"
+            get_demos_output_dir() / "gsplats_3d_kidney_multichannel_layers.luxar.zarr"
         )
 
     with asection("Creating 3D Luxar Scene (layer controls)"):
@@ -562,7 +562,9 @@ def main():
     aprint("Press L in the viewer to open the Layers panel")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_3d_kidney_multichannel_layers.zarr"
+    output_path = (
+        get_demos_output_dir() / "gsplats_3d_kidney_multichannel_layers.luxar.zarr"
+    )
 
     # Serve-only mode
     if SERVE_ONLY:

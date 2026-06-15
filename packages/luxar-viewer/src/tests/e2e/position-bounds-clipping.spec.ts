@@ -14,7 +14,8 @@ import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 // Use a basic example dataset which should have position_bounds set
-const DATASET_WITH_BOUNDS = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET_WITH_BOUNDS =
+  'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 test.describe('Position Bounds and Clipping Planes', () => {
   test('should load scene with position_bounds from metadata', async ({ page }) => {

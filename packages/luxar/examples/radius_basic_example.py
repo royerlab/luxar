@@ -29,7 +29,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main():
     """Create a simple test scene with three groups of different-sized points."""
-    output_path = get_examples_output_dir() / "radius_basic_example.zarr"
+    output_path = get_examples_output_dir() / "radius_basic_example.luxar.zarr"
 
     aprint(f"Creating radius test scene at {output_path}")
 

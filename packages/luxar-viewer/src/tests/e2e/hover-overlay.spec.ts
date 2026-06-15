@@ -17,14 +17,14 @@
  * yet. A follow-up fixture would let a sibling spec also exercise the
  * picking → label → overlay path end-to-end.
  *
- * Dataset: build_example_structured.zarr — any 3D fixture works; the
+ * Dataset: build_example_structured.luxar.zarr — any 3D fixture works; the
  * scene content is irrelevant to the probe.
  */
 
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 /**
  * Inject a synthetic hover overlay via `OverlayManager.loadOverlays`.
