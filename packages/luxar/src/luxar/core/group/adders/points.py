@@ -521,17 +521,29 @@ def add_points_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
     from ..lod.group import derive_min_pixel_sizes
 
-    # v1 scope: scalar+colormap points have no per-splat gsplat equivalent.
+    # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
+    # scalars -> RGB (via the same LUT normalisation the viewer uses) and lift
+    # with those colours. The FINEST child keeps scalars+colormap (native,
+    # interactively re-colourable); only the coarse gsplat levels carry baked
+    # colours — so a live colormap change re-colours the finest level but not the
+    # coarse ones (documented caveat). Scalars without a colormap is still an
+    # error (scalars require a colormap to map to colour).
+    colors_for_lift = colors
     if scalars is not None and colors is None:
-        raise NotImplementedError(
-            "substitutive_lod on Points with scalars+colormap is not yet "
-            "supported (gsplats carry colors, not per-splat scalars). Provide "
-            "explicit per-point colors, or use additive_lod for colormap points."
-        )
+        colormap = attrs.get("colormap")
+        if colormap is None:
+            raise ValueError(
+                "substitutive_lod on Points with scalars requires a colormap "
+                "(scalars map to colour via a colormap LUT). Pass colormap=..., "
+                "or provide explicit per-point colors."
+            )
+        from ....colormaps import scalars_to_colors
+
+        colors_for_lift = scalars_to_colors(np.asarray(scalars), colormap)
 
     radii_for_lift = DEFAULT_POINT_RADIUS if radii is None else radii
     lifted = lift_points_to_gsplats(
-        pos_arr, radii_for_lift, colors=colors, opacity=1.0,
+        pos_arr, radii_for_lift, colors=colors_for_lift, opacity=1.0,
         truncation_radius=float(spec["truncation_radius"]),
     )
 
@@ -585,6 +597,10 @@ def add_points_substitutive_lod_wrapper_impl(
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     child_attrs.pop("min_pixel_size", None)
     lod_attrs.setdefault("display_type", "points")  # finest child is points
+    # The coarse gsplat children carry baked per-splat colours (from the lift),
+    # so they must NOT also receive `colormap` (gsplats reject colors+colormap).
+    # `colormap` (when scalars were baked) stays on the finest Points child only.
+    gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
 
     parent_node = parent or group
     aprint(
@@ -607,7 +623,7 @@ def add_points_substitutive_lod_wrapper_impl(
             lod_group=None,
             additive_lod=None,
             min_pixel_size=min_pixel_sizes[idx],
-            **child_attrs,
+            **gsplat_child_attrs,
         )
 
     # Finest child: the original Points node (carries all N points + image_labels;

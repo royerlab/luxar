@@ -273,18 +273,41 @@ class TestSubstitutiveLodGuards:
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
 
-    def test_scalars_without_colors_raises(self, tmp_path) -> None:
+    def test_scalars_without_colormap_raises(self, tmp_path) -> None:
+        # scalars need a colormap to map to colour — without one, raise clearly.
         out = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         pos = rng.rand(200, 3).astype(np.float32)
         scalars = rng.rand(200).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(NotImplementedError, match="scalars"):
-                scene.add_points(
-                    "pts", pos, scalars=scalars, colormap="viridis",
-                    substitutive_lod=True,
-                )
+            with pytest.raises(ValueError, match="colormap"):
+                scene.add_points("pts", pos, scalars=scalars, substitutive_lod=True)
+
+    def test_scalars_plus_colormap_bakes_colors_on_coarse_levels(self, tmp_path) -> None:
+        # scalars+colormap now WORKS: coarse gsplat levels carry baked SDR colours
+        # from the colormap; the finest Points child keeps scalars+colormap.
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (6000, 3)).astype(np.float32)
+        scalars = rng.uniform(0, 1, 6000).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("cloud", pos, scalars=scalars, colormap="viridis",
+                             substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "points"
+        children = sorted(k for k in grp.keys() if k.startswith("child_"))
+        # Coarse gsplat children carry baked colours (SDR, not blown-out HDR).
+        c0 = grp[children[0]]
+        assert c0.attrs["type"] == "gsplats"
+        assert bool(c0.attrs.get("has_colors")) is True
+        # Finest child stays scalar-driven + colormapped.
+        finest = grp[children[-1]]
+        assert finest.attrs["type"] == "points"
+        assert bool(finest.attrs.get("has_scalars")) is True
+        assert finest.attrs.get("colormap") == "viridis"
 
     def test_image_labels_forwarded_to_finest_points_child(self, tmp_path) -> None:
         # image_labels must NOT be silently dropped on the substitutive path; they

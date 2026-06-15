@@ -165,7 +165,10 @@ class Group(Node):
                 node. ``dict(...)`` keys: ``compression_factor`` (``K``),
                 ``levels`` (``n_lods``), ``method``, ``base_pixel_size``,
                 ``truncation_radius``, ``device``, ``seed``, ``min_pixel_sizes``.
-                Mutually exclusive with ``additive_lod``. See
+                Mutually exclusive with ``additive_lod``. ``scalars``+``colormap``
+                points are supported by baking scalars→RGB for the coarse gsplat
+                levels (the finest Points child stays scalar-driven; a live
+                colormap change re-colours only the finest level). See
                 :func:`luxar.core.group.lod.points.resolve_substitutive_axis_points`.
             partition: Spatial-decomposition control. ``None`` (default) writes
                 a single Points node. ``True`` decomposes via balanced median

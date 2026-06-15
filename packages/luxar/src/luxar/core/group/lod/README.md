@@ -126,8 +126,12 @@ method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 
 Mutually exclusive with `additive_lod` (append vs replace on the same axis).
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
-colormap points are not yet supported (gsplats carry colors, not per-splat
-scalars) — provide explicit colors.
+colormap points are supported by **baking** `scalars`→RGB through the colormap
+LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
+and lifting with those colours; the finest Points child keeps `scalars`+`colormap`
+(native). Caveat: a *live* colormap change in the viewer re-colours only the
+finest child, not the baked coarse gsplat levels. (`scalars` without a `colormap`
+still raises.)
 
 ### Lines (`lines.py`)
 
