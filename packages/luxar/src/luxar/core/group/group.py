@@ -165,7 +165,8 @@ class Group(Node):
                 node. ``dict(...)`` keys: ``compression_factor`` (``K``),
                 ``levels`` (``n_lods``), ``method``, ``base_pixel_size``,
                 ``truncation_radius``, ``device``, ``seed``, ``min_pixel_sizes``.
-                Mutually exclusive with ``additive_lod``. ``scalars``+``colormap``
+                Mutually exclusive with ``additive_lod`` and ``partition``.
+                ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
                 colormap change re-colours only the finest level). See

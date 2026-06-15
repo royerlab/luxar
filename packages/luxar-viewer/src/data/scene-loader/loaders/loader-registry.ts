@@ -88,6 +88,16 @@ export class LoaderRegistry {
     this.loaders.delete(path);
   }
 
+  /**
+   * Drop a single lines loader so it no longer participates in scene-wide
+   * ``updateView`` sweeps. Peer of :meth:`unregisterPointsLoader` /
+   * :meth:`unregisterGSplatsLoader`: used when a lazily-loaded lines
+   * substitutive LOD level is released back to the buffer pool.
+   */
+  unregisterLinesLoader(path: string): void {
+    this.linesLoaders.delete(path);
+  }
+
   // ---------------------------------------------------------------------------
   // Lookup
   // ---------------------------------------------------------------------------

@@ -40,6 +40,16 @@ vi.mock('../../../../../data/scene-loader/nodes/load-points-node', () => ({
   loadPointsNodeExpensive: loadPointsNodeExpensiveMock,
 }));
 
+// Lines deferral mirrors points/gsplats.
+const { loadLinesNodeCheapMock, loadLinesNodeExpensiveMock } = vi.hoisted(() => ({
+  loadLinesNodeCheapMock: vi.fn(),
+  loadLinesNodeExpensiveMock: vi.fn(),
+}));
+vi.mock('../../../../../data/scene-loader/nodes/load-lines-node', () => ({
+  loadLinesNodeCheap: loadLinesNodeCheapMock,
+  loadLinesNodeExpensive: loadLinesNodeExpensiveMock,
+}));
+
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
@@ -51,6 +61,8 @@ beforeEach(() => {
   loadGSplatsNodeExpensiveMock.mockReset();
   loadPointsNodeCheapMock.mockReset();
   loadPointsNodeExpensiveMock.mockReset();
+  loadLinesNodeCheapMock.mockReset();
+  loadLinesNodeExpensiveMock.mockReset();
   // Default cheap-attach: attach a stub mesh named after the node path
   // (so getObjectByName / visibility toggles work) and return a
   // placeholder + dummy loader. Expensive defaults to a no-op resolve.
@@ -64,6 +76,8 @@ beforeEach(() => {
   loadGSplatsNodeExpensiveMock.mockResolvedValue(undefined);
   loadPointsNodeCheapMock.mockImplementation(cheapImpl);
   loadPointsNodeExpensiveMock.mockResolvedValue(undefined);
+  loadLinesNodeCheapMock.mockImplementation(cheapImpl);
+  loadLinesNodeExpensiveMock.mockResolvedValue(undefined);
 });
 
 function makeChildNode(
@@ -106,6 +120,25 @@ function makePointsChildNode(
   };
 }
 
+/** A ``lines`` leaf child (the finest level of a lines-substitutive ladder). */
+function makeLinesChildNode(
+  path: string,
+  minPixelSize: number,
+  positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
+): SceneNode {
+  return {
+    path,
+    type: 'lines',
+    attrs: {
+      type: 'lines',
+      min_pixel_size: minPixelSize,
+      position_bounds: positionBounds,
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
 function makeLodGroupNode(
   children: SceneNode[],
   extraAttrs: Record<string, unknown> = {}
@@ -137,7 +170,9 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     registry: {
       registerGSplatsLoader: vi.fn(),
       registerPointsLoader: vi.fn(),
+      registerLinesLoader: vi.fn(),
       unregisterPointsLoader: vi.fn(),
+      unregisterLinesLoader: vi.fn(),
     } as never,
     lodGroupRegistry: registry,
     nodeFactory,
@@ -146,6 +181,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     isDatasetLive: () => true,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
+    releaseLazyLines: vi.fn(),
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
@@ -544,6 +580,101 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBe(false);
     expect(deferred.failedTick).toBeUndefined();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Lazy loading: a lines finest child (lines-substitutive ladder) defers too
+// ────────────────────────────────────────────────────────────────────────
+
+describe('loadLodGroupNode — lazy lines level loading', () => {
+  function makeReg(): LODGroupRegistry {
+    return new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+  }
+
+  it('defers a non-default lines child via the lines cheap split (not eager)', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [
+        makeChildNode('/lod/child_0', 0), // coarsest gsplat (default/eager)
+        makeLinesChildNode('/lod/child_1', 100), // finest = lines
+      ],
+      { default_level: 0, display_type: 'lines' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1); // only the eager default
+    expect(loadLinesNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadLinesNodeExpensiveMock).not.toHaveBeenCalled();
+    expect(reg.get('/lod')!.children[1].ready).toBe(false);
+  });
+
+  it('ensureLoaded loads the lines level and registers the lines loader', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'lines' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const ln = reg.get('/lod')!.children[1];
+    ln.ensureLoaded!();
+    await vi.waitFor(() => expect(ln.ready).toBe(true));
+    expect(loadLinesNodeExpensiveMock).toHaveBeenCalledTimes(1);
+    expect(ctx.registry.registerLinesLoader).toHaveBeenCalledWith(
+      '/lod/child_1',
+      expect.anything()
+    );
+    expect(ln.loading).toBe(false);
+  });
+
+  it('gives a deferred lines level a release thunk that evicts + resets readiness', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'lines' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const ln = reg.get('/lod')!.children[1];
+    ln.ready = true; // simulate a completed load
+    ln.failed = true; // simulate a stale failure flag from a prior cycle
+    ln.failedTick = 42;
+    expect(typeof ln.release).toBe('function');
+    ln.release!();
+    expect(vi.mocked(ctx.releaseLazyLines)).toHaveBeenCalledWith('/lod/child_1');
+    expect(ln.ready).toBe(false);
+    expect(ln.loading).toBe(false);
+    expect(ln.failed).toBe(false);
+    expect(ln.failedTick).toBeUndefined();
+  });
+
+  it('does not register the lines level when the dataset is switched mid-load', async () => {
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      { default_level: 0, display_type: 'lines' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const ln = reg.get('/lod')!.children[1];
+    ctx.isDatasetLive = () => false;
+    ln.ensureLoaded!();
+    await vi.waitFor(() => expect(ln.loading).toBe(false));
+    expect(ctx.registry.registerLinesLoader).not.toHaveBeenCalled();
+    expect(ln.ready).toBe(false);
   });
 });
 

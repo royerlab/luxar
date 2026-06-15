@@ -17,14 +17,15 @@
  * children in that same order for consistent threshold comparisons.
  *
  * **Lazy loading**: only the default level's geometry is loaded eagerly.
- * Every other gsplats *or points* level is *cheap-attached* (placeholder +
- * loader, no array fetch) with an ``ensureLoaded`` thunk; the registry fires
+ * Every other gsplats, points, *or lines* level is *cheap-attached* (placeholder
+ * + loader, no array fetch) with an ``ensureLoaded`` thunk; the registry fires
  * the thunk on demand the first time the per-frame selector wants to show
  * that level. This is what keeps a scene of many lod_groups from loading
  * every level of every group up front — distant groups stay coarse and
- * their fine levels are never fetched. Deferring the points level matters for
- * the points-substitutive ladder, whose finest child is the full Points cloud
- * (eager-loading it would defeat progressive loading). The selector math needs
+ * their fine levels are never fetched. Deferring the points/lines level matters
+ * for the points-/lines-substitutive ladders, whose finest child is the full
+ * cloud / line set (eager-loading it would defeat progressive loading). The
+ * selector math needs
  * only the per-child ``min_pixel_size`` / ``position_bounds`` attrs (read here),
  * not loaded geometry, so deferral is fully correct.
  *
@@ -41,6 +42,7 @@ import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
+import { loadLinesNodeCheap, loadLinesNodeExpensive } from './load-lines-node';
 import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
@@ -78,8 +80,8 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * differ per leaf type — ``runExpensive`` (fetch + commit), ``registerLoaded``
  * (join the scene-wide update sweep, only after the load lands), and an optional
  * ``releaseLoaded`` (return GPU buffers to the evictable pool). Shared between
- * the gsplats and points defer paths so the ready/failed/loading state machine
- * and the abort-discard error handling live in exactly one place.
+ * the gsplats, points, and lines defer paths so the ready/failed/loading state
+ * machine and the abort-discard error handling live in exactly one place.
  */
 function attachLazyChild(
   placeholder: THREE.Object3D,
@@ -236,13 +238,16 @@ export async function loadLodGroupNode(
     const minPixelSize = typeof minPixelSizeRaw === 'number' ? minPixelSizeRaw : 0;
 
     // Defer only when there's a selector to trigger the load AND the child is a
-    // leaf type with a cheap/expensive split (gsplats or points). The
+    // leaf type with a cheap/expensive split (gsplats / points / lines). The
     // eager/default child and any other type (e.g. nested groups) load fully
-    // now. Deferring the points child matters for the points-substitutive LOD
-    // ladder, whose finest child is the full Points cloud — without this it
-    // would be fetched eagerly on initial load, defeating progressive loading.
+    // now. Deferring the points/lines child matters for the points-/lines-
+    // substitutive LOD ladder, whose finest child is the full cloud / line set —
+    // without this it would be fetched eagerly on load, defeating progressive
+    // loading.
     const canDefer =
-      hasRegistry && i !== eagerIdx && (child.type === 'gsplats' || child.type === 'points');
+      hasRegistry &&
+      i !== eagerIdx &&
+      (child.type === 'gsplats' || child.type === 'points' || child.type === 'lines');
 
     if (canDefer) {
       // Cheap-attach: placeholder mesh + loader, no array fetch. The thunk runs
@@ -265,7 +270,7 @@ export async function loadLodGroupNode(
           () => ctx.registry.registerGSplatsLoader(lazyChild.path, loader),
           () => ctx.releaseLazyGSplats(lazyChild.path)
         );
-      } else {
+      } else if (child.type === 'points') {
         const { placeholder, loader } = await loadPointsNodeCheap(
           child,
           lodThreeGroup,
@@ -280,6 +285,32 @@ export async function loadLodGroupNode(
           () => loadPointsNodeExpensive(lazyChild, ctx, loader),
           () => ctx.registry.registerPointsLoader(lazyChild.path, loader),
           () => ctx.releaseLazyPoints(lazyChild.path)
+        );
+      } else {
+        // `canDefer` only admits gsplats/points/lines, so this is the lines
+        // branch. Assert it explicitly so a future 4th deferrable type added to
+        // `canDefer` but not here fails loudly instead of being mis-loaded as
+        // lines.
+        if (child.type !== 'lines') {
+          throw new Error(
+            `lod_group defer dispatch: unhandled deferrable child type "${child.type}" ` +
+              `for ${child.path} — add a branch above`
+          );
+        }
+        const { placeholder, loader } = await loadLinesNodeCheap(
+          child,
+          lodThreeGroup,
+          childLoc,
+          ctx
+        );
+        entryChild = attachLazyChild(
+          placeholder,
+          lazyChild,
+          minPixelSize,
+          ctx,
+          () => loadLinesNodeExpensive(lazyChild, ctx, loader),
+          () => ctx.registry.registerLinesLoader(lazyChild.path, loader),
+          () => ctx.releaseLazyLines(lazyChild.path)
         );
       }
       registryChildren.push(entryChild);

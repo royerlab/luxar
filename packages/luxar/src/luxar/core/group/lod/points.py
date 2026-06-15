@@ -17,13 +17,12 @@ The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
 
 * ``n_lods: int`` — equal-count split into this many LODs.
-* ``counts: list[int]`` — cumulative element-count breakpoints (the
-  shape PR #301 used for HTTP-range-streaming-sized gsplats demos).
+* ``counts: list[int]`` — cumulative element-count breakpoints (sized for
+  HTTP-range-streaming the coarsest levels first).
 
 If both are passed, ``counts`` wins. If the dataset has fewer elements
 than the requested ``n_lods``, the writer emits ``min(n_lods, n)``
-non-empty levels and the trailing levels are dropped (silent — matches
-the user's preference in the plan).
+non-empty levels and silently drops the trailing (empty) levels.
 """
 
 from __future__ import annotations
