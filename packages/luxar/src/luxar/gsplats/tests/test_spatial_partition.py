@@ -131,6 +131,18 @@ def test_partition_file_grafts_into_a_scene():
         assert n_parts >= 2
         total = sum(root[f"part_{i}"]["centers"].shape[0] for i in range(n_parts))
         assert total == 80
+        # The grafted partition WRAPPER must carry position_bounds (back-filled at
+        # scene finalization) — add_partition_group doesn't compute the union the
+        # standalone writer stamps, so without the back-fill the wrapper reaches the
+        # viewer bounds-less, losing partition-unit culling / standalone parity.
+        wrapper_pb = root.attrs.get("position_bounds")
+        assert wrapper_pb is not None, "grafted partition wrapper lost position_bounds"
+        # the wrapper union must contain every part's bounds.
+        for i in range(n_parts):
+            part_pb = root[f"part_{i}"].attrs["position_bounds"]
+            for d in range(len(part_pb["min"])):
+                assert wrapper_pb["min"][d] <= part_pb["min"][d]
+                assert wrapper_pb["max"][d] >= part_pb["max"][d]
 
 
 def test_grafting_a_partition_rejects_dim_order():

@@ -40,6 +40,18 @@ algorithm** (kmeans_lloyd/greedy/…) — formerly `lod substitutive -m`/`--meth
 — is now the long-only `--substitutive-method` for `--recipe substitutive` /
 `pyramid`.
 
+#### Fixed — grafted `multiscale` LOD was stuck on its fine branch
+
+Grafting a `multiscale` recipe into a scene (`add_gsplats_from_file` /
+`gsplat convert`) dropped the per-child `min_pixel_size` selector threshold on
+the `kind=partition` fine branch of the `kind=lod` group. The viewer reads an
+absent threshold as `0` — identical to the coarse cap's `0` — so the LOD
+selector always picked the finest eligible child and never switched to the
+coarse cap (the embryo stayed stuck on the fine partition at every zoom). The
+scene-graft path now stamps the threshold on the lod/partition **wrapper** group
+(matching the standalone writer `gsplat_tree.write_gsplat_node`), so the coarse
+far-view cap and the fine near-view branch switch as designed.
+
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 
 Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
