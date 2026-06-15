@@ -97,6 +97,13 @@ class RecipeParams:
     substitutive_method: str = "auto"
     lloyd_iterations: int = 5
     candidate_bins_k: int = 12
+    # LOD selector threshold anchor (multiscale coarse↔fine switch). ``None`` →
+    # the serializer's count-derived default (~10 px). The count proxy switches
+    # "early" for a substitutive cap (fewer but LARGER splats than the fine
+    # branch, so equal screen coverage at far fewer elements), leaving the fine
+    # branch eligible at almost every zoom; raise this to push the coarse cap
+    # across a wider/farther zoom range. See ``derive_min_pixel_sizes``.
+    base_pixel_size: Optional[float] = None
     # shared
     device: str = "auto"
     seed: Optional[int] = None
@@ -192,7 +199,11 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     (``[fine_partition, coarse_leaf]``). The serializer derives each child's
     ``min_pixel_size`` selector threshold from its splat count, so the coarse cap
     shows when the node is far/small on screen and the partitioned fine branch
-    takes over up close.
+    takes over up close. When ``params.base_pixel_size`` is set, the thresholds are
+    pre-stamped onto the children's ``meta`` using that anchor (honored by both the
+    standalone writer and the scene graft), overriding the count-derived default —
+    use it when the fine branch stays eligible at too-far a zoom (the substitutive
+    cap's bigger splats make the count proxy switch early; see ``RecipeParams``).
     """
     base = data.flattened()
     fine_partition = build_partitioned(base, params)
@@ -210,6 +221,27 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         seed=params.seed,
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
+
+    if params.base_pixel_size is not None:
+        # Pre-stamp the selector thresholds from the chosen anchor (coarsest→finest
+        # element counts → ascending thresholds [0.0, fine]). Authored child meta
+        # takes precedence over the serializer's count-derived default in both write
+        # paths (gsplat_tree.write_gsplat_node / from_io.graft_gsplat_node).
+        from dataclasses import replace
+
+        from luxar.core.group.lod.group import derive_min_pixel_sizes
+        from luxar.gsplats.tree import total_splats
+
+        coarse_mps, fine_mps = derive_min_pixel_sizes(
+            [total_splats(coarse_leaf), total_splats(fine_partition)],
+            base_pixel_size=params.base_pixel_size,
+        )
+        coarse_leaf = replace(
+            coarse_leaf, meta={**coarse_leaf.meta, "min_pixel_size": coarse_mps}
+        )
+        fine_partition = replace(
+            fine_partition, meta={**fine_partition.meta, "min_pixel_size": fine_mps}
+        )
 
     return GSplatLodGroup(children=[fine_partition, coarse_leaf], default_level=0)
 
