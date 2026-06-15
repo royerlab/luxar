@@ -46,7 +46,7 @@ def runner():
 @pytest.fixture
 def sample_scene(tmp_path: Path) -> Path:
     """Create a minimal zarr scene for testing."""
-    store_path = tmp_path / "test_scene.zarr"
+    store_path = tmp_path / "test_scene.luxar.zarr"
     from luxar.demos import create_lorenz_attractor
 
     create_lorenz_attractor(store_path, n_points=100, seed=42)
@@ -187,7 +187,7 @@ class TestExportScene:
 
     def test_fails_on_nonexistent_source(self, tmp_path: Path) -> None:
         """ValueError when source doesn't exist."""
-        source = tmp_path / "nonexistent.zarr"
+        source = tmp_path / "nonexistent.luxar.zarr"
         output = tmp_path / "output"
 
         with pytest.raises(ValueError, match="Invalid zarr store"):
@@ -417,7 +417,7 @@ class TestCopyZarrData:
 
     def test_complex_hierarchy(self, tmp_path: Path) -> None:
         """Verify a scene with nested groups is copied correctly."""
-        source = tmp_path / "complex.zarr"
+        source = tmp_path / "complex.luxar.zarr"
         with LuxarZarrCompiler(source) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("Group1")
@@ -502,7 +502,7 @@ class TestCLIExportCommand:
             app,
             [
                 "export",
-                str(tmp_path / "nope.zarr"),
+                str(tmp_path / "nope.luxar.zarr"),
                 "-o",
                 str(tmp_path / "out"),
             ],

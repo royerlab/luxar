@@ -121,9 +121,9 @@ tests/
 # Test fixtures (auto-generated, Python → TypeScript compatibility)
 ../../tests/fixtures/              # At luxar-viewer root level
 ├── generate_test_data.py          # Python script to generate test datasets
-├── test_4d.zarr                   # 4D points dataset
-├── test_broadcasting.zarr         # Broadcasting encoding test
-├── test_array_refs.zarr           # Array reference resolution test
+├── test_4d.luxar.zarr                   # 4D points dataset
+├── test_broadcasting.luxar.zarr         # Broadcasting encoding test
+├── test_array_refs.luxar.zarr           # Array reference resolution test
 └── ... (more fixtures)
 ```
 
@@ -516,11 +516,11 @@ Test fixtures are Python-generated zarr datasets for Python-TypeScript compatibi
 ```
 packages/luxar-viewer/tests/fixtures/
 ├── generate_test_data.py          # Python script to generate fixtures
-├── test_4d.zarr                   # 4D points dataset
-├── test_broadcasting.zarr         # Broadcasting encoding test
-├── test_array_refs.zarr           # Array reference resolution test
-├── test_hdr_colors.zarr           # HDR color support test
-├── test_hierarchical_transforms.zarr  # Transform composition test
+├── test_4d.luxar.zarr                   # 4D points dataset
+├── test_broadcasting.luxar.zarr         # Broadcasting encoding test
+├── test_array_refs.luxar.zarr           # Array reference resolution test
+├── test_hdr_colors.luxar.zarr           # HDR color support test
+├── test_hierarchical_transforms.luxar.zarr  # Transform composition test
 └── ... (more fixtures)
 ```
 

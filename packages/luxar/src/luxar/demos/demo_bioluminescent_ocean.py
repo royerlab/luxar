@@ -866,7 +866,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "ocean.zarr"
+        output_path = get_demos_output_dir() / "ocean.luxar.zarr"
         with asection("Generating ocean scene"):
             generate_ocean_scene(
                 output_path, n_jellyfish=n_jellyfish, n_frames=n_frames
@@ -876,7 +876,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_ocean_") as tmpdir:
-        output_path = Path(tmpdir) / "ocean.zarr"
+        output_path = Path(tmpdir) / "ocean.luxar.zarr"
 
         with asection("Generating ocean scene"):
             total_segments, total_points = generate_ocean_scene(

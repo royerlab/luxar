@@ -665,7 +665,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "nuclear_pore_complex.zarr"
+        output_path = get_demos_output_dir() / "nuclear_pore_complex.luxar.zarr"
         try:
             n_atoms = generate_nuclear_pore_complex(
                 output_path,
@@ -688,7 +688,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_npc_") as tmpdir:
-        output_path = Path(tmpdir) / "nuclear_pore_complex.zarr"
+        output_path = Path(tmpdir) / "nuclear_pore_complex.luxar.zarr"
 
         try:
             n_atoms = generate_nuclear_pore_complex(

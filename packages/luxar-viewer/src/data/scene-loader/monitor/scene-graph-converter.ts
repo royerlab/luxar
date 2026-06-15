@@ -27,12 +27,26 @@ const VALID_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
 
 /**
  * Pretty-print the node's display name from its path:
- *   - root path "/"  → "Scene"
+ *   - root path "/" of a true scene → "Scene"
+ *   - root path "/" of a bare-node file (a standalone .gsplats.zarr opened
+ *     directly) → a type label ("GSplats" / "Points" / "Lines" / "LOD" /
+ *     "Partition") instead of the misleading "Scene"
  *   - "/foo/bar"     → "bar"
  *   - "" or weird    → fall back to the raw path string
  */
-function deriveDisplayName(path: string): string {
-  if (path === '/') return 'Scene';
+function deriveDisplayName(path: string, rootType?: string): string {
+  if (path === '/') {
+    if (!rootType || rootType === 'scene') return 'Scene';
+    const labels: Record<string, string> = {
+      gsplats: 'GSplats',
+      points: 'Points',
+      lines: 'Lines',
+      lod: 'LOD',
+      partition: 'Partition',
+      group: 'Group',
+    };
+    return labels[rootType] ?? rootType;
+  }
   return path.split('/').filter(Boolean).pop() || path;
 }
 
@@ -81,7 +95,13 @@ function deriveKind(node: SceneNode): SceneGraphNode['kind'] {
  * de-duplication lives in `calculateSceneGraphStats`, keyed off `kind`.
  */
 export function convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
-  const name = deriveDisplayName(node.path);
+  // For a bare-node root ("/"), prefer the kind (lod/partition) over the raw
+  // "group" type so the monitor shows "LOD"/"Partition" rather than "Scene".
+  const rootKind =
+    node.type === 'group'
+      ? ((node.attrs as Record<string, unknown> | undefined)?.kind as string | undefined)
+      : node.type;
+  const name = deriveDisplayName(node.path, rootKind);
   const type = deriveDisplayType(node.type);
 
   const graphNode: SceneGraphNode = {

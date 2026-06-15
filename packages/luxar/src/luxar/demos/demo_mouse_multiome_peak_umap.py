@@ -304,7 +304,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.zarr"
+        output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.luxar.zarr"
         _n_points = create_mouse_scene(
             output_path, coordinates, attributes, category_maps
         )
@@ -313,7 +313,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_mouse_") as tmpdir:
-        output_path = Path(tmpdir) / "mouse_umap.zarr"
+        output_path = Path(tmpdir) / "mouse_umap.luxar.zarr"
 
         # Create scene
         _n_points = create_mouse_scene(

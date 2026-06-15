@@ -14,7 +14,7 @@ class TestSceneMethods:
 
     def test_scene_str_representation(self, tmp_path) -> None:
         """Test Scene __str__ method."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             str_repr = str(scene)
             assert "Scene" in str_repr
@@ -28,7 +28,7 @@ class TestSceneMethods:
 
     def test_scene_finalize_methods(self, tmp_path) -> None:
         """Test Scene finalize and related methods."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add some points
@@ -38,13 +38,13 @@ class TestSceneMethods:
             # Finalize is called automatically by context manager
 
         # Check the zarr was properly finalized
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert ".zmetadata" in store.store
         assert "points" in store
 
     def test_scene_dimensions_always_set(self, tmp_path) -> None:
         """Test that Scene always has dimensions from creation."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Scene must have dimensions from creation
@@ -61,7 +61,7 @@ class TestSceneMethods:
 
     def test_dimension_mismatch_error_add_points(self, tmp_path) -> None:
         """Test that adding points with wrong dimensionality raises error."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # 5D positions to 3D scene should fail
@@ -76,7 +76,7 @@ class TestSceneMethods:
 
     def test_dimension_mismatch_error_add_lines(self, tmp_path) -> None:
         """Test that adding lines with wrong dimensionality raises error."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # 4D vertices to 3D scene should fail
@@ -86,7 +86,7 @@ class TestSceneMethods:
 
     def test_dimension_mismatch_error_add_gsplats(self, tmp_path) -> None:
         """Test that adding gsplats with wrong dimensionality raises error."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # 4D centers to 3D scene should fail
@@ -111,7 +111,7 @@ class TestSceneMethods:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Positions outside declared range should produce warning
@@ -147,7 +147,7 @@ class TestSceneMethods:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Positions within declared range should not produce warning
@@ -183,7 +183,7 @@ class TestSceneMethods:
             ]
         )
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # 3D positions to 4D scene should fail with helpful message
@@ -203,7 +203,7 @@ class TestSceneMethods:
 
     def test_scene_writer_access(self, tmp_path) -> None:
         """Test Scene has access to writer."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Scene should have writer
@@ -212,7 +212,7 @@ class TestSceneMethods:
 
     def test_scene_add_points_error_handling(self, tmp_path) -> None:
         """Test Scene.add_points error handling."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Test with invalid positions (1D array)
@@ -227,7 +227,7 @@ class TestSceneMethods:
         """Test Scene.add_group with transform."""
         from luxar import transforms
 
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create transform
@@ -242,7 +242,7 @@ class TestSceneMethods:
 
     def test_scene_add_group_with_rendering_attrs(self, tmp_path) -> None:
         """Test Scene.add_group with rendering attributes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Add group with rendering attributes
@@ -258,7 +258,7 @@ class TestSceneMethods:
     def test_scene_context_manager_exception(self, tmp_path):
         """Test Scene handles exceptions in context manager."""
         try:
-            with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points("points", np.random.randn(10, 3).astype(np.float32))
                 raise RuntimeError("Test exception")
@@ -266,7 +266,7 @@ class TestSceneMethods:
             pass  # Expected
 
         # Scene should still be finalized
-        store = zarr.open_group(tmp_path / "test.zarr", mode="r")
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert "points" in store
 
     def test_points_metadata_preservation(self, tmp_path) -> None:
@@ -280,7 +280,7 @@ class TestSceneMethods:
         - max_radius (float value)
         - n_points, dims (shape info)
         """
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             # Create points with all attributes
@@ -321,7 +321,7 @@ class TestSceneMethods:
 
         Note: Radii now have a default value of 0.5, so has_radii is always True.
         """
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             positions = np.random.randn(50, 3).astype(np.float32)

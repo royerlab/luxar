@@ -716,13 +716,13 @@ def main() -> None:
     edges = load_edges(feather_path, neurons, min_syn, max_edges)
 
     if "--no-serve" in argv:
-        output_path = get_demos_output_dir() / "flywire_connectome.zarr"
+        output_path = get_demos_output_dir() / "flywire_connectome.luxar.zarr"
         build_scene(output_path, neurons, edges)
         aprint(f"Dataset generated at {output_path}")
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_flywire_") as tmpdir:
-        output_path = Path(tmpdir) / "flywire_connectome.zarr"
+        output_path = Path(tmpdir) / "flywire_connectome.luxar.zarr"
         n_neurons, n_edges = build_scene(output_path, neurons, edges)
 
         aprint("")

@@ -1,19 +1,16 @@
-"""Migrate legacy .gsplats.zarr layouts to format v2.0.
+"""Migrate legacy .gsplats.zarr layouts to the current v3.0 node-tree format.
 
-Three input shapes are auto-detected:
+Four input shapes are auto-detected:
 
 * **v1.0** ``.gsplats.zarr`` — single flat splat set under ``/splats``.
-  Migrates to v2.0 with shape ``[1, 1]``.
-* **v1.1** ``.gsplats.zarr`` — multi-LOD additive with
-  ``/splats/lod_<i>/`` subgroups. Migrates to v2.0 with shape ``[1, M]``.
-* **Substitutive directory** — a directory of
-  ``level_<i>.gsplats.zarr`` files + ``manifest.json``, as produced by
-  the pre-v2.0 ``luxar gsplat lod substitutive`` command. Migrates to
-  v2.0 with shape ``[N, 1]``.
+* **v1.1** ``.gsplats.zarr`` — multi-LOD additive with ``/splats/lod_<i>/``.
+* **v2.0** ``.gsplats.zarr`` — the 2-D ``substitutive_<s>/additive_<a>`` matrix.
+* **Substitutive directory** — a directory of ``level_<i>.gsplats.zarr`` files
+  + ``manifest.json`` (the pre-v2.0 ``lod substitutive`` output).
 
-All variants are read with the v1.x decoder logic preserved here (it
-was removed from the live ``load_gsplats`` path) and re-written via
-the unified v2.0 writer.
+Each legacy decoder is *frozen* here (the v1.x and v2.0 decode loops were removed
+from the live ``load_gsplats`` path at the v3.0 cutover) and the result is
+re-written via the unified v3.0 node-tree writer (``write_gsplats_tree``).
 """
 
 from __future__ import annotations
@@ -22,7 +19,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal, Optional
 
 import zarr
 
@@ -63,9 +60,7 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
                         f"Zip member '{zip_member}' would escape extraction directory"
                     ) from exc
             zip_ref.extractall(temp_dir)
-    elif suffix == ".gz" or str(compressed_path).endswith(
-        (".tar.gz", ".gsplats.zarr.tar.gz")
-    ):
+    elif str(compressed_path).endswith(".tar.gz"):
         with tarfile.open(compressed_path, "r:gz") as tar_ref:
             for member in tar_ref.getmembers():
                 member_path = Path(temp_dir) / member.name
@@ -100,11 +95,7 @@ def detect_legacy_format(input_path: Path) -> str:
             return "substitutive_dir"
     # Otherwise treat as a .gsplats.zarr or compressed archive; sniff the
     # root .zattrs to read format_version
-    if (
-        input_path.is_dir()
-        or input_path.suffix in (".zip", ".gz")
-        or str(input_path).endswith((".gsplats.zarr.zip", ".gsplats.zarr.tar.gz"))
-    ):
+    if input_path.is_dir() or str(input_path).endswith((".zip", ".tar.gz")):
         zarr_path = input_path
         cleanup_temp = None
         try:
@@ -120,6 +111,11 @@ def detect_legacy_format(input_path: Path) -> str:
                 fv = root.attrs.get("format_version")
                 if fv in ("1.0", "1.1", "2.0"):
                     return f"v{fv}"
+                if fv == "3.0":
+                    raise ValueError(
+                        f"Input {input_path} is already format v3.0 "
+                        f"(the current node-tree format); no migration needed."
+                    )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
                 shutil.rmtree(cleanup_temp, ignore_errors=True)
@@ -215,6 +211,95 @@ def _read_v1_x_root(
     return data, fitting_info, fitting_config, provenance_info
 
 
+def _read_v2_0_root(
+    root: zarr.Group, include_stats: bool = True
+) -> tuple[GSplatData, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """Read a v2.0 ``substitutive_<s>/additive_<a>`` matrix root.
+
+    Frozen copy of the v2.0 decode loop that lived in ``load_gsplats`` before the
+    v3.0 cutover. Returns ``(data, fitting_info, fitting_config, provenance_info)``.
+    """
+    if root.attrs.get("format_version") != "2.0":
+        raise ValueError(
+            f"_read_v2_0_root expected format_version 2.0, "
+            f"got {root.attrs.get('format_version')!r}"
+        )
+
+    decoder = ArrayDecoder()
+    splats_group = root["splats"]
+    truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
+    n_substitutive = int(
+        root.attrs.get("n_substitutive", splats_group.attrs.get("n_substitutive", 1))
+    )
+    # A legacy file's `default_substitutive` is intentionally NOT carried: the
+    # v3.0 data model fixes the default at the finest level (index 0), and the
+    # on-disk default_level is the viewer's separate coarsest-first render hint
+    # (stamped by the serializer). The substitutive order (finest at index 0) is
+    # preserved below, which is what actually matters.
+
+    substitutive_levels: List[SubstitutiveLevel] = []
+    for s in range(n_substitutive):
+        sub_group = splats_group[f"substitutive_{s}"]
+        n_additive_sublods = int(sub_group.attrs.get("n_additive_sublods", 1))
+        compression_factor = int(sub_group.attrs.get("compression_factor", 1))
+        parent_method_raw = sub_group.attrs.get("parent_method", "")
+        parent_method = (
+            None if parent_method_raw in ("", None) else str(parent_method_raw)
+        )
+        level_index = int(sub_group.attrs.get("level_index", s))
+        ls_raw = sub_group.attrs.get("level_stats", {})
+        level_stats: Dict[str, Any] = dict(ls_raw) if isinstance(ls_raw, dict) else {}
+
+        additive_sublods: List[AdditiveSubLOD] = []
+        for a in range(n_additive_sublods):
+            add_group = sub_group[f"additive_{a}"]
+            lod_stats: Dict[str, Any] = {}
+            ls2 = add_group.attrs.get("lod_stats", {})
+            if isinstance(ls2, dict):
+                lod_stats = dict(ls2)
+            additive_sublods.append(
+                AdditiveSubLOD(
+                    centers=decoder.decode(add_group["centers"], root),
+                    amplitudes=decoder.decode(add_group["amplitudes"], root),
+                    cholesky_factors=decoder.decode(
+                        add_group["cholesky_factors"], root
+                    ),
+                    colors=decoder.decode(add_group["colors"], root)
+                    if "colors" in add_group
+                    else None,
+                    stats=lod_stats,
+                    truncation_radius=float(
+                        add_group.attrs.get("truncation_radius", truncation_radius)
+                    ),
+                )
+            )
+        substitutive_levels.append(
+            SubstitutiveLevel(
+                additive_sublods=additive_sublods,
+                compression_factor=compression_factor,
+                parent_method=parent_method,
+                level_index=level_index,
+                stats=level_stats,
+            )
+        )
+
+    fitting_info: Dict[str, Any] = {}
+    fitting_config: Dict[str, Any] = {}
+    provenance_info: Dict[str, Any] = {}
+    if include_stats:
+        if "fitting" in root:
+            fitting_info = dict(root["fitting"].attrs)
+            if "config" in root["fitting"]:
+                fitting_config = dict(root["fitting"]["config"].attrs)
+        if "provenance" in root:
+            provenance_info = dict(root["provenance"].attrs)
+
+    data = GSplatData(
+        substitutive_levels=substitutive_levels,
+    )
+    return data, fitting_info, fitting_config, provenance_info
+
+
 def _read_substitutive_directory(input_path: Path) -> GSplatData:
     """Read a directory of ``level_<i>.gsplats.zarr`` + ``manifest.json``.
 
@@ -275,17 +360,27 @@ def migrate_format(
     output_path: str | Path,
     *,
     overwrite: bool = False,
+    zip_deflate: bool = False,
 ) -> str:
-    """Convert a legacy .gsplats.zarr or substitutive-directory layout to v2.0.
+    """Convert a legacy .gsplats.zarr (v1.0 / v1.1 / v2.0) or substitutive
+    directory to the current v3.0 node-tree format.
 
-    Returns the detected legacy format identifier (``"v1.0"``,
-    ``"v1.1"``, or ``"substitutive_dir"``).
+    The **container format is preserved from the output extension**: an
+    ``output_path`` ending in ``.zip`` / ``.tar.gz`` is written as a compressed
+    archive (so migrating a compressed legacy file in place stays compressed),
+    while a plain path is written as a ``.gsplats.zarr`` directory. ``zip_deflate``
+    selects DEFLATE vs the default STORED for ``.zip`` outputs.
+
+    Returns the detected legacy format identifier (``"v1.0"``, ``"v1.1"``,
+    ``"v2.0"``, or ``"substitutive_dir"``).
 
     Raises:
-        ValueError: If ``output_path`` exists and ``overwrite`` is False,
-            or the input is already v2.0, or the layout is unrecognised.
+        ValueError: If ``output_path`` exists and ``overwrite`` is False, the
+            input is already v3.0, or the layout is unrecognised.
         FileNotFoundError: If ``input_path`` doesn't exist.
     """
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
     input_path = Path(input_path)
     output_path = Path(output_path)
 
@@ -297,18 +392,15 @@ def migrate_format(
         )
 
     detected = detect_legacy_format(input_path)
-    if detected == "v2.0":
-        raise ValueError(
-            f"Input {input_path} is already format v2.0; no migration needed."
-        )
+
+    fitting_info: Dict[str, Any] = {}
+    fitting_config: Dict[str, Any] = {}
+    provenance_info: Dict[str, Any] = {}
 
     if detected == "substitutive_dir":
         data = _read_substitutive_directory(input_path)
-        fitting_info: Dict[str, Any] = {}
-        fitting_config: Dict[str, Any] = {}
-        provenance_info: Dict[str, Any] = {}
     else:
-        # v1.0 or v1.1 .gsplats.zarr (or compressed)
+        # v1.0 / v1.1 / v2.0 .gsplats.zarr (or compressed)
         zarr_path = input_path
         cleanup_temp = None
         try:
@@ -316,57 +408,43 @@ def migrate_format(
                 zarr_path = _extract_compressed_zarr(input_path)
                 cleanup_temp = zarr_path.parent
             root = zarr.open_group(str(zarr_path), mode="r")
-            (
-                data,
-                fitting_info,
-                fitting_config,
-                provenance_info,
-            ) = _read_v1_x_root(root, include_stats=True)
+            reader = _read_v2_0_root if detected == "v2.0" else _read_v1_x_root
+            data, fitting_info, fitting_config, provenance_info = reader(
+                root, include_stats=True
+            )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
                 shutil.rmtree(cleanup_temp, ignore_errors=True)
 
-    # Write via the v2.0 writer
     if output_path.exists() and overwrite:
         if output_path.is_dir():
             shutil.rmtree(output_path)
         else:
             output_path.unlink()
 
-    # Use GSplatData.save which already routes to v2.0 layout. We pass
-    # ordering="none" so the migrated arrays are byte-equivalent to the
-    # source — the source already had its own ordering (or lack thereof)
-    # and the migration is a pure rewrap.
-    data.save(
-        output_path,
-        ordering="none",
-        description=f"Migrated from legacy format {detected}",
-    )
+    # Preserve the container format implied by the output extension: a .zip /
+    # .tar.gz output is written compressed (so an in-place migration of a
+    # compressed legacy file stays compressed), not a bare directory.
+    out_name = output_path.name
+    compress: Optional[Literal["zip", "tar.gz"]] = None
+    if out_name.endswith(".zip"):
+        compress = "zip"
+    elif out_name.endswith(".tar.gz"):
+        compress = "tar.gz"
 
-    # Re-attach the v1.x fitting / provenance groups via direct zarr writes
-    # (GSplatData.save's plumbing only writes them when stats hold them in
-    # a specific shape; the cleanest approach is to splice the raw attrs back)
-    if fitting_info or provenance_info:
-        root = zarr.open_group(str(output_path), mode="a")
-        if fitting_info:
-            fitting_group = (
-                root["fitting"] if "fitting" in root else root.create_group("fitting")
-            )
-            fitting_group.attrs.update(fitting_info)
-            if fitting_config:
-                config_group = (
-                    fitting_group["config"]
-                    if "config" in fitting_group
-                    else fitting_group.create_group("config")
-                )
-                config_group.attrs.update(fitting_config)
-        if provenance_info:
-            prov_group = (
-                root["provenance"]
-                if "provenance" in root
-                else root.create_group("provenance")
-            )
-            prov_group.attrs.update(provenance_info)
-        zarr.consolidate_metadata(root.store)
+    # Write via the single v3.0 node-tree writer. ordering="none" keeps the
+    # migrated arrays byte-equivalent to the source (a pure rewrap); fitting /
+    # provenance flow through as first-class write inputs (no post-hoc splice).
+    write_gsplats_tree(
+        output_path,
+        data.tree,
+        ordering="none",
+        fitting_info=fitting_info or None,
+        fitting_config=fitting_config or None,
+        provenance_info=provenance_info or None,
+        description=f"Migrated from legacy format {detected}",
+        compress=compress,
+        zip_deflate=zip_deflate,
+    )
 
     return detected

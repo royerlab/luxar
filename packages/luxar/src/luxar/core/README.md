@@ -19,7 +19,7 @@ positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
 
 # Create scene
-with LuxarZarrCompiler('my_scene.zarr') as compiler:
+with LuxarZarrCompiler('my_scene.luxar.zarr') as compiler:
     # Define 3D dimensions
     dims = Dimensions([
         Dimension("x", unit="um", display=True),
@@ -39,7 +39,7 @@ with LuxarZarrCompiler('my_scene.zarr') as compiler:
         blending_mode="additive"
     )
 
-# View with: luxar serve my_scene.zarr --viewer
+# View with: luxar serve my_scene.luxar.zarr --viewer
 ```
 
 **Key Concepts:**
@@ -76,7 +76,7 @@ dims = Dimensions([
 ])
 
 # Create scene with progressive writer
-with LuxarZarrCompiler('output.zarr') as compiler:
+with LuxarZarrCompiler('output.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add different data types
@@ -429,7 +429,7 @@ image = np.random.rand(100, 100).astype(np.float32)
 result = fit_gaussian_splats(image, n_iters=1000)
 
 # Add directly to scene (no intermediate save)
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_data('fitted', result)
     print(f"Added {gsplats.n_splats} splats with colors={gsplats.has_colors}")
@@ -438,7 +438,7 @@ with LuxarZarrCompiler('scene.zarr') as compiler:
 **From .gsplats.zarr File:**
 ```python
 # Load previously saved Gaussian splats
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     gsplats = scene.add_gsplats_from_file('loaded', 'path/to/fitted.gsplats.zarr')
     print(f"Loaded {gsplats.n_splats} splats")
@@ -651,7 +651,7 @@ vc = ViewerConfig(
 vc = ViewerConfig.from_file("my_view.json")
 
 # Apply to scene
-with LuxarZarrCompiler('output.zarr') as compiler:
+with LuxarZarrCompiler('output.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=dims, viewer_config=vc)
 ```
 
@@ -832,7 +832,7 @@ See `luxar.validation.validate_categories()` and `luxar.validation.validate_cate
 
 ### 1. Always Use Context Manager
 ```python
-with LuxarZarrCompiler('output.zarr') as compiler:
+with LuxarZarrCompiler('output.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     # ... build scene
 # Automatically finalized

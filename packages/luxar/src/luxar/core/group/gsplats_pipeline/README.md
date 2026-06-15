@@ -17,7 +17,7 @@ routes the result to one of three write shapes:
 | Resolved shape | Write path | On-disk result |
 |----------------|------------|----------------|
 | multi-substitutive | `add_gsplats_as_lod_group_impl` | a `kind=lod` `Group`, one gsplats child per level |
-| single-substitutive + multi-additive | `add_gsplats_multi_lod_impl` | one gsplats node with per-LOD subgroups |
+| single-substitutive + multi-additive | `add_gsplats_multi_lod_impl` | one gsplats leaf with `additive_<i>/` subgroups |
 | single-substitutive + single-additive | `Group.add_gsplats` | a flat single-leaf gsplats node |
 
 The substitutive axis is resolved first (it can produce a multi-level
@@ -88,14 +88,15 @@ child is added through `lod_group_node.add_gsplats_from_data(...)` with
 both LOD axes explicitly `None`, so the resolvers no-op and the
 multi-substitutive branch is never re-entered.
 
-**`add_gsplats_multi_lod_impl`** writes a multi-additive-LOD gsplats node.
+**`add_gsplats_multi_lod_impl`** writes a multi-additive-LOD gsplats leaf.
 It builds one `(centers, amplitudes, cholesky_factors, colors)` tuple per
 additive sublod — applying `dim_order` per LOD through
 [`apply_dim_order_positions` / `apply_dim_order_cholesky`](../dim_order.py)
-and validating dimensions against the scene — then calls the writer's
-`write_gsplats_multi_lod`. Specifying both `colors` and `colormap` raises
-`ValueError`; a missing colormap defaults to `"gray"` only when the data
-has no colors.
+and validating dimensions against the scene — then calls the shared walker
+`write_gsplat_leaf_subtree` (which routes through
+`io/_compiler/gsplat_tree.write_gsplat_node`). Specifying both `colors` and
+`colormap` raises `ValueError`; a missing colormap defaults to `"gray"` only
+when the data has no colors.
 
 ## Usage
 
@@ -105,13 +106,13 @@ API:
 ```python
 from luxar import LuxarZarrCompiler, Dimensions
 
-with LuxarZarrCompiler("scene.zarr") as compiler:
+with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
     # Fit a volume and add in one step
     scene.add_gsplats_from_volume("fitted", volume, seeds=8000, n_iters=1000)
 
-    # Load a pre-fitted .gsplats.zarr (v2.0 LOD matrix → kind=lod Group)
+    # Load a pre-fitted .gsplats.zarr (v3.0 node tree grafted into the scene)
     scene.add_gsplats_from_file("loaded", "path/to/fitted.gsplats.zarr")
 ```
 
@@ -135,4 +136,4 @@ with LuxarZarrCompiler("scene.zarr") as compiler:
 - [core/README.md](../../README.md) — scene graph and `add_gsplats*` overview
 - [core/group/group.py](../group.py) — public method signatures that delegate here
 - [gsplats/README.md](../../../gsplats/README.md) — fitting and `GSplatData`
-- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v2.0 substitutive × additive LOD matrix
+- `docs/specs/GSPLATS_ZARR_FORMAT.md` — the v3.0 node-tree format (leaf / kind=lod / kind=partition)

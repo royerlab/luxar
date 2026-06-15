@@ -72,20 +72,20 @@ const SCENARIOS: ScenarioSpec[] = [
   {
     type: 'zarr',
     id: 'lines-basic',
-    label: 'lines_basic_example.zarr (small, always present)',
-    url: 'http://localhost:9000/datasets/examples/lines_basic_example.zarr',
+    label: 'lines_basic_example.luxar.zarr (small, always present)',
+    url: 'http://localhost:9000/datasets/examples/lines_basic_example.luxar.zarr',
   },
   {
     type: 'zarr',
     id: 'lines-zebrahub-hifi',
-    label: 'zebrahub_velocity_streamlines_hifi.zarr (large)',
-    url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.zarr',
+    label: 'zebrahub_velocity_streamlines_hifi.luxar.zarr (large)',
+    url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.luxar.zarr',
   },
   {
     type: 'synthetic-lines',
     id: 'synthetic-lines-10M',
     label: 'synthetic random-walk lines, 10 M segments (bandwidth bound)',
-    bootstrapUrl: 'http://localhost:9000/datasets/examples/lines_basic_example.zarr',
+    bootstrapUrl: 'http://localhost:9000/datasets/examples/lines_basic_example.luxar.zarr',
     count: 10_000_000,
   },
 ];

@@ -594,9 +594,13 @@ def generate_esm3_landscape(
         # --- Step 3: Compute ESM embeddings ---
         embeddings = _compute_esm3_embeddings(sequences, cache_dir, model_name)
 
-        # Subsample embeddings if needed (in case full embeddings were cached but we want a subset)
-        if sample_size > 0 and len(embeddings) > n:
-            embeddings = embeddings[:n]
+        # Sequences are already subsampled (and the cache is shape-validated
+        # against len(sequences)), so embeddings line up 1:1 with the rng.choice
+        # selected names/organisms/kingdoms. Assert it loudly rather than
+        # positionally truncating, which would silently misalign the metadata.
+        assert len(embeddings) == n, (
+            f"embeddings ({len(embeddings)}) misaligned with selected metadata ({n})"
+        )
 
         # --- Step 4: UMAP ---
         positions = _reduce_to_3d(embeddings, cache_path=umap_cache)
@@ -725,7 +729,7 @@ def main() -> None:
     cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "esm3_protein_landscape.zarr"
+        output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
         try:
             n = generate_esm3_landscape(
                 output_path,
@@ -746,7 +750,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_esm3_") as tmpdir:
-        output_path = Path(tmpdir) / "esm3_protein_landscape.zarr"
+        output_path = Path(tmpdir) / "esm3_protein_landscape.luxar.zarr"
 
         try:
             n = generate_esm3_landscape(

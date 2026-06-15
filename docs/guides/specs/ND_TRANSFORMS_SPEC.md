@@ -150,7 +150,7 @@ dims = Dimensions([
     Dimension("Channel", display=False, categories=["DAPI", "GFP", "mCherry"]),
 ])
 
-with luxar.LuxarZarrCompiler("scene.zarr") as compiler:
+with luxar.LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Group with spatial transform + nD transform

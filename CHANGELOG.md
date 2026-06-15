@@ -4,48 +4,116 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### June 2026
+
+#### Changed — `gsplat lod` is now a single `--recipe` command
+
+`luxar gsplat lod` is now one command driven by a required `--recipe` flag
+instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
+**partitioned**, **multiscale**, plus the **substitutive** and **pyramid**
+primitives (which absorb the former `lod substitutive` / `lod pyramid`
+subcommands; `lod additive` becomes `--recipe additive`). Two topologies are new
+and were previously unbuildable from the CLI:
+
+- **partitioned** — a spatial BSP `kind=partition` where *each part carries its
+  own additive ladder* (the old `partition` collapsed parts to a single level).
+- **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
+  substitutive cap for the far view above a `partitioned` fine branch, so detail
+  structure exists only where you look closely.
+
+The recipe builders are pure functions in `luxar.gsplats.lod.recipes`
+(`build_recipe`); the CLI wrapper lives in `luxar/cli/lod.py` (keeping the
+already-large `gsplat_commands.py` from growing). Options irrelevant to the
+chosen recipe are rejected with a clear error. The `.gsplats.zarr` format and the
+underlying `make_additive_lod` / `make_substitutive_lod` / `make_lod_pyramid`
+Python builders are unchanged; output stays a standalone v3.0 `.gsplats.zarr` to
+graft into a scene via `add_gsplats_from_file` / `gsplat convert`.
+
+The niche `lod additive --substitutive-level N` flag (build an additive ladder on
+one substitutive level of an existing pyramid) is dropped from the CLI — recipes
+take a fitted/flat input. The capability remains in the Python API
+(`make_additive_lod(..., substitutive_level=N)`).
+
+Flag-name note for scripted users: under `--recipe`, `-m`/`--method` is the
+**additive ordering** method (greedy/self_energy/…); the **substitutive
+algorithm** (kmeans_lloyd/greedy/…) — formerly `lod substitutive -m`/`--method`
+— is now the long-only `--substitutive-method` for `--recipe substitutive` /
+`pyramid`.
+
+#### Changed — scenes use the canonical `.luxar.zarr` extension
+
+Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
+(previously the bare `.zarr`, which is indistinguishable from generic / OME-Zarr
+stores). Standalone gsplat files are **unchanged** (`.gsplats.zarr`). The scene
+compiler (`LuxarZarrCompiler`) auto-normalizes its output path —
+`foo` → `foo.luxar.zarr`, `foo.zarr` → `foo.luxar.zarr`, `foo.luxar.zarr`
+unchanged — and reports the final path via `store_path`; the CLI `luxar demo`
+default output and `luxar export`/`serve` examples follow suit. Reading is
+unaffected: format detection is attribute-based and every path check matches the
+`.zarr` suffix, so plain `.zarr` scenes still load. A new shared helper
+`luxar.utils.paths.normalize_zarr_path` enforces the canonical suffix for both
+scenes (`.luxar.zarr`) and standalone gsplats (`.gsplats.zarr`).
+
 ### May 2026
 
-#### Changed — `.gsplats.zarr` format v2.0 (2-D LOD matrix) (2026-05-20)
+#### Changed — `.gsplats.zarr` format v3.0 (node-tree, unified with the scene)
 
-The `.gsplats.zarr` on-disk format moves to v2.0, a 2-D
-`substitutive × additive` LOD matrix housed under a single self-describing
-file. This breaks v1.x compatibility at the runtime; convert legacy files
-(v1.0 single-LOD, v1.1 multi-additive, or the pre-v2.0 substitutive
-directory + manifest.json) with the new `luxar gsplat migrate-format`
-command. Luxar is pre-1.0; no historical reading path is retained outside
-the migrate tool.
+The standalone `.gsplats.zarr` is now a **detached scene-node subtree** — the
+exact same thing a Luxar scene already contains for a gsplats node — rather than
+a bespoke 2-D `substitutive × additive` matrix. Embedding into a scene becomes a
+**graft** (in the identity case, a byte copy) instead of a lowering, the viewer
+opens a standalone file **directly** (`?src=<file>.gsplats.zarr`), and any
+combination of additive LOD / substitutive LOD / partition is expressed by
+nesting three primitives. This is a hard cutover to **format v3.0**; convert any
+legacy file (v1.0 single-LOD, v1.1 multi-additive, the pre-v2.0 substitutive
+directory, or an interim v2.0 matrix) with `luxar gsplat migrate-format <in>
+<out>`. Luxar is pre-1.0; no historical reading path is retained outside the
+migrate tool.
 
-**On-disk layout.** Splat data lives at
-`splats/substitutive_<s>/additive_<a>/` with root attrs `format_version`,
-`n_substitutive`, `default_substitutive`. The four canonical pyramid shapes
-all use the same layout: `[1, 1]` (one splat set), `[1, M]` (additive
-ladder), `[N, 1]` (substitutive pyramid), and `[N, M_i]` (full 2-D).
+**On-disk grammar (the node tree).** The file root **is** the node. Three
+nestable primitives:
+- **leaf** (`type=gsplats`) — a single splat set writes `centers` / `amplitudes`
+  / `cholesky_factors` / `colors` directly; an additive ladder writes
+  `additive_<i>/` subgroups + `n_additive_sublods`.
+- **lod group** (`type=group, kind=lod`) — substitutive levels as `child_<i>/`
+  (coarsest→finest on disk) each with a `min_pixel_size` selector threshold.
+- **partition group** (`type=group, kind=partition`) — spatial parts as
+  `part_<i>/`, each carrying its own `position_bounds`; `max_elements`.
 
-**Python.** `GSplatLOD` is renamed `AdditiveSubLOD`; a new `SubstitutiveLevel`
-holds the per-substitutive-level metadata; `GSplatData` is refactored around
-`substitutive_levels`. Accessors: `additive_sublods`, `n_additive_sublods`,
-`additive_sublod(k)`, `additive_prefix(k)` (the old `lods` / `n_lods` /
-`at_lod` / `up_to_lod` names are gone). New 2-D accessors: `n_substitutive`,
-`at_substitutive(s)`, `cell(s, a)`, `from_substitutive_levels(...)`.
+Every node carries a `position_bounds` attr (groups = union of children) so the
+viewer frames a bare-node file on load. Root header: `format_version:"3.0"`,
+`format_type:"gsplats_zarr"`, `timestamp`, `luxar_gsplats_version`.
 
-**LOD producers.** `make_substitutive_lod` now returns a single `GSplatData`
-with `n_substitutive = levels + 1` (was `list[GSplatData]`). `make_additive_lod`
-gains `substitutive_level=` to target one substitutive level of a pyramid.
-New `make_lod_pyramid` builds the full 2-D matrix in one call.
+**One writer.** Scene and standalone gsplats now share a single root-agnostic
+serializer (`io/_compiler/gsplat_tree.write_gsplat_node`) layered on the same
+`gsplat_assembly` leaf functions the scene compiler uses, so a scene leaf /
+additive ladder / kind=lod / kind=partition subtree is **byte-identical** to a
+standalone one (locked by parity tests). `LuxarZarrCompiler.write_gsplats_multi_lod`
+(the duplicate additive-ladder writer) is deleted; the scene additive-ladder
+write flows through the shared walker via `write_gsplat_leaf_subtree`.
 
-**CLI.** `luxar gsplat lod substitutive` writes a single v2.0 file (no more
-directory + manifest.json). `luxar gsplat lod additive` accepts
-`--substitutive-level <s>`. New `luxar gsplat lod pyramid` builds the full
-2-D pyramid in one shot. New `luxar gsplat migrate-format` converts
-legacy layouts to v2.0.
+**Python model.** `GSplatData` bridges to a tree of
+`GSplatLeaf` / `GSplatLodGroup` / `GSplatPartition` (`.tree` / `from_tree`).
+`GSplatLOD` → `AdditiveSubLOD`; `SubstitutiveLevel` holds per-level metadata;
+accessors `additive_sublods`, `n_additive_sublods`, `n_substitutive`,
+`at_substitutive(s)`, `cell(s, a)`, `from_substitutive_levels(...)`,
+`to_spatial_partition(...)`. `filter()` / `cull` apply per substitutive level
+(the full pyramid is preserved, never silently flattened).
 
-**Scene + viewer.** `LuxarZarrCompiler.write_gsplats_multi_lod` writes the
-v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
-`createProgressiveGSplatsLoader` walks
-`substitutive_<defaultSub>/additive_<i>/`; `GSplatsMetadata` adds
-`format_version`, `n_substitutive`, `default_substitutive`,
-`n_additive_sublods_default` (the legacy `n_lods` field is dropped).
+**CLI.** `luxar gsplat lod substitutive` / `pyramid` / `additive` write v3.0
+trees; `migrate-format` converts any legacy layout to v3.0. `luxar gsplat
+partition` now produces a single `kind=partition` file via a spatial BSP
+(`--parts` / `--max-elements` / `--rule`); the index-based `--indices` flag is
+**removed**. `luxar gsplat view` serves the node tree directly to the viewer (no
+scene round-trip) so partition / nested files open framed. `luxar gsplat info`
+reports the tree shape for kind=lod / kind=partition / nested roots.
+
+**Viewer.** A bare gsplats node (leaf / kind=lod / kind=partition) loads as a
+scene root: `buildSceneGraph` derives the root `SceneNode.type`/attrs from the
+real root `.zattrs`, and `load-scene` frames on the root `position_bounds` (with
+a `center_bounds`/union fallback). A `format_type==='gsplats_zarr' &&
+format_version!=='3.0'` file surfaces a migrate-format toast. `GSplatsMetadata`
+gains an optional `position_bounds`.
 
 #### Removed — Per-package `SPECIFICATIONS.md` files (2026-05-19)
 

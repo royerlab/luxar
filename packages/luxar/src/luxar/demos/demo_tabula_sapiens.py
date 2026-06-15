@@ -730,7 +730,7 @@ def main() -> None:
     cache_dir = Path.home() / ".cache" / "luxar" / "tabula_sapiens"
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "tabula_sapiens.zarr"
+        output_path = get_demos_output_dir() / "tabula_sapiens.luxar.zarr"
         try:
             n_cells = generate_tabula_sapiens(
                 output_path, sample_size=sample_size, cache_dir=cache_dir
@@ -748,7 +748,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_tabula_sapiens_") as tmpdir:
-        output_path = Path(tmpdir) / "tabula_sapiens.zarr"
+        output_path = Path(tmpdir) / "tabula_sapiens.luxar.zarr"
 
         try:
             n_cells = generate_tabula_sapiens(

@@ -219,7 +219,7 @@ class TestCompilerIntegration:
         positions = np.random.randn(100, 5).astype(np.float32)
 
         # Compile to zarr
-        output_path = tmp_path / "test.zarr"
+        output_path = tmp_path / "test.luxar.zarr"
 
         from luxar import Scene
 

@@ -72,7 +72,7 @@ ladder is always built fresh from the base splats (that is the point of the
 demo); use --serve-only to reopen the last generated scene without rebuilding.
 
 Output:
-    - Scene saved to:  datasets/demos/gsplats_lod_tribolium.zarr
+    - Scene saved to:  datasets/demos/gsplats_lod_tribolium.luxar.zarr
     - Automatically opens in browser
 """
 
@@ -390,7 +390,7 @@ def main() -> None:
     aprint("~256K real microscopy splats -> adaptive level-of-detail pyramid")
     aprint("")
 
-    output_path = get_demos_output_dir() / "gsplats_lod_tribolium.zarr"
+    output_path = get_demos_output_dir() / "gsplats_lod_tribolium.luxar.zarr"
 
     # Serve-only mode: reopen the last generated scene without rebuilding.
     if SERVE_ONLY:

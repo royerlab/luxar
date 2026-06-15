@@ -126,7 +126,7 @@ class TestSceneErrorHandling:
     def test_add_points_invalid_positions(self) -> None:
         """Test adding points with invalid position arrays."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
+            with LuxarZarrCompiler(Path(tmpdir) / "test.luxar.zarr") as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
                 # Not array-like
@@ -153,7 +153,7 @@ class TestSceneErrorHandling:
             dims = Dimensions(
                 [Dimension("x", range=(-10, 10)), Dimension("y", range=(-10, 10))]
             )
-            with LuxarZarrCompiler(Path(tmpdir) / "test.zarr") as compiler:
+            with LuxarZarrCompiler(Path(tmpdir) / "test.luxar.zarr") as compiler:
                 scene = compiler.create_scene(dimensions=dims)
 
                 # 2D points - matches scene dimensions: should succeed
@@ -180,7 +180,7 @@ class TestSceneErrorHandling:
             # Verify matching points were written, mismatched was not
             import zarr
 
-            store = zarr.open_group(Path(tmpdir) / "test.zarr", mode="r")
+            store = zarr.open_group(Path(tmpdir) / "test.luxar.zarr", mode="r")
             assert "2d_points" in store
             assert "3d_points" not in store  # Dimension mismatch prevented writing
             assert "out_of_range" in store
@@ -258,7 +258,7 @@ class TestEdgeCases:
     def test_concurrent_scene_access(self) -> None:
         """Test that new compiler overwrites existing data (mode='w' behavior)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             # Create and finalize first scene
             with LuxarZarrCompiler(zarr_path) as compiler:
@@ -290,7 +290,7 @@ class TestRecoveryStrategies:
     def test_partial_scene_recovery(self) -> None:
         """Test that validation errors don't corrupt the scene."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -325,7 +325,7 @@ class TestRecoveryStrategies:
         Mismatched dimensions raise ValueError with helpful error messages.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            zarr_path = Path(tmpdir) / "test.zarr"
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             with LuxarZarrCompiler(zarr_path) as compiler:
                 # Create scene with 3D dimensions

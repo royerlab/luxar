@@ -418,14 +418,14 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "cloud.zarr"
+        output_path = get_demos_output_dir() / "cloud.luxar.zarr"
         generate_volumetric_cloud(output_path, n_candidate_points=n_candidate_points)
         aprint(f"Dataset generated at {output_path}")
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_cloud_") as tmpdir:
-        output_path = Path(tmpdir) / "cloud.zarr"
+        output_path = Path(tmpdir) / "cloud.luxar.zarr"
 
         # Generate the dataset (all code in this file!)
         generate_volumetric_cloud(output_path, n_candidate_points=n_candidate_points)

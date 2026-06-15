@@ -229,7 +229,7 @@ def create_sharpness_wave_example(scene, n_points: int = 4000) -> None:
 
 def main():
     """Run the sharpness feature example."""
-    output_path = get_examples_output_dir() / "sharpness_showcase_example.zarr"
+    output_path = get_examples_output_dir() / "sharpness_showcase_example.luxar.zarr"
 
     aprint(f"Creating sharpness example scene at {output_path}")
     aprint("\nThis example showcases the per-point sharpness feature:")

@@ -58,7 +58,7 @@ pnpm agent:debug
 pnpm agent:debug:visible
 
 # Custom URL
-pnpm agent:debug --url="http://localhost:5173/?src=/data/my-dataset.zarr&debug"
+pnpm agent:debug --url="http://localhost:5173/?src=/data/my-dataset.luxar.zarr&debug"
 ```
 
 **Output**:
@@ -108,9 +108,9 @@ pnpm agent:debug
 Look for these key sections:
 
 ```
-[BROWSER-CONSOLE-LOG] Loading dataset from /data/demo.zarr...
+[BROWSER-CONSOLE-LOG] Loading dataset from /data/demo.luxar.zarr...
 [BROWSER-CONSOLE-ERROR] Failed to load spatial index
-[NETWORK-FAIL] http://localhost:5173/data/demo.zarr/.zarray - 404
+[NETWORK-FAIL] http://localhost:5173/data/demo.luxar.zarr/.zarray - 404
 ```
 
 **Color Coding**:
@@ -273,7 +273,7 @@ test('should load demo dataset', async ({ page }) => {
   // (typical: http://localhost:9000/datasets/examples/...). The
   // older `/data/...` path used in some examples is not the
   // production convention.
-  await page.goto('/?src=http://localhost:9000/datasets/examples/demo.zarr&debug');
+  await page.goto('/?src=http://localhost:9000/datasets/examples/demo.luxar.zarr&debug');
 
   // Wait for Luxar to initialize
   await waitForLuxarReady(page);
@@ -313,7 +313,7 @@ test('advanced nD navigation test', async ({ page }) => {
   // Capture console messages
   const console = captureConsoleMessages(page);
 
-  await page.goto('/?src=/examples/5d-dataset.zarr&debug');
+  await page.goto('/?src=/examples/5d-dataset.luxar.zarr&debug');
   await waitForLuxarReady(page);
   await waitForDataLoaded(page);
 
@@ -349,7 +349,7 @@ test('advanced nD navigation test', async ({ page }) => {
 
 ```typescript
 test('should navigate through dimensions', async ({ page }) => {
-  await page.goto('/?src=/data/4d-dataset.zarr&debug');
+  await page.goto('/?src=/data/4d-dataset.luxar.zarr&debug');
   await waitForLuxarReady(page);
 
   // Press '1' to select dimension 0
@@ -371,7 +371,7 @@ test('should navigate through dimensions', async ({ page }) => {
 
 ```typescript
 test('visual regression', async ({ page }) => {
-  await page.goto('/?src=/data/demo.zarr&debug');
+  await page.goto('/?src=/data/demo.luxar.zarr&debug');
   await waitForLuxarReady(page);
   await waitForPointsLoaded(page, 1000);
 

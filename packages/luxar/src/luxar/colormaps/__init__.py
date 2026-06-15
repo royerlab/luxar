@@ -19,10 +19,12 @@ Usage::
     lut = resolve_colormap(my_array)  # shape (N, 3), resampled to 256
 """
 
+from luxar.colormaps.apply import scalars_to_colors
 from luxar.colormaps.builtins import BUILTIN_COLORMAP_NAMES
 from luxar.colormaps.registry import resolve_colormap
 
 __all__ = [
     "BUILTIN_COLORMAP_NAMES",
     "resolve_colormap",
+    "scalars_to_colors",
 ]

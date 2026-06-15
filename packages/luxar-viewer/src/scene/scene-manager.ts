@@ -339,7 +339,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Apply resize directly during initialization (no rAF coalescing) so
     // dimensions are available before the first render.
-    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
+    this.resizeToCanvas();
   }
 
   /**
@@ -383,7 +383,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
 
     // Configure renderer dimensions and high-DPI support.
-    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
+    this.resizeToCanvas();
 
     // Clear immediately to the scene background color to avoid the
     // brief white flash before the first frame renders.
@@ -427,7 +427,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // GLSL ShaderMaterial and the NodeBuilder rejects it.
     materialManager.setCaps(this.capabilities);
 
-    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
+    this.resizeToCanvas();
     this.renderer.setClearColor(config.scene.backgroundColor);
     this.renderer.clear();
   }
@@ -464,8 +464,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         getScene: () => this.scene,
         renderer: this.renderer as THREE.WebGLRenderer,
         getPostProcessing: () => this.postProcessing ?? null,
-        updateRendererSize: () =>
-          this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx()),
+        updateRendererSize: () => this.resizeToCanvas(),
         onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
         triggerChange: () => this.dispatchEvent({ type: 'change' }),
         onContextLost: () => reduceGpuByteBudgetForContextLoss(),
@@ -809,7 +808,55 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   updateSize(): void {
-    this.resizer.scheduleResize(() => this.makeResizeCtx());
+    this.resizer.scheduleResize(
+      () => this.makeResizeCtx(),
+      () => this.measureViewport()
+    );
+  }
+
+  /**
+   * Measure the viewport the canvas should fill.
+   *
+   * **Fullscreen-first**: while any fullscreen is active the canvas is styled
+   * to fill the screen (`100vw/100vh`, see
+   * `window-event-handler.onFullscreenChange`, which keys off the same
+   * `document.fullscreenElement` check), so its DOM parent — an embed
+   * container — no longer reflects its displayed size. Measure the window.
+   *
+   * **Parent-first** otherwise: Three.js stamps inline `width`/`height` px
+   * styles onto the canvas on every `setSize`, so the canvas's own client box
+   * reflects our *last stamp*, not the host's layout. The parent element (the
+   * embedder's frame, or `document.body` in the standalone app — sized 100% by
+   * `base/layout.css`) is the box that actually tracks layout changes. Falls
+   * back to the canvas's own box, then the window, when the parent reports
+   * zero (detached canvas, jsdom).
+   */
+  private measureViewport(): { width: number; height: number } {
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      return { width: window.innerWidth, height: window.innerHeight };
+    }
+    const canvas = this.renderer.domElement;
+    const parent = canvas.parentElement;
+    return {
+      width: parent?.clientWidth || canvas.clientWidth || window.innerWidth,
+      height: parent?.clientHeight || canvas.clientHeight || window.innerHeight,
+    };
+  }
+
+  /**
+   * Resize to the canvas's container box rather than the window.
+   *
+   * This is the embedding-safe resize path: an embedded canvas lives inside
+   * a host container whose size can change without the window changing
+   * (sidebars, splitters, flex/grid reflow), so a `window.innerWidth`-based
+   * resize would stamp window-sized inline styles onto the canvas and
+   * overflow the host frame. Sizing comes from {@link measureViewport}
+   * (parent-first). Synchronous via `resizeNow`; callers that fire it from
+   * a `ResizeObserver` already get browser-batched delivery (~once/frame).
+   */
+  public resizeToCanvas(): void {
+    const { width, height } = this.measureViewport();
+    this.resizer.resizeNow(width, height, this.makeResizeCtx());
   }
 
   /** Build the per-call ResizeCtx snapshot used by the resize orchestrator. */

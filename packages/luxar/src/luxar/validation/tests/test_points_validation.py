@@ -21,7 +21,7 @@ from luxar.validation import ValidationError, validate_colors_for_writing
 
 def test_bad_positions_shape(tmp_path) -> None:
     """Positions must be 2D array with shape (N, ndim)."""
-    store = tmp_path / "bad.zarr"
+    store = tmp_path / "bad.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         with pytest.raises(ValueError, match="Positions must"):
@@ -30,7 +30,7 @@ def test_bad_positions_shape(tmp_path) -> None:
 
 def test_mismatched_colors(tmp_path) -> None:
     """Colors array length must match positions."""
-    store = tmp_path / "bad2.zarr"
+    store = tmp_path / "bad2.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         pos = np.ones((10, 3), np.float32)
@@ -73,7 +73,7 @@ def test_non_finite_point_attributes_rejected(
     tmp_path, field: str, kwargs: dict[str, np.ndarray], error_pattern: str
 ) -> None:
     """NaN/Inf values should fail before corrupting stored Zarr arrays."""
-    store = tmp_path / f"bad_{field}.zarr"
+    store = tmp_path / f"bad_{field}.luxar.zarr"
     positions = kwargs.pop("positions", np.array([[0.0, 1.0, 2.0]], dtype=np.float32))
 
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
@@ -138,7 +138,7 @@ def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
 )
 def test_invalid_radii(tmp_path, radii_factory, error_pattern, test_id) -> None:
     """Test that various invalid radii configurations raise ValidationError."""
-    store = tmp_path / f"invalid_radii_{test_id}.zarr"
+    store = tmp_path / f"invalid_radii_{test_id}.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         positions = np.random.randn(100, 3).astype(np.float32)
@@ -149,7 +149,7 @@ def test_invalid_radii(tmp_path, radii_factory, error_pattern, test_id) -> None:
 
 def test_valid_radii(tmp_path) -> None:
     """Test that valid radii are accepted and stored correctly."""
-    store = tmp_path / "radii_test.zarr"
+    store = tmp_path / "radii_test.luxar.zarr"
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
@@ -203,7 +203,7 @@ def test_valid_radii(tmp_path) -> None:
 )
 def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) -> None:
     """Test that various invalid sharpness configurations raise ValidationError."""
-    store = tmp_path / f"invalid_sharpness_{test_id}.zarr"
+    store = tmp_path / f"invalid_sharpness_{test_id}.luxar.zarr"
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         positions = np.random.randn(100, 3).astype(np.float32)
@@ -214,7 +214,7 @@ def test_invalid_sharpness(tmp_path, sharpness_factory, error_pattern, test_id) 
 
 def test_valid_sharpness(tmp_path) -> None:
     """Test that valid sharpness values are accepted and stored correctly."""
-    store = tmp_path / "sharpness_test.zarr"
+    store = tmp_path / "sharpness_test.luxar.zarr"
     with LuxarZarrCompiler(
         store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
     ) as compiler:
@@ -233,7 +233,7 @@ def test_valid_sharpness(tmp_path) -> None:
 
 def test_sharpness_out_of_range_rejected(tmp_path) -> None:
     """Out-of-range sharpness (outside [0, 1]) raises a ValidationError."""
-    store = tmp_path / "sharpness_rejected.zarr"
+    store = tmp_path / "sharpness_rejected.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         positions = np.random.randn(100, 3).astype(np.float32)

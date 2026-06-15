@@ -76,6 +76,28 @@ export class LoaderRegistry {
     this.gsplatLoaders.delete(path);
   }
 
+  /**
+   * Drop a single points loader so it no longer participates in scene-wide
+   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader`: used when a
+   * lazily-loaded points substitutive LOD level is released back to the buffer
+   * pool — leaving it registered would reload its geometry on the next view
+   * update. The loader object is kept alive by the lod_group's ``ensureLoaded``
+   * closure and re-registered on reload.
+   */
+  unregisterPointsLoader(path: string): void {
+    this.loaders.delete(path);
+  }
+
+  /**
+   * Drop a single lines loader so it no longer participates in scene-wide
+   * ``updateView`` sweeps. Peer of :meth:`unregisterPointsLoader` /
+   * :meth:`unregisterGSplatsLoader`: used when a lazily-loaded lines
+   * substitutive LOD level is released back to the buffer pool.
+   */
+  unregisterLinesLoader(path: string): void {
+    this.linesLoaders.delete(path);
+  }
+
   // ---------------------------------------------------------------------------
   // Lookup
   // ---------------------------------------------------------------------------

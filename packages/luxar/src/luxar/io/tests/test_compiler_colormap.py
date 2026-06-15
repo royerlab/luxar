@@ -16,7 +16,7 @@ class TestColormapPointsCompiler:
     def test_points_with_colormap_string(self) -> None:
         """Points with a named colormap and scalars."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -41,7 +41,7 @@ class TestColormapPointsCompiler:
     def test_points_colormap_without_scalars(self) -> None:
         """Points with colormap but no scalars — valid (uses default uniform)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -54,7 +54,7 @@ class TestColormapPointsCompiler:
     def test_points_colors_and_colormap_raises(self) -> None:
         """Cannot set both colors and colormap."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -66,7 +66,7 @@ class TestColormapPointsCompiler:
     def test_points_scalars_without_colormap_raises(self) -> None:
         """Scalars require a colormap."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -78,7 +78,7 @@ class TestColormapPointsCompiler:
     def test_points_custom_colormap_array(self) -> None:
         """Custom colormap as numpy array is stored as LUT dataset."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             custom_lut = np.random.randint(0, 256, (256, 3), dtype=np.uint8)
             with LuxarZarrCompiler(path) as c:
@@ -97,7 +97,7 @@ class TestColormapPointsCompiler:
         """Non-built-in colormap names (e.g. matplotlib) are resolved to LUT."""
         pytest.importorskip("matplotlib")
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -116,7 +116,7 @@ class TestColormapPointsCompiler:
     def test_points_builtin_colormap_stored_as_name(self) -> None:
         """Built-in colormaps are stored by name (no LUT dataset)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -136,7 +136,7 @@ class TestColormapToneMappingWarning:
     def test_warns_under_default_aces(self) -> None:
         """A colormap with the default tone-mapping (None → ACES) warns once."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with pytest.warns(UserWarning, match="ACES"):
                 with LuxarZarrCompiler(path) as c:
@@ -147,7 +147,7 @@ class TestColormapToneMappingWarning:
     def test_warns_only_once_for_multiple_nodes(self) -> None:
         """The warning fires at most once per compile session."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with pytest.warns(UserWarning) as record:
                 with LuxarZarrCompiler(path) as c:
@@ -165,7 +165,7 @@ class TestColormapToneMappingWarning:
         from luxar.core.viewer_config import ViewerConfig
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             vc = ViewerConfig(tone_mapping="Neutral")
             with _warnings.catch_warnings(record=True) as record:
@@ -183,7 +183,7 @@ class TestColormapGSplatsCompiler:
     def test_gsplats_default_gray_colormap(self) -> None:
         """GSplats without colors or colormap get default gray."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -209,7 +209,7 @@ class TestColormapGSplatsCompiler:
     def test_gsplats_with_explicit_colormap(self) -> None:
         """GSplats with explicit colormap."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -236,7 +236,7 @@ class TestColormapGSplatsCompiler:
     def test_gsplats_colors_and_colormap_raises(self) -> None:
         """Cannot set both colors and colormap on gsplats."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -267,7 +267,7 @@ class TestColormapGSplatsCompiler:
     def test_gsplats_with_colors_no_default_gray(self) -> None:
         """GSplats with explicit colors should NOT get default gray colormap."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -294,7 +294,7 @@ class TestColormapGSplatsCompiler:
     def test_gsplats_invalid_colormap_name_raises(self) -> None:
         """Invalid colormap name should raise at write time."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -327,7 +327,7 @@ class TestColormapLinesCompiler:
     def test_lines_with_colormap_and_scalars(self) -> None:
         """Lines with colormap and scalar values."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -352,7 +352,7 @@ class TestColormapLinesCompiler:
     def test_lines_invalid_colormap_name_raises(self) -> None:
         """Invalid colormap name should raise at write time, not silently pass."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -385,7 +385,7 @@ class TestScalarsReorderWithSpatialOrdering:
         from luxar.encoding.decoder import ArrayDecoder
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             # Create points with known pattern: scalar[i] = position[i].sum()
             n = 500
@@ -417,7 +417,7 @@ class TestScalarsReorderWithSpatialOrdering:
         from luxar.encoding.decoder import ArrayDecoder
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             n = 200
             vertices = np.random.rand(n, 3).astype(np.float32)
@@ -450,7 +450,7 @@ class TestColormapLinesScalarsBug:
     def test_lines_scalars_does_not_crash(self) -> None:
         """Lines with scalars must not crash — _write_scalars_dataset must find 'vertices'."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -475,7 +475,7 @@ class TestColormapNodeProperty:
     def test_colormap_set_at_creation(self) -> None:
         """Colormap set via attrs at node creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -486,7 +486,7 @@ class TestColormapNodeProperty:
     def test_colormap_setter_accepts_string(self) -> None:
         """Colormap setter accepts string names."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -498,7 +498,7 @@ class TestColormapNodeProperty:
     def test_colormap_setter_rejects_array(self) -> None:
         """Colormap property setter must reject numpy arrays (JSON serialization)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)
@@ -510,7 +510,7 @@ class TestColormapNodeProperty:
     def test_colormap_default_none(self) -> None:
         """Colormap defaults to None when not set."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "test.zarr"
+            path = Path(tmpdir) / "test.luxar.zarr"
             dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
             with LuxarZarrCompiler(path) as c:
                 scene = c.create_scene(dimensions=dims)

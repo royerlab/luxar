@@ -5,12 +5,20 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 import numpy as np
 
 if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
+    from luxar.gsplats.tree import GSplatNode, GSplatPartition
+
+
+#: Sentinel for ``GSplatData.save(compressor=...)`` distinguishing "not specified"
+#: (→ default Blosc) from an explicit ``compressor=None`` (→ no compression). A
+#: plain ``None`` default would conflate the two and make uncompressed output
+#: impossible (the bug that produced blosc-bitshuffle fixtures zarrita can't read).
+_USE_DEFAULT_COMPRESSOR = object()
 
 
 def _merge_lod_colors(
@@ -368,7 +376,6 @@ class GSplatData(_SplatArrayMixin):
         *,
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
         substitutive_levels: Optional[List[SubstitutiveLevel]] = None,
-        default_substitutive: int = 0,
         truncation_radius: float = 3.0,
     ) -> None:
         if substitutive_levels is not None:
@@ -383,18 +390,17 @@ class GSplatData(_SplatArrayMixin):
                         f"Each entry must be a SubstitutiveLevel, got "
                         f"{type(s).__name__}"
                     )
-            if not 0 <= default_substitutive < len(substitutive_levels):
-                raise ValueError(
-                    f"default_substitutive {default_substitutive} out of range "
-                    f"[0, {len(substitutive_levels)})"
-                )
             self.substitutive_levels: List[SubstitutiveLevel] = list(
                 substitutive_levels
             )
-            self.default_substitutive: int = default_substitutive
-            # Derived: the "primary" additive ladder is the default level's
+            # The data-model default is fixed at the FINEST level (index 0) — it
+            # is not a settable, persistable concept (the on-disk default_level
+            # is the viewer's separate coarsest-first render hint). Kept as a
+            # constant attribute so accessors document "return the finest".
+            self.default_substitutive: int = 0
+            # Derived: the "primary" additive ladder is the finest level's.
             self.additive_sublods: List[AdditiveSubLOD] = list(
-                self.substitutive_levels[default_substitutive].additive_sublods
+                self.substitutive_levels[0].additive_sublods
             )
         elif additive_sublods is not None:
             # Single-substitutive construction with explicit additive sub-LODs
@@ -596,20 +602,20 @@ class GSplatData(_SplatArrayMixin):
         cls,
         substitutive_levels: List[SubstitutiveLevel],
         stats: Optional[Dict[str, Any]] = None,
-        default_substitutive: int = 0,
     ) -> "GSplatData":
         """Construct a 2-D GSplatData from a list of substitutive levels.
 
         Each ``SubstitutiveLevel`` carries its own additive ladder (one or
         more :class:`AdditiveSubLOD`). The resulting ``GSplatData`` has
         ``n_substitutive == len(substitutive_levels)`` and represents the
-        full ``[N, M_i]`` matrix of splat sets.
+        full ``[N, M_i]`` matrix of splat sets. The accessors
+        (``.centers``/``.additive_sublods``/…) always return the FINEST level
+        (index 0) — the data-model default is fixed, not settable (see
+        ``__init__``).
 
         Args:
             substitutive_levels: Ordered list, finest at index 0.
             stats: Optional top-level statistics.
-            default_substitutive: Which level the ``additive_sublods`` /
-                ``n_additive_sublods`` accessors return (default: 0 = finest).
 
         Returns:
             New ``GSplatData`` with the given substitutive × additive matrix.
@@ -617,7 +623,6 @@ class GSplatData(_SplatArrayMixin):
         return cls(
             substitutive_levels=substitutive_levels,
             stats=stats,
-            default_substitutive=default_substitutive,
         )
 
     # ── 2-D substitutive × additive accessors ──────────────
@@ -685,6 +690,48 @@ class GSplatData(_SplatArrayMixin):
             )
         return level.additive_sublods[additive]
 
+    # ── Node-tree bridge (v3.0 unified representation) ──────
+
+    @property
+    def tree(self) -> "GSplatNode":
+        """This dataset as a :mod:`luxar.gsplats.tree` node subtree.
+
+        The tree is the unified representation behind the v3.0 ``.gsplats.zarr``
+        format and the scene gsplat-node subtree. For the historical
+        ``substitutive × additive`` matrix this is exactly one shape: a single
+        :class:`~luxar.gsplats.tree.GSplatLeaf` (one substitutive level) or a
+        :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (multiple levels,
+        finest first). Per-level provenance rides in each leaf's ``meta``.
+        """
+        from luxar.gsplats.tree import tree_from_substitutive_levels
+
+        return tree_from_substitutive_levels(self.substitutive_levels)
+
+    @classmethod
+    def from_tree(
+        cls,
+        node: "GSplatNode",
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> "GSplatData":
+        """Construct a ``GSplatData`` from a matrix-shaped tree node.
+
+        Accepts a bare :class:`~luxar.gsplats.tree.GSplatLeaf` or a
+        :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (the inverse of
+        :attr:`tree`). Genuinely nested trees (partitions, or lod groups with
+        non-leaf children) have no flat ``GSplatData`` equivalent and raise —
+        they must be consumed through the tree directly.
+        """
+        from luxar.gsplats.tree import substitutive_levels_from_tree
+
+        # The on-disk default_level is the viewer's coarsest-first render hint,
+        # not a data-model default — the accessors always return the finest
+        # level (index 0), so it is intentionally ignored here.
+        levels, _default = substitutive_levels_from_tree(node)
+        return cls(
+            substitutive_levels=levels,
+            stats=stats,
+        )
+
     # ── Filtering ───────────────────────────────────────────
 
     def filter(self, mask: np.ndarray) -> "GSplatData":
@@ -704,6 +751,20 @@ class GSplatData(_SplatArrayMixin):
         if mask.shape != (self.n_splats,):
             raise ValueError(
                 f"Mask shape {mask.shape} doesn't match splat count ({self.n_splats},)"
+            )
+
+        # A raw boolean mask is sized to the default substitutive level, so it
+        # cannot be applied per-level — coarser substitutive levels are dropped.
+        # Warn loudly (never silent) and point at the criteria-based ops, which
+        # DO preserve the full pyramid (see filter_by / cull).
+        if self.n_substitutive > 1:
+            warnings.warn(
+                "filter(mask) keeps only the default substitutive level "
+                f"(n_substitutive={self.n_substitutive}); coarser levels are "
+                "dropped. Use filter_by(...) / cull(...) to filter every "
+                "substitutive level and preserve the pyramid.",
+                UserWarning,
+                stacklevel=2,
             )
 
         # Multi-LOD path: split mask across LODs
@@ -839,6 +900,57 @@ class GSplatData(_SplatArrayMixin):
             raise ValueError(
                 f"sigma_axis={sigma_axis} out of range for {self.ndim}D data"
             )
+
+        # Multi-substitutive: apply the SAME criteria to every substitutive
+        # level and rebuild the pyramid (decision 6) rather than silently
+        # collapsing to the default level. Each level is filtered through the
+        # single-substitutive path below (a per-level view); thresholds with
+        # *_normalized resolve per-level (each level to its own range).
+        if self.n_substitutive > 1:
+            new_levels: List[SubstitutiveLevel] = []
+            for s, src in enumerate(self.substitutive_levels):
+                filtered = self.at_substitutive(s).filter_by(
+                    bbox=bbox,
+                    volume_min=volume_min,
+                    volume_max=volume_max,
+                    volume_normalized=volume_normalized,
+                    amplitude_min=amplitude_min,
+                    amplitude_max=amplitude_max,
+                    amplitude_normalized=amplitude_normalized,
+                    eccentricity_min=eccentricity_min,
+                    eccentricity_max=eccentricity_max,
+                    mass_min=mass_min,
+                    mass_max=mass_max,
+                    mass_normalized=mass_normalized,
+                    sigma_axis=sigma_axis,
+                    sigma_min=sigma_min,
+                    sigma_max=sigma_max,
+                    truncate=truncate,
+                )
+                new_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=filtered.substitutive_levels[
+                            0
+                        ].additive_sublods,
+                        compression_factor=src.compression_factor,
+                        parent_method=src.parent_method,
+                        level_index=src.level_index,
+                        stats=dict(src.stats),
+                    )
+                )
+            out = GSplatData.from_substitutive_levels(
+                new_levels,
+                stats=dict(self.stats),
+            )
+            out.stats.update(
+                {
+                    "filtered": True,
+                    "n_original": self.n_splats,
+                    "n_removed": self.n_splats - out.n_splats,
+                    "truncate": truncate,
+                }
+            )
+            return out
 
         mask = np.ones(self.n_splats, dtype=bool)
         criteria: dict[str, object] = {}
@@ -1062,7 +1174,6 @@ class GSplatData(_SplatArrayMixin):
             return cls.from_substitutive_levels(
                 sub_levels,
                 stats=merged_stats,
-                default_substitutive=non_empty[0].default_substitutive,
             )
 
         # Single substitutive level: merge its additive ladder.
@@ -1146,106 +1257,77 @@ class GSplatData(_SplatArrayMixin):
         ]
         return cls.concatenate(embedded)
 
-    def partition(
-        self, n_or_indices: "int | list[int] | np.ndarray"
-    ) -> "list[GSplatData]":
-        """Partition into multiple GSplatData objects.
+    def to_spatial_partition(
+        self,
+        *,
+        max_elements: int,
+        rule: Literal["median", "midpoint", "sah"] = "median",
+    ) -> "GSplatPartition":
+        """Spatially partition the splats into a ``kind=partition`` tree node.
 
-        Partitioning operates on a single flattened splat set. A multi-level
-        LOD input cannot survive raw index chunking — substitutive levels are
-        *distinct* splat sets and additive levels are *cumulative* prefixes,
-        neither of which is preserved by splitting one index range. Such an
-        input is therefore flattened to its default substitutive level (with a
-        loud warning) before partitioning; build any LOD hierarchy *after*
-        partitioning if you need it per-part.
+        Recursively BSP-splits the splat **centers** so each part holds at most
+        ``max_elements`` splats, using the shared splitters in
+        :mod:`luxar.core.group.partition` (the same machinery the scene uses).
+        Returns a :class:`~luxar.gsplats.tree.GSplatPartition` (a tree node, not
+        a ``GSplatData`` — a partition has no flat-matrix equivalent); write it
+        with ``write_gsplats_tree`` (one self-contained ``kind=partition`` file)
+        or embed it in a scene. Each part gets its own ``position_bounds`` at
+        write time so the viewer can frustum-cull per part.
 
-        Args:
-            n_or_indices: If int (>= 1), partition into n roughly equal parts.
-                If a list/array of ints, partition at those split points; they
-                must be strictly increasing and lie within ``(0, n_splats)``.
-
-        Returns:
-            List of single-level GSplatData objects.
-
-        Raises:
-            ValueError: If the partition count is < 1, or split points are not
-                strictly increasing / out of range.
+        A multi-LOD input is flattened to its default substitutive level first
+        (BSP partitions a single splat set), matching :meth:`partition`.
         """
+        from luxar.core.group.partition import (
+            median_bsp_partition,
+            midpoint_bsp_partition,
+            sah_bsp_partition,
+        )
+
+        from .tree import GSplatLeaf, GSplatPartition
+
+        if max_elements < 1:
+            raise ValueError(f"max_elements must be >= 1, got {max_elements}")
+
         src: GSplatData = self
         if self.n_substitutive > 1 or self.n_additive_sublods > 1:
             warnings.warn(
-                "partition() flattens LOD structure: input has "
+                "to_spatial_partition() flattens LOD structure: input has "
                 f"n_substitutive={self.n_substitutive}, "
                 f"n_additive_sublods={self.n_additive_sublods}; coarser "
                 "substitutive levels and the additive ladder are collapsed "
-                "into a single level before partitioning. Build the LOD "
-                "hierarchy after partitioning if you need it per-part.",
+                "into a single level before partitioning.",
                 UserWarning,
                 stacklevel=2,
             )
             src = self.flattened()
 
-        n_splats = src.n_splats
-        indices = np.arange(n_splats)
-        if isinstance(n_or_indices, (int, np.integer)):
-            n = int(n_or_indices)
-            if n < 1:
-                raise ValueError(f"partition count must be >= 1, got {n}")
-            groups = np.array_split(indices, n)
+        centers = np.asarray(src.centers)
+        if rule == "median":
+            parts = median_bsp_partition(centers, max_elements)
+        elif rule == "midpoint":
+            parts = midpoint_bsp_partition(centers, max_elements)
+        elif rule == "sah":
+            parts = sah_bsp_partition(centers, max_elements)
         else:
-            # ``np.split`` treats split points positionally: unsorted or
-            # out-of-range points silently yield overlapping / empty parts
-            # rather than erroring. Validate up front so all callers (incl.
-            # the ``gsplat partition --indices`` CLI) fail loudly instead.
-            split_points = [int(x) for x in n_or_indices]
-            if any(
-                split_points[i] >= split_points[i + 1]
-                for i in range(len(split_points) - 1)
-            ):
-                raise ValueError(
-                    f"partition split points must be strictly increasing, "
-                    f"got {split_points}"
+            raise ValueError(
+                f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        children: List["GSplatNode"] = []
+        for idx in parts:
+            children.append(
+                GSplatLeaf(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=src.centers[idx],
+                            amplitudes=src.amplitudes[idx],
+                            cholesky_factors=src.cholesky_factors[idx],
+                            colors=src.colors[idx] if src.colors is not None else None,
+                            truncation_radius=src.truncation_radius,
+                        )
+                    ]
                 )
-            if split_points and (split_points[0] <= 0 or split_points[-1] >= n_splats):
-                raise ValueError(
-                    f"partition split points must lie within (0, "
-                    f"n_splats={n_splats}), got {split_points}"
-                )
-            groups = np.split(indices, split_points)
-
-        from luxar.gsplats.utils.trils import tril_size
-
-        results = []
-        for idx in groups:
-            if len(idx) == 0:
-                d = src.ndim
-                k = tril_size(d) if d > 0 else 0
-                results.append(
-                    GSplatData(
-                        centers=np.empty((0, d), dtype=src.centers.dtype),
-                        amplitudes=np.empty(0, dtype=src.amplitudes.dtype),
-                        cholesky_factors=np.empty(
-                            (0, k), dtype=src.cholesky_factors.dtype
-                        ),
-                        colors=np.empty((0, 3), dtype=np.float32)
-                        if src.colors is not None
-                        else None,
-                        stats=dict(src.stats),
-                        truncation_radius=src.truncation_radius,
-                    )
-                )
-            else:
-                results.append(
-                    GSplatData(
-                        centers=src.centers[idx],
-                        amplitudes=src.amplitudes[idx],
-                        cholesky_factors=src.cholesky_factors[idx],
-                        colors=src.colors[idx] if src.colors is not None else None,
-                        stats=dict(src.stats),
-                        truncation_radius=src.truncation_radius,
-                    )
-                )
-        return results
+            )
+        return GSplatPartition(children=children, max_elements=max_elements)
 
     def embed_dimension(
         self,
@@ -1272,8 +1354,32 @@ class GSplatData(_SplatArrayMixin):
         """
         from luxar.gsplats.utils.trils import embed_cholesky_packed
 
+        # A 0-d numpy array is semantically a scalar; unwrap it so the
+        # np.isscalar() branches below treat it as the broadcast coordinate it
+        # represents (rather than a malformed per-splat array of shape ()).
+        if isinstance(values, np.ndarray) and values.ndim == 0:
+            values = values.item()
+
         n = self.n_splats
         d = self.ndim
+
+        # Multi-substitutive: embed every level and rebuild the pyramid. A scalar
+        # coordinate broadcasts cleanly to all levels; a per-splat array is sized
+        # to the finest level only and cannot map to coarser levels, so reject it
+        # (mirrors with_colors) rather than silently collapsing the ladder. The
+        # scalar path is the one the merge pipeline (combine_as_new_dimension)
+        # exercises on pyramid inputs.
+        if self.n_substitutive > 1:
+            if not np.isscalar(values):
+                raise ValueError(
+                    "embed_dimension with a per-splat values array is not "
+                    "supported on a multi-substitutive pyramid (each level has a "
+                    "different splat count). Pass a scalar coordinate to broadcast "
+                    "across all levels, or operate per level via at_substitutive()."
+                )
+            return self._map_substitutive(
+                lambda lvl: lvl.embed_dimension(values, sigma)
+            )
 
         # Multi-LOD path: embed each LOD independently
         if self.n_additive_sublods > 1:
@@ -1344,6 +1450,32 @@ class GSplatData(_SplatArrayMixin):
 
     # ── Geometric transforms ────────────────────────────────
 
+    def _map_substitutive(
+        self, fn: "Callable[[GSplatData], GSplatData]"
+    ) -> "GSplatData":
+        """Apply a single-level transform to EVERY substitutive level, rebuild.
+
+        ``fn`` maps a single-substitutive-level view (``n_substitutive == 1``)
+        to a transformed single-level ``GSplatData``; per-level metadata
+        (compression_factor / parent_method / level_index / stats) is preserved.
+        Mirrors :meth:`filter_by`'s per-level rebuild (decision 6) so spatial
+        and intensity ops never silently collapse the substitutive LOD ladder
+        to the finest level. Callers guard with ``if self.n_substitutive > 1``.
+        """
+        new_levels: List[SubstitutiveLevel] = []
+        for s, src in enumerate(self.substitutive_levels):
+            out = fn(self.at_substitutive(s))
+            new_levels.append(
+                SubstitutiveLevel(
+                    additive_sublods=out.substitutive_levels[0].additive_sublods,
+                    compression_factor=src.compression_factor,
+                    parent_method=src.parent_method,
+                    level_index=src.level_index,
+                    stats=dict(src.stats),
+                )
+            )
+        return GSplatData.from_substitutive_levels(new_levels, stats=dict(self.stats))
+
     def transform(self, matrix: np.ndarray) -> "GSplatData":
         """Apply affine transformation to all splats.
 
@@ -1367,6 +1499,11 @@ class GSplatData(_SplatArrayMixin):
             >>> transformed = data.transform(M)
         """
         from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+
+        # Multi-substitutive: transform every level and rebuild the pyramid
+        # (mirrors filter_by/cull) rather than collapsing to the finest level.
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.transform(matrix))
 
         matrix = np.asarray(matrix, dtype=np.float64)
         d = self.ndim
@@ -1508,11 +1645,33 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with the specified colors.
         """
-        if not isinstance(colors, np.ndarray):
-            colors = np.asarray(colors, dtype=np.float32)
-        if colors.ndim == 1 and colors.shape == (3,):
+        arr = (
+            colors
+            if isinstance(colors, np.ndarray)
+            else np.asarray(colors, dtype=np.float32)
+        )
+        is_broadcast = arr.ndim == 1 and arr.shape == (3,)
+
+        # Multi-substitutive: rebuild the pyramid. A single (r, g, b) broadcasts
+        # cleanly to every level; an explicit per-splat array cannot (each level
+        # has a different splat count), so reject it rather than silently
+        # collapse the ladder to the finest level.
+        if self.n_substitutive > 1:
+            if not is_broadcast:
+                raise ValueError(
+                    "with_colors with an explicit per-splat color array is not "
+                    "supported on a multi-substitutive pyramid (each level has a "
+                    "different splat count). Pass a single (r, g, b) to broadcast "
+                    "across all levels, or operate per level via at_substitutive()."
+                )
+            rgb = arr.astype(np.float32)
+            return self._map_substitutive(lambda lvl: lvl.with_colors(rgb))
+
+        if is_broadcast:
             # Broadcast single color to all splats
-            colors = np.tile(colors.astype(np.float32), (self.n_splats, 1))
+            colors = np.tile(arr.astype(np.float32), (self.n_splats, 1))
+        else:
+            colors = arr
         if colors.shape != (self.n_splats, 3):
             raise ValueError(
                 f"colors shape {colors.shape} doesn't match ({self.n_splats}, 3)"
@@ -1553,6 +1712,10 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with transformed amplitudes.
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(
+                lambda lvl: lvl.affine_intensity(scale, offset)
+            )
         return self._with_new_amplitudes(self.amplitudes * scale + offset)
 
     def normalize_intensity(self, target_max: float = 1.0) -> "GSplatData":
@@ -1564,9 +1727,13 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData. Returns copy if all amplitudes are zero.
         """
+        # A single global factor (from the finest level's max) is applied
+        # uniformly to all substitutive levels via scale_intensity — which is
+        # itself pyramid-preserving — so the ladder is kept and levels stay
+        # consistently scaled (a per-level normalization would shift them apart).
         current_max = float(self.amplitudes.max()) if self.n_splats > 0 else 0.0
         if current_max == 0:
-            return self._with_new_amplitudes(self.amplitudes.copy())
+            return self.scale_intensity(1.0)  # no-op, but preserves the pyramid
         return self.scale_intensity(target_max / current_max)
 
     def clamp_intensity(
@@ -1583,6 +1750,8 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with clamped amplitudes.
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.clamp_intensity(min, max))
         new_amps = self.amplitudes.copy()
         if min is not None:
             new_amps = np.maximum(new_amps, min)
@@ -1597,13 +1766,11 @@ class GSplatData(_SplatArrayMixin):
         path: str | Path,
         ordering: Literal["morton", "hilbert", "none"] = "hilbert",
         encoding_mode: Optional["EncodingMode"] = None,
-        positive_scalar_encoding: Literal["linear", "log"] = "linear",
-        color_mode: Optional[Literal["sdr", "hdr"]] = None,
         include_fitting_info: bool = True,
         include_provenance: bool = False,
         description: Optional[str] = None,
         compress: Optional[Literal["zip", "tar.gz"]] = None,
-        compressor: Optional[Any] = None,
+        compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
     ) -> None:
         """Save splats to .gsplats.zarr format.
@@ -1612,8 +1779,6 @@ class GSplatData(_SplatArrayMixin):
             path: Output path (should end with .gsplats.zarr or .gsplats.zarr.zip/.tar.gz if compress is used)
             ordering: Spatial ordering method ("morton", "hilbert", or "none")
             encoding_mode: Encoding mode (AUTO, PRECISION, or MEMORY), defaults to AUTO
-            positive_scalar_encoding: Encoding for amplitudes ("linear" or "log")
-            color_mode: Required if colors are float32 ("sdr" or "hdr")
             include_fitting_info: Whether to include fitting statistics
             include_provenance: Whether to include provenance info from stats
             description: Optional user description
@@ -1621,284 +1786,51 @@ class GSplatData(_SplatArrayMixin):
             zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
                 Useful when metadata overhead matters, e.g. for Git LFS storage.
 
+        Colors are written via the shared COLOR helper, which auto-detects SDR vs
+        HDR (values > 1) — there is no explicit ``color_mode`` knob.
+
         Example:
             >>> result = fit_gaussian_splats(image, n_iters=1000)
             >>> result.save("fitted.gsplats.zarr", encoding_mode=EncodingMode.MEMORY)
-            >>> # With colors
-            >>> result_with_colors.save("colored.gsplats.zarr", color_mode="sdr")
             >>> # With compression for storage/git-lfs
             >>> result.save("fitted.gsplats.zarr.zip", compress="zip")
         """
         from luxar.encoding import EncodingMode
-        from luxar.gsplats.io.save_gsplats import save_gsplats
+        from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.io.reader import DEFAULT_COMP
 
         # Use AUTO as default
         if encoding_mode is None:
             encoding_mode = EncodingMode.AUTO
 
-        # Use Blosc(zstd) compression by default
-        if compressor is None:
+        # Use Blosc(zstd) by default; an EXPLICIT compressor=None disables
+        # compression (e.g. for raw, zarrita-readable cross-language fixtures).
+        # Only the sentinel "not specified" coerces to the default.
+        if compressor is _USE_DEFAULT_COMPRESSOR:
             compressor = DEFAULT_COMP
 
-        # Extract fitting info from stats
-        fitting_info = None
-        fitting_config = None
-        provenance_info = None
-
-        if include_fitting_info and self.stats:
-            # Extract common fitting fields (quality metrics, culling/filtering stats)
-            fitting_info = {
-                k: v
-                for k, v in self.stats.items()
-                if k
-                in [
-                    "time_seconds",
-                    "iterations",
-                    "converged",
-                    "early_stopped",
-                    "best_iteration",
-                    "final_loss",
-                    "final_max_abs_error",
-                    "final_rel_l2",
-                    "n_splats",
-                    "n_culled",
-                    "fitter_name",
-                    "fitter_version",
-                    "timestamp",
-                    "culled",
-                    "culling_method",
-                    "n_original",
-                    "n_removed",
-                    "amplitude_retention",
-                    "filtered",
-                    "filter_criteria",
-                    "truncate",
-                    "psnr_db",
-                    "ssim",
-                    "mse",
-                ]
-            }
-
-            # Extract fitting config if present
-            if "config" in self.stats:
-                fitting_config = self.stats["config"]
-
-        if include_provenance and self.stats:
-            if "provenance" in self.stats:
-                provenance_info = self.stats["provenance"]
-
-        if self.n_substitutive == 1 and self.n_additive_sublods == 1:
-            # Trivial 1×1 case: route through save_gsplats for the simplest
-            # v2.0 layout (single substitutive level, single additive sub-LOD).
-            save_gsplats(
-                path=path,
-                centers=self.centers,
-                amplitudes=self.amplitudes,
-                cholesky_factors=self.cholesky_factors,
-                colors=self.colors,
-                ordering=ordering,
-                encoding_mode=encoding_mode,
-                color_mode=color_mode,
-                positive_scalar_encoding=positive_scalar_encoding,
-                fitting_info=fitting_info,
-                fitting_config=fitting_config,
-                provenance_info=provenance_info,
-                description=description,
-                compress=compress,
-                compressor=compressor,
-                zip_deflate=zip_deflate,
-                truncation_radius=self.truncation_radius,
-            )
-        else:
-            # 2-D matrix with N substitutive × M_i additive: write the full
-            # v2.0 substitutive_<s>/additive_<a> nested layout.
-            self._save_multi_lod(
-                path=path,
-                ordering=ordering,
-                encoding_mode=encoding_mode,
-                color_mode=color_mode,
-                positive_scalar_encoding=positive_scalar_encoding,
-                fitting_info=fitting_info,
-                fitting_config=fitting_config,
-                provenance_info=provenance_info,
-                description=description,
-                compress=compress,
-                compressor=compressor,
-                zip_deflate=zip_deflate,
-            )
-
-    def _save_multi_lod(
-        self,
-        path: str | Path,
-        ordering: Literal["morton", "hilbert", "none"],
-        encoding_mode: "EncodingMode",
-        color_mode: Optional[Literal["sdr", "hdr"]],
-        positive_scalar_encoding: Literal["linear", "log"],
-        fitting_info: Optional[Dict[str, Any]],
-        fitting_config: Optional[Dict[str, Any]],
-        provenance_info: Optional[Dict[str, Any]],
-        description: Optional[str],
-        compress: Optional[Literal["zip", "tar.gz"]],
-        compressor: Optional[Any] = None,
-        zip_deflate: bool = False,
-    ) -> None:
-        """Write the 2-D substitutive × additive matrix as v2.0 zarr format.
-
-        Layout::
-
-            <path>/.zattrs                       # format_version=2.0, n_substitutive,
-                                                 # default_substitutive, …
-            <path>/splats/.zattrs                # n_substitutive, default_substitutive
-            <path>/splats/substitutive_<s>/      # one per substitutive level
-                .zattrs                          # n_additive_sublods, compression_factor,
-                                                 # parent_method, level_index
-                additive_<a>/                    # one per additive sub-LOD
-                    centers, amplitudes,
-                    cholesky_factors, colors?,
-                    chunk_bounds
-                    .zattrs                      # lod_stats={…}
-        """
-        import datetime
-        import shutil
-        import tempfile
-
-        import zarr
-        from zarr.storage import DirectoryStore
-
-        from luxar.gsplats.io.save_gsplats import (  # type: ignore[attr-defined]
-            GSPLATS_VERSION,
-            _save_splat_arrays_to_group,
+        # Extract fitting/provenance groups from stats (single-sourced helper).
+        fitting_info, fitting_config, provenance_info = split_fitting_info(
+            self.stats,
+            include_fitting_info=include_fitting_info,
+            include_provenance=include_provenance,
         )
 
-        path = Path(path)
-
-        # Handle compression (same pattern as save_gsplats)
-        temp_dir = None
-        if compress:
-            temp_dir = Path(tempfile.mkdtemp(prefix="luxar_gsplat_save_"))
-            zarr_name = path.name
-            for suffix in [".zip", ".tar.gz", ".gz"]:
-                if zarr_name.endswith(suffix):
-                    zarr_name = zarr_name[: -len(suffix)]
-            if not zarr_name.endswith(".gsplats.zarr"):
-                zarr_name = zarr_name + ".gsplats.zarr"
-            zarr_path = temp_dir / zarr_name
-        else:
-            zarr_path = path
-
-        store = DirectoryStore(str(zarr_path))
-        root = zarr.group(store=store, overwrite=True)
-
-        # Root attributes (v2.0 — 2-D substitutive × additive)
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        root.attrs.update(
-            {
-                "format_version": "2.0",
-                "format_type": "gsplats_zarr",
-                "timestamp": timestamp,
-                "luxar_gsplats_version": GSPLATS_VERSION,
-                "n_substitutive": self.n_substitutive,
-                "default_substitutive": self.default_substitutive,
-            }
+        # One authoring path: serialize this dataset's node tree to v3.0 via the
+        # shared walker (the same machinery the scene compiler uses for leaves).
+        write_gsplats_tree(
+            path,
+            self.tree,
+            ordering=ordering,
+            encoding_mode=encoding_mode,
+            fitting_info=fitting_info,
+            fitting_config=fitting_config,
+            provenance_info=provenance_info,
+            description=description,
+            compress=compress,
+            compressor=compressor,
+            zip_deflate=zip_deflate,
         )
-        if description:
-            root.attrs["description"] = description
-
-        splats_group = root.create_group("splats")
-        splats_group.attrs.update(
-            {
-                "type": "gsplats",
-                "n_substitutive": self.n_substitutive,
-                "default_substitutive": self.default_substitutive,
-                "truncation_radius": self.truncation_radius,
-            }
-        )
-
-        # Iterate substitutive × additive matrix
-        for s, sub_level in enumerate(self.substitutive_levels):
-            sub_group = splats_group.create_group(f"substitutive_{s}")
-            sub_group.attrs.update(
-                {
-                    "n_additive_sublods": sub_level.n_additive_lods,
-                    "compression_factor": int(sub_level.compression_factor),
-                    "parent_method": sub_level.parent_method
-                    if sub_level.parent_method is not None
-                    else "",
-                    "level_index": int(sub_level.level_index),
-                }
-            )
-            # Serialize SubstitutiveLevel.stats that are JSON-safe
-            sub_stats = {
-                k: v
-                for k, v in sub_level.stats.items()
-                if isinstance(v, (int, float, str, bool, list))
-            }
-            if sub_stats:
-                sub_group.attrs["level_stats"] = sub_stats
-
-            for a, sublod in enumerate(sub_level.additive_sublods):
-                add_group = sub_group.create_group(f"additive_{a}")
-
-                # Serialize AdditiveSubLOD stats that are JSON-safe
-                lod_stats = {
-                    k: v
-                    for k, v in sublod.stats.items()
-                    if isinstance(v, (int, float, str, bool, list))
-                }
-
-                _save_splat_arrays_to_group(
-                    splats_group=add_group,
-                    centers=sublod.centers,
-                    amplitudes=sublod.amplitudes,
-                    cholesky_factors=sublod.cholesky_factors,
-                    colors=sublod.colors,
-                    ordering=ordering,
-                    encoding_mode=encoding_mode,
-                    color_mode=color_mode,
-                    positive_scalar_encoding=positive_scalar_encoding,
-                    float16_allowed=False,
-                    lod_stats=lod_stats,
-                    compressor=compressor,
-                    truncation_radius=sublod.truncation_radius,
-                )
-
-        # Write fitting info (optional, root level)
-        if fitting_info is not None:
-            fitting_group = root.create_group("fitting")
-            fitting_group.attrs.update(fitting_info)
-            if fitting_config is not None:
-                config_group = fitting_group.create_group("config")
-                config_group.attrs.update(fitting_config)
-
-        # Write provenance info (optional)
-        if provenance_info is not None:
-            prov_group = root.create_group("provenance")
-            prov_group.attrs.update(provenance_info)
-
-        zarr.consolidate_metadata(store)
-
-        # Compress if requested
-        if compress:
-            try:
-                import tarfile
-                import zipfile
-
-                if compress == "zip":
-                    zip_method = (
-                        zipfile.ZIP_DEFLATED if zip_deflate else zipfile.ZIP_STORED
-                    )
-                    with zipfile.ZipFile(path, "w", zip_method) as zipf:
-                        for file_path in zarr_path.rglob("*"):
-                            if file_path.is_file():
-                                arcname = file_path.relative_to(zarr_path.parent)
-                                zipf.write(file_path, arcname)
-                elif compress == "tar.gz":
-                    with tarfile.open(path, "w:gz") as tarf:
-                        tarf.add(zarr_path, arcname=zarr_path.name)
-            finally:
-                if temp_dir is not None and temp_dir.exists():
-                    shutil.rmtree(temp_dir, ignore_errors=True)
 
     def translate(self, offset: np.ndarray) -> "GSplatData":
         """Translate all splat centers by an offset vector.
@@ -1913,6 +1845,10 @@ class GSplatData(_SplatArrayMixin):
             >>> # Shift all splats by [10, 20, 30]
             >>> translated = data.translate(np.array([10, 20, 30]))
         """
+        # Multi-substitutive: translate every level and rebuild the pyramid.
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.translate(offset))
+
         # Multi-LOD path: translate each LOD independently
         if self.n_additive_sublods > 1:
             new_lods = [
@@ -1952,6 +1888,12 @@ class GSplatData(_SplatArrayMixin):
             >>> # Amplitude-weighted centroid is now at origin
             >>> centroid = (centered.centers.T @ centered.amplitudes) / centered.amplitudes.sum()
         """
+        # Empty data: nothing to center. Return a structure-preserving copy
+        # (translate by zero) rather than computing mean() of an empty array,
+        # which would emit a spurious "Mean of empty slice" RuntimeWarning.
+        if self.n_splats == 0:
+            return self.translate(np.zeros(self.ndim, dtype=np.float64))
+
         # Compute amplitude-weighted centroid
         total_amplitude = self.amplitudes.sum()
         if total_amplitude > 0:
@@ -1980,6 +1922,8 @@ class GSplatData(_SplatArrayMixin):
             >>> # Brighten by 2x
             >>> brightened = data.scale_intensity(2.0)
         """
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda lvl: lvl.scale_intensity(factor))
         return self._with_new_amplitudes(self.amplitudes * factor)
 
     def cull(
@@ -2098,6 +2042,55 @@ class GSplatData(_SplatArrayMixin):
                 method = "redundancy"
             else:
                 method = "cumulative"
+
+        # Multi-substitutive: cull EVERY substitutive level and rebuild the
+        # pyramid (decision 6) rather than collapsing to the default level via
+        # the single-level mask that the strategies below feed to self.filter().
+        # Each level is culled through the single-substitutive path (the same
+        # target volume reconstructs every level). Mirrors filter_by().
+        if self.n_substitutive > 1:
+            culled_levels: List[SubstitutiveLevel] = []
+            for s, src in enumerate(self.substitutive_levels):
+                culled_level = self.at_substitutive(s).cull(
+                    target,
+                    method=method,
+                    shape=shape,
+                    truncate=truncate,
+                    error_percentile=error_percentile,
+                    error_tolerance=error_tolerance,
+                    redundancy_threshold=redundancy_threshold,
+                    max_binary_search_iters=max_binary_search_iters,
+                    device=device,
+                    intensity_floor=intensity_floor,
+                    retention=retention,
+                    amplitude_percentile=amplitude_percentile,
+                    volume_percentile=volume_percentile,
+                    verbose=verbose,
+                )
+                culled_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=culled_level.substitutive_levels[
+                            0
+                        ].additive_sublods,
+                        compression_factor=src.compression_factor,
+                        parent_method=src.parent_method,
+                        level_index=src.level_index,
+                        stats=dict(src.stats),
+                    )
+                )
+            out = GSplatData.from_substitutive_levels(
+                culled_levels,
+                stats=dict(self.stats),
+            )
+            out.stats.update(
+                {
+                    "culled": True,
+                    "culling_method": method,
+                    "n_original": self.n_splats,
+                    "n_culled": self.n_splats - out.n_splats,
+                }
+            )
+            return out
 
         # =================================================================
         # Heuristic methods (no rendering, CPU-only, fast)
@@ -2441,6 +2434,37 @@ class GSplatData(_SplatArrayMixin):
         total_time = sum(g.stats.get("time_seconds", 0) for g in gsplats_per_channel)
         if total_time > 0:
             merged_stats["time_seconds"] = total_time
+
+        # Multi-substitutive: merge per substitutive level and rebuild the
+        # pyramid (mirrors concatenate / the transform ops), never silently
+        # collapsing to the finest level. Reachable via `luxar gsplat merge
+        # --channel-colors` on kind=lod inputs. Each level merges the channels
+        # that HAVE that level (parallel to the additive max_lods path below).
+        max_sub = max(g.n_substitutive for g in gsplats_per_channel)
+        if max_sub > 1:
+            new_levels: List[SubstitutiveLevel] = []
+            for s in range(max_sub):
+                parts = [
+                    (g.at_substitutive(s), color)
+                    for g, color in zip(gsplats_per_channel, channel_colors)
+                    if s < g.n_substitutive
+                ]
+                merged_level = cls.merge_with_channel_colors(
+                    [view for view, _ in parts], [color for _, color in parts]
+                )
+                template = parts[0][0].substitutive_levels[0]
+                new_levels.append(
+                    SubstitutiveLevel(
+                        additive_sublods=merged_level.substitutive_levels[
+                            0
+                        ].additive_sublods,
+                        compression_factor=template.compression_factor,
+                        parent_method=template.parent_method,
+                        level_index=template.level_index,
+                        stats=dict(template.stats),
+                    )
+                )
+            return cls.from_substitutive_levels(new_levels, stats=merged_stats)
 
         # Multi-LOD path: per-LOD channel color assignment
         max_lods = max(g.n_additive_sublods for g in gsplats_per_channel)

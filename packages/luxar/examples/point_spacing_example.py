@@ -124,7 +124,7 @@ def create_touching_pairs():
 
 def main():
     """Create a scene demonstrating point size and spacing relationships."""
-    output_path = get_examples_output_dir() / "point_spacing_example.zarr"
+    output_path = get_examples_output_dir() / "point_spacing_example.luxar.zarr"
 
     aprint(f"Creating point spacing example at {output_path}")
     aprint("This example demonstrates the relationship between point size and spacing")
@@ -202,7 +202,7 @@ Educational value:
         aprint(f"\n✓ Scene created with {len(positions)} spheres")
         aprint("\n" + "=" * 60)
         aprint("VIEWING INSTRUCTIONS:")
-        aprint("1. Run: luxar serve point_spacing_example.zarr")
+        aprint("1. Run: luxar serve point_spacing_example.luxar.zarr")
         aprint("2. Observe the touching relationships in all test cases")
         aprint("3. Rotate view to verify touching from all angles")
         aprint("4. Notice: spacing = 2 × radius makes spheres touch perfectly")

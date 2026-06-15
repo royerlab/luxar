@@ -336,7 +336,7 @@ class TestNodeNdTransformIntegration:
 
     def test_nd_transform_property(self, tmp_path) -> None:
         """Test set/get/remove nd_transform on nodes."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             dims = Dimensions(
                 [
                     Dimension("X", display=True),
@@ -361,7 +361,7 @@ class TestNodeNdTransformIntegration:
 
     def test_nd_transform_via_add_group(self, tmp_path) -> None:
         """Test nd_transform passed via add_group kwargs."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             dims = Dimensions(
                 [
                     Dimension("X", display=True),
@@ -379,7 +379,7 @@ class TestNodeNdTransformIntegration:
 
     def test_nd_transform_persists_to_zarr(self, tmp_path) -> None:
         """Test nd_transform is persisted to zarr and survives reopen."""
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         nd_t = {"Time": {"scale": 0.001, "offset": 50.0}}
 
         with LuxarZarrCompiler(store_path) as compiler:
@@ -402,7 +402,7 @@ class TestNodeNdTransformIntegration:
 
     def test_world_nd_transform(self, tmp_path) -> None:
         """Test hierarchical composition via world_nd_transform."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             dims = Dimensions(
                 [
                     Dimension("X", display=True),
@@ -432,7 +432,7 @@ class TestNodeNdTransformIntegration:
 
     def test_nd_transform_on_points(self, tmp_path) -> None:
         """Test nd_transform stored on points node."""
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             dims = Dimensions(
                 [

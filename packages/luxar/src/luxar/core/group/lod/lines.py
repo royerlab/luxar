@@ -524,3 +524,22 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
 
 
 LinesAdditiveSpec = Union[None, bool, dict]
+
+
+def resolve_substitutive_axis_lines(spec: Any) -> Optional[dict]:
+    """Translate the ``substitutive_lod=`` kwarg value into a normalized dict.
+
+    The substitutive axis coarsens a line set by **synthesising gsplats**: each
+    segment is lifted to a string of isotropic "bead" Gaussians (view-independent,
+    summing to a smooth tube) and the gsplat substitutive pipeline builds
+    fewer-but-larger representative levels, which become the coarse levels of a
+    lines LOD ladder (the finest level stays the original Lines node).
+
+    Thin wrapper over the shared
+    :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
+    implementation shared with Points so the two can't drift). See it for the
+    full value vocabulary.
+    """
+    from .group import resolve_substitutive_axis
+
+    return resolve_substitutive_axis(spec, "Lines")

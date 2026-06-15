@@ -465,7 +465,7 @@ def main() -> None:
     )
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "chromatrace_choir_umap.zarr"
+        output_path = get_demos_output_dir() / "chromatrace_choir_umap.luxar.zarr"
         n = build_scene(
             output_path, coords, attributes, category_maps, term_colors, groups
         )
@@ -473,7 +473,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_chromatrace_") as tmpdir:
-        output_path = Path(tmpdir) / "chromatrace_choir_umap.zarr"
+        output_path = Path(tmpdir) / "chromatrace_choir_umap.luxar.zarr"
         n = build_scene(
             output_path, coords, attributes, category_maps, term_colors, groups
         )

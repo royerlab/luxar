@@ -53,7 +53,7 @@ def make_synthetic_volume(size: int = 32, seed: int = 0) -> np.ndarray:
 
 def main() -> None:
     """Fit Gaussian splats to a synthetic volume and write the resulting scene."""
-    output_path = get_examples_output_dir() / "gsplats_fit_volume_example.zarr"
+    output_path = get_examples_output_dir() / "gsplats_fit_volume_example.luxar.zarr"
     aprint(f"Writing fitted-gsplat example to {output_path}")
 
     volume = make_synthetic_volume(size=32, seed=0)

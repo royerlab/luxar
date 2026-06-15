@@ -176,7 +176,7 @@ test.describe('First-Time User Experience', () => {
     } else {
       // If no close button, navigate to a dataset to dismiss
       await page.goto(
-        '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+        '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
       );
       await expect(browser).toBeHidden({ timeout: 10000 });
     }
@@ -194,7 +194,7 @@ test.describe('First-Time User Experience', () => {
     // shortcut handler bails out via `if (!this.datasetBrowser)
     // return` and makes `O` a silent no-op until reload.
     await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
     );
     await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
       timeout: 10000,
@@ -231,7 +231,7 @@ test.describe('First-Time User Experience', () => {
     // close. `InputHandler.onKeyDown` exempts Escape from the typing
     // guard.
     await page.goto(
-      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.luxar.zarr&debug'
     );
     await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
       timeout: 10000,

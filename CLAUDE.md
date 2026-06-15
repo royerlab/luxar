@@ -193,14 +193,14 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 ### Luxar CLI
 ```bash
 luxar demo                       # Quick demo with viewer
-luxar serve <data.zarr> --viewer # Serve with viewer
-luxar info <data.zarr> --stats   # Dataset info
+luxar serve <data.luxar.zarr> --viewer # Serve with viewer
+luxar info <data.luxar.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
-luxar export scene.zarr -o my_export/             # Export scene + viewer as standalone offline folder
-luxar export scene.zarr -o my_export/ --open      # Export and serve in browser
-luxar export scene.zarr -o my_export/ --overwrite # Overwrite existing export
-luxar export scene.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
-luxar export scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
+luxar export scene.luxar.zarr -o my_export/             # Export scene + viewer as standalone offline folder
+luxar export scene.luxar.zarr -o my_export/ --open      # Export and serve in browser
+luxar export scene.luxar.zarr -o my_export/ --overwrite # Overwrite existing export
+luxar export scene.luxar.zarr -o out/ --native macos    # Native macOS .app bundle (requires `make build-launchers`)
+luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
 ```
 
 ### GSplat CLI (fitting, converting, rendering, merging)
@@ -244,7 +244,7 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 
 # Convert .gsplats.zarr to Luxar scene for web viewer
-luxar gsplat convert splats.gsplats.zarr scene.zarr --center
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 
 # Render gsplats back to volume for quality comparison
 luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
@@ -268,52 +268,58 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive | pyramid)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v2.0 (a 2-D
-# substitutive × additive LOD matrix) — see docs/specs/GSPLATS_ZARR_FORMAT.md.
+# to pick K* in a principled way. .gsplats.zarr is format v3.0 (a node tree —
+# a detached scene gsplat-node subtree the viewer loads directly) — see
+# docs/specs/GSPLATS_ZARR_FORMAT.md.
 
-# Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
-# Progressive fitting now returns a single flattened dataset; the LOD ladder is
-# built explicitly here via the supp-doc additive-LOD algorithm (greedy /
-# matching-pursuit ordering). Default method is `greedy`; for very large N use
-# `self_energy` (cheap O(N log N), 2-10% AUC gap on real datasets).
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                 # 4 equal-count levels (default)
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6      # 6 equal-count levels
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
-    --breakpoints energy:0.5,0.9,0.99,1.0                                   # cumulative energy fractions
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
-    --breakpoints counts:1000,5000,25000                                    # explicit cumulative splat counts
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
-luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
-luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level 1   # target a single
-                                                                                     # substitutive level of a pyramid
+# Build a representation topology from a fitted gsplat dataset — one command,
+# one `--recipe` flag (REQUIRED). Recipes are scale-ordered:
+#   flat          single leaf (no LOD, no partition)               — small N
+#   additive      one leaf + additive (prefix-sum) ladder           — medium N
+#   partitioned   BSP parts, each with its own additive ladder      — large N
+#   multiscale    coarse substitutive cap + a partitioned fine      — huge N
+#                 branch (unbalanced by design: detail only where
+#                 you look closely; cull off-screen, stream in view)
+#   substitutive  pure substitutive pyramid (synthesised levels)    — primitive
+#   pyramid       balanced substitutive × additive matrix           — primitive
+# Output is a standalone v3.0 .gsplats.zarr (loadable with `luxar gsplat info`);
+# graft it into a scene from Python via `add_gsplats_from_file` or `gsplat convert`.
+# (Replaces the former `lod additive`/`lod substitutive`/`lod pyramid` subcommands.)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --n-lods 6
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
+    --breakpoints energy:0.5,0.9,0.99,1.0                                    # cumulative energy fractions
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive \
+    -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
+# additive default method `greedy` (provably (1-1/e)-optimal at every prefix);
+# for very large N use `self_energy` (cheap O(N log N)).
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy
 
-# Build a substitutive LOD hierarchy (synthesised representative splats per level)
-# Each coarser substitutive level has ceil(N/K^L) splats that REPLACE the previous
-# level. Output is a single v2.0 .gsplats.zarr (substitutive_<s>/additive_0 cells);
-# loadable with `luxar gsplat info`. The recommended workhorse `kmeans_lloyd`
-# (O(N log N) Morton-partition warm-start + vectorised cost-increment Lloyd)
-# beats amplitude culling at every K on real anisotropic 3D data per supp-doc
-# Experiment C, and reduces 256K splats in seconds (was ~1hr). Greedy
-# hierarchical (lazy-heap Runnalls, ~O(Nk log Nk)) is quality-leading at
-# small N but heavier per-merge — use kmeans_lloyd for very large N.
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr               # K=4, L=3, method=auto (default)
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --K 4 --L 3   # explicit K, L
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \
-    --method kmeans-lloyd --lloyd-iters 5                                    # tune Lloyd refinement
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning small N
-luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --device cpu  # skip GPU
+# partitioned / multiscale (the large-data topologies): each part carries its own
+# additive ladder; `--max-elements` (or `--parts`) caps per-part splats (median
+# BSP by default; --partition-rule midpoint|sah). `multiscale` adds a single
+# coarse substitutive cap (`--compression-factor`/-K) above the partitioned branch.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8 --max-elements 250000
 
-# Build the full 2-D LOD pyramid (substitutive × additive) in one shot
-luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
-    --substitutive K=4,L=3 --additive 4                                       # [4, 4] pyramid
+# substitutive / pyramid primitives: each coarser substitutive level has
+# ceil(N/K^L) representative splats that REPLACE the previous level. Recommended
+# workhorse `kmeans_lloyd` (O(N log N) Morton warm-start + cost-increment Lloyd);
+# `greedy`/`greedy_lloyd` (lazy-heap Runnalls) is quality-leading at small N.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive            # K=4, L=3, method=auto
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
+    --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 
-# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir) → v2.0
-luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr               # single file
-luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr                          # substitutive directory
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.0
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
+luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
-# Partition into parts
-luxar gsplat partition splats.gsplats.zarr output_dir/ --parts 4
-luxar gsplat partition splats.gsplats.zarr output_dir/ --indices "1000,5000"
+# Partition into a single kind=partition file via spatial BSP (--indices removed)
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4               # target part count
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --max-elements 100000   # per-part cap
+luxar gsplat partition splats.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah    # median|midpoint|sah
 
 # Merge multiple datasets
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
@@ -790,7 +796,7 @@ Before PR/merge:
 8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action. **ALWAYS use the `AskUserQuestion` interactive tool** for any decision point — never pose choices as inline prose. If the tool isn't loaded, load it via `ToolSearch` first.
 
 ### Naming Conventions
-- Example files: `*_example.py` or `*_example.zarr`
+- Example files: `*_example.py` or `*_example.luxar.zarr`
 - Temp files: Put in `delme/` directory
 - Example outputs: Generated to `datasets/examples/` (via `get_examples_output_dir()`)
 - Demo outputs: Generated to `datasets/demos/` (via `get_demos_output_dir()`)

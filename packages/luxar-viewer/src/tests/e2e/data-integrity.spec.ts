@@ -23,8 +23,8 @@ import {
   waitForNextRender,
 } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/sharpness_showcase_example.zarr';
-const DATASET_5D = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/sharpness_showcase_example.luxar.zarr';
+const DATASET_5D = 'http://localhost:9000/datasets/examples/dense_grid_5d_example.luxar.zarr';
 
 test.describe('Data Integrity - Attribute Alignment', () => {
   test('should have matching attribute counts across position/color/radius/sharpness', async ({

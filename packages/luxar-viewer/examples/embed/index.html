@@ -79,17 +79,22 @@
     <div class="host-card">
       <h1>My Beautiful Host Page</h1>
       <p>
-        This page mounts the Luxar viewer inside the box below. The page's serif
-        font, beige background, and bulleted list should remain intact — that's
-        the embeddability contract.
+        This page mounts the Luxar viewer inside the box below. The page's serif font, beige
+        background, and bulleted list should remain intact — that's the embeddability contract.
       </p>
       <ul>
-        <li>Importing <code>luxar-viewer/styles.css</code> must not change
-          the host page's margins, fonts, or scrollbars.</li>
-        <li>Importing <code>{ LuxarApp } from 'luxar-viewer'</code> must
-          not patch the host page's <code>console.*</code>.</li>
-        <li>Calling <code>app.dispose()</code> must remove the viewer
-          completely and leave the host page's state untouched.</li>
+        <li>
+          Importing <code>luxar-viewer/styles.css</code> must not change the host page's margins,
+          fonts, or scrollbars.
+        </li>
+        <li>
+          Importing <code>{ LuxarApp } from 'luxar-viewer'</code> must not patch the host page's
+          <code>console.*</code>.
+        </li>
+        <li>
+          Calling <code>app.dispose()</code> must remove the viewer completely and leave the host
+          page's state untouched.
+        </li>
       </ul>
 
       <div id="viewer-frame" class="viewer-frame">
@@ -99,9 +104,14 @@
       <div class="actions">
         <button id="dispose-btn">Dispose viewer</button>
         <button id="reinit-btn">Re-initialize</button>
+        <button id="recenter-btn">Recenter camera</button>
+        <button id="screenshot-btn">Screenshot</button>
       </div>
+
+      <p id="status" style="margin-top: 12px; font-style: italic; min-height: 1.2em"></p>
     </div>
 
-    <script type="module" src="./embed.js"></script>
+    <!-- ?v= busts stale browser caches when iterating on the demo script. -->
+    <script type="module" src="./embed.js?v=2"></script>
   </body>
 </html>

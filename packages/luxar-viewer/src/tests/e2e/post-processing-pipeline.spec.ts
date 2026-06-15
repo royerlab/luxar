@@ -9,7 +9,7 @@
  * - Rapid toggle stress test
  * - Visual regression with default post-processing
  *
- * Dataset: build_example_structured.zarr (3D, reliable point count)
+ * Dataset: build_example_structured.luxar.zarr (3D, reliable point count)
  */
 
 import { test, expect } from './fixtures';
@@ -23,7 +23,7 @@ import {
   waitForRenderStable,
 } from './helpers';
 
-const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 test.describe('Post-Processing Pipeline', () => {
   test.beforeEach(async ({ page }) => {

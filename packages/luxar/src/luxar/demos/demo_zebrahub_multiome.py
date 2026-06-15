@@ -97,7 +97,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output = get_demos_output_dir() / "zebrahub_multiome.zarr"
+        output = get_demos_output_dir() / "zebrahub_multiome.luxar.zarr"
         with asection("Building Scene"):
             # Create 2 views (celltype, timepoint)
             all_pos, all_col = [], []
@@ -189,7 +189,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_multiome_") as tmpdir:
-        output = Path(tmpdir) / "cells.zarr"
+        output = Path(tmpdir) / "cells.luxar.zarr"
 
         with asection("Building Scene"):
             # Create 2 views (celltype, timepoint)

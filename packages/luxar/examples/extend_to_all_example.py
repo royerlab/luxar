@@ -38,7 +38,7 @@ from luxar.utils.paths import get_examples_output_dir
 
 def main() -> None:
     """Walk a moving scan-line through time alongside fixed axis markers."""
-    output_path = get_examples_output_dir() / "extend_to_all_example.zarr"
+    output_path = get_examples_output_dir() / "extend_to_all_example.luxar.zarr"
     aprint(f"Writing extend_to_all example to {output_path}")
 
     n_timepoints = 6

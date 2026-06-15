@@ -65,7 +65,7 @@ def make_star_cluster(
 
 def main() -> None:
     """Render an SDR and HDR cluster side-by-side under additive blending."""
-    output_path = get_examples_output_dir() / "hdr_colors_example.zarr"
+    output_path = get_examples_output_dir() / "hdr_colors_example.luxar.zarr"
     aprint(f"Writing HDR-colors example to {output_path}")
 
     rng = np.random.default_rng(seed=0)

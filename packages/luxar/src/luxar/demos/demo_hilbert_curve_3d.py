@@ -306,13 +306,13 @@ def main() -> None:
     aprint("")
 
     if "--no-serve" in argv:
-        output_path = get_demos_output_dir() / "hilbert_curve_3d.zarr"
+        output_path = get_demos_output_dir() / "hilbert_curve_3d.luxar.zarr"
         n = build_scene(output_path, max_order=max_order)
         aprint(f"Dataset generated at {output_path} ({n:,} total vertices)")
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_hilbert_") as tmpdir:
-        output_path = Path(tmpdir) / "hilbert_curve_3d.zarr"
+        output_path = Path(tmpdir) / "hilbert_curve_3d.luxar.zarr"
         n = build_scene(output_path, max_order=max_order)
 
         aprint("")

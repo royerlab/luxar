@@ -26,55 +26,59 @@ const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
 // ALL example datasets (auto-discovered from datasets/examples/)
 const ALL_EXAMPLES = [
-  'build_example_manual.zarr',
-  'build_example_structured.zarr',
-  'dense_cubic_gradient_example.zarr',
-  'dense_grid_5d_example.zarr',
-  'dimension_navigation_example.zarr',
-  'dimension_sliders_5d_example.zarr',
-  'hierarchy_example.zarr',
-  'lines_basic_example.zarr',
-  'multiple_objects_example.zarr',
-  'nd_points_example.zarr',
-  'performance_benchmark_example.zarr',
-  'point_spacing_example.zarr',
-  'progressive_writing_example.zarr',
-  'radius_basic_example.zarr',
-  'radius_showcase_example.zarr',
-  'radius_slicing_example.zarr',
-  'rainbow_sphere_4d_example.zarr',
-  'rainbow_sphere_spiral_example.zarr',
-  'rendering_attributes_example.zarr',
-  'rendering_modes_example.zarr',
-  'scene_dimensions_example.zarr',
-  'sharpness_showcase_example.zarr', // CRITICAL: Exposed LUT scalar bug
-  'simple_nd_example.zarr',
-  'single_point_example.zarr',
-  'spatial_index_demo_example.zarr',
-  'temporal_spiral_sphere_4d_example.zarr',
-  'time_series_4d_example.zarr',
-  'transform_example.zarr',
+  'build_example_manual.luxar.zarr',
+  'build_example_structured.luxar.zarr',
+  'dense_cubic_gradient_example.luxar.zarr',
+  'dense_grid_5d_example.luxar.zarr',
+  'dimension_navigation_example.luxar.zarr',
+  'dimension_sliders_5d_example.luxar.zarr',
+  'gsplats_basic_example.luxar.zarr', // gsplats leaf (v3.0 node tree)
+  'gsplats_lod_example.luxar.zarr', // gsplats kind=lod (substitutive hierarchy)
+  'hierarchy_example.luxar.zarr',
+  'lines_basic_example.luxar.zarr',
+  'multiple_objects_example.luxar.zarr',
+  'nd_points_example.luxar.zarr',
+  'partition_of_lod_example.luxar.zarr', // nested kind=partition of kind=lod (points)
+  'partition_only_example.luxar.zarr', // kind=partition (points)
+  'performance_benchmark_example.luxar.zarr',
+  'point_spacing_example.luxar.zarr',
+  'progressive_writing_example.luxar.zarr',
+  'radius_basic_example.luxar.zarr',
+  'radius_showcase_example.luxar.zarr',
+  'radius_slicing_example.luxar.zarr',
+  'rainbow_sphere_4d_example.luxar.zarr',
+  'rainbow_sphere_spiral_example.luxar.zarr',
+  'rendering_attributes_example.luxar.zarr',
+  'rendering_modes_example.luxar.zarr',
+  'scene_dimensions_example.luxar.zarr',
+  'sharpness_showcase_example.luxar.zarr', // CRITICAL: Exposed LUT scalar bug
+  'simple_nd_example.luxar.zarr',
+  'single_point_example.luxar.zarr',
+  'spatial_index_demo_example.luxar.zarr',
+  'temporal_spiral_sphere_4d_example.luxar.zarr',
+  'time_series_4d_example.luxar.zarr',
+  'transform_example.luxar.zarr',
 ];
 
 // Known-flaky large datasets that require investigation. These have edge
 // cases with effective-radius filtering or WebGL buffer issues — tracked
 // for the post-decomposition points-spatial-index-loader work.
 const KNOWN_FLAKY_LARGE_DATASETS = [
-  'temporal_spiral_sphere_4d_example.zarr', // 102M points - effective radius filtering edge case
-  'time_series_4d_example.zarr', // Large 4D - occasional WebGL buffer issues
+  'temporal_spiral_sphere_4d_example.luxar.zarr', // 102M points - effective radius filtering edge case
+  'time_series_4d_example.luxar.zarr', // Large 4D - occasional WebGL buffer issues
   // 196 MB on disk; the headless chromium worker pool exhausts
   // ERR_INSUFFICIENT_RESOURCES decoding it in parallel with the rest
   // of the suite. Smoke coverage is provided by smaller fixtures;
   // re-enable once we ship a downsized progressive_writing example or
   // sequential-mode override for oversized fixtures.
-  'progressive_writing_example.zarr',
+  'progressive_writing_example.luxar.zarr',
   // 1M points (CubicArray group). Even at 120s the parallel HTTP-server
   // + decompression contention causes the page.evaluate slot inside
   // waitForLuxarReady / getLuxarState to stall past the test ceiling.
   // The dataset itself loads fine in isolation; smoke coverage is
   // provided by the smaller fixtures. Re-enable once we have a
   // sequential-mode override for million-point examples.
-  'dense_cubic_gradient_example.zarr',
+  'dense_cubic_gradient_example.luxar.zarr',
 ];
 
 // Datasets that may legitimately have 0 visible points:
@@ -82,17 +86,19 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
 // - Lines-only datasets have no point clouds (geometry is line segments)
 // - Datasets with only 3D spatial dims but specific loading quirks
 const DATASETS_ALLOW_ZERO_POINTS = [
-  'rainbow_sphere_4d_example.zarr', // 4D sphere - initial slice may have 0 points
-  'spatial_index_demo_example.zarr', // May have 0 points at initial position
-  'lines_basic_example.zarr', // Lines geometry only - no point clouds
-  'build_example_manual.zarr', // Simple 3D manual build - scene loaded without points sometimes
+  'rainbow_sphere_4d_example.luxar.zarr', // 4D sphere - initial slice may have 0 points
+  'spatial_index_demo_example.luxar.zarr', // May have 0 points at initial position
+  'lines_basic_example.luxar.zarr', // Lines geometry only - no point clouds
+  'build_example_manual.luxar.zarr', // Simple 3D manual build - scene loaded without points sometimes
+  'gsplats_basic_example.luxar.zarr', // GSplats geometry only - no point clouds (totalPoints=0)
+  'gsplats_lod_example.luxar.zarr', // GSplats kind=lod - no point clouds (totalPoints=0)
 ];
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
   // Configure for parallel execution to speed up testing.
   // 120s (was 90s) absorbs HTTP-server contention when several
   // worker-pool tabs decode mid-size datasets like
-  // dense_cubic_gradient_example.zarr concurrently — page.evaluate
+  // dense_cubic_gradient_example.luxar.zarr concurrently — page.evaluate
   // calls inside getLuxarState() consistently bumped against the
   // 90s ceiling under load. Truly oversized fixtures are still
   // routed through KNOWN_FLAKY_LARGE_DATASETS.
@@ -236,7 +242,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   // Deep validation for examples that exposed bugs
 
   test('sharpness_showcase - should render all point clouds', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.zarr&debug`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr&debug`);
     await waitForLuxarReady(page, 60000);
 
     // CRITICAL: This example exposed the LUT scalar mode bug
@@ -280,7 +286,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('dense_grid_5d - should handle 5D nD data', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/dense_grid_5d_example.zarr&debug`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/dense_grid_5d_example.luxar.zarr&debug`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);
@@ -299,7 +305,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('hierarchy_example - should apply transforms correctly', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/hierarchy_example.zarr&debug`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/hierarchy_example.luxar.zarr&debug`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);
@@ -318,7 +324,7 @@ test.describe('Critical Examples - Deep Validation', () => {
   });
 
   test('radius_showcase - should demonstrate radius-based slicing', async ({ page }) => {
-    await page.goto(`/?src=${EXAMPLES_BASE}/radius_showcase_example.zarr&debug`);
+    await page.goto(`/?src=${EXAMPLES_BASE}/radius_showcase_example.luxar.zarr&debug`);
     await waitForLuxarReady(page, 60000);
 
     await assertNoConsoleErrors(page);

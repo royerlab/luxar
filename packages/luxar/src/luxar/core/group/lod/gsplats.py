@@ -217,7 +217,6 @@ def resolve_additive_axis_gsplats(
         return GSplatData.from_substitutive_levels(
             new_levels,
             stats=dict(data.stats),
-            default_substitutive=data.default_substitutive,
         )
 
     if isinstance(spec, dict):

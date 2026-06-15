@@ -213,7 +213,9 @@ def main():
     aprint(f"Total rotation: {total_rotation:.4f} radians ({10} points)")
 
     # Output path
-    output_path = get_examples_output_dir() / "temporal_spiral_sphere_4d_example.zarr"
+    output_path = (
+        get_examples_output_dir() / "temporal_spiral_sphere_4d_example.luxar.zarr"
+    )
 
     # Create scene with 4D dimensions (only first 3 displayed)
     with LuxarZarrCompiler(output_path) as compiler:
@@ -319,7 +321,7 @@ def main():
     aprint(
         f"✨ Sharpness range: [{all_sharpness.min():.4f}, {all_sharpness.max():.4f}]"
     )
-    aprint("\nTo visualize: luxar serve temporal_spiral_sphere_4d_example.zarr")
+    aprint("\nTo visualize: luxar serve temporal_spiral_sphere_4d_example.luxar.zarr")
     aprint(
         "Then navigate through time with the 't' dimension controls (press 4, then [/])"
     )

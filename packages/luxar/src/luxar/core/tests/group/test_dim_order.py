@@ -27,7 +27,7 @@ class TestDimOrderPoints:
 
     def test_3d_points_to_4d_scene(self, tmp_path) -> None:
         """3D point data added to 4D scene with dim_order."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         # Data: (N, 3) with columns [Z, Y, X]
         positions_3d = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
 
@@ -56,7 +56,7 @@ class TestDimOrderPoints:
 
     def test_auto_extend_unmapped_dims(self, tmp_path) -> None:
         """Unmapped dims should be auto-added to extend_to_all."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2, 3]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -68,7 +68,7 @@ class TestDimOrderPoints:
 
     def test_explicit_extend_to_all_overrides_auto(self, tmp_path) -> None:
         """If user sets extend_to_all explicitly, don't auto-extend."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2, 3]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -86,7 +86,7 @@ class TestDimOrderPoints:
 
     def test_2d_points_to_3d_scene(self, tmp_path) -> None:
         """2D data in a 3D scene with fill for Z."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions_2d = np.array([[1, 2], [3, 4]], dtype=np.float32)
 
         dims = Dimensions.default_3d()
@@ -106,7 +106,7 @@ class TestDimOrderPoints:
 
     def test_no_dim_order_unchanged(self, tmp_path) -> None:
         """Without dim_order, behavior is unchanged (positional mapping)."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2, 3]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -120,7 +120,7 @@ class TestDimOrderLines:
 
     def test_2d_lines_to_3d_scene(self, tmp_path) -> None:
         """2D line vertices in a 3D scene."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         vertices_2d = np.array([[0, 0], [1, 1]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -140,7 +140,7 @@ class TestDimOrderGSplats:
 
     def test_3d_gsplats_to_4d_scene(self, tmp_path) -> None:
         """3D gsplats embedded into 4D scene with Cholesky transformation."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
 
         # Create 3D splat data
         centers_3d = np.array([[1, 2, 3]], dtype=np.float32)
@@ -186,7 +186,7 @@ class TestDimOrderGSplats:
         every splat) takes the ``cholesky_factors.ndim == 1`` branch of
         ``apply_dim_order_cholesky`` (dim_order.py:90-96): reshape to (1, k),
         embed, reshape back. The 2-D per-row tests above never reach it."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         centers = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
         amplitudes = np.array([1.0, 1.0], dtype=np.float32)
         # 1-D uniform packed Cholesky for an isotropic 3D Gaussian.
@@ -220,7 +220,7 @@ class TestDimOrderGSplats:
 
     def test_gsplats_cholesky_reorder_preserves_covariance(self, tmp_path) -> None:
         """Anisotropic 3D splats: verify covariance is correctly permuted."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
 
         # Create anisotropic 3D Cholesky
         L_3d = np.array([[[2, 0, 0], [0.5, 1.5, 0], [0.3, 0.2, 1]]], dtype=np.float32)
@@ -271,7 +271,7 @@ class TestDimOrderGSplats:
         """add_gsplats_from_data passes through dim_order."""
         from luxar.gsplats.gsplat_data import GSplatData
 
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         result = GSplatData(
             centers=np.array([[1, 2, 3]], dtype=np.float32),
             amplitudes=np.array([1.0], dtype=np.float32),
@@ -300,7 +300,7 @@ class TestDimOrderValidation:
 
     def test_unknown_dimension_name(self, tmp_path) -> None:
         """dim_order with a name not in scene dimensions."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -310,7 +310,7 @@ class TestDimOrderValidation:
 
     def test_duplicate_dim_names(self, tmp_path) -> None:
         """dim_order with repeated dimension name."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -320,7 +320,7 @@ class TestDimOrderValidation:
 
     def test_wrong_length_too_few(self, tmp_path) -> None:
         """dim_order shorter than data columns."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2, 3]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -332,7 +332,7 @@ class TestDimOrderValidation:
 
     def test_wrong_length_too_many(self, tmp_path) -> None:
         """dim_order longer than data columns."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -344,7 +344,7 @@ class TestDimOrderValidation:
 
     def test_fill_key_also_in_dim_order(self, tmp_path) -> None:
         """fill key that conflicts with a dim_order name."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -359,7 +359,7 @@ class TestDimOrderValidation:
 
     def test_fill_key_unknown_dimension(self, tmp_path) -> None:
         """fill key with a name not in scene dimensions."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -375,7 +375,7 @@ class TestDimOrderValidation:
     def test_dim_order_more_names_than_scene_dims(self, tmp_path) -> None:
         """dim_order cannot have more names than scene dimensions (implicitly
         caught by data having more columns than scene dims after transform)."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         # 4 data columns, 3D scene, dim_order with 4 names
         positions = np.array([[1, 2, 3, 4]], dtype=np.float32)
 
@@ -387,7 +387,7 @@ class TestDimOrderValidation:
 
     def test_pure_reorder_no_padding(self, tmp_path) -> None:
         """dim_order covering all scene dims = pure reorder, no padding."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         # Data columns are [z, y, x], scene dims are [x, y, z]
         positions = np.array([[10, 20, 30]], dtype=np.float32)
 
@@ -403,7 +403,7 @@ class TestDimOrderValidation:
 
     def test_validation_on_add_lines(self, tmp_path) -> None:
         """dim_order validation also works on add_lines."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         vertices = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -413,7 +413,7 @@ class TestDimOrderValidation:
 
     def test_validation_on_add_gsplats(self, tmp_path) -> None:
         """dim_order validation also works on add_gsplats."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         centers = np.array([[1, 2]], dtype=np.float32)
         amplitudes = np.array([1.0], dtype=np.float32)
         cholesky = np.array([[1, 0, 1]], dtype=np.float32)
@@ -431,7 +431,7 @@ class TestDimOrderValidation:
 
     def test_empty_dim_order_with_mismatched_data(self, tmp_path) -> None:
         """Empty dim_order but data has columns — length mismatch."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         positions = np.array([[1, 2]], dtype=np.float32)
 
         with LuxarZarrCompiler(output) as compiler:
@@ -443,7 +443,7 @@ class TestDimOrderValidation:
 
     def test_fill_sigma_unknown_dimension(self, tmp_path) -> None:
         """fill_sigma with a name not in scene dimensions."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         centers = np.array([[1, 2, 3]], dtype=np.float32)
         amplitudes = np.array([1.0], dtype=np.float32)
         L = np.eye(3, dtype=np.float32).reshape(1, 3, 3)
@@ -463,7 +463,7 @@ class TestDimOrderValidation:
 
     def test_fill_sigma_on_mapped_dimension(self, tmp_path) -> None:
         """fill_sigma key that is already in dim_order (a mapped dimension)."""
-        output = tmp_path / "test.zarr"
+        output = tmp_path / "test.luxar.zarr"
         centers = np.array([[1, 2, 3]], dtype=np.float32)
         amplitudes = np.array([1.0], dtype=np.float32)
         L = np.eye(3, dtype=np.float32).reshape(1, 3, 3)

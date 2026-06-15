@@ -19,7 +19,7 @@ import {
 } from './helpers';
 
 // Use layers_test_example for colormap tests (needs layer=True for layers panel access)
-const DATASET = 'http://localhost:9000/datasets/examples/layers_test_example.zarr';
+const DATASET = 'http://localhost:9000/datasets/examples/layers_test_example.luxar.zarr';
 
 test.describe('Colormap System', () => {
   test.beforeEach(async ({ page }) => {

@@ -230,11 +230,11 @@ def main():
     aprint("- Modular scene construction patterns")
 
     # Example 1: Manual scene management
-    manual_path = base_path / "build_example_manual.zarr"
+    manual_path = base_path / "build_example_manual.luxar.zarr"
     build_scene_manually(manual_path)
 
     # Example 2: Structured approach
-    structured_path = base_path / "build_example_structured.zarr"
+    structured_path = base_path / "build_example_structured.luxar.zarr"
     build_scene_with_structure(structured_path)
 
     aprint("\n" + "=" * 60)

@@ -27,7 +27,7 @@ class TestPointsMetadataNdimKey:
     with Lines and GSplats."""
 
     def test_points_metadata_has_ndim_key(self, tmp_path: Path) -> None:
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert "ndim" in pts.metadata
@@ -35,21 +35,21 @@ class TestPointsMetadataNdimKey:
 
     def test_points_metadata_no_dims_key(self, tmp_path: Path) -> None:
         """The old 'dims' key must not be present."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert "dims" not in pts.metadata
 
     def test_points_ndim_property_works(self, tmp_path: Path) -> None:
         """DataNode.ndim property should work for Points."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             pts = scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
             assert pts.ndim == 3
 
     def test_lines_and_gsplats_also_use_ndim(self, tmp_path: Path) -> None:
         """Lines and GSplats should also use 'ndim' key."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             lines = scene.add_lines(
@@ -80,7 +80,7 @@ class TestPropertySettersPersistToZarr:
     persist the change to the zarr store on disk."""
 
     def test_opacity_setter_persists(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("grp")
@@ -96,7 +96,7 @@ class TestPropertySettersPersistToZarr:
         assert float(store["grp"].attrs["opacity"]) == pytest.approx(0.42)
 
     def test_gamma_setter_persists(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("grp")
@@ -109,7 +109,7 @@ class TestPropertySettersPersistToZarr:
         assert float(store["grp"].attrs["gamma"]) == pytest.approx(1.5)
 
     def test_blending_mode_setter_persists(self, tmp_path: Path) -> None:
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("grp")
@@ -123,7 +123,7 @@ class TestPropertySettersPersistToZarr:
 
     def test_opacity_setter_on_points_node(self, tmp_path: Path) -> None:
         """Property setters should also work on DataNode subclasses."""
-        store_path = tmp_path / "test.zarr"
+        store_path = tmp_path / "test.luxar.zarr"
         with LuxarZarrCompiler(store_path) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             pts = scene.add_points("pts", np.zeros((3, 3), dtype=np.float32))
@@ -144,22 +144,22 @@ class TestCrossSceneNodeInequality:
     be considered equal."""
 
     def test_same_name_different_scenes_not_equal(self, tmp_path: Path) -> None:
-        with LuxarZarrCompiler(tmp_path / "a.zarr") as c1:
+        with LuxarZarrCompiler(tmp_path / "a.luxar.zarr") as c1:
             scene1 = c1.create_scene(dimensions=Dimensions.default_3d())
             g1 = scene1.add_group("foo")
 
-        with LuxarZarrCompiler(tmp_path / "b.zarr") as c2:
+        with LuxarZarrCompiler(tmp_path / "b.luxar.zarr") as c2:
             scene2 = c2.create_scene(dimensions=Dimensions.default_3d())
             g2 = scene2.add_group("foo")
 
         assert g1 != g2
 
     def test_same_name_different_scenes_different_hash(self, tmp_path: Path) -> None:
-        with LuxarZarrCompiler(tmp_path / "a.zarr") as c1:
+        with LuxarZarrCompiler(tmp_path / "a.luxar.zarr") as c1:
             scene1 = c1.create_scene(dimensions=Dimensions.default_3d())
             g1 = scene1.add_group("foo")
 
-        with LuxarZarrCompiler(tmp_path / "b.zarr") as c2:
+        with LuxarZarrCompiler(tmp_path / "b.luxar.zarr") as c2:
             scene2 = c2.create_scene(dimensions=Dimensions.default_3d())
             g2 = scene2.add_group("foo")
 
@@ -167,28 +167,28 @@ class TestCrossSceneNodeInequality:
 
     def test_same_scene_same_node_still_equal(self, tmp_path: Path) -> None:
         """Regression: same node in same scene must still be == to itself."""
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             group = scene.add_group("foo")
 
             assert group == group
 
     def test_root_nodes_from_different_scenes_not_equal(self, tmp_path: Path) -> None:
-        with LuxarZarrCompiler(tmp_path / "a.zarr") as c1:
+        with LuxarZarrCompiler(tmp_path / "a.luxar.zarr") as c1:
             scene1 = c1.create_scene(dimensions=Dimensions.default_3d())
 
-        with LuxarZarrCompiler(tmp_path / "b.zarr") as c2:
+        with LuxarZarrCompiler(tmp_path / "b.luxar.zarr") as c2:
             scene2 = c2.create_scene(dimensions=Dimensions.default_3d())
 
         assert scene1 != scene2
 
     def test_cross_scene_nodes_in_set(self, tmp_path: Path) -> None:
         """Nodes from different scenes should both appear in a set."""
-        with LuxarZarrCompiler(tmp_path / "a.zarr") as c1:
+        with LuxarZarrCompiler(tmp_path / "a.luxar.zarr") as c1:
             scene1 = c1.create_scene(dimensions=Dimensions.default_3d())
             g1 = scene1.add_group("foo")
 
-        with LuxarZarrCompiler(tmp_path / "b.zarr") as c2:
+        with LuxarZarrCompiler(tmp_path / "b.luxar.zarr") as c2:
             scene2 = c2.create_scene(dimensions=Dimensions.default_3d())
             g2 = scene2.add_group("foo")
 
@@ -204,7 +204,7 @@ class TestSceneDimensionsProperty:
 
     def test_dimensions_returns_correct_object(self, tmp_path: Path) -> None:
         dims = Dimensions.default_3d()
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             assert scene.dimensions is dims
@@ -214,7 +214,7 @@ class TestSceneDimensionsProperty:
     def test_dimensions_getter_enforces_initialization_invariant(
         self, tmp_path: Path
     ) -> None:
-        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene._dimensions = None  # type: ignore[assignment]
 
@@ -229,8 +229,8 @@ class TestSceneToZarrExport:
     """Guard: Scene.to_zarr must be a functional export API, not a stub."""
 
     def test_to_zarr_finalizes_and_copies_store(self, tmp_path: Path) -> None:
-        source = tmp_path / "source.zarr"
-        export = tmp_path / "exported.zarr"
+        source = tmp_path / "source.luxar.zarr"
+        export = tmp_path / "exported.luxar.zarr"
 
         with LuxarZarrCompiler(source) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -251,8 +251,8 @@ class TestSceneToZarrExport:
         assert "overlays/__hover_text" in store
 
     def test_to_zarr_refuses_existing_destination(self, tmp_path: Path) -> None:
-        source = tmp_path / "source.zarr"
-        export = tmp_path / "exported.zarr"
+        source = tmp_path / "source.luxar.zarr"
+        export = tmp_path / "exported.luxar.zarr"
         export.mkdir()
 
         with LuxarZarrCompiler(source) as compiler:
@@ -262,13 +262,13 @@ class TestSceneToZarrExport:
                 scene.to_zarr(export)
 
     def test_to_zarr_refuses_destination_inside_source(self, tmp_path: Path) -> None:
-        source = tmp_path / "source.zarr"
+        source = tmp_path / "source.luxar.zarr"
 
         with LuxarZarrCompiler(source) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
             with pytest.raises(ValueError, match="cannot be inside source"):
-                scene.to_zarr(source / "nested.zarr")
+                scene.to_zarr(source / "nested.luxar.zarr")
 
 
 # ── GSplatData re-exported at the top level ──────────────────────────

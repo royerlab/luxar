@@ -128,6 +128,7 @@ class Group(Node):
         fill: Optional[Dict[str, float]] = None,
         partition: Any = None,
         additive_lod: Any = None,
+        substitutive_lod: Any = None,
         **attrs: Any,
     ) -> Union[Points, "Group"]:
         """Add a points node.
@@ -155,6 +156,21 @@ class Group(Node):
                 Unmapped dims are filled with ``fill`` values and auto-extended.
             fill: Fixed coordinate values for unmapped scene dimensions
                 when using ``dim_order``. Defaults to 0.0 for unspecified dims.
+            substitutive_lod: Substitutive-LOD control. ``None`` (default) /
+                ``False`` write no substitutive ladder. ``True`` / ``dict()``
+                synthesise coarse LOD levels as Gaussian splats: each point is
+                lifted to an isotropic Gaussian and reduced by the gsplat
+                substitutive pipeline (mass-preserving), assembled as a
+                ``kind="lod"`` Group whose finest child is the original Points
+                node. ``dict(...)`` keys: ``compression_factor`` (``K``),
+                ``levels`` (``n_lods``), ``method``, ``base_pixel_size``,
+                ``truncation_radius``, ``device``, ``seed``, ``min_pixel_sizes``.
+                Mutually exclusive with ``additive_lod`` and ``partition``.
+                ``scalars``+``colormap``
+                points are supported by baking scalars→RGB for the coarse gsplat
+                levels (the finest Points child stays scalar-driven; a live
+                colormap change re-colours only the finest level). See
+                :func:`luxar.core.group.lod.points.resolve_substitutive_axis_points`.
             partition: Spatial-decomposition control. ``None`` (default) writes
                 a single Points node. ``True`` decomposes via balanced median
                 BSP with ``max_elements = DEFAULT_MAX_ELEMENTS``.
@@ -202,6 +218,7 @@ class Group(Node):
             fill=fill,
             partition=partition,
             additive_lod=additive_lod,
+            substitutive_lod=substitutive_lod,
             **attrs,
         )
 
@@ -230,6 +247,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         additive_lod: Any = None,
+        substitutive_lod: Any = None,
         partition: Any = None,
         **attrs: Any,
     ) -> Union[Lines, "Group"]:
@@ -251,6 +269,15 @@ class Group(Node):
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed values for unmapped dimensions when using dim_order
+            substitutive_lod: Substitutive-LOD control (peer of Points'). ``None``
+                /``False`` write no substitutive ladder. ``True``/``dict()``
+                synthesise coarse LOD levels as Gaussian splats: each segment is
+                lifted to isotropic "bead" gaussians and reduced by the gsplat
+                substitutive pipeline, assembled as a ``kind="lod"`` Group whose
+                finest child is the original Lines node. Same dict vocabulary as
+                Points; ``scalars``+``colormap`` are baked for the coarse levels.
+                Mutually exclusive with ``additive_lod`` and ``partition``. See
+                :func:`luxar.core.group.lod.lines.resolve_substitutive_axis_lines`.
             **attrs: Additional node attributes. Common ones:
 
                 - ``layer`` (bool): Expose this node in the viewer's Layers
@@ -282,6 +309,7 @@ class Group(Node):
             dim_order=dim_order,
             fill=fill,
             additive_lod=additive_lod,
+            substitutive_lod=substitutive_lod,
             partition=partition,
             **attrs,
         )

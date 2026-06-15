@@ -364,7 +364,7 @@ def main() -> None:
     cache_dir = Path.home() / ".cache" / "luxar" / "spotify"
 
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "spotify_tracks.zarr"
+        output_path = get_demos_output_dir() / "spotify_tracks.luxar.zarr"
         try:
             n_tracks = generate_spotify_landscape(
                 output_path, sample_size=sample_size, cache_dir=cache_dir
@@ -382,7 +382,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_demo_spotify_") as tmpdir:
-        output_path = Path(tmpdir) / "spotify_tracks.zarr"
+        output_path = Path(tmpdir) / "spotify_tracks.luxar.zarr"
 
         try:
             n_tracks = generate_spotify_landscape(

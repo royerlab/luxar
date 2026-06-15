@@ -326,7 +326,7 @@ export function clampPosition(
  * import { SceneLoader } from './data/scene-loader';
  *
  * const loader = new SceneLoader(store);
- * const scene = await loader.loadScene('http://example.com/data.zarr');
+ * const scene = await loader.loadScene('http://example.com/data.luxar.zarr');
  * threeScene.add(scene);
  * console.log(`Loaded ${scene.children.length} nodes`);
  * ```

@@ -61,7 +61,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │ STORAGE LAYER (Zarr)                                                       │
 ├───────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  scene.zarr/                                                                │
+│  scene.luxar.zarr/                                                          │
 │  ├── .zattrs              Scene metadata (dimensions, units, transforms)   │
 │  ├── .zmetadata           Consolidated metadata                            │
 │  └── node_name/                                                            │
@@ -142,7 +142,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 ## Format Structure
 
 ```
-scene.zarr/
+scene.luxar.zarr/
 ├── .zattrs                  # Scene-level metadata
 ├── .zgroup                  # Zarr group marker
 ├── .zmetadata              # Consolidated metadata (optional, created by finalize())
@@ -240,6 +240,14 @@ gsplats, or themselves specialized groups (e.g. a Partition group inside an
 LOD group). The finest child's resolved `display_type` becomes the LOD
 group's `display_type`.
 
+**Standalone `.gsplats.zarr` root**: a `kind=lod` group is also a valid
+root of a standalone `.gsplats.zarr` file — the file root IS the node. The
+viewer opens such a file directly (`?src=<file>.gsplats.zarr`) and frames
+on its `position_bounds`. On-disk, children are `child_<i>/` in
+**coarsest→finest** order; `default_level` is 0-based in that same order
+(`default_level = (n-1) - default_substitutive`, so a finest-default
+`default_substitutive=0` maps to `default_level = n-1`).
+
 **Attributes (.zattrs):**
 ```json
 {
@@ -307,6 +315,12 @@ culling does the per-part culling).
 Children are **homogeneous**: every child's resolved `display_type`
 must match the wrapper's (you cannot decompose a single logical
 layer into mixed-type parts).
+
+**Standalone `.gsplats.zarr` root**: a `kind=partition` group is also a
+valid root of a standalone `.gsplats.zarr` file. The viewer opens it
+directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
+`luxar gsplat partition` CLI writes this shape via spatial BSP
+(`--parts` / `--max-elements` / `--rule median|midpoint|sah`).
 
 **Attributes (.zattrs):**
 ```json
@@ -1096,7 +1110,7 @@ dims = Dimensions([
     Dimension("time", unit="ms", display=False, discrete=True)
 ])
 
-with LuxarZarrCompiler("output.zarr") as compiler:
+with LuxarZarrCompiler("output.luxar.zarr") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Add points
@@ -1123,7 +1137,7 @@ dims = Dimensions([
 ])
 
 # Enable spatial index for efficient nD slicing
-with LuxarZarrCompiler("output.zarr", enable_spatial_index=True) as compiler:
+with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Generate 4D points

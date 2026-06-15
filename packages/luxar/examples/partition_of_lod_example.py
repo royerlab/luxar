@@ -48,7 +48,7 @@ def make_strip(n: int = 50_000, seed: int = 0):
 
 
 def main() -> None:
-    output_path = get_examples_output_dir() / "partition_of_lod_example.zarr"
+    output_path = get_examples_output_dir() / "partition_of_lod_example.luxar.zarr"
 
     # Auto-partition kicks in when an add_points call exceeds the threshold.
     # The default balanced median BSP halves recursively, so 50k points with

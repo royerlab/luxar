@@ -42,7 +42,7 @@ interface VideoDemoConfig {
 const VIDEO_DEMOS: VideoDemoConfig[] = [
   {
     name: 'Lorenz Attractor',
-    datasetPath: 'datasets/demos/lorenz.zarr',
+    datasetPath: 'datasets/demos/lorenz.luxar.zarr',
     filename: 'lorenz-demo',
     zoomClicks: 3,
     exposure: 1.3, // ~2.5x
@@ -50,7 +50,7 @@ const VIDEO_DEMOS: VideoDemoConfig[] = [
   },
   {
     name: 'Spiral Galaxy',
-    datasetPath: 'datasets/demos/spiral_galaxy.zarr',
+    datasetPath: 'datasets/demos/spiral_galaxy.luxar.zarr',
     filename: 'spiral-galaxy-demo',
     zoomClicks: 4,
     exposure: 1.6, // ~3x
@@ -58,7 +58,7 @@ const VIDEO_DEMOS: VideoDemoConfig[] = [
   },
   {
     name: 'Rainbow Sphere',
-    datasetPath: 'datasets/demos/rainbow_sphere.zarr',
+    datasetPath: 'datasets/demos/rainbow_sphere.luxar.zarr',
     filename: 'rainbow-sphere-demo',
     zoomClicks: 17,
     exposure: 4.6, // ~25x

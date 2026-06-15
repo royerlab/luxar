@@ -115,7 +115,7 @@ The server layer sits between storage and viewer, providing:
    import uvicorn
 
    # Create configured FastAPI app
-   app = create_server_app("/path/to/data.zarr", serve_viewer=False)
+   app = create_server_app("/path/to/data.luxar.zarr", serve_viewer=False)
 
    # Run server
    uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -558,7 +558,7 @@ Workflow 1: Microscopy Time-Series
    ])
 
    # Write with compound ordering for efficient time navigation
-   with LuxarZarrCompiler('cells.zarr') as c:  # Hilbert ordering by default
+   with LuxarZarrCompiler('cells.luxar.zarr') as c:  # Hilbert ordering by default
        scene = c.create_scene(dimensions=dims)
 
        # Track cell positions over time

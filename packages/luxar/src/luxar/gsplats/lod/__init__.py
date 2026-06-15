@@ -26,15 +26,36 @@ The convenience function :func:`make_lod_pyramid` (in
 first (outer axis), then an additive ladder inside each substitutive
 level (inner axis). The result is a single v2.0 ``.gsplats.zarr``
 carrying the full 2-D pyramid.
+
+The :mod:`luxar.gsplats.lod.recipes` module composes these builders into
+named, scale-ordered **representation topologies** (``flat`` / ``additive`` /
+``partitioned`` / ``multiscale`` / ``substitutive`` / ``pyramid``) — the
+``luxar gsplat lod --recipe`` CLI is a thin wrapper over :func:`build_recipe`.
 """
 
 from __future__ import annotations
 
 from luxar.gsplats.lod.additive import compute_additive_order, make_additive_lod
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
+from luxar.gsplats.lod.recipes import (
+    COMPOSED_RECIPES,
+    MATRIX_RECIPES,
+    RECIPE_NAMES,
+    RecipeName,
+    RecipeParams,
+    RecipeResult,
+    build_recipe,
+)
 from luxar.gsplats.lod.substitutive import make_substitutive_lod
 
 __all__ = [
+    "COMPOSED_RECIPES",
+    "MATRIX_RECIPES",
+    "RECIPE_NAMES",
+    "RecipeName",
+    "RecipeParams",
+    "RecipeResult",
+    "build_recipe",
     "compute_additive_order",
     "make_additive_lod",
     "make_lod_pyramid",

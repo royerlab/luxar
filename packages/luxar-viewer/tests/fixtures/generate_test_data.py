@@ -57,33 +57,34 @@ FLOAT16_ALLOWED = False  # zarrita-js cannot read float16 in Node.js
 # here too. The Python self-check in main() asserts that every declared
 # name was actually written to disk.
 FIXTURE_NAMES: list[str] = [
-    "test_4d.zarr",
-    "test_4d_scalar_lut.zarr",
-    "test_array_ref_broadcasting.zarr",
-    "test_array_refs.zarr",
-    "test_broadcasting.zarr",
-    "test_encoding_contract_matrix.zarr",
-    "test_encoding_edge_cases.zarr",
-    "test_gsplats.zarr",
-    "test_hdr_colors.zarr",
-    "test_hierarchical_transforms.zarr",
-    "test_integer_colors.zarr",
-    "test_labelled_points.zarr",
-    "test_lines.zarr",
-    "test_log_scalar.zarr",
-    "test_lut.zarr",
-    "test_mixed.zarr",
-    "test_nd_transforms.zarr",
-    "test_quantization.zarr",
-    "test_sharpness_range.zarr",
-    "test_uint16_quantization.zarr",
+    "test_4d.luxar.zarr",
+    "test_4d_scalar_lut.luxar.zarr",
+    "test_array_ref_broadcasting.luxar.zarr",
+    "test_array_refs.luxar.zarr",
+    "test_broadcasting.luxar.zarr",
+    "test_encoding_contract_matrix.luxar.zarr",
+    "test_encoding_edge_cases.luxar.zarr",
+    "test_gsplats.luxar.zarr",
+    "test_hdr_colors.luxar.zarr",
+    "test_hierarchical_transforms.luxar.zarr",
+    "test_integer_colors.luxar.zarr",
+    "test_labelled_points.luxar.zarr",
+    "test_lines.luxar.zarr",
+    "test_log_scalar.luxar.zarr",
+    "test_lut.luxar.zarr",
+    "test_mixed.luxar.zarr",
+    "test_nd_transforms.luxar.zarr",
+    "test_quantization.luxar.zarr",
+    "test_sharpness_range.luxar.zarr",
+    "test_standalone_gsplats.gsplats.zarr",
+    "test_uint16_quantization.luxar.zarr",
 ]
 
 
 def generate_broadcasting_test() -> None:
     """Test dataset with broadcasted (uniform) values."""
     with asection("Generating Broadcasting Test"):
-        output = FIXTURES_DIR / "test_broadcasting.zarr"
+        output = FIXTURES_DIR / "test_broadcasting.luxar.zarr"
 
         # Create 1000 points at different positions
         # But all with the SAME color (perfect for broadcasting)
@@ -129,7 +130,7 @@ def generate_broadcasting_test() -> None:
 def generate_lut_test() -> None:
     """Test dataset with LUT encoding (≤256 unique values)."""
     with asection("Generating LUT Encoding Test"):
-        output = FIXTURES_DIR / "test_lut.zarr"
+        output = FIXTURES_DIR / "test_lut.luxar.zarr"
 
         # 1000 points with only 10 unique colors (perfect for LUT)
         positions = np.random.randn(1000, 3).astype(np.float32) * 10
@@ -190,7 +191,7 @@ def generate_lut_test() -> None:
 def generate_quantization_test() -> None:
     """Test dataset with quantized arrays (uint8/uint16)."""
     with asection("Generating Quantization Test"):
-        output = FIXTURES_DIR / "test_quantization.zarr"
+        output = FIXTURES_DIR / "test_quantization.luxar.zarr"
 
         # 1000 points with bounded radii (perfect for quantization)
         positions = np.random.randn(1000, 3).astype(np.float32) * 10
@@ -233,7 +234,7 @@ def generate_quantization_test() -> None:
 def generate_array_refs_test() -> None:
     """Test dataset with array references (deduplication)."""
     with asection("Generating Array References Test"):
-        output = FIXTURES_DIR / "test_array_refs.zarr"
+        output = FIXTURES_DIR / "test_array_refs.luxar.zarr"
 
         # CRITICAL: Use SAME positions for both groups!
         # Morton ordering must produce SAME sort order for deduplication to work
@@ -280,7 +281,7 @@ def generate_array_ref_broadcasting_test() -> None:
     not to the physical array_ref shape.
     """
     with asection("Generating Array Ref + Broadcasting Test"):
-        output = FIXTURES_DIR / "test_array_ref_broadcasting.zarr"
+        output = FIXTURES_DIR / "test_array_ref_broadcasting.luxar.zarr"
 
         positions = np.array(
             [
@@ -348,7 +349,7 @@ def generate_array_ref_broadcasting_test() -> None:
 def generate_encoding_edge_cases_test() -> None:
     """Raw ArrayEncoder fixture covering edge cases outside scene validation."""
     with asection("Generating Raw Encoding Edge Cases Test"):
-        output = FIXTURES_DIR / "test_encoding_edge_cases.zarr"
+        output = FIXTURES_DIR / "test_encoding_edge_cases.luxar.zarr"
         if output.exists():
             shutil.rmtree(output)
 
@@ -482,7 +483,7 @@ def generate_encoding_contract_matrix_test() -> None:
     thresholds that are awkward to trigger from normal scene validation.
     """
     with asection("Generating Encoding Contract Matrix Test"):
-        output = FIXTURES_DIR / "test_encoding_contract_matrix.zarr"
+        output = FIXTURES_DIR / "test_encoding_contract_matrix.luxar.zarr"
         if output.exists():
             shutil.rmtree(output)
 
@@ -822,7 +823,7 @@ def generate_encoding_contract_matrix_test() -> None:
 def generate_mixed_encoding_test() -> None:
     """Test dataset with mixed encoding modes in same scene."""
     with asection("Generating Mixed Encoding Test"):
-        output = FIXTURES_DIR / "test_mixed.zarr"
+        output = FIXTURES_DIR / "test_mixed.luxar.zarr"
 
         # Group 1: Broadcasting
         pos1 = np.random.randn(500, 3).astype(np.float32) * 10
@@ -873,7 +874,7 @@ def generate_mixed_encoding_test() -> None:
 def generate_4d_test() -> None:
     """Test dataset with 4D data (time dimension) for nD slicing tests."""
     with asection("Generating 4D nD Slicing Test"):
-        output = FIXTURES_DIR / "test_4d.zarr"
+        output = FIXTURES_DIR / "test_4d.luxar.zarr"
 
         # 4D data: 500 points × 10 time steps = 5000 total
         num_points = 500
@@ -944,7 +945,7 @@ def generate_hierarchical_transforms_test() -> None:
     - Matrix multiplication order is correct
     """
     with asection("Generating Hierarchical Transforms Test"):
-        output = FIXTURES_DIR / "test_hierarchical_transforms.zarr"
+        output = FIXTURES_DIR / "test_hierarchical_transforms.luxar.zarr"
 
         # Create a simple hierarchy:
         # Scene
@@ -1007,7 +1008,7 @@ def generate_hierarchical_transforms_test() -> None:
 def generate_integer_colors_test() -> None:
     """Test dataset with direct uint8 and uint16 SDR color arrays."""
     with asection("Generating Integer Colors Test"):
-        output = FIXTURES_DIR / "test_integer_colors.zarr"
+        output = FIXTURES_DIR / "test_integer_colors.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -1051,7 +1052,7 @@ def generate_hdr_colors_test() -> None:
     - Rendering pipeline handles HDR values correctly
     """
     with asection("Generating HDR Colors Test"):
-        output = FIXTURES_DIR / "test_hdr_colors.zarr"
+        output = FIXTURES_DIR / "test_hdr_colors.luxar.zarr"
 
         # Create 20 points with HDR colors ranging from [0, 10]
         num_points = 20
@@ -1104,11 +1105,11 @@ def generate_log_scalar_test() -> None:
 
     The scene compiler currently uses linear positive-scalar encoding by default,
     so this fixture exercises uint16 bounded-scalar radii. The raw
-    ``test_encoding_edge_cases.zarr`` fixture below covers explicit log-scalar
+    ``test_encoding_edge_cases.luxar.zarr`` fixture below covers explicit log-scalar
     encoder compatibility.
     """
     with asection("Generating Wide-Range Scalar Encoding Test"):
-        output = FIXTURES_DIR / "test_log_scalar.zarr"
+        output = FIXTURES_DIR / "test_log_scalar.luxar.zarr"
 
         # Create 100 points with radii spanning wide dynamic range
         num_points = 100
@@ -1172,7 +1173,7 @@ def generate_4d_scalar_lut_test() -> None:
     actualElementsPerPoint = 4 (not 1 from indices shape).
     """
     with asection("Generating 4D Scalar LUT Encoding Test"):
-        output = FIXTURES_DIR / "test_4d_scalar_lut.zarr"
+        output = FIXTURES_DIR / "test_4d_scalar_lut.luxar.zarr"
 
         # Create 200 points in 4D with LIMITED unique coordinate values
         # This triggers scalar LUT encoding (≤256 unique values per coordinate)
@@ -1247,7 +1248,7 @@ def generate_uint16_quantization_test() -> None:
     NOT attrs.dtype which defaults to uint8.
     """
     with asection("Generating uint16 Quantization Test"):
-        output = FIXTURES_DIR / "test_uint16_quantization.zarr"
+        output = FIXTURES_DIR / "test_uint16_quantization.luxar.zarr"
 
         # Create data with WIDE dynamic range (> 256:1) to trigger uint16 encoding
         # This mimics gsplat amplitudes: small values with ~6000:1 dynamic range
@@ -1259,9 +1260,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert (
-            dynamic_range > 256
-        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        assert dynamic_range > 256, (
+            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        )
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -1306,7 +1307,7 @@ def generate_sharpness_range_test() -> None:
     beta = 2^(6s - 2). The uint8 quantization step is 1/255 ≈ 0.0039.
     """
     with asection("Generating Sharpness Range Test"):
-        output = FIXTURES_DIR / "test_sharpness_range.zarr"
+        output = FIXTURES_DIR / "test_sharpness_range.luxar.zarr"
 
         # Create 32 points sampling the full [0, 1] sharpness range, including
         # the s=0 endpoint (now valid -> beta=0.25) and s=1 (-> beta=16).
@@ -1369,7 +1370,7 @@ def generate_nd_transforms_test() -> None:
     At world time=5: only GroupB points visible (due to offset).
     """
     with asection("Generating nD Transforms Test"):
-        output = FIXTURES_DIR / "test_nd_transforms.zarr"
+        output = FIXTURES_DIR / "test_nd_transforms.luxar.zarr"
 
         dims = Dimensions(
             [
@@ -1444,7 +1445,7 @@ def generate_lines_test() -> None:
     including vertices, widths, colors, and segment auto-generation.
     """
     with asection("Generating Lines Test"):
-        output = FIXTURES_DIR / "test_lines.zarr"
+        output = FIXTURES_DIR / "test_lines.luxar.zarr"
 
         # Create a simple zigzag line with 10 vertices
         num_vertices = 10
@@ -1496,7 +1497,7 @@ def generate_gsplats_test() -> None:
     including centers, amplitudes, cholesky_factors, and colors.
     """
     with asection("Generating GSplats Test"):
-        output = FIXTURES_DIR / "test_gsplats.zarr"
+        output = FIXTURES_DIR / "test_gsplats.luxar.zarr"
 
         # Create 20 Gaussian splats at grid positions
         num_splats = 20
@@ -1555,6 +1556,55 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_standalone_gsplats_test() -> None:
+    """Standalone v3.0 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
+
+    Exercises the viewer's bare-node load path (Phase 4): opening this file via
+    ``?src=`` must dispatch the root as a gsplats leaf, auto-frame it, and
+    render it. The cluster is offset well away from the origin so a *working*
+    auto-frame is observable — if framing breaks, the camera stays at the
+    default origin and the offset cluster falls off-screen (black canvas).
+
+    Written node-safe (PRECISION float32, no blosc) like the other fixtures so
+    zarrita-js can read it; ``ordering="morton"`` exercises the spatial-index
+    path. There is no scene wrapper — the file root IS the gsplats node.
+    """
+    with asection("Generating Standalone GSplats Test"):
+        from luxar.gsplats import GSplatData
+
+        output = FIXTURES_DIR / "test_standalone_gsplats.gsplats.zarr"
+        rng = np.random.default_rng(0)
+        n = 40
+        # Cluster offset from the origin so auto-framing is observable.
+        centers = (
+            np.array([12.0, 8.0, 5.0], dtype=np.float32)
+            + rng.uniform(-2.0, 2.0, size=(n, 3))
+        ).astype(np.float32)
+        amplitudes = np.linspace(0.6, 1.5, n).astype(np.float32)
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        sigma = 0.6
+        cholesky[:, 0] = sigma  # L11
+        cholesky[:, 2] = sigma  # L22
+        cholesky[:, 5] = sigma  # L33
+        colors = np.zeros((n, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(1.0, 0.0, n)
+        colors[:, 1] = np.linspace(0.0, 1.0, n)
+        colors[:, 2] = 0.6
+
+        GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            colors=colors,
+        ).save(
+            output,
+            ordering="morton",
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=COMPRESSOR_DISABLED,
+        )
+        aprint(f"  Created {output} ({n} splats, standalone v3.0 leaf)")
+
+
 def generate_lod_group_test() -> None:
     """Three-level ``lod_group`` fixture for the lod-group E2E spec.
 
@@ -1570,7 +1620,7 @@ def generate_lod_group_test() -> None:
     same as what a real-world authoring path would supply.
     """
     with asection("Generating LODGroup Test"):
-        output = FIXTURES_DIR / "test_lod_group.zarr"
+        output = FIXTURES_DIR / "test_lod_group.luxar.zarr"
 
         def _make_level_splats(n: int, rng: np.random.RandomState) -> dict:
             centers = rng.rand(n, 3).astype(np.float32) * 5.0
@@ -1624,7 +1674,7 @@ def generate_labelled_points_test() -> None:
     predict pixel-coords without any randomness.
     """
     with asection("Generating Labelled Points Test (E2E hover-tooltip)"):
-        output = FIXTURES_DIR / "test_labelled_points.zarr"
+        output = FIXTURES_DIR / "test_labelled_points.luxar.zarr"
 
         # 8 points in a regular pattern across the visible volume.
         # Stay near the origin (the viewer's default camera centres on (0,0,0));
@@ -1740,6 +1790,9 @@ def main() -> None:
         generate_gsplats_test()
         aprint("")
 
+        generate_standalone_gsplats_test()
+        aprint("")
+
         generate_lod_group_test()
         aprint("")
 
@@ -1751,26 +1804,26 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("Generated datasets:")
-        aprint(f"  {FIXTURES_DIR}/test_broadcasting.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_lut.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_quantization.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_array_refs.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_array_ref_broadcasting.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_encoding_edge_cases.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_encoding_contract_matrix.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_mixed.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_4d.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_hdr_colors.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_integer_colors.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_sharpness_range.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_log_scalar.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_uint16_quantization.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_nd_transforms.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_lines.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_gsplats.zarr")
-        aprint(f"  {FIXTURES_DIR}/test_labelled_points.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_broadcasting.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_lut.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_quantization.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_array_refs.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_array_ref_broadcasting.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_encoding_edge_cases.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_encoding_contract_matrix.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_mixed.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_4d.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_hdr_colors.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_integer_colors.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_sharpness_range.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_log_scalar.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_uint16_quantization.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_nd_transforms.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_lines.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_gsplats.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_labelled_points.luxar.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")

@@ -90,8 +90,9 @@ Scene-level position-bounds machinery:
   otherwise be clipped as the camera rotates.
 
 ### `gsplat_assembly.py`
-The gsplat-specific pipeline sequenced by the public `write_gsplats` /
-`write_gsplats_multi_lod` orchestrators:
+The gsplat-specific pipeline sequenced by the shared walker
+`gsplat_tree.write_gsplat_node` (called from both the standalone
+`write_gsplats_tree` and the scene compiler's `write_gsplat_leaf_subtree`):
 
 | Function | Step |
 |----------|------|

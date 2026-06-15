@@ -48,9 +48,9 @@ afterEach(() => {
 describe('loadAndDecodeOptionalArray', () => {
   describe('success path (real fixture, real decoder)', () => {
     it('returns the decoded array and threads expectedElements through the decoder', async () => {
-      // test_broadcasting.zarr "points/positions" is direct float32 (decodes in
+      // test_broadcasting.luxar.zarr "points/positions" is direct float32 (decodes in
       // Node without blosc): 1000 points x 3 dims = 3000 elements.
-      const root = await openFixtureRoot('test_broadcasting.zarr');
+      const root = await openFixtureRoot('test_broadcasting.luxar.zarr');
       const pointsLoc = root.resolve('points');
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
@@ -70,7 +70,7 @@ describe('loadAndDecodeOptionalArray', () => {
     });
 
     it('passes attrs and expectedElements straight to decoder.decode', async () => {
-      const root = await openFixtureRoot('test_broadcasting.zarr');
+      const root = await openFixtureRoot('test_broadcasting.luxar.zarr');
       const pointsLoc = root.resolve('points');
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
@@ -97,7 +97,7 @@ describe('loadAndDecodeOptionalArray', () => {
 
   describe('missing path (array not found)', () => {
     it('returns null and does NOT log success when zarr.open throws not-found', async () => {
-      const root = await openFixtureRoot('test_broadcasting.zarr');
+      const root = await openFixtureRoot('test_broadcasting.luxar.zarr');
       const pointsLoc = root.resolve('points');
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
@@ -121,7 +121,7 @@ describe('loadAndDecodeOptionalArray', () => {
     it('returns null for a non-existent array name against the real store', async () => {
       // End-to-end through the real store (no mock): a genuinely absent array
       // must yield null, not throw.
-      const root = await openFixtureRoot('test_broadcasting.zarr');
+      const root = await openFixtureRoot('test_broadcasting.luxar.zarr');
       const pointsLoc = root.resolve('points');
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
@@ -138,7 +138,7 @@ describe('loadAndDecodeOptionalArray', () => {
 
   describe('error path (decoder throws)', () => {
     it('swallows a decoder error and returns null (matches source catch-all)', async () => {
-      const root = await openFixtureRoot('test_broadcasting.zarr');
+      const root = await openFixtureRoot('test_broadcasting.luxar.zarr');
       const pointsLoc = root.resolve('points');
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 

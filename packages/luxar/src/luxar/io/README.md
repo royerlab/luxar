@@ -17,12 +17,12 @@ colors = np.random.rand(1000, 3).astype(np.float32)
 dims = Dimensions.default_3d()
 
 # 2. Write to zarr (progressive - data written immediately)
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=dims)
     scene.add_points('cloud', positions, colors, radii=0.1)
 
 # 3. Read it back (memory-efficient lazy loading)
-scene = LuxarScene.load('scene.zarr')
+scene = LuxarScene.load('scene.luxar.zarr')
 points = scene.get_points('cloud')
 print(f"Loaded {points['positions'].shape[0]} points")
 ```
@@ -52,7 +52,7 @@ from luxar.io import LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 with LuxarZarrCompiler(
-    'scene.zarr',
+    'scene.luxar.zarr',
     encoding_mode=EncodingMode.AUTO,      # AUTO, PRECISION, or MEMORY
     ordering_method="hilbert",            # "hilbert" (default, best locality) or "morton" (fastest)
     enable_spatial_index=True,            # Apply spatial ordering
@@ -90,7 +90,7 @@ Read-only access to Luxar zarr scenes with automatic decoding.
 from luxar.io import LuxarScene
 
 # Load a scene
-scene = LuxarScene.load('scene.zarr')
+scene = LuxarScene.load('scene.luxar.zarr')
 
 # Scene metadata
 print(scene.version)        # "0.1" (LUXAR_VERSION_CURRENT)
@@ -308,7 +308,7 @@ dims = Dimensions([
     Dimension("Time", discrete=True, display=False),  # Discrete dimension
 ])
 
-with LuxarZarrCompiler('scene.zarr', ordering_method="hilbert") as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr', ordering_method="hilbert") as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
     # Data will be compound-sorted: Time first, then Hilbert(X,Y,Z)
@@ -322,7 +322,7 @@ from luxar.io import LuxarZarrCompiler
 from luxar.encoding import EncodingMode
 
 with LuxarZarrCompiler(
-    'compressed.zarr',
+    'compressed.luxar.zarr',
     encoding_mode=EncodingMode.MEMORY,  # Aggressive quantization
     ordering_method="hilbert",
 ) as compiler:
@@ -344,12 +344,12 @@ import numpy as np
 positions = np.random.randn(1000, 3).astype(np.float32)
 colors = np.random.rand(1000, 3).astype(np.float32)
 
-with LuxarZarrCompiler('scene.zarr') as compiler:
+with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
     scene.add_points('cloud', positions, colors, radii=0.1)
 
 # Read it back
-scene = LuxarScene.load('scene.zarr')
+scene = LuxarScene.load('scene.luxar.zarr')
 points = scene.get_points('cloud')
 
 # Verify data (accounting for encoding precision)

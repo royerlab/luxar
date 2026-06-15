@@ -279,7 +279,7 @@ class TestResolveAdditiveAxisLines:
 
 class TestAddLinesAdditiveLod:
     def test_segments_round_trip(self, tmp_path) -> None:
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         vertices = rng.rand(40, 3).astype(np.float32)
         widths = np.ones(40, dtype=np.float32) * 0.1
@@ -309,7 +309,7 @@ class TestAddLinesAdditiveLod:
         test_dict_with_explicit_n_lods`` — an explicit ``n_lods`` (≠ the
         default 4) must flow end-to-end to the on-disk sub-LOD count, proving
         it is honored rather than hardcoded."""
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(3)
         vertices = rng.rand(40, 3).astype(np.float32)
         widths = np.ones(40, dtype=np.float32) * 0.1
@@ -332,7 +332,7 @@ class TestAddLinesAdditiveLod:
 
     def test_polyline_single_falls_through_to_single_shot(self, tmp_path) -> None:
         """Single-polyline + additive_lod=True → warning + single-shot write."""
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(1)
         vertices = rng.rand(20, 3).astype(np.float32)
         widths = np.ones(20, dtype=np.float32) * 0.1
@@ -357,7 +357,7 @@ class TestAddLinesAdditiveLod:
 
     def test_single_shot_path_still_works(self, tmp_path) -> None:
         """No additive_lod → existing single-LOD layout."""
-        output = tmp_path / "t.zarr"
+        output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(2)
         vertices = rng.rand(10, 3).astype(np.float32)
         widths = np.ones(10, dtype=np.float32) * 0.1

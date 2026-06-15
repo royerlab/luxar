@@ -32,7 +32,7 @@ import {
 
 // Test datasets
 const DATASETS = {
-  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',
+  sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.luxar.zarr',
 };
 
 test.describe('Keyboard Input System - Fly Controls', () => {
