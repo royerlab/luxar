@@ -38,9 +38,13 @@ Luxar's gsplat LOD model has two orthogonal axes; the helpers here build both:
 
 - **Substitutive** — coarser levels *replace* finer ones (fewer, larger
   elements). A multi-substitutive dataset becomes a `kind=lod` `Group` whose
-  children are the levels in coarsest→finest order. Only gsplats carry a stored
-  substitutive pyramid; `gsplats.py::resolve_substitutive_axis_gsplats` resolves
-  the `lod_group=` kwarg against it.
+  children are the levels in coarsest→finest order. GSplats carry a stored
+  substitutive pyramid (`gsplats.py::resolve_substitutive_axis_gsplats` resolves
+  the `lod_group=` kwarg). **Points** synthesise one on demand via the
+  `substitutive_lod=` kwarg: each point is *lifted* to an isotropic Gaussian and
+  the gsplat substitutive pipeline coarsens it — so the coarse levels are
+  mass-preserving gsplats while the finest child stays the original Points node
+  (a heterogeneous `kind=lod` group). See "Points substitutive" below.
 - **Additive** — finer levels *add to* coarser ones (a streaming prefix of
   elements). All three geometries support an additive ladder via the
   `additive_lod=` kwarg. For gsplats it is applied per substitutive level
@@ -99,6 +103,35 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
   luminance term.
 
 `DEFAULT_METHOD` is `random`; `DEFAULT_N_LODS` is `4`.
+
+#### Points substitutive (lift to gsplats)
+
+`resolve_substitutive_axis_points(spec)` normalizes the `substitutive_lod=`
+kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
+method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
+`method`, `base_pixel_size`, `truncation_radius`, `device`, `seed`,
+`min_pixel_sizes`). `add_points_substitutive_lod_wrapper_impl`
+(`adders/points.py`) then:
+
+1. **Lifts** each point to an isotropic Gaussian
+   (`gsplats.lift.lift_points_to_gsplats`): `σ = 2R/T`, `a = opacity/(uRIF·σ)`
+   — calibrated against the viewer shaders so a single lifted splat renders like
+   its point (peak ratio 1.0, profile rel-L2 0.45% at the default `T=3`).
+2. **Coarsens** via `gsplats.lift.coarse_substitutive_levels` →
+   `make_substitutive_lod`, drops the 1:1 level 0 (the Points node is the finest
+   level), and **rescales** each coarse level's amplitudes to conserve
+   render-light (`Σ a·σ³`) so the LOD seam does not dim on zoom-out.
+3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
+   the original Points node as the finest child; `display_type="points"`.
+
+Mutually exclusive with `additive_lod` (append vs replace on the same axis).
+The lift is strictly isotropic (brightness stays view-independent). Scalar +
+colormap points are supported by **baking** `scalars`→RGB through the colormap
+LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
+and lifting with those colours; the finest Points child keeps `scalars`+`colormap`
+(native). Caveat: a *live* colormap change in the viewer re-colours only the
+finest child, not the baked coarse gsplat levels. (`scalars` without a `colormap`
+still raises.)
 
 ### Lines (`lines.py`)
 

@@ -58,8 +58,21 @@ def add_points_impl(
     fill: Optional[Dict[str, float]] = None,
     partition: Any = None,
     additive_lod: Any = None,
+    substitutive_lod: Any = None,
     **attrs: Any,
 ) -> Union[Points, "Group"]:
+    if additive_lod is not None and substitutive_lod is not None:
+        raise ValueError(
+            "additive_lod and substitutive_lod are mutually exclusive coarsening "
+            "strategies for Points (append vs replace on the same LOD axis); "
+            "pass only one."
+        )
+    if substitutive_lod is not None and partition is not None:
+        raise ValueError(
+            "partition= and substitutive_lod= cannot be combined yet "
+            "(partition-of-substitutive — a kind=partition of per-part gsplat "
+            "LOD ladders — is not implemented). Use one or the other."
+        )
     try:
         scene = group._find_scene()
 
@@ -78,6 +91,37 @@ def add_points_impl(
 
         n_points = pos_arr.shape[0]
         ndim = pos_arr.shape[1]
+
+        # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
+        # point lifted to an isotropic Gaussian, then reduced by the gsplat
+        # substitutive pipeline) under a kind=lod Group whose finest child is the
+        # original Points node. Fires BEFORE (auto-)partition so substitutive
+        # takes precedence over the opt-in auto-partition heuristic; explicit
+        # partition= is rejected up front (mutually exclusive, checked above).
+        # ``pos_arr`` is already dim_order-transformed, so children are written
+        # with dim_order=None/fill=None to avoid double application.
+        if substitutive_lod is not None and n_points > 0:
+            from ..lod.points import resolve_substitutive_axis_points
+
+            substitutive_spec = resolve_substitutive_axis_points(substitutive_lod)
+            if substitutive_spec is not None:
+                return add_points_substitutive_lod_wrapper_impl(
+                    group,
+                    name=name,
+                    pos_arr=pos_arr,
+                    n_points=n_points,
+                    colors=colors,
+                    radii=radii,
+                    sharpness=sharpness,
+                    scalars=scalars,
+                    labels=labels,
+                    image_labels=image_labels,
+                    parent=parent,
+                    extend_to_all=extend_to_all,
+                    grid_shape=grid_shape,
+                    spec=substitutive_spec,
+                    **attrs,
+                )
 
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off) before evaluating the partition branch. User-explicit
@@ -440,3 +484,168 @@ def add_points_multi_lod_wrapper_impl(
         writer=writer,
         **attrs,
     )
+
+
+def add_points_substitutive_lod_wrapper_impl(
+    group: "Group",
+    *,
+    name: str,
+    pos_arr: np.ndarray,
+    n_points: int,
+    colors: Any,
+    radii: Any,
+    sharpness: Any,
+    scalars: Any,
+    labels: Any,
+    image_labels: Any,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    grid_shape: Optional[Tuple[int, ...]],
+    spec: Dict[str, Any],
+    **attrs: Any,
+) -> Union["Group", Points]:
+    """Write a Points node whose coarse LOD levels are synthesised gsplats.
+
+    Each point is lifted to an isotropic Gaussian (see
+    :func:`luxar.gsplats.lift.lift_points_to_gsplats`), the gsplat substitutive
+    pipeline (:func:`luxar.gsplats.make_substitutive_lod`) synthesises
+    fewer-but-larger representative levels, and those become the coarse children
+    of a ``kind=lod`` Group whose **finest** child is the original Points node.
+    Coarse-level amplitudes are rescaled to conserve render-light (``sum a·σ³``)
+    so brightness is stable across the LOD seam (no zoom-out dimming).
+
+    Compositing attrs (opacity, gamma, ...) land on the ``kind=lod`` Group;
+    ``opacity`` is therefore applied once at composite time to both the points
+    child and the gsplat children (the lift uses ``opacity=1``).
+    """
+    from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
+    from ..lod.group import derive_min_pixel_sizes
+
+    # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
+    # scalars -> RGB (via the same LUT normalisation the viewer uses) and lift
+    # with those colours. The FINEST child keeps scalars+colormap (native,
+    # interactively re-colourable); only the coarse gsplat levels carry baked
+    # colours — so a live colormap change re-colours the finest level but not the
+    # coarse ones (documented caveat). Scalars without a colormap is still an
+    # error (scalars require a colormap to map to colour).
+    colors_for_lift = colors
+    if scalars is not None and colors is None:
+        colormap = attrs.get("colormap")
+        if colormap is None:
+            raise ValueError(
+                "substitutive_lod on Points with scalars requires a colormap "
+                "(scalars map to colour via a colormap LUT). Pass colormap=..., "
+                "or provide explicit per-point colors."
+            )
+        from ....colormaps import scalars_to_colors
+
+        colors_for_lift = scalars_to_colors(np.asarray(scalars), colormap)
+
+    radii_for_lift = DEFAULT_POINT_RADIUS if radii is None else radii
+    lifted = lift_points_to_gsplats(
+        pos_arr, radii_for_lift, colors=colors_for_lift, opacity=1.0,
+        truncation_radius=float(spec["truncation_radius"]),
+    )
+
+    # Synthesise coarse gsplat levels (level 0 dropped, render-light conserved so
+    # the LOD seam does not brighten/dim). Returns finest -> coarsest.
+    coarse = coarse_substitutive_levels(
+        lifted,
+        compression_factor=int(spec["compression_factor"]),
+        levels=int(spec["levels"]),
+        method=str(spec["method"]),
+        device=spec.get("device", "auto"),
+        seed=spec.get("seed"),
+    )
+
+    # Degenerate input (too few points to reduce, or every coarse level failed
+    # to actually shrink) — no usable coarse levels. Fall back to a plain flat
+    # Points node rather than a one-child LOD group. ``pos_arr`` is already
+    # dim_order-transformed, so dim_order/fill are None and partition is
+    # disabled (the cloud is tiny by definition here).
+    if not coarse:
+        aprint(
+            f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
+            "levels; writing a flat Points node."
+        )
+        return add_points_impl(
+            group, name=name, positions=pos_arr, colors=colors, radii=radii,
+            sharpness=sharpness, scalars=scalars, labels=labels,
+            image_labels=image_labels, parent=parent, extend_to_all=extend_to_all,
+            grid_shape=grid_shape, partition=False, **attrs,
+        )
+
+    # Children coarsest -> finest: [coarsest gsplat .. finest gsplat, points].
+    coarse_first = list(reversed(coarse))  # coarsest first
+    counts = [int(c.n_splats) for c in coarse_first] + [int(n_points)]
+    explicit = spec.get("min_pixel_sizes")
+    if explicit is not None:
+        if len(explicit) != len(counts):
+            raise ValueError(
+                f"min_pixel_sizes has {len(explicit)} entries but the LOD ladder "
+                f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 points)"
+            )
+        min_pixel_sizes = list(explicit)
+    else:
+        min_pixel_sizes = derive_min_pixel_sizes(
+            counts, base_pixel_size=spec.get("base_pixel_size")
+        )
+
+    # Compositing attrs ride on the kind=lod Group; everything else (colormap,
+    # truncation_radius, ...) rides onto each child.
+    lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+    child_attrs.pop("min_pixel_size", None)
+    lod_attrs.setdefault("display_type", "points")  # finest child is points
+    # The coarse gsplat children carry baked per-splat colours (from the lift),
+    # so they must NOT also receive `colormap` (gsplats reject colors+colormap).
+    # `colormap` (when scalars were baked) stays on the finest Points child only.
+    gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
+
+    parent_node = parent or group
+    aprint(
+        f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + points "
+        f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
+    )
+    lod_group_node = parent_node.add_lod_group(
+        name, base_pixel_size=spec.get("base_pixel_size"), **lod_attrs
+    )
+
+    # Coarse gsplat children (coarsest first). pos_arr is already
+    # dim_order-transformed, so children use dim_order=None/fill=None.
+    for idx, lvl_data in enumerate(coarse_first):
+        lod_group_node.add_gsplats_from_data(
+            name=f"child_{idx}",
+            result=lvl_data,
+            extend_to_all=extend_to_all,
+            dim_order=None,
+            fill=None,
+            lod_group=None,
+            additive_lod=None,
+            min_pixel_size=min_pixel_sizes[idx],
+            **gsplat_child_attrs,
+        )
+
+    # Finest child: the original Points node (carries all N points + image_labels;
+    # partition=False so the auto-partition heuristic cannot split it underneath).
+    lod_group_node.add_points(
+        f"child_{len(coarse_first)}",
+        pos_arr,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+        image_labels=image_labels,
+        extend_to_all=extend_to_all,
+        grid_shape=grid_shape,
+        dim_order=None,
+        fill=None,
+        partition=False,
+        additive_lod=None,
+        substitutive_lod=None,
+        min_pixel_size=min_pixel_sizes[-1],
+        **child_attrs,
+    )
+
+    return lod_group_node

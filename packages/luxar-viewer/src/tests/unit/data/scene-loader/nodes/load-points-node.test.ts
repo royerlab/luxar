@@ -109,6 +109,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     factoryDeps,
     isDatasetLive: () => true,
     releaseLazyGSplats: vi.fn(),
+    releaseLazyPoints: vi.fn(),
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
@@ -154,11 +155,18 @@ describe('loadPointsNode — placeholder-before-fetch invariant', () => {
 
     const promise = loadPointsNode(makeSceneNode(), parent, {} as never, ctx);
 
-    // After the await loadPoints kicks off (it's already on the
-    // microtask queue), parent already has the placeholder.
+    // The placeholder is attached synchronously by the cheap half, before the
+    // function yields — so an initial-load failure leaves a recoverable scene.
     expect(parent.children.length).toBe(1);
     expect((parent.children[0] as THREE.Mesh).name).toBe('/scene/p');
-    expect(ctx.registry.loaders.has('/scene/p')).toBe(true);
+
+    // The loader is registered before the fetch completes (so retry/update can
+    // find it while the fetch is in flight). Registration lands one microtask
+    // after the cheap split returns — the cheap/expensive split (mirroring the
+    // gsplats loader) registers between the two halves, not synchronously — so
+    // flush microtasks before asserting. The fetch promise (`pending`) is still
+    // unresolved here, proving registration precedes the fetch.
+    await vi.waitFor(() => expect(ctx.registry.loaders.has('/scene/p')).toBe(true));
 
     // Let the promise settle so the test cleans up.
     _resolve({ pointCount: 0 } as LoadedPointsData);
