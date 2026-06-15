@@ -185,8 +185,11 @@ Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
-Degenerate-width segments are dropped and per-segment beads are capped
-(`lift.MAX_BEADS_PER_SEGMENT`) so a zero/tiny-width line can't OOM. The viewer
+Degenerate-width segments are dropped; bead allocation is bounded both
+per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
+(`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a
+zero/tiny-width line — or a large set of long thin ones — degrades the tube
+rather than OOMing. The viewer
 lazily defers + evicts the finest Lines lod child (like `gsplats`/`points`) via
 `loadLinesNodeCheap`/`loadLinesNodeExpensive` + `releaseLazyLines`.
 

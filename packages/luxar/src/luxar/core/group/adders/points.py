@@ -563,12 +563,13 @@ def add_points_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
     )
 
-    # Degenerate input (too few points to reduce, or every coarse level failed
-    # to actually shrink) — no usable coarse levels. Fall back to a plain flat
-    # Points node rather than a one-child LOD group. ``pos_arr`` is already
-    # dim_order-transformed, so dim_order/fill are None and partition is
-    # disabled (the cloud is tiny by definition here).
-    if not coarse:
+    # Degenerate input -> flat Points node rather than a one-child LOD group.
+    # Covers BOTH no coarse levels AND an all-zero-radius cloud (the lift yields
+    # 0 splats, so every coarse level is empty: coarse[-1] is the coarsest, and
+    # writing a 0-element coarsest gsplat child would crash downstream). Mirrors
+    # the lines.py degenerate guard. ``pos_arr`` is already dim_order-transformed,
+    # so dim_order/fill are None and partition is disabled.
+    if not coarse or int(coarse[-1].n_splats) == 0:
         aprint(
             f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
             "levels; writing a flat Points node."
