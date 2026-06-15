@@ -6,6 +6,7 @@ import pytest
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lift import (
     compute_ray_integral_factor,
+    lift_lines_to_gsplats,
     lift_points_to_gsplats,
     render_light,
 )
@@ -182,3 +183,90 @@ def test_invalid_inputs_raise():
         lift_points_to_gsplats(
             np.zeros((2, 3), np.float32), 1.0, None, truncation_radius=0.0
         )
+
+
+# ── lift_lines_to_gsplats (segment → isotropic beads) ──────────────────────
+
+
+def _bead_sigma(data, d=3):
+    from luxar.gsplats.utils.trils import unpack_tril
+
+    L = unpack_tril(np.asarray(data.flattened().cholesky_factors), d)
+    return np.abs(np.linalg.det(L)) ** (1.0 / d)
+
+
+def test_lines_segment_bead_count():
+    # L=20, width=1, T=3 -> sigma_perp=2/3, spacing=sigma -> ~30 beads.
+    verts = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", truncation_radius=3.0)
+    assert data.n_splats == 30
+
+
+def test_lines_beads_are_isotropic_with_sigma_2w_over_T():
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.5, line_type="segments", truncation_radius=3.0)
+    sig = _bead_sigma(data)
+    # uniform width -> all beads share sigma = 2*1.5/3 = 1.0
+    np.testing.assert_allclose(sig, 1.0, rtol=1e-4)
+
+
+def test_lines_tube_centerline_matches_opacity():
+    # Overlapping beads sum to ~opacity at the centreline (the √(2π) calibration).
+    verts = np.array([[0, 0, 0], [20, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", opacity=1.0,
+                                 truncation_radius=3.0)
+    flat = data.flattened()
+    c = np.asarray(flat.centers, np.float64)
+    a = np.asarray(flat.amplitudes, np.float64)
+    sig = _bead_sigma(data)
+    uRIF = compute_ray_integral_factor(3.0)
+    mid = np.array([10.0, 0.0, 0.0])
+    # sum of per-bead screen peaks (points peak formula a*sigma*uRIF) at the centre
+    peaks = a * sig * uRIF * np.exp(-0.5 * (np.linalg.norm(c - mid, axis=1) / sig) ** 2)
+    assert float(peaks.sum()) == pytest.approx(1.0, abs=0.05)
+
+
+@pytest.mark.parametrize("line_type", ["segments", "polyline", "loop"])
+def test_lines_line_types_produce_beads(line_type):
+    verts = np.array([[0, 0, 0], [5, 0, 0], [5, 5, 0], [10, 5, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 0.5, line_type=line_type, truncation_radius=3.0)
+    assert data.n_splats > 0
+    assert data.ndim == 3
+
+
+def test_lines_indexed_uses_edge_list():
+    verts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0]], np.float32)
+    idx = np.array([[0, 1], [0, 2]], np.intp)  # two edges from vertex 0
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="indexed", indices=idx)
+    assert data.n_splats > 0
+    with pytest.raises(ValueError):
+        lift_lines_to_gsplats(verts, 1.0, line_type="indexed", indices=None)
+
+
+def test_lines_colors_interpolated_and_normalized():
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    colors = np.array([[255, 0, 0], [0, 0, 255]], np.uint8)  # red -> blue
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", colors=colors)
+    c = np.asarray(data.flattened().colors)
+    assert c.max() <= 1.0 + 1e-6  # uint8 normalized to [0,1]
+    # first bead near red, last near blue
+    assert c[0, 0] > c[0, 2]
+    assert c[-1, 2] > c[-1, 0]
+
+
+def test_lines_render_light_positive():
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments")
+    assert render_light(data) > 0.0
+
+
+def test_lines_single_vertex_polyline_is_empty():
+    data = lift_lines_to_gsplats(np.array([[1.0, 2.0, 3.0]], np.float32), 1.0,
+                                 line_type="polyline")
+    assert data.n_splats == 0
+
+
+def test_lines_nd_support():
+    verts = np.random.default_rng(0).uniform(0, 10, (6, 4)).astype(np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments")
+    assert data.ndim == 4

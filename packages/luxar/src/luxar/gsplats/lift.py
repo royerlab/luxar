@@ -65,6 +65,7 @@ from .gsplat_data import GSplatData
 __all__ = [
     "coarse_substitutive_levels",
     "compute_ray_integral_factor",
+    "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
 ]
@@ -198,6 +199,132 @@ def lift_points_to_gsplats(
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,
         colors=colors_arr,
+        truncation_radius=T,
+    )
+
+
+def _segment_pairs(
+    n_vertices: int, line_type: str, indices: Optional[NDArray]
+) -> NDArray:
+    """Vertex-index pairs ``(E, 2)`` for each edge of a line set."""
+    if line_type == "segments":
+        m = n_vertices - (n_vertices % 2)
+        return np.arange(m, dtype=np.intp).reshape(-1, 2)
+    if line_type in ("polyline", "loop"):
+        if n_vertices < 2:
+            return np.empty((0, 2), dtype=np.intp)
+        a = np.arange(n_vertices - 1, dtype=np.intp)
+        pairs = np.stack([a, a + 1], axis=1)
+        if line_type == "loop":
+            pairs = np.vstack([pairs, [[n_vertices - 1, 0]]])
+        return pairs
+    if line_type == "indexed":
+        if indices is None:
+            raise ValueError("line_type='indexed' requires an indices edge list")
+        return np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    raise ValueError(
+        f"line_type must be 'segments'/'polyline'/'loop'/'indexed'; got {line_type!r}"
+    )
+
+
+def lift_lines_to_gsplats(
+    vertices: NDArray,
+    widths: Union[NDArray, float],
+    line_type: str = "polyline",
+    indices: Optional[NDArray] = None,
+    colors: Union[NDArray, None] = None,
+    opacity: float = 1.0,
+    *,
+    radius_scale: float = 1.0,
+    truncation_radius: float = 3.0,
+    bead_spacing_factor: float = 1.0,
+) -> GSplatData:
+    """Lift a line set to a flat :class:`GSplatData` of **isotropic bead** Gaussians.
+
+    Each segment is sampled into a string of overlapping isotropic "bead"
+    Gaussians spaced ``bead_spacing_factor * σ_perp`` along it (``σ_perp = 2 w /
+    T`` per the C0 calibration — same constant as the point lift). Beads are used
+    instead of one elongated anisotropic Gaussian per segment because the gsplat
+    ray-integral is **view-dependent** for anisotropic covariances (a single
+    elongated Gaussian is ``~L/(4w)`` brighter end-on than broadside); isotropic
+    beads are view-independent and sum to a smooth tube.
+
+    Bead amplitude conserves the line's centreline brightness: overlapping beads
+    at spacing ``σ`` sum to ``√(2π)`` × a single bead's peak (the Gaussian-comb
+    sum), so each bead uses ``opacity / √(2π)`` (scaled by ``bead_spacing_factor``)
+    as the effective opacity in the peak-matched point amplitude. The result feeds
+    the substitutive pipeline exactly like the point lift.
+
+    Parameters mirror :func:`lift_points_to_gsplats` plus ``line_type`` /
+    ``indices`` (how vertices form edges) and ``bead_spacing_factor``.
+    """
+    verts = np.asarray(vertices, dtype=np.float32)
+    if verts.ndim != 2:
+        raise ValueError(f"vertices must be (N, d); got shape {verts.shape}")
+    n_vertices, d = verts.shape
+    T = float(truncation_radius)
+    if T <= 0:
+        raise ValueError(f"truncation_radius must be > 0; got {T}")
+
+    pairs = _segment_pairs(n_vertices, line_type, indices)
+    if pairs.shape[0] == 0:
+        # No edges — nothing to lift (e.g. a single-vertex polyline).
+        return lift_points_to_gsplats(
+            np.empty((0, d), np.float32), np.empty((0,), np.float32),
+            colors=None, opacity=opacity, radius_scale=radius_scale,
+            truncation_radius=T,
+        )
+
+    w_arr = np.broadcast_to(
+        np.asarray(widths, dtype=np.float64), (n_vertices,)
+    ).astype(np.float64)
+    p0 = verts[pairs[:, 0]].astype(np.float64)  # (E, d)
+    p1 = verts[pairs[:, 1]].astype(np.float64)
+    w0 = w_arr[pairs[:, 0]]
+    w1 = w_arr[pairs[:, 1]]
+    seg_len = np.linalg.norm(p1 - p0, axis=1)  # (E,)
+
+    # Per-segment bead count: cover the length at spacing = factor * σ_perp(w̄).
+    wbar = 0.5 * (w0 + w1)
+    sigma = 2.0 * wbar * float(radius_scale) / T
+    spacing = np.maximum(float(bead_spacing_factor) * sigma, 1e-9)
+    n_i = np.maximum(1, np.ceil(seg_len / spacing).astype(np.intp))  # (E,)
+
+    # Ragged expansion: one row per bead, at interval centres t=(k+0.5)/n_i.
+    seg_idx = np.repeat(np.arange(pairs.shape[0], dtype=np.intp), n_i)
+    starts = np.repeat(np.cumsum(n_i) - n_i, n_i)
+    within = np.arange(seg_idx.shape[0], dtype=np.intp) - starts
+    t = (within + 0.5) / n_i[seg_idx]  # (B,) in (0, 1)
+
+    bead_centers = (p0[seg_idx] + t[:, None] * (p1[seg_idx] - p0[seg_idx])).astype(
+        np.float32
+    )
+    bead_widths = (w0[seg_idx] + t * (w1[seg_idx] - w0[seg_idx])).astype(np.float32)
+
+    bead_colors: Optional[NDArray] = None
+    if colors is not None:
+        c = np.asarray(colors)
+        # Interpolate endpoint colours along the segment (keep the input dtype so
+        # the point lift's integer→[0,1] normalisation still applies).
+        c0 = c[pairs[:, 0]].astype(np.float64)[seg_idx]
+        c1 = c[pairs[:, 1]].astype(np.float64)[seg_idx]
+        interp = c0 + t[:, None] * (c1 - c0)
+        bead_colors = (
+            interp.round().astype(c.dtype) if np.issubdtype(c.dtype, np.integer)
+            else interp.astype(c.dtype)
+        )
+
+    # Bead amplitude conserves the line centreline: divide opacity by the
+    # Gaussian-comb overlap sum √(2π)/factor (peak-match in lift_points_to_gsplats).
+    overlap_sum = np.sqrt(2.0 * np.pi) / float(bead_spacing_factor)
+    opacity_eff = float(opacity) / overlap_sum
+
+    return lift_points_to_gsplats(
+        bead_centers,
+        bead_widths,
+        colors=bead_colors,
+        opacity=opacity_eff,
+        radius_scale=radius_scale,
         truncation_radius=T,
     )
 

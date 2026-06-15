@@ -46,15 +46,9 @@ DEFAULT_METHOD: PointsMethodName = "random"
 
 # Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — the
 # coarse levels are synthesised gsplats (each point lifted to an isotropic
-# Gaussian, then reduced by the gsplat substitutive pipeline). Mirror the
-# gsplat substitutive defaults (compression_factor=4, levels=3, method="auto").
-DEFAULT_SUBSTITUTIVE_K: int = 4
-DEFAULT_SUBSTITUTIVE_LEVELS: int = 3
-DEFAULT_SUBSTITUTIVE_METHOD: str = "auto"
-#: Accepted substitutive reduction methods (passed to make_substitutive_lod).
-_SUBSTITUTIVE_METHODS = frozenset(
-    {"auto", "kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"}
-)
+# Gaussian, then reduced by the gsplat substitutive pipeline). The substitutive
+# vocabulary/defaults are shared with Lines — see
+# :func:`luxar.core.group.lod.group.resolve_substitutive_axis`.
 
 
 def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
@@ -66,93 +60,14 @@ def resolve_substitutive_axis_points(spec: Any) -> Optional[dict]:
     which become the coarse levels of a points LOD ladder (the finest level
     stays the original Points node).
 
-    Vocabulary (peer of :func:`resolve_additive_axis_points`):
-
-    * ``None`` / ``False`` → no-op (caller writes a flat / additive node).
-    * ``True`` / ``dict()`` → defaults (K=4, levels=3, method="auto").
-    * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
-      (alias ``n_lods``), ``method``, ``base_pixel_size``, ``truncation_radius``,
-      ``device``, ``seed``, ``min_pixel_sizes`` (explicit threshold override).
-      Unrecognized keys raise.
-
-    Returns ``None`` for no-op, or a dict with normalized keys.
+    Thin wrapper over the shared
+    :func:`luxar.core.group.lod.group.resolve_substitutive_axis` (one
+    implementation shared with Lines so the two can't drift). See it for the
+    full value vocabulary.
     """
-    if spec is None or spec is False:
-        return None
-    if spec is True:
-        spec = {}
-    if not isinstance(spec, dict):
-        raise TypeError(
-            f"substitutive_lod must be None, bool, or dict; got {type(spec).__name__}"
-        )
-    kwargs = dict(spec)
+    from .group import resolve_substitutive_axis
 
-    compression_factor = int(
-        kwargs.pop("compression_factor", kwargs.pop("K", DEFAULT_SUBSTITUTIVE_K))
-    )
-    if compression_factor < 2:
-        raise ValueError(
-            f"compression_factor must be >= 2, got {compression_factor}"
-        )
-
-    levels = int(kwargs.pop("levels", kwargs.pop("n_lods", DEFAULT_SUBSTITUTIVE_LEVELS)))
-    if levels < 1:
-        raise ValueError(f"levels must be >= 1, got {levels}")
-
-    method = str(kwargs.pop("method", DEFAULT_SUBSTITUTIVE_METHOD)).replace("-", "_")
-    if method not in _SUBSTITUTIVE_METHODS:
-        raise ValueError(
-            f"method must be one of {sorted(_SUBSTITUTIVE_METHODS)}; got {method!r}"
-        )
-
-    base_pixel_size = kwargs.pop("base_pixel_size", None)
-    if base_pixel_size is not None:
-        base_pixel_size = float(base_pixel_size)
-        if base_pixel_size <= 0:
-            raise ValueError(
-                f"base_pixel_size must be positive, got {base_pixel_size}"
-            )
-
-    truncation_radius = float(kwargs.pop("truncation_radius", 3.0))
-    if truncation_radius <= 0:
-        raise ValueError(
-            f"truncation_radius must be > 0, got {truncation_radius}"
-        )
-
-    device = kwargs.pop("device", "auto")
-    seed = kwargs.pop("seed", None)
-    if seed is not None:
-        seed = int(seed)
-
-    min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
-    if min_pixel_sizes is not None:
-        min_pixel_sizes = [float(m) for m in min_pixel_sizes]
-        # Same strict-ascending (coarsest=0.0) contract the LOD group requires —
-        # validate here so a malformed override fails loudly, matching the
-        # gsplats substitutive resolver.
-        from .group import _assert_strict_ascending
-
-        _assert_strict_ascending(
-            min_pixel_sizes, "substitutive_lod=dict(min_pixel_sizes=...)"
-        )
-
-    if kwargs:
-        raise ValueError(
-            f"substitutive_lod for Points: unrecognized keys {sorted(kwargs)}. "
-            "Valid keys: compression_factor (K), levels (n_lods), method, "
-            "base_pixel_size, truncation_radius, device, seed, min_pixel_sizes."
-        )
-
-    return {
-        "compression_factor": compression_factor,
-        "levels": levels,
-        "method": method,
-        "base_pixel_size": base_pixel_size,
-        "truncation_radius": truncation_radius,
-        "device": device,
-        "seed": seed,
-        "min_pixel_sizes": min_pixel_sizes,
-    }
+    return resolve_substitutive_axis(spec, "Points")
 
 
 # ─────────────────────────────────────────────────────────────────────
