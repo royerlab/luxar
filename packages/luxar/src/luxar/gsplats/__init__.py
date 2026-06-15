@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.lift import (
         coarse_substitutive_levels,
         compute_ray_integral_factor,
+        lift_lines_to_gsplats,
         lift_points_to_gsplats,
         render_light,
     )
@@ -75,6 +76,7 @@ else:
         from luxar.gsplats.lift import (
             coarse_substitutive_levels,
             compute_ray_integral_factor,
+            lift_lines_to_gsplats,
             lift_points_to_gsplats,
             render_light,
         )
@@ -222,6 +224,9 @@ else:
         def compute_ray_integral_factor(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
+        def lift_lines_to_gsplats(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
         def lift_points_to_gsplats(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
@@ -272,6 +277,7 @@ __all__ = [
     # Lift (points -> gsplats)
     "coarse_substitutive_levels",
     "compute_ray_integral_factor",
+    "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
     # Submodules

@@ -65,6 +65,7 @@ from .gsplat_data import GSplatData
 __all__ = [
     "coarse_substitutive_levels",
     "compute_ray_integral_factor",
+    "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
 ]
@@ -198,6 +199,193 @@ def lift_points_to_gsplats(
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,
         colors=colors_arr,
+        truncation_radius=T,
+    )
+
+
+def _segment_pairs(
+    n_vertices: int, line_type: str, indices: Optional[NDArray]
+) -> NDArray:
+    """Vertex-index pairs ``(E, 2)`` for each edge of a line set."""
+    if line_type == "segments":
+        m = n_vertices - (n_vertices % 2)
+        return np.arange(m, dtype=np.intp).reshape(-1, 2)
+    if line_type in ("polyline", "loop"):
+        if n_vertices < 2:
+            return np.empty((0, 2), dtype=np.intp)
+        a = np.arange(n_vertices - 1, dtype=np.intp)
+        pairs = np.stack([a, a + 1], axis=1)
+        if line_type == "loop":
+            pairs = np.vstack([pairs, [[n_vertices - 1, 0]]])
+        return pairs
+    if line_type == "indexed":
+        if indices is None:
+            raise ValueError("line_type='indexed' requires an indices edge list")
+        return np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    raise ValueError(
+        f"line_type must be 'segments'/'polyline'/'loop'/'indexed'; got {line_type!r}"
+    )
+
+
+#: Max beads synthesised per segment — caps the lift-time allocation so a thin
+#: (tiny-width) or zero-width segment can't explode ``ceil(L/σ)`` into an OOM.
+#: A segment longer than ``MAX_BEADS_PER_SEGMENT * σ`` is under-sampled (beads
+#: spaced > σ → a slightly gappy tube), which is acceptable for such extreme
+#: aspect ratios and is warned about.
+MAX_BEADS_PER_SEGMENT: int = 4096
+
+
+def lift_lines_to_gsplats(
+    vertices: NDArray,
+    widths: Union[NDArray, float],
+    line_type: str = "polyline",
+    indices: Optional[NDArray] = None,
+    colors: Union[NDArray, None] = None,
+    opacity: float = 1.0,
+    *,
+    scalars: Union[NDArray, None] = None,
+    colormap: Union[str, NDArray, None] = None,
+    radius_scale: float = 1.0,
+    truncation_radius: float = 3.0,
+    bead_spacing_factor: float = 1.0,
+) -> GSplatData:
+    """Lift a line set to a flat :class:`GSplatData` of **isotropic bead** Gaussians.
+
+    Each segment is sampled into a string of overlapping isotropic "bead"
+    Gaussians spaced ``bead_spacing_factor * σ_perp`` along it (``σ_perp = 2 w /
+    T`` per the C0 calibration — same constant as the point lift). Beads are used
+    instead of one elongated anisotropic Gaussian per segment because the gsplat
+    ray-integral is **view-dependent** for anisotropic covariances (a single
+    elongated Gaussian is ``~L/(4w)`` brighter end-on than broadside); isotropic
+    beads are view-independent and sum to a smooth tube.
+
+    Bead amplitude conserves the line's centreline brightness: each bead's
+    amplitude is divided by the **per-segment** Gaussian-comb sum evaluated at the
+    segment midpoint (the sum of all the segment's beads' unit peaks there), so a
+    long segment's tube and a short segment's single bead both peak at ``opacity``
+    — the asymptotic ``√(2π)`` only applies in the long-segment limit.
+
+    ``scalars`` + ``colormap`` (per-vertex scalar field): the scalar is
+    interpolated per bead and then mapped through the colormap LUT
+    (interpolate-then-LUT, matching the line shader) — pass these instead of
+    pre-baked ``colors`` so non-linear colormaps get correct mid-segment colours.
+
+    Parameters otherwise mirror :func:`lift_points_to_gsplats` plus ``line_type`` /
+    ``indices`` (how vertices form edges) and ``bead_spacing_factor``.
+    """
+    verts = np.asarray(vertices, dtype=np.float32)
+    if verts.ndim != 2:
+        raise ValueError(f"vertices must be (N, d); got shape {verts.shape}")
+    n_vertices, d = verts.shape
+    T = float(truncation_radius)
+    if T <= 0:
+        raise ValueError(f"truncation_radius must be > 0; got {T}")
+
+    def _empty() -> GSplatData:
+        return lift_points_to_gsplats(
+            np.empty((0, d), np.float32), np.empty((0,), np.float32),
+            colors=None, opacity=opacity, radius_scale=radius_scale,
+            truncation_radius=T,
+        )
+
+    pairs = _segment_pairs(n_vertices, line_type, indices)
+    if pairs.shape[0] == 0:
+        return _empty()  # no edges (e.g. a single-vertex polyline)
+
+    w_arr = np.broadcast_to(
+        np.asarray(widths, dtype=np.float64), (n_vertices,)
+    ).astype(np.float64)
+    p0 = verts[pairs[:, 0]].astype(np.float64)  # (E, d)
+    p1 = verts[pairs[:, 1]].astype(np.float64)
+    w0 = w_arr[pairs[:, 0]]
+    w1 = w_arr[pairs[:, 1]]
+    seg_len = np.linalg.norm(p1 - p0, axis=1)  # (E,)
+
+    # Per-segment isotropic sigma; drop degenerate (zero/negative-width) segments
+    # — they render nothing AND would blow ceil(L/σ) up to an OOM (σ=0 → ∞ beads).
+    wbar = 0.5 * (w0 + w1)
+    sigma = 2.0 * wbar * float(radius_scale) / T  # (E,)
+    keep = sigma > 0.0
+    if not np.any(keep):
+        return _empty()
+    pairs, p0, p1, w0, w1, seg_len, sigma = (
+        pairs[keep], p0[keep], p1[keep], w0[keep], w1[keep], seg_len[keep], sigma[keep]
+    )
+
+    # Bead count per segment, CAPPED so a tiny-but-positive width can't OOM.
+    spacing = float(bead_spacing_factor) * sigma
+    n_i = np.minimum(
+        np.maximum(1, np.ceil(seg_len / spacing).astype(np.intp)),
+        MAX_BEADS_PER_SEGMENT,
+    )  # (E,)
+
+    # Ragged expansion: one row per bead, at interval centres t=(k+0.5)/n_i.
+    n_seg = pairs.shape[0]
+    seg_idx = np.repeat(np.arange(n_seg, dtype=np.intp), n_i)
+    starts = np.repeat(np.cumsum(n_i) - n_i, n_i)
+    within = np.arange(seg_idx.shape[0], dtype=np.intp) - starts
+    t = (within + 0.5) / n_i[seg_idx]  # (B,) in (0, 1)
+
+    bead_centers = (p0[seg_idx] + t[:, None] * (p1[seg_idx] - p0[seg_idx])).astype(
+        np.float32
+    )
+    bead_widths = (w0[seg_idx] + t * (w1[seg_idx] - w0[seg_idx])).astype(np.float32)
+
+    # Per-bead colour. Prefer interpolate-the-scalar-then-LUT (matches the line
+    # shader's interpolate-then-LUT order for non-linear colormaps); else
+    # interpolate per-vertex colours.
+    bead_colors: Optional[NDArray] = None
+    if scalars is not None and colormap is not None:
+        from luxar.colormaps import scalars_to_colors
+
+        s_arr = np.broadcast_to(
+            np.asarray(scalars, dtype=np.float64).reshape(-1), (n_vertices,)
+        )
+        s0 = s_arr[pairs[:, 0]][seg_idx]
+        s1 = s_arr[pairs[:, 1]][seg_idx]
+        bead_scalars = s0 + t * (s1 - s0)
+        # Normalise over the FULL field range (vmin/vmax from all vertices) so the
+        # beads share the finest node's scalar_data_range, not a per-segment one.
+        bead_colors = scalars_to_colors(
+            bead_scalars, colormap, vmin=float(s_arr.min()), vmax=float(s_arr.max())
+        )
+    elif colors is not None:
+        c = np.asarray(colors)
+        c0 = c[pairs[:, 0]].astype(np.float64)[seg_idx]
+        c1 = c[pairs[:, 1]].astype(np.float64)[seg_idx]
+        interp = c0 + t[:, None] * (c1 - c0)
+        bead_colors = (
+            interp.round().astype(c.dtype) if np.issubdtype(c.dtype, np.integer)
+            else interp.astype(c.dtype)
+        )
+
+    # Per-segment comb overlap at the midpoint: sum over the segment's beads of
+    # exp(-½ (Δ/σ)²), Δ = (t-½)·L. For a long segment this → √(2π) (the comb sum,
+    # smooth tube); for a single bead it is 1 (so a lone bead keeps full opacity
+    # instead of being √(2π)≈2.5× too dim). bincount reduces per segment.
+    off_over_sigma = (t - 0.5) * seg_len[seg_idx] / sigma[seg_idx]
+    contrib = np.exp(-0.5 * off_over_sigma * off_over_sigma)
+    overlap = np.bincount(seg_idx, weights=contrib, minlength=n_seg)  # (E,)
+    overlap_per_bead = np.maximum(overlap[seg_idx], 1e-9)
+
+    # Build via the isotropic point lift at opacity=1 (no beads dropped — all
+    # kept segments have σ>0 → positive bead widths), then scale each bead's
+    # amplitude by opacity / overlap_i so every segment's tube peaks at opacity.
+    lifted = lift_points_to_gsplats(
+        bead_centers, bead_widths, colors=bead_colors, opacity=1.0,
+        radius_scale=radius_scale, truncation_radius=T,
+    )
+    flat = lifted.flattened()
+    if int(flat.n_splats) != bead_centers.shape[0]:  # defensive: alignment broke
+        return lifted
+    amps = (
+        np.asarray(flat.amplitudes, dtype=np.float64) * (float(opacity) / overlap_per_bead)
+    ).astype(np.float32)
+    return GSplatData(
+        centers=np.asarray(flat.centers, dtype=np.float32),
+        amplitudes=amps,
+        cholesky_factors=np.asarray(flat.cholesky_factors, dtype=np.float32),
+        colors=None if flat.colors is None else np.asarray(flat.colors, np.float32),
         truncation_radius=T,
     )
 
