@@ -41,6 +41,7 @@ import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
+import { loadLinesNodeCheap, loadLinesNodeExpensive } from './load-lines-node';
 import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
@@ -236,13 +237,16 @@ export async function loadLodGroupNode(
     const minPixelSize = typeof minPixelSizeRaw === 'number' ? minPixelSizeRaw : 0;
 
     // Defer only when there's a selector to trigger the load AND the child is a
-    // leaf type with a cheap/expensive split (gsplats or points). The
+    // leaf type with a cheap/expensive split (gsplats / points / lines). The
     // eager/default child and any other type (e.g. nested groups) load fully
-    // now. Deferring the points child matters for the points-substitutive LOD
-    // ladder, whose finest child is the full Points cloud — without this it
-    // would be fetched eagerly on initial load, defeating progressive loading.
+    // now. Deferring the points/lines child matters for the points-/lines-
+    // substitutive LOD ladder, whose finest child is the full cloud / line set —
+    // without this it would be fetched eagerly on load, defeating progressive
+    // loading.
     const canDefer =
-      hasRegistry && i !== eagerIdx && (child.type === 'gsplats' || child.type === 'points');
+      hasRegistry &&
+      i !== eagerIdx &&
+      (child.type === 'gsplats' || child.type === 'points' || child.type === 'lines');
 
     if (canDefer) {
       // Cheap-attach: placeholder mesh + loader, no array fetch. The thunk runs
@@ -265,7 +269,7 @@ export async function loadLodGroupNode(
           () => ctx.registry.registerGSplatsLoader(lazyChild.path, loader),
           () => ctx.releaseLazyGSplats(lazyChild.path)
         );
-      } else {
+      } else if (child.type === 'points') {
         const { placeholder, loader } = await loadPointsNodeCheap(
           child,
           lodThreeGroup,
@@ -280,6 +284,22 @@ export async function loadLodGroupNode(
           () => loadPointsNodeExpensive(lazyChild, ctx, loader),
           () => ctx.registry.registerPointsLoader(lazyChild.path, loader),
           () => ctx.releaseLazyPoints(lazyChild.path)
+        );
+      } else {
+        const { placeholder, loader } = await loadLinesNodeCheap(
+          child,
+          lodThreeGroup,
+          childLoc,
+          ctx
+        );
+        entryChild = attachLazyChild(
+          placeholder,
+          lazyChild,
+          minPixelSize,
+          ctx,
+          () => loadLinesNodeExpensive(lazyChild, ctx, loader),
+          () => ctx.registry.registerLinesLoader(lazyChild.path, loader),
+          () => ctx.releaseLazyLines(lazyChild.path)
         );
       }
       registryChildren.push(entryChild);

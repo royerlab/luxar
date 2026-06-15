@@ -186,9 +186,9 @@ mapped per bead (scalar interpolated along each segment, *then* the LUT — matc
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
 Degenerate-width segments are dropped and per-segment beads are capped
-(`lift.MAX_BEADS_PER_SEGMENT`) so a zero/tiny-width line can't OOM. *Follow-up:*
-the finest Lines child loads eagerly — the viewer defers `gsplats`/`points` lod
-children lazily but not `lines` yet (no `loadLinesNodeCheap` split / eviction).
+(`lift.MAX_BEADS_PER_SEGMENT`) so a zero/tiny-width line can't OOM. The viewer
+lazily defers + evicts the finest Lines lod child (like `gsplats`/`points`) via
+`loadLinesNodeCheap`/`loadLinesNodeExpensive` + `releaseLazyLines`.
 
 ### GSplats (`gsplats.py`)
 
