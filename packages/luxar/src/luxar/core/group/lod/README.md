@@ -155,6 +155,33 @@ during partial loads.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
   resolver.
 
+#### Lines substitutive (lift to gsplats)
+
+`resolve_substitutive_axis_lines(spec)` is the `add_lines(..., substitutive_lod=...)`
+resolver — a thin wrapper over the shared
+`group.resolve_substitutive_axis(spec, "Lines")` (one body, shared with Points,
+so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
+(`adders/lines.py`) then:
+
+1. **Lifts** each segment to a string of isotropic **bead** Gaussians
+   (`gsplats.lift.lift_lines_to_gsplats`): beads spaced `σ_perp = 2w/T` along the
+   segment, each isotropic. Beads (not one elongated anisotropic Gaussian) because
+   the gsplat ray-integral is *view-dependent* for anisotropic covariances (a
+   single elongated Gaussian is ~`L/(4w)` brighter end-on than broadside);
+   isotropic beads are view-independent and sum to a smooth tube. Per-bead
+   amplitude divides by the Gaussian-comb overlap `√(2π)` so the tube centreline
+   = `opacity`.
+2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
+   rescale) — identical to Points.
+3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
+   the original Lines node as the finest child; `display_type="lines"`. The finest
+   "count" for `derive_min_pixel_sizes` is the full lifted **bead** count (not
+   vertex count) so the ladder thresholds stay on one scale.
+
+Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
+baked for the coarse levels (same caveat as Points). All `line_type`s
+(segments/polyline/loop/indexed) are supported.
+
 ### GSplats (`gsplats.py`)
 
 GSplats are the only geometry with a stored substitutive pyramid, so it has two
