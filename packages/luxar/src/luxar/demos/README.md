@@ -594,6 +594,17 @@ Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium 
 
 ---
 
+#### demo_gsplats_recipes_tribolium.py - LOD `--recipe` gallery (flat / additive / partitioned / multiscale)
+Runs the unified `luxar gsplat lod --recipe` pipeline on the **one** precomputed Tribolium fit to build the four scale-ordered representation topologies and lays them out side by side for direct comparison: **flat** (one leaf) → **additive** (one leaf + a prefix-sum ladder) → **partitioned** (a spatial BSP `kind=partition` where every part carries its own additive ladder) → **multiscale** (an *unbalanced-by-design* `kind=lod`: a cheap coarse substitutive cap for the far view, above a partitioned fine branch for close-up — detail only where you look). Structure is colour-coded so the topologies are legible: each BSP part gets a distinct colour, the multiscale coarse cap is red ("far") above cool-coloured fine parts ("near"), and the additive ladder runs blue→cyan coarse→fine. The reference demo for the `cal → fit → lod --recipe → convert → serve` workflow; each recipe build prints the equivalent CLI command.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.py`
+
+**Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
+
+**Demonstrates**: The `lod --recipe` engine (`build_recipe`/`RecipeParams`) and the two novel topologies — `partitioned` (per-part additive ladders) and `multiscale` (coarse cap over a partitioned fine branch); writing each recipe via the CLI's exact path (`GSplatData.save` for matrix recipes, `write_gsplats_tree` for composed node trees) and grafting them with `add_group(transform=...)` + `add_gsplats_from_file`. Options: `--max-elements=N`, `--factor=K`, `--serve-only`.
+
+---
+
 #### demo_gsplats_4d_zebrafish_timelapse.py - 4D Zebrafish Embryo Time-Lapse
 4D (3D + time) confocal recording of a living zebrafish embryo during gastrulation, with per-timepoint Gaussian splatting and a time dimension slider.
 
@@ -877,6 +888,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_3d_tribolium_embryo.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_tribolium.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_lod_embryo_line.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.py
 
 # --- GSplats: 4D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
