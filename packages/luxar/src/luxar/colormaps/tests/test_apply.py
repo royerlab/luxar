@@ -32,13 +32,28 @@ def test_vmin_vmax_clamping():
     np.testing.assert_allclose(c[-1], lut[255], atol=1e-6)  # 99 clamps to max
 
 
-def test_degenerate_constant_scalars_maps_to_lut_centre():
+def test_degenerate_constant_scalars_maps_to_lut0_like_viewer():
+    # All-equal scalars -> 0-width range. The VIEWER normalises with
+    # uScalarScale=1/max(1e-10, max-min) so t=clamp((s-min)*scale,0,1)=0 ->
+    # samples LUT[0]. The bake must match (NOT the LUT centre) or coarse levels
+    # would jump colour vs the finest scalar-driven node at the LOD seam.
     s = np.full(8, 3.0, dtype=np.float32)
     c = scalars_to_colors(s, "viridis")
     lut = resolve_colormap("viridis").astype(np.float64) / 255.0
-    # all-equal -> 0-width range -> LUT centre, all rows identical
     assert np.allclose(c, c[0])
-    np.testing.assert_allclose(c[0], lut[round(0.5 * 255)], atol=1e-6)
+    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)
+
+
+def test_nan_scalars_map_to_lut0_not_garbage():
+    s = np.array([0.0, np.nan, 1.0, np.inf], dtype=np.float32)
+    c = scalars_to_colors(s, "viridis")
+    lut = resolve_colormap("viridis").astype(np.float64) / 255.0
+    assert np.all(np.isfinite(c))
+    np.testing.assert_allclose(c[1], lut[0], atol=1e-6)  # NaN -> LUT[0]
+    np.testing.assert_allclose(c[3], lut[0], atol=1e-6)  # Inf -> LUT[0]
+    # finite endpoints still map correctly over the finite range [0,1]
+    np.testing.assert_allclose(c[0], lut[0], atol=1e-6)
+    np.testing.assert_allclose(c[2], lut[255], atol=1e-6)
 
 
 def test_default_vmin_vmax_from_data():

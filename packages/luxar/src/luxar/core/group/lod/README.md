@@ -129,9 +129,12 @@ The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
 LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
 and lifting with those colours; the finest Points child keeps `scalars`+`colormap`
-(native). Caveat: a *live* colormap change in the viewer re-colours only the
-finest child, not the baked coarse gsplat levels. (`scalars` without a `colormap`
-still raises.)
+(native). Caveats: a *live* colormap change in the viewer re-colours only the
+finest child, not the baked coarse gsplat levels; and a node `gamma` ≠ 1 is not
+reproduced on the coarse levels (colormap mode applies gamma to the scalar
+*pre-LUT* on the finest child, whereas the baked-colour gsplats get gamma applied
+to RGB — fundamentally different, so they diverge at `gamma` ≠ 1). (`scalars`
+without a `colormap` still raises.)
 
 ### Lines (`lines.py`)
 
@@ -179,8 +182,13 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    vertex count) so the ladder thresholds stay on one scale.
 
 Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
-baked for the coarse levels (same caveat as Points). All `line_type`s
-(segments/polyline/loop/indexed) are supported.
+mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
+the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
+Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
+Degenerate-width segments are dropped and per-segment beads are capped
+(`lift.MAX_BEADS_PER_SEGMENT`) so a zero/tiny-width line can't OOM. *Follow-up:*
+the finest Lines child loads eagerly — the viewer defers `gsplats`/`points` lod
+children lazily but not `lines` yet (no `loadLinesNodeCheap` split / eviction).
 
 ### GSplats (`gsplats.py`)
 
