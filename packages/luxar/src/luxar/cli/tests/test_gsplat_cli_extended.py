@@ -2222,6 +2222,60 @@ class TestLODCommand:
         assert total_splats(fine) == 32
         assert coarse.n_splats < 32
 
+    def test_recipe_multiscale_base_pixel_size_sets_threshold(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`--base-pixel-size` on multiscale stamps the coarse↔fine selector
+        threshold on the fine partition wrapper (so the coarse cap is reachable);
+        without it the count-derived ~10px default would leave the fine branch
+        eligible at every zoom. Reads the on-disk attr the viewer's selector uses."""
+        import math
+
+        import zarr
+
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import total_splats
+
+        out = tmp_path / "ms_bps.gsplats.zarr"
+        bps = 200.0
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(medium_gsplats), str(out),
+                "--recipe", "multiscale",
+                "--max-elements", "12", "--n-lods", "2", "-K", "2",
+                "--base-pixel-size", str(bps), "--device", "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale+bps failed:\n{result.stdout}"
+        # Read the threshold from the on-disk attr the viewer's selector uses.
+        g = zarr.open_group(str(out), mode="r")
+        assert g["child_0"].attrs.get("min_pixel_size") == 0.0  # coarsest cap
+        fine_mps = g["child_1"].attrs.get("min_pixel_size")
+        # Counts from the loaded tree (parts are multi-LOD leaves, so reach into the
+        # node model rather than the raw zarr layout).
+        node, _ = load_gsplat_node(out)
+        fine, coarse = node.children  # finest→coarsest in memory
+        expected = bps * math.sqrt(total_splats(fine) / total_splats(coarse))
+        assert fine_mps == pytest.approx(expected)
+        assert fine_mps > 0.0  # ascending → coarse cap is reachable at far zoom
+
+    def test_base_pixel_size_rejected_for_non_multiscale_recipe(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`--base-pixel-size` is multiscale-only; the option-relevance check
+        rejects it for other recipes (it only tunes a kind=lod group's switch)."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(medium_gsplats), str(out),
+                "--recipe", "additive", "--base-pixel-size", "200",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

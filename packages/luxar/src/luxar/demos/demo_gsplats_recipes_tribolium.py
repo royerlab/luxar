@@ -266,7 +266,10 @@ def _cli_for(recipe: str) -> str:
     if recipe == "partitioned":
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
     if recipe == "multiscale":
-        return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+        return (
+            base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+            f" --base-pixel-size {MULTISCALE_BASE_PIXEL_SIZE:g}"
+        )
     return base
 
 

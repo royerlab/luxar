@@ -58,13 +58,17 @@ _OPTION_TOKENS = {
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
     "--levels": "levels",
+    "--base-pixel-size": "lod_selector",
 }
 
 _ALLOWED_TOKENS = {
     "flat": frozenset(),
     "additive": frozenset({"additive"}),
     "partitioned": frozenset({"additive", "partition"}),
-    "multiscale": frozenset({"additive", "partition", "substitutive"}),
+    # ``lod_selector`` (--base-pixel-size) tunes the coarse↔fine switch of the
+    # multiscale kind=lod group; only this recipe builds such a group from a flat
+    # input, so it is the only recipe that accepts it.
+    "multiscale": frozenset({"additive", "partition", "substitutive", "lod_selector"}),
     "substitutive": frozenset({"substitutive", "levels"}),
     "pyramid": frozenset({"additive", "substitutive", "levels"}),
 }
@@ -220,6 +224,14 @@ def lod_recipe(
     candidate_bins_k: Optional[int] = typer.Option(
         None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
     ),
+    base_pixel_size: Optional[float] = typer.Option(
+        None,
+        "--base-pixel-size",
+        help="multiscale only: LOD selector anchor (px) for the coarse↔fine "
+        "switch. Default is a count-derived ~10px, which often leaves the fine "
+        "branch eligible at every zoom (the coarse cap never shows); raise it "
+        "(e.g. 200) to push the coarse cap across a wider/farther zoom range.",
+    ),
     # ── universal ──
     ordering: str = typer.Option(
         "hilbert", "--ordering", help="Spatial ordering: hilbert | morton | none."
@@ -297,6 +309,7 @@ def lod_recipe(
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
             "--levels": levels,
+            "--base-pixel-size": base_pixel_size,
         }
         allowed = _ALLOWED_TOKENS[recipe]
         irrelevant = [
@@ -411,6 +424,8 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
+                # multiscale-only; None → the serializer's count-derived default.
+                base_pixel_size=base_pixel_size,
                 device=device or "auto",
                 seed=seed,
             )

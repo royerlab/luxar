@@ -52,6 +52,16 @@ scene-graft path now stamps the threshold on the lod/partition **wrapper** group
 (matching the standalone writer `gsplat_tree.write_gsplat_node`), so the coarse
 far-view cap and the fine near-view branch switch as designed.
 
+Two follow-ups make the switch actually *visible*: grafted `kind=partition`
+wrappers are now back-filled with `position_bounds` at scene finalization (the
+graft, unlike the standalone writer, didn't compute the children union — needed
+for partition-unit frustum culling), and `multiscale` gained a `base_pixel_size`
+anchor (`RecipeParams.base_pixel_size` / the new `gsplat lod --base-pixel-size`
+flag). The coarse cap is a *substitutive* level — fewer but larger splats — so the
+count-derived threshold (~10 px) switched too early and left the fine branch
+eligible at every practical zoom; raising the anchor (e.g. `200`) pushes the
+coarse cap across a wider/farther zoom range so it is actually seen.
+
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 
 Full Luxar **scenes** now adopt a self-identifying `.luxar.zarr` extension
