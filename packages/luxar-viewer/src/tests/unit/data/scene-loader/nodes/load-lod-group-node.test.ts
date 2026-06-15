@@ -633,6 +633,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
       '/lod/child_1',
       expect.anything()
     );
+    expect(ln.loading).toBe(false);
   });
 
   it('gives a deferred lines level a release thunk that evicts + resets readiness', async () => {
@@ -646,11 +647,16 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     const ln = reg.get('/lod')!.children[1];
-    ln.ready = true;
+    ln.ready = true; // simulate a completed load
+    ln.failed = true; // simulate a stale failure flag from a prior cycle
+    ln.failedTick = 42;
     expect(typeof ln.release).toBe('function');
     ln.release!();
     expect(vi.mocked(ctx.releaseLazyLines)).toHaveBeenCalledWith('/lod/child_1');
     expect(ln.ready).toBe(false);
+    expect(ln.loading).toBe(false);
+    expect(ln.failed).toBe(false);
+    expect(ln.failedTick).toBeUndefined();
   });
 
   it('does not register the lines level when the dataset is switched mid-load', async () => {

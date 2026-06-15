@@ -146,9 +146,11 @@ export async function loadLinesNodeExpensive(
     const staged = await ctx.processLinesData(node.path, data, linesViewState);
     // Liveness gate: a deferred (lazy lod_group) load may resolve after the
     // dataset was switched/disposed; committing then would write into a stale
-    // root group. Drop the commit silently — the abort-discard policy, matching
-    // loadPointsNodeExpensive / loadGSplatsNodeExpensive.
-    if (staged && ctx.isDatasetLive()) ctx.commitLinesGeometry(staged);
+    // root group. Drop silently (no commit, no success log) — the abort-discard
+    // policy, matching loadPointsNodeExpensive / loadGSplatsNodeExpensive's
+    // early return.
+    if (!ctx.isDatasetLive()) return;
+    if (staged) ctx.commitLinesGeometry(staged);
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
   } catch (error) {
