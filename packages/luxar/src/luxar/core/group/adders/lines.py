@@ -101,7 +101,6 @@ def add_lines_impl(
                     group,
                     name=name,
                     vert_arr=vert_arr,
-                    n_vertices=n_vertices,
                     widths=widths,
                     colors=colors,
                     sharpness=sharpness,
@@ -120,6 +119,14 @@ def add_lines_impl(
         # (β); add_lines honors user-explicit ``partition=`` here and
         # will pick up the auto-partition path automatically once β
         # merges. Until then, ``partition=`` is opt-in via the call site.
+
+        # ``partition=False`` is an explicit no-partition bypass (the same
+        # sentinel resolve_auto_partition normalises for Points), used by the
+        # substitutive finest-child + degenerate fallback so a nested add_lines
+        # can't re-partition. Normalise it to None here (lines does not yet wire
+        # the auto-partition heuristic, so there is nothing else to resolve).
+        if partition is False:
+            partition = None
 
         # Partition branch — polyline-aware BSP. Whole polylines are
         # atomic; the BSP runs over per-polyline centroids and assigns
@@ -632,7 +639,6 @@ def add_lines_substitutive_lod_wrapper_impl(
     *,
     name: str,
     vert_arr: np.ndarray,
-    n_vertices: int,
     widths: Any,
     colors: Any,
     sharpness: Any,
@@ -659,20 +665,20 @@ def add_lines_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import derive_min_pixel_sizes
 
-    # Scalar+colormap lines have no per-splat scalar channel on gsplats, so bake
-    # scalars -> RGB (the finest Lines child keeps scalars+colormap natively).
+    # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
+    # interpolates the scalar per bead then maps it through the LUT (matching the
+    # line shader's interpolate-then-LUT order — important for non-linear
+    # colormaps). The finest Lines child keeps scalars+colormap natively.
+    scalars_for_lift = None
     colors_for_lift = colors
     if scalars is not None and colors is None:
-        colormap = attrs.get("colormap")
-        if colormap is None:
+        if attrs.get("colormap") is None:
             raise ValueError(
                 "substitutive_lod on Lines with scalars requires a colormap "
                 "(scalars map to colour via a colormap LUT). Pass colormap=..., "
                 "or provide explicit per-vertex colors."
             )
-        from ....colormaps import scalars_to_colors
-
-        colors_for_lift = scalars_to_colors(np.asarray(scalars), colormap)
+        scalars_for_lift = scalars
 
     lifted = lift_lines_to_gsplats(
         vert_arr,
@@ -680,6 +686,8 @@ def add_lines_substitutive_lod_wrapper_impl(
         line_type=line_type,
         indices=indices,
         colors=colors_for_lift,
+        scalars=scalars_for_lift,
+        colormap=attrs.get("colormap") if scalars_for_lift is not None else None,
         opacity=1.0,
         truncation_radius=float(spec["truncation_radius"]),
     )
@@ -694,18 +702,20 @@ def add_lines_substitutive_lod_wrapper_impl(
         seed=spec.get("seed"),
     )
 
-    # Degenerate (no usable coarse levels, e.g. a too-small / edge-less line set)
-    # -> flat Lines node. vert_arr is already dim_order-transformed.
-    if not coarse:
+    # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an
+    # edge-less / all-zero-width set (the lift yields 0 beads, so every coarse
+    # level is empty: coarse[-1] is the coarsest). vert_arr is already
+    # dim_order-transformed; partition=False so auto-partition can't re-fire.
+    if not coarse or int(coarse[-1].n_splats) == 0:
         aprint(
-            f"  ⚠ substitutive_lod '{name}': input too small to synthesise coarse "
-            "levels; writing a flat Lines node."
+            f"  ⚠ substitutive_lod '{name}': no liftable segments / too small to "
+            "synthesise coarse levels; writing a flat Lines node."
         )
         return add_lines_impl(
             group, name=name, vertices=vert_arr, widths=widths, colors=colors,
             sharpness=sharpness, scalars=scalars, labels=labels,
             image_labels=image_labels, indices=indices, line_type=line_type,
-            parent=parent, extend_to_all=extend_to_all, partition=None, **attrs,
+            parent=parent, extend_to_all=extend_to_all, partition=False, **attrs,
         )
 
     coarse_first = list(reversed(coarse))  # coarsest first
@@ -777,7 +787,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         fill=None,
         additive_lod=None,
         substitutive_lod=None,
-        partition=None,
+        partition=False,
         min_pixel_size=min_pixel_sizes[-1],
         **child_attrs,
     )

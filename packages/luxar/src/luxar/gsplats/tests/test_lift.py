@@ -270,3 +270,71 @@ def test_lines_nd_support():
     verts = np.random.default_rng(0).uniform(0, 10, (6, 4)).astype(np.float32)
     data = lift_lines_to_gsplats(verts, 1.0, line_type="segments")
     assert data.ndim == 4
+
+
+def test_lines_zero_width_does_not_explode():
+    # Regression: width=0 -> sigma=0 must NOT blow ceil(L/sigma) into an OOM.
+    data = lift_lines_to_gsplats(
+        np.array([[0, 0, 0], [10, 0, 0]], np.float32), 0.0, line_type="segments"
+    )
+    assert data.n_splats == 0  # degenerate-width segment dropped, no allocation
+
+
+def test_lines_tiny_width_capped():
+    # A tiny-but-positive width must be capped, not explode to billions of beads.
+    data = lift_lines_to_gsplats(
+        np.array([[0, 0, 0], [10, 0, 0]], np.float32), 1e-6, line_type="segments"
+    )
+    assert 0 < data.n_splats <= 4096
+
+
+@pytest.mark.parametrize("seg_len", [20.0, 2.0, 0.5])
+def test_lines_tube_centerline_equals_opacity_for_any_length(seg_len):
+    # Per-segment comb amplitude: long tubes AND short (single-bead) segments must
+    # both peak at opacity (the asymptotic sqrt(2pi) alone under-renders short ones).
+    verts = np.array([[0, 0, 0], [seg_len, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", opacity=1.0,
+                                 truncation_radius=3.0)
+    flat = data.flattened()
+    c = np.asarray(flat.centers, np.float64)
+    a = np.asarray(flat.amplitudes, np.float64)
+    sig = _bead_sigma(data)
+    uRIF = compute_ray_integral_factor(3.0)
+    mid = np.array([seg_len / 2, 0.0, 0.0])
+    peaks = a * sig * uRIF * np.exp(-0.5 * (np.linalg.norm(c - mid, axis=1) / sig) ** 2)
+    assert float(peaks.sum()) == pytest.approx(1.0, abs=0.05)
+
+
+def test_lines_loop_has_more_beads_than_polyline():
+    # The loop closing edge (N-1,0) must contribute beads — dropping it would
+    # make loop == polyline.
+    verts = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]], np.float32)
+    poly = lift_lines_to_gsplats(verts, 1.0, line_type="polyline").n_splats
+    loop = lift_lines_to_gsplats(verts, 1.0, line_type="loop").n_splats
+    assert loop > poly
+
+
+def test_lines_indexed_lifts_all_edges():
+    # Both edges of the indexed edge list must be lifted (not just one).
+    verts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0]], np.float32)
+    idx = np.array([[0, 1], [0, 2]], np.intp)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="indexed", indices=idx)
+    c = np.asarray(data.flattened().centers, np.float64)
+    # beads near both edge midpoints [5,0,0] and [0,5,0]
+    assert np.any(np.linalg.norm(c - [5, 0, 0], axis=1) < 1.0)
+    assert np.any(np.linalg.norm(c - [0, 5, 0], axis=1) < 1.0)
+
+
+def test_lines_scalars_interpolate_then_lut():
+    # scalars+colormap: scalar interpolated per bead THEN LUT (not RGB-interpolated).
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments",
+                                 scalars=np.array([0.0, 1.0], np.float32),
+                                 colormap="viridis")
+    from luxar.colormaps import resolve_colormap
+
+    lut = resolve_colormap("viridis").astype(np.float64) / 255.0
+    c = np.asarray(data.flattened().colors, np.float64)
+    # first bead (t≈small) near LUT low end, last near LUT high end
+    assert np.linalg.norm(c[0] - lut[0]) < np.linalg.norm(c[0] - lut[255])
+    assert np.linalg.norm(c[-1] - lut[255]) < np.linalg.norm(c[-1] - lut[0])

@@ -138,3 +138,46 @@ class TestSubstitutiveLinesGuards:
             with pytest.raises(ValueError, match="colormap"):
                 scene.add_lines("c", verts, 1.0, scalars=scalars, line_type="segments",
                                 substitutive_lod=True)
+
+    def test_uniform_scalar_plus_colormap_works(self, tmp_path) -> None:
+        # A scalar-valued (uniform) `scalars` must broadcast, not crash.
+        out = tmp_path / "t.luxar.zarr"
+        verts = _segments(1500)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines("c", verts, 0.8, scalars=0.5, colormap="viridis",
+                            line_type="segments",
+                            substitutive_lod=dict(levels=2, device="cpu", seed=0))
+        grp = zarr.open(str(out), mode="r")["c"]
+        assert grp.attrs["kind"] == "lod"
+
+    def test_edgeless_input_delegates_to_flat_not_substitutive_crash(self, tmp_path) -> None:
+        # A 1-vertex polyline is genuinely invalid (a flat add_lines rejects it
+        # too). The substitutive builder must DELEGATE to the flat path and raise
+        # the SAME normal validation error — not a cryptic substitutive-internal
+        # error (e.g. 'coarsest child must have >=1 element') from running the
+        # pipeline on a 0-bead lift.
+        out = tmp_path / "t.luxar.zarr"
+        verts = np.array([[1.0, 2.0, 3.0]], np.float32)  # 1 vertex -> 0 segments
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="at least 2 vertices"):
+                scene.add_lines("c", verts, 1.0, line_type="polyline",
+                                substitutive_lod=dict(levels=2, device="cpu"))
+
+    def test_finest_count_uses_bead_currency(self, tmp_path) -> None:
+        # The finest (lines) threshold must be derived from the lifted bead count,
+        # giving it the LARGEST threshold — not n_vertices (a different scale that
+        # would collapse the top thresholds). Assert the finest threshold exceeds
+        # what an n_vertices-based ladder would produce.
+        from luxar.core.group.lod.group import derive_min_pixel_sizes
+
+        grp, n_verts = _build(tmp_path, levels=2)
+        n = len(sorted(k for k in grp.keys() if k.startswith("child_")))
+        finest_mps = float(grp[f"child_{n - 1}"].attrs["min_pixel_size"])
+        coarse_counts = [
+            int(grp[f"child_{i}"].attrs["n_splats"]) for i in range(n - 1)
+        ]
+        # An n_vertices-based ladder (the wrong currency) would give this finest:
+        wrong = derive_min_pixel_sizes(coarse_counts + [n_verts])[-1]
+        assert finest_mps > wrong
