@@ -52,6 +52,7 @@ vi.mock('../../../../../data/scene-loader/nodes/load-lines-node', () => ({
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
+import { log } from '../../../../../utils/log';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
@@ -458,6 +459,65 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(afterPaths).toContain('/lod/child_1');
     }
   );
+
+  it('re-sorts children to ascending min_pixel_size (and warns) when the order is wrong', async () => {
+    // Defense-in-depth for malformed / hand-authored scenes: the selector assumes
+    // ascending thresholds. Given out-of-order thresholds (0, 500, 100), the loader
+    // must repair to ascending so the selector works, keep the eager default active,
+    // and warn so the producer bug is surfaced.
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0), // eager default + coarsest
+          makeChildNode('/lod/child_1', 500),
+          makeChildNode('/lod/child_2', 100), // out of order (< 500)
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      // Repaired to strictly ascending so pickChildWithHysteresis is well-defined.
+      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      // The eager default (mps=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      // The violation was surfaced.
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn or reorder when child thresholds are already ascending', async () => {
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeChildNode('/lod/child_1', 100),
+          makeChildNode('/lod/child_2', 500),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      expect(reg.get('/lod')!.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+      ).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 
   it('does not register or mark ready when the dataset is switched mid-load', async () => {
     attachStubChildren();

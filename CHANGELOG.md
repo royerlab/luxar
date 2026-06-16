@@ -68,7 +68,11 @@ loads lazily on first activation (the selector only needs the child's
 `min_pixel_size` + `position_bounds`, not geometry). Geometry-agnostic — a
 partition/lod nesting of points or lines defers identically to gsplats. (Once
 loaded, grouped subtrees stay resident until scene teardown — they have no
-leaf-style evictable buffer pool yet.)
+leaf-style evictable buffer pool yet.) As defense-in-depth, `loadLodGroupNode`
+now validates that a group's child `min_pixel_size` thresholds are ascending
+(coarsest→finest) — the selector's monotonic assumption — and gracefully
+re-sorts + warns if a malformed / hand-authored scene violates it, rather than
+silently mis-selecting levels.
 
 Two follow-ups make the switch actually *visible*: grafted `kind=partition`
 wrappers are now back-filled with `position_bounds` at scene finalization (the

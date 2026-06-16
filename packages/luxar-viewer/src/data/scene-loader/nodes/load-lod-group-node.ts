@@ -404,6 +404,36 @@ export async function loadLodGroupNode(
     });
   }
 
+  // Defense-in-depth: the per-frame selector (``pickChildWithHysteresis``)
+  // assumes children are in ascending ``min_pixel_size`` order (coarsest→finest)
+  // — it scans upward and stops at the first threshold above the metric, so a
+  // later out-of-order (smaller) threshold would never be reached and the wrong
+  // level renders. The Python writer guarantees ascending order
+  // (``derive_min_pixel_sizes`` + its monotonicity guard), but a hand-authored
+  // or otherwise malformed scene could violate it. Rather than refuse the scene
+  // (the geometry is fine — only the order is wrong; cf. ``validateTransformFormat``
+  // which DOES refuse, because a row-major transform renders catastrophically
+  // wrong), recover gracefully: stable-sort to ascending and warn so the
+  // producer bug is surfaced. Almost always a no-op (already ascending).
+  const isAscending = registryChildren.every(
+    (c, k) => k === 0 || registryChildren[k - 1].minPixelSize <= c.minPixelSize
+  );
+  if (!isAscending) {
+    const before = registryChildren.map((c) => c.minPixelSize);
+    // Object identity survives the sort, so remap the eager index by reference.
+    const eagerChild = eagerRegistryIdx >= 0 ? registryChildren[eagerRegistryIdx] : null;
+    // ES2019+ Array.sort is stable, so equal thresholds keep their relative order.
+    registryChildren.sort((a, b) => a.minPixelSize - b.minPixelSize);
+    if (eagerChild) eagerRegistryIdx = registryChildren.indexOf(eagerChild);
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${node.path}: child min_pixel_size thresholds are not ascending ` +
+        `(${before.join(', ')}). The pixel-size selector needs coarsest-to-finest ` +
+        'order; re-sorted to ascending. Fix the producer ' +
+        '(derive_min_pixel_sizes guarantees ascending thresholds).'
+    );
+  }
+
   // Prefer the eager child's actual registry index. If it failed to attach
   // (eagerRegistryIdx still -1), fall back to the first ready/eager level so
   // the group shows something, else the clamped metadata default.
