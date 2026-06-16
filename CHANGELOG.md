@@ -56,6 +56,20 @@ scene-graft path now stamps the threshold on the lod/partition **wrapper** group
 (matching the standalone writer `gsplat_tree.write_gsplat_node`), so the coarse
 far-view cap and the fine near-view branch switch as designed.
 
+#### Fixed — viewer now streams nested-group LOD children (multiscale fine branch)
+
+The viewer's lazy-loader (`load-lod-group-node.ts`) only deferred **leaf**
+(gsplats/points/lines) lod-group children; a nested `kind=lod` / `kind=partition`
+child loaded eagerly at scene-init. So `multiscale`'s fine `kind=partition`
+branch was fully resident even while the coarse cap was the visible level,
+contradicting its "detail only where you look closely" design. Such non-leaf
+children are now cheap-attached as a transparent placeholder and their subtree
+loads lazily on first activation (the selector only needs the child's
+`min_pixel_size` + `position_bounds`, not geometry). Geometry-agnostic — a
+partition/lod nesting of points or lines defers identically to gsplats. (Once
+loaded, grouped subtrees stay resident until scene teardown — they have no
+leaf-style evictable buffer pool yet.)
+
 Two follow-ups make the switch actually *visible*: grafted `kind=partition`
 wrappers are now back-filled with `position_bounds` at scene finalization (the
 graft, unlike the standalone writer, didn't compute the children union — needed

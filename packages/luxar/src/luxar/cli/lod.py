@@ -183,7 +183,7 @@ def lod_recipe(
     max_n_dense: Optional[int] = typer.Option(
         None, "--max-n-dense", help="Greedy dense-Gram threshold (default 2000)."
     ),
-    # ── spatial partition (partitioned / multiscale) ──
+    # ── spatial partition (partitioned / multiscale / mosaic) ──
     max_elements: Optional[int] = typer.Option(
         None,
         "--max-elements",

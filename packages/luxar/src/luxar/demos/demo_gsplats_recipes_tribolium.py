@@ -71,7 +71,7 @@ Options:
     --recompute:       Force re-fitting the base splats from scratch (download + GPU)
     --no-serve:        Generate scene without launching viewer
     --serve-only:      Just serve a previously generated scene (skips rebuild)
-    --max-elements=N:  Per-part BSP cap for partitioned/multiscale (default 50000)
+    --max-elements=N:  Per-part BSP cap for partitioned/multiscale/mosaic (default 50000)
     --factor=K:        Coarse-cap compression for multiscale (default 8)
 
 Output:

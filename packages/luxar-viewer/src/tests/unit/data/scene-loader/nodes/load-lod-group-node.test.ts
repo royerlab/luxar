@@ -139,6 +139,33 @@ function makeLinesChildNode(
   };
 }
 
+/**
+ * A nested group child (e.g. multiscale's fine kind=partition branch). The
+ * ``displayType`` lets a single test prove the deferral is geometry-agnostic —
+ * a partition/lod wrapper of points or lines defers identically to gsplats.
+ */
+function makeGroupChildNode(
+  path: string,
+  minPixelSize: number,
+  displayType: 'gsplats' | 'points' | 'lines' = 'gsplats',
+  kind: 'partition' | 'lod' = 'partition',
+  positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
+): SceneNode {
+  return {
+    path,
+    type: 'group',
+    attrs: {
+      type: 'group',
+      kind,
+      display_type: displayType,
+      min_pixel_size: minPixelSize,
+      position_bounds: positionBounds,
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
 function makeLodGroupNode(
   children: SceneNode[],
   extraAttrs: Record<string, unknown> = {}
@@ -383,6 +410,54 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBeUndefined();
   });
+
+  // Three-way symmetry: a nested kind=partition / kind=lod wrapper defers
+  // identically regardless of the inner geometry (gsplats / points / lines).
+  // The deferral branches on the wrapper's kind, never the leaf type, so all
+  // three node types stay symmetric. Parametrized to guard that invariant.
+  it.each(['gsplats', 'points', 'lines'] as const)(
+    'defers a non-leaf group child (display_type=%s) and loads its subtree on activation',
+    async (displayType) => {
+      attachStubChildren();
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+
+      // child_0 = eager leaf (default); child_1 = a kind=partition group.
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeGroupChildNode('/lod/child_1', 100, displayType),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      expect(entry.children).toHaveLength(2);
+      const groupChild = entry.children[1];
+      // Registered with its threshold/bounds, but NOT loaded.
+      expect(groupChild.minPixelSize).toBe(100);
+      expect(groupChild.positionBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 1] });
+      expect(groupChild.ready).toBe(false);
+      expect(typeof groupChild.ensureLoaded).toBe('function');
+      // Grouped subtrees aren't evictable (no leaf-style pool) → no release thunk.
+      expect(groupChild.release).toBeUndefined();
+      // The transparent wrapper must not steal the child's identity — only the
+      // real node (attached on load) owns the path/kind.
+      expect(groupChild.object.name).toBe('');
+      expect(groupChild.object.userData.kind).toBeUndefined();
+      // At init, loadChildren ran ONLY for the eager default — NOT the group child.
+      const initPaths = loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path);
+      expect(initPaths).toContain('/lod/child_0');
+      expect(initPaths).not.toContain('/lod/child_1');
+
+      // Activation loads the whole subtree (loadChildren on the group), marks ready.
+      groupChild.ensureLoaded!();
+      await vi.waitFor(() => expect(groupChild.ready).toBe(true));
+      const afterPaths = loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path);
+      expect(afterPaths).toContain('/lod/child_1');
+    }
+  );
 
   it('does not register or mark ready when the dataset is switched mid-load', async () => {
     attachStubChildren();

@@ -317,6 +317,62 @@ export async function loadLodGroupNode(
       continue;
     }
 
+    // Deferred GROUP path: a non-leaf child (a nested kind=partition or
+    // kind=lod) that is not the eager default. The leaf cheap/expensive split
+    // doesn't apply, but the selector only needs the child's min_pixel_size +
+    // position_bounds (both on attrs, read by attachLazyChild) — not loaded
+    // geometry — so we cheap-attach an empty placeholder group and load the
+    // whole subtree lazily on first activation. This is what keeps multiscale's
+    // fine kind=partition branch from loading eagerly at scene-init while the
+    // coarse cap is the visible level (it loads only once you zoom in close
+    // enough to select it).
+    //
+    // Geometry-agnostic by construction: it branches on the wrapper's *kind*
+    // (lod/partition), never on the inner leaf type, and the load runs through
+    // the same ``loadChildren`` recursion as any other node — so a
+    // partition/lod nesting of points or lines defers identically to gsplats
+    // (the three node types stay symmetric here; see the parametrized test).
+    //
+    // A per-child transform would make the transform-less placeholder
+    // mis-project its bounds, so those (rare) fall through to the eager path
+    // below. Grouped subtrees have no leaf-style evictable buffer pool, so
+    // there is no release(): once loaded they stay resident and scene teardown
+    // disposes them — matching the prior eager behaviour, just deferred to
+    // first view.
+    const childAttrs = child.attrs as Record<string, unknown>;
+    const canDeferGroup =
+      hasRegistry &&
+      i !== eagerIdx &&
+      child.type === 'group' &&
+      (childAttrs.kind === 'lod' || childAttrs.kind === 'partition') &&
+      !childAttrs.transform;
+
+    if (canDeferGroup) {
+      // Transparent lazy wrapper: an anonymous, empty group. The registry holds
+      // it by reference for visibility toggling, so it needs no name/kind — and
+      // must NOT take the child's name/kind, or it would duplicate the identity
+      // of the real node that ``loadChildren`` attaches *under* it on activation
+      // (which owns the path + kind for picking / getObjectByName).
+      const placeholder = new THREE.Group();
+      lodThreeGroup.add(placeholder);
+      const lazyChild = child;
+      const entryChild = attachLazyChild(
+        placeholder,
+        lazyChild,
+        minPixelSize,
+        ctx,
+        () => loadChildren(lazyChild, placeholder, childLoc, ctx),
+        () => {
+          // Nested leaf / lod-group loaders self-register during loadChildren
+          // (which runs only on activation), so there's no separate loader to
+          // register here. Laziness holds because loadChildren is gated by the
+          // selector firing ensureLoaded, not run up front.
+        }
+      );
+      registryChildren.push(entryChild);
+      continue;
+    }
+
     // Eager path: load fully via the generic recursion (handles any
     // geometry type), then look up the attached THREE node by name.
     await loadChildren(child, lodThreeGroup, childLoc, ctx);
