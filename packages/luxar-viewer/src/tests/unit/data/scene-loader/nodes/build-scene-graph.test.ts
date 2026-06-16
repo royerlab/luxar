@@ -82,6 +82,70 @@ describe('buildSceneGraph — hierarchy', () => {
   });
 });
 
+describe('buildSceneGraph — sibling order (napari-style insertion order)', () => {
+  it('sorts siblings by child_index, not by alphabetical enumeration order', async () => {
+    // enumerateStore yields consolidated-metadata (alphabetical) order, but
+    // the Python Node stamps insertion order as `child_index`. The graph must
+    // come back in child_index order. Mirrors the recipe-gallery demo, whose
+    // scale order (flat→additive→partitioned→multiscale→mosaic) is NOT
+    // alphabetical.
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/recipe_additive', kind: 'group' },
+      { path: '/recipe_flat', kind: 'group' },
+      { path: '/recipe_mosaic', kind: 'group' },
+      { path: '/recipe_multiscale', kind: 'group' },
+      { path: '/recipe_partitioned', kind: 'group' },
+    ]);
+    attrsByPath['/recipe_flat'] = { type: 'group', child_index: 0 };
+    attrsByPath['/recipe_additive'] = { type: 'group', child_index: 1 };
+    attrsByPath['/recipe_partitioned'] = { type: 'group', child_index: 2 };
+    attrsByPath['/recipe_multiscale'] = { type: 'group', child_index: 3 };
+    attrsByPath['/recipe_mosaic'] = { type: 'group', child_index: 4 };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    expect(root.children?.map((c) => c.path)).toEqual([
+      '/recipe_flat',
+      '/recipe_additive',
+      '/recipe_partitioned',
+      '/recipe_multiscale',
+      '/recipe_mosaic',
+    ]);
+  });
+
+  it('falls back to stable enumeration order when child_index is absent', async () => {
+    // Legacy data with no child_index keeps its (alphabetical) enumeration
+    // order rather than being shuffled by the Infinity sentinel.
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/a', kind: 'group' },
+      { path: '/b', kind: 'group' },
+      { path: '/c', kind: 'group' },
+    ]);
+    attrsByPath['/a'] = { type: 'group' };
+    attrsByPath['/b'] = { type: 'group' };
+    attrsByPath['/c'] = { type: 'group' };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    expect(root.children?.map((c) => c.path)).toEqual(['/a', '/b', '/c']);
+  });
+
+  it('sorts nested children by child_index too', async () => {
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/grp', kind: 'group' },
+      { path: '/grp/beta', kind: 'group' },
+      { path: '/grp/alpha', kind: 'group' },
+    ]);
+    attrsByPath['/grp'] = { type: 'group', child_index: 0 };
+    attrsByPath['/grp/alpha'] = { type: 'points', child_index: 1 };
+    attrsByPath['/grp/beta'] = { type: 'points', child_index: 0 };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    expect(root.children?.[0].children?.map((c) => c.path)).toEqual(['/grp/beta', '/grp/alpha']);
+  });
+});
+
 describe('buildSceneGraph — overlay skip', () => {
   it('omits /overlays and its descendants from the scene graph', async () => {
     enumerateStoreMock.mockResolvedValue([

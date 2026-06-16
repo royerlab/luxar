@@ -62,9 +62,18 @@ class Node:
                     raise ValueError(
                         f"Duplicate child name '{name}' under parent '{parent.name}'."
                     )
+            # Insertion order among siblings. The viewer rebuilds the scene
+            # graph from zarr consolidated metadata, whose enumeration is
+            # alphabetical — so we record the add order explicitly here and
+            # the loader sorts siblings by it. This keeps the layers panel in
+            # napari-style addition order rather than alphabetical.
+            child_index = len(parent.children)
             parent.children.append(self)
             parent_path = getattr(parent, "path", None)
             self.path = f"{parent_path}/{name}" if parent_path else name
+            # ``setdefault`` so an explicit caller-supplied value wins (and a
+            # re-created node keeps its original slot).
+            attrs.setdefault("child_index", child_index)
         else:
             self.path = ""
 

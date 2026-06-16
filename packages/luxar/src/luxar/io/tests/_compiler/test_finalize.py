@@ -87,6 +87,41 @@ def test_finalize_lod_display_types_resolves_from_finest() -> None:
     assert dict(root["lodgrp"].attrs)["display_type"] == "gsplats"
 
 
+def test_finalize_lod_display_types_uses_child_index_not_name_order() -> None:
+    """The finest child is resolved by ``child_index`` (coarsest→finest), not by
+    alphabetical name order. With >=10 children, name order puts ``child_10``
+    before ``child_2`` — so a name-sorted "last" child is NOT the finest. Mixing
+    leaf types across levels makes the mis-resolution observable: pre-fix the
+    name-sorted last child (child_9, a ``points`` leaf) wins; post-fix the
+    highest-child_index child (child_11, the actual finest ``gsplats`` leaf) wins.
+    """
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    # 12 children, child_index 0..11 (coarsest→finest). All but the true finest
+    # are 'points'; the finest (child_index 11) is 'gsplats'. Name-sorting yields
+    # child_9 last (a 'points' leaf) — the wrong answer.
+    for i in range(12):
+        c = lod.create_group(f"child_{i}")
+        c.attrs["type"] = "gsplats" if i == 11 else "points"
+        c.attrs["child_index"] = i
+    finalize_lod_display_types(root)
+    assert dict(root["lodgrp"].attrs)["display_type"] == "gsplats"
+
+
+def test_finalize_lod_display_types_falls_back_to_name_order_without_child_index() -> None:
+    """Legacy trees with no ``child_index`` keep the historical name-order
+    behaviour (finest = last by name) so nothing regresses for old data."""
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    for i in range(3):  # child_0..child_2, no child_index
+        c = lod.create_group(f"child_{i}")
+        c.attrs["type"] = "lines" if i == 2 else "points"
+    finalize_lod_display_types(root)
+    assert dict(root["lodgrp"].attrs)["display_type"] == "lines"
+
+
 def test_compute_content_hashes_is_deterministic_and_stamps_attrs() -> None:
     root = _lod_tree()
     h1 = compute_content_hashes(root)

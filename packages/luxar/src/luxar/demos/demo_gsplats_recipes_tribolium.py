@@ -27,30 +27,35 @@ novel topologies are the point:
 
 - **partitioned** — a spatial BSP ``kind=partition`` where EACH part carries its
   own additive LOD ladder. Off-screen parts frustum-cull; visible parts stream
-  detail progressively. Here each BSP part is painted a distinct colour, so you
-  can SEE the spatial cells.
+  detail progressively. Each BSP part gets a distinct HUE (see the spatial cells)
+  and each ladder level a SHADE of that hue (see the coarse→fine accumulation).
 - **multiscale** — an *unbalanced-by-design* ``kind=lod``: a single cheap coarse
   substitutive cap for the far/zoomed-out view, ABOVE a ``partitioned`` fine
-  branch for close-up. Detail structure exists only where you look closely. Here
-  the coarse cap is painted red ("far view") and the fine partition parts cool
-  colours ("near detail").
+  branch for close-up. Detail structure exists only where you look closely. The
+  coarse↔fine switch is unmistakable: zoom out → one uniform pale blob (the cap);
+  zoom in → it bursts into the multicoloured fine partition parts.
 - **mosaic** — a spatial BSP ``kind=partition`` where EACH part is its own
   *substitutive* lod group (coarse↔fine *replacement* per part). Unlike
   ``partitioned`` (additive, accumulating) and ``multiscale`` (one global cap),
   every cell picks its own level by its own on-screen size — locally adaptive
-  detail. Each part is painted a distinct colour; the per-part swap shows as the
-  blob count changing as you navigate.
+  detail. Each part gets a distinct HUE; each substitutive level a SHADE of it,
+  so a per-part swap reads as that part's shade jumping as you navigate.
 
 For reference the two primitives bracket them: **flat** (one leaf, neutral grey)
-and **additive** (one leaf + a prefix-sum ladder, painted on a blue→cyan ramp so
-the coarse-first ordering is visible).
+and **additive** (one leaf + a prefix-sum ladder, each accumulating level painted
+its own vivid hue so the coarse→fine streaming is unmistakable).
+
+All colouring is applied AFTER the fact by a generic painter that walks whatever
+tree the unmodified ``build_recipe`` engine produced (keyed on node type, never on
+recipe identity) — so what renders is byte-for-byte the topology the CLI builds,
+only recoloured.
 
 Pipeline:
 1. **Load** the precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
 2. **Center** it so all five columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
-4. **Colour-code** the structure (per-part / cap-vs-fine / ladder ramp)
+4. **Colour-code** the result after the fact (hue = part, shade = LOD level)
 5. **Compose** one scene: five translated columns, each grafted via
    ``add_gsplats_from_file`` (exactly what ``gsplat convert`` does), with a legend
 6. **Visualize** — pan across the row; zoom into a column to watch its LOD switch
@@ -79,6 +84,7 @@ Output:
     - Automatically opens in browser
 """
 
+import colorsys
 import sys
 import tempfile
 from pathlib import Path
@@ -145,19 +151,33 @@ for _arg in sys.argv:
 Arbol.max_depth = 5
 
 # Colour palettes (RGB floats in [0, 1]).
-_GREY = (0.72, 0.74, 0.78)  # flat
-_WARM_RED = (1.00, 0.30, 0.32)  # multiscale coarse cap (far view)
-# Categorical palette for partition parts (distinct, readable).
-_PART_PALETTE = [
-    (0.20, 0.75, 0.95),  # cyan
-    (0.40, 0.85, 0.45),  # green
-    (1.00, 0.78, 0.20),  # amber
-    (0.85, 0.45, 0.95),  # violet
-    (0.95, 0.55, 0.30),  # orange
-    (0.45, 0.60, 1.00),  # blue
-    (0.95, 0.40, 0.65),  # pink
-    (0.55, 0.90, 0.75),  # mint
-]
+#
+# Debug-colouring scheme — every part AND every LOD level gets its own colour, so
+# that BOTH facts are obvious at a glance: how many parts there are, and the
+# instant a level switches. We encode them on two orthogonal axes:
+#     hue   → which spatial partition part   (distinct parts ⇒ distinct hues)
+#     shade → which LOD level within a part   (a switch ⇒ a visible shade jump)
+# A standalone ladder (the ``additive`` recipe — a single "part") instead spreads
+# its accumulating levels across the *full* hue wheel, so every streamed-in level
+# is its own vivid colour. ``flat`` stays neutral grey (nothing to differentiate).
+_GREY = (0.72, 0.74, 0.78)  # flat — a single undifferentiated leaf
+
+
+def _hsv(h: float, s: float, v: float) -> tuple[float, float, float]:
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
+    return (float(r), float(g), float(b))
+
+
+def _level_shades(hue: float, n_levels: int) -> list[tuple[float, float, float]]:
+    """``n_levels`` distinct shades of one ``hue``, ordered coarsest→finest:
+    coarse = pale/bright, fine = vivid/deep. The large saturation+value swing
+    makes a level switch unmistakable even within a single part's hue."""
+    if n_levels <= 1:
+        return [_hsv(hue, 0.70, 0.96)]
+    return [
+        _hsv(hue, 0.35 + 0.60 * (j / (n_levels - 1)), 1.0 - 0.45 * (j / (n_levels - 1)))
+        for j in range(n_levels)
+    ]
 
 
 def _color_array(rgb: tuple[float, float, float], n: int) -> np.ndarray:
@@ -179,92 +199,104 @@ def _recolor_sublod(
 
 
 def _recolor_leaf(leaf: GSplatLeaf, rgb: tuple[float, float, float]) -> GSplatLeaf:
-    """A copy of ``leaf`` with every sub-LOD painted ``rgb``."""
+    """A copy of ``leaf`` with every sub-LOD painted one flat ``rgb``."""
     return GSplatLeaf(
         additive_sublods=[_recolor_sublod(s, rgb) for s in leaf.additive_sublods],
         meta=dict(leaf.meta),
     )
 
 
+def _recolor_leaf_by_shades(leaf: GSplatLeaf, hue: float) -> GSplatLeaf:
+    """A copy of ``leaf`` whose additive sub-LODs (coarse→fine) get distinct
+    shades of ``hue`` — so the prefix-sum accumulation reads as concentric shades
+    and each streamed-in level is a visibly new colour."""
+    subs = leaf.additive_sublods
+    shades = _level_shades(hue, len(subs))
+    return GSplatLeaf(
+        additive_sublods=[_recolor_sublod(s, shades[j]) for j, s in enumerate(subs)],
+        meta=dict(leaf.meta),
+    )
+
+
 # =============================================================================
-# Per-recipe structural colouring (makes each topology legible)
+# Generic, recipe-agnostic post-hoc painter
 # =============================================================================
+#
+# We build every recipe with the *unmodified* ``build_recipe`` engine, then paint
+# the result AFTER THE FACT by walking whatever tree it produced — keyed only on
+# node *type* (the stable ``GSplatNode`` contract), never on which recipe made it
+# or on assumed child positions. This guarantees we serialize byte-for-byte the
+# same topology the CLI would (same constructors, ``meta`` preserved — including
+# the ``min_pixel_size`` switch thresholds), differing only in the colour arrays.
+# The two axes (see above): hue = spatial part, shade = LOD level.
 
 
-def recolor_flat(data: GSplatData) -> GSplatData:
-    """Solid neutral grey — a single undifferentiated leaf."""
-    flat = data.flattened()
-    sub = flat.additive_sublods[0]
-    return GSplatData.from_additive_sublods([_recolor_sublod(sub, _GREY)])
+def _arc_mid(arc: tuple[float, float]) -> float:
+    return 0.5 * (arc[0] + arc[1])
 
 
-def recolor_additive(data: GSplatData) -> GSplatData:
-    """Paint each additive sub-LOD on a blue→cyan ramp (coarse-first → fine)."""
+def _paint_data(data: GSplatData) -> GSplatData:
+    """A flat ``GSplatData`` (the ``flat`` / ``additive`` matrix recipes).
+
+    One sub-LOD → neutral grey (``flat``: nothing to differentiate). A multi-level
+    ladder (``additive``) → each accumulating level its own vivid hue across the
+    full wheel, so every streamed-in increment is unmistakably a new colour.
+    """
     subs = data.additive_sublods
     n = len(subs)
-    colored = []
-    for i, sub in enumerate(subs):
-        t = i / max(1, n - 1)
-        rgb = (0.20 + 0.10 * t, 0.45 + 0.45 * t, 0.95)  # blue → cyan
-        colored.append(_recolor_sublod(sub, rgb))
+    if n == 1:
+        return GSplatData.from_additive_sublods([_recolor_sublod(subs[0], _GREY)])
+    colored = [_recolor_sublod(s, _hsv(i / n, 0.80, 0.97)) for i, s in enumerate(subs)]
     return GSplatData.from_additive_sublods(colored)
 
 
-def recolor_partition(node: GSplatPartition) -> GSplatPartition:
-    """Paint each BSP part a distinct categorical colour (see the spatial cells)."""
-    children: list[GSplatNode] = []
-    for i, part in enumerate(node.children):
-        rgb = _PART_PALETTE[i % len(_PART_PALETTE)]
-        # to_spatial_partition yields leaf parts; recolor recursively to be safe.
-        if isinstance(part, GSplatLeaf):
-            children.append(_recolor_leaf(part, rgb))
-        else:  # pragma: no cover - partitioned parts are leaves today
-            children.append(part)
-    return GSplatPartition(
-        children=children, max_elements=node.max_elements, meta=dict(node.meta)
-    )
+def _paint_node(node: GSplatNode, arc: tuple[float, float]) -> GSplatNode:
+    """Recursively paint a node tree within the hue arc ``[lo, hi)``.
+
+    * ``GSplatPartition`` → split the arc evenly among the parts so every part is
+      a distinct hue; recurse into each (each part owns its slice).
+    * ``GSplatLodGroup``  → siblings are mutually-exclusive levels (only one shown
+      at a time), so a switch is read as a colour change. Leaf levels get a
+      distinct shade of the arc hue (coarse = pale, fine = deep); a non-leaf level
+      (e.g. ``multiscale``'s partitioned fine branch) self-colours its own parts —
+      the switch then reads as one uniform blob ⇄ a burst of multicoloured parts.
+    * ``GSplatLeaf``      → a partition part carrying an additive ladder: paint its
+      sub-LODs as concentric shades (coarse→fine) of the arc hue.
+    """
+    if isinstance(node, GSplatPartition):
+        n = node.n_children
+        lo, hi = arc
+        children: list[GSplatNode] = []
+        for i, part in enumerate(node.children):
+            sub_arc = (lo + (hi - lo) * i / n, lo + (hi - lo) * (i + 1) / n)
+            children.append(_paint_node(part, sub_arc))
+        return GSplatPartition(
+            children=children, max_elements=node.max_elements, meta=dict(node.meta)
+        )
+    if isinstance(node, GSplatLodGroup):
+        m = node.n_children
+        shades = _level_shades(_arc_mid(arc), m)  # index 0 = coarsest … m-1 = finest
+        children = []
+        for k, level in enumerate(node.children):  # k: 0 = finest … m-1 = coarsest
+            if isinstance(level, GSplatLeaf):
+                children.append(_recolor_leaf(level, shades[m - 1 - k]))
+            else:
+                children.append(_paint_node(level, arc))
+        return GSplatLodGroup(
+            children=children,
+            default_level=node.default_level,
+            meta=dict(node.meta),
+        )
+    if isinstance(node, GSplatLeaf):
+        return _recolor_leaf_by_shades(node, _arc_mid(arc))
+    return node  # pragma: no cover - unknown node type: leave untouched
 
 
-def recolor_multiscale(node: GSplatLodGroup) -> GSplatLodGroup:
-    """Coarse cap red ("far view"); fine partition parts cool colours ("near")."""
-    fine, coarse = node.children  # finest→coarsest in memory
-    fine_colored = (
-        recolor_partition(fine) if isinstance(fine, GSplatPartition) else fine
-    )
-    coarse_colored = (
-        _recolor_leaf(coarse, _WARM_RED) if isinstance(coarse, GSplatLeaf) else coarse
-    )
-    return GSplatLodGroup(
-        children=[fine_colored, coarse_colored],
-        default_level=node.default_level,
-        meta=dict(node.meta),
-    )
-
-
-def recolor_mosaic(node: GSplatPartition) -> GSplatPartition:
-    """Each BSP part a distinct colour (see the cells); within a part, every
-    substitutive level shares that colour — the per-part coarse↔fine swap shows
-    as the blob count changing, not the hue."""
-    children: list[GSplatNode] = []
-    for i, part in enumerate(node.children):
-        rgb = _PART_PALETTE[i % len(_PART_PALETTE)]
-        if isinstance(part, GSplatLodGroup):
-            levels = [
-                _recolor_leaf(c, rgb) if isinstance(c, GSplatLeaf) else c
-                for c in part.children
-            ]
-            children.append(
-                GSplatLodGroup(
-                    children=levels,
-                    default_level=part.default_level,
-                    meta=dict(part.meta),
-                )
-            )
-        else:  # pragma: no cover - mosaic parts are lod groups today
-            children.append(part)
-    return GSplatPartition(
-        children=children, max_elements=node.max_elements, meta=dict(node.meta)
-    )
+def paint_recipe(result: GSplatData | GSplatNode) -> GSplatData | GSplatNode:
+    """Paint a built recipe result of either return shape (see ``build_recipe``)."""
+    if isinstance(result, GSplatData):
+        return _paint_data(result)
+    return _paint_node(result, (0.0, 1.0))
 
 
 # =============================================================================
@@ -311,18 +343,9 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
     """
     with asection(f"lod --recipe {recipe}"):
         aprint(f"$ {_cli_for(recipe)}")
-        result = build_recipe(base, recipe, _params())  # type: ignore[arg-type]
-
-        if recipe == "flat":
-            result = recolor_flat(result)
-        elif recipe == "additive":
-            result = recolor_additive(result)
-        elif recipe == "partitioned":
-            result = recolor_partition(result)
-        elif recipe == "multiscale":
-            result = recolor_multiscale(result)
-        elif recipe == "mosaic":
-            result = recolor_mosaic(result)
+        # Build with the UNMODIFIED engine, then paint the result after the fact
+        # (generic, type-driven — see ``paint_recipe``).
+        result = paint_recipe(build_recipe(base, recipe, _params()))  # type: ignore[arg-type]
 
         # Structure stats for the legend.
         if isinstance(result, GSplatData):
@@ -339,9 +362,11 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
             )
         else:
             if recipe == "partitioned":
-                structure = f"{result.n_children} BSP parts, ladder each"
+                n = result.n_children
+                structure = f"{n} BSP part{'s' if n != 1 else ''}, ladder each"
             elif recipe == "mosaic":
-                structure = f"{result.n_children} BSP parts, substitutive each"
+                n = result.n_children
+                structure = f"{n} BSP part{'s' if n != 1 else ''}, substitutive each"
             else:  # multiscale
                 fine = result.children[0]
                 n_parts = fine.n_children if isinstance(fine, GSplatPartition) else 1
@@ -410,11 +435,19 @@ GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
 The same ~256K-splat fit, laid out left→right as the five `luxar gsplat lod
 --recipe` topologies: flat → additive → partitioned → multiscale → mosaic.
 
-- partitioned: BSP spatial parts (each a distinct colour), each with its own
-  additive ladder — off-screen parts cull, visible parts stream.
-- multiscale: an unbalanced lod tree — a cheap coarse cap (red, shown when far)
-  above a partitioned fine branch (cool colours, shown up close). Detail only
-  where you look.
+Colour is applied AFTER the fact: hue = which spatial part, shade = which LOD
+level — so multiple parts read as different hues and any level switch reads as a
+shade jump.
+
+- partitioned: BSP spatial parts (each a distinct hue), each with its own additive
+  ladder (its levels are shades of that hue) — off-screen parts cull, visible
+  parts stream.
+- multiscale: an unbalanced lod tree — a cheap coarse cap above a partitioned fine
+  branch. Detail only where you look: zoom out → one uniform pale blob (the cap);
+  zoom in → it bursts into the multicoloured fine parts.
+- mosaic: BSP parts (each a distinct hue) where every part is its OWN substitutive
+  lod group — each cell culls AND picks its own level by its own on-screen size
+  (the per-part swap shows as that part's shade jumping).
 
 Pan across the row; zoom into a column to watch its level switch. Data: Cell
 Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
@@ -468,9 +501,11 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                 )
 
             scene.add_text(
-                "Left → right: the scale ladder. partitioned & multiscale are the\n"
-                "new BSP/unbalanced topologies — colours show the parts; the red\n"
-                "cap in #4 is the cheap far-view level above the fine branch.",
+                "Left → right: the scale ladder. partitioned, multiscale & mosaic\n"
+                "are the new BSP/unbalanced topologies. Colour code: hue = which\n"
+                "part, shade = which LOD level — so a switch reads as a shade jump\n"
+                "and multiple parts as different hues. In #4 the coarse cap shows as\n"
+                "one uniform blob far out, bursting into the fine parts up close.",
                 position=(0.02, 0.86),
                 font_size=0.018,
                 font="mono",
