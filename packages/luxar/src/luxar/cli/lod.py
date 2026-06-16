@@ -156,7 +156,7 @@ def lod_recipe(
         "-r",
         help=(
             "Representation topology to build (REQUIRED). Scale-ordered: "
-            "flat | additive | partitioned | multiscale; plus primitives "
+            "flat | additive | partitioned | multiscale | mosaic; plus primitives "
             "substitutive | pyramid."
         ),
     ),
@@ -385,7 +385,7 @@ def lod_recipe(
 
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
-            if recipe in ("partitioned", "multiscale"):
+            if recipe in ("partitioned", "multiscale", "mosaic"):
                 # BSP partitioning needs >= 3 spatial dims; fail cleanly (the
                 # rest of the command's validation style) rather than letting
                 # the deeper ValueError surface as a raw traceback.

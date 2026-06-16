@@ -2251,6 +2251,31 @@ class TestLODCommand:
         assert finest_total == 32
         assert total_splats(node) > 32  # synthesized coarse levels add storage
 
+    def test_recipe_mosaic_parts_drives_partition(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--parts must drive mosaic's per-part cap too (regression: the CLI's
+        partition-recipe branch listed only partitioned/multiscale, so --parts was
+        silently ignored for mosaic and it collapsed to a single default-capped
+        part)."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition
+
+        out = tmp_path / "mp.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(medium_gsplats), str(out),
+                "--recipe", "mosaic", "--parts", "4",
+                "-K", "2", "--levels", "1", "--device", "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"mosaic --parts failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert isinstance(node, GSplatPartition)
+        # 32 splats / 4 parts -> cap 8 -> 4 BSP parts (pre-fix: --parts ignored -> 1).
+        assert node.n_children == 4
+
     def test_recipe_mosaic_rejects_additive_option(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -2404,7 +2429,7 @@ class TestLODCommand:
         ).save(path)
         return path
 
-    @pytest.mark.parametrize("recipe", ["partitioned", "multiscale"])
+    @pytest.mark.parametrize("recipe", ["partitioned", "multiscale", "mosaic"])
     def test_2d_input_partition_recipes_clean_error(
         self, runner: CliRunner, tmp_path: Path, recipe: str
     ) -> None:

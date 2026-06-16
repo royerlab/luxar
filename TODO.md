@@ -25,7 +25,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 22 - **Level-of-Detail (LOD) with PartitionNode** — core landed, advanced refinements remain.
 
-    **Implemented (see Completed archive, item 22-core):** LODNode (`kind:'lod'`, pixel-size selector + hysteresis), PartitionNode (`kind:'partition'`, median [default] + midpoint + SAH BSP, auto-partition heuristic), recursive scene-graph composition, `luxar gsplat lod --recipe` (flat / additive / partitioned / multiscale / substitutive / pyramid), Poisson-disk + spatial-uniform LOD ordering, LOD for lines (connectivity-preserving), progressive multi-additive-LOD loading for Points & Lines, zarr v2.0 (substitutive × additive matrix) format.
+    **Implemented (see Completed archive, item 22-core):** LODNode (`kind:'lod'`, pixel-size selector + hysteresis), PartitionNode (`kind:'partition'`, median [default] + midpoint + SAH BSP, auto-partition heuristic), recursive scene-graph composition, `luxar gsplat lod --recipe` (flat / additive / partitioned / multiscale / mosaic / substitutive / pyramid), Poisson-disk + spatial-uniform LOD ordering, LOD for lines (connectivity-preserving), progressive multi-additive-LOD loading for Points & Lines, zarr v2.0 (substitutive × additive matrix) format.
 
     **Still TODO:**
     - **Per-splat opacity crossfade** during LOD transitions — each splat's opacity modulated by the transition factor to avoid brightness doubling from overlapping semi-transparent layers. (Currently transitions are hard switches with hysteresis; no crossfade.)
@@ -73,7 +73,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
     - **LODNode** (`kind:'lod'`): screen-space pixel-size selector with asymmetric, spacing-aware hysteresis — `lod-group-registry.ts`, `types/lod-group.ts`.
     - **PartitionNode** (`kind:'partition'`): spatial BSP partitioning (balanced median [default] + midpoint + opt-in SAH BSP) with per-mesh frustum culling and an auto-partition heuristic — `core/group/partition.py`, `core/group/auto_partition.py`, `data/scene-loader/nodes/load-partition-group-node.ts`.
     - **Recursive composition**: arbitrary nesting of `lod`/`partition` groups via standard scene-graph loading.
-    - **Decimation CLI**: `luxar gsplat lod --recipe {flat,additive,partitioned,multiscale,substitutive,pyramid}` (greedy / self_energy / mass / kmeans_lloyd, energy/count breakpoints; per-part additive ladders and the unbalanced multiscale tree) — `cli/lod.py` + `gsplats/lod/recipes.py`.
+    - **Decimation CLI**: `luxar gsplat lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}` (greedy / self_energy / mass / kmeans_lloyd, energy/count breakpoints; per-part additive ladders, the unbalanced multiscale tree, and per-part substitutive mosaic) — `cli/lod.py` + `gsplats/lod/recipes.py`.
     - **LOD ordering**: Poisson-disk (Bridson) + spatial-uniform — `core/group/lod/poisson_disk.py`.
     - **LOD for lines**: polyline-aware, connectivity-preserving simplification — `core/group/lod/lines.py`.
     - **Progressive multi-additive-LOD loading** for Points & Lines — `data/points/points-progressive-loader.ts`, `data/lines/lines-progressive-loader.ts`.

@@ -303,9 +303,9 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
     """Build one recipe, colour-code its structure, write the .gsplats.zarr.
 
     Mirrors ``cli/lod.py`` exactly: matrix recipes (flat/additive) round-trip
-    through ``GSplatData.save``; composed recipes (partitioned/multiscale) write
-    the node tree via ``write_gsplats_tree``. Returns a small stats dict for the
-    legend.
+    through ``GSplatData.save``; composed recipes (partitioned/multiscale/mosaic)
+    write the node tree via ``write_gsplats_tree``. Returns a small stats dict for
+    the legend.
     """
     with asection(f"lod --recipe {recipe}"):
         aprint(f"$ {_cli_for(recipe)}")

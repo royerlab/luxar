@@ -55,8 +55,9 @@ from luxar.gsplats.tree import (
     GSplatPartition,
 )
 
-#: The recipe vocabulary, ordered by dataset scale (the four-rung ladder first,
-#: then the two absorbed primitives).
+#: The recipe vocabulary, ordered by dataset scale (the five-rung ladder first
+#: — flat/additive/partitioned/multiscale/mosaic — then the two absorbed
+#: primitives substitutive/pyramid).
 RecipeName = Literal[
     "flat",
     "additive",
