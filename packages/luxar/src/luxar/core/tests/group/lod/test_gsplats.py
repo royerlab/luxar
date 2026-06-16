@@ -57,31 +57,37 @@ def pyramid() -> GSplatData:
 
 class TestResolveSubstitutiveAxisGsplats:
     def test_none_is_passthrough(self, flat) -> None:
-        data, mps, bps = resolve_substitutive_axis_gsplats(flat, None)
+        data, mps, bps, opts = resolve_substitutive_axis_gsplats(flat, None)
         assert data is flat
         assert mps is None
         assert bps is None
+        # extent knobs default: physically-anchored, p90, anisotropy-aware.
+        assert opts == {
+            "lod_method": "extent",
+            "extent_percentile": 90.0,
+            "extent_anisotropy": True,
+        }
 
     def test_true_requires_multi_substitutive(self, flat) -> None:
         with pytest.raises(ValueError, match="n_substitutive"):
             resolve_substitutive_axis_gsplats(flat, True)
 
     def test_true_passes_pyramid_through(self, pyramid) -> None:
-        data, mps, bps = resolve_substitutive_axis_gsplats(pyramid, True)
+        data, mps, bps, _ = resolve_substitutive_axis_gsplats(pyramid, True)
         assert data.n_substitutive == pyramid.n_substitutive
         assert mps is None and bps is None
 
     def test_false_collapses_to_finest(self, pyramid) -> None:
         assert pyramid.n_substitutive > 1
-        data, _, _ = resolve_substitutive_axis_gsplats(pyramid, False)
+        data, _, _, _ = resolve_substitutive_axis_gsplats(pyramid, False)
         assert data.n_substitutive == 1
 
     def test_false_single_level_noop(self, flat) -> None:
-        data, _, _ = resolve_substitutive_axis_gsplats(flat, False)
+        data, _, _, _ = resolve_substitutive_axis_gsplats(flat, False)
         assert data is flat
 
     def test_dict_explicit_min_pixel_sizes(self, pyramid) -> None:
-        data, mps, bps = resolve_substitutive_axis_gsplats(
+        data, mps, bps, _ = resolve_substitutive_axis_gsplats(
             pyramid, {"min_pixel_sizes": [0.0, 10.0, 50.0]}
         )
         assert mps == [0.0, 10.0, 50.0]
@@ -94,7 +100,7 @@ class TestResolveSubstitutiveAxisGsplats:
             )
 
     def test_dict_base_pixel_size(self, pyramid) -> None:
-        _, _, bps = resolve_substitutive_axis_gsplats(
+        _, _, bps, _ = resolve_substitutive_axis_gsplats(
             pyramid, {"base_pixel_size": 25.0}
         )
         assert bps == 25.0
@@ -110,7 +116,7 @@ class TestResolveSubstitutiveAxisGsplats:
             resolve_substitutive_axis_gsplats(pyramid, {"levels": 2})
 
     def test_dict_computes_on_single_level(self, flat) -> None:
-        data, _, _ = resolve_substitutive_axis_gsplats(
+        data, _, _, _ = resolve_substitutive_axis_gsplats(
             flat, {"levels": 2, "device": "cpu"}
         )
         assert data.n_substitutive >= 2

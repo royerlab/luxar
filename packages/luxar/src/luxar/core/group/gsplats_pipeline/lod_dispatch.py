@@ -32,6 +32,9 @@ def add_gsplats_as_lod_group_impl(
     result: "GSplatData",
     explicit_min_pixel_sizes: Optional[List[float]],
     base_pixel_size: Optional[float] = None,
+    lod_method: str = "extent",
+    extent_percentile: float = 90.0,
+    extent_anisotropy: bool = True,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
@@ -47,7 +50,7 @@ def add_gsplats_as_lod_group_impl(
     land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
     (truncation_radius, extend_to_all, colormap) ride into each child.
     """
-    from ..lod.group import derive_min_pixel_sizes
+    from ..lod.group import lod_thresholds
 
     # Substitutive convention: index 0 = finest, n-1 = coarsest. The
     # LOD group needs coarsest first.
@@ -70,8 +73,43 @@ def add_gsplats_as_lod_group_impl(
             )
         min_pixel_sizes = list(explicit_min_pixel_sizes)
     else:
-        min_pixel_sizes = derive_min_pixel_sizes(
-            splat_counts, base_pixel_size=base_pixel_size
+        # Auto-derive (coarsest-first). Default to the physically-anchored
+        # ``extent`` method (W / r, anisotropy-aware p-percentile element
+        # radius per level); ``lod_thresholds`` falls back to the legacy √N
+        # ``count`` method if extents/W are unavailable.
+        level_radii = [
+            float(
+                np.percentile(
+                    result.at_substitutive(s).principal_radii(extent_anisotropy),
+                    extent_percentile,
+                )
+            )
+            for s in order
+        ]
+        # Node extent W = world bbox diagonal over the UNION of all levels'
+        # centers — matching the viewer's group bbox and the standalone writer's
+        # ``center_bounds`` (so scene and standalone thresholds stay identical).
+        mins, maxs = [], []
+        for s in order:
+            c = result.at_substitutive(s).centers
+            if c.shape[0] > 0:
+                mins.append(c.min(axis=0))
+                maxs.append(c.max(axis=0))
+        node_extent = (
+            float(
+                np.linalg.norm(
+                    np.max(maxs, axis=0) - np.min(mins, axis=0)
+                )
+            )
+            if mins
+            else None
+        )
+        min_pixel_sizes = lod_thresholds(
+            lod_method,  # type: ignore[arg-type]
+            element_counts=splat_counts,
+            element_extents=level_radii,
+            node_extent=node_extent,
+            base_pixel_size=base_pixel_size,
         )
 
     # Separate compositing attrs (go on the kind=lod Group) from

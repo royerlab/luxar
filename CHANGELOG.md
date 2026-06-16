@@ -6,6 +6,30 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Changed — LOD switching thresholds are now extent-based (physically anchored)
+
+The substitutive-LOD `min_pixel_size` selector thresholds — the on-screen sizes
+at which the viewer swaps levels — were derived purely from element *counts*
+(`base_pixel_size · √(nᵢ/n₀)`). That scene-relative proxy is biased for
+substitutive levels (a coarse level has *fewer but larger* elements), so it
+switched at the wrong zoom and needed per-dataset `base_pixel_size` tuning.
+
+The derivation is now **selectable** with a new default. `lod_method="extent"`
+(default) anchors each threshold in physical element size — mipmap-style
+`threshold_i = T·W/rᵢ` (W = node world-bbox diagonal, `rᵢ` = the level's
+element radius, T = a ~1.5 px target). Because it is anchored in pixels it is
+**self-calibrating** (no per-dataset tuning) and captures the substitutive
+"larger coarse elements" effect that counts cannot. The element radius is an
+anisotropy-aware p90 of the splat semi-axes (`GSplatData.principal_radii`), the
+point `radii`, or the line `widths` — symmetric across all three geometries.
+`lod_method="count"` keeps the legacy √N method. New knobs `extent_percentile`
+(90), `extent_anisotropy` (True) and the re-anchored `base_pixel_size` (target px
+in extent mode) are exposed on the `lod_group=`/`substitutive_lod=` Python specs,
+`RecipeParams`, and the CLI (`gsplat lod --lod-method/--extent-percentile/
+--extent-anisotropy`, multiscale). The viewer is unchanged (it reads the authored
+`min_pixel_size`). The render-measured error factor and empirical SSE calibration
+remain future work.
+
 #### Changed — `gsplat lod` is now a single `--recipe` command
 
 `luxar gsplat lod` is now one command driven by a required `--recipe` flag

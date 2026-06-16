@@ -519,7 +519,7 @@ def add_points_substitutive_lod_wrapper_impl(
     child and the gsplat children (the lift uses ``opacity=1``).
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
-    from ..lod.group import derive_min_pixel_sizes
+    from ..lod.group import lod_thresholds
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
     # scalars -> RGB (via the same LUT normalisation the viewer uses) and lift
@@ -583,7 +583,13 @@ def add_points_substitutive_lod_wrapper_impl(
 
     # Children coarsest -> finest: [coarsest gsplat .. finest gsplat, points].
     coarse_first = list(reversed(coarse))  # coarsest first
-    counts = [int(c.n_splats) for c in coarse_first] + [int(n_points)]
+    # Finest "count" is the lifted BEAD count: the coarse gsplat children are bead
+    # reductions of ``lifted`` and the finest radius is measured on ``lifted`` too,
+    # so the count/extent pair stays in one bead currency (matches lines.py). For
+    # Points the finest node rejects non-positive radii, so no points are dropped
+    # by the lift and ``lifted.n_splats == n_points`` — but keying off ``lifted``
+    # keeps the two geometries' wrappers structurally identical and robust.
+    counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
     explicit = spec.get("min_pixel_sizes")
     if explicit is not None:
         if len(explicit) != len(counts):
@@ -593,8 +599,22 @@ def add_points_substitutive_lod_wrapper_impl(
             )
         min_pixel_sizes = list(explicit)
     else:
-        min_pixel_sizes = derive_min_pixel_sizes(
-            counts, base_pixel_size=spec.get("base_pixel_size")
+        # Per-level element radius (world units), coarsest→finest. The finest
+        # level is the points rendered as ``lifted`` gsplats, so use its
+        # principal_radii for consistency with the coarse gsplat levels.
+        pct = float(spec["extent_percentile"])
+        aniso = bool(spec["extent_anisotropy"])
+        extents = [
+            float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
+        ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
+        lo, hi = pos_arr.min(axis=0), pos_arr.max(axis=0)
+        node_extent = float(np.linalg.norm(hi - lo)) if n_points else None
+        min_pixel_sizes = lod_thresholds(
+            str(spec["lod_method"]),  # type: ignore[arg-type]
+            element_counts=counts,
+            element_extents=extents,
+            node_extent=node_extent,
+            base_pixel_size=spec.get("base_pixel_size"),
         )
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,

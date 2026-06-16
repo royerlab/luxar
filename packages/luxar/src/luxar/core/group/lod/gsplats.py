@@ -13,7 +13,7 @@ monotonicity guard — lives in the type-neutral :mod:`luxar.core.group.lod.grou
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from .group import _assert_strict_ascending
 
@@ -27,6 +27,33 @@ if TYPE_CHECKING:
 #: optionally with ``recompute=True``).
 LODAxisSpec = Union[None, bool, dict]
 
+#: Default min_pixel_size derivation knobs (see ``group.lod_thresholds`` /
+#: ``extent_min_pixel_sizes``). ``extent`` = physically-anchored W/r (default);
+#: ``count`` = legacy √N. p90 largest-semi-axis element radius.
+_DEFAULT_EXTENT_OPTS: Dict[str, Any] = {
+    "lod_method": "extent",
+    "extent_percentile": 90.0,
+    "extent_anisotropy": True,
+}
+
+
+def _parse_extent_opts(kwargs: dict) -> Dict[str, Any]:
+    """Pop + validate the extent-method knobs from a ``lod_group=dict(...)`` spec."""
+    opts = dict(_DEFAULT_EXTENT_OPTS)
+    if "lod_method" in kwargs:
+        m = str(kwargs.pop("lod_method"))
+        if m not in ("extent", "count"):
+            raise ValueError(f"lod_method must be 'extent' or 'count', got {m!r}")
+        opts["lod_method"] = m
+    if "extent_percentile" in kwargs:
+        p = float(kwargs.pop("extent_percentile"))
+        if not (0.0 < p <= 100.0):
+            raise ValueError(f"extent_percentile must lie in (0, 100], got {p}")
+        opts["extent_percentile"] = p
+    if "extent_anisotropy" in kwargs:
+        opts["extent_anisotropy"] = bool(kwargs.pop("extent_anisotropy"))
+    return opts
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Resolvers for the ``lod_group=`` / ``additive_lod=`` convenience kwargs
@@ -36,11 +63,13 @@ LODAxisSpec = Union[None, bool, dict]
 def resolve_substitutive_axis_gsplats(
     data: "GSplatData",
     spec: LODAxisSpec,
-) -> Tuple["GSplatData", Optional[List[float]], Optional[float]]:
+) -> Tuple["GSplatData", Optional[List[float]], Optional[float], Dict[str, Any]]:
     """Apply ``lod_group=`` semantics to ``data``.
 
     Returns ``(resolved_data, explicit_min_pixel_sizes_or_None,
-    base_pixel_size_or_None)``.
+    base_pixel_size_or_None, extent_opts)`` where ``extent_opts`` carries the
+    ``lod_method`` / ``extent_percentile`` / ``extent_anisotropy`` knobs (parsed
+    from a ``dict`` spec, else defaults) for the auto-derivation path.
 
     - ``explicit_min_pixel_sizes`` is non-None only when the user passed
       ``dict(min_pixel_sizes=[...])`` — otherwise downstream code
@@ -79,12 +108,14 @@ def resolve_substitutive_axis_gsplats(
     explicit_min_pixel_sizes: Optional[List[float]] = None
     base_pixel_size: Optional[float] = None
 
+    default_opts = dict(_DEFAULT_EXTENT_OPTS)
+
     if spec is None:
         # Auto-lower: a multi-substitutive pyramid is expensive to build, so
         # the default no longer silently drops it. Returning the full data
         # routes it to the kind=lod Group builder (same as ``lod_group=True``)
         # downstream. Use ``lod_group=False`` to collapse to the finest level.
-        return data, None, None
+        return data, None, None, default_opts
 
     if spec is True:
         if data.n_substitutive <= 1:
@@ -94,16 +125,17 @@ def resolve_substitutive_axis_gsplats(
                 f"n_substitutive={data.n_substitutive}. Use "
                 "lod_group=dict(...) to compute them on the fly."
             )
-        return data, None, None
+        return data, None, None, default_opts
 
     if spec is False:
         if data.n_substitutive > 1:
             # Convention: finest substitutive level is index 0.
-            return data.at_substitutive(0), None, None
-        return data, None, None
+            return data.at_substitutive(0), None, None, default_opts
+        return data, None, None, default_opts
 
     if isinstance(spec, dict):
         kwargs = dict(spec)  # copy — don't mutate caller's dict
+        extent_opts = _parse_extent_opts(kwargs)
         recompute = bool(kwargs.pop("recompute", False))
         explicit_min_pixel_sizes = kwargs.pop("min_pixel_sizes", None)
         if explicit_min_pixel_sizes is not None:
@@ -136,7 +168,7 @@ def resolve_substitutive_axis_gsplats(
                     "recompute=True to override the stored pyramid, or "
                     "drop the compute kwargs to reuse it."
                 )
-            return data, explicit_min_pixel_sizes, base_pixel_size
+            return data, explicit_min_pixel_sizes, base_pixel_size, extent_opts
 
         # Compute. Align with ``make_substitutive_lod``'s canonical default
         # (3 levels) so ``lod_group=dict()`` yields the same pyramid as a
@@ -145,7 +177,7 @@ def resolve_substitutive_axis_gsplats(
         from ....gsplats.lod.substitutive import make_substitutive_lod
 
         new_data = make_substitutive_lod(data, **kwargs)
-        return new_data, explicit_min_pixel_sizes, base_pixel_size
+        return new_data, explicit_min_pixel_sizes, base_pixel_size, extent_opts
 
     raise TypeError(f"lod_group must be None, bool, or dict; got {type(spec).__name__}")
 

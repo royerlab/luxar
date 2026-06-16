@@ -59,6 +59,9 @@ _OPTION_TOKENS = {
     "--candidate-bins-k": "substitutive",
     "--levels": "levels",
     "--base-pixel-size": "lod_selector",
+    "--lod-method": "lod_selector",
+    "--extent-percentile": "lod_selector",
+    "--extent-anisotropy": "lod_selector",
 }
 
 _ALLOWED_TOKENS = {
@@ -228,13 +231,33 @@ def lod_recipe(
     candidate_bins_k: Optional[int] = typer.Option(
         None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
     ),
+    lod_method: Optional[str] = typer.Option(
+        None,
+        "--lod-method",
+        help="multiscale only: coarse↔fine threshold method. 'extent' (default) "
+        "anchors the switch in physical element size (W/r, self-calibrating); "
+        "'count' is the legacy scene-relative √N proxy.",
+    ),
+    extent_percentile: Optional[float] = typer.Option(
+        None,
+        "--extent-percentile",
+        min=0.0,
+        max=100.0,
+        help="multiscale only: percentile of per-level element radius used by "
+        "--lod-method extent (default 90).",
+    ),
+    extent_anisotropy: Optional[bool] = typer.Option(
+        None,
+        "--extent-anisotropy/--no-extent-anisotropy",
+        help="multiscale only: use the largest principal semi-axis (anisotropy-"
+        "aware, default) vs the isotropic-equivalent radius for --lod-method extent.",
+    ),
     base_pixel_size: Optional[float] = typer.Option(
         None,
         "--base-pixel-size",
-        help="multiscale only: LOD selector anchor (px) for the coarse↔fine "
-        "switch. Default is a count-derived ~10px, which often leaves the fine "
-        "branch eligible at every zoom (the coarse cap never shows); raise it "
-        "(e.g. 200) to push the coarse cap across a wider/farther zoom range.",
+        help="multiscale only: LOD selector pixel anchor. In 'extent' mode the "
+        "target element pixel size T (~1.5 px, self-calibrating); in 'count' mode "
+        "the √N anchor (~10 px). The default rarely needs tuning under 'extent'.",
     ),
     # ── universal ──
     ordering: str = typer.Option(
@@ -316,6 +339,9 @@ def lod_recipe(
             "--candidate-bins-k": candidate_bins_k,
             "--levels": levels,
             "--base-pixel-size": base_pixel_size,
+            "--lod-method": lod_method,
+            "--extent-percentile": extent_percentile,
+            "--extent-anisotropy": extent_anisotropy,
         }
         allowed = _ALLOWED_TOKENS[recipe]
         irrelevant = [
@@ -409,6 +435,11 @@ def lod_recipe(
                 else:
                     aprint(f"max_elements={eff_max_elements:,}")
 
+            if lod_method is not None and lod_method not in ("extent", "count"):
+                raise typer.BadParameter(
+                    f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
+                )
+
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,
                 additive_method=method_norm,  # type: ignore[arg-type]
@@ -430,7 +461,15 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
-                # multiscale-only; None → the serializer's count-derived default.
+                # multiscale-only LOD threshold knobs; None → RecipeParams defaults
+                # (extent method, p90, anisotropy-aware, ~1.5px target anchor).
+                lod_method=lod_method if lod_method is not None else "extent",
+                extent_percentile=extent_percentile
+                if extent_percentile is not None
+                else 90.0,
+                extent_anisotropy=extent_anisotropy
+                if extent_anisotropy is not None
+                else True,
                 base_pixel_size=base_pixel_size,
                 device=device or "auto",
                 seed=seed,
