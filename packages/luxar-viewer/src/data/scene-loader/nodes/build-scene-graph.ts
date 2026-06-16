@@ -170,5 +170,27 @@ export async function buildSceneGraph(
     }
   }
 
+  // Restore napari-style insertion order. Children are pushed in store
+  // enumeration order (consolidated metadata → alphabetical), but the Python
+  // `Node` stamps each child's add order as `child_index`. Sort every sibling
+  // list by it so the layers panel, picking, and any order-sensitive consumer
+  // follow scene-authoring order. Internal `child_<i>`/`part_<i>` gsplat
+  // subgroups are likewise stamped (with their numeric index `i`) by the
+  // gsplat-tree writers, so they sort correctly too — fixing the alphabetical
+  // `part_10`-before-`part_2` misordering for groups with ≥10 children. The
+  // sort is stable, so only genuinely legacy/unstamped children (no
+  // `child_index`) fall back to enumeration order via the `?? Infinity`
+  // sentinel.
+  const sortChildrenByInsertionOrder = (node: SceneNode): void => {
+    if (!node.children || node.children.length === 0) return;
+    node.children.sort((a, b) => {
+      const ai = (a.attrs as ZarrNodeAttrs)?.child_index ?? Infinity;
+      const bi = (b.attrs as ZarrNodeAttrs)?.child_index ?? Infinity;
+      return ai - bi;
+    });
+    for (const child of node.children) sortChildrenByInsertionOrder(child);
+  };
+  sortChildrenByInsertionOrder(root);
+
   return root;
 }

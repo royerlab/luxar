@@ -388,7 +388,13 @@ def write_gsplat_node(
                 ordering_ctx=ordering_ctx,
                 store=store,
                 scene_tone_mapping=scene_tone_mapping,
-                attrs={"min_pixel_size": float(derived_mps[i])},
+                # ``child_index`` records on-disk insertion order so the viewer
+                # restores it (napari-style) instead of zarr's alphabetical
+                # enumeration — matching the scene ``Node`` stamp. Needed here
+                # because bare-root .gsplats.zarr children are written by this
+                # writer, not via ``Node.__init__``; without it a >=10-child
+                # ladder/partition would reorder (child_10 before child_2).
+                attrs={"min_pixel_size": float(derived_mps[i]), "child_index": i},
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -429,6 +435,11 @@ def write_gsplat_node(
                 ordering_ctx=ordering_ctx,
                 store=store,
                 scene_tone_mapping=scene_tone_mapping,
+                # Insertion order for the viewer's sibling sort (see child_<i>
+                # above). Order is visually irrelevant for partition parts (all
+                # render), but keeping it consistent prevents a >=10-part graft
+                # from enumerating part_10 before part_2.
+                attrs={"child_index": i},
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

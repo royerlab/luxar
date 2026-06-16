@@ -214,7 +214,11 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
   "blending_mode": "additive",  // normal, additive, max (default: additive)
   "layer": false,          // Optional: if true, node appears in the viewer's Layers panel
-  "visible": true          // Optional: initial visibility when the scene loads (default true)
+  "visible": true,         // Optional: initial visibility when the scene loads (default true)
+  "child_index": 0         // Insertion order among siblings (stamped on add). The viewer
+                           //   sorts siblings by this so the scene graph / layers panel
+                           //   follow napari-style add order, not zarr's alphabetical
+                           //   consolidated-metadata enumeration. Absent → enumeration order.
 }
 ```
 

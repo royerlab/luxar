@@ -122,13 +122,21 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
         if kind in ("lod", "partition") and "display_type" in attrs:
             return str(attrs["display_type"])
         # Plain group or kind=lod / kind=partition without display_type
-        # → recurse into children. Children of an lod_group are
-        # stored in coarsest→finest order, so the finest is the
-        # last one — that's the one to read.
-        child_names = sorted(group.keys())
+        # → recurse into children. Children of an lod_group are stored in
+        # coarsest→finest order, so the finest is the LAST one. Order by the
+        # child's ``child_index`` attr (the canonical insertion order) rather
+        # than by name: name-sort puts ``child_10`` before ``child_2``, which
+        # would pick the wrong "finest" for a >=10-level ladder. Fall back to
+        # name order for any child missing ``child_index`` (legacy data).
+        child_names = list(group.keys())
         if not child_names:
             return ""  # nothing to resolve
-        finest_child = group[child_names[-1]]
+
+        def _order_key(name: str) -> tuple[float, str]:
+            idx = dict(group[name].attrs).get("child_index")
+            return (float(idx) if isinstance(idx, (int, float)) else float("inf"), name)
+
+        finest_child = group[max(child_names, key=_order_key)]
         return resolve(finest_child)
 
     def walk(group: "zarr.Group") -> None:
