@@ -10,9 +10,9 @@ All notable changes to Luxar are documented in this file.
 
 `luxar gsplat lod` is now one command driven by a required `--recipe` flag
 instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
-**partitioned**, **multiscale**, plus the **substitutive** and **pyramid**
-primitives (which absorb the former `lod substitutive` / `lod pyramid`
-subcommands; `lod additive` becomes `--recipe additive`). Two topologies are new
+**partitioned**, **multiscale**, **mosaic**, plus the **substitutive** and
+**pyramid** primitives (which absorb the former `lod substitutive` / `lod pyramid`
+subcommands; `lod additive` becomes `--recipe additive`). Three topologies are new
 and were previously unbuildable from the CLI:
 
 - **partitioned** — a spatial BSP `kind=partition` where *each part carries its
@@ -20,6 +20,10 @@ and were previously unbuildable from the CLI:
 - **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
   substitutive cap for the far view above a `partitioned` fine branch, so detail
   structure exists only where you look closely.
+- **mosaic** — a spatial BSP `kind=partition` where *each part is its own
+  substitutive lod group* (per-part coarse↔fine replacement): every cell
+  frustum-culls AND picks its own level by its own on-screen size — locally
+  adaptive detail, the per-part-substitutive sibling of `partitioned`.
 
 The recipe builders are pure functions in `luxar.gsplats.lod.recipes`
 (`build_recipe`); the CLI wrapper lives in `luxar/cli/lod.py` (keeping the

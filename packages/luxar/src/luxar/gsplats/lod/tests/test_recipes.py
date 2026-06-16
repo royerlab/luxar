@@ -89,6 +89,9 @@ def test_partition_recipes_support_4d():
     ms = build_recipe(data, "multiscale", _params(max_elements=120))
     assert isinstance(ms, GSplatLodGroup)
     assert all(leaf.ndim == 4 for leaf in iter_leaves(ms))
+    mo = build_recipe(data, "mosaic", _params(max_elements=120))
+    assert isinstance(mo, GSplatPartition)
+    assert all(leaf.ndim == 4 for leaf in iter_leaves(mo))
 
 
 def test_flat_is_single_leaf():
@@ -204,6 +207,32 @@ def test_multiscale_is_unbalanced_lod_over_partition():
     assert coarse.n_splats < total_splats(fine)
     # the fine branch carries the full resolution
     assert total_splats(fine) == 400
+
+
+def test_mosaic_is_partition_of_substitutive_lod_groups():
+    """`mosaic` = a kind=partition whose EVERY part is its own substitutive lod
+    group (per-part coarse↔fine swap) — the per-part substitutive sibling of
+    `partitioned` (additive parts) and `multiscale` (one global cap)."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data, "mosaic", _params(max_elements=120, compression_factor=4, levels=2)
+    )
+    assert isinstance(res, GSplatPartition)
+    assert res.n_children >= 2
+    # every part is a substitutive lod group with >= 2 levels (not a bare leaf).
+    for part in res.children:
+        assert isinstance(part, GSplatLodGroup)
+        assert part.n_children >= 2  # >= coarse + fine
+        # in-memory children are finest→coarsest; thresholds ascend that way.
+        levels_coarse_to_fine = [total_splats(c) for c in reversed(part.children)]
+        assert levels_coarse_to_fine == sorted(levels_coarse_to_fine)
+    # Conservation is at the FINEST level (the parts tile the original N); the
+    # synthesized coarser substitutive levels are extra stored representatives.
+    finest_total = sum(total_splats(part.children[0]) for part in res.children)
+    assert finest_total == 400
+    assert total_splats(res) > 400  # synthesized coarse levels add storage
+    # leaves are all real gsplat leaves at every level
+    assert all(isinstance(leaf, GSplatLeaf) for leaf in iter_leaves(res))
 
 
 # ── absorption regression: recipes == the builders they wrap ──────────────

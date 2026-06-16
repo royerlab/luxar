@@ -69,6 +69,10 @@ _ALLOWED_TOKENS = {
     # multiscale kind=lod group; only this recipe builds such a group from a flat
     # input, so it is the only recipe that accepts it.
     "multiscale": frozenset({"additive", "partition", "substitutive", "lod_selector"}),
+    # mosaic: BSP partition + a substitutive lod group per part — partition knobs
+    # plus the substitutive ones (and --levels for per-part depth). No additive
+    # ladder (parts replace, not accumulate).
+    "mosaic": frozenset({"partition", "substitutive", "levels"}),
     "substitutive": frozenset({"substitutive", "levels"}),
     "pyramid": frozenset({"additive", "substitutive", "levels"}),
 }
@@ -261,6 +265,8 @@ def lod_recipe(
       partitioned   BSP parts, each with its own additive ladder
       multiscale    a coarse substitutive cap + a partitioned fine branch
                     (unbalanced by design: detail only where you look closely)
+      mosaic        BSP parts, each its own substitutive lod group
+                    (per-part coarse<->fine swap: locally adaptive detail)
       substitutive  pure substitutive pyramid (synthesised coarse levels)
       pyramid       balanced substitutive x additive matrix
 

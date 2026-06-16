@@ -2222,6 +2222,51 @@ class TestLODCommand:
         assert total_splats(fine) == 32
         assert coarse.n_splats < 32
 
+    def test_recipe_mosaic(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`mosaic` writes a kind=partition whose every part is its own
+        substitutive lod group (per-part coarse↔fine swap)."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition, total_splats
+
+        out = tmp_path / "mosaic.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(medium_gsplats), str(out),
+                "--recipe", "mosaic",
+                "--max-elements", "12", "-K", "2", "--levels", "1",
+                "--device", "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"mosaic failed:\n{result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children >= 2
+        # every part is its own substitutive lod group
+        assert all(isinstance(p, GSplatLodGroup) for p in node.children)
+        # conservation at the finest level (parts tile the original 32 splats)
+        finest_total = sum(total_splats(p.children[0]) for p in node.children)
+        assert finest_total == 32
+        assert total_splats(node) > 32  # synthesized coarse levels add storage
+
+    def test_recipe_mosaic_rejects_additive_option(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """mosaic parts are substitutive, not additive ladders — an additive-only
+        option (--n-lods) is rejected by the option-relevance check."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(medium_gsplats), str(out),
+                "--recipe", "mosaic", "--n-lods", "4",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
     def test_recipe_multiscale_base_pixel_size_sets_threshold(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

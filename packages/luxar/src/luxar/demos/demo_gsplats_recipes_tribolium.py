@@ -3,11 +3,11 @@
 
 Takes the ~256K-splat fit of the *Tribolium castaneum* embryo (the same
 precomputed dataset as ``demo_gsplats_3d_tribolium_embryo.py``) and runs the
-unified ``luxar gsplat lod --recipe`` pipeline to build the FOUR scale-ordered
+unified ``luxar gsplat lod --recipe`` pipeline to build the FIVE scale-ordered
 representation topologies side by side, so you can compare them directly:
 
-    flat   →   additive   →   partitioned   →   multiscale
-   (small)    (medium)        (large)           (huge)
+    flat   →   additive   →   partitioned   →   multiscale   →   mosaic
+   (small)    (medium)        (large)           (huge)            (huge, adaptive)
 
 ================================================================================
 WHAT THIS DEMONSTRATES — THE `lod --recipe` PIPELINE + THE NOVEL TOPOLOGIES
@@ -22,7 +22,7 @@ make it render well at any scale is::
     luxar gsplat convert out.gsplats.zarr scene.luxar.zarr && luxar serve ...
 
 This demo runs the ``lod --recipe`` step for each recipe on the SAME base fit and
-grafts the four results into one scene as labelled, colour-coded columns. The two
+grafts the five results into one scene as labelled, colour-coded columns. The three
 novel topologies are the point:
 
 - **partitioned** — a spatial BSP ``kind=partition`` where EACH part carries its
@@ -34,6 +34,12 @@ novel topologies are the point:
   branch for close-up. Detail structure exists only where you look closely. Here
   the coarse cap is painted red ("far view") and the fine partition parts cool
   colours ("near detail").
+- **mosaic** — a spatial BSP ``kind=partition`` where EACH part is its own
+  *substitutive* lod group (coarse↔fine *replacement* per part). Unlike
+  ``partitioned`` (additive, accumulating) and ``multiscale`` (one global cap),
+  every cell picks its own level by its own on-screen size — locally adaptive
+  detail. Each part is painted a distinct colour; the per-part swap shows as the
+  blob count changing as you navigate.
 
 For reference the two primitives bracket them: **flat** (one leaf, neutral grey)
 and **additive** (one leaf + a prefix-sum ladder, painted on a blue→cyan ramp so
@@ -41,11 +47,11 @@ the coarse-first ordering is visible).
 
 Pipeline:
 1. **Load** the precomputed ~256K-splat Tribolium fit (Git LFS / local cache)
-2. **Center** it so all four columns sit at the origin before placement
+2. **Center** it so all five columns sit at the origin before placement
 3. **Build** each recipe with ``build_recipe`` (the engine behind the CLI) and
    write each to a ``.gsplats.zarr`` — exactly what ``lod --recipe`` does
 4. **Colour-code** the structure (per-part / cap-vs-fine / ladder ramp)
-5. **Compose** one scene: four translated columns, each grafted via
+5. **Compose** one scene: five translated columns, each grafted via
    ``add_gsplats_from_file`` (exactly what ``gsplat convert`` does), with a legend
 6. **Visualize** — pan across the row; zoom into a column to watch its LOD switch
 
@@ -121,7 +127,7 @@ N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.
 ADDITIVE_METHOD = "self_energy"
 
-RECIPES = ("flat", "additive", "partitioned", "multiscale")
+RECIPES = ("flat", "additive", "partitioned", "multiscale", "mosaic")
 
 # Parse command-line flags.
 FLAGS = parse_demo_flags()
@@ -233,6 +239,32 @@ def recolor_multiscale(node: GSplatLodGroup) -> GSplatLodGroup:
     )
 
 
+def recolor_mosaic(node: GSplatPartition) -> GSplatPartition:
+    """Each BSP part a distinct colour (see the cells); within a part, every
+    substitutive level shares that colour — the per-part coarse↔fine swap shows
+    as the blob count changing, not the hue."""
+    children: list[GSplatNode] = []
+    for i, part in enumerate(node.children):
+        rgb = _PART_PALETTE[i % len(_PART_PALETTE)]
+        if isinstance(part, GSplatLodGroup):
+            levels = [
+                _recolor_leaf(c, rgb) if isinstance(c, GSplatLeaf) else c
+                for c in part.children
+            ]
+            children.append(
+                GSplatLodGroup(
+                    children=levels,
+                    default_level=part.default_level,
+                    meta=dict(part.meta),
+                )
+            )
+        else:  # pragma: no cover - mosaic parts are lod groups today
+            children.append(part)
+    return GSplatPartition(
+        children=children, max_elements=node.max_elements, meta=dict(node.meta)
+    )
+
+
 # =============================================================================
 # Recipe building (the engine behind `luxar gsplat lod --recipe`)
 # =============================================================================
@@ -262,6 +294,8 @@ def _cli_for(recipe: str) -> str:
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
     if recipe == "multiscale":
         return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
+    if recipe == "mosaic":
+        return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
     return base
 
 
@@ -285,6 +319,8 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
             result = recolor_partition(result)
         elif recipe == "multiscale":
             result = recolor_multiscale(result)
+        elif recipe == "mosaic":
+            result = recolor_mosaic(result)
 
         # Structure stats for the legend.
         if isinstance(result, GSplatData):
@@ -302,6 +338,8 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
         else:
             if recipe == "partitioned":
                 structure = f"{result.n_children} BSP parts, ladder each"
+            elif recipe == "mosaic":
+                structure = f"{result.n_children} BSP parts, substitutive each"
             else:  # multiscale
                 fine = result.children[0]
                 n_parts = fine.n_children if isinstance(fine, GSplatPartition) else 1
@@ -318,7 +356,7 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
 
 
 # =============================================================================
-# Scene composition (four columns, exactly as `gsplat convert` would graft them)
+# Scene composition (five columns, exactly as `gsplat convert` would graft them)
 # =============================================================================
 
 # Per-recipe legend descriptions + a representative legend colour.
@@ -333,13 +371,17 @@ _RECIPE_DESC = {
         "coarse cap (far) + partitioned fine branch (near)",
         "rgb(255,77,82)",
     ),
+    "mosaic": (
+        "BSP parts, each its own substitutive lod (per-part swap)",
+        "rgb(255,179,71)",
+    ),
 }
 
 
 def create_luxar_scene(
     recipe_paths: dict[str, Path], recipe_stats: dict[str, dict], output_path: Path
 ) -> Path:
-    """Compose the four recipe .gsplats.zarr files into one side-by-side scene."""
+    """Compose the five recipe .gsplats.zarr files into one side-by-side scene."""
     with asection("Composing recipe-gallery scene"):
         aprint(f"Output: {output_path.name}")
 
@@ -363,8 +405,8 @@ def create_luxar_scene(
 GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
 =====================================================================
 
-The same ~256K-splat fit, laid out left→right as the four `luxar gsplat lod
---recipe` topologies: flat → additive → partitioned → multiscale.
+The same ~256K-splat fit, laid out left→right as the five `luxar gsplat lod
+--recipe` topologies: flat → additive → partitioned → multiscale → mosaic.
 
 - partitioned: BSP spatial parts (each a distinct colour), each with its own
   additive ladder — off-screen parts cull, visible parts stream.
@@ -398,7 +440,7 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                 blend_mode="difference",
             )
             scene.add_text(
-                "Light-sheet microscopy • one fit, four LOD topologies",
+                "Light-sheet microscopy • one fit, five LOD topologies",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -454,7 +496,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: lod --recipe gallery — Tribolium castaneum Embryo")
     aprint("=" * 70)
-    aprint("One ~256K-splat fit → flat | additive | partitioned | multiscale")
+    aprint("One ~256K-splat fit → flat | additive | partitioned | multiscale | mosaic")
     aprint("")
 
     output_path = get_demos_output_dir() / "gsplats_recipes_tribolium.luxar.zarr"
