@@ -519,6 +519,54 @@ describe('loadLodGroupNode — lazy level loading', () => {
     }
   });
 
+  it('keeps a deferred GROUP child correct through a threshold re-sort (FIX A × FIX B)', async () => {
+    // Interaction of the two new behaviours: a nested-group child is deferred
+    // (FIX A) AND the input thresholds are out of order (FIX B). The sort must
+    // reorder the deferred group child by its threshold WITHOUT loading it or
+    // losing its deferred state, and the eager default must stay active.
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      // child_0 leaf (eager default, mps=0); child_1 a deferred PARTITION group
+      // (mps=500); child_2 leaf (mps=100) — out of order (0, 500, 100).
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeGroupChildNode('/lod/child_1', 500),
+          makeChildNode('/lod/child_2', 100),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      // Re-sorted ascending; the deferred group child lands at its threshold slot.
+      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      const groupChild = entry.children[2];
+      expect(groupChild.minPixelSize).toBe(500);
+      // Sort must NOT have loaded or lost the deferred state of the group child.
+      expect(groupChild.ready).toBe(false);
+      expect(typeof groupChild.ensureLoaded).toBe('function');
+      expect(groupChild.release).toBeUndefined();
+      // The eager default (mps=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      // The group child was NOT eager-loaded at init...
+      expect(
+        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
+      ).not.toContain('/lod/child_1');
+      // ...but loads its subtree on activation (post-sort object identity intact).
+      groupChild.ensureLoaded!();
+      await vi.waitFor(() => expect(groupChild.ready).toBe(true));
+      expect(
+        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
+      ).toContain('/lod/child_1');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('does not register or mark ready when the dataset is switched mid-load', async () => {
     attachStubChildren();
     const reg = makeReg();
