@@ -10,9 +10,9 @@ All notable changes to Luxar are documented in this file.
 
 `luxar gsplat lod` is now one command driven by a required `--recipe` flag
 instead of three subcommands. Recipes are scale-ordered: **flat**, **additive**,
-**partitioned**, **multiscale**, plus the **substitutive** and **pyramid**
-primitives (which absorb the former `lod substitutive` / `lod pyramid`
-subcommands; `lod additive` becomes `--recipe additive`). Two topologies are new
+**partitioned**, **multiscale**, **mosaic**, plus the **substitutive** and
+**pyramid** primitives (which absorb the former `lod substitutive` / `lod pyramid`
+subcommands; `lod additive` becomes `--recipe additive`). Three topologies are new
 and were previously unbuildable from the CLI:
 
 - **partitioned** — a spatial BSP `kind=partition` where *each part carries its
@@ -20,6 +20,10 @@ and were previously unbuildable from the CLI:
 - **multiscale** — an unbalanced-by-design `kind=lod`: a single coarse
   substitutive cap for the far view above a `partitioned` fine branch, so detail
   structure exists only where you look closely.
+- **mosaic** — a spatial BSP `kind=partition` where *each part is its own
+  substitutive lod group* (per-part coarse↔fine replacement): every cell
+  frustum-culls AND picks its own level by its own on-screen size — locally
+  adaptive detail, the per-part-substitutive sibling of `partitioned`.
 
 The recipe builders are pure functions in `luxar.gsplats.lod.recipes`
 (`build_recipe`); the CLI wrapper lives in `luxar/cli/lod.py` (keeping the
@@ -39,6 +43,46 @@ Flag-name note for scripted users: under `--recipe`, `-m`/`--method` is the
 algorithm** (kmeans_lloyd/greedy/…) — formerly `lod substitutive -m`/`--method`
 — is now the long-only `--substitutive-method` for `--recipe substitutive` /
 `pyramid`.
+
+#### Fixed — grafted `multiscale` LOD was stuck on its fine branch
+
+Grafting a `multiscale` recipe into a scene (`add_gsplats_from_file` /
+`gsplat convert`) dropped the per-child `min_pixel_size` selector threshold on
+the `kind=partition` fine branch of the `kind=lod` group. The viewer reads an
+absent threshold as `0` — identical to the coarse cap's `0` — so the LOD
+selector always picked the finest eligible child and never switched to the
+coarse cap (the embryo stayed stuck on the fine partition at every zoom). The
+scene-graft path now stamps the threshold on the lod/partition **wrapper** group
+(matching the standalone writer `gsplat_tree.write_gsplat_node`), so the coarse
+far-view cap and the fine near-view branch switch as designed.
+
+#### Fixed — viewer now streams nested-group LOD children (multiscale fine branch)
+
+The viewer's lazy-loader (`load-lod-group-node.ts`) only deferred **leaf**
+(gsplats/points/lines) lod-group children; a nested `kind=lod` / `kind=partition`
+child loaded eagerly at scene-init. So `multiscale`'s fine `kind=partition`
+branch was fully resident even while the coarse cap was the visible level,
+contradicting its "detail only where you look closely" design. Such non-leaf
+children are now cheap-attached as a transparent placeholder and their subtree
+loads lazily on first activation (the selector only needs the child's
+`min_pixel_size` + `position_bounds`, not geometry). Geometry-agnostic — a
+partition/lod nesting of points or lines defers identically to gsplats. (Once
+loaded, grouped subtrees stay resident until scene teardown — they have no
+leaf-style evictable buffer pool yet.) As defense-in-depth, `loadLodGroupNode`
+now validates that a group's child `min_pixel_size` thresholds are ascending
+(coarsest→finest) — the selector's monotonic assumption — and gracefully
+re-sorts + warns if a malformed / hand-authored scene violates it, rather than
+silently mis-selecting levels.
+
+Two follow-ups make the switch actually *visible*: grafted `kind=partition`
+wrappers are now back-filled with `position_bounds` at scene finalization (the
+graft, unlike the standalone writer, didn't compute the children union — needed
+for partition-unit frustum culling), and `multiscale` gained a `base_pixel_size`
+anchor (`RecipeParams.base_pixel_size` / the new `gsplat lod --base-pixel-size`
+flag). The coarse cap is a *substitutive* level — fewer but larger splats — so the
+count-derived threshold (~10 px) switched too early and left the fine branch
+eligible at every practical zoom; raising the anchor (e.g. `200`) pushes the
+coarse cap across a wider/farther zoom range so it is actually seen.
 
 #### Changed — scenes use the canonical `.luxar.zarr` extension
 

@@ -317,6 +317,62 @@ export async function loadLodGroupNode(
       continue;
     }
 
+    // Deferred GROUP path: a non-leaf child (a nested kind=partition or
+    // kind=lod) that is not the eager default. The leaf cheap/expensive split
+    // doesn't apply, but the selector only needs the child's min_pixel_size +
+    // position_bounds (both on attrs, read by attachLazyChild) — not loaded
+    // geometry — so we cheap-attach an empty placeholder group and load the
+    // whole subtree lazily on first activation. This is what keeps multiscale's
+    // fine kind=partition branch from loading eagerly at scene-init while the
+    // coarse cap is the visible level (it loads only once you zoom in close
+    // enough to select it).
+    //
+    // Geometry-agnostic by construction: it branches on the wrapper's *kind*
+    // (lod/partition), never on the inner leaf type, and the load runs through
+    // the same ``loadChildren`` recursion as any other node — so a
+    // partition/lod nesting of points or lines defers identically to gsplats
+    // (the three node types stay symmetric here; see the parametrized test).
+    //
+    // A per-child transform would make the transform-less placeholder
+    // mis-project its bounds, so those (rare) fall through to the eager path
+    // below. Grouped subtrees have no leaf-style evictable buffer pool, so
+    // there is no release(): once loaded they stay resident and scene teardown
+    // disposes them — matching the prior eager behaviour, just deferred to
+    // first view.
+    const childAttrs = child.attrs as Record<string, unknown>;
+    const canDeferGroup =
+      hasRegistry &&
+      i !== eagerIdx &&
+      child.type === 'group' &&
+      (childAttrs.kind === 'lod' || childAttrs.kind === 'partition') &&
+      !childAttrs.transform;
+
+    if (canDeferGroup) {
+      // Transparent lazy wrapper: an anonymous, empty group. The registry holds
+      // it by reference for visibility toggling, so it needs no name/kind — and
+      // must NOT take the child's name/kind, or it would duplicate the identity
+      // of the real node that ``loadChildren`` attaches *under* it on activation
+      // (which owns the path + kind for picking / getObjectByName).
+      const placeholder = new THREE.Group();
+      lodThreeGroup.add(placeholder);
+      const lazyChild = child;
+      const entryChild = attachLazyChild(
+        placeholder,
+        lazyChild,
+        minPixelSize,
+        ctx,
+        () => loadChildren(lazyChild, placeholder, childLoc, ctx),
+        () => {
+          // Nested leaf / lod-group loaders self-register during loadChildren
+          // (which runs only on activation), so there's no separate loader to
+          // register here. Laziness holds because loadChildren is gated by the
+          // selector firing ensureLoaded, not run up front.
+        }
+      );
+      registryChildren.push(entryChild);
+      continue;
+    }
+
     // Eager path: load fully via the generic recursion (handles any
     // geometry type), then look up the attached THREE node by name.
     await loadChildren(child, lodThreeGroup, childLoc, ctx);
@@ -346,6 +402,36 @@ export async function loadLodGroupNode(
       minPixelSize,
       positionBounds: readPositionBounds(child.attrs),
     });
+  }
+
+  // Defense-in-depth: the per-frame selector (``pickChildWithHysteresis``)
+  // assumes children are in ascending ``min_pixel_size`` order (coarsest→finest)
+  // — it scans upward and stops at the first threshold above the metric, so a
+  // later out-of-order (smaller) threshold would never be reached and the wrong
+  // level renders. The Python writer guarantees ascending order
+  // (``derive_min_pixel_sizes`` + its monotonicity guard), but a hand-authored
+  // or otherwise malformed scene could violate it. Rather than refuse the scene
+  // (the geometry is fine — only the order is wrong; cf. ``validateTransformFormat``
+  // which DOES refuse, because a row-major transform renders catastrophically
+  // wrong), recover gracefully: stable-sort to ascending and warn so the
+  // producer bug is surfaced. Almost always a no-op (already ascending).
+  const isAscending = registryChildren.every(
+    (c, k) => k === 0 || registryChildren[k - 1].minPixelSize <= c.minPixelSize
+  );
+  if (!isAscending) {
+    const before = registryChildren.map((c) => c.minPixelSize);
+    // Object identity survives the sort, so remap the eager index by reference.
+    const eagerChild = eagerRegistryIdx >= 0 ? registryChildren[eagerRegistryIdx] : null;
+    // ES2019+ Array.sort is stable, so equal thresholds keep their relative order.
+    registryChildren.sort((a, b) => a.minPixelSize - b.minPixelSize);
+    if (eagerChild) eagerRegistryIdx = registryChildren.indexOf(eagerChild);
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${node.path}: child min_pixel_size thresholds are not ascending ` +
+        `(${before.join(', ')}). The pixel-size selector needs coarsest-to-finest ` +
+        'order; re-sorted to ascending. Fix the producer ' +
+        '(derive_min_pixel_sizes guarantees ascending thresholds).'
+    );
   }
 
   // Prefer the eager child's actual registry index. If it failed to attach

@@ -280,6 +280,9 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 #   multiscale    coarse substitutive cap + a partitioned fine      — huge N
 #                 branch (unbalanced by design: detail only where
 #                 you look closely; cull off-screen, stream in view)
+#   mosaic        BSP parts, each its own substitutive lod group    — huge N,
+#                 (per-part coarse↔fine swap: every cell culls AND     adaptive
+#                 picks its own level by its own on-screen size)
 #   substitutive  pure substitutive pyramid (synthesised levels)    — primitive
 #   pyramid       balanced substitutive × additive matrix           — primitive
 # Output is a standalone v3.0 .gsplats.zarr (loadable with `luxar gsplat info`);
@@ -302,6 +305,13 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe additive --method sel
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --max-elements 250000
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe partitioned --parts 8 --partition-rule sah
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe multiscale --compression-factor 8 --max-elements 250000
+
+# mosaic: BSP partition where EACH part is its own substitutive lod group (per-part
+# coarse↔fine swap — locally adaptive; the per-part-substitutive sibling of
+# partitioned). Partition knobs + the substitutive ones (--compression-factor/-K,
+# --levels/-L, --substitutive-method); no additive ladder per part.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe mosaic --max-elements 250000
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe mosaic --parts 8 -K 4 -L 2
 
 # substitutive / pyramid primitives: each coarser substitutive level has
 # ceil(N/K^L) representative splats that REPLACE the previous level. Recommended

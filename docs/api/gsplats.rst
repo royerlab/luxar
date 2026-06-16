@@ -219,7 +219,7 @@ Level of Detail (LOD)
 
 Post-fit LOD construction for streaming and view-dependent rendering. Used by
 the ``luxar gsplat lod --recipe ...`` CLI command (recipes ``flat`` / ``additive``
-/ ``partitioned`` / ``multiscale`` / ``substitutive`` / ``pyramid``).
+/ ``partitioned`` / ``multiscale`` / ``mosaic`` / ``substitutive`` / ``pyramid``).
 
 * **Additive** — same N splats, reordered into a prefix-monotone ladder
   (``make_additive_lod``). Loading the first k splats is the best L²

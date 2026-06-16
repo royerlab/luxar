@@ -58,13 +58,21 @@ _OPTION_TOKENS = {
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
     "--levels": "levels",
+    "--base-pixel-size": "lod_selector",
 }
 
 _ALLOWED_TOKENS = {
     "flat": frozenset(),
     "additive": frozenset({"additive"}),
     "partitioned": frozenset({"additive", "partition"}),
-    "multiscale": frozenset({"additive", "partition", "substitutive"}),
+    # ``lod_selector`` (--base-pixel-size) tunes the coarse↔fine switch of the
+    # multiscale kind=lod group; only this recipe builds such a group from a flat
+    # input, so it is the only recipe that accepts it.
+    "multiscale": frozenset({"additive", "partition", "substitutive", "lod_selector"}),
+    # mosaic: BSP partition + a substitutive lod group per part — partition knobs
+    # plus the substitutive ones (and --levels for per-part depth). No additive
+    # ladder (parts replace, not accumulate).
+    "mosaic": frozenset({"partition", "substitutive", "levels"}),
     "substitutive": frozenset({"substitutive", "levels"}),
     "pyramid": frozenset({"additive", "substitutive", "levels"}),
 }
@@ -148,7 +156,7 @@ def lod_recipe(
         "-r",
         help=(
             "Representation topology to build (REQUIRED). Scale-ordered: "
-            "flat | additive | partitioned | multiscale; plus primitives "
+            "flat | additive | partitioned | multiscale | mosaic; plus primitives "
             "substitutive | pyramid."
         ),
     ),
@@ -175,7 +183,7 @@ def lod_recipe(
     max_n_dense: Optional[int] = typer.Option(
         None, "--max-n-dense", help="Greedy dense-Gram threshold (default 2000)."
     ),
-    # ── spatial partition (partitioned / multiscale) ──
+    # ── spatial partition (partitioned / multiscale / mosaic) ──
     max_elements: Optional[int] = typer.Option(
         None,
         "--max-elements",
@@ -220,6 +228,14 @@ def lod_recipe(
     candidate_bins_k: Optional[int] = typer.Option(
         None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
     ),
+    base_pixel_size: Optional[float] = typer.Option(
+        None,
+        "--base-pixel-size",
+        help="multiscale only: LOD selector anchor (px) for the coarse↔fine "
+        "switch. Default is a count-derived ~10px, which often leaves the fine "
+        "branch eligible at every zoom (the coarse cap never shows); raise it "
+        "(e.g. 200) to push the coarse cap across a wider/farther zoom range.",
+    ),
     # ── universal ──
     ordering: str = typer.Option(
         "hilbert", "--ordering", help="Spatial ordering: hilbert | morton | none."
@@ -249,6 +265,8 @@ def lod_recipe(
       partitioned   BSP parts, each with its own additive ladder
       multiscale    a coarse substitutive cap + a partitioned fine branch
                     (unbalanced by design: detail only where you look closely)
+      mosaic        BSP parts, each its own substitutive lod group
+                    (per-part coarse<->fine swap: locally adaptive detail)
       substitutive  pure substitutive pyramid (synthesised coarse levels)
       pyramid       balanced substitutive x additive matrix
 
@@ -297,6 +315,7 @@ def lod_recipe(
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
             "--levels": levels,
+            "--base-pixel-size": base_pixel_size,
         }
         allowed = _ALLOWED_TOKENS[recipe]
         irrelevant = [
@@ -366,7 +385,7 @@ def lod_recipe(
 
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
-            if recipe in ("partitioned", "multiscale"):
+            if recipe in ("partitioned", "multiscale", "mosaic"):
                 # BSP partitioning needs >= 3 spatial dims; fail cleanly (the
                 # rest of the command's validation style) rather than letting
                 # the deeper ValueError surface as a raw traceback.
@@ -411,6 +430,8 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
+                # multiscale-only; None → the serializer's count-derived default.
+                base_pixel_size=base_pixel_size,
                 device=device or "auto",
                 seed=seed,
             )
