@@ -111,13 +111,11 @@ from luxar.utils.paths import get_demos_output_dir
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for multiscale (one substitutive level ≈ N/FACTOR splats).
 FACTOR = 8
-# LOD selector anchor for the multiscale coarse↔fine switch (px). The count-derived
-# default (~10px) leaves the fine branch eligible at almost every zoom for a
-# substitutive cap (its splats are fewer but larger), so the red coarse cap is
-# never seen in practice. This anchor lifts the fine-branch threshold to a few
-# hundred px so the coarse cap shows at the gallery overview and the fine,
-# colour-coded parts take over when you zoom into the column. (See RecipeParams.)
-MULTISCALE_BASE_PIXEL_SIZE = 200.0
+# NB: the multiscale coarse↔fine switch uses the library-default selector anchor
+# (count-derived ~10px), so the coarse cap engages as you zoom *out* (the embryo
+# small on screen) and the fine, colour-coded parts show at the overview / up
+# close. To make the coarse cap appear at a nearer zoom, pass
+# RecipeParams(base_pixel_size=...) here (or `gsplat lod --base-pixel-size`).
 # Additive ladder depth for additive / partitioned-part / multiscale-part ladders.
 N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.
@@ -246,9 +244,6 @@ def _params() -> RecipeParams:
         additive_method=ADDITIVE_METHOD,  # type: ignore[arg-type]
         max_elements=MAX_ELEMENTS,
         compression_factor=FACTOR,
-        # Only consumed by the multiscale recipe (its coarse↔fine selector
-        # threshold); ignored by flat/additive/partitioned.
-        base_pixel_size=MULTISCALE_BASE_PIXEL_SIZE,
         device=detect_device(),
         seed=0,
     )
@@ -266,10 +261,7 @@ def _cli_for(recipe: str) -> str:
     if recipe == "partitioned":
         return base + f" --max-elements {MAX_ELEMENTS} --n-lods {N_LODS}"
     if recipe == "multiscale":
-        return (
-            base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
-            f" --base-pixel-size {MULTISCALE_BASE_PIXEL_SIZE:g}"
-        )
+        return base + f" --max-elements {MAX_ELEMENTS} --compression-factor {FACTOR}"
     return base
 
 
