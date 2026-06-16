@@ -29,7 +29,7 @@ carrying the full 2-D pyramid.
 
 The :mod:`luxar.gsplats.lod.recipes` module composes these builders into
 named, scale-ordered **representation topologies** (``flat`` / ``additive`` /
-``partitioned`` / ``multiscale`` / ``substitutive`` / ``pyramid``) — the
+``partitioned`` / ``multiscale`` / ``mosaic`` / ``substitutive`` / ``pyramid``) — the
 ``luxar gsplat lod --recipe`` CLI is a thin wrapper over :func:`build_recipe`.
 """
 

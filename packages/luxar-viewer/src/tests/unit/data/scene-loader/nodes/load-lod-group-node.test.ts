@@ -52,6 +52,7 @@ vi.mock('../../../../../data/scene-loader/nodes/load-lines-node', () => ({
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
+import { log } from '../../../../../utils/log';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
@@ -131,6 +132,33 @@ function makeLinesChildNode(
     type: 'lines',
     attrs: {
       type: 'lines',
+      min_pixel_size: minPixelSize,
+      position_bounds: positionBounds,
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
+/**
+ * A nested group child (e.g. multiscale's fine kind=partition branch). The
+ * ``displayType`` lets a single test prove the deferral is geometry-agnostic —
+ * a partition/lod wrapper of points or lines defers identically to gsplats.
+ */
+function makeGroupChildNode(
+  path: string,
+  minPixelSize: number,
+  displayType: 'gsplats' | 'points' | 'lines' = 'gsplats',
+  kind: 'partition' | 'lod' = 'partition',
+  positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
+): SceneNode {
+  return {
+    path,
+    type: 'group',
+    attrs: {
+      type: 'group',
+      kind,
+      display_type: displayType,
       min_pixel_size: minPixelSize,
       position_bounds: positionBounds,
     } as SceneNode['attrs'],
@@ -382,6 +410,161 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(loadGSplatsNodeExpensiveMock).toHaveBeenCalledTimes(1);
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBeUndefined();
+  });
+
+  // Three-way symmetry: a nested kind=partition / kind=lod wrapper defers
+  // identically regardless of the inner geometry (gsplats / points / lines).
+  // The deferral branches on the wrapper's kind, never the leaf type, so all
+  // three node types stay symmetric. Parametrized to guard that invariant.
+  it.each(['gsplats', 'points', 'lines'] as const)(
+    'defers a non-leaf group child (display_type=%s) and loads its subtree on activation',
+    async (displayType) => {
+      attachStubChildren();
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+
+      // child_0 = eager leaf (default); child_1 = a kind=partition group.
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeGroupChildNode('/lod/child_1', 100, displayType),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      expect(entry.children).toHaveLength(2);
+      const groupChild = entry.children[1];
+      // Registered with its threshold/bounds, but NOT loaded.
+      expect(groupChild.minPixelSize).toBe(100);
+      expect(groupChild.positionBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 1] });
+      expect(groupChild.ready).toBe(false);
+      expect(typeof groupChild.ensureLoaded).toBe('function');
+      // Grouped subtrees aren't evictable (no leaf-style pool) → no release thunk.
+      expect(groupChild.release).toBeUndefined();
+      // The transparent wrapper must not steal the child's identity — only the
+      // real node (attached on load) owns the path/kind.
+      expect(groupChild.object.name).toBe('');
+      expect(groupChild.object.userData.kind).toBeUndefined();
+      // At init, loadChildren ran ONLY for the eager default — NOT the group child.
+      const initPaths = loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path);
+      expect(initPaths).toContain('/lod/child_0');
+      expect(initPaths).not.toContain('/lod/child_1');
+
+      // Activation loads the whole subtree (loadChildren on the group), marks ready.
+      groupChild.ensureLoaded!();
+      await vi.waitFor(() => expect(groupChild.ready).toBe(true));
+      const afterPaths = loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path);
+      expect(afterPaths).toContain('/lod/child_1');
+    }
+  );
+
+  it('re-sorts children to ascending min_pixel_size (and warns) when the order is wrong', async () => {
+    // Defense-in-depth for malformed / hand-authored scenes: the selector assumes
+    // ascending thresholds. Given out-of-order thresholds (0, 500, 100), the loader
+    // must repair to ascending so the selector works, keep the eager default active,
+    // and warn so the producer bug is surfaced.
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0), // eager default + coarsest
+          makeChildNode('/lod/child_1', 500),
+          makeChildNode('/lod/child_2', 100), // out of order (< 500)
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      // Repaired to strictly ascending so pickChildWithHysteresis is well-defined.
+      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      // The eager default (mps=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      // The violation was surfaced.
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn or reorder when child thresholds are already ascending', async () => {
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeChildNode('/lod/child_1', 100),
+          makeChildNode('/lod/child_2', 500),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      expect(reg.get('/lod')!.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+      ).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('keeps a deferred GROUP child correct through a threshold re-sort (FIX A × FIX B)', async () => {
+    // Interaction of the two new behaviours: a nested-group child is deferred
+    // (FIX A) AND the input thresholds are out of order (FIX B). The sort must
+    // reorder the deferred group child by its threshold WITHOUT loading it or
+    // losing its deferred state, and the eager default must stay active.
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      // child_0 leaf (eager default, mps=0); child_1 a deferred PARTITION group
+      // (mps=500); child_2 leaf (mps=100) — out of order (0, 500, 100).
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeGroupChildNode('/lod/child_1', 500),
+          makeChildNode('/lod/child_2', 100),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      // Re-sorted ascending; the deferred group child lands at its threshold slot.
+      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      const groupChild = entry.children[2];
+      expect(groupChild.minPixelSize).toBe(500);
+      // Sort must NOT have loaded or lost the deferred state of the group child.
+      expect(groupChild.ready).toBe(false);
+      expect(typeof groupChild.ensureLoaded).toBe('function');
+      expect(groupChild.release).toBeUndefined();
+      // The eager default (mps=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      // The group child was NOT eager-loaded at init...
+      expect(
+        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
+      ).not.toContain('/lod/child_1');
+      // ...but loads its subtree on activation (post-sort object identity intact).
+      groupChild.ensureLoaded!();
+      await vi.waitFor(() => expect(groupChild.ready).toBe(true));
+      expect(
+        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
+      ).toContain('/lod/child_1');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('does not register or mark ready when the dataset is switched mid-load', async () => {

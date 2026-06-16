@@ -89,6 +89,9 @@ def test_partition_recipes_support_4d():
     ms = build_recipe(data, "multiscale", _params(max_elements=120))
     assert isinstance(ms, GSplatLodGroup)
     assert all(leaf.ndim == 4 for leaf in iter_leaves(ms))
+    mo = build_recipe(data, "mosaic", _params(max_elements=120))
+    assert isinstance(mo, GSplatPartition)
+    assert all(leaf.ndim == 4 for leaf in iter_leaves(mo))
 
 
 def test_flat_is_single_leaf():
@@ -156,6 +159,39 @@ def test_partitioned_clamps_ladder_on_small_parts():
     assert total_splats(res) == 20
 
 
+def test_multiscale_base_pixel_size_stamps_child_thresholds():
+    """``base_pixel_size`` pre-stamps the coarse↔fine selector thresholds on the
+    children's meta (ascending [0.0, fine]); without it, no threshold is authored
+    and the serializer falls back to its count-derived default. The anchor lets a
+    caller push the fine branch's switch to a farther zoom (the substitutive cap's
+    bigger splats otherwise make the count proxy switch too early)."""
+    import math
+
+    data = _make_random_gsplat(n=400)
+
+    # Default (no anchor): children carry no authored min_pixel_size.
+    default = build_recipe(data, "multiscale", _params(max_elements=120))
+    fine_d, coarse_d = default.children
+    assert "min_pixel_size" not in fine_d.meta
+    assert "min_pixel_size" not in coarse_d.meta
+
+    # With an anchor: thresholds are stamped, ascending, scaled by the anchor.
+    bps = 200.0
+    res = build_recipe(data, "multiscale", _params(max_elements=120, base_pixel_size=bps))
+    fine, coarse = res.children  # finest→coarsest in memory
+    assert coarse.meta["min_pixel_size"] == 0.0  # coarsest is always eligible
+    expected = bps * math.sqrt(total_splats(fine) / total_splats(coarse))
+    assert fine.meta["min_pixel_size"] == pytest.approx(expected)
+    assert fine.meta["min_pixel_size"] > coarse.meta["min_pixel_size"]  # ascending
+    # A larger anchor pushes the fine-branch switch even farther out.
+    bigger = build_recipe(
+        data, "multiscale", _params(max_elements=120, base_pixel_size=2 * bps)
+    )
+    assert bigger.children[0].meta["min_pixel_size"] == pytest.approx(
+        2 * fine.meta["min_pixel_size"]
+    )
+
+
 def test_multiscale_is_unbalanced_lod_over_partition():
     data = _make_random_gsplat(n=400)
     res = build_recipe(
@@ -171,6 +207,32 @@ def test_multiscale_is_unbalanced_lod_over_partition():
     assert coarse.n_splats < total_splats(fine)
     # the fine branch carries the full resolution
     assert total_splats(fine) == 400
+
+
+def test_mosaic_is_partition_of_substitutive_lod_groups():
+    """`mosaic` = a kind=partition whose EVERY part is its own substitutive lod
+    group (per-part coarse↔fine swap) — the per-part substitutive sibling of
+    `partitioned` (additive parts) and `multiscale` (one global cap)."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data, "mosaic", _params(max_elements=120, compression_factor=4, levels=2)
+    )
+    assert isinstance(res, GSplatPartition)
+    assert res.n_children >= 2
+    # every part is a substitutive lod group with >= 2 levels (not a bare leaf).
+    for part in res.children:
+        assert isinstance(part, GSplatLodGroup)
+        assert part.n_children >= 2  # >= coarse + fine
+        # in-memory children are finest→coarsest; thresholds ascend that way.
+        levels_coarse_to_fine = [total_splats(c) for c in reversed(part.children)]
+        assert levels_coarse_to_fine == sorted(levels_coarse_to_fine)
+    # Conservation is at the FINEST level (the parts tile the original N); the
+    # synthesized coarser substitutive levels are extra stored representatives.
+    finest_total = sum(total_splats(part.children[0]) for part in res.children)
+    assert finest_total == 400
+    assert total_splats(res) > 400  # synthesized coarse levels add storage
+    # leaves are all real gsplat leaves at every level
+    assert all(isinstance(leaf, GSplatLeaf) for leaf in iter_leaves(res))
 
 
 # ── absorption regression: recipes == the builders they wrap ──────────────

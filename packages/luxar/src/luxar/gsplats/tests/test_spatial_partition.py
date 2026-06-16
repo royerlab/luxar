@@ -131,6 +131,18 @@ def test_partition_file_grafts_into_a_scene():
         assert n_parts >= 2
         total = sum(root[f"part_{i}"]["centers"].shape[0] for i in range(n_parts))
         assert total == 80
+        # The grafted partition WRAPPER must carry position_bounds (back-filled at
+        # scene finalization) — add_partition_group doesn't compute the union the
+        # standalone writer stamps, so without the back-fill the wrapper reaches the
+        # viewer bounds-less, losing partition-unit culling / standalone parity.
+        wrapper_pb = root.attrs.get("position_bounds")
+        assert wrapper_pb is not None, "grafted partition wrapper lost position_bounds"
+        # the wrapper union must contain every part's bounds.
+        for i in range(n_parts):
+            part_pb = root[f"part_{i}"].attrs["position_bounds"]
+            for d in range(len(part_pb["min"])):
+                assert wrapper_pb["min"][d] <= part_pb["min"][d]
+                assert wrapper_pb["max"][d] >= part_pb["max"][d]
 
 
 def test_grafting_a_partition_rejects_dim_order():
@@ -191,6 +203,69 @@ def test_grafted_lod_uses_coarsest_default_level():
         assert g.attrs["default_level"] == 0  # coarsest, NOT finest
         # child_0 is the coarsest (10 splats), not the finest (100).
         assert g["child_0"].attrs["n_splats"] == 10
+
+
+def test_grafted_multiscale_stamps_min_pixel_size_on_partition_child():
+    """Grafting a ``multiscale`` recipe (kind=lod over a kind=partition fine
+    branch) must stamp the per-child ``min_pixel_size`` selector threshold on the
+    PARTITION child — not only on the coarse leaf. Without it the viewer has no
+    threshold to gate the fine branch on, so the lod can never switch off it and
+    is stuck rendering the fine partition ("multiscale stuck at level 1" bug).
+
+    Regression: ``graft_gsplat_node`` popped min_pixel_size for all non-leaf
+    nodes but only re-applied it to the lod/partition WRAPPER for leaves; the
+    partition wrapper got None. The standalone writer always stamped it, so the
+    bug only bit the scene-graft path (add_gsplats_from_file / gsplat convert)."""
+    from luxar import Dimensions, LuxarZarrCompiler
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    rng = np.random.default_rng(0)
+    n = 400
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+    data = GSplatData(
+        centers=rng.uniform(0, 100, size=(n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, size=n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    ms = build_recipe(
+        data,
+        "multiscale",
+        RecipeParams(max_elements=120, compression_factor=4, n_lods=3, device="cpu"),
+    )
+    assert isinstance(ms, GSplatLodGroup)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        std = Path(tmp) / "ms.gsplats.zarr"
+        write_gsplats_tree(std, ms, ordering="none")
+        # The standalone writer must stamp the partition child too (the contract
+        # the graft has to match).
+        std_g = zarr.open_group(str(std), mode="r")
+        assert std_g["child_1"].attrs["kind"] == "partition"
+        assert std_g["child_1"].attrs["min_pixel_size"] is not None
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=std)
+        g = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert g.attrs["kind"] == "lod"
+        # child_0 = coarse leaf cap (threshold 0 = always-eligible coarsest);
+        # child_1 = fine partition branch, which MUST carry a positive threshold.
+        # (A gsplats leaf writes no ``kind`` attr; only group nodes do.)
+        assert g["child_0"].attrs.get("kind", "leaf") == "leaf"
+        assert g["child_0"].attrs["min_pixel_size"] == 0.0
+        assert g["child_1"].attrs["kind"] == "partition"
+        fine_mps = g["child_1"].attrs["min_pixel_size"]
+        assert fine_mps is not None, "partition child lost its min_pixel_size"
+        # thresholds must be strictly ascending coarsest -> finest for the
+        # selector to switch (0 -> positive).
+        assert fine_mps > g["child_0"].attrs["min_pixel_size"]
+        # the graft must match the standalone writer's threshold exactly.
+        assert fine_mps == std_g["child_1"].attrs["min_pixel_size"]
+        # the threshold rides on the partition WRAPPER, not its parts.
+        assert "min_pixel_size" not in g["child_1"]["part_0"].attrs
 
 
 def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():

@@ -9,20 +9,26 @@ from arbol import aprint
 
 
 def finalize_lod_position_bounds(store: zarr.Group) -> None:
-    """Back-fill missing ``position_bounds`` on kind=lod groups.
+    """Back-fill missing ``position_bounds`` on kind=lod / kind=partition wrappers.
 
-    Walks the zarr tree post-order and, for every group whose attrs
-    declare ``kind == 'lod'`` without a ``position_bounds``, computes
+    Walks the zarr tree post-order and, for every ``kind == 'lod'`` or
+    ``kind == 'partition'`` group without a ``position_bounds``, computes
     the union of its children's ``position_bounds`` (recursing into
     nested ``kind="lod"`` / ``kind="partition"`` wrappers and plain
-    groups). The convenience-builder path
-    (``_add_gsplats_as_lod_group``) leaves the parent without bounds
-    because each leaf carries its own; ``kind="partition"`` wrappers
-    already persist their union at write time
-    (``add_*_partition_wrapper_impl``); only ``kind="lod"`` wrappers
-    were left without aggregate bounds, so the viewer's
-    ``loadLodGroupNode`` saw empty bounds for a nested LOD-of-LOD
-    construction and skipped that level in projection.
+    groups). Two producers leave a wrapper without aggregate bounds:
+
+    - The convenience-builder path (``_add_gsplats_as_lod_group``) leaves
+      the ``kind="lod"`` parent without bounds because each leaf carries
+      its own, so the viewer's ``loadLodGroupNode`` saw empty bounds for a
+      nested LOD-of-LOD construction and skipped that level in projection.
+    - The **scene-graft** path (``graft_gsplat_node`` → ``add_partition_group``)
+      composes a ``kind="partition"`` wrapper without computing the
+      children-union that the standalone writer
+      (``gsplat_tree.write_gsplat_node``) stamps at write time. A grafted
+      partition — e.g. the ``multiscale`` recipe's fine branch, or a bare
+      partition via ``add_gsplats_from_file`` / ``gsplat convert`` — would
+      otherwise reach the viewer without wrapper-level bounds, losing
+      partition-unit frustum culling and graft/standalone parity.
 
     **Never overwrites** an authored ``position_bounds`` — only
     fills missing values. Children with empty / mismatched bounds
@@ -73,13 +79,14 @@ def finalize_lod_position_bounds(store: zarr.Group) -> None:
 
     def walk(group: "zarr.Group") -> None:
         attrs = dict(group.attrs)
-        if attrs.get("kind") == "lod" and "position_bounds" not in attrs:
+        kind = attrs.get("kind")
+        if kind in ("lod", "partition") and "position_bounds" not in attrs:
             aggregated = resolve(group)
             if aggregated is not None:
                 group.attrs["position_bounds"] = aggregated
                 aprint(
                     f"  📐 Back-filled position_bounds on "
-                    f"kind=lod group {group.path or '/'}"
+                    f"kind={kind} group {group.path or '/'}"
                 )
         for child_name in group.keys():
             child = group[child_name]

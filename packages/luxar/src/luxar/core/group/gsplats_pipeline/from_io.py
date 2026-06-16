@@ -112,7 +112,18 @@ def graft_gsplat_node(
     parent_node = parent or group
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    child_attrs.pop("min_pixel_size", None)
+    # A ``min_pixel_size`` passed down by a parent lod-group is THIS node's own
+    # selector threshold. For a leaf it is applied via ``add_gsplats_from_data``
+    # (the leaf branch above); for a kind=lod / kind=partition WRAPPER it must land
+    # on the wrapper group itself — NOT be silently dropped and NOT propagate to
+    # the parts. Without this, a kind=partition child of a kind=lod group (the
+    # ``multiscale`` recipe's fine branch) loses its threshold, so the viewer's
+    # pixel-size selector can never switch to it and the lod is stuck on it. This
+    # matches the standalone writer (``gsplat_tree.write_gsplat_node``), which
+    # stamps min_pixel_size on the partition wrapper.
+    self_min_pixel_size = child_attrs.pop("min_pixel_size", None)
+    if self_min_pixel_size is not None:
+        wrapper_attrs["min_pixel_size"] = self_min_pixel_size
 
     if isinstance(node, GSplatLodGroup):
         from luxar.gsplats.tree import total_splats
