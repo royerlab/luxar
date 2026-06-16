@@ -285,10 +285,30 @@ def test_lod_group_back_fills_min_pixel_size():
     # children are finest-first: [0]=finest(100), [1]=coarsest(25)
     finest_mps = node.children[0].meta["min_pixel_size"]
     coarse_mps = node.children[1].meta["min_pixel_size"]
+    # Default `extent` method (T·W/r): coarsest is the 0.0 floor, the finer level
+    # has a positive ascending threshold anchored in element size.
     assert coarse_mps == 0.0
     assert finest_mps > coarse_mps
-    # √(100/25) = 2 → finest threshold = BASE(10) * 2 = 20
-    assert finest_mps == 20.0
+    assert finest_mps > 0.0
+    # Pin the exact formula with an INDEPENDENTLY computed W and r, so a wrong W
+    # (e.g. finest-level bbox instead of the union of all levels) is caught: W must
+    # be the union bbox diagonal over BOTH levels' centers, r = p90 of the finest
+    # level's principal_radii, threshold = DEFAULT_TARGET_PIXEL_SIZE · W / r.
+    from luxar.core.group.lod.group import DEFAULT_TARGET_PIXEL_SIZE
+
+    all_centers = np.concatenate(
+        [s.centers for lvl in levels for s in lvl.additive_sublods]
+    )
+    w_union = float(np.linalg.norm(all_centers.max(axis=0) - all_centers.min(axis=0)))
+    fine_r = float(
+        np.percentile(
+            np.concatenate(
+                [s.principal_radii(True) for s in levels[0].additive_sublods]
+            ),
+            90.0,
+        )
+    )
+    assert finest_mps == pytest.approx(DEFAULT_TARGET_PIXEL_SIZE * w_union / fine_r)
 
 
 def test_min_pixel_size_explicit_meta_preserved():

@@ -29,8 +29,11 @@ from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
     BASE_PIXEL_SIZE,
+    DEFAULT_TARGET_PIXEL_SIZE,
     compute_lod_display_type,
     derive_min_pixel_sizes,
+    extent_min_pixel_sizes,
+    lod_thresholds,
     resolve_display_type,
     validate_lod_group,
 )
@@ -287,6 +290,110 @@ class TestDeriveMinPixelSizes:
     def test_zero_coarsest_rejected(self) -> None:
         with pytest.raises(ValueError, match="at least 1 element"):
             derive_min_pixel_sizes([0, 10])
+
+
+class TestExtentMinPixelSizes:
+    """The physically-anchored ``T·W/r`` (extent) method."""
+
+    def test_formula_and_floor(self) -> None:
+        # threshold_0 = 0 (coarsest floor); threshold_i = T·W/r_i. Coarsest
+        # extent (index 0) is unused. extents coarsest→finest (descending r).
+        th = extent_min_pixel_sizes([10.0, 5.0, 2.0], node_extent=100.0,
+                                    base_pixel_size=1.5)
+        assert th[0] == 0.0
+        assert th[1] == pytest.approx(1.5 * 100.0 / 5.0)  # 30
+        assert th[2] == pytest.approx(1.5 * 100.0 / 2.0)  # 75
+
+    def test_ascending_because_radius_descends(self) -> None:
+        th = extent_min_pixel_sizes([8.0, 4.0, 1.0], node_extent=50.0)
+        assert all(th[i] > th[i - 1] for i in range(1, len(th)))
+
+    def test_default_target_pixel_size(self) -> None:
+        th = extent_min_pixel_sizes([4.0, 2.0], node_extent=10.0)
+        assert th[1] == pytest.approx(DEFAULT_TARGET_PIXEL_SIZE * 10.0 / 2.0)
+
+    def test_smaller_element_switches_later(self) -> None:
+        # Halving the fine element's radius doubles its threshold (it stays the
+        # right LOD until twice as zoomed-in) — the physical-anchor property.
+        big = extent_min_pixel_sizes([10.0, 4.0], node_extent=100.0)[1]
+        small = extent_min_pixel_sizes([10.0, 2.0], node_extent=100.0)[1]
+        assert small == pytest.approx(2.0 * big)
+
+    def test_non_monotone_extents_guarded(self) -> None:
+        # A finer level with a *larger* radius (non-physical) still yields strictly
+        # ascending thresholds via the ×1.1 monotonicity guard.
+        th = extent_min_pixel_sizes([5.0, 6.0, 1.0], node_extent=100.0)
+        assert all(th[i] > th[i - 1] for i in range(1, len(th)))
+
+    def test_zero_extent_clamped(self) -> None:
+        # A degenerate zero-radius level must not divide-by-zero; it gets a huge
+        # (clamped) threshold and the guard keeps order.
+        th = extent_min_pixel_sizes([10.0, 0.0], node_extent=100.0)
+        assert th[1] > th[0] and th[1] == th[1]  # finite-ish, no NaN
+
+    def test_node_extent_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="node_extent"):
+            extent_min_pixel_sizes([10.0, 5.0], node_extent=0.0)
+
+    def test_single_level_is_just_the_floor(self) -> None:
+        # Boundary: one level → only the 0.0 coarsest floor (no finer threshold).
+        assert extent_min_pixel_sizes([3.0], node_extent=100.0) == [0.0]
+
+    def test_empty_extents_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            extent_min_pixel_sizes([], node_extent=100.0)
+
+
+class TestLodThresholdsSelector:
+    """The ``lod_thresholds`` method selector + graceful fallback."""
+
+    def test_extent_is_default_uses_extents(self) -> None:
+        got = lod_thresholds(
+            element_counts=[100, 400],
+            element_extents=[8.0, 2.0],
+            node_extent=100.0,
+        )
+        assert got == pytest.approx(extent_min_pixel_sizes([8.0, 2.0], 100.0))
+
+    def test_count_method_reproduces_sqrt(self) -> None:
+        got = lod_thresholds("count", element_counts=[100, 400, 1600])
+        assert got == pytest.approx(derive_min_pixel_sizes([100, 400, 1600]))
+
+    def test_extent_falls_back_to_count_without_extents(self) -> None:
+        # No extents/node_extent available → transparently use the count method.
+        got = lod_thresholds("extent", element_counts=[100, 400])
+        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
+
+    def test_extent_falls_back_when_node_extent_missing(self) -> None:
+        got = lod_thresholds(
+            "extent", element_counts=[100, 400], element_extents=[8.0, 2.0],
+            node_extent=None,
+        )
+        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
+
+    def test_extent_falls_back_when_node_extent_nonpositive(self) -> None:
+        # Degenerate node (coincident centers → W=0): fall back to count, don't crash.
+        got = lod_thresholds(
+            "extent", element_counts=[100, 400], element_extents=[8.0, 2.0],
+            node_extent=0.0,
+        )
+        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
+
+    def test_extent_falls_back_when_finer_extent_nonpositive(self) -> None:
+        # A finer level with a non-positive (degenerate/empty) extent must NOT
+        # poison the ladder with a spurious huge threshold — fall back to count.
+        # The coarsest extent (index 0) is unused, so a 0 there is fine.
+        got = lod_thresholds(
+            "extent", element_counts=[100, 400, 1600],
+            element_extents=[8.0, 0.0, 2.0], node_extent=100.0,
+        )
+        assert got == pytest.approx(derive_min_pixel_sizes([100, 400, 1600]))
+        # ...but a 0 coarsest extent is exempt (still uses extent for the rest).
+        ok = lod_thresholds(
+            "extent", element_counts=[100, 400], element_extents=[0.0, 2.0],
+            node_extent=100.0,
+        )
+        assert ok == pytest.approx(extent_min_pixel_sizes([0.0, 2.0], 100.0))
 
 
 # ────────────────────────────────────────────────────────────────────────

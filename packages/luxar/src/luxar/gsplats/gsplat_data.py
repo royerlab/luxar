@@ -209,6 +209,40 @@ class _SplatArrayMixin:
         result[nonzero] = max_s[nonzero] / min_s[nonzero]
         return result
 
+    def principal_radii(self, anisotropy: bool = True) -> np.ndarray:
+        """Per-splat element radius (world units) at the truncation boundary.
+
+        This is the extent that governs on-screen resolvability for LOD switching
+        (see ``core.group.lod.group.extent_min_pixel_sizes``): the Gaussian is
+        truncated at ``truncation_radius`` sigmas, so the radius is
+        ``truncation_radius * semi_axis``.
+
+        - ``anisotropy=True`` → the largest principal semi-axis
+          ``sqrt(lambda_max(Sigma))`` (worst-case projected radius;
+          orientation-independent — the splat's biggest reach in any direction).
+        - ``anisotropy=False`` → the isotropic-equivalent geometric-mean semi-axis
+          ``det(Sigma)^(1/2d)`` (== ``sqrt(volumes())``).
+
+        Returns:
+            shape (N,) float array.
+        """
+        if self.n_splats == 0:
+            return np.empty(0, dtype=np.float64)
+        trunc = float(getattr(self, "truncation_radius", 3.0))
+        if anisotropy:
+            from luxar.gsplats.utils.trils import unpack_tril
+
+            chol = self.cholesky_factors.astype(np.float64)
+            ell = unpack_tril(chol, self.ndim)
+            sigma = ell @ np.swapaxes(ell, -2, -1)
+            # eigvalsh returns ascending eigenvalues; the last is lambda_max.
+            lam_max = np.linalg.eigvalsh(sigma)[:, -1]
+            semi = np.sqrt(np.clip(lam_max, 0.0, None))
+        else:
+            semi = np.sqrt(self.volumes())
+        result: np.ndarray = trunc * semi
+        return result
+
 
 @dataclass(frozen=True, eq=False)
 class AdditiveSubLOD(_SplatArrayMixin):

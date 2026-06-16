@@ -2292,43 +2292,58 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_recipe_multiscale_base_pixel_size_sets_threshold(
+    def _multiscale_fine_threshold(
+        self, runner: CliRunner, src: Path, out: Path, *flags: str
+    ) -> float:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", str(src), str(out),
+                "--recipe", "multiscale",
+                "--max-elements", "12", "--n-lods", "2", "-K", "2",
+                "--device", "cpu", *flags,
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
+        import zarr
+
+        g = zarr.open_group(str(out), mode="r")
+        assert g["child_0"].attrs.get("min_pixel_size") == 0.0  # coarsest cap
+        return float(g["child_1"].attrs.get("min_pixel_size"))
+
+    def test_recipe_multiscale_lod_method_thresholds(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--base-pixel-size` on multiscale stamps the coarse↔fine selector
-        threshold on the fine partition wrapper (so the coarse cap is reachable);
-        without it the count-derived ~10px default would leave the fine branch
-        eligible at every zoom. Reads the on-disk attr the viewer's selector uses."""
+        """`--lod-method` selects the coarse↔fine threshold on the fine partition
+        wrapper (the on-disk attr the viewer's selector reads). `extent` (default)
+        is physically anchored; `count` reproduces the legacy √N proxy exactly."""
         import math
-
-        import zarr
 
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.tree import total_splats
 
-        out = tmp_path / "ms_bps.gsplats.zarr"
-        bps = 200.0
-        result = runner.invoke(
-            app,
-            [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "multiscale",
-                "--max-elements", "12", "--n-lods", "2", "-K", "2",
-                "--base-pixel-size", str(bps), "--device", "cpu",
-            ],
+        # count method: fine == base_pixel_size · √(n_fine / n_coarse).
+        out_c = tmp_path / "ms_count.gsplats.zarr"
+        count_mps = self._multiscale_fine_threshold(
+            runner, medium_gsplats, out_c, "--lod-method", "count"
         )
-        assert result.exit_code == 0, f"multiscale+bps failed:\n{result.stdout}"
-        # Read the threshold from the on-disk attr the viewer's selector uses.
-        g = zarr.open_group(str(out), mode="r")
-        assert g["child_0"].attrs.get("min_pixel_size") == 0.0  # coarsest cap
-        fine_mps = g["child_1"].attrs.get("min_pixel_size")
-        # Counts from the loaded tree (parts are multi-LOD leaves, so reach into the
-        # node model rather than the raw zarr layout).
-        node, _ = load_gsplat_node(out)
+        node, _ = load_gsplat_node(out_c)
         fine, coarse = node.children  # finest→coarsest in memory
-        expected = bps * math.sqrt(total_splats(fine) / total_splats(coarse))
-        assert fine_mps == pytest.approx(expected)
-        assert fine_mps > 0.0  # ascending → coarse cap is reachable at far zoom
+        expected = 10.0 * math.sqrt(total_splats(fine) / total_splats(coarse))
+        assert count_mps == pytest.approx(expected)
+
+        # extent method (default): positive, ascending, and generally != count.
+        out_e = tmp_path / "ms_extent.gsplats.zarr"
+        extent_mps = self._multiscale_fine_threshold(runner, medium_gsplats, out_e)
+        assert extent_mps > 0.0  # ascending → coarse cap reachable at far zoom
+        assert extent_mps != pytest.approx(count_mps)
+
+        # base_pixel_size is the target-px anchor T in extent mode → 2× scales it.
+        out_b = tmp_path / "ms_bps.gsplats.zarr"
+        scaled = self._multiscale_fine_threshold(
+            runner, medium_gsplats, out_b, "--base-pixel-size", "3.0"
+        )
+        assert scaled == pytest.approx(2.0 * extent_mps)  # default T is 1.5
 
     def test_base_pixel_size_rejected_for_non_multiscale_recipe(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

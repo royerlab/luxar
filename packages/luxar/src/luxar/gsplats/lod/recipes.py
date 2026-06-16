@@ -109,12 +109,20 @@ class RecipeParams:
     substitutive_method: str = "auto"
     lloyd_iterations: int = 5
     candidate_bins_k: int = 12
-    # LOD selector threshold anchor (multiscale coarse↔fine switch). ``None`` →
-    # the serializer's count-derived default (~10 px). The count proxy switches
-    # "early" for a substitutive cap (fewer but LARGER splats than the fine
-    # branch, so equal screen coverage at far fewer elements), leaving the fine
-    # branch eligible at almost every zoom; raise this to push the coarse cap
-    # across a wider/farther zoom range. See ``derive_min_pixel_sizes``.
+    # LOD switching-threshold derivation (multiscale coarse↔fine switch).
+    #   ``lod_method="extent"`` (default): physically-anchored W / r — the switch
+    #     is anchored in the element's on-screen pixel size, so it self-calibrates
+    #     and the substitutive cap's fewer-but-LARGER splats raise its threshold
+    #     correctly (no per-dataset tuning).
+    #   ``lod_method="count"``: legacy scene-relative √(N/N₀) proxy.
+    # ``extent_percentile`` / ``extent_anisotropy`` tune the per-level element
+    # radius r (default p90, largest-semi-axis). ``base_pixel_size`` is the anchor:
+    # the target element pixel size T (~1.5 px) in extent mode, or the √N anchor
+    # (~10 px) in count mode; ``None`` → the method's default. See
+    # ``core.group.lod.group.lod_thresholds`` / ``extent_min_pixel_sizes``.
+    lod_method: str = "extent"
+    extent_percentile: float = 90.0
+    extent_anisotropy: bool = True
     base_pixel_size: Optional[float] = None
     # shared
     device: str = "auto"
@@ -261,15 +269,24 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     """Coarse substitutive cap (far view) + a ``partitioned`` fine branch.
 
     The result is a ``kind=lod`` group with children **finest→coarsest in memory**
-    (``[fine_partition, coarse_leaf]``). The serializer derives each child's
-    ``min_pixel_size`` selector threshold from its splat count, so the coarse cap
-    shows when the node is far/small on screen and the partitioned fine branch
-    takes over up close. When ``params.base_pixel_size`` is set, the thresholds are
-    pre-stamped onto the children's ``meta`` using that anchor (honored by both the
-    standalone writer and the scene graft), overriding the count-derived default —
-    use it when the fine branch stays eligible at too-far a zoom (the substitutive
-    cap's bigger splats make the count proxy switch early; see ``RecipeParams``).
+    (``[fine_partition, coarse_leaf]``). Each child's ``min_pixel_size`` selector
+    threshold is pre-stamped onto its ``meta`` (honored by both the standalone
+    writer and the scene graft) via ``lod_thresholds``: by default the
+    physically-anchored ``extent`` method (``T·W/r``, anisotropy-aware p90 radius),
+    so the coarse cap — whose splats are fewer but LARGER — gets a correctly higher
+    fine-branch threshold and shows when the node is far/small on screen, with the
+    fine branch taking over up close. ``params.lod_method``/``extent_percentile``/
+    ``extent_anisotropy``/``base_pixel_size`` tune this (see ``RecipeParams``).
     """
+    from dataclasses import replace
+
+    from luxar.core.group.lod.group import lod_thresholds
+    from luxar.gsplats.tree import (
+        node_extent_diagonal,
+        node_percentile_radius,
+        total_splats,
+    )
+
     base = data.flattened()
     fine_partition = build_partitioned(base, params)
 
@@ -287,27 +304,25 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
 
-    if params.base_pixel_size is not None:
-        # Pre-stamp the selector thresholds from the chosen anchor (coarsest→finest
-        # element counts → ascending thresholds [0.0, fine]). Authored child meta
-        # takes precedence over the serializer's count-derived default in both write
-        # paths (gsplat_tree.write_gsplat_node / from_io.graft_gsplat_node).
-        from dataclasses import replace
-
-        from luxar.core.group.lod.group import derive_min_pixel_sizes
-        from luxar.gsplats.tree import total_splats
-
-        coarse_mps, fine_mps = derive_min_pixel_sizes(
-            [total_splats(coarse_leaf), total_splats(fine_partition)],
-            base_pixel_size=params.base_pixel_size,
-        )
-        coarse_leaf = replace(
-            coarse_leaf, meta={**coarse_leaf.meta, "min_pixel_size": coarse_mps}
-        )
-        fine_partition = replace(
-            fine_partition, meta={**fine_partition.meta, "min_pixel_size": fine_mps}
-        )
-
+    group = GSplatLodGroup(children=[fine_partition, coarse_leaf], default_level=0)
+    pct, aniso = params.extent_percentile, params.extent_anisotropy
+    # Coarsest→finest: [coarse cap, fine partition].
+    coarse_mps, fine_mps = lod_thresholds(
+        params.lod_method,  # type: ignore[arg-type]
+        element_counts=[total_splats(coarse_leaf), total_splats(fine_partition)],
+        element_extents=[
+            node_percentile_radius(coarse_leaf, pct, aniso),
+            node_percentile_radius(fine_partition, pct, aniso),
+        ],
+        node_extent=node_extent_diagonal(group),
+        base_pixel_size=params.base_pixel_size,
+    )
+    coarse_leaf = replace(
+        coarse_leaf, meta={**coarse_leaf.meta, "min_pixel_size": coarse_mps}
+    )
+    fine_partition = replace(
+        fine_partition, meta={**fine_partition.meta, "min_pixel_size": fine_mps}
+    )
     return GSplatLodGroup(children=[fine_partition, coarse_leaf], default_level=0)
 
 
