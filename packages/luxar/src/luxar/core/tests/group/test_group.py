@@ -542,9 +542,21 @@ class TestLodGroupAxis:
         # Coarsest first → child_0 has fewer splats than child_1.
         assert grp["child_0"].attrs["n_splats"] == 2
         assert grp["child_1"].attrs["n_splats"] == 8
-        # Monotonic min_pixel_size, coarsest = 0. B11/[P7]: pin the finer
-        # level to the documented derivation (BASE * sqrt(8/2) = 2*BASE)
-        # instead of a loose ``> 0`` that any positive value would satisfy.
+        # Default method is `extent` (physically anchored W/r): coarsest = 0,
+        # finer level has a positive ascending threshold.
+        assert grp["child_0"].attrs["min_pixel_size"] == 0.0
+        assert grp["child_1"].attrs["min_pixel_size"] > 0.0
+
+    def test_lod_method_count_reproduces_sqrt(self, tmp_path) -> None:
+        """``lod_group=dict(lod_method="count")`` pins the legacy √N derivation
+        (BASE·sqrt(8/2) = 2·BASE) — the selectable fallback to the extent default."""
+        data = _make_multi_substitutive_gsplat_data()
+        with LuxarZarrCompiler(tmp_path / "c.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data(
+                "multires", data, lod_group={"lod_method": "count"}
+            )
+        grp = zarr.open(str(tmp_path / "c.luxar.zarr"), mode="r")["multires"]
         assert grp["child_0"].attrs["min_pixel_size"] == 0.0
         expected_mps = derive_min_pixel_sizes([2, 8])[1]
         assert expected_mps == pytest.approx(2.0 * BASE_PIXEL_SIZE)

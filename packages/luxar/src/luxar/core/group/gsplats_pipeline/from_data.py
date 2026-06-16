@@ -55,7 +55,7 @@ def add_gsplats_from_data_impl(
 
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
-    result, explicit_min_pixel_sizes, base_pixel_size = (
+    result, explicit_min_pixel_sizes, base_pixel_size, extent_opts = (
         resolve_substitutive_axis_gsplats(result, lod_group)
     )
     result = resolve_additive_axis_gsplats(result, additive_lod)
@@ -75,6 +75,9 @@ def add_gsplats_from_data_impl(
             result=result,
             explicit_min_pixel_sizes=explicit_min_pixel_sizes,
             base_pixel_size=base_pixel_size,
+            lod_method=extent_opts["lod_method"],
+            extent_percentile=extent_opts["extent_percentile"],
+            extent_anisotropy=extent_opts["extent_anisotropy"],
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,

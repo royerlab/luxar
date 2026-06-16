@@ -48,6 +48,79 @@ class TestVolumes:
         assert gs.volumes().shape == (0,)
 
 
+class TestPrincipalRadii:
+    """Per-splat element radius (truncation_radius × semi-axis) for LOD switching."""
+
+    def test_anisotropic_largest_semi_axis(self):
+        # Axis-aligned diagonal Cholesky [2,0,3,0,0,4] → Σ diag (4, 9, 16),
+        # eigenvalues = variances; largest semi-axis = sqrt(16) = 4, × truncation.
+        gs = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
+            truncation_radius=3.0,
+        )
+        r = gs.principal_radii(anisotropy=True)
+        assert r.shape == (1,)
+        assert np.allclose(r[0], 3.0 * 4.0)
+
+    def test_isotropic_geometric_mean(self):
+        # Same splat, isotropic mode → geometric-mean semi-axis
+        # (2·3·4)^(1/3) = 24^(1/3), × truncation.
+        gs = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
+            truncation_radius=3.0,
+        )
+        r = gs.principal_radii(anisotropy=False)
+        assert np.allclose(r[0], 3.0 * (24.0 ** (1.0 / 3.0)))
+
+    def test_anisotropic_ge_isotropic(self):
+        gs = _make_3d_gsplat(n=8)
+        assert np.all(
+            gs.principal_radii(anisotropy=True) >= gs.principal_radii(anisotropy=False)
+            - 1e-6
+        )
+
+    def test_scales_with_truncation(self):
+        gs = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
+            truncation_radius=5.0,
+        )
+        assert np.allclose(gs.principal_radii(anisotropy=True)[0], 5.0 * 4.0)
+
+    def test_rotation_invariant_recovers_true_semi_axes(self):
+        """A ROTATED (off-diagonal Cholesky) covariance with principal semi-axes
+        (5,2,1): anisotropy=True must recover the largest semi-axis (5)·truncation
+        and anisotropy=False the geometric mean — both rotation-invariant. Guards
+        against using axis-aligned marginal sigmas (which an axis-aligned-only test
+        would not catch — marginal σ ≠ principal semi-axis once rotated)."""
+        from luxar.gsplats.utils.trils import pack_tril
+
+        rng = np.random.default_rng(1)
+        q, _ = np.linalg.qr(rng.standard_normal((3, 3)))  # random rotation
+        axes = np.array([5.0, 2.0, 1.0])
+        sigma = q @ np.diag(axes**2) @ q.T
+        chol = pack_tril(np.linalg.cholesky(sigma)[None, :, :])
+        gs = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=chol.astype(np.float32),
+            truncation_radius=3.0,
+        )
+        assert np.allclose(gs.principal_radii(anisotropy=True)[0], 3.0 * 5.0, atol=1e-2)
+        assert np.allclose(
+            gs.principal_radii(anisotropy=False)[0], 3.0 * (5 * 2 * 1) ** (1 / 3),
+            atol=1e-2,
+        )
+
+    def test_empty(self):
+        assert _make_empty_gsplat().principal_radii().shape == (0,)
+
+
 class TestMasses:
     def test_basic(self):
         gs = _make_3d_gsplat(n=5)

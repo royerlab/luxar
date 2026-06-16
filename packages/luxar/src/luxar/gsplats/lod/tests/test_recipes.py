@@ -159,37 +159,63 @@ def test_partitioned_clamps_ladder_on_small_parts():
     assert total_splats(res) == 20
 
 
-def test_multiscale_base_pixel_size_stamps_child_thresholds():
-    """``base_pixel_size`` pre-stamps the coarse↔fine selector thresholds on the
-    children's meta (ascending [0.0, fine]); without it, no threshold is authored
-    and the serializer falls back to its count-derived default. The anchor lets a
-    caller push the fine branch's switch to a farther zoom (the substitutive cap's
-    bigger splats otherwise make the count proxy switch too early)."""
+def test_extent_thresholds_are_scale_invariant():
+    """The ``extent`` method's defining property: threshold = T·W/r is dimensionless
+    in scale, so uniformly scaling a scene (centers AND covariance × k) leaves the
+    switch thresholds unchanged — no per-dataset tuning (unlike the √N ``count``
+    method, which is also scale-free, but here we lock the self-calibration that
+    motivated the change). A mutation to a non-W/r formula would break this."""
+    data = _make_random_gsplat(n=400)
+    k = 7.0
+    scaled = GSplatData(
+        centers=data.centers * k,
+        amplitudes=data.amplitudes.copy(),
+        cholesky_factors=data.cholesky_factors * k,  # L×k → Σ×k² → semi-axis × k
+    )
+    p = _params(max_elements=120, compression_factor=4, n_lods=3)
+    base_mps = build_recipe(data, "multiscale", p).children[0].meta["min_pixel_size"]
+    scaled_mps = build_recipe(scaled, "multiscale", p).children[0].meta["min_pixel_size"]
+    assert base_mps > 0.0
+    assert scaled_mps == pytest.approx(base_mps, rel=1e-4)
+
+
+def test_multiscale_stamps_extent_thresholds_by_default():
+    """multiscale always pre-stamps the coarse↔fine selector thresholds on the
+    children's meta (ascending [0.0, fine]). The default ``extent`` method anchors
+    the switch in physical element size (T·W/r), so the anchor ``base_pixel_size``
+    (target px) scales it linearly; ``lod_method="count"`` falls back to √N."""
     import math
 
     data = _make_random_gsplat(n=400)
 
-    # Default (no anchor): children carry no authored min_pixel_size.
-    default = build_recipe(data, "multiscale", _params(max_elements=120))
-    fine_d, coarse_d = default.children
-    assert "min_pixel_size" not in fine_d.meta
-    assert "min_pixel_size" not in coarse_d.meta
-
-    # With an anchor: thresholds are stamped, ascending, scaled by the anchor.
-    bps = 200.0
-    res = build_recipe(data, "multiscale", _params(max_elements=120, base_pixel_size=bps))
+    # Default = extent method: thresholds stamped, coarsest = 0.0, ascending.
+    res = build_recipe(data, "multiscale", _params(max_elements=120))
     fine, coarse = res.children  # finest→coarsest in memory
-    assert coarse.meta["min_pixel_size"] == 0.0  # coarsest is always eligible
-    expected = bps * math.sqrt(total_splats(fine) / total_splats(coarse))
-    assert fine.meta["min_pixel_size"] == pytest.approx(expected)
-    assert fine.meta["min_pixel_size"] > coarse.meta["min_pixel_size"]  # ascending
-    # A larger anchor pushes the fine-branch switch even farther out.
+    assert coarse.meta["min_pixel_size"] == 0.0  # coarsest = always-eligible floor
+    fine_mps = fine.meta["min_pixel_size"]
+    assert fine_mps > 0.0  # ascending → coarse cap reachable at far zoom
+
+    # base_pixel_size is the target-px anchor T in extent mode: 2× → 2× threshold.
     bigger = build_recipe(
-        data, "multiscale", _params(max_elements=120, base_pixel_size=2 * bps)
+        data, "multiscale", _params(max_elements=120, base_pixel_size=2 * 1.5)
     )
-    assert bigger.children[0].meta["min_pixel_size"] == pytest.approx(
-        2 * fine.meta["min_pixel_size"]
+    # default T is DEFAULT_TARGET_PIXEL_SIZE (1.5); 3.0 is 2×.
+    assert bigger.children[0].meta["min_pixel_size"] == pytest.approx(2 * fine_mps)
+
+    # lod_method="count" reproduces the legacy √N proxy exactly.
+    cnt = build_recipe(data, "multiscale", _params(max_elements=120, lod_method="count"))
+    cfine, ccoarse = cnt.children
+    assert ccoarse.meta["min_pixel_size"] == 0.0
+    expected_count = 10.0 * math.sqrt(total_splats(cfine) / total_splats(ccoarse))
+    assert cfine.meta["min_pixel_size"] == pytest.approx(expected_count)
+    # extent and count generally land the switch at different thresholds.
+    assert cfine.meta["min_pixel_size"] != pytest.approx(fine_mps)
+
+    # extent knobs change the radius → change the threshold.
+    p50 = build_recipe(
+        data, "multiscale", _params(max_elements=120, extent_percentile=50.0)
     )
+    assert p50.children[0].meta["min_pixel_size"] != pytest.approx(fine_mps)
 
 
 def test_multiscale_is_unbalanced_lod_over_partition():

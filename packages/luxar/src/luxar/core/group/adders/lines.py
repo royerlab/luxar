@@ -662,7 +662,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
-    from ..lod.group import derive_min_pixel_sizes
+    from ..lod.group import lod_thresholds
 
     # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
     # interpolates the scalar per bead then maps it through the LUT (matching the
@@ -733,8 +733,24 @@ def add_lines_substitutive_lod_wrapper_impl(
             )
         min_pixel_sizes = list(explicit)
     else:
-        min_pixel_sizes = derive_min_pixel_sizes(
-            counts, base_pixel_size=spec.get("base_pixel_size")
+        # Per-level element radius (world units), coarsest→finest. The finest
+        # level is the lines rendered as ``lifted`` beads (gsplats), so use its
+        # principal_radii — consistent with the coarse gsplat levels.
+        pct = float(spec["extent_percentile"])
+        aniso = bool(spec["extent_anisotropy"])
+        extents = [
+            float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
+        ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
+        lo, hi = vert_arr.min(axis=0), vert_arr.max(axis=0)
+        node_extent = (
+            float(np.linalg.norm(hi - lo)) if vert_arr.shape[0] else None
+        )
+        min_pixel_sizes = lod_thresholds(
+            str(spec["lod_method"]),  # type: ignore[arg-type]
+            element_counts=counts,
+            element_extents=extents,
+            node_extent=node_extent,
+            base_pixel_size=spec.get("base_pixel_size"),
         )
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}

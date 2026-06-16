@@ -117,11 +117,13 @@ from luxar.utils.paths import get_demos_output_dir
 MAX_ELEMENTS = 50_000
 # Coarse-cap compression for multiscale (one substitutive level ≈ N/FACTOR splats).
 FACTOR = 8
-# NB: the multiscale coarse↔fine switch uses the library-default selector anchor
-# (count-derived ~10px), so the coarse cap engages as you zoom *out* (the embryo
-# small on screen) and the fine, colour-coded parts show at the overview / up
-# close. To make the coarse cap appear at a nearer zoom, pass
-# RecipeParams(base_pixel_size=...) here (or `gsplat lod --base-pixel-size`).
+# NB: the multiscale coarse↔fine switch uses the default `extent` method — the
+# threshold is physically anchored in element size (T·W/r, self-calibrating), so
+# the coarse cap (its splats fewer-but-larger) engages as you zoom *out* (the
+# embryo small on screen) and the fine, colour-coded parts show up close. To tune
+# it, pass RecipeParams(lod_method=..., extent_percentile=..., base_pixel_size=...)
+# here (or `gsplat lod --lod-method/--extent-percentile/--base-pixel-size`); the
+# legacy √N proxy is `lod_method="count"`.
 # Additive ladder depth for additive / partitioned-part / multiscale-part ladders.
 N_LODS = 4
 # Cheap O(N log N) additive ordering — keeps the demo fast on CPU.

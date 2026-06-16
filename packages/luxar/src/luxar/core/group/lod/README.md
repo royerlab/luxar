@@ -61,8 +61,10 @@ finest child whose threshold is satisfied by the current view.
 
 | Symbol | Purpose |
 |--------|---------|
-| `BASE_PIXEL_SIZE = 10.0` | Anchor for auto-derived thresholds; the detail floor below which a finer level isn't worth the cost. |
-| `derive_min_pixel_sizes(element_counts, base_pixel_size=None)` | Auto-derive thresholds: child *i* → `base * sqrt(n_i / n_0)`, coarsest = `0.0`. Defensively bumps near-equal levels (×1.1) to keep the list strictly ascending. |
+| `lod_thresholds(method, *, element_counts, element_extents=None, node_extent=None, base_pixel_size=None)` | **Method selector** (default `"extent"`). Dispatches to `extent_min_pixel_sizes` when extents + a positive `node_extent` are available; gracefully falls back to the `"count"` √N method otherwise. |
+| `extent_min_pixel_sizes(element_extents, node_extent, base_pixel_size=None)` | **Default (physically anchored).** child *i* → `T · W / r_i` (`W` = node bbox diagonal, `r_i` = the level's element radius, `T` = `base_pixel_size` or `DEFAULT_TARGET_PIXEL_SIZE ≈ 1.5` px), coarsest = `0.0`. Self-calibrating; captures substitutive levels' larger coarse elements. |
+| `derive_min_pixel_sizes(element_counts, base_pixel_size=None)` | **Legacy `count` method.** child *i* → `base * sqrt(n_i / n_0)` (`base = BASE_PIXEL_SIZE = 10`), coarsest = `0.0`. Scene-relative; biased for substitutive levels. |
+| `BASE_PIXEL_SIZE = 10.0` / `DEFAULT_TARGET_PIXEL_SIZE = 1.5` | Default anchors for the `count` / `extent` methods respectively. |
 | `validate_lod_group(group)` | Free-function validator for any `Group` with `attrs["kind"] == "lod"`. Raises on no children, out-of-range `default_level`, missing `min_pixel_size`, or non-monotonic thresholds. |
 | `resolve_display_type(node)` | The geometry type a node appears as to the user. For `kind in (lod, partition)` returns the recorded `display_type`; else the node's own `type`. Shared with the Partition kind's validator. |
 | `compute_lod_display_type(children)` | Derive an LOD group's `display_type` from its finest (last) child, recursing through nested specialized groups. |
@@ -177,9 +179,12 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 2. **Coarsens** via `coarse_substitutive_levels` (drop level 0, render-light
    rescale) — identical to Points.
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
-   the original Lines node as the finest child; `display_type="lines"`. The finest
-   "count" for `derive_min_pixel_sizes` is the full lifted **bead** count (not
-   vertex count) so the ladder thresholds stay on one scale.
+   the original Lines node as the finest child; `display_type="lines"`. Thresholds
+   come from `lod_thresholds` — by default the `extent` method (per-level element
+   radius `r` = the lifted beads'/coarse splats' p90 `principal_radii`); the
+   `count` fallback uses the full lifted **bead** count (not vertex count) so the
+   ladder stays on one scale. `extent_percentile` / `extent_anisotropy` /
+   `base_pixel_size` / `lod_method` tune it via the `substitutive_lod=` spec.
 
 Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
@@ -200,7 +205,9 @@ resolvers:
 
 - `resolve_substitutive_axis_gsplats(data, spec)` — the `lod_group=` axis.
   Returns `(resolved_data, explicit_min_pixel_sizes_or_None,
-  base_pixel_size_or_None)`. `None` auto-keeps a multi-substitutive pyramid
+  base_pixel_size_or_None, extent_opts)` where `extent_opts` carries the
+  `lod_method` / `extent_percentile` / `extent_anisotropy` knobs (defaults when
+  not in the spec). `None` auto-keeps a multi-substitutive pyramid
   (routes to the `kind=lod` builder, no work discarded); `False` collapses to
   the finest level (index 0); `True` requires a stored pyramid; `dict(...)`
   reuses a stored pyramid or computes one via
