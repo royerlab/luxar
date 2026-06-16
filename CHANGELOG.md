@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Fixed — Layers panel now follows scene add-order (napari-style), not alphabetical
+
+The viewer rebuilds the scene graph from zarr **consolidated metadata**, whose
+group enumeration is alphabetical — so the Layers panel listed layers
+alphabetically regardless of the order they were added in Python. In the LOD
+recipe-gallery demo this made the panel (`additive, flat, mosaic, multiscale,
+partitioned`) disagree with the left→right spatial placement and the numbered
+overlay legend (both `flat → additive → partitioned → multiscale → mosaic`).
+
+Each `Node` now stamps its insertion order among siblings as a `child_index`
+attr on add, and the loader (`build-scene-graph.ts`) sorts every sibling list by
+it — restoring napari-style add-order across the scene graph, Layers panel, and
+any order-sensitive consumer. Siblings without `child_index` (legacy data) keep
+their relative enumeration order. As a bonus this fixes a latent misordering of
+≥10 `part_<i>`/`child_<i>` subgroups (alphabetical put `part_10` before `part_2`).
+
+`child_index` is stamped on **both** scene-authored nodes (`Node.__init__`) and
+the bare-root standalone `.gsplats.zarr` writer (`gsplat_tree.write_gsplat_node`),
+so grafted and standalone trees order identically. The finalize back-fill that
+resolves a kind=lod group's `display_type` from its finest child now selects by
+`child_index` rather than alphabetical name order (name-sort mis-picked the
+finest for ≥10-level ladders).
+
 #### Changed — LOD switching thresholds are now extent-based (physically anchored)
 
 The substitutive-LOD `min_pixel_size` selector thresholds — the on-screen sizes

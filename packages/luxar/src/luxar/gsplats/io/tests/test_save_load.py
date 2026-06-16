@@ -711,3 +711,58 @@ class TestCompressedLoadSecurity:
             _extract_compressed_zarr(evil)
         # The decisive assertion: nothing was written outside the extraction dir.
         assert not target.exists(), "symlink escape wrote a file outside the temp dir"
+
+
+def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
+    """Bare-root .gsplats.zarr trees stamp ``child_index`` (insertion order) on
+    every ``child_<i>`` / ``part_<i>`` so the viewer restores napari-style order
+    instead of zarr's alphabetical enumeration. Pre-fix the children carried no
+    ``child_index``; a >=10-child group then reordered (child_10 before child_2)
+    in the viewer's sibling sort.
+    """
+    import tempfile
+    from pathlib import Path
+
+    import zarr
+
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    def _leaf(n: int, seed: int) -> GSplatLeaf:
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+                    amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
+                    cholesky_factors=chol,
+                )
+            ]
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # kind=partition with 3 parts.
+        ppath = Path(tmpdir) / "part.gsplats.zarr"
+        write_gsplats_tree(
+            ppath,
+            GSplatPartition(children=[_leaf(20, 0), _leaf(20, 1), _leaf(20, 2)]),
+            ordering="none",
+        )
+        proot = zarr.open_group(str(ppath), mode="r")
+        for i in range(3):
+            assert dict(proot[f"part_{i}"].attrs)["child_index"] == i
+
+        # kind=lod: in-memory finest→coarsest; on disk child_0 = coarsest, and
+        # child_index must match the child_<i> numbering (0=coarsest..N=finest).
+        lpath = Path(tmpdir) / "lod.gsplats.zarr"
+        write_gsplats_tree(
+            lpath,
+            GSplatLodGroup(children=[_leaf(40, 3), _leaf(10, 4)], default_level=0),
+            ordering="none",
+        )
+        lroot = zarr.open_group(str(lpath), mode="r")
+        for i in range(2):
+            assert dict(lroot[f"child_{i}"].attrs)["child_index"] == i

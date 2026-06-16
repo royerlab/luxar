@@ -286,6 +286,14 @@ export interface ZarrNodeAttrs {
   /** Arrays in this group */
   arrays?: string[];
 
+  /**
+   * Insertion order among siblings, stamped by the Python `Node` on add.
+   * The scene graph is rebuilt from zarr consolidated metadata, whose
+   * enumeration is alphabetical; the loader sorts siblings by this index
+   * to restore napari-style addition order (e.g. the layers panel).
+   */
+  child_index?: number;
+
   /** Physical units */
   units?: string;
 
