@@ -1806,6 +1806,10 @@ class GSplatData(_SplatArrayMixin):
         compress: Optional[Literal["zip", "tar.gz"]] = None,
         compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
+        lod_method: str = "extent",
+        extent_percentile: float = 90.0,
+        extent_anisotropy: bool = True,
+        base_pixel_size: Optional[float] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1819,6 +1823,12 @@ class GSplatData(_SplatArrayMixin):
             compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
             zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
                 Useful when metadata overhead matters, e.g. for Git LFS storage.
+            lod_method / extent_percentile / extent_anisotropy / base_pixel_size:
+                LOD switching-threshold knobs for a multi-substitutive dataset (the
+                per-level ``min_pixel_size`` of the kind=lod group). ``lod_method``
+                ="extent" (default) anchors the switch in element size (``T·W/r``);
+                "count" is the legacy √N proxy. Inert for a single-level dataset.
+                See ``core.group.lod.group.lod_thresholds``.
 
         Colors are written via the shared COLOR helper, which auto-detects SDR vs
         HDR (values > 1) — there is no explicit ``color_mode`` knob.
@@ -1852,9 +1862,21 @@ class GSplatData(_SplatArrayMixin):
 
         # One authoring path: serialize this dataset's node tree to v3.0 via the
         # shared walker (the same machinery the scene compiler uses for leaves).
+        # Build the tree with the chosen LOD-threshold knobs (multi-substitutive
+        # → a kind=lod group whose per-level min_pixel_size is derived here); a
+        # single level is a bare leaf and the knobs are inert.
+        from luxar.gsplats.tree import tree_from_substitutive_levels
+
+        tree = tree_from_substitutive_levels(
+            self.substitutive_levels,
+            lod_method=lod_method,
+            extent_percentile=extent_percentile,
+            extent_anisotropy=extent_anisotropy,
+            base_pixel_size=base_pixel_size,
+        )
         write_gsplats_tree(
             path,
-            self.tree,
+            tree,
             ordering=ordering,
             encoding_mode=encoding_mode,
             fitting_info=fitting_info,

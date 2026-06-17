@@ -249,6 +249,34 @@ def test_bridge_default_level_is_fixed_at_finest():
     assert default == 0
 
 
+def test_tree_from_substitutive_levels_lod_method_selectable():
+    """#5: the builder threads the lod_method knob into the per-child threshold
+    derivation. ``count`` reproduces the legacy √N thresholds exactly; the default
+    ``extent`` is physically anchored and differs. (Pre-fix the function took no
+    knobs, so a substitutive/pyramid file was never CLI-tunable.)"""
+    import math
+
+    from luxar.core.group.lod.group import BASE_PIXEL_SIZE
+
+    # finest-first levels: counts 800, 200, 50 (coarsest = 50, last).
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(800, seed=0)], level_index=0),
+        SubstitutiveLevel(additive_sublods=[_sublod(200, seed=1)], level_index=1),
+        SubstitutiveLevel(additive_sublods=[_sublod(50, seed=2)], level_index=2),
+    ]
+    cnt = tree_from_substitutive_levels(levels, lod_method="count")
+    cnt_mps = [c.meta["min_pixel_size"] for c in cnt.children]  # finest-first
+    assert cnt_mps[2] == 0.0  # coarsest = always-eligible floor
+    assert cnt_mps[1] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(200 / 50))
+    assert cnt_mps[0] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(800 / 50))
+
+    ext = tree_from_substitutive_levels(levels)  # default = extent
+    ext_mps = [c.meta["min_pixel_size"] for c in ext.children]
+    assert ext_mps[2] == 0.0
+    assert ext_mps[0] > ext_mps[1] > ext_mps[2]  # ascending coarsest→finest
+    assert ext_mps[0] != pytest.approx(cnt_mps[0])  # physically anchored, differs
+
+
 def test_non_matrix_trees_have_no_matrix_projection():
     # partition is not matrix-shaped
     part = GSplatPartition(children=[_leaf(10, seed=0), _leaf(10, seed=1)])

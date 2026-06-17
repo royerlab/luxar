@@ -68,16 +68,16 @@ _ALLOWED_TOKENS = {
     "flat": frozenset(),
     "additive": frozenset({"additive"}),
     "partitioned": frozenset({"additive", "partition"}),
-    # ``lod_selector`` (--base-pixel-size) tunes the coarse↔fine switch of the
-    # multiscale kind=lod group; only this recipe builds such a group from a flat
-    # input, so it is the only recipe that accepts it.
+    # ``lod_selector`` (--lod-method/--extent-percentile/--extent-anisotropy/
+    # --base-pixel-size) tunes the coarse↔fine switch of any kind=lod group:
+    # the multiscale cap, and the substitutive/pyramid/mosaic lod ladders.
     "multiscale": frozenset({"additive", "partition", "substitutive", "lod_selector"}),
     # mosaic: BSP partition + a substitutive lod group per part — partition knobs
-    # plus the substitutive ones (and --levels for per-part depth). No additive
-    # ladder (parts replace, not accumulate).
-    "mosaic": frozenset({"partition", "substitutive", "levels"}),
-    "substitutive": frozenset({"substitutive", "levels"}),
-    "pyramid": frozenset({"additive", "substitutive", "levels"}),
+    # plus the substitutive ones (and --levels for per-part depth) and the lod
+    # selector. No additive ladder (parts replace, not accumulate).
+    "mosaic": frozenset({"partition", "substitutive", "levels", "lod_selector"}),
+    "substitutive": frozenset({"substitutive", "levels", "lod_selector"}),
+    "pyramid": frozenset({"additive", "substitutive", "levels", "lod_selector"}),
 }
 
 
@@ -492,11 +492,18 @@ def lod_recipe(
                         output_path.unlink()
                 if isinstance(result, GSplatData):
                     # Matrix recipe — identical write path to the absorbed subcommands.
+                    # The LOD-threshold knobs are derived at tree-build time (here),
+                    # so forward them so substitutive/pyramid honor --lod-method etc.
+                    # (inert for flat/additive, which have no kind=lod group).
                     result.save(
                         output_path,
                         ordering=ordering,  # type: ignore[arg-type]
                         encoding_mode=encoding_obj,
                         compress=compress,  # type: ignore[arg-type]
+                        lod_method=params.lod_method,
+                        extent_percentile=params.extent_percentile,
+                        extent_anisotropy=params.extent_anisotropy,
+                        base_pixel_size=params.base_pixel_size,
                     )
                 else:
                     # Composed recipe — write the node tree, carrying input provenance.

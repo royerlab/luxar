@@ -126,19 +126,29 @@ def graft_gsplat_node(
         wrapper_attrs["min_pixel_size"] = self_min_pixel_size
 
     if isinstance(node, GSplatLodGroup):
-        from luxar.gsplats.tree import total_splats
+        from luxar.gsplats.tree import (
+            node_extent_diagonal,
+            node_percentile_radius,
+            total_splats,
+        )
 
-        from ..lod.group import derive_min_pixel_sizes
+        from ..lod.group import lod_thresholds
 
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are finest-first; add_lod_group wants coarsest→finest.
         on_disk = list(reversed(node.children))
-        # Per-child min_pixel_size selector thresholds: prefer each child's
-        # authored ``meta`` value, but derive from the per-child splat counts
-        # when absent — matching the standalone writer (gsplat_tree) and scene
-        # writer (lod_dispatch) so a meta-less grafted tree doesn't collapse to
-        # all-zero (non-ascending) thresholds the selector would reject.
-        derived_mps = derive_min_pixel_sizes([total_splats(c) for c in on_disk])
+        # Per-child min_pixel_size selector thresholds: prefer each child's authored
+        # ``meta`` value, else derive — defaulting to the physically-anchored
+        # ``extent`` method (T·W/r₉₀), matching the standalone writer (gsplat_tree)
+        # and scene writer (lod_dispatch); ``lod_thresholds`` falls back to the count
+        # √N method when extents/W are unavailable, so a meta-less grafted tree still
+        # gets ascending thresholds the selector accepts (never all-zero).
+        derived_mps = lod_thresholds(
+            "extent",
+            element_counts=[total_splats(c) for c in on_disk],
+            element_extents=[node_percentile_radius(c) for c in on_disk],
+            node_extent=node_extent_diagonal(node),
+        )
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
