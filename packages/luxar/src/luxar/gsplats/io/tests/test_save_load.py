@@ -766,3 +766,51 @@ def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
         lroot = zarr.open_group(str(lpath), mode="r")
         for i in range(2):
             assert dict(lroot[f"child_{i}"].attrs)["child_index"] == i
+
+
+def test_writer_derives_extent_thresholds_for_meta_less_lod_group() -> None:
+    """#4: a meta-less (hand-built) kind=lod group gets EXTENT-based min_pixel_size
+    from the writer fallback (physically anchored T·W/r), not the legacy √N count.
+    The builders normally stamp the threshold into child meta — this exercises the
+    fallback for a tree written without it, and pins it to extent."""
+    import math
+    import tempfile
+    from pathlib import Path
+
+    import zarr
+
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+    def _leaf(n: int, scale: float, seed: int) -> GSplatLeaf:
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = scale  # isotropic; radius ∝ scale
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=rng.uniform(0, 100, (n, 3)).astype(np.float32),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=chol,
+                )
+            ]
+        )
+
+    # finest-first: 800 small (scale 1) + 50 large (scale 4). No authored meta.
+    grp = GSplatLodGroup(
+        children=[_leaf(800, 1.0, 1), _leaf(50, 4.0, 0)], default_level=0
+    )
+    assert "min_pixel_size" not in grp.children[0].meta
+    assert "min_pixel_size" not in grp.children[1].meta
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "m.gsplats.zarr"
+        write_gsplats_tree(path, grp, ordering="none")
+        root = zarr.open_group(str(path), mode="r")
+        assert root["child_0"].attrs["min_pixel_size"] == 0.0  # coarsest floor
+        fine_mps = root["child_1"].attrs["min_pixel_size"]
+        assert fine_mps > 0.0
+        # Legacy count would give BASE(10)·√(800/50) = 40; extent (T·W/r) differs.
+        count_pred = 10.0 * math.sqrt(800 / 50)
+        assert abs(fine_mps - count_pred) > 1.0

@@ -294,6 +294,11 @@ def _leaf_from_substitutive_level(level: "SubstitutiveLevel") -> GSplatLeaf:
 
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
+    *,
+    lod_method: str = "extent",
+    extent_percentile: float = 90.0,
+    extent_anisotropy: bool = True,
+    base_pixel_size: Optional[float] = None,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
@@ -306,11 +311,13 @@ def tree_from_substitutive_levels(
       not a settable data-model default.
 
     Each child of a multi-level lod group is back-filled with a derived
-    ``min_pixel_size`` selector threshold (the physically-anchored ``extent``
-    method by default — ``W / r``, anisotropy-aware p90 element radius — the
-    same single-sourced derivation the scene path uses), so a standalone
-    substitutive ``.gsplats.zarr`` selects levels correctly in the viewer rather
-    than being stuck at the finest level.
+    ``min_pixel_size`` selector threshold, so a standalone substitutive
+    ``.gsplats.zarr`` selects levels correctly in the viewer rather than being
+    stuck at the finest level. ``lod_method`` (``"extent"`` default — the
+    physically-anchored ``T·W/r`` method, with ``extent_percentile`` /
+    ``extent_anisotropy`` tuning the per-level radius and ``base_pixel_size`` the
+    target-px anchor; or ``"count"`` for the legacy √N proxy) selects the
+    derivation — the same single-sourced one the scene path uses.
 
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
@@ -324,24 +331,26 @@ def tree_from_substitutive_levels(
     group = GSplatLodGroup(children=leaves, default_level=0)
 
     # Back-fill per-child min_pixel_size. The derivation is single-sourced in
-    # core (coarsest child = 0.0, ascending). Default to the physically-anchored
-    # ``extent`` method (W / r₉₀, anisotropy-aware); ``lod_thresholds`` falls back
-    # to the legacy √N ``count`` method if extents/W are unavailable. Inputs are
-    # coarsest-first; our leaves/levels are finest-first.
+    # core (coarsest child = 0.0, ascending); ``lod_thresholds`` falls back to the
+    # √N ``count`` method if extents/W are unavailable. Inputs are coarsest-first;
+    # our leaves/levels are finest-first.
     from luxar.core.group.lod.group import lod_thresholds
 
     counts_finest_first = [
         sum(sub.n_splats for sub in lvl.additive_sublods) for lvl in levels
     ]
     extents_finest_first = [
-        level_percentile_radius(list(lvl.additive_sublods)) for lvl in levels
+        level_percentile_radius(list(lvl.additive_sublods), extent_percentile,
+                                extent_anisotropy)
+        for lvl in levels
     ]
     n = len(leaves)
     thresholds_coarsest_first = lod_thresholds(
-        "extent",
+        lod_method,  # type: ignore[arg-type]
         element_counts=counts_finest_first[::-1],
         element_extents=extents_finest_first[::-1],
         node_extent=node_extent_diagonal(group),
+        base_pixel_size=base_pixel_size,
     )
     for i, leaf in enumerate(leaves):
         # finest-first index i ↔ coarsest-first index (n-1-i)
