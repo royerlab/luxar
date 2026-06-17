@@ -691,6 +691,15 @@ def add_lines_substitutive_lod_wrapper_impl(
         truncation_radius=float(spec["truncation_radius"]),
     )
 
+    # Resolve which dims coarsening may merge over (default Auto = displayed dims,
+    # grouping by non-displayed dims so coarse beads never blend across a
+    # categorical/sliced axis). Bead columns == vertex/scene dim columns.
+    from ..lod.group import resolve_coarsen_dims
+
+    coarsen_dims = resolve_coarsen_dims(
+        group._find_scene(), int(lifted.ndim), spec.get("coarsen_dims")
+    )
+
     # Synthesise coarse gsplat levels (level 0 dropped, render-light conserved).
     coarse = coarse_substitutive_levels(
         lifted,
@@ -699,6 +708,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         method=str(spec["method"]),
         device=spec.get("device", "auto"),
         seed=spec.get("seed"),
+        coarsen_dims=coarsen_dims,
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an

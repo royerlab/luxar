@@ -321,6 +321,13 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive         
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+# Barrier-aware coarsening (substitutive/pyramid/multiscale/mosaic): --coarsen-dims
+# lists the center-column indices coarsening may merge over; the rest become hard
+# barriers (a categorical/time/channel axis), so coarse splats never blend across
+# them. Default = all dims. (The Python scene API defaults to Auto = coarsen
+# displayed dims, group by non-displayed; standalone gsplats have no display info
+# so the CLI takes explicit indices and warns on >3D input without the flag.)
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --coarsen-dims 1,2,3
 # LOD switch tuning — applies to ANY recipe with a kind=lod group (multiscale,
 # substitutive, pyramid, mosaic): --lod-method extent|count (default extent=T·W/r),
 # --extent-percentile 90, --extent-anisotropy/--no-extent-anisotropy, --base-pixel-size.

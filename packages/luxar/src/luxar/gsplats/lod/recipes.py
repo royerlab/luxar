@@ -109,6 +109,9 @@ class RecipeParams:
     substitutive_method: str = "auto"
     lloyd_iterations: int = 5
     candidate_bins_k: int = 12
+    # Center-column indices substitutive coarsening may merge over; the
+    # complement become hard grouping barriers. None == coarsen all dims.
+    coarsen_dims: Optional[tuple] = None
     # LOD switching-threshold derivation (multiscale coarse↔fine switch).
     #   ``lod_method="extent"`` (default): physically-anchored W / r — the switch
     #     is anchored in the element's on-screen pixel size, so it self-calibrates
@@ -168,6 +171,7 @@ def build_substitutive(data: GSplatData, params: RecipeParams) -> GSplatData:
         candidate_bins_k=params.candidate_bins_k,
         device=params.device,
         seed=params.seed,
+        coarsen_dims=params.coarsen_dims,
     )
 
 
@@ -181,6 +185,7 @@ def build_pyramid(data: GSplatData, params: RecipeParams) -> GSplatData:
         lloyd_iterations=params.lloyd_iterations,
         candidate_bins_k=params.candidate_bins_k,
         device=params.device,
+        coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
         additive_method=params.additive_method,
         breakpoints=params.breakpoints,
@@ -234,6 +239,7 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
         candidate_bins_k=params.candidate_bins_k,
         device=params.device,
         seed=params.seed,
+        coarsen_dims=params.coarsen_dims,
     )
     # Build each part's lod group with the chosen threshold knobs (default
     # extent T·W/r), so mosaic's per-part coarse↔fine switch is tunable too.
@@ -311,6 +317,7 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         candidate_bins_k=params.candidate_bins_k,
         device=params.device,
         seed=params.seed,
+        coarsen_dims=params.coarsen_dims,
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
 

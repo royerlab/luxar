@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
@@ -293,3 +293,60 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         assert grp.attrs["display_type"] == "lines"
         children = sorted(k for k in grp.keys() if k.startswith("child_"))
         assert grp[children[-1]].attrs["type"] == "lines"
+
+
+# ────────────────────────────────────────────────────────────────────────
+# coarsen_dims — barrier-aware coarsening (parallels the Points tests)
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestCoarsenDimsLines:
+    def _build_4d(self, tmp_path, *, coarsen_dims="__unset__", n_groups=3):
+        # Segments stacked at categorical (display=False) coloring values 0..G-1,
+        # sharing the same xyz so a barrier-unaware coarsening would blend them.
+        rng = np.random.default_rng(0)
+        n_seg = 1200
+        xyz = rng.normal(0, 5, (2 * n_seg, 3)).astype(np.float32)
+        parts = [
+            np.column_stack([np.full(2 * n_seg, g, np.float32), xyz])
+            for g in range(n_groups)
+        ]
+        verts = np.vstack(parts).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("coloring", categories=[str(g) for g in range(n_groups)],
+                          display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+        out = tmp_path / "l4d.luxar.zarr"
+        kw = {} if coarsen_dims == "__unset__" else {"coarsen_dims": coarsen_dims}
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_lines(
+                "curves", verts, 0.8, line_type="segments",
+                substitutive_lod=dict(levels=3, device="cpu", **kw),
+            )
+        return zarr.open(str(out), mode="r")["curves"]
+
+    @staticmethod
+    def _purity(grp) -> float:
+        worst = 0.0
+        for k in grp.keys():
+            if k.startswith("child_") and grp[k].attrs.get("type") == "gsplats":
+                c0 = np.asarray(grp[k]["centers"])[:, 0]
+                worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
+        return worst
+
+    def test_auto_default_groups_by_non_displayed(self, tmp_path) -> None:
+        assert self._purity(self._build_4d(tmp_path)) < 1e-4
+
+    def test_all_dims_blends(self, tmp_path) -> None:
+        grp = self._build_4d(tmp_path, n_groups=4, coarsen_dims="all")
+        assert self._purity(grp) > 0.05
+
+    def test_resolver_passthrough(self) -> None:
+        assert resolve_substitutive_axis_lines(
+            dict(coarsen_dims=["x", "y", "z"]))["coarsen_dims"] == ["x", "y", "z"]

@@ -2035,6 +2035,55 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
+    def test_coarsen_dims_rejected_for_additive(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--coarsen-dims is a substitutive-only knob; additive must reject it."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out),
+                  "--recipe", "additive", "--coarsen-dims", "0,1"]
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_coarsen_dims_out_of_range_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """An index >= ndim (3D data) is a clean BadParameter, writes nothing."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out),
+                  "--recipe", "substitutive", "--coarsen-dims", "0,1,5"]
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_coarsen_dims_non_integer_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out),
+                  "--recipe", "substitutive", "--coarsen-dims", "a,b"]
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_coarsen_dims_substitutive_runs(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Valid indices on a substitutive build succeed (barrier = dim 2)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "sub.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "lod", str(medium_gsplats), str(out),
+                  "--recipe", "substitutive", "--coarsen-dims", "0,1"]
+        )
+        assert result.exit_code == 0, f"failed:\n{result.stdout}"
+        assert GSplatData.load(out).n_substitutive >= 2
+
     def test_recipe_flat(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
