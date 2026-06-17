@@ -6,6 +6,55 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Fixed — Substitutive LOD pops to coarse when the camera enters the bounding box
+
+The viewer selects which substitutive LOD level to show from the screen-space
+pixel-diagonal of the group's bounding box (`projectBoxDiagonalPx` in
+`scene/lod-group-registry.ts`). It projected the 8 corners with an unguarded
+perspective divide, so when the camera was inside or straddling the box (any
+corner at/behind the near plane, clip `w ≤ 0`) the NDC flipped/exploded and the
+diagonal **collapsed** — dropping to a *coarse* level exactly on close approach,
+the inverse of the intended behaviour. The projection is now `w`-aware and
+**saturates to `+Infinity`** (→ finest level) when any corner has `w ≤ 1e-6`,
+reusing the per-frame `projectionMatrix × matrixWorldInverse` product. Also:
+
+- Added a behind-camera reject (`uIsOrtho == 0 && view-z ≥ 0` → off-screen) to
+  the **Points** vertex shaders — visual *and* picking, GLSL *and* TSL — matching
+  the existing gsplat guard; the sprite-quad expansion multiplies by
+  `projCenter.w` (`≤ 0` behind the camera) and could otherwise emit a
+  degenerate/flipped sprite (and spurious pick hits). The generated-TSL codegen
+  snapshots pin the guard; a perspective behind-camera parity case was added.
+- Hardened `coarsestReadyIndex` (warn-once instead of per-frame) and documented
+  the multi-level downgrade behaviour of `pickChildWithHysteresis`.
+
+#### Fixed — LOD threshold-derivation robustness on degenerate input
+
+Hardened the `min_pixel_size` derivation against degenerate LOD ladders so a
+malformed/degenerate input yields a usable result (or a clear error) instead of
+a cryptic crash:
+
+- `_apply_monotonicity_guard` now falls back to a small absolute floor when the
+  previous threshold is `0` (the relative ×1.1 bump is a no-op at `0`). A
+  zero-count *intermediate* level — or a zero-extent level whose neighbour
+  derives to `0` — previously tripped the strict-ascending assertion and aborted
+  the build; the guard is now *total* (never raises).
+- `derive_min_pixel_sizes`' empty-coarsest error is now actionable (names the
+  likely cause: a substitutive reduction that culled every representative, e.g.
+  all-non-positive input amplitudes) instead of "coarsest child must have at
+  least 1 element".
+- The viewer's LOD child-order check is now strict (`<`, was `<=`), matching the
+  Python writer's `_assert_strict_ascending`: *equal* adjacent `min_pixel_size`
+  thresholds (a zero-width hysteresis band) now surface the same producer-bug
+  warning rather than passing silently.
+
+These paths are not reachable from a normal `fit → lod` workflow (a real fit
+produces positive amplitudes; the builders clamp level depth) — confirmed
+empirically — but the hardening turns hand-authored / externally-produced
+degenerate `.gsplats.zarr` inputs from crashes into graceful handling. Also
+documented (in `adders/points.py` / `lines.py`) why the Points/Lines node-extent
+`W` (finest-level bbox) equals the gsplat path's union-over-levels bbox exactly
+— so the apparent asymmetry is not "fixed" into a behavior-neutral churn.
+
 #### Fixed — Layers panel now follows scene add-order (napari-style), not alphabetical
 
 The viewer rebuilds the scene graph from zarr **consolidated metadata**, whose

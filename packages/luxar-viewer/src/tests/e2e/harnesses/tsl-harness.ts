@@ -95,6 +95,14 @@ interface RegistryEntry {
    */
   readonly buildMesh?: (material: THREE.Material) => THREE.Object3D;
   /**
+   * Override the camera. Defaults to an `OrthographicCamera` at (0,0,1)
+   * looking at the origin (see `buildDefaultCamera`). Override for cases
+   * that need a `PerspectiveCamera` — e.g. the behind-camera guard, which
+   * is perspective-only (`uIsOrtho == 0`) and a no-op under the default
+   * ortho camera.
+   */
+  readonly buildCamera?: () => THREE.Camera;
+  /**
    * Set on the GLSL3 `ShaderMaterial`. Needed by shaders like
    * `point` that read the auto-injected `in vec3 color` attribute —
    * Three only emits the attribute declaration when this is true.
@@ -244,12 +252,18 @@ const CONST_SHADER: ShaderSource = {
  */
 function buildPointInstancedMesh(
   material: THREE.Material,
-  sharpness: number = 0.5
+  sharpness: number = 0.5,
+  center: readonly [number, number, number] = [0, 0, 0]
 ): THREE.Object3D {
   // sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
-  // beta = 2^(6s - 2). Default 0.5 -> beta=2 (a true Gaussian).
+  // beta = 2^(6s - 2). Default 0.5 -> beta=2 (a true Gaussian). `center` is the
+  // world-space point position (default origin); a behind-camera center is used
+  // to exercise the perspective behind-camera guard.
   const geom = createPointQuadGeometry();
-  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+  geom.setAttribute(
+    'aCenter',
+    new THREE.InstancedBufferAttribute(new Float32Array([center[0], center[1], center[2]]), 3)
+  );
   geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
   geom.setAttribute(
     'aSharpness',
@@ -349,6 +363,30 @@ function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
   const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
   return mesh;
+}
+
+/**
+ * Default parity camera: `OrthographicCamera` at (0,0,1) looking at the
+ * origin, so world (0,0,0) projects to NDC centre. Shared by every case that
+ * doesn't override `buildCamera`.
+ */
+function buildDefaultCamera(): THREE.Camera {
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+  camera.position.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+  return camera;
+}
+
+/**
+ * Perspective camera at (0,0,1) looking down −Z, for the behind-camera guard
+ * cases. A point at world z=3 lands at view-space z=+2 (behind the camera),
+ * so the perspective-only guard (`uIsOrtho == 0 && mvPosition.z >= 0`) fires.
+ */
+function buildBehindCamera(): THREE.Camera {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10);
+  camera.position.set(0, 0, 1);
+  camera.lookAt(0, 0, 0);
+  return camera;
 }
 
 const SHADER_REGISTRY: Record<string, RegistryEntry> = {
@@ -911,6 +949,54 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       ) as unknown as THREE.Material,
     buildMesh: buildPointInstancedMesh,
   },
+  // Behind-camera guard parity: perspective camera (uIsOrtho:0) with the point
+  // placed behind it (world z=3 → view z=+2). The visual point shader's
+  // `uIsOrtho == 0 && mvPosition.z >= 0` reject must fire IDENTICALLY in GLSL and
+  // TSL, so both backends produce an empty (background) frame. Without a behind-
+  // camera case the guard ships with no rendered parity coverage (every other
+  // point case is ortho, where the guard is a no-op).
+  'point-behind': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  // Same behind-camera guard, but on the point PICK shader (the path that was
+  // missing the guard before — see the visual/pick symmetry fix). Both backends
+  // must cull the behind-camera point so no spurious pick sprite is emitted.
+  'point-pick-behind': {
+    source: POINT_PICK_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 0 },
+      uNodeId: { value: 42 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      pointPickWebGPUFactory(
+        buildPointPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
 };
 
 const HARNESS_SIZE = 64;
@@ -961,12 +1047,10 @@ function renderGLSL(shaderName: string): Uint8Array {
   });
 
   const scene = new THREE.Scene();
-  // OrthographicCamera positioned slightly behind origin so world-
-  // space (0,0,0) projects to NDC (0,0) — viewport centre. Points
-  // shaders depend on this for sprite-centring.
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-  camera.position.set(0, 0, 1);
-  camera.lookAt(0, 0, 0);
+  // Default is an OrthographicCamera at (0,0,1) so world (0,0,0) projects to
+  // NDC (0,0) — viewport centre (point shaders depend on this for centring).
+  // Cases override via `buildCamera` (e.g. the perspective behind-camera guard).
+  const camera = entry.buildCamera ? entry.buildCamera() : buildDefaultCamera();
   const mesh = entry.buildMesh
     ? entry.buildMesh(material)
     : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
@@ -1052,11 +1136,9 @@ async function renderTSL(
   });
 
   const scene = new THREE.Scene();
-  // Mirrors the GLSL path's camera setup. See renderGLSL for the
-  // rationale around the slight near-plane offset.
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-  camera.position.set(0, 0, 1);
-  camera.lookAt(0, 0, 0);
+  // Mirrors the GLSL path's camera setup (default ortho, or the entry's
+  // `buildCamera` override). See renderGLSL for the rationale.
+  const camera = entry.buildCamera ? entry.buildCamera() : buildDefaultCamera();
   const mesh = entry.buildMesh
     ? entry.buildMesh(material)
     : new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);

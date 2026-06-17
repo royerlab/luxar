@@ -156,7 +156,12 @@ def derive_min_pixel_sizes(
         raise ValueError("element_counts must be non-empty")
     n0 = element_counts[0]
     if n0 <= 0:
-        raise ValueError(f"coarsest child must have at least 1 element, got {n0}")
+        raise ValueError(
+            "coarsest LOD level is empty (0 elements), so per-level pixel "
+            "thresholds cannot be derived. This usually means a substitutive "
+            "reduction culled every representative — e.g. the input splats all "
+            f"have non-positive amplitude. Got element_counts={list(element_counts)}."
+        )
     bps = BASE_PIXEL_SIZE if base_pixel_size is None else float(base_pixel_size)
     if bps <= 0:
         raise ValueError(f"base_pixel_size must be positive, got {bps}")
@@ -174,15 +179,30 @@ def _apply_monotonicity_guard(thresholds: list[float], source: str) -> list[floa
     *relative* bump (×1.1) rather than a fixed +1px so near-equal levels
     separate proportionally to their scale — a fixed pixel nudge places the
     switch threshold at a meaningless absolute value for large ladders.
-    ``thresholds[i-1]`` is always > 0 when the bump fires (i >= 2), so it is
-    strictly increasing. The trailing ``_assert_strict_ascending`` is the same
-    invariant the explicit-``min_pixel_sizes`` path is checked against.
+
+    The relative bump is a no-op when the previous threshold is ``0`` (the
+    coarsest entry is always the ``0.0`` floor, and a zero-count intermediate
+    level derives to ``0``), which would leave two equal entries and trip the
+    trailing assertion. So when the previous threshold is non-positive we fall
+    back to a small absolute floor (``_MONOTONIC_FLOOR``); every later entry
+    then bumps relative to a positive value. This makes the guard *total* — it
+    never raises — so a degenerate ladder yields a usable strictly-ascending
+    sequence instead of a crash. The trailing ``_assert_strict_ascending`` is
+    the same invariant the explicit-``min_pixel_sizes`` path is checked against.
     """
     for i in range(1, len(thresholds)):
         if thresholds[i] <= thresholds[i - 1]:
-            thresholds[i] = thresholds[i - 1] * 1.1
+            prev = thresholds[i - 1]
+            thresholds[i] = prev * 1.1 if prev > 0 else _MONOTONIC_FLOOR
     _assert_strict_ascending(thresholds, source)
     return thresholds
+
+
+#: Absolute floor (px) used by :func:`_apply_monotonicity_guard` when the
+#: previous threshold is ``0`` and the relative ×1.1 bump would be a no-op.
+#: Tiny on purpose: a degenerate level it separates effectively switches at the
+#: smallest on-screen size, which is the least-surprising fallback.
+_MONOTONIC_FLOOR: float = 1e-6
 
 
 #: Target on-screen element size (px) for the ``extent`` method. A level is

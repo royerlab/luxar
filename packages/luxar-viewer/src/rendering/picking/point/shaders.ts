@@ -61,6 +61,17 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       vRadius = normalizedRadius;
 
       vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
+
+      // Reject points behind the camera (perspective only; camera looks down -Z).
+      // The quad expansion below multiplies by projCenter.w, which is <= 0 behind
+      // the camera and would produce a degenerate/flipped pick sprite (and thus
+      // spurious hover/pick hits). Keep in sync with the visual point shader
+      // (shader-glsl.ts) and the gsplat pick guard. Ortho keeps projCenter.w == 1.
+      if (uIsOrtho == 0 && mvPosition.z >= 0.0) {
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
+        return;
+      }
+
       vec4 projCenter = projectionMatrix * mvPosition;
 
       float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
@@ -77,7 +88,8 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       float pointSize = basePointSize * 0.8;
       pointSize = max(1.0, min(pointSize, maxPointSize));
 
-      // Instanced quad expansion (matches shader-glsl.ts approach).
+      // Instanced quad expansion (matches shader-glsl.ts approach, including
+      // the behind-camera guard above).
       vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w;
       gl_Position = projCenter + vec4(offsetClip, 0.0, 0.0);
 

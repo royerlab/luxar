@@ -46,6 +46,11 @@ converts the NDC delta into a clip-space delta that survives the upcoming
 perspective divide). The interpolated sprite UV `vSpriteCoord ∈ [0, 1]²`
 replaces `gl_PointCoord`, which is unavailable under `THREE.Mesh`.
 
+Points behind the camera (perspective only — `mvPosition.z >= 0`, where
+`projCenter.w <= 0` would flip/degenerate the sprite) are rejected to an
+off-screen clip position so they produce no fragments, mirroring the gsplat
+shader's behind-camera guard.
+
 ## World-space sizing
 
 Sizing is FOV-independent and matches `..` siblings' implementation: per-frame
