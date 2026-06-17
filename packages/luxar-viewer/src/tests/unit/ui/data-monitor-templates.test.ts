@@ -299,12 +299,12 @@ describe('renderSecondaryMetrics — requests served', () => {
 });
 
 describe('summariseLodStates', () => {
-  it('summarises LOD groups, additive nodes, and refinement', () => {
+  it('summarises substitutive groups, additive nodes, and refinement', () => {
     const states = new Map<string, LODProgressState>([
       ['/a', { kind: 'lod', levelCount: 3, activeLevel: 0 }],
       ['/b', { kind: 'additive', loaded: 1, total: 4, refining: true }],
     ]);
-    expect(summariseLodStates(states)).toBe('1 LOD group · 1 additive · refining 1');
+    expect(summariseLodStates(states)).toBe('1 substitutive · 1 additive · refining 1');
   });
 
   it('returns empty string for no states', () => {

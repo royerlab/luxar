@@ -54,7 +54,10 @@ vi.mock('../../../../rendering/colormap-textures', () => ({
 // the lod_group registry on the current scene loader. Tests mock it so
 // the dropdown change handler can drive a stub registry.
 const setSelectorModeMock = vi.fn();
-const registryGetMock = vi.fn(() => undefined);
+// Return type is `unknown` so tests can `mockReturnValue` a stub
+// LODGroupEntry ({ activeChildIndex, children, selectorMode }); the panel
+// only reads those three fields off the registry.
+const registryGetMock = vi.fn((..._args: unknown[]): unknown => undefined);
 const getDefaultLoaderMock = vi.fn(() => ({
   lodGroupRegistry: {
     setSelectorMode: setSelectorModeMock,
@@ -76,10 +79,51 @@ import {
   type LuxarMaterial,
 } from '../../../../ui/layers/layers-panel';
 
+/**
+ * AnimationController stub. Captures per-frame callbacks into a map so
+ * tests can invoke them synchronously (the real loop is not running under
+ * jsdom) and assert teardown via `hasPerFrameCallback`. The map is exposed
+ * as a non-typed `__perFrame` handle for test access.
+ */
 function makeAnimationController(): AnimationController {
+  const perFrame = new Map<string, () => void>();
+  const perFrameOpts = new Map<string, unknown>();
   return {
     startAnimation: vi.fn(),
+    addPerFrameCallback: vi.fn((id: string, cb: () => void, opts?: unknown) => {
+      perFrame.set(id, cb);
+      perFrameOpts.set(id, opts);
+    }),
+    removePerFrameCallback: vi.fn((id: string) => {
+      perFrameOpts.delete(id);
+      return perFrame.delete(id);
+    }),
+    hasPerFrameCallback: vi.fn((id: string) => perFrame.has(id)),
+    __perFrame: perFrame,
+    __perFrameOpts: perFrameOpts,
   } as unknown as AnimationController;
+}
+
+/** Read the captured per-frame callback map from a stub controller. */
+function perFrameCallbacks(c: AnimationController): Map<string, () => void> {
+  return (c as unknown as { __perFrame: Map<string, () => void> }).__perFrame;
+}
+
+/** Read the captured per-frame callback options map from a stub controller. */
+function perFrameOptions(c: AnimationController): Map<string, unknown> {
+  return (c as unknown as { __perFrameOpts: Map<string, unknown> }).__perFrameOpts;
+}
+
+/** Find the "Active level" status span (the live LOD readout). */
+function findActiveLevelStatus(container: HTMLElement): HTMLSpanElement | null {
+  const groups = Array.from(container.querySelectorAll('.luxar-layers-panel__control-group'));
+  for (const group of groups) {
+    const label = group.querySelector('.luxar-layers-panel__control-label');
+    if (label?.textContent === 'Active level') {
+      return group.querySelector('.luxar-layers-panel__control-value') as HTMLSpanElement | null;
+    }
+  }
+  return null;
 }
 
 function makeEmptySceneGraph(): SceneNode {
@@ -350,6 +394,8 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     animationController = makeAnimationController();
     setSelectorModeMock.mockClear();
     getDefaultLoaderMock.mockClear();
+    registryGetMock.mockReset();
+    registryGetMock.mockReturnValue(undefined);
     showToastMock.mockClear();
   });
 
@@ -422,6 +468,279 @@ describe('LayersPanel — LOD active-level dropdown', () => {
 
     expect(setSelectorModeMock).toHaveBeenCalled();
     expect(animationController.startAnimation).not.toHaveBeenCalled();
+  });
+
+  it('readout is 1-based "L{i}/{n}" — matches the data-monitor chip numbering', () => {
+    // Regression: the readout used to print the raw 0-based
+    // activeChildIndex ("rendering: 1") while the data-monitor chip prints
+    // "L2/2". Both must now agree on 1-based numbering.
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 1,
+      children: [{}, {}],
+      selectorMode: 'auto',
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L2/2');
+  });
+
+  it('dropdown options are 1-based labels with 0-based values', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    const opts = Array.from(findActiveLevelSelect(container)!.options);
+    expect(opts.map((o) => o.textContent)).toEqual([
+      'auto',
+      'lock to level 1',
+      'lock to level 2',
+    ]);
+    // Values stay 0-based — the registry's lockLevel API is 0-based.
+    expect(opts.slice(1).map((o) => o.value)).toEqual(['0', '1']);
+  });
+
+  it('per-frame callback updates the readout when the auto-selector swaps level', () => {
+    // The core fix: an auto swap (camera motion) changes activeChildIndex
+    // without any layer-state change, so renderControls() never re-runs.
+    // The 'layers-lod-status' per-frame callback must refresh the readout.
+    const entry = { activeChildIndex: 0, children: [{}, {}], selectorMode: 'auto' as const };
+    registryGetMock.mockReturnValue(entry);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+    const status = findActiveLevelStatus(container)!;
+    expect(status.textContent).toBe('L1/2');
+
+    // Registry now reports a finer level (as evaluatePerFrame would set);
+    // fire the captured callback — the real loop isn't running under jsdom.
+    entry.activeChildIndex = 1;
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+    expect(status.textContent).toBe('L2/2');
+  });
+
+  it('per-frame callback is a no-op while the panel is hidden', () => {
+    const entry = { activeChildIndex: 0, children: [{}, {}], selectorMode: 'auto' as const };
+    registryGetMock.mockReturnValue(entry);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+    const status = findActiveLevelStatus(container)!;
+    panel.hide();
+
+    entry.activeChildIndex = 1;
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+    // Hidden → not refreshed; keeps the value rendered while visible.
+    expect(status.textContent).toBe('L1/2');
+  });
+
+  it('does not touch the DOM when the level is unchanged across frames', () => {
+    const entry = { activeChildIndex: 0, children: [{}, {}], selectorMode: 'auto' as const };
+    registryGetMock.mockReturnValue(entry);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+    const status = findActiveLevelStatus(container)!;
+
+    // Intercept textContent writes from here on.
+    let writes = 0;
+    let value = status.textContent ?? '';
+    Object.defineProperty(status, 'textContent', {
+      configurable: true,
+      get: () => value,
+      set: (v: string) => {
+        writes++;
+        value = v;
+      },
+    });
+    const cb = perFrameCallbacks(animationController).get('layers-lod-status')!;
+    cb();
+    cb();
+    cb();
+    expect(writes).toBe(0); // unchanged level → no DOM writes
+  });
+
+  it('broadcast partition aggregates the nested groups (uniform → single level)', () => {
+    // kind=partition wrapping two nested lod_groups.
+    const partitionScene = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'mosaic',
+          path: '/mosaic',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'points' },
+          children: [
+            {
+              name: 'part_0',
+              path: '/mosaic/part_0',
+              type: 'group',
+              attrs: { kind: 'lod' },
+              children: [
+                { name: 'l0', path: '/mosaic/part_0/l0', type: 'points', attrs: {}, children: [] },
+                { name: 'l1', path: '/mosaic/part_0/l1', type: 'points', attrs: {}, children: [] },
+              ],
+            },
+            {
+              name: 'part_1',
+              path: '/mosaic/part_1',
+              type: 'group',
+              attrs: { kind: 'lod' },
+              children: [
+                { name: 'l0', path: '/mosaic/part_1/l0', type: 'points', attrs: {}, children: [] },
+                { name: 'l1', path: '/mosaic/part_1/l1', type: 'points', attrs: {}, children: [] },
+              ],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 0,
+      children: [{}, {}],
+      selectorMode: 'auto',
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), partitionScene);
+    panel.show();
+    panel.layerState.select('/mosaic', 'single');
+
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 · 2 groups');
+  });
+
+  it('broadcast partition shows a level RANGE when nested groups diverge (ragged ladders)', () => {
+    // part_0 has a 4-level ladder at level 0 (L1); part_1 has a 2-level
+    // ladder at level 1 (L2). Under auto each part picks its own level, so
+    // the readout must widen to a range and use the MAX ladder depth (4) as
+    // the denominator — matching the dropdown's option count.
+    const partitionScene = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'mosaic',
+          path: '/mosaic',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'points' },
+          children: [
+            {
+              name: 'part_0',
+              path: '/mosaic/part_0',
+              type: 'group',
+              attrs: { kind: 'lod' },
+              children: [0, 1, 2, 3].map((i) => ({
+                name: `l${i}`,
+                path: `/mosaic/part_0/l${i}`,
+                type: 'points',
+                attrs: {},
+                children: [],
+              })),
+            },
+            {
+              name: 'part_1',
+              path: '/mosaic/part_1',
+              type: 'group',
+              attrs: { kind: 'lod' },
+              children: [0, 1].map((i) => ({
+                name: `l${i}`,
+                path: `/mosaic/part_1/l${i}`,
+                type: 'points',
+                attrs: {},
+                children: [],
+              })),
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+    const entries: Record<string, unknown> = {
+      '/mosaic/part_0': { activeChildIndex: 0, children: [{}, {}, {}, {}], selectorMode: 'auto' },
+      '/mosaic/part_1': { activeChildIndex: 1, children: [{}, {}], selectorMode: 'auto' },
+    };
+    registryGetMock.mockImplementation((p: unknown) => entries[p as string]);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), partitionScene);
+    panel.show();
+    panel.layerState.select('/mosaic', 'single');
+
+    // min level 1 (part_0), max level 2 (part_1), denominator 4 (max ladder).
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1–2/4 · 2 groups');
+  });
+
+  it('appends "(off-screen)" when the frustum gate holds the group coarse', () => {
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 0,
+      children: [{}, {}],
+      selectorMode: 'auto',
+      offScreen: true,
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/2 (off-screen)');
+  });
+
+  it('refreshes a stale readout on show() (level changed while hidden)', () => {
+    // Regression for the reshow-staleness gap: the per-frame refresh is
+    // gated on visibility, so a swap that happens while hidden is not
+    // reflected until show() re-syncs.
+    const entry = { activeChildIndex: 0, children: [{}, {}], selectorMode: 'auto' as const };
+    registryGetMock.mockReturnValue(entry);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+    const status = findActiveLevelStatus(container)!;
+    expect(status.textContent).toBe('L1/2');
+
+    panel.hide();
+    // Swap happens while hidden; the per-frame callback no-ops (not visible).
+    entry.activeChildIndex = 1;
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+    expect(status.textContent).toBe('L1/2'); // still stale while hidden
+
+    panel.show(); // must re-sync
+    expect(status.textContent).toBe('L2/2');
+  });
+
+  it('registers the live LOD callback as non-continuous (must not keep the loop awake)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    const opts = perFrameOptions(animationController).get('layers-lod-status') as
+      | { continuous?: boolean }
+      | undefined;
+    // Either no options object, or continuous explicitly falsy — never true.
+    expect(opts?.continuous ?? false).toBe(false);
+  });
+
+  it('does NOT register the live LOD callback for a zero-layer scene', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeEmptySceneGraph());
+    // No layers → buildPanel() is skipped → no dangling per-frame callback.
+    expect(animationController.hasPerFrameCallback('layers-lod-status')).toBe(false);
+  });
+
+  it('removes the live LOD callback on dispose', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    expect(animationController.hasPerFrameCallback('layers-lod-status')).toBe(true);
+    panel.dispose();
+    expect(animationController.hasPerFrameCallback('layers-lod-status')).toBe(false);
   });
 });
 
