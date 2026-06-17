@@ -5,8 +5,9 @@
  *   - Loading a multi-level lod_group fixture into the viewer (no console
  *     errors, no WebGL errors).
  *   - The layers panel renders an "Active level" dropdown for the
- *     lod_group, populated with ``auto`` + one ``lock to level <i>``
- *     option per child.
+ *     lod_group, populated with ``auto`` + one ``lock to level <n>``
+ *     option per child (label is 1-based; the option value stays 0-based
+ *     to match the registry's lockLevel API).
  *   - Manual override: locking to a specific level via the dropdown
  *     swaps which child mesh is visible. ``auto`` mode resumes
  *     view-driven selection.
@@ -138,7 +139,10 @@ test.describe('lod_group node', () => {
     expect(optionValues).toEqual(['auto', '0', '1', '2']);
   });
 
-  test('selecting "lock to level 2" makes child_2 the visible mesh', async ({ page }) => {
+  // Selects by option VALUE '2' (0-based child index 2 = finest), whose
+  // 1-based label reads "lock to level 3". Asserting the value, not the
+  // label text, keeps this robust to label wording.
+  test('locking the finest level (value 2) makes child_2 the visible mesh', async ({ page }) => {
     await openLayersPanel(page);
     const lodRow = page.locator('.luxar-layer-row__name', { hasText: 'multires' }).first();
     await lodRow.click();

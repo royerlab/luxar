@@ -1435,7 +1435,10 @@ export function summariseLodStates(lodStates?: Map<string, LODProgressState>): s
     } else if (s.kind === 'partition') partition++;
   }
   const parts: string[] = [];
-  if (lod > 0) parts.push(`${lod} LOD group${lod !== 1 ? 's' : ''}`);
+  // "substitutive" (not the generic "LOD group") so it reads in parallel
+  // with "additive" — both are LOD kinds; naming only one "LOD" was the
+  // ambiguous wording.
+  if (lod > 0) parts.push(`${lod} substitutive`);
   if (additive > 0) parts.push(`${additive} additive`);
   if (partition > 0) parts.push(`${partition} partition${partition !== 1 ? 's' : ''}`);
   if (refining > 0) parts.push(`refining ${refining}`);

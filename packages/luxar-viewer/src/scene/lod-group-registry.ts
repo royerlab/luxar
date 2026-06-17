@@ -143,6 +143,15 @@ export interface LODGroupEntry {
   defaultLevel: number;
   /** Index into ``children`` of the currently-visible child. */
   activeChildIndex: number;
+  /**
+   * Whether the auto-selector is currently holding this group at its
+   * coarsest-ready level because its world bounds are outside the camera
+   * frustum (the off-screen gate). ``false`` when on-screen or when a
+   * level is explicitly locked. Surfaced in the layers-panel readout as an
+   * "(off-screen)" hint so a coarse level on close inspection isn't
+   * mistaken for a selection bug. Updated each ``evaluatePerFrame``.
+   */
+  offScreen?: boolean;
 }
 
 /**
@@ -539,6 +548,7 @@ export class LODGroupRegistry {
       // Explicit lock bypasses the off-screen gate: a user who pins a level
       // keeps it whether or not the group is on screen.
       desired = entry.selectorMode.lockLevel;
+      entry.offScreen = false;
     } else {
       const cache = this.caches.get(entry.path);
       if (!cache) return false; // shouldn't happen — register() populates this.
@@ -559,11 +569,13 @@ export class LODGroupRegistry {
       WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
       if (!frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
+        entry.offScreen = true;
       } else {
         // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
         // built in evaluatePerFrame) instead of recomputing it per group.
         const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, diagonalPx);
+        entry.offScreen = false;
       }
     }
 

@@ -145,15 +145,26 @@ export class LayersPanel {
   /**
    * "Active level" dropdown for ``lod_group`` layers. Shown only when
    * the primary selected layer is an lod_group; hidden otherwise.
-   * Options: ``auto`` plus one ``lock to level <i>`` entry per child.
+   * Options: ``auto`` plus one ``lock to level <n>`` entry per child
+   * (1-based label; the option value stays 0-based for the registry's
+   * ``lockLevel`` API).
    */
   private lodLevelSelect: HTMLSelectElement | null = null;
   /**
    * Status span next to the dropdown showing the currently-rendering
-   * level (e.g. "rendering: 2"). Refreshed on each renderControls()
-   * call; not per-frame for v1.
+   * level (e.g. "L3/5", 1-based to match the data-monitor chip). Kept
+   * live by a per-frame callback (``layers-lod-status``) registered in
+   * buildPanel(), so it tracks auto-selection swaps driven by camera
+   * motion — not only ``renderControls()`` state changes.
    */
   private lodLevelStatus: HTMLSpanElement | null = null;
+  /**
+   * Last text written to {@link lodLevelStatus}. The per-frame callback
+   * compares against this and only touches the DOM when the readout
+   * actually changes, so a static scene costs a string compare per
+   * frame rather than a DOM write. Reset in clear().
+   */
+  private lastShownLodStatus: string | null = null;
   private visible = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
@@ -244,6 +255,11 @@ export class LayersPanel {
     this.panelEl.style.display = 'flex';
     this.visible = true;
     this.repositionGUI();
+    // The per-frame readout refresh is gated on `visible`, so while hidden
+    // it does not track auto-LOD swaps. Refresh once on show so a level that
+    // changed while hidden (or with the loop now idle) is reflected
+    // immediately rather than only after the next swap.
+    this.refreshLodStatus();
   }
 
   hide(): void {
@@ -289,6 +305,11 @@ export class LayersPanel {
     // with a fresh group rather than a disposed one.
     this.events.dispose();
     this.events = new EventGroup();
+    // Remove the live LOD-readout callback; buildPanel() re-registers it
+    // on the next scene load. Reset the cached text so the fresh panel
+    // writes its first readout unconditionally.
+    this.animationController.removePerFrameCallback('layers-lod-status');
+    this.lastShownLodStatus = null;
     this.sceneGraph = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -373,6 +394,19 @@ export class LayersPanel {
     this.renderList();
     this.buildControls();
     this.renderControls();
+
+    // Keep the "Active level" readout live. The auto-LOD selector swaps
+    // the active child per-frame as the camera moves (lod-group-registry
+    // evaluatePerFrame), but renderControls() only runs on layer-state
+    // changes — so without this the readout went stale and disagreed
+    // with the data-monitor chip. Non-continuous: it must not keep the
+    // loop awake (no swaps happen while idle anyway), and the pipeline's
+    // own 'lod-group-selector' callback is registered first, so by the
+    // time this runs activeChildIndex is already updated for the frame.
+    // Removed (and re-registered fresh) symmetrically in clear().
+    this.animationController.addPerFrameCallback('layers-lod-status', () =>
+      this.refreshLodStatus()
+    );
   }
 
   // ─── Layer List ────────────────────────────────────────
@@ -802,8 +836,11 @@ export class LayersPanel {
     this.lodLevelSelect.appendChild(autoOpt);
     for (let i = 0; i < childCount; i++) {
       const opt = document.createElement('option');
+      // Value stays 0-based (the registry's lockLevel API), but the
+      // label is 1-based to match the readout ("L3/5") and the
+      // data-monitor chip — so all three LOD surfaces agree numerically.
       opt.value = String(i);
-      opt.textContent = `lock to level ${i}`;
+      opt.textContent = `lock to level ${i + 1}`;
       this.lodLevelSelect.appendChild(opt);
     }
   }
@@ -841,50 +878,123 @@ export class LayersPanel {
     // (kind=lod) or the largest nested ladder (kind=partition).
     if (this.lodLevelSelect && this.lodLevelStatus) {
       const lodContainer = this.lodLevelSelect.parentElement!;
-      const broadcastPartition =
-        primary.kind === 'partition' &&
-        primary.nestedLodGroupPaths &&
-        primary.nestedLodGroupPaths.length > 0 &&
-        (primary.nestedLodMaxChildCount ?? 0) > 0;
+      const registry = this.getLodGroupRegistry();
       if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.lodGroupChildCount!);
-
-        const registry = this.getLodGroupRegistry();
+        // Sync the dropdown to the registry's selector mode. No entry
+        // yet (scene still loading) → default to "auto".
         const entry = registry?.get(primary.path);
-        if (entry) {
-          this.lodLevelSelect.value =
-            entry.selectorMode === 'auto' ? 'auto' : String(entry.selectorMode.lockLevel);
-          this.lodLevelStatus.textContent = `rendering: ${entry.activeChildIndex}`;
-        } else {
-          // Registry not yet populated (e.g., scene still loading) —
-          // default to "auto" and clear the status.
-          this.lodLevelSelect.value = 'auto';
-          this.lodLevelStatus.textContent = '';
-        }
-      } else if (broadcastPartition) {
+        this.lodLevelSelect.value =
+          entry && entry.selectorMode !== 'auto'
+            ? String(entry.selectorMode.lockLevel)
+            : 'auto';
+      } else if (this.isBroadcastPartition(primary)) {
         lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
-
         // Sync widget state from the FIRST nested entry — they should
         // be lock-stepped after a broadcast change, and pre-broadcast
         // divergence (rare: legacy authored values) is acceptable
         // ambiguity here.
-        const registry = this.getLodGroupRegistry();
-        const firstPath = primary.nestedLodGroupPaths![0];
-        const entry = registry?.get(firstPath);
-        if (entry) {
-          this.lodLevelSelect.value =
-            entry.selectorMode === 'auto' ? 'auto' : String(entry.selectorMode.lockLevel);
-          this.lodLevelStatus.textContent = `${primary.nestedLodGroupPaths!.length} nested LOD groups`;
-        } else {
-          this.lodLevelSelect.value = 'auto';
-          this.lodLevelStatus.textContent = '';
-        }
+        const entry = registry?.get(primary.nestedLodGroupPaths![0]);
+        this.lodLevelSelect.value =
+          entry && entry.selectorMode !== 'auto'
+            ? String(entry.selectorMode.lockLevel)
+            : 'auto';
       } else {
         lodContainer.style.display = 'none';
       }
+      // Single source of truth for the readout text, shared with the
+      // per-frame refreshLodStatus() so both always agree. null → no
+      // readout applies (non-LOD layer, or registry not yet populated).
+      this.setLodStatusText(this.computeLodStatusText(primary) ?? '');
     }
+  }
+
+  /**
+   * True when ``primary`` is a kind=partition layer wrapping one or more
+   * nested lod_groups, so the "Active level" dropdown broadcasts to them.
+   */
+  private isBroadcastPartition(primary: LayerInfo): boolean {
+    return (
+      primary.kind === 'partition' &&
+      primary.nestedLodGroupPaths != null &&
+      primary.nestedLodGroupPaths.length > 0 &&
+      (primary.nestedLodMaxChildCount ?? 0) > 0
+    );
+  }
+
+  /**
+   * Compute the "Active level" readout text for the primary-selected
+   * layer, or ``null`` when no LOD readout applies (non-LOD layer, or the
+   * lod_group registry isn't populated yet). 1-based ("L3/5") to match
+   * the data-monitor chip (data-loading-monitor/templates.ts) and the
+   * dropdown labels. Reads the live active level straight from the
+   * registry, so it is correct on any frame — including auto-selection
+   * swaps driven by camera motion.
+   */
+  private computeLodStatusText(primary: LayerInfo): string | null {
+    const registry = this.getLodGroupRegistry();
+    if (!registry) return null;
+    if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
+      const entry = registry.get(primary.path);
+      if (!entry || entry.children.length === 0) return null;
+      // The off-screen gate holds the group at its coarsest level while it
+      // is outside the frustum; flag it so a coarse level isn't read as a
+      // selection bug.
+      const suffix = entry.offScreen ? ' (off-screen)' : '';
+      return `L${entry.activeChildIndex + 1}/${entry.children.length}${suffix}`;
+    }
+    if (this.isBroadcastPartition(primary)) {
+      // Aggregate across EVERY nested lod_group, not just the first: under
+      // auto-selection each part picks its own level by its own on-screen
+      // size, so they legitimately diverge (the mosaic recipe is unbalanced
+      // by design). Show a range when they do, and use the dropdown's
+      // max-ladder depth (nestedLodMaxChildCount) as the denominator so the
+      // readout and the option list agree on {n}.
+      const paths = primary.nestedLodGroupPaths!;
+      let min = Infinity;
+      let max = -Infinity;
+      for (const p of paths) {
+        const e = registry.get(p);
+        if (!e || e.children.length === 0) continue;
+        const lvl = e.activeChildIndex + 1;
+        if (lvl < min) min = lvl;
+        if (lvl > max) max = lvl;
+      }
+      if (max < 0) return null; // no populated nested group yet
+      const n = primary.nestedLodMaxChildCount!;
+      const levelStr = min === max ? `L${min}/${n}` : `L${min}–${max}/${n}`;
+      return `${levelStr} · ${paths.length} groups`;
+    }
+    return null;
+  }
+
+  /**
+   * Write the LOD readout, skipping the DOM touch when the text is
+   * unchanged. Lets the per-frame callback run every frame at the cost of
+   * a string compare on a static scene rather than a DOM write.
+   */
+  private setLodStatusText(text: string): void {
+    if (!this.lodLevelStatus || text === this.lastShownLodStatus) return;
+    this.lodLevelStatus.textContent = text;
+    this.lastShownLodStatus = text;
+  }
+
+  /**
+   * Per-frame: keep the LOD readout in sync with the live active level
+   * chosen by the auto-selector. Cheap — early-returns when the panel is
+   * hidden or the primary layer has no LOD readout, and setLodStatusText
+   * skips the DOM write unless the text actually changed. A ``null`` text
+   * (non-LOD layer / registry not ready) leaves whatever renderControls
+   * last set in place rather than clobbering it.
+   */
+  private refreshLodStatus(): void {
+    if (!this.visible || !this.lodLevelStatus) return;
+    const primary = this.state.getPrimarySelected();
+    if (!primary) return;
+    const text = this.computeLodStatusText(primary);
+    if (text !== null) this.setLodStatusText(text);
   }
 
   // ─── Scene Application ─────────────────────────────────

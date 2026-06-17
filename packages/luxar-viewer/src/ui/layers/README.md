@@ -28,12 +28,20 @@ specially (see `LayerKind` in `layer-state.ts`):
 - A `kind=lod` layer gets a **`N LODs`** badge and an inline **Active level**
   dropdown. Selecting a level calls `LODGroupRegistry.setSelectorMode(path, …)`
   with either `'auto'` or `{ lockLevel: i }`; the status span shows the
-  currently-rendering child index (`rendering: i`).
+  currently-rendering level 1-based (`L{i}/{n}`), matching the data-monitor
+  chip and the dropdown labels, with an `(off-screen)` suffix when the
+  frustum gate is holding the group at its coarsest level. A per-frame
+  callback (`layers-lod-status`) keeps the readout live, so it tracks
+  `auto`-mode swaps driven by camera motion — not only state changes.
 - A `kind=partition` layer gets a **`N parts`** badge. When it wraps nested
   `lod_group` descendants, the badge combines counts as **`N parts × M LODs`**
   (M = max child count across the nested ladders) and the Active-level dropdown
   broadcasts the chosen mode to every nested `lod_group` path (clamped per-group
-  by `setSelectorMode` on ragged ladders).
+  by `setSelectorMode` on ragged ladders). The readout aggregates the live
+  level across all nested groups as `L{i}/{n} · {N} groups`, widening to a
+  range `L{min}–{max}/{n}` when parts diverge under `auto` (each part picks
+  its own level by its own on-screen size); `{n}` is the max ladder depth, so
+  it agrees with the dropdown's option count.
 
 The LOD registry is looked up lazily via
 `SceneLoaderManager.getInstance().getDefaultLoader()?.lodGroupRegistry` so the
