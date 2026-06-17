@@ -234,30 +234,32 @@ def lod_recipe(
     lod_method: Optional[str] = typer.Option(
         None,
         "--lod-method",
-        help="multiscale only: coarse↔fine threshold method. 'extent' (default) "
-        "anchors the switch in physical element size (W/r, self-calibrating); "
-        "'count' is the legacy scene-relative √N proxy.",
+        help="lod recipes (multiscale/substitutive/pyramid/mosaic): coarse↔fine "
+        "threshold method. 'extent' (default) anchors the switch in physical element "
+        "size (W/r, self-calibrating); 'count' is the legacy scene-relative √N proxy.",
     ),
     extent_percentile: Optional[float] = typer.Option(
         None,
         "--extent-percentile",
         min=0.0,
         max=100.0,
-        help="multiscale only: percentile of per-level element radius used by "
-        "--lod-method extent (default 90).",
+        help="lod recipes (multiscale/substitutive/pyramid/mosaic): percentile of "
+        "per-level element radius used by --lod-method extent (default 90).",
     ),
     extent_anisotropy: Optional[bool] = typer.Option(
         None,
         "--extent-anisotropy/--no-extent-anisotropy",
-        help="multiscale only: use the largest principal semi-axis (anisotropy-"
-        "aware, default) vs the isotropic-equivalent radius for --lod-method extent.",
+        help="lod recipes (multiscale/substitutive/pyramid/mosaic): use the largest "
+        "principal semi-axis (anisotropy-aware, default) vs the isotropic-equivalent "
+        "radius for --lod-method extent.",
     ),
     base_pixel_size: Optional[float] = typer.Option(
         None,
         "--base-pixel-size",
-        help="multiscale only: LOD selector pixel anchor. In 'extent' mode the "
-        "target element pixel size T (~1.5 px, self-calibrating); in 'count' mode "
-        "the √N anchor (~10 px). The default rarely needs tuning under 'extent'.",
+        help="lod recipes (multiscale/substitutive/pyramid/mosaic): LOD selector "
+        "pixel anchor. In 'extent' mode the target element pixel size T (~1.5 px, "
+        "self-calibrating); in 'count' mode the √N anchor (~10 px). The default "
+        "rarely needs tuning under 'extent'.",
     ),
     # ── universal ──
     ordering: str = typer.Option(
@@ -461,7 +463,8 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
-                # multiscale-only LOD threshold knobs; None → RecipeParams defaults
+                # LOD threshold knobs for any kind=lod recipe (multiscale/
+                # substitutive/pyramid/mosaic); None → RecipeParams defaults
                 # (extent method, p90, anisotropy-aware, ~1.5px target anchor).
                 lod_method=lod_method if lod_method is not None else "extent",
                 extent_percentile=extent_percentile

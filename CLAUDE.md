@@ -321,6 +321,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive         
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive -K 4 -L 3 \
     --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+# LOD switch tuning — applies to ANY recipe with a kind=lod group (multiscale,
+# substitutive, pyramid, mosaic): --lod-method extent|count (default extent=T·W/r),
+# --extent-percentile 90, --extent-anisotropy/--no-extent-anisotropy, --base-pixel-size.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --lod-method count
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.0
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
