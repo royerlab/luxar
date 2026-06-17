@@ -85,6 +85,17 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 
       // Transform per-instance centre from world space to view + clip space.
       vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
+
+      // Reject points behind the camera (perspective only; camera looks down -Z,
+      // so mvPosition.z >= 0 is behind the near plane). The quad expansion below
+      // multiplies by projCenter.w, which is <= 0 for such points and would
+      // produce a degenerate/flipped sprite. Mirrors the gsplat shader's guard.
+      // Ortho keeps projCenter.w == 1, so it is excluded.
+      if (uIsOrtho == 0 && mvPosition.z >= 0.0) {
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
+        return;
+      }
+
       vec4 projCenter = projectionMatrix * mvPosition;
 
       // OPTIMIZED world-space point sizing:

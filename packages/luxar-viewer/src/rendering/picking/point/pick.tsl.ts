@@ -110,7 +110,16 @@ export function pointPickWebGPUFactory(
   );
 
   const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
-  const clipPos: TSLNode = projCenter.add(vec4(offsetClip, 0.0, 0.0));
+  // Reject points behind the camera (perspective only; camera looks down -Z).
+  // projCenter.w is <= 0 behind the camera and the expansion above would
+  // flip/degenerate the pick sprite (spurious hits). Keep in sync with the
+  // visual point shader (shader-tsl.ts) and the gsplat pick guard; ortho keeps
+  // w == 1 and is excluded.
+  const behindCamera: TSLNode = int(uIsOrtho).equal(int(0)).and(mvPos.z.greaterThanEqual(0.0));
+  const clipPos: TSLNode = behindCamera.select(
+    vec4(0.0, 0.0, -2.0, 1.0),
+    projCenter.add(vec4(offsetClip, 0.0, 0.0))
+  );
 
   // Varyings.
   const vSpriteCoord: TSLNode = varying(aQuadCorner.add(1.0).mul(0.5));

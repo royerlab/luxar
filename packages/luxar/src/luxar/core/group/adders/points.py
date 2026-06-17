@@ -607,6 +607,15 @@ def add_points_substitutive_lod_wrapper_impl(
         extents = [
             float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
         ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
+        # Node extent W = world bbox diagonal. Computed from the FINEST level's
+        # positions here, whereas the gsplat path (lod_dispatch) takes the union
+        # over all substitutive levels' centers. These are EQUAL by construction
+        # — a coarse level's representatives are convex/weighted-mean combinations
+        # of the finest centers, so they always lie inside the finest bbox; the
+        # union therefore equals the finest bbox exactly (verified empirically:
+        # 0.0 difference). Keep this finest-only form — it is cheaper and the
+        # equality means the three geometries stay self-calibrated together. Do
+        # not "fix" the apparent asymmetry; it produces identical thresholds.
         lo, hi = pos_arr.min(axis=0), pos_arr.max(axis=0)
         node_extent = float(np.linalg.norm(hi - lo)) if n_points else None
         min_pixel_sizes = lod_thresholds(

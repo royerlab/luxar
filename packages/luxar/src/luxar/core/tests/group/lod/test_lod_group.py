@@ -288,8 +288,21 @@ class TestDeriveMinPixelSizes:
             derive_min_pixel_sizes([])
 
     def test_zero_coarsest_rejected(self) -> None:
-        with pytest.raises(ValueError, match="at least 1 element"):
+        # An empty coarsest level can't anchor the ratio denominator; the error
+        # is actionable (names the likely cause: an all-non-positive-amplitude
+        # reduction that culled every representative).
+        with pytest.raises(ValueError, match="(?i)coarsest.*empty|0 elements"):
             derive_min_pixel_sizes([0, 10])
+
+    def test_intermediate_zero_count_does_not_raise(self) -> None:
+        # A zero-count INTERMEDIATE level derives to a 0 threshold equal to the
+        # 0.0 coarsest floor; the ×1.1 relative bump is a no-op at 0, so the
+        # monotonicity guard must fall back to an absolute floor instead of
+        # raising. Pre-fix this raised ValueError (0*1.1 == 0, assert failed).
+        th = derive_min_pixel_sizes([10, 0, 20])
+        assert th[0] == 0.0
+        assert all(th[i] > th[i - 1] for i in range(1, len(th))), th
+        assert all(np.isfinite(t) for t in th)
 
 
 class TestExtentMinPixelSizes:
@@ -327,9 +340,19 @@ class TestExtentMinPixelSizes:
 
     def test_zero_extent_clamped(self) -> None:
         # A degenerate zero-radius level must not divide-by-zero; it gets a huge
-        # (clamped) threshold and the guard keeps order.
+        # (eps-clamped) finite threshold above the 0.0 floor.
         th = extent_min_pixel_sizes([10.0, 0.0], node_extent=100.0)
-        assert th[1] > th[0] and th[1] == th[1]  # finite-ish, no NaN
+        assert np.isfinite(th[1]) and th[1] > th[0]
+
+    def test_zero_extent_intermediate_stays_monotonic(self) -> None:
+        # A zero-radius INTERMEDIATE level gets the huge eps-clamped threshold,
+        # which would leave the finer (smaller) threshold below it — the guard
+        # must then bump the finer one above it so the sequence is strictly
+        # ascending end-to-end (no out-of-order threshold the selector skips).
+        th = extent_min_pixel_sizes([5.0, 0.0, 2.0], node_extent=100.0)
+        assert th[0] == 0.0
+        assert all(th[i] > th[i - 1] for i in range(1, len(th))), th
+        assert all(np.isfinite(t) for t in th)
 
     def test_node_extent_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match="node_extent"):
