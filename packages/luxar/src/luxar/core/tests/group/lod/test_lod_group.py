@@ -16,7 +16,9 @@ The GSplats-specific axis resolvers (``resolve_*_axis_gsplats``) are exercised
 in ``test_gsplats.py``; their Points/Lines peers in ``test_points.py`` /
 ``test_lines.py``. End-to-end ``add_gsplats_from_data(lod_group=/additive_lod=)``
 round-trips live in ``luxar.core.tests.group.test_group`` (the broader ``Group``
-suite), not here.
+suite), not here — except the barrier-aware ``coarsen_dims`` end-to-end suite
+(``TestCoarsenDimsGsplats``) which lives here alongside the other LOD-group tests,
+parallel to the Points/Lines coarsen suites in ``test_substitutive_*.py``.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
     BASE_PIXEL_SIZE,
@@ -478,3 +480,126 @@ class TestDisplayTypeResolution:
     def test_compute_lod_display_type_empty_raises(self) -> None:
         with pytest.raises(ValueError, match="empty children"):
             compute_lod_display_type([])
+
+
+# ────────────────────────────────────────────────────────────────────────
+# coarsen_dims via add_gsplats_from_data (3rd geometry — parallels Points/Lines)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _stacked_4d_gsplatdata(n_per=600, n_groups=3, seed=0):
+    """Flat GSplatData: dim 0 categorical (0..G-1), dims 1-3 xyz shared."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    rng = np.random.default_rng(seed)
+    xyz = rng.normal(0, 5, (n_per, 3)).astype(np.float32)
+    parts = [
+        np.column_stack([np.full(n_per, g, np.float32), xyz]) for g in range(n_groups)
+    ]
+    pos = np.vstack(parts).astype(np.float32)
+    return lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+
+
+def _gsplat_coarse_purity(store, name) -> float:
+    """Max |fractional offset| of the kind=lod gsplat children's dim-0 centers."""
+    grp = store[name]
+    worst = 0.0
+    for k in grp.keys():
+        if not k.startswith("child_"):
+            continue
+        child = grp[k]
+        if "centers" not in list(child.array_keys()):
+            continue
+        c0 = np.asarray(child["centers"])[:, 0]
+        worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
+    return worst
+
+
+def _dims_4d():
+    return Dimensions(
+        [
+            Dimension("coloring", categories=["0", "1", "2"], display=False),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+
+
+class TestCoarsenDimsGsplats:
+    def test_auto_default_groups_by_non_displayed(self, tmp_path) -> None:
+        out = tmp_path / "g.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=_dims_4d())
+            scene.add_gsplats_from_data(
+                "splats", _stacked_4d_gsplatdata(),
+                lod_group=dict(compression_factor=4, levels=3, device="cpu"),
+            )
+        store = zarr.open(str(out), mode="r")
+        assert _gsplat_coarse_purity(store, "splats") < 1e-4
+
+    def test_all_dims_blends(self, tmp_path) -> None:
+        out = tmp_path / "g.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=_dims_4d())
+            scene.add_gsplats_from_data(
+                "splats", _stacked_4d_gsplatdata(n_per=800),
+                lod_group=dict(compression_factor=4, levels=3, device="cpu",
+                               coarsen_dims="all"),
+            )
+        store = zarr.open(str(out), mode="r")
+        assert _gsplat_coarse_purity(store, "splats") > 0.05
+
+    def test_explicit_indices(self, tmp_path) -> None:
+        out = tmp_path / "g.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=_dims_4d())
+            scene.add_gsplats_from_data(
+                "splats", _stacked_4d_gsplatdata(),
+                lod_group=dict(compression_factor=4, levels=2, device="cpu",
+                               coarsen_dims=[1, 2, 3]),
+            )
+        store = zarr.open(str(out), mode="r")
+        assert _gsplat_coarse_purity(store, "splats") < 1e-4
+
+
+class TestResolveCoarsenDimsResolver:
+    """Direct unit tests for resolve_coarsen_dims (scene -> column indices)."""
+
+    @staticmethod
+    def _scene(dims):
+        import types
+        return types.SimpleNamespace(_dimensions=dims)
+
+    def test_auto_default_groups_by_non_displayed(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        r = resolve_coarsen_dims(self._scene(_dims_4d()), 4, None)
+        assert r == (1, 2, 3)  # displayed dims; barrier = dim 0
+
+    def test_pure_3d_returns_none(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        assert resolve_coarsen_dims(self._scene(Dimensions.default_3d()), 3, None) is None
+
+    def test_all_sentinel_returns_none(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        assert resolve_coarsen_dims(self._scene(_dims_4d()), 4, "all") is None
+
+    def test_names_resolve_when_aligned(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        assert resolve_coarsen_dims(self._scene(_dims_4d()), 4, ["x", "y", "z"]) == (1, 2, 3)
+
+    def test_name_on_unaligned_raises(self):
+        # n_cols (3) != scene ndim (4): a name could map to the wrong column.
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        with pytest.raises(ValueError, match="aligned"):
+            resolve_coarsen_dims(self._scene(_dims_4d()), 3, ["x"])
+
+    def test_display_sentinel_on_unaligned_raises(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        with pytest.raises(ValueError, match="aligned"):
+            resolve_coarsen_dims(self._scene(_dims_4d()), 3, "display")
+
+    def test_out_of_range_index_raises(self):
+        from luxar.core.group.lod.group import resolve_coarsen_dims
+        with pytest.raises(ValueError, match="out of range"):
+            resolve_coarsen_dims(self._scene(_dims_4d()), 4, [9])

@@ -552,6 +552,15 @@ def add_points_substitutive_lod_wrapper_impl(
         truncation_radius=float(spec["truncation_radius"]),
     )
 
+    # Resolve which dims coarsening may merge over (default Auto = displayed dims,
+    # grouping by non-displayed dims so coarse splats never blend across a
+    # categorical/sliced axis). pos_arr columns == lifted gsplat columns.
+    from ..lod.group import resolve_coarsen_dims
+
+    coarsen_dims = resolve_coarsen_dims(
+        group._find_scene(), int(lifted.ndim), spec.get("coarsen_dims")
+    )
+
     # Synthesise coarse gsplat levels (level 0 dropped, render-light conserved so
     # the LOD seam does not brighten/dim). Returns finest -> coarsest.
     coarse = coarse_substitutive_levels(
@@ -561,6 +570,7 @@ def add_points_substitutive_lod_wrapper_impl(
         method=str(spec["method"]),
         device=spec.get("device", "auto"),
         seed=spec.get("seed"),
+        coarsen_dims=coarsen_dims,
     )
 
     # Degenerate input -> flat Points node rather than a one-child LOD group.

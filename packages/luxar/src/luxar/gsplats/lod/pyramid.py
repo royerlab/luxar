@@ -10,7 +10,7 @@ each substitutive level (inner axis, see
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import torch
 
@@ -39,6 +39,7 @@ def make_lod_pyramid(
     lloyd_iterations: int = 5,
     candidate_bins_k: int = 12,
     device: Union[str, torch.device, None] = "auto",
+    coarsen_dims: Optional[Sequence[int]] = None,
     n_additive_lods: int = 4,
     additive_method: AdditiveMethodName = "greedy",
     breakpoints: BreakpointSpec = "equal-count",
@@ -88,6 +89,7 @@ def make_lod_pyramid(
         candidate_bins_k=candidate_bins_k,
         device=device,
         seed=seed,
+        coarsen_dims=coarsen_dims,
         verbose=verbose,
     )
 

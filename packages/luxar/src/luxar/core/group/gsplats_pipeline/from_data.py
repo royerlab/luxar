@@ -53,6 +53,21 @@ def add_gsplats_from_data_impl(
     if "truncation_radius" not in attrs:
         attrs["truncation_radius"] = result.truncation_radius
 
+    # Resolve coarsen_dims (which dims substitutive coarsening may merge over)
+    # on the COMPUTE path only — scene + data ndim are available here, but the
+    # stored-pyramid path rejects compute kwargs. Default Auto = displayed dims,
+    # grouping by non-displayed dims (same semantics as Points/Lines).
+    if isinstance(lod_group, dict):
+        computing = result.n_substitutive <= 1 or bool(lod_group.get("recompute"))
+        if computing:
+            from ..lod.group import _validate_coarsen_dims_spec, resolve_coarsen_dims
+
+            raw = _validate_coarsen_dims_spec(lod_group.get("coarsen_dims"))
+            resolved = resolve_coarsen_dims(
+                group._find_scene(), int(result.ndim), raw
+            )
+            lod_group = {**lod_group, "coarsen_dims": resolved}
+
     # Resolve the two LOD axes. Substitutive first (it can produce a
     # multi-level result), then additive (uniform across levels).
     result, explicit_min_pixel_sizes, base_pixel_size, extent_opts = (

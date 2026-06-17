@@ -60,6 +60,18 @@ pyramid.save("substitutive_pyramid.gsplats.zarr")   # v3.0 kind=lod group
 for s, lev in enumerate(pyramid.substitutive_levels):
     print(f"level {s}: {lev.n_splats_total} splats, K={lev.compression_factor}")
 
+# ── Barrier-aware coarsening: restrict merging to a subset of dims.
+# `coarsen_dims` lists the center-column indices coarsening may merge over;
+# the complement becomes hard grouping barriers (a categorical / timepoint /
+# channel axis), so coarse splats never blend across them. None = all dims.
+barrier = make_substitutive_lod(data4d, compression_factor=4, levels=3,
+                                coarsen_dims=[1, 2, 3])   # group by dim 0
+# In the scene API (add_points/add_lines/add_gsplats_from_data) the default is
+# Auto: coarsen the displayed dims, group by the non-displayed dims — so nD
+# scenes are barrier-correct without specifying anything. The standalone
+# `luxar gsplat lod --coarsen-dims i,j,k` takes explicit indices (no display
+# metadata exists standalone).
+
 # ── Full pyramid: substitutive (outer) × additive (inner) in one call
 full = make_lod_pyramid(
     data,

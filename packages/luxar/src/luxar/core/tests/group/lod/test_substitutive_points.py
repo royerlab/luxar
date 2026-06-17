@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
@@ -388,3 +388,109 @@ class TestSubstitutiveLodGuards:
         assert grp.attrs["display_type"] == "points"
         children = sorted(k for k in grp.keys() if k.startswith("child_"))
         assert grp[children[-1]].attrs["type"] == "points"  # finest is points
+
+
+# ────────────────────────────────────────────────────────────────────────
+# coarsen_dims — barrier-aware coarsening (Auto default = group by non-display)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _build_4d(tmp_path, *, n_per=1500, n_groups=3, coarsen_dims="__unset__"):
+    """A 4D scene: categorical (display=False) `coloring` dim 0 + xyz displayed.
+
+    The same xyz is stacked at each coloring value, so a barrier-unaware
+    coarsening would merge across colorings.
+    """
+    rng = np.random.default_rng(0)
+    xyz = rng.normal(0, 5, (n_per, 3)).astype(np.float32)
+    parts = [
+        np.column_stack([np.full(n_per, g, np.float32), xyz]) for g in range(n_groups)
+    ]
+    pos = np.vstack(parts).astype(np.float32)
+    palette = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float32)
+    colors = np.vstack([np.tile(palette[g % 3], (n_per, 1)) for g in range(n_groups)])
+    dims = Dimensions(
+        [
+            Dimension("coloring", categories=[str(g) for g in range(n_groups)],
+                      display=False),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+    out = tmp_path / "t4d.luxar.zarr"
+    kw = {} if coarsen_dims == "__unset__" else {"coarsen_dims": coarsen_dims}
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_points(
+            "cloud", pos, colors=colors.astype(np.float32),
+            radii=np.full(len(pos), 0.5, np.float32),
+            substitutive_lod=dict(compression_factor=4, levels=3, device="cpu", **kw),
+        )
+    return zarr.open(str(out), mode="r")["cloud"]
+
+
+def _coarse_barrier_purity(grp) -> float:
+    """Max |fractional offset| of the coarse gsplat children's dim-0 centers."""
+    worst = 0.0
+    for k in grp.keys():
+        if not k.startswith("child_"):
+            continue
+        child = grp[k]
+        if child.attrs.get("type") != "gsplats":
+            continue
+        c0 = np.asarray(child["centers"])[:, 0]
+        worst = max(worst, float(np.abs(c0 - np.round(c0)).max()))
+    return worst
+
+
+class TestCoarsenDimsPoints:
+    def test_auto_default_groups_by_non_displayed(self, tmp_path) -> None:
+        # No coarsen_dims passed → Auto = coarsen displayed (x,y,z), group by the
+        # non-displayed categorical dim. Coarse splats stay on integer values.
+        grp = _build_4d(tmp_path)
+        assert _coarse_barrier_purity(grp) < 1e-4
+
+    def test_explicit_names(self, tmp_path) -> None:
+        grp = _build_4d(tmp_path, coarsen_dims=["x", "y", "z"])
+        assert _coarse_barrier_purity(grp) < 1e-4
+
+    def test_all_dims_blends_across_barrier(self, tmp_path) -> None:
+        # Opting out of grouping ("all") reproduces the cross-coloring blend.
+        grp = _build_4d(tmp_path, n_groups=4, coarsen_dims="all")
+        assert _coarse_barrier_purity(grp) > 0.05
+
+    def test_pure_3d_scene_unaffected(self, tmp_path) -> None:
+        # No non-displayed dims → Auto has nothing to group by → builds fine.
+        out = tmp_path / "t3d.luxar.zarr"
+        rng = np.random.default_rng(1)
+        pos = rng.normal(0, 5, (4000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud", pos, radii=1.0,
+                substitutive_lod=dict(compression_factor=4, levels=2, device="cpu"),
+            )
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        assert grp.attrs["kind"] == "lod"
+
+
+class TestResolveCoarsenDims:
+    def test_default_none(self) -> None:
+        assert resolve_substitutive_axis_points({})["coarsen_dims"] is None
+
+    def test_names_passthrough(self) -> None:
+        r = resolve_substitutive_axis_points(dict(coarsen_dims=["x", "y", 2]))
+        assert r["coarsen_dims"] == ["x", "y", 2]
+
+    def test_display_and_all_sentinels(self) -> None:
+        assert resolve_substitutive_axis_points(
+            dict(coarsen_dims="display"))["coarsen_dims"] == "display"
+        assert resolve_substitutive_axis_points(
+            dict(coarsen_dims="all"))["coarsen_dims"] == "all"
+
+    def test_bad_values_raise(self) -> None:
+        with pytest.raises(ValueError):
+            resolve_substitutive_axis_points(dict(coarsen_dims=[]))
+        with pytest.raises(ValueError):
+            resolve_substitutive_axis_points(dict(coarsen_dims="nope"))

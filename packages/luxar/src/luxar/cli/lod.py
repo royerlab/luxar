@@ -57,6 +57,7 @@ _OPTION_TOKENS = {
     "--substitutive-method": "substitutive",
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
+    "--coarsen-dims": "substitutive",
     "--levels": "levels",
     "--base-pixel-size": "lod_selector",
     "--lod-method": "lod_selector",
@@ -231,6 +232,14 @@ def lod_recipe(
     candidate_bins_k: Optional[int] = typer.Option(
         None, "--candidate-bins-k", min=1, help="Lloyd spatial-hash top-k (default 12)."
     ),
+    coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help="Comma-separated center-column indices coarsening may merge over; "
+        "the remaining dims become hard grouping barriers (e.g. a categorical / "
+        "timepoint / channel axis). Default: all dims. (Standalone gsplats carry "
+        "no display info, so pass explicit indices here.)",
+    ),
     lod_method: Optional[str] = typer.Option(
         None,
         "--lod-method",
@@ -339,6 +348,7 @@ def lod_recipe(
             "--substitutive-method": substitutive_method,
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
+            "--coarsen-dims": coarsen_dims,
             "--levels": levels,
             "--base-pixel-size": base_pixel_size,
             "--lod-method": lod_method,
@@ -442,6 +452,42 @@ def lod_recipe(
                     f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
                 )
 
+            # Barrier dims for substitutive coarsening. Standalone gsplats carry
+            # no display metadata, so this path takes explicit column indices and
+            # warns (rather than auto-grouping) when the input is >3D.
+            parsed_coarsen: Optional[tuple] = None
+            if coarsen_dims is not None:
+                try:
+                    idxs = sorted(
+                        {int(t) for t in coarsen_dims.split(",") if t.strip() != ""}
+                    )
+                except ValueError as e:
+                    raise typer.BadParameter(
+                        f"--coarsen-dims must be comma-separated integers; "
+                        f"got {coarsen_dims!r}"
+                    ) from e
+                if not idxs:
+                    raise typer.BadParameter("--coarsen-dims must list >=1 index")
+                for i in idxs:
+                    if i < 0 or i >= data.ndim:
+                        raise typer.BadParameter(
+                            f"--coarsen-dims index {i} out of range for "
+                            f"{data.ndim}D data"
+                        )
+                parsed_coarsen = tuple(idxs) if len(idxs) < data.ndim else None
+            elif data.ndim > 3 and recipe in (
+                "substitutive",
+                "pyramid",
+                "multiscale",
+                "mosaic",
+            ):
+                aprint(
+                    f"  ⚠ {data.ndim}D input with no --coarsen-dims: substitutive "
+                    "coarsening will merge across ALL dims. If some dims are "
+                    "categorical/sliced (time/channel/...), pass --coarsen-dims "
+                    "with the spatial column indices to keep them as barriers."
+                )
+
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,
                 additive_method=method_norm,  # type: ignore[arg-type]
@@ -463,6 +509,7 @@ def lod_recipe(
                 candidate_bins_k=candidate_bins_k
                 if candidate_bins_k is not None
                 else 12,
+                coarsen_dims=parsed_coarsen,
                 # LOD threshold knobs for any kind=lod recipe (multiscale/
                 # substitutive/pyramid/mosaic); None → RecipeParams defaults
                 # (extent method, p90, anisotropy-aware, ~1.5px target anchor).
