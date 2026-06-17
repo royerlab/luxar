@@ -96,6 +96,28 @@ describe('pickChildWithHysteresis', () => {
     expect(pickChildWithHysteresis(thresholds, 0, 100)).toBe(1);
     expect(pickChildWithHysteresis(thresholds, 0, 99.999)).toBe(0);
   });
+
+  // projectBoxDiagonalPx returns +Infinity when the camera is inside/straddling
+  // the bbox. That must select the finest child from any current index, and
+  // must never produce NaN through the downgrade arithmetic.
+  it('saturates to the finest child for an infinite diagonal (camera-inside)', () => {
+    expect(pickChildWithHysteresis(thresholds, 0, Number.POSITIVE_INFINITY)).toBe(2);
+    expect(pickChildWithHysteresis(thresholds, 1, Number.POSITIVE_INFINITY)).toBe(2);
+    expect(pickChildWithHysteresis(thresholds, 2, Number.POSITIVE_INFINITY)).toBe(2);
+    expect(Number.isNaN(pickChildWithHysteresis(thresholds, 2, Number.POSITIVE_INFINITY))).toBe(
+      false
+    );
+  });
+
+  // A multi-level downgrade snaps straight to the natural level: the metric fell
+  // well past the adjacent band, so the single-gap hysteresis cannot suppress it.
+  it('snaps multiple levels down at once when the metric drops far', () => {
+    // current=2 (threshold 500), metric 95 → natural is 0 (95 < 100, so only
+    // threshold 0 qualifies); well under 500 - 0.1*(500-100)=460 → straight to 0.
+    expect(pickChildWithHysteresis(thresholds, 2, 95)).toBe(0);
+    // current=2, metric 150 → natural=1 (100≤150<500); below 500-0.1*(500-100)=460 → down to 1.
+    expect(pickChildWithHysteresis(thresholds, 2, 150)).toBe(1);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -114,6 +136,26 @@ describe('projectBoxDiagonalPx', () => {
     cam.matrixWorldInverse.identity();
     cam.projectionMatrix.identity();
     cam.matrixWorld.identity();
+    return cam;
+  }
+
+  /** Perspective camera at the origin looking down −Z (near 0.1, far 1000). */
+  function perspectiveAtOrigin(): THREE.PerspectiveCamera {
+    const cam = new THREE.PerspectiveCamera(60, 800 / 600, 0.1, 1000);
+    cam.position.set(0, 0, 0);
+    cam.lookAt(0, 0, -1);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
+    return cam;
+  }
+
+  /** Orthographic camera at the origin looking down −Z. Keeps w == 1. */
+  function orthoAtOrigin(): THREE.OrthographicCamera {
+    const cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    cam.position.set(0, 0, 0);
+    cam.lookAt(0, 0, -1);
+    cam.updateMatrixWorld(true);
+    cam.updateProjectionMatrix();
     return cam;
   }
 
@@ -170,6 +212,50 @@ describe('projectBoxDiagonalPx', () => {
     const diagonal = projectBoxDiagonalPx(box, identityCamera(), { width: 800, height: 600 });
     expect(diagonal).toBeCloseTo(1000, 1); // hypot, not 1400 (sum)
     expect(diagonal).not.toBeCloseTo(1400, 0);
+  });
+
+  // Near-plane saturation: the camera being inside or straddling the box must
+  // yield +Infinity (→ finest level), not a collapsed/garbage diagonal.
+  it('returns the correct finite diagonal when the box is fully in front (perspective)', () => {
+    // Small box well in front of the camera (negative z, all corners have w>0).
+    const box: BoundingBox = { min: { x: -1, y: -1, z: -11 }, max: { x: 1, y: 1, z: -9 } };
+    const diagonal = projectBoxDiagonalPx(box, perspectiveAtOrigin(), { width: 800, height: 600 });
+    expect(Number.isFinite(diagonal)).toBe(true);
+    // Analytic value pins the perspective divide + NDC→px scaling (not just
+    // finite>0, which a divide-omitting mutant would also pass). fovY=60 →
+    // f=1/tan30=1.73205; m[0]=f/aspect=1.29904, w=-z. Nearest corners (z=-9)
+    // dominate the AABB: Δndc_x=2·1.29904/9, Δndc_y=2·1.73205/9 → widthPx=
+    // heightPx=115.47 → hypot=163.30.
+    expect(diagonal).toBeCloseTo(163.3, 1);
+  });
+
+  it('saturates to +Infinity when the camera is inside the box (perspective)', () => {
+    // Camera at origin sits inside this box → some corners are behind it (w<=0).
+    const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+    expect(projectBoxDiagonalPx(box, perspectiveAtOrigin(), { width: 800, height: 600 })).toBe(
+      Number.POSITIVE_INFINITY
+    );
+  });
+
+  it('saturates to +Infinity when the box straddles the near plane (perspective)', () => {
+    // Box spans z=-2..+2; the +z corners are behind a camera looking down −Z.
+    const box: BoundingBox = { min: { x: -1, y: -1, z: -2 }, max: { x: 1, y: 1, z: 2 } };
+    expect(projectBoxDiagonalPx(box, perspectiveAtOrigin(), { width: 800, height: 600 })).toBe(
+      Number.POSITIVE_INFINITY
+    );
+  });
+
+  it('never saturates for an orthographic camera (w stays 1)', () => {
+    // Camera "inside" the box, but ortho has no perspective divide → w==1, so
+    // the diagonal stays finite rather than tripping the near-plane guard.
+    const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+    const diagonal = projectBoxDiagonalPx(box, orthoAtOrigin(), { width: 800, height: 600 });
+    expect(Number.isFinite(diagonal)).toBe(true);
+    // Pin the ortho projection math: left/right=±10 maps x=±5 → NDC ±0.5;
+    // top/bottom=±10 maps y=±5 → NDC ±0.5. widthPx=1·0.5·800=400,
+    // heightPx=1·0.5·600=300 → hypot=500. Confirms w stays 1 (no saturation)
+    // AND the manual column-major NDC computation is correct for ortho.
+    expect(diagonal).toBeCloseTo(500, 1);
   });
 });
 

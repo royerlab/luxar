@@ -320,7 +320,11 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    instead of loading a fine level the renderer would frustum-cull.
 4. Otherwise, project the 8 world corners to NDC and measure the
    diagonal of the screen-space AABB in pixels
-   (`projectBoxDiagonalPx`).
+   (`projectBoxDiagonalPx`). The projection is `w`-aware: if any corner
+   is at/behind the camera near plane (camera inside or straddling the
+   box), it returns `+Infinity` so the selector saturates to the finest
+   level — instead of the collapsed/garbage diagonal an unguarded
+   perspective divide would produce on close approach.
 5. Pick the finest child whose `minPixelSize` threshold is satisfied,
    with 10% asymmetric, spacing-aware hysteresis on the downgrade
    direction to suppress threshold-edge flicker

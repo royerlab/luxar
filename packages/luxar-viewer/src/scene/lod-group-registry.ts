@@ -160,8 +160,12 @@ interface LODGroupEntryCache {
   localBoxScratch: BoundingBox;
 }
 
-/** Module-scope scratch for ``projectBoxDiagonalPx``. Single-threaded. */
-const CORNER_SCRATCH = new THREE.Vector3();
+/**
+ * Module-scope scratch for ``projectBoxDiagonalPx``'s projection × view
+ * product. Single-threaded — ``evaluatePerFrame`` is the only per-frame entry
+ * point, so reusing one matrix across all entries within a frame is safe.
+ */
+const PROJ_VIEW_SCRATCH = new THREE.Matrix4();
 
 /**
  * Module-scope scratch for the per-frame frustum gate and eviction ranking.
@@ -208,6 +212,18 @@ export interface LODGroupRegistryDeps {
 }
 
 /**
+ * Saturation epsilon for ``projectBoxDiagonalPx``'s near-plane guard. When any
+ * bbox corner's homogeneous ``w`` (clip-space, ≈ view-space depth in front of
+ * the camera) falls to/below this, the perspective divide is already producing
+ * exploding/flipped NDC, so the diagonal is meaningless. We trip *before* ``w``
+ * crosses zero (hence 1e-6, not ``transformBoundingBox``'s singular-point
+ * ``1e-12``) to eliminate the unstable near-plane regime, not just the literal
+ * singularity. With identity matrices ``w == 1 ≫ 1e-6``, so this never fires in
+ * the identity-camera unit tests.
+ */
+const W_EPSILON = 1e-6;
+
+/**
  * Project a world-space :type:`BoundingBox` through the camera and
  * return the diagonal of the screen-space AABB in pixels.
  *
@@ -216,32 +232,58 @@ export interface LODGroupRegistryDeps {
  * radius). NDC → pixels assumes the viewport size matches the
  * renderer canvas.
  *
+ * **Near-plane saturation.** Projects with an explicit homogeneous ``w`` (the
+ * combined ``projectionMatrix * matrixWorldInverse``, not THREE's
+ * ``Vector3.project`` which divides by ``w`` unguarded). If any corner has
+ * ``w <= W_EPSILON`` — i.e. the camera is inside or straddling the box — the
+ * group fills the screen, so we return ``+Infinity`` to saturate the selector
+ * to its finest level (``pickChildWithHysteresis`` then picks the top index;
+ * the value is never fed to finite arithmetic, so no NaN). This is the inverse
+ * of the old behaviour, where a corner crossing behind the near plane
+ * *collapsed* the diagonal and wrongly dropped to a coarse level on close
+ * approach. Orthographic cameras keep ``w == 1`` and so never saturate.
+ *
  * Exported for unit testing.
  */
 export function projectBoxDiagonalPx(
   box: BoundingBox,
   camera: THREE.Camera,
-  viewport: { width: number; height: number }
+  viewport: { width: number; height: number },
+  precomputedProjView?: THREE.Matrix4
 ): number {
-  // Reuse a module-scope Vector3. ``evaluatePerFrame`` is invoked from
-  // a single per-frame callback, so this is safe — no concurrent
-  // entries into this function.
-  const corner = CORNER_SCRATCH;
+  // Combined projection × view. ``evaluatePerFrame`` already builds this product
+  // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
+  // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
+  // callers (unit tests) omit it and we fall back to a module-scope scratch (no
+  // per-call allocation). Unlike THREE's ``Vector3.project`` this exposes ``w``
+  // so we can guard the near plane. ``evaluatePerFrame`` is the single per-frame
+  // entry point, so sharing the scratch is safe.
+  const m =
+    precomputedProjView ??
+    PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const e = m.elements; // THREE.Matrix4 is column-major flat[16]
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
   for (let i = 0; i < 8; i++) {
-    corner.set(
-      i & 1 ? box.max.x : box.min.x,
-      i & 2 ? box.max.y : box.min.y,
-      i & 4 ? box.max.z : box.min.z
-    );
-    corner.project(camera);
-    if (corner.x < minX) minX = corner.x;
-    if (corner.x > maxX) maxX = corner.x;
-    if (corner.y < minY) minY = corner.y;
-    if (corner.y > maxY) maxY = corner.y;
+    const x = i & 1 ? box.max.x : box.min.x;
+    const y = i & 2 ? box.max.y : box.min.y;
+    const z = i & 4 ? box.max.z : box.min.z;
+    // Same column-major indexing as ``transformBoundingBox`` (bounds-math.ts):
+    // w = m[3]*x + m[7]*y + m[11]*z + m[15].
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+    if (w <= W_EPSILON) {
+      // Camera inside / straddling the bbox near plane → group fills the
+      // screen → saturate so the finest child is selected.
+      return Number.POSITIVE_INFINITY;
+    }
+    const ndcX = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
+    const ndcY = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
+    if (ndcX < minX) minX = ndcX;
+    if (ndcX > maxX) maxX = ndcX;
+    if (ndcY < minY) minY = ndcY;
+    if (ndcY > maxY) maxY = ndcY;
   }
   const widthPx = (maxX - minX) * 0.5 * viewport.width;
   const heightPx = (maxY - minY) * 0.5 * viewport.height;
@@ -299,6 +341,13 @@ export function pickChildWithHysteresis(
   // so the deadband never straddles the neighbour — every level still
   // renders on the way down and the selection can't flip-flop across a band
   // wider than the inter-level spacing.
+  //
+  // The margin guards only the immediate ``currentIdx → currentIdx - 1``
+  // boundary, but ``natural`` may be several levels coarser. That is correct: a
+  // multi-level drop means the metric fell well past the adjacent band, so the
+  // hysteresis (sized to one inter-level gap) cannot suppress it and we snap
+  // straight to ``natural`` — no flip-flop, because the metric is nowhere near
+  // the band it would need to re-cross to come back up.
   const currentThreshold = thresholds[currentIdx];
   const prevThreshold = thresholds[currentIdx - 1]; // currentIdx >= 1 here
   const margin = hysteresisRatio * (currentThreshold - prevThreshold);
@@ -329,6 +378,14 @@ export class LODGroupRegistry {
    * eviction LRU evicts the lowest-tick (coldest) loaded levels first.
    */
   private tick = 0;
+  /**
+   * Entry paths already warned about a missing-ready-child invariant break in
+   * ``coarsestReadyIndex``. The off-screen gate calls that method every frame,
+   * so without a dedupe a genuinely-stuck group (eager default failed to
+   * attach) would log at frame rate. One warning per entry surfaces the break
+   * without the flood.
+   */
+  private warnedNoReadyChild: Set<string> = new Set();
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
@@ -359,6 +416,7 @@ export class LODGroupRegistry {
   unregister(path: string): void {
     this.entries.delete(path);
     this.caches.delete(path);
+    this.warnedNoReadyChild.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
@@ -368,6 +426,7 @@ export class LODGroupRegistry {
     // Reset the monotonic tick so a reused registry (shared-registry
     // refactor) starts cold rather than inheriting stale LRU ordering.
     this.tick = 0;
+    this.warnedNoReadyChild.clear();
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -443,9 +502,11 @@ export class LODGroupRegistry {
     // Build the camera frustum once per frame. ``camera.matrixWorldInverse`` /
     // ``projectionMatrix`` are current here (``controls.update()`` →
     // ``updateMatrixWorld()`` runs before per-frame callbacks), and the default
-    // WebGL coordinate system matches the NDC convention used by
-    // ``Vector3.project()`` inside ``projectBoxDiagonalPx``. The frustum is
-    // shared by the off-screen LOD gate (per entry) and the eviction ranking.
+    // WebGL coordinate system matches the NDC convention used by the manual
+    // projection×view divide inside ``projectBoxDiagonalPx``. The projection×view
+    // product (``FRUSTUM_MATRIX_SCRATCH``) is shared three ways: it seeds the
+    // frustum for the off-screen LOD gate and eviction ranking, and is passed
+    // into ``projectBoxDiagonalPx`` so the per-group pixel-diagonal reuses it.
     FRUSTUM_MATRIX_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     FRUSTUM_SCRATCH.setFromProjectionMatrix(FRUSTUM_MATRIX_SCRATCH);
 
@@ -499,7 +560,9 @@ export class LODGroupRegistry {
       if (!frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
       } else {
-        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport);
+        // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
+        // built in evaluatePerFrame) instead of recomputing it per group.
+        const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, diagonalPx);
       }
     }
@@ -657,6 +720,22 @@ export class LODGroupRegistry {
   private coarsestReadyIndex(entry: LODGroupEntry): number {
     for (let i = 0; i < entry.children.length; i++) {
       if (isReady(entry.children[i])) return i;
+    }
+    // Invariant: a substitutive lod_group's default level is loaded eagerly
+    // (committed before ``register`` and never evicted), so at least one child
+    // is always ready. If that ever breaks (e.g. the eager default failed to
+    // attach, or a future change makes the default lazy too), the off-screen
+    // gate pins whatever ``activeChildIndex`` happens to be — surface it rather
+    // than fail silently, but only ONCE per entry: this method runs every frame
+    // while the group is off-screen, so an unguarded log would flood at frame
+    // rate for a genuinely-stuck group.
+    if (!this.warnedNoReadyChild.has(entry.path)) {
+      this.warnedNoReadyChild.add(entry.path);
+      log.warning(
+        Modules.SCENE_LOADER,
+        `lod_group ${entry.path}: no ready child for off-screen gate; ` +
+          `holding active index ${entry.activeChildIndex}`
+      );
     }
     return entry.activeChildIndex;
   }

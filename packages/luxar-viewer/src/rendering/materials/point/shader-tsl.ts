@@ -229,7 +229,17 @@ export function pointWebGPUFactory(
 
   // Expand the unit quad to a sprite in clip space.
   const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
-  const clipPos: TSLNode = projCenter.add(vec4(offsetClip, 0.0, 0.0));
+  // Reject points behind the camera (perspective only; camera looks down -Z,
+  // so mvPos.z >= 0 is behind the near plane). projCenter.w is <= 0 for such
+  // points and the quad expansion above would flip/degenerate the sprite.
+  // Emit an off-screen position so no fragments are produced. Mirrors the GLSL
+  // shader's guard and the gsplat behind-camera reject; ortho keeps w == 1 and
+  // is excluded.
+  const behindCamera: TSLNode = int(uIsOrtho).equal(int(0)).and(mvPos.z.greaterThanEqual(0.0));
+  const clipPos: TSLNode = behindCamera.select(
+    vec4(0.0, 0.0, -2.0, 1.0),
+    projCenter.add(vec4(offsetClip, 0.0, 0.0))
+  );
 
   // Sprite UV (replaces gl_PointCoord). Computed per-vertex,
   // interpolated to the fragment via the `varying()` wrapper —

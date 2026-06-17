@@ -238,6 +238,8 @@ view. Each child carries a `min_pixel_size` threshold; the viewer
 projects the LOD group's bbox to screen, takes the diagonal in pixels,
 and renders the **finest** child whose threshold is satisfied (with 10%
 asymmetric hysteresis on the downgrade direction to suppress flicker).
+When the camera is inside or straddling a group's bounding box, the group
+is treated as filling the screen and its **finest** child is selected.
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
 gsplats, or themselves specialized groups (e.g. a Partition group inside an

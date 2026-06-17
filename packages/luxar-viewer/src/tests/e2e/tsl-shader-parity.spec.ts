@@ -69,6 +69,31 @@ function meanAbsDiff(a: number[], b: number[]): number {
   return sum / a.length;
 }
 
+/**
+ * Count RGBA quadruplets that differ from the first pixel. A fully culled
+ * frame is uniform (all clear-colour) → 0 differing pixels; a rendered sprite
+ * makes some pixels differ. Used to assert the behind-camera guard produced no
+ * fragments.
+ */
+function nonUniformPixelCount(pixels: number[]): number {
+  const r0 = pixels[0];
+  const g0 = pixels[1];
+  const b0 = pixels[2];
+  const a0 = pixels[3];
+  let n = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (
+      pixels[i] !== r0 ||
+      pixels[i + 1] !== g0 ||
+      pixels[i + 2] !== b0 ||
+      pixels[i + 3] !== a0
+    ) {
+      n++;
+    }
+  }
+  return n;
+}
+
 /** First N RGBA quadruplets of a buffer, formatted for human reading. */
 function previewPixels(pixels: number[], count = 4): string {
   const lines: string[] = [];
@@ -451,6 +476,52 @@ test.describe('TSL ↔ GLSL shader parity', () => {
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
     ).toBeLessThan(2.0);
   });
+
+  // Behind-camera parity. A perspective camera (uIsOrtho:0) with the point
+  // behind it — the only cases exercising the perspective path and the
+  // behind-camera reject (`uIsOrtho == 0 && mvPosition.z >= 0`); every other
+  // point case is ortho. Each asserts GLSL ↔ TSL produce identical frames and
+  // that the frame is uniform (no fragments).
+  //
+  // NOTE on what this does and does NOT prove: the GPU already clips primitives
+  // with clip-space w <= 0, so a behind-camera point yields an empty frame in
+  // both backends *whether or not* the shader guard is present (verified: the
+  // test still passes with the guard removed). So this is a cross-backend
+  // *parity* lock for the behind-camera branch, not proof the guard alone culls.
+  // The guard's actual presence is pinned with teeth by the generated-shader
+  // codegen snapshot (tsl-codegen-snapshot.spec.ts: point / point-pick vertex
+  // snapshots contain the `mvPosition.z >= 0 → vec4(0,0,-2,1)` reject). The
+  // guard itself is a defensive early-out (skips wasted vertex math; explicit
+  // intent; safe at the w≈0 singularity).
+  for (const variant of ['point-behind', 'point-pick-behind'] as const) {
+    test(`${variant}: behind-camera point renders identically (empty) in both backends`, async ({
+      page,
+    }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      expect(
+        diff,
+        `${variant} parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+          `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+          `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+      ).toBeLessThan(2.0);
+
+      // No fragments emitted, so each frame is a uniform clear colour in both
+      // backends (the behind-camera point is culled).
+      expect(
+        nonUniformPixelCount(glslPixels),
+        'GLSL behind-camera frame should be empty (uniform), got a rendered sprite'
+      ).toBe(0);
+      expect(
+        nonUniformPixelCount(tslResult.pixels),
+        'TSL behind-camera frame should be empty (uniform), got a rendered sprite'
+      ).toBe(0);
+    });
+  }
 
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);

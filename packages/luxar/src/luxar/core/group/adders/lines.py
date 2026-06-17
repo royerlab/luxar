@@ -741,6 +741,11 @@ def add_lines_substitutive_lod_wrapper_impl(
         extents = [
             float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
         ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
+        # Node extent W from the FINEST level's vertices. Equal by construction
+        # to the gsplat path's union-over-levels bbox (coarse representatives are
+        # convex/weighted-mean combinations of the finest centers → inside the
+        # finest bbox; union == finest, verified 0.0 difference). Cheaper and
+        # keeps the three geometries self-calibrated together — see points.py.
         lo, hi = vert_arr.min(axis=0), vert_arr.max(axis=0)
         node_extent = (
             float(np.linalg.norm(hi - lo)) if vert_arr.shape[0] else None

@@ -487,7 +487,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
       // The violation was surfaced.
       expect(
-        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
       ).toBe(true);
     } finally {
       warnSpy.mockRestore();
@@ -512,8 +512,36 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       expect(reg.get('/lod')!.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
       expect(
-        warnSpy.mock.calls.some((c) => String(c[1]).includes('not ascending'))
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
       ).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns on EQUAL adjacent thresholds (not strictly ascending), matching the Python invariant', async () => {
+    // Python's `_assert_strict_ascending` forbids equal thresholds (zero-width
+    // hysteresis band between two levels). The viewer's order check is therefore
+    // strict (`<`, not `<=`): equal adjacent thresholds must surface the same
+    // producer-bug warning. The stable sort leaves the equal pair in place.
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeChildNode('/lod/child_0', 0),
+          makeChildNode('/lod/child_1', 100),
+          makeChildNode('/lod/child_2', 100), // equal to previous → not strictly ascending
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
+      ).toBe(true);
     } finally {
       warnSpy.mockRestore();
     }

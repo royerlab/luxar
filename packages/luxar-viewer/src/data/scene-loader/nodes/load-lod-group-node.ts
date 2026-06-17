@@ -415,10 +415,17 @@ export async function loadLodGroupNode(
   // which DOES refuse, because a row-major transform renders catastrophically
   // wrong), recover gracefully: stable-sort to ascending and warn so the
   // producer bug is surfaced. Almost always a no-op (already ascending).
-  const isAscending = registryChildren.every(
-    (c, k) => k === 0 || registryChildren[k - 1].minPixelSize <= c.minPixelSize
+  //
+  // The check is for STRICTLY ascending (``<``, not ``<=``), matching the
+  // Python writer's invariant (``_assert_strict_ascending`` rejects equal
+  // thresholds). Two equal thresholds give the selector a zero-width hysteresis
+  // band between those levels — a degenerate, producer-side bug — so we surface
+  // it with the same warning. The stable sort leaves equal entries in place, so
+  // the only effect for the equal case is the diagnostic.
+  const isStrictlyAscending = registryChildren.every(
+    (c, k) => k === 0 || registryChildren[k - 1].minPixelSize < c.minPixelSize
   );
-  if (!isAscending) {
+  if (!isStrictlyAscending) {
     const before = registryChildren.map((c) => c.minPixelSize);
     // Object identity survives the sort, so remap the eager index by reference.
     const eagerChild = eagerRegistryIdx >= 0 ? registryChildren[eagerRegistryIdx] : null;
@@ -427,10 +434,10 @@ export async function loadLodGroupNode(
     if (eagerChild) eagerRegistryIdx = registryChildren.indexOf(eagerChild);
     log.warning(
       Modules.SCENE_LOADER,
-      `lod_group ${node.path}: child min_pixel_size thresholds are not ascending ` +
-        `(${before.join(', ')}). The pixel-size selector needs coarsest-to-finest ` +
-        'order; re-sorted to ascending. Fix the producer ' +
-        '(derive_min_pixel_sizes guarantees ascending thresholds).'
+      `lod_group ${node.path}: child min_pixel_size thresholds are not strictly ` +
+        `ascending (${before.join(', ')}). The pixel-size selector needs distinct ` +
+        'coarsest-to-finest thresholds; re-sorted to ascending. Fix the producer ' +
+        '(derive_min_pixel_sizes guarantees strictly ascending thresholds).'
     );
   }
 
