@@ -322,6 +322,15 @@ def tree_from_substitutive_levels(
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
     """
+    # Validate the method name eagerly: ``lod_thresholds`` treats any non-"extent"
+    # string as "count" (it falls back), so a typo like "Extent"/"sqrt" would
+    # SILENTLY pick the wrong derivation. Reject it here — the single user-facing
+    # chokepoint for substitutive gsplats (save / recipes / .tree all route through
+    # this). The CLI validates too; the #4 writers pass a hardcoded literal.
+    if lod_method not in ("extent", "count"):
+        raise ValueError(
+            f"lod_method must be 'extent' or 'count', got {lod_method!r}"
+        )
     if not levels:
         raise ValueError("levels must contain at least one SubstitutiveLevel")
     if len(levels) == 1:
