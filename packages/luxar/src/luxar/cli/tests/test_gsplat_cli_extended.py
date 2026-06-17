@@ -2111,6 +2111,41 @@ class TestLODCommand:
             4,
         ]
 
+    def test_recipe_substitutive_lod_method_threads_to_thresholds(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """#5: `--lod-method` now reaches the substitutive/pyramid thresholds
+        (derived at save). `count` reproduces √N on the on-disk lod children;
+        `extent` (default) is physically anchored and differs."""
+        import math
+
+        import zarr
+
+        def _fine_threshold(*flags: str) -> tuple[float, float]:
+            out = tmp_path / ("sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr")
+            r = runner.invoke(
+                app,
+                ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe",
+                 "substitutive", "-K", "2", "-L", "2", "--device", "cpu", *flags],
+            )
+            assert r.exit_code == 0, f"substitutive {flags} failed:\n{r.stdout}"
+            g = zarr.open_group(str(out), mode="r")
+            ch = sorted(
+                (k for k in g.group_keys() if k.startswith("child_")),
+                key=lambda s: int(s.split("_")[1]),
+            )
+            mps = [float(g[k].attrs["min_pixel_size"]) for k in ch]
+            counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
+            assert mps[0] == 0.0
+            # count method: threshold_i = 10·√(n_i / n_0).
+            return mps, counts
+
+        cnt_mps, counts = _fine_threshold("--lod-method", "count")
+        for i in range(1, len(cnt_mps)):
+            assert cnt_mps[i] == pytest.approx(10.0 * math.sqrt(counts[i] / counts[0]))
+        ext_mps, _ = _fine_threshold()  # default = extent
+        assert ext_mps[-1] != pytest.approx(cnt_mps[-1])  # physically anchored
+
     def test_recipe_pyramid(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -2345,21 +2380,22 @@ class TestLODCommand:
         )
         assert scaled == pytest.approx(2.0 * extent_mps)  # default T is 1.5
 
-    def test_base_pixel_size_rejected_for_non_multiscale_recipe(
+    def test_lod_selector_rejected_for_recipe_without_lod_group(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """`--base-pixel-size` is multiscale-only; the option-relevance check
-        rejects it for other recipes (it only tunes a kind=lod group's switch)."""
+        """The lod-selector knobs (`--base-pixel-size`/`--lod-method`/…) tune a
+        kind=lod group's switch, so the option-relevance check accepts them for
+        substitutive/pyramid/multiscale/mosaic but REJECTS them for recipes that
+        build no lod group (flat/additive/partitioned)."""
         out = tmp_path / "x.gsplats.zarr"
-        result = runner.invoke(
-            app,
-            [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "additive", "--base-pixel-size", "200",
-            ],
-        )
-        assert result.exit_code != 0
-        assert not out.exists()
+        for flag, val in (("--base-pixel-size", "200"), ("--lod-method", "count")):
+            result = runner.invoke(
+                app,
+                ["gsplat", "lod", str(medium_gsplats), str(out),
+                 "--recipe", "additive", flag, val],
+            )
+            assert result.exit_code != 0, f"{flag} should be rejected for additive"
+            assert not out.exists()
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

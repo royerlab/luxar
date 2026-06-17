@@ -235,7 +235,17 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
         device=params.device,
         seed=params.seed,
     )
-    return sub.tree
+    # Build each part's lod group with the chosen threshold knobs (default
+    # extent T·W/r), so mosaic's per-part coarse↔fine switch is tunable too.
+    from luxar.gsplats.tree import tree_from_substitutive_levels
+
+    return tree_from_substitutive_levels(
+        sub.substitutive_levels,
+        lod_method=params.lod_method,
+        extent_percentile=params.extent_percentile,
+        extent_anisotropy=params.extent_anisotropy,
+        base_pixel_size=params.base_pixel_size,
+    )
 
 
 def build_mosaic(data: GSplatData, params: RecipeParams) -> GSplatPartition:

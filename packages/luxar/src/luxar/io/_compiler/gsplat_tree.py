@@ -365,19 +365,30 @@ def write_gsplat_node(
         )
 
     if isinstance(node, GSplatLodGroup):
-        from luxar.core.group.lod.group import derive_min_pixel_sizes
-        from luxar.gsplats.tree import total_splats
+        from luxar.core.group.lod.group import lod_thresholds
+        from luxar.gsplats.tree import (
+            node_extent_diagonal,
+            node_percentile_radius,
+            total_splats,
+        )
 
         # In-memory children are finest→coarsest; on disk child_0 = coarsest.
         on_disk = list(reversed(node.children))
         n = len(on_disk)
-        # Derive a per-child selector threshold (coarsest→finest) from element
-        # counts so EVERY child — leaf OR nested Group — is viewer-selectable.
-        # A min_pixel_size already authored on the child (leaf meta / group meta)
-        # takes precedence over this derived value (applied via setdefault below /
-        # _leaf_child_attrs for leaves). Without this, a nested lod-of-Group child
-        # carried no threshold and the selector was stuck always-finest.
-        derived_mps = derive_min_pixel_sizes([total_splats(c) for c in on_disk])
+        # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
+        # leaf OR nested Group — is viewer-selectable. Default to the physically-
+        # anchored ``extent`` method (T·W/r₉₀), matching the builders; ``lod_thresholds``
+        # falls back to the count √N method when extents/W are unavailable. An authored
+        # min_pixel_size on the child (leaf meta / group meta) still takes precedence
+        # (applied via setdefault below / _leaf_child_attrs for leaves), so this only
+        # sets the threshold for meta-less (e.g. hand-built) trees. Without it a nested
+        # lod-of-Group child carried no threshold and the selector was stuck always-finest.
+        derived_mps = lod_thresholds(
+            "extent",
+            element_counts=[total_splats(c) for c in on_disk],
+            element_extents=[node_percentile_radius(c) for c in on_disk],
+            node_extent=node_extent_diagonal(node),
+        )
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
             child_group = group.require_group(f"child_{i}")
