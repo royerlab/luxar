@@ -332,3 +332,36 @@ def test_pyramid_recipe_matches_make_lod_pyramid():
     got = [lev.n_additive_lods for lev in via_recipe.substitutive_levels]
     exp = [lev.n_additive_lods for lev in direct.substitutive_levels]
     assert got == exp
+
+
+# ── coarsen_dims threads through RecipeParams ─────────────────────────────
+
+
+def _stacked_4d_gsplat(n_per=600, n_groups=3, seed=0) -> GSplatData:
+    """4D splats: dim 0 categorical (0..G-1), dims 1-3 xyz shared across groups."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    rng = np.random.default_rng(seed)
+    xyz = rng.normal(0, 5, (n_per, 3)).astype(np.float32)
+    parts = [
+        np.column_stack([np.full(n_per, g, np.float32), xyz]) for g in range(n_groups)
+    ]
+    pos = np.vstack(parts).astype(np.float32)
+    return lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+
+
+class TestRecipeParamsCoarsenDims:
+    def test_default_none(self) -> None:
+        assert RecipeParams().coarsen_dims is None
+
+    def test_build_substitutive_respects_barrier(self) -> None:
+        from luxar.gsplats.lod.recipes import build_substitutive
+
+        data = _stacked_4d_gsplat()
+        params = RecipeParams(
+            compression_factor=4, levels=3, device="cpu", coarsen_dims=(1, 2, 3)
+        )
+        out = build_substitutive(data, params)
+        for s in range(out.n_substitutive):
+            c0 = np.asarray(out.at_substitutive(s).flattened().centers)[:, 0]
+            assert np.abs(c0 - np.round(c0)).max() < 1e-4

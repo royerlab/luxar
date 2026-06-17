@@ -364,6 +364,114 @@ SUBSTITUTIVE_METHODS = frozenset(
 )
 
 
+def _validate_coarsen_dims_spec(value: Any) -> Any:
+    """Shape/type-validate the raw ``coarsen_dims`` spec value (no scene yet).
+
+    Accepts ``None``, the sentinels ``"display"`` / ``"all"``, or a non-empty
+    list/tuple of dim names (str) and/or column indices (int). Names and the
+    ``"display"`` default are resolved against the scene later by
+    :func:`resolve_coarsen_dims`.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("display", "displayed"):
+            return "display"
+        if v in ("all", "*"):
+            return "all"
+        raise ValueError(
+            f"coarsen_dims string must be 'display' or 'all'; got {value!r}"
+        )
+    if isinstance(value, (list, tuple)):
+        if len(value) == 0:
+            raise ValueError("coarsen_dims must be non-empty")
+        out: list[Any] = []
+        for x in value:
+            if isinstance(x, bool):
+                raise ValueError("coarsen_dims entries must be int or str, not bool")
+            if isinstance(x, int):
+                out.append(int(x))
+            elif isinstance(x, str):
+                out.append(x)
+            else:
+                raise ValueError(
+                    "coarsen_dims entries must be int (column index) or str "
+                    f"(dimension name); got {type(x).__name__}"
+                )
+        return out
+    raise TypeError(
+        "coarsen_dims must be None, 'display'/'all', or a list of dim "
+        f"names/indices; got {type(value).__name__}"
+    )
+
+
+def resolve_coarsen_dims(scene: Any, n_cols: int, raw: Any) -> Optional[tuple]:
+    """Resolve a raw ``coarsen_dims`` spec into concrete center-column indices.
+
+    ``scene`` supplies the dimension metadata; ``n_cols`` is the lifted gsplat
+    dimensionality (== the position columns being coarsened). Returns a sorted
+    tuple of allowed-coarsen column indices, or ``None`` meaning "coarsen over
+    all dims" (no barrier — the historical behavior).
+
+    Default (``raw is None``) is **Auto**: coarsen over the scene's *displayed*
+    dims and group by the *non-displayed* dims. This only applies when the
+    positions are aligned with the scene (``n_cols == scene.ndim``); otherwise
+    (dim_order / extend_to_all reshaped the columns) Auto safely falls back to
+    all-dims. ``"display"`` is the explicit form of Auto and errors if unaligned;
+    ``"all"`` forces all-dims; a list resolves names via ``Dimensions.get_index``
+    and ints as direct column indices.
+    """
+    dims = getattr(scene, "_dimensions", None) if scene is not None else None
+    aligned = dims is not None and int(dims.ndim) == int(n_cols)
+
+    def _finalize(idxs: Any) -> Optional[tuple]:
+        norm = sorted({int(i) for i in idxs})
+        if not norm:
+            raise ValueError("coarsen_dims must be non-empty")
+        for i in norm:
+            if i < 0 or i >= n_cols:
+                raise ValueError(
+                    f"coarsen_dims index {i} out of range for {n_cols} dims"
+                )
+        return None if len(norm) == n_cols else tuple(norm)
+
+    if raw == "all":
+        return None
+    if raw is None or raw == "display":
+        if not aligned:
+            if raw == "display":
+                raise ValueError(
+                    "coarsen_dims='display' requires positions aligned with the "
+                    f"scene dims (got {n_cols} columns, scene ndim "
+                    f"{getattr(dims, 'ndim', '?')}). Pass explicit indices."
+                )
+            return None  # Auto, unaligned -> safe all-dims fallback
+        assert dims is not None  # implied by `aligned`
+        displayed = [d for d in dims.displayed if 0 <= d < n_cols]
+        non_displayed = [d for d in range(n_cols) if d not in set(displayed)]
+        if not non_displayed:
+            return None  # nothing to group by -> coarsen everything (no-op barrier)
+        return _finalize(displayed)
+    # Explicit list of names / indices.
+    idxs: list[int] = []
+    for x in raw:
+        if isinstance(x, str):
+            if not aligned:
+                # Names resolve to scene-dim indices, which only equal center
+                # columns when positions span the scene 1:1. Refuse rather than
+                # silently mapping a name to the wrong column.
+                raise ValueError(
+                    "coarsen_dims by name requires positions aligned with the "
+                    f"scene dims (got {n_cols} columns, scene ndim "
+                    f"{getattr(dims, 'ndim', '?')}). Pass explicit column indices."
+                )
+            idxs.append(int(dims.get_index(x)))  # type: ignore[union-attr]
+        else:
+            idxs.append(int(x))
+    return _finalize(idxs)
+
+
 def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, Any]]:
     """Normalize the ``substitutive_lod=`` kwarg into a spec dict (or ``None``).
 
@@ -442,12 +550,17 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
             min_pixel_sizes, "substitutive_lod=dict(min_pixel_sizes=...)"
         )
 
+    # Dims coarsening may cluster over; complement = hard grouping barriers.
+    # Shape/type only here (scene dims aren't known yet); names + the "display"
+    # default are resolved in the scene-aware adder via resolve_coarsen_dims().
+    coarsen_dims = _validate_coarsen_dims_spec(kwargs.pop("coarsen_dims", None))
+
     if kwargs:
         raise ValueError(
             f"substitutive_lod for {geometry}: unrecognized keys {sorted(kwargs)}. "
             "Valid keys: compression_factor (K), levels (n_lods), method, "
             "lod_method, extent_percentile, extent_anisotropy, base_pixel_size, "
-            "truncation_radius, device, seed, min_pixel_sizes."
+            "truncation_radius, device, seed, min_pixel_sizes, coarsen_dims."
         )
 
     return {
@@ -462,4 +575,5 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "device": device,
         "seed": seed,
         "min_pixel_sizes": min_pixel_sizes,
+        "coarsen_dims": coarsen_dims,
     }

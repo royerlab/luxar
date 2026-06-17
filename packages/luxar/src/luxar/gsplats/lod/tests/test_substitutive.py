@@ -698,3 +698,182 @@ class TestAutoMethod:
         data = _make_isotropic_3d(n=16, seed=0)
         out = make_substitutive_lod(data, levels=1, method="auto", device="cpu")
         assert out.n_substitutive == 2
+
+
+# ─────────────────────────────────────────────────────────────────────
+# coarsen_dims (barrier-dim grouping)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _stacked_categorical(n_per: int = 1500, n_groups: int = 3, seed: int = 0):
+    """A 4D lifted gsplat set: dim 0 is a categorical barrier (0..G-1), dims
+    1-3 are xyz shared across the groups (spatially coincident copies)."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    rng = np.random.default_rng(seed)
+    xyz = rng.normal(0, 5, (n_per, 3)).astype(np.float32)
+    parts = [
+        np.column_stack([np.full(n_per, g, np.float32), xyz]) for g in range(n_groups)
+    ]
+    pos = np.vstack(parts).astype(np.float32)
+    return lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+
+
+class TestCoarsenDims:
+    def test_barrier_invariant_keeps_groups_pure(self):
+        # Coarsening over xyz (dims 1-3), grouping by the categorical dim 0:
+        # every coarse splat must sit exactly on an integer group value.
+        data = _stacked_categorical(n_groups=3)
+        out = make_substitutive_lod(
+            data, compression_factor=4, levels=3, device="cpu", coarsen_dims=[1, 2, 3]
+        )
+        for s in range(out.n_substitutive):
+            c0 = np.asarray(out.at_substitutive(s).flattened().centers)[:, 0]
+            assert np.abs(c0 - np.round(c0)).max() < 1e-4
+
+    def test_baseline_merges_across_barrier(self):
+        # Without coarsen_dims the coarse levels DO blend across the barrier
+        # (this is the bug coarsen_dims fixes) — assert it actually happens so
+        # the invariant test above is meaningful.
+        data = _stacked_categorical(n_per=2000, n_groups=4)
+        out = make_substitutive_lod(
+            data, compression_factor=4, levels=3, method="kmeans_lloyd", device="cpu"
+        )
+        c0 = np.asarray(out.at_substitutive(out.n_substitutive - 1).flattened().centers)[
+            :, 0
+        ]
+        assert np.abs(c0 - np.round(c0)).max() > 0.1
+
+    def test_all_dims_is_noop_equivalent(self):
+        # coarsen_dims == every dim normalises to None (the all-dims path).
+        data = _stacked_categorical(n_groups=2)
+        a = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            coarsen_dims=[0, 1, 2, 3],
+        )
+        b = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+        )
+        for s in range(a.n_substitutive):
+            assert a.at_substitutive(s).n_splats == b.at_substitutive(s).n_splats
+
+    def test_coarsest_level_has_at_least_n_groups(self):
+        # Each barrier group keeps >= 1 representative, so the coarsest level
+        # cannot compress below the number of groups.
+        data = _stacked_categorical(n_per=2000, n_groups=4)
+        out = make_substitutive_lod(
+            data, compression_factor=4, levels=5, device="cpu", coarsen_dims=[1, 2, 3]
+        )
+        coarsest = out.at_substitutive(out.n_substitutive - 1).n_splats
+        assert coarsest >= 4
+
+    def test_invalid_coarsen_dims_raise(self):
+        data = _stacked_categorical(n_groups=2)
+        with pytest.raises(ValueError):
+            make_substitutive_lod(data, levels=1, device="cpu", coarsen_dims=[])
+        with pytest.raises(ValueError):
+            make_substitutive_lod(data, levels=1, device="cpu", coarsen_dims=[7])
+
+    def test_single_barrier_value_is_noop(self):
+        # All splats share barrier value 0 → one group → identical to all-dims.
+        data = _stacked_categorical(n_per=1200, n_groups=1)
+        a = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+            coarsen_dims=[1, 2, 3],
+        )
+        b = make_substitutive_lod(
+            data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu",
+        )
+        for s in range(a.n_substitutive):
+            assert a.at_substitutive(s).n_splats == b.at_substitutive(s).n_splats
+
+
+class TestAllocateGroupM:
+    """Direct unit coverage of the per-group M allocator (its clamp + water-fill
+    branches are never reached by the balanced integration fixtures)."""
+
+    import pytest as _pytest
+
+    @_pytest.mark.parametrize(
+        "sizes,M_target,expected",
+        [
+            ([1, 1, 1000], 2, [1, 1, 1]),     # M_target < G -> >=1 each, bumped to G
+            ([2, 2], 10, [2, 2]),             # over-target: size-clamp + water-fill
+            ([1, 1, 1], 5, [1, 1, 1]),        # all size-1: clamp, water-fill breaks
+            ([5, 5, 5], 2, [1, 1, 1]),        # M_target < G, balanced
+            ([100, 1, 1], 50, [48, 1, 1]),    # skewed proportional, small clamped
+        ],
+    )
+    def test_branches(self, sizes, M_target, expected):
+        from luxar.gsplats.lod.substitutive import _allocate_group_M
+
+        s = np.asarray(sizes)
+        alloc = _allocate_group_M(s, M_target)
+        g = len(s)
+        assert (alloc >= 1).all()
+        assert (alloc <= s).all()  # never asks for more reps than splats
+        assert int(alloc.sum()) == min(max(M_target, g), int(s.sum()))
+        assert alloc.tolist() == expected
+
+
+def test_continuous_barrier_warns():
+    """A barrier dim with ~all-distinct values (continuous) should warn that
+    coarsening will be negligible."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    rng = np.random.default_rng(0)
+    # dim 0 is continuous (unique per splat) -> grouping by it = N singletons.
+    pos = rng.normal(0, 5, (400, 4)).astype(np.float32)
+    g = lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+    with pytest.warns(RuntimeWarning, match="look continuous"):
+        make_substitutive_lod(g, levels=1, device="cpu", coarsen_dims=[1, 2, 3])
+
+
+def test_make_lod_pyramid_respects_coarsen_dims():
+    """coarsen_dims threads through the pyramid (substitutive × additive) builder."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+    from luxar.gsplats.lod.pyramid import make_lod_pyramid
+
+    rng = np.random.default_rng(0)
+    xyz = rng.normal(0, 5, (700, 3)).astype(np.float32)
+    pos = np.vstack(
+        [np.column_stack([np.full(700, g, np.float32), xyz]) for g in range(3)]
+    ).astype(np.float32)
+    data = lift_points_to_gsplats(pos, np.full(len(pos), 0.5, np.float32))
+    out = make_lod_pyramid(
+        data, compression_factor=4, levels=2, n_additive_lods=1, device="cpu",
+        coarsen_dims=[1, 2, 3],
+    )
+    for s in range(out.n_substitutive):
+        c0 = np.asarray(out.at_substitutive(s).flattened().centers)[:, 0]
+        assert np.abs(c0 - np.round(c0)).max() < 1e-4
+
+
+def test_drop_nonpositive_culls_only_nonpositive():
+    """_drop_nonpositive keeps positive-amplitude splats, drops <=0, and is an
+    identity (returns the same object) when all amplitudes are positive."""
+    from luxar.gsplats.lod.substitutive import _drop_nonpositive
+
+    centers = np.array([[0, 0, 0], [1, 1, 1], [2, 2, 2], [3, 3, 3]], np.float32)
+    chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (4, 1))
+    amps = np.array([0.5, 0.0, -1.0, 2.0], np.float32)
+    data = GSplatData(centers=centers, amplitudes=amps, cholesky_factors=chol)
+    out = _drop_nonpositive(data)
+    assert out.n_splats == 2  # only the 0.5 and 2.0 rows survive
+    assert np.array_equal(np.asarray(out.amplitudes), np.array([0.5, 2.0], np.float32))
+
+    allpos = GSplatData(
+        centers=centers, amplitudes=np.full(4, 1.0, np.float32), cholesky_factors=chol
+    )
+    assert _drop_nonpositive(allpos) is allpos  # no-op shortcut, no copy
+
+
+def test_allocate_group_M_stable_tie_break():
+    """Equal-size groups with a fractional tie give the extra rep(s) to the
+    LOWEST-index groups (stable), so allocation is reproducible."""
+    from luxar.gsplats.lod.substitutive import _allocate_group_M
+
+    # 4 equal groups, total=6 -> base 1 each, rem=2 split over equal weights:
+    # ideal=0.5 each, floor=0, leftover=2 -> first two groups get +1.
+    alloc = _allocate_group_M(np.array([10, 10, 10, 10]), 6)
+    assert alloc.tolist() == [2, 2, 1, 1]

@@ -57,7 +57,7 @@ blur across it. Use ``extend_to_all`` for such axes (the common case), or restri
 from __future__ import annotations
 
 import warnings
-from typing import Any, List, Optional, Union, cast
+from typing import Any, List, Optional, Sequence, Union, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -437,6 +437,7 @@ def coarse_substitutive_levels(
     method: str = "auto",
     device: Any = "auto",
     seed: Optional[int] = None,
+    coarsen_dims: Optional[Sequence[int]] = None,
 ) -> "List[GSplatData]":
     """Coarse substitutive levels of a lifted point cloud (render-light conserved).
 
@@ -463,6 +464,7 @@ def coarse_substitutive_levels(
         method=cast(Any, str(method)),
         device=device,
         seed=seed,
+        coarsen_dims=coarsen_dims,
     )
     light0 = render_light(pyramid.at_substitutive(0))
     out: List[GSplatData] = []

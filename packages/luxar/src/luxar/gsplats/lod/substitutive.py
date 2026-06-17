@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 import torch
@@ -147,6 +147,202 @@ def _pack_level(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Barrier-dim grouping (coarsen_dims)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _normalise_coarsen_dims(
+    coarsen_dims: Optional[Sequence[int]], src: GSplatData
+) -> Optional[tuple[int, ...]]:
+    """Validate ``coarsen_dims`` against ``src.ndim``.
+
+    Returns the sorted unique tuple of allowed-coarsen dims, or ``None`` to mean
+    "coarsen over all dims" (the historical path). Passing every dim normalises
+    to ``None`` (no barrier). Warns if the implied barrier dims look continuous
+    (so many distinct values that grouping would disable coarsening).
+    """
+    if coarsen_dims is None:
+        return None
+    d_total = src.ndim
+    cd = sorted({int(d) for d in coarsen_dims})
+    if not cd:
+        raise ValueError("coarsen_dims must be non-empty")
+    for d in cd:
+        if d < 0 or d >= d_total:
+            raise ValueError(
+                f"coarsen_dims index {d} out of range for ndim={d_total}"
+            )
+    if len(cd) == d_total:
+        return None  # no barrier dims -> identical to the all-dims path
+    barrier = [d for d in range(d_total) if d not in set(cd)]
+    keys = np.asarray(src.centers)[:, barrier]
+    n_groups = len(np.unique(keys, axis=0))
+    if n_groups > 0.5 * max(int(src.n_splats), 1):
+        warnings.warn(
+            f"coarsen_dims barrier {barrier} yields {n_groups} groups for "
+            f"{src.n_splats} splats: the barrier dims look continuous, so "
+            "coarsening will be negligible. Barrier dims should be discrete "
+            "(categorical / timepoint / channel).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return tuple(cd)
+
+
+def _subset_gsplatdata(data: GSplatData, mask: np.ndarray) -> GSplatData:
+    """Boolean-index a flat ``GSplatData`` (preserves truncation_radius)."""
+    colors = np.asarray(data.colors)[mask] if data.colors is not None else None
+    return GSplatData(
+        centers=np.asarray(data.centers)[mask],
+        amplitudes=np.asarray(data.amplitudes)[mask],
+        cholesky_factors=np.asarray(data.cholesky_factors)[mask],
+        colors=colors,
+        truncation_radius=data.truncation_radius,
+    )
+
+
+def _drop_nonpositive(data: GSplatData) -> GSplatData:
+    """Drop non-positive-amplitude splats (parity with _reduce_one_level's cull
+    for the kept-as-is small-group branch). No-op for the usual all-positive
+    lifted input."""
+    amps = np.asarray(data.amplitudes)
+    if amps.size == 0 or bool((amps > 0).all()):
+        return data
+    return _subset_gsplatdata(data, amps > 0)
+
+
+def _concat_gsplatdata(parts: list[GSplatData]) -> GSplatData:
+    """Concatenate flat ``GSplatData`` parts (colors kept iff all present)."""
+    keep_colors = all(p.colors is not None for p in parts)
+    return GSplatData(
+        centers=np.concatenate([np.asarray(p.centers) for p in parts], axis=0),
+        amplitudes=np.concatenate([np.asarray(p.amplitudes) for p in parts], axis=0),
+        cholesky_factors=np.concatenate(
+            [np.asarray(p.cholesky_factors) for p in parts], axis=0
+        ),
+        colors=(
+            np.concatenate([np.asarray(p.colors) for p in parts], axis=0)
+            if keep_colors
+            else None
+        ),
+        truncation_radius=parts[0].truncation_radius,
+    )
+
+
+def _allocate_group_M(sizes: np.ndarray, M_target: int) -> np.ndarray:
+    """Split ``M_target`` representatives across groups: floor 1 each, the rest
+    proportional to ``size - 1`` (largest-remainder), clamped to group size with
+    deficit water-filled into groups that still have slack."""
+    g_count = len(sizes)
+    total = max(int(M_target), g_count)  # >= 1 per group
+    alloc = np.ones(g_count, dtype=np.int64)
+    rem = total - g_count
+    if rem > 0:
+        weights = np.maximum(sizes - 1, 0).astype(np.float64)
+        if weights.sum() > 0:
+            ideal = rem * weights / weights.sum()
+            floor = np.floor(ideal).astype(np.int64)
+            leftover = int(rem - floor.sum())
+            if leftover > 0:
+                # Stable sort so ties (common with equal-size groups) break by
+                # group index -> reproducible allocation across numpy versions.
+                order = np.argsort(-(ideal - floor), kind="stable")
+                floor[order[:leftover]] += 1
+            alloc = alloc + floor
+    alloc = np.minimum(alloc, sizes)
+    # Water-fill any deficit (from the size clamp) into groups with slack.
+    deficit = total - int(alloc.sum())
+    while deficit > 0:
+        slack = sizes - alloc
+        idx = np.where(slack > 0)[0]
+        if idx.size == 0:
+            break
+        order = idx[np.argsort(-slack[idx], kind="stable")]
+        take = order[: min(deficit, idx.size)]
+        alloc[take] += 1
+        deficit = total - int(alloc.sum())
+    return cast(np.ndarray, alloc)
+
+
+def _reduce_one_level_grouped(
+    data: GSplatData,
+    *,
+    M_target: int,
+    coarsen_dims: tuple[int, ...],
+    method: MethodName,
+    lloyd_iterations: int,
+    candidate_bins_k: int,
+    device: torch.device,
+) -> GSplatData:
+    """One reduction level that never merges across the barrier dims.
+
+    Splats are partitioned by their exact coordinate in the barrier dims (all
+    dims except ``coarsen_dims``); each group is reduced independently with the
+    **unchanged** :func:`_reduce_one_level` and a proportional share of
+    ``M_target``, then concatenated. Within a group every barrier coordinate is
+    identical, so the merged representatives stay on that value.
+    """
+    d_total = data.ndim
+    coarsen_set = set(coarsen_dims)
+    barrier = [d for d in range(d_total) if d not in coarsen_set]
+    if not barrier:
+        return _reduce_one_level(
+            data,
+            M_target=M_target,
+            method=method,
+            lloyd_iterations=lloyd_iterations,
+            candidate_bins_k=candidate_bins_k,
+            device=device,
+        )
+    keys = np.asarray(data.centers)[:, barrier]
+    _group_ids, inverse = np.unique(keys, axis=0, return_inverse=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    g_count = int(inverse.max()) + 1 if inverse.size else 0
+    if g_count <= 1:
+        return _reduce_one_level(
+            data,
+            M_target=M_target,
+            method=method,
+            lloyd_iterations=lloyd_iterations,
+            candidate_bins_k=candidate_bins_k,
+            device=device,
+        )
+    sizes = np.bincount(inverse, minlength=g_count)
+    if M_target < g_count:
+        aprint(
+            f"  substitutive: M_target={M_target} < {g_count} barrier groups; "
+            f"level clamped to {g_count} splats (>=1 per group)."
+        )
+    alloc = _allocate_group_M(sizes, M_target)
+    # Group row indices in one O(N log N) pass (avoids an O(N*G) mask scan when
+    # the barrier has many groups). Stable sort preserves within-group order.
+    order = np.argsort(inverse, kind="stable")
+    ends = np.cumsum(sizes)
+    starts = ends - sizes
+    parts: list[GSplatData] = []
+    for g in range(g_count):
+        idx = order[starts[g] : ends[g]]
+        sub = _subset_gsplatdata(data, idx)
+        if int(alloc[g]) >= int(sizes[g]):
+            # Group already small enough; keep as-is, but still drop any
+            # non-positive-amplitude splats that a reduction would have culled
+            # (fidelity with the reduced branch).
+            parts.append(_drop_nonpositive(sub))
+        else:
+            parts.append(
+                _reduce_one_level(
+                    sub,
+                    M_target=int(alloc[g]),
+                    method=method,
+                    lloyd_iterations=lloyd_iterations,
+                    candidate_bins_k=candidate_bins_k,
+                    device=device,
+                )
+            )
+    return _concat_gsplatdata(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────
 
@@ -161,6 +357,7 @@ def make_substitutive_lod(
     candidate_bins_k: int = 12,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
+    coarsen_dims: Optional[Sequence[int]] = None,
     verbose: bool = False,
 ) -> GSplatData:
     """Build a substitutive-LOD hierarchy.
@@ -198,6 +395,16 @@ def make_substitutive_lod(
         Accepted for API stability; the Morton warm start and the
         synchronous Lloyd pass are deterministic, so it has no effect on
         the ``kmeans*`` methods.
+    coarsen_dims
+        Center-column indices that coarsening is *allowed* to cluster/merge
+        over. The complementary dims become hard grouping boundaries: splats
+        are partitioned by their exact coordinate in those barrier dims and
+        each group is reduced independently, so a coarse splat never blends
+        across a barrier value (e.g. a categorical ``coloring`` axis, time, or
+        channel). ``None`` (default) coarsens over all dims (the historical
+        behavior). Passing all dims is equivalent to ``None``. Because every
+        non-empty group keeps >= 1 representative, the coarsest level has at
+        least as many splats as there are barrier groups.
     verbose
         Per-level Arbol logging.
 
@@ -249,6 +456,29 @@ def make_substitutive_lod(
         )
         target_device = torch.device("cpu")
 
+    # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
+    norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
+
+    def _reduce(cur: GSplatData, m_target: int, meth: MethodName) -> GSplatData:
+        if norm_coarsen is None:
+            return _reduce_one_level(
+                cur,
+                M_target=m_target,
+                method=meth,
+                lloyd_iterations=lloyd_iterations,
+                candidate_bins_k=candidate_bins_k,
+                device=target_device,
+            )
+        return _reduce_one_level_grouped(
+            cur,
+            M_target=m_target,
+            coarsen_dims=norm_coarsen,
+            method=meth,
+            lloyd_iterations=lloyd_iterations,
+            candidate_bins_k=candidate_bins_k,
+            device=target_device,
+        )
+
     # Collect per-level outputs and pack them as SubstitutiveLevels.
     sub_levels: list[SubstitutiveLevel] = [
         _pack_level(
@@ -286,23 +516,9 @@ def make_substitutive_lod(
                 f"Substitutive level {level_idx}: {N_in} -> {M_target} splats"
             ):
                 aprint(f"method={label}")
-                new_data = _reduce_one_level(
-                    current,
-                    M_target=M_target,
-                    method=level_method,
-                    lloyd_iterations=lloyd_iterations,
-                    candidate_bins_k=candidate_bins_k,
-                    device=target_device,
-                )
+                new_data = _reduce(current, M_target, level_method)
         else:
-            new_data = _reduce_one_level(
-                current,
-                M_target=M_target,
-                method=level_method,
-                lloyd_iterations=lloyd_iterations,
-                candidate_bins_k=candidate_bins_k,
-                device=target_device,
-            )
+            new_data = _reduce(current, M_target, level_method)
         sub_levels.append(
             _pack_level(
                 new_data,
@@ -321,6 +537,7 @@ def make_substitutive_lod(
             "compression_factor": K,
             "method": method,
             "n_substitutive_levels": len(sub_levels),
+            "coarsen_dims": list(norm_coarsen) if norm_coarsen is not None else None,
         }
     )
     return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)
