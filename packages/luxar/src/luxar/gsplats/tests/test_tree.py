@@ -276,6 +276,30 @@ def test_tree_from_substitutive_levels_lod_method_selectable():
     assert ext_mps[0] > ext_mps[1] > ext_mps[2]  # ascending coarsest→finest
     assert ext_mps[0] != pytest.approx(cnt_mps[0])  # physically anchored, differs
 
+    # extent_anisotropy is actually threaded (not silently ignored): _sublod makes
+    # anisotropic splats (random per-axis diagonals), so the isotropic geometric-mean
+    # radius differs from the largest-semi-axis radius → different thresholds.
+    iso = tree_from_substitutive_levels(levels, extent_anisotropy=False)
+    iso_mps = [c.meta["min_pixel_size"] for c in iso.children]
+    assert iso_mps[0] != pytest.approx(ext_mps[0])
+
+
+def test_tree_from_substitutive_levels_rejects_invalid_lod_method():
+    """#5 hardening: an unknown lod_method must RAISE, not silently fall back to
+    ``count`` (``lod_thresholds`` treats any non-"extent" string as count). Guards
+    save()/recipes/.tree — the single user-method chokepoint for substitutive gsplats."""
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(80, seed=0)], level_index=0),
+        SubstitutiveLevel(additive_sublods=[_sublod(20, seed=1)], level_index=1),
+    ]
+    with pytest.raises(ValueError, match="lod_method must be 'extent' or 'count'"):
+        tree_from_substitutive_levels(levels, lod_method="Extent")  # typo'd case
+    with pytest.raises(ValueError, match="lod_method"):
+        tree_from_substitutive_levels(levels, lod_method="sqrt")
+    # validation fires even for the single-level (otherwise-inert) path
+    with pytest.raises(ValueError, match="lod_method"):
+        tree_from_substitutive_levels(levels[:1], lod_method="bogus")
+
 
 def test_non_matrix_trees_have_no_matrix_projection():
     # partition is not matrix-shaped

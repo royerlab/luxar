@@ -2121,7 +2121,7 @@ class TestLODCommand:
 
         import zarr
 
-        def _fine_threshold(*flags: str) -> tuple[float, float]:
+        def _fine_threshold(*flags: str) -> tuple[list[float], list[int]]:
             out = tmp_path / ("sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr")
             r = runner.invoke(
                 app,
