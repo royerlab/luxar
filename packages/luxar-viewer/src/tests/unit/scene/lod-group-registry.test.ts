@@ -765,6 +765,7 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     reg.evaluatePerFrame();
     expect(children[0].object.visible).toBe(true); // dropped to coarsest
     expect(children[1].object.visible).toBe(false);
+    expect(entry.offScreen).toBe(true); // surfaced in the layers-panel readout
   });
 
   it('auto: does not kick a lazy load for an off-screen group', () => {
@@ -789,11 +790,13 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     ];
     // Centered in front at depth 3 → inside the frustum, projects to a large
     // (>> 10 px) diagonal, so the diagonal selector upgrades 0 → 1.
-    reg.register(placeAt(makeEntry(children, 0, '/g'), 0, 0, -3));
+    const entry = placeAt(makeEntry(children, 0, '/g'), 0, 0, -3);
+    reg.register(entry);
 
     reg.evaluatePerFrame();
     expect(children[1].object.visible).toBe(true);
     expect(children[0].object.visible).toBe(false);
+    expect(entry.offScreen).toBe(false); // on-screen → no "(off-screen)" hint
   });
 
   it('eviction: demotes an off-screen group before an on-screen colder level', () => {

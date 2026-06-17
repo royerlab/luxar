@@ -6,6 +6,45 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Added — Barrier-aware substitutive LOD (`coarsen_dims`)
+
+Substitutive-LOD coarsening can now be restricted to a subset of dimensions; the
+remaining dims become **hard grouping barriers** that coarse Gaussian splats never
+merge across. This fixes blended/averaged coarse splats when slices are stacked
+along a categorical / timepoint / channel axis (e.g. a `coloring` selector). The
+engine partitions splats by their barrier-dim value and runs the **unchanged**
+per-group reduction, so the merge stays barrier-pure.
+
+- Engine: `make_substitutive_lod(..., coarsen_dims=)` and `make_lod_pyramid(...,
+  coarsen_dims=)` (`gsplats/lod/substitutive.py`, `pyramid.py`). `None` = coarsen
+  all dims (historical behavior); passing every dim normalises to `None`.
+- Scene API: `add_points`/`add_lines`/`add_gsplats_from_data(substitutive_lod=
+  dict(coarsen_dims=...))` accepts dim **names** or column indices, the sentinel
+  `"display"`, or `"all"`. **Default is Auto** — coarsen the scene's *displayed*
+  dims, group by the *non-displayed* dims — so nD scenes are correct automatically
+  (pure-3D scenes are unchanged: no barrier → identical output).
+- CLI: `luxar gsplat lod ... --coarsen-dims i,j,k` (indices; standalone gsplats
+  carry no display metadata, so the CLI takes explicit indices and warns on >3D
+  input without the flag) across the substitutive/pyramid/multiscale recipes.
+- Implied floor: the coarsest level has ≥ one splat per barrier group.
+
+#### Fixed — Layers panel "Active level" readout was stale and off-by-one
+
+The Layers panel's **Active level** status only refreshed inside
+`renderControls()` (fired on layer-state changes), so under `auto` mode it went
+stale as the camera moved while the per-frame selector
+(`LODGroupRegistry.evaluatePerFrame`) swapped levels — disagreeing with the
+data-monitor chip, which polls the live level. It also showed the raw 0-based
+child index (`rendering: 2`) while the monitor showed 1-based (`L3/5`). Fixed in
+`ui/layers/layers-panel.ts`: a lightweight per-frame callback
+(`layers-lod-status`, registered in `buildPanel`, torn down in `clear`) keeps the
+readout live (string-compare gated — no DOM write unless the level changed), a
+shared `computeLodStatusText()` helper feeds both the per-frame path and
+`renderControls()`, and all three LOD surfaces (readout, dropdown labels,
+data-monitor chip) now use 1-based `L{i}/{n}` numbering (dropdown `value`s stay
+0-based for the `lockLevel` API). Broadcast partitions show the first nested
+group's live level as `L{i}/{n} · {N} groups`.
+
 #### Fixed — Substitutive LOD pops to coarse when the camera enters the bounding box
 
 The viewer selects which substitutive LOD level to show from the screen-space
