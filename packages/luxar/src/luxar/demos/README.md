@@ -271,6 +271,17 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 ---
 
+#### demo_cellxgene_census_umap.py - CZ CELLxGENE Census single-cell 3D UMAP (LOD stress test)
+A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedded from their **precomputed scVI latent** (50-d) with **cuML UMAP**, rendered with **substitutive Points LOD** + a categorical `coloring` dimension (cell type / tissue / disease). The shipped default builds a 3M-element scene from a 1M-cell cache; the pipeline scales to **10M cells (30M elements, a 7-level LOD ladder)** — the largest UMAP demo in the repo, built to exercise the LOD machinery.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_cellxgene_census_umap.py [--no-serve]`
+
+**Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at a larger cache via `CENSUS_UMAP_CACHE` / `CENSUS_UMAP_MAX_CELLS` / `CENSUS_UMAP_DEVICE`.
+
+**Demonstrates**: precomputed scVI single-cell embeddings, cuML UMAP at 10M scale, substitutive Points LOD (coarse levels as mass-preserving Gaussian splats), the `coarsen_dims` barrier (coarse splats stay pure per coloring), categorical-dimension colour switching, large-scale LOD streaming.
+
+---
+
 #### demo_cytoself_protein_landscape.py - CytoSelf Protein Localization 3D UMAP
 ~114k per-image CytoSelf embeddings from the OpenCell dataset as a 3D UMAP point cloud. Each point is a single fluorescence microscopy crop of an endogenously tagged protein, colored by subcellular localization or protein identity.
 
