@@ -18,7 +18,12 @@ data-fetch paths — the multi-level caching store's network tier
 (`cache/multi-level-caching-store/fetch-retry.ts`, the default) and the
 no-cache `FetchStore` (`data/zarr.ts`). HTTP/2 multiplexes happily at this
 width, so throughput is unchanged while the browser's socket/memory budget is
-respected. A 30M-element scene that previously error-stormed now loads cleanly.
+respected. The retry path starts its per-attempt timeout *inside* the gate (once
+a slot is acquired), so time spent waiting in the concurrency queue is not
+charged against the fetch budget — otherwise the tail of a large queued
+selection would spuriously time out and, at scale, burn the retry budget into
+dropped chunks. A 30M-element scene that previously error-stormed now loads
+cleanly.
 
 #### Added — Barrier-aware substitutive LOD (`coarsen_dims`)
 

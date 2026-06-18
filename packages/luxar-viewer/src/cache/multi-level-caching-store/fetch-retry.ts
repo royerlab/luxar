@@ -93,16 +93,27 @@ export async function fetchWithRetry(
       return undefined;
     }
 
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
-    const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
-
     try {
       // Bounded-concurrency gate: zarrita fans out one fetch per chunk, so a
       // large LOD selection would otherwise fire thousands at once and exhaust
       // the browser (ERR_INSUFFICIENT_RESOURCES). The slot is held only for the
       // request itself (headers); the small chunk body is read by the caller.
-      const response = await withFetchGate(() => fetch(url, { signal }));
+      //
+      // The per-attempt timeout starts *inside* the gate, once the slot is
+      // acquired, so time spent waiting in the concurrency queue does not burn
+      // the fetch budget. A large LOD selection can queue thousands of chunks;
+      // charging that wait to the timeout would spuriously abort the tail of
+      // the queue and, at scale, exhaust the retry budget into dropped chunks.
+      const response = await withFetchGate(async () => {
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
+        const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
+        try {
+          return await fetch(url, { signal });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      });
       if (response.ok || (response.status < 500 && response.status !== 429)) {
         return response;
       }
@@ -113,8 +124,6 @@ export async function fetchWithRetry(
       if (options?.signal?.aborted) {
         return undefined;
       }
-    } finally {
-      clearTimeout(timeoutId);
     }
 
     if (attempt < maxAttempts - 1) {

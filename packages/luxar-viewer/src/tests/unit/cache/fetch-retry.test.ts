@@ -5,6 +5,7 @@ import {
   hashUrl,
   mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
+import { MAX_CONCURRENT_CHUNK_FETCHES, withFetchGate } from '../../../utils/fetch-concurrency';
 
 function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
   return {
@@ -247,6 +248,47 @@ describe('fetchWithRetry', () => {
     expect(response?.ok).toBe(true);
     // Exactly 3 calls: two 503s + one 200. NOT a 4th retry after success.
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not charge the per-attempt timeout for time spent in the concurrency queue', async () => {
+    vi.useFakeTimers();
+    // Saturate the global fetch gate so the next request must wait in the queue.
+    const release: Array<() => void> = [];
+    const held = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES }, () =>
+      withFetchGate(() => new Promise<void>((resolve) => release.push(resolve)))
+    );
+    try {
+      let sawAbortedSignal: boolean | undefined;
+      const fetchMock = vi.fn(async (_url: string, opts?: { signal?: AbortSignal }) => {
+        sawAbortedSignal = opts?.signal?.aborted ?? false;
+        return mockResponse(200, 'ok');
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      // Total budget 1000ms → per-attempt ceil(1000/4)=250ms.
+      const promise = fetchWithRetry('https://example.com/queued', { timeoutMsOverride: 1000 });
+
+      // While the request is stuck behind a saturated gate, advance far past the
+      // per-attempt budget. If the timeout started at enqueue (the pre-fix bug),
+      // the request's signal would already be aborted by the time it runs.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      // Free the gate; the queued request acquires a slot and starts its timer
+      // fresh, so it fetches with a live (non-aborted) signal and succeeds.
+      release.forEach((r) => r());
+      await vi.advanceTimersByTimeAsync(0);
+      const response = await promise;
+
+      expect(response?.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // The discriminator: pre-fix this is true (queue wait aborted the signal).
+      expect(sawAbortedSignal).toBe(false);
+    } finally {
+      // Always drain the gate so the module-global counter resets for later tests.
+      release.forEach((r) => r());
+      await Promise.all(held);
+    }
   });
 
   it('caps backoff at MAX_RETRY_DELAY_MS (~500ms)', async () => {
