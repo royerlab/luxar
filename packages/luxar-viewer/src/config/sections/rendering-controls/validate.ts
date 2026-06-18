@@ -7,8 +7,8 @@ export function validateRendering(config: AppConfig, errors: string[], _warnings
   const defaults = config.renderingControls.defaults;
 
   // NaN/Infinity hardening for the global EOG values.
-  if (!Number.isFinite(defaults.exposure) || defaults.exposure < -5 || defaults.exposure > 5) {
-    errors.push(`Invalid exposure: ${defaults.exposure} (must be a finite number -5..5)`);
+  if (!Number.isFinite(defaults.exposure) || defaults.exposure < -10 || defaults.exposure > 10) {
+    errors.push(`Invalid exposure: ${defaults.exposure} (must be a finite number -10..10)`);
   }
   if (
     !Number.isFinite(defaults.globalOffset) ||

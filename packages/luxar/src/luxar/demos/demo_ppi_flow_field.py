@@ -89,11 +89,13 @@ EDGE_TAIL_COLOR: Final = np.array([0.16, 0.42, 1.00], dtype=np.float32)
 EDGE_HEAD_COLOR: Final = np.array([1.00, 0.62, 0.18], dtype=np.float32)
 ATTRACTOR_COLOR: Final = np.array([1.35, 0.92, 0.28], dtype=np.float32)
 
-# The viewer validates exposure to [-5, +5] EV.  The original scene used
-# -3.6 EV; the requested -5 EV dimming would land at -8.6 EV, so we clamp the
-# viewer exposure to -5 and apply the remaining -3.6 EV as a linear intensity
-# multiplier on scene layers: 2^-3.6 ≈ 0.082.
-VIEWER_EXPOSURE_EV: Final = -5.0
+# The scene targets a total of -8.6 EV of dimming.  The viewer now validates
+# exposure over [-10, +10] EV, so the full -8.6 EV is applied directly as the
+# viewer exposure.  NODE_INTENSITY_SCALE compensates the residual between the
+# -8.6 EV target and the viewer exposure as a linear intensity multiplier; with
+# VIEWER_EXPOSURE_EV = -8.6 it evaluates to 2^0 = 1.0 (no extra scaling), while
+# keeping the -8.6 EV total invariant if the viewer exposure is ever retuned.
+VIEWER_EXPOSURE_EV: Final = -8.6
 NODE_INTENSITY_SCALE: Final = float(2.0 ** (-8.6 - VIEWER_EXPOSURE_EV))
 
 
