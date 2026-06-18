@@ -249,12 +249,16 @@ class TestViewerConfig:
 
     def test_invalid_exposure_out_of_range(self) -> None:
         with pytest.raises(ValueError, match="exposure"):
-            ViewerConfig(exposure=-6.0)
+            ViewerConfig(exposure=-11.0)
         with pytest.raises(ValueError, match="exposure"):
-            ViewerConfig(exposure=6.0)
+            ViewerConfig(exposure=11.0)
 
     def test_exposure_zero(self) -> None:
         ViewerConfig(exposure=0.0)  # should pass
+
+    def test_exposure_range_bounds(self) -> None:
+        ViewerConfig(exposure=10.0)  # should pass
+        ViewerConfig(exposure=-10.0)  # should pass
 
     def test_invalid_global_gamma(self) -> None:
         with pytest.raises(ValueError, match="global_gamma"):

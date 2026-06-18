@@ -83,7 +83,7 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   merged.bloomLevels = integerClampOrDefault(merged.bloomLevels, defaults.bloomLevels, 1, 12);
 
   // Exposure / tone-mapping
-  merged.exposure = clampOrDefault(merged.exposure, defaults.exposure, -5, 5);
+  merged.exposure = clampOrDefault(merged.exposure, defaults.exposure, -10, 10);
   merged.globalOffset = clampOrDefault(merged.globalOffset, defaults.globalOffset, -1, 1);
   merged.globalGamma = clampOrDefault(merged.globalGamma, defaults.globalGamma, 0.1, 10);
 

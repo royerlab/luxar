@@ -36,7 +36,7 @@ Three global controls applied to the composited HDR buffer:
 
 | Parameter      | Python field     | TS field       | Default | Range        | Formula                  | Purpose                                |
 |----------------|------------------|----------------|---------|--------------|--------------------------|----------------------------------------|
-| **Exposure**   | `exposure`       | `exposure`     | 0.0     | -5.0 – +5.0 | `color * 2^exposure`     | Log2 stops (photography standard)      |
+| **Exposure**   | `exposure`       | `exposure`     | 0.0     | -10.0 – +10.0 | `color * 2^exposure`     | Log2 stops (photography standard)      |
 | **Offset**     | `global_offset`  | `globalOffset` | 0.0     | -1.0 – +1.0 | `color + offset`         | Lift/lower the entire composited image |
 | **Gamma**      | `global_gamma`   | `globalGamma`  | 1.0     | 0.1 – 10.0  | `pow(color, 1/gamma)`    | Reshape midtones globally              |
 
@@ -128,7 +128,7 @@ TS RenderingSettings: {exposure: 1.0, globalOffset: 0.0, globalGamma: 1.0}
 Priority chain: localStorage (user) > zarr viewer_config (author) > app defaults
   ↓
 UI sliders (in "☀️ HDR" folder):
-  - Exposure: linear slider -5 to +5 stops
+  - Exposure: linear slider -10 to +10 stops
   - Offset: linear slider -1.0 to +1.0
   - Gamma: linear slider 0.1 to 10.0
   ↓
@@ -191,7 +191,7 @@ The rendering controls panel would be restructured:
 
 ```
 ☀️ HDR
-├── Exposure      [-5 ─────●───── +5]  stops
+├── Exposure      [-10 ────●──── +10]  stops
 ├── Offset        [-1.0 ────●──── +1.0]
 ├── Gamma         [0.1 ─────●──── 10.0]
 └── Tone Mapping  [ACES ▾]

@@ -36,10 +36,10 @@ export function setupHDRControls(context: SetupContext): SetupResult {
       '4. Tone Mapping — compresses HDR values to fit the display'
   );
 
-  // Exposure: log2 stops (-5 to +5)
+  // Exposure: log2 stops (-10 to +10)
   // 0 = neutral, +1 = 2x brighter, -1 = half brightness
   const exposureControl = hdrFolder
-    .add(settings, 'exposure', -5.0, 5.0, 0.01)
+    .add(settings, 'exposure', -10.0, 10.0, 0.01)
     .name('Exposure')
     .onChange((value: number) => {
       sceneManager.updateExposure(value);
@@ -50,7 +50,7 @@ export function setupHDRControls(context: SetupContext): SetupResult {
   exposureControl.domElement.setAttribute(
     'title',
     'Exposure: Global brightness in log2 stops (photography standard)\n' +
-      '• Range: -5 (very dim) to +5 (very bright)\n' +
+      '• Range: -10 (very dim) to +10 (very bright)\n' +
       '• 0 = neutral (no change)\n' +
       '• +1 = 2× brighter, -1 = half brightness\n' +
       '• Applied before tone mapping in a single shader pass'
