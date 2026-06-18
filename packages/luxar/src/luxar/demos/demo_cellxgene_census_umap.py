@@ -160,6 +160,11 @@ def build_scene(
                 sharpness=np.full(len(positions), 0.6, np.float32),
                 opacity=0.85,
                 intensity=0.2,
+                # Expose the single cells node in the viewer's Layers panel.
+                # With the substitutive-LOD wrapper this rides onto the
+                # kind=lod group (not the per-level children), so the panel
+                # shows one "cells" layer.
+                layer=True,
                 # Auto coarsen_dims = coarsen x/y/z, group by the `coloring`
                 # barrier so coarse splats stay pure per colour.
                 substitutive_lod=dict(
