@@ -6,6 +6,20 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Fixed — Large LOD scenes exhausted the browser (unbounded chunk fetches)
+
+A `kind=lod` scene whose finest level holds many millions of points (e.g. a
+10M-cell UMAP, ~30M elements across stacked colorings) flooded the browser with
+`net::ERR_INSUFFICIENT_RESOURCES`: zarrita's `get` fans out one `fetch()` per
+chunk via an internal `Promise.all`, so a single visible range over the finest
+level fired thousands of simultaneous requests. Added a shared
+bounded-concurrency gate (`utils/fetch-concurrency.ts`, cap 64) funnelling both
+data-fetch paths — the multi-level caching store's network tier
+(`cache/multi-level-caching-store/fetch-retry.ts`, the default) and the
+no-cache `FetchStore` (`data/zarr.ts`). HTTP/2 multiplexes happily at this
+width, so throughput is unchanged while the browser's socket/memory budget is
+respected. A 30M-element scene that previously error-stormed now loads cleanly.
+
 #### Added — Barrier-aware substitutive LOD (`coarsen_dims`)
 
 Substitutive-LOD coarsening can now be restricted to a subset of dimensions; the

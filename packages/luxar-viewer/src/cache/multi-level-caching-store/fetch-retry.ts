@@ -1,5 +1,6 @@
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
+import { withFetchGate } from '../../utils/fetch-concurrency';
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
@@ -97,7 +98,11 @@ export async function fetchWithRetry(
     const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
 
     try {
-      const response = await fetch(url, { signal });
+      // Bounded-concurrency gate: zarrita fans out one fetch per chunk, so a
+      // large LOD selection would otherwise fire thousands at once and exhaust
+      // the browser (ERR_INSUFFICIENT_RESOURCES). The slot is held only for the
+      // request itself (headers); the small chunk body is read by the caller.
+      const response = await withFetchGate(() => fetch(url, { signal }));
       if (response.ok || (response.status < 500 && response.status !== 429)) {
         return response;
       }

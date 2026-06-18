@@ -8,6 +8,8 @@
  */
 
 import * as zarrita from 'zarrita';
+
+import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
 import type {
   AbsolutePath,
   AsyncReadable,
@@ -64,9 +66,14 @@ export type OpenOptions = {
  */
 export const codecRegistry: Map<string, () => Promise<unknown>> = zarrita.registry;
 
-/** Create the default HTTP-backed store for browser/network datasets. */
+/** Create the default HTTP-backed store for browser/network datasets.
+ *
+ * Wrapped in {@link boundedConcurrencyStore} so the no-cache path's chunk
+ * fetches are throttled (the default caching path is throttled at its network
+ * tier in `cache/multi-level-caching-store/fetch-retry.ts`). See
+ * {@link withFetchGate} for why. */
 export function createFetchStore(url: string): FetchStore {
-  return new zarrita.FetchStore(url);
+  return boundedConcurrencyStore(new zarrita.FetchStore(url));
 }
 
 /**

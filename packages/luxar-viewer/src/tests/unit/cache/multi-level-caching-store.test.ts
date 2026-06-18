@@ -795,8 +795,14 @@ describe('MultiLevelCachingStore', () => {
       const firstValidation = (store as any).validateCache('same-dataset');
       const secondValidation = (store as any).validateCache('same-dataset');
 
-      await Promise.resolve();
-      await Promise.resolve();
+      // Flush microtasks until the first (bounded-concurrency-gated) validation
+      // fetch has started. The gate adds a microtask hop before fetch(), so a
+      // fixed tick count is brittle; poll the observable condition instead. The
+      // second validation stays serialized behind the first (validation queue),
+      // so exactly one fetch is in flight here.
+      for (let i = 0; i < 100 && zattrsFetches === 0; i++) {
+        await Promise.resolve();
+      }
       expect(zattrsFetches).toBe(1);
 
       releaseFirstFetch();
