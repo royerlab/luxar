@@ -425,7 +425,7 @@ class ViewerConfig:
         if self.theme is not None and self.theme not in VALID_THEMES:
             raise ValueError(f"theme must be one of {VALID_THEMES}, got '{self.theme}'")
 
-        _validate_range(self.exposure, "exposure", -5.0, 5.0)
+        _validate_range(self.exposure, "exposure", -10.0, 10.0)
         _validate_range(self.global_offset, "global_offset", -1.0, 1.0)
         _validate_range(self.global_gamma, "global_gamma", 0.1, 10.0)
         _validate_min(self.bloom_strength, "bloom_strength", 0)

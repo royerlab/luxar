@@ -17,7 +17,7 @@ describe('validateRendering', () => {
 
   it('should error when exposure is out of range', () => {
     const cfg = cloneConfig();
-    cfg.renderingControls.defaults.exposure = -6;
+    cfg.renderingControls.defaults.exposure = -11;
 
     const result = invokeValidator(validateRendering, cfg);
 
@@ -32,12 +32,12 @@ describe('validateRendering', () => {
       invokeValidator(validateRendering, cfg).errors.filter((e) => e.includes('exposure'))
     ).toHaveLength(0);
 
-    cfg.renderingControls.defaults.exposure = 5;
+    cfg.renderingControls.defaults.exposure = 10;
     expect(
       invokeValidator(validateRendering, cfg).errors.filter((e) => e.includes('exposure'))
     ).toHaveLength(0);
 
-    cfg.renderingControls.defaults.exposure = -5;
+    cfg.renderingControls.defaults.exposure = -10;
     expect(
       invokeValidator(validateRendering, cfg).errors.filter((e) => e.includes('exposure'))
     ).toHaveLength(0);

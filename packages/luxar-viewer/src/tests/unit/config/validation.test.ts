@@ -36,7 +36,7 @@ describe('validateConfig', () => {
       // Per-section coverage lives in src/tests/unit/config/sections/.
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.fov = 0; // camera error
-      cfg.renderingControls.defaults.exposure = -10; // rendering error
+      cfg.renderingControls.defaults.exposure = -11; // rendering error (out of [-10, 10])
       cfg.dataLoading.network.timeoutMs = -1; // data loading error
 
       const result = validateConfig(cfg);
