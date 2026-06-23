@@ -173,8 +173,11 @@ def test_extent_thresholds_are_scale_invariant():
         cholesky_factors=data.cholesky_factors * k,  # L×k → Σ×k² → semi-axis × k
     )
     p = _params(max_elements=120, compression_factor=4, n_lods=3)
-    base_mps = build_recipe(data, "multiscale", p).children[0].meta["min_pixel_size"]
-    scaled_mps = build_recipe(scaled, "multiscale", p).children[0].meta["min_pixel_size"]
+    # children are coarsest→finest; the fine branch (last) carries the >0 threshold.
+    base_mps = build_recipe(data, "multiscale", p).children[-1].meta["min_pixel_size"]
+    scaled_mps = build_recipe(scaled, "multiscale", p).children[-1].meta[
+        "min_pixel_size"
+    ]
     assert base_mps > 0.0
     assert scaled_mps == pytest.approx(base_mps, rel=1e-4)
 
@@ -190,7 +193,7 @@ def test_multiscale_stamps_extent_thresholds_by_default():
 
     # Default = extent method: thresholds stamped, coarsest = 0.0, ascending.
     res = build_recipe(data, "multiscale", _params(max_elements=120))
-    fine, coarse = res.children  # finest→coarsest in memory
+    coarse, fine = res.children  # coarsest→finest in memory
     assert coarse.meta["min_pixel_size"] == 0.0  # coarsest = always-eligible floor
     fine_mps = fine.meta["min_pixel_size"]
     assert fine_mps > 0.0  # ascending → coarse cap reachable at far zoom
@@ -200,11 +203,11 @@ def test_multiscale_stamps_extent_thresholds_by_default():
         data, "multiscale", _params(max_elements=120, base_pixel_size=2 * 1.5)
     )
     # default T is DEFAULT_TARGET_PIXEL_SIZE (1.5); 3.0 is 2×.
-    assert bigger.children[0].meta["min_pixel_size"] == pytest.approx(2 * fine_mps)
+    assert bigger.children[-1].meta["min_pixel_size"] == pytest.approx(2 * fine_mps)
 
     # lod_method="count" reproduces the legacy √N proxy exactly.
     cnt = build_recipe(data, "multiscale", _params(max_elements=120, lod_method="count"))
-    cfine, ccoarse = cnt.children
+    ccoarse, cfine = cnt.children
     assert ccoarse.meta["min_pixel_size"] == 0.0
     expected_count = 10.0 * math.sqrt(total_splats(cfine) / total_splats(ccoarse))
     assert cfine.meta["min_pixel_size"] == pytest.approx(expected_count)
@@ -215,7 +218,7 @@ def test_multiscale_stamps_extent_thresholds_by_default():
     p50 = build_recipe(
         data, "multiscale", _params(max_elements=120, extent_percentile=50.0)
     )
-    assert p50.children[0].meta["min_pixel_size"] != pytest.approx(fine_mps)
+    assert p50.children[-1].meta["min_pixel_size"] != pytest.approx(fine_mps)
 
 
 def test_multiscale_is_unbalanced_lod_over_partition():
@@ -225,8 +228,8 @@ def test_multiscale_is_unbalanced_lod_over_partition():
     )
     assert isinstance(res, GSplatLodGroup)
     assert res.n_children == 2
-    # children are finest -> coarsest in memory: [fine partition, coarse leaf]
-    fine, coarse = res.children
+    # children are coarsest -> finest in memory: [coarse leaf, fine partition]
+    coarse, fine = res.children
     assert isinstance(fine, GSplatPartition)
     assert isinstance(coarse, GSplatLeaf)
     # the coarse cap is strictly smaller than the fine branch (it is a reduction)
@@ -249,12 +252,12 @@ def test_mosaic_is_partition_of_substitutive_lod_groups():
     for part in res.children:
         assert isinstance(part, GSplatLodGroup)
         assert part.n_children >= 2  # >= coarse + fine
-        # in-memory children are finest→coarsest; thresholds ascend that way.
-        levels_coarse_to_fine = [total_splats(c) for c in reversed(part.children)]
+        # in-memory children are coarsest→finest; counts ascend that way.
+        levels_coarse_to_fine = [total_splats(c) for c in part.children]
         assert levels_coarse_to_fine == sorted(levels_coarse_to_fine)
     # Conservation is at the FINEST level (the parts tile the original N); the
     # synthesized coarser substitutive levels are extra stored representatives.
-    finest_total = sum(total_splats(part.children[0]) for part in res.children)
+    finest_total = sum(total_splats(part.children[-1]) for part in res.children)
     assert finest_total == 400
     assert total_splats(res) > 400  # synthesized coarse levels add storage
     # leaves are all real gsplat leaves at every level
