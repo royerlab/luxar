@@ -177,21 +177,6 @@ def validate_chunk_bytes(chunk_bytes: Any) -> int:
     return chunk_bytes
 
 
-def validate_chunk_size(chunk_size: Any) -> int:
-    """Deprecated alias for :func:`validate_chunk_bytes`.
-
-    The unit is bytes; the explicit function name makes that clear. This
-    shim emits ``DeprecationWarning`` and forwards.
-    """
-    import warnings
-
-    warnings.warn(
-        "validate_chunk_size is deprecated; use validate_chunk_bytes "
-        "(unit is now bytes, not elements).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return validate_chunk_bytes(chunk_size)
 
 
 def validate_compression_level(level: Any) -> int:

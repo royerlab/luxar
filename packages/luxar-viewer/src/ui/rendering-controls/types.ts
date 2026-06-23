@@ -51,19 +51,6 @@ export interface RenderingControllers {
   cinematicMode?: Controller;
 }
 
-/** Bloom effect GUI controllers. */
-export interface BloomControllers {
-  threshold?: Controller;
-  strength?: Controller;
-  radius?: Controller;
-}
-
-/** HDR GUI controllers. */
-export interface HDRControllers {
-  hdrMultiplier?: Controller;
-  toneMapping?: Controller;
-}
-
 /**
  * Context object passed to all setup functions.
  * Contains all dependencies needed to create controls.

@@ -243,9 +243,8 @@ Key types and type guards exported from this package:
 - `isOrbitControls(control)` — Type guard for orbit controls
 - `isFlyControls(control)` — Type guard for fly controls
 
-(GUI-controller reference types — `RenderingControllers`, `BloomControllers`,
-`HDRControllers` — live alongside their consumers in
-`ui/rendering-controls/types.ts`, not here.)
+(GUI-controller reference types such as `RenderingControllers` live alongside
+their consumers in `ui/rendering-controls/types.ts`, not here.)
 
 ### Events
 

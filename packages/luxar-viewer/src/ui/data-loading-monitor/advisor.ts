@@ -334,25 +334,11 @@ export class LoadingAdvisor {
    * Get all current recommendations
    */
   getRecommendations(): Recommendation[] {
-    // Clean up old recommendations that may no longer apply
-    this.cleanupRecommendations();
-
     // Sort by severity
     const severityOrder = { error: 0, warning: 1, info: 2 };
     return Array.from(this.recommendations.values()).sort(
       (a, b) => severityOrder[a.severity] - severityOrder[b.severity]
     );
-  }
-
-  /**
-   * Clean up old recommendations
-   */
-  private cleanupRecommendations(): void {
-    // Remove recommendations that haven't been reinforced recently
-    // const now = Date.now();
-    // Check if issues are still present
-    // For now, just timeout old recommendations
-    // In a real implementation, we'd check if the issue is resolved
   }
 
   /**

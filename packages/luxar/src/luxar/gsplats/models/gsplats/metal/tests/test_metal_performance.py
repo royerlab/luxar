@@ -444,6 +444,7 @@ class TestPerformanceSummary:
         )
         aprint("-" * 60)
 
+        speedups: list[float] = []
         for name, shape, n_splats in configs[:2]:  # Skip large for backward (slow)
             np.random.seed(42)
             centers = (
@@ -479,6 +480,7 @@ class TestPerformanceSummary:
             cpu_fwd, cpu_bwd = benchmark_backward(model_cpu, n_warmup=2, n_iters=5)
 
             total_speedup = (cpu_fwd + cpu_bwd) / (metal_fwd + metal_bwd)
+            speedups.append(total_speedup)
 
             aprint(
                 f"{name:<10} {cpu_fwd + cpu_bwd:8.2f} ms   {metal_fwd + metal_bwd:8.2f} ms     {total_speedup:6.2f}x"
@@ -486,8 +488,11 @@ class TestPerformanceSummary:
 
         aprint("\n" + "=" * 80)
 
-        # All configs should show speedup
-        assert True
+        # The benchmark must produce a valid, positive speedup for every config.
+        # (Magnitude is hardware-dependent, so we assert validity — finite and
+        # positive — not a fixed threshold, to stay non-flaky across machines.)
+        assert len(speedups) == len(configs[:2])
+        assert all(s > 0 for s in speedups), f"non-positive/NaN speedup: {speedups}"
 
 
 if __name__ == "__main__":

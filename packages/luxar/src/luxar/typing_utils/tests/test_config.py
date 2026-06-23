@@ -26,7 +26,6 @@ from luxar.typing_utils.config import (
     check_dataset_size_warning,
     estimate_memory_usage,
     validate_chunk_bytes,
-    validate_chunk_size,
     validate_compression_level,
 )
 
@@ -124,14 +123,6 @@ class TestValidateChunkBytes:
     def test_chunk_bytes_string_error(self) -> None:
         with pytest.raises(ValueError, match="integer"):
             validate_chunk_bytes("1024")  # type: ignore[arg-type]
-
-    def test_legacy_alias_warns_and_forwards(self) -> None:
-        """`validate_chunk_size` is a deprecated alias that warns and forwards."""
-        with pytest.warns(DeprecationWarning, match="validate_chunk_bytes"):
-            assert validate_chunk_size(DEFAULT_CHUNK_BYTES) == DEFAULT_CHUNK_BYTES
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ValueError, match="too small"):
-                validate_chunk_size(constants.MIN_CHUNK_BYTES - 1)
 
 
 class TestValidateCompressionLevel:

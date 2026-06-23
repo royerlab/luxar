@@ -41,7 +41,7 @@ data/
 │   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
 │   ├── points-progressive-loader.ts   # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
-│   ├── handler.ts                     # GeometryTypeHandler<Points> registry entry
+│   ├── handler.ts                     # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   ├── projection.ts                  # nD → 3D projection (main-thread, WASM-accelerated; single impl)
 │   └── effective-radius-calculator.ts # query-tolerance + should-apply helpers (+ TS-ref effective-radii)
@@ -50,7 +50,7 @@ data/
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │   ├── lines-progressive-loader.ts    # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
-│   ├── handler.ts                     # GeometryTypeHandler<Lines> registry entry
+│   ├── handler.ts                     # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   └── projection.ts                  # createEmptyLinesData only (nD→3D math lives in workers/data-worker/projection/lines.ts)
 │
@@ -58,7 +58,7 @@ data/
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
 │   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
-│   ├── handler.ts                       # GeometryTypeHandler<GSplats> registry entry
+│   ├── handler.ts                       # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
 │   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
 │   └── projection.ts                    # createEmptyGSplatsData only (nD→3D math lives in workers/data-worker/projection/gsplats.ts)
 │
