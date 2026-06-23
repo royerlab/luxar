@@ -61,17 +61,6 @@ export interface LODGroupMetadata {
 }
 
 /**
- * Per-child attribute that must appear on each `lod_group` child's
- * `.zattrs`. Strictly monotonic increasing in coarsest→finest order;
- * conventionally `0.0` on the coarsest child.
- *
- * The selector picks the **finest** child whose `min_pixel_size`
- * threshold is satisfied by the current projected bbox diagonal in
- * pixels.
- */
-export type ChildMinPixelSize = number;
-
-/**
  * Runtime selector mode held by the registry per lod_group node.
  *
  * `auto` — view-driven pixel-size selection (the default).
@@ -80,12 +69,3 @@ export type ChildMinPixelSize = number;
  */
 export type LODGroupSelectorMode = 'auto' | { lockLevel: number };
 
-/**
- * Type guard for `LODGroupMetadata`. Matches the new `{ type: "group",
- * kind: "lod" }` shape on disk.
- */
-export function isLODGroupMetadata(attrs: unknown): attrs is LODGroupMetadata {
-  if (typeof attrs !== 'object' || attrs === null) return false;
-  const record = attrs as Record<string, unknown>;
-  return record.type === 'group' && record.kind === 'lod';
-}

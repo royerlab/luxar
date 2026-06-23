@@ -9,8 +9,8 @@
  *   - aQuadCorner (vec2, ±1)  — unit-quad corner, vertex shader
  *     expands to a sprite of size `pointSize` pixels in screen space.
  *
- * Per-instance attributes (one entry per point, supplied by
- * `setupInstancedPointsMesh` in `point-geometry.ts`):
+ * Per-instance attributes (one entry per point, supplied by the
+ * gpu-buffer-pool points adapter):
  *   - aCenter    (vec3) — world-space centre position
  *   - aRadius    (float)
  *   - aSharpness (float)
