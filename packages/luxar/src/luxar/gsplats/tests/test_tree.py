@@ -75,22 +75,21 @@ def test_leaf_repr_mentions_splats():
 
 
 def test_lod_group_renders_default_child_count():
-    fine = _leaf(100, seed=0)
     coarse = _leaf(10, seed=1)
-    grp = GSplatLodGroup(children=[fine, coarse], default_level=0)
+    fine = _leaf(100, seed=0)
+    # children are coarsest→finest; the default (rendered) child is the finest (last)
+    grp = GSplatLodGroup(children=[coarse, fine])
     assert grp.n_children == 2
-    # substitutive: n_splats reflects only the default (rendered) child
+    assert grp.default_level == 1  # finest = last index
     assert grp.n_splats == 100
-    grp2 = GSplatLodGroup(children=[fine, coarse], default_level=1)
-    assert grp2.n_splats == 10
 
 
-def test_lod_group_validates_default_level():
-    leaf = _leaf(5)
+def test_lod_group_default_level_is_derived_finest():
+    # default_level is a derived property (= the finest, last child), not settable
+    assert GSplatLodGroup(children=[_leaf(5)]).default_level == 0
+    assert GSplatLodGroup(children=[_leaf(3), _leaf(9)]).default_level == 1
     with pytest.raises(ValueError):
-        GSplatLodGroup(children=[leaf], default_level=1)
-    with pytest.raises(ValueError):
-        GSplatLodGroup(children=[], default_level=0)
+        GSplatLodGroup(children=[])
 
 
 # ── GSplatPartition ──────────────────────────────────────────────────────
@@ -122,8 +121,8 @@ def test_iter_leaves_depth_first_nested():
 def test_total_splats_counts_every_leaf_ignoring_selection():
     # lod group: n_splats honours selection (default child), total_splats does not
     fine, coarse = _leaf(100, seed=0), _leaf(10, seed=1)
-    grp = GSplatLodGroup(children=[fine, coarse], default_level=0)
-    assert grp.n_splats == 100
+    grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest
+    assert grp.n_splats == 100  # default = finest (last)
     assert total_splats(grp) == 110
 
 
@@ -217,11 +216,12 @@ def test_multi_level_round_trips_through_lod_group():
     node = tree_from_substitutive_levels(levels_in)
     assert isinstance(node, GSplatLodGroup)
     assert node.n_children == 3
-    assert node.default_level == 0
-    # finest-first order preserved
-    assert node.children[0].n_splats == 100
-    assert node.children[2].n_splats == 6
+    assert node.default_level == 2  # derived finest = last child
+    # tree children are coarsest→finest
+    assert node.children[0].n_splats == 6
+    assert node.children[2].n_splats == 100
 
+    # the matrix view is reversed back to finest-first
     levels_out, default = substitutive_levels_from_tree(node)
     assert default == 0
     assert len(levels_out) == 3
@@ -233,18 +233,18 @@ def test_multi_level_round_trips_through_lod_group():
         assert dst.n_splats_total == src.n_splats_total
 
 
-def test_bridge_default_level_is_fixed_at_finest():
-    # The data-model default is fixed at the FINEST level (index 0); it is not a
-    # settable, persistable concept. The in-memory bridge therefore always emits
-    # default_level=0 regardless of input ordering (the on-disk default_level is
-    # the viewer's separate coarsest-first render hint, stamped by the serializer).
+def test_bridge_default_level_is_derived_finest():
+    # The tree's default_level is a derived property = the finest (last) child in
+    # coarsest-first order; it is not settable. The matrix view's default is fixed
+    # at the finest (index 0). Both mean "finest"; the on-disk default_level is the
+    # viewer's separate coarsest-first render hint, stamped by the serializer.
     levels = [
         SubstitutiveLevel(additive_sublods=[_sublod(50, seed=i)], level_index=i)
         for i in range(3)
     ]
     node = tree_from_substitutive_levels(levels)
     assert isinstance(node, GSplatLodGroup)
-    assert node.default_level == 0
+    assert node.default_level == node.n_children - 1
     _, default = substitutive_levels_from_tree(node)
     assert default == 0
 
@@ -265,23 +265,23 @@ def test_tree_from_substitutive_levels_lod_method_selectable():
         SubstitutiveLevel(additive_sublods=[_sublod(50, seed=2)], level_index=2),
     ]
     cnt = tree_from_substitutive_levels(levels, lod_method="count")
-    cnt_mps = [c.meta["min_pixel_size"] for c in cnt.children]  # finest-first
-    assert cnt_mps[2] == 0.0  # coarsest = always-eligible floor
+    cnt_mps = [c.meta["min_pixel_size"] for c in cnt.children]  # coarsest-first
+    assert cnt_mps[0] == 0.0  # coarsest = always-eligible floor
     assert cnt_mps[1] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(200 / 50))
-    assert cnt_mps[0] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(800 / 50))
+    assert cnt_mps[2] == pytest.approx(BASE_PIXEL_SIZE * math.sqrt(800 / 50))
 
     ext = tree_from_substitutive_levels(levels)  # default = extent
     ext_mps = [c.meta["min_pixel_size"] for c in ext.children]
-    assert ext_mps[2] == 0.0
-    assert ext_mps[0] > ext_mps[1] > ext_mps[2]  # ascending coarsest→finest
-    assert ext_mps[0] != pytest.approx(cnt_mps[0])  # physically anchored, differs
+    assert ext_mps[0] == 0.0
+    assert ext_mps[2] > ext_mps[1] > ext_mps[0]  # ascending coarsest→finest
+    assert ext_mps[2] != pytest.approx(cnt_mps[2])  # physically anchored, differs
 
     # extent_anisotropy is actually threaded (not silently ignored): _sublod makes
     # anisotropic splats (random per-axis diagonals), so the isotropic geometric-mean
     # radius differs from the largest-semi-axis radius → different thresholds.
     iso = tree_from_substitutive_levels(levels, extent_anisotropy=False)
     iso_mps = [c.meta["min_pixel_size"] for c in iso.children]
-    assert iso_mps[0] != pytest.approx(ext_mps[0])
+    assert iso_mps[2] != pytest.approx(ext_mps[2])
 
 
 def test_tree_from_substitutive_levels_rejects_invalid_lod_method():
@@ -334,9 +334,9 @@ def test_lod_group_back_fills_min_pixel_size():
     ]
     node = tree_from_substitutive_levels(levels)
     assert isinstance(node, GSplatLodGroup)
-    # children are finest-first: [0]=finest(100), [1]=coarsest(25)
-    finest_mps = node.children[0].meta["min_pixel_size"]
-    coarse_mps = node.children[1].meta["min_pixel_size"]
+    # children are coarsest-first: [0]=coarsest(25), [1]=finest(100)
+    coarse_mps = node.children[0].meta["min_pixel_size"]
+    finest_mps = node.children[1].meta["min_pixel_size"]
     # Default `extent` method (T·W/r): coarsest is the 0.0 floor, the finer level
     # has a positive ascending threshold anchored in element size.
     assert coarse_mps == 0.0

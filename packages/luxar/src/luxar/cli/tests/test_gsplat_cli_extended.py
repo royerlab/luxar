@@ -2300,7 +2300,7 @@ class TestLODCommand:
         node, _ = load_gsplat_node(out)
         assert isinstance(node, GSplatLodGroup)
         assert node.n_children == 2
-        fine, coarse = node.children
+        coarse, fine = node.children  # coarsest→finest in memory
         assert isinstance(fine, GSplatPartition)
         assert isinstance(coarse, GSplatLeaf)
         assert total_splats(fine) == 32
@@ -2330,8 +2330,9 @@ class TestLODCommand:
         assert node.n_children >= 2
         # every part is its own substitutive lod group
         assert all(isinstance(p, GSplatLodGroup) for p in node.children)
-        # conservation at the finest level (parts tile the original 32 splats)
-        finest_total = sum(total_splats(p.children[0]) for p in node.children)
+        # conservation at the finest level (parts tile the original 32 splats);
+        # per-part lod children are coarsest→finest, so the finest is the last.
+        finest_total = sum(total_splats(p.children[-1]) for p in node.children)
         assert finest_total == 32
         assert total_splats(node) > 32  # synthesized coarse levels add storage
 
@@ -2412,7 +2413,7 @@ class TestLODCommand:
             runner, medium_gsplats, out_c, "--lod-method", "count"
         )
         node, _ = load_gsplat_node(out_c)
-        fine, coarse = node.children  # finest→coarsest in memory
+        coarse, fine = node.children  # coarsest→finest in memory
         expected = 10.0 * math.sqrt(total_splats(fine) / total_splats(coarse))
         assert count_mps == pytest.approx(expected)
 

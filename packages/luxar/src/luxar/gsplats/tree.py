@@ -10,10 +10,10 @@ Three node types compose freely (and nest arbitrarily):
   more :class:`~luxar.gsplats.gsplat_data.AdditiveSubLOD`, prefix-sum / additive
   LOD). The trivial single-splat-set case is a leaf with a one-entry ladder.
 * :class:`GSplatLodGroup` — **substitutive** LOD: children are rendered one at a
-  time (the scene ``kind=lod`` Group). Children are ordered **finest → coarsest**
-  in memory (matching the historical ``GSplatData.substitutive_levels`` index-0
-  = finest convention); the v3.0 serializer is responsible for the on-disk
-  ``child_<i>`` coarsest-first convention.
+  time (the scene ``kind=lod`` Group). Children are ordered **coarsest → finest**
+  in memory — the SAME order as the on-disk ``child_<i>`` layout (child_0 =
+  coarsest), so the serializer writes them straight through with no reversal.
+  ``default_level`` is a derived property (= the finest, last child).
 * :class:`GSplatPartition` — **spatial** split: all children are rendered (the
   scene ``kind=partition`` Group), each carrying its own ``position_bounds``.
 
@@ -25,11 +25,13 @@ free-form ``meta`` dict on each node — mirroring the zarr ``.zattrs`` a node
 carries on disk.
 
 The :func:`tree_from_substitutive_levels` / :func:`substitutive_levels_from_tree`
-bridge converts to and from the historical 2-D ``substitutive × additive`` matrix
-representation (``GSplatData.substitutive_levels``) so the tree can be introduced
-without breaking the existing matrix-shaped API. The matrix is exactly one shape
-of the tree: a single :class:`GSplatLodGroup` of leaves (or, for a single
-substitutive level, a bare :class:`GSplatLeaf`).
+bridge converts to and from the **derived** 2-D ``substitutive × additive`` matrix
+*view* (``GSplatData.substitutive_levels``, finest-first by convention). The tree
+is the single in-memory ground truth (``GSplatData`` stores a node and derives the
+matrix view on demand); the matrix is exactly one shape of the tree: a single
+:class:`GSplatLodGroup` of leaves (or, for a single substitutive level, a bare
+:class:`GSplatLeaf`). This bridge is the ONE place the coarsest-first tree order
+is reversed to the finest-first matrix-view convention and back.
 """
 
 from __future__ import annotations
@@ -100,22 +102,25 @@ class GSplatLeaf:
 class GSplatLodGroup:
     """Substitutive LOD group — children rendered one at a time (``kind=lod``).
 
-    Children are ordered **finest → coarsest** in memory. ``default_level`` is
-    the index of the child a simple consumer renders by default.
+    Children are ordered **coarsest → finest** in memory, matching the on-disk
+    ``child_<i>`` layout (child_0 = coarsest) so the serializer needs no reversal.
+    ``default_level`` is a derived property (= the finest, last child): the level
+    a simple consumer renders by default. It is deliberately distinct from the
+    on-disk ``default_level`` (a viewer progressive-load hint = coarsest), which
+    the serializer stamps independently.
     """
 
     children: "List[GSplatNode]"
-    default_level: int = 0
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.children:
             raise ValueError("GSplatLodGroup must contain at least one child")
-        if not 0 <= self.default_level < len(self.children):
-            raise ValueError(
-                f"default_level {self.default_level} out of range "
-                f"[0, {len(self.children)})"
-            )
+
+    @property
+    def default_level(self) -> int:
+        """The finest child's index (last entry, coarsest→finest order)."""
+        return len(self.children) - 1
 
     @property
     def n_children(self) -> int:
@@ -292,6 +297,26 @@ def _leaf_from_substitutive_level(level: "SubstitutiveLevel") -> GSplatLeaf:
     )
 
 
+def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNode:
+    """Build the tree shape from a finest-first matrix view — **no stamping**.
+
+    The lightweight inverse of :func:`substitutive_levels_from_tree`: a single
+    level → a bare :class:`GSplatLeaf`; multiple levels → a :class:`GSplatLodGroup`
+    reversed to coarsest-first (matching disk). This is what ``GSplatData`` stores
+    as its ground-truth node on construction — cheap, with no ``min_pixel_size``
+    derivation (the view-driven thresholds are a serialize-time concern, stamped
+    by :func:`tree_from_substitutive_levels` / re-derived by the writer).
+    """
+    if not levels:
+        raise ValueError("levels must contain at least one SubstitutiveLevel")
+    if len(levels) == 1:
+        return _leaf_from_substitutive_level(levels[0])
+    # ``levels`` is the finest-first matrix view; the tree stores coarsest-first.
+    return GSplatLodGroup(
+        children=[_leaf_from_substitutive_level(lvl) for lvl in reversed(levels)]
+    )
+
+
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
     *,
@@ -305,10 +330,11 @@ def tree_from_substitutive_levels(
     * A single substitutive level → a bare :class:`GSplatLeaf` (its additive
       ladder), carrying that level's provenance in ``meta``.
     * Multiple substitutive levels → a :class:`GSplatLodGroup` of one leaf per
-      level, in the same order as ``levels`` (index 0 = finest). The in-memory
-      ``default_level`` is fixed at 0 — the persisted on-disk ``default_level``
-      is the viewer's coarsest-first render hint (stamped by the serializer),
-      not a settable data-model default.
+      level, **reversed to coarsest-first** (``levels`` is the finest-first matrix
+      view; the tree stores coarsest-first to match disk). The in-memory
+      ``default_level`` is the derived finest (last) child; the persisted on-disk
+      ``default_level`` is the viewer's coarsest-first render hint (stamped by the
+      serializer), a separate concept.
 
     Each child of a multi-level lod group is back-filled with a derived
     ``min_pixel_size`` selector threshold, so a standalone substitutive
@@ -331,41 +357,38 @@ def tree_from_substitutive_levels(
         raise ValueError(
             f"lod_method must be 'extent' or 'count', got {lod_method!r}"
         )
-    if not levels:
-        raise ValueError("levels must contain at least one SubstitutiveLevel")
-    if len(levels) == 1:
-        return _leaf_from_substitutive_level(levels[0])
-
-    leaves: List[GSplatNode] = [_leaf_from_substitutive_level(lvl) for lvl in levels]
-    group = GSplatLodGroup(children=leaves, default_level=0)
+    node = node_from_substitutive_levels(levels)
+    if isinstance(node, GSplatLeaf):
+        return node
 
     # Back-fill per-child min_pixel_size. The derivation is single-sourced in
     # core (coarsest child = 0.0, ascending); ``lod_thresholds`` falls back to the
-    # √N ``count`` method if extents/W are unavailable. Inputs are coarsest-first;
-    # our leaves/levels are finest-first.
+    # √N ``count`` method if extents/W are unavailable. Children, counts, extents,
+    # and thresholds are now all coarsest-first — a straight 1:1 mapping.
     from luxar.core.group.lod.group import lod_thresholds
 
-    counts_finest_first = [
-        sum(sub.n_splats for sub in lvl.additive_sublods) for lvl in levels
+    levels_coarsest_first = list(reversed(levels))
+    counts_coarsest_first = [
+        sum(sub.n_splats for sub in lvl.additive_sublods)
+        for lvl in levels_coarsest_first
     ]
-    extents_finest_first = [
-        level_percentile_radius(list(lvl.additive_sublods), extent_percentile,
-                                extent_anisotropy)
-        for lvl in levels
+    extents_coarsest_first = [
+        level_percentile_radius(
+            list(lvl.additive_sublods), extent_percentile, extent_anisotropy
+        )
+        for lvl in levels_coarsest_first
     ]
-    n = len(leaves)
     thresholds_coarsest_first = lod_thresholds(
         lod_method,  # type: ignore[arg-type]
-        element_counts=counts_finest_first[::-1],
-        element_extents=extents_finest_first[::-1],
-        node_extent=node_extent_diagonal(group),
+        element_counts=counts_coarsest_first,
+        element_extents=extents_coarsest_first,
+        node_extent=node_extent_diagonal(node),
         base_pixel_size=base_pixel_size,
     )
-    for i, leaf in enumerate(leaves):
-        # finest-first index i ↔ coarsest-first index (n-1-i)
-        leaf.meta.setdefault("min_pixel_size", thresholds_coarsest_first[n - 1 - i])
+    for leaf, threshold in zip(node.children, thresholds_coarsest_first):
+        leaf.meta.setdefault("min_pixel_size", threshold)
 
-    return group
+    return node
 
 
 def substitutive_levels_from_tree(
@@ -378,7 +401,10 @@ def substitutive_levels_from_tree(
 
     * a bare :class:`GSplatLeaf` → one substitutive level, default 0;
     * a :class:`GSplatLodGroup` whose children are all leaves → one level per
-      child, default = ``group.default_level``.
+      child, **reversed** from the tree's coarsest-first order to the matrix
+      view's finest-first convention (index 0 = finest). The returned default is
+      always 0 (the matrix view's finest), distinct from the tree's coarsest-first
+      on-disk hint.
 
     Raises :class:`ValueError` for genuinely non-matrix trees (partitions, or
     lod groups with non-leaf children) — those have no rectangular-matrix
@@ -405,11 +431,14 @@ def substitutive_levels_from_tree(
                 "substitutive_levels_from_tree: lod group has non-leaf children "
                 "(a nested tree has no flat substitutive-matrix equivalent)"
             )
+        # Tree children are coarsest-first; the matrix view is finest-first.
         levels = [
             leaf_to_level(child, i)  # type: ignore[arg-type]
-            for i, child in enumerate(node.children)
+            for i, child in enumerate(reversed(node.children))
         ]
-        return levels, node.default_level
+        # The matrix-view default is always the finest (index 0); the tree's
+        # coarsest-first default_level is a separate (viewer) concept.
+        return levels, 0
 
     raise ValueError(
         f"substitutive_levels_from_tree: {type(node).__name__} has no "

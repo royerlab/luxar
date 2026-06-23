@@ -755,12 +755,12 @@ def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
         for i in range(3):
             assert dict(proot[f"part_{i}"].attrs)["child_index"] == i
 
-        # kind=lod: in-memory finest→coarsest; on disk child_0 = coarsest, and
-        # child_index must match the child_<i> numbering (0=coarsest..N=finest).
+        # kind=lod: in-memory coarsest→finest, same as on disk (child_0 = coarsest),
+        # and child_index must match the child_<i> numbering (0=coarsest..N=finest).
         lpath = Path(tmpdir) / "lod.gsplats.zarr"
         write_gsplats_tree(
             lpath,
-            GSplatLodGroup(children=[_leaf(40, 3), _leaf(10, 4)], default_level=0),
+            GSplatLodGroup(children=[_leaf(10, 4), _leaf(40, 3)]),
             ordering="none",
         )
         lroot = zarr.open_group(str(lpath), mode="r")
@@ -797,9 +797,9 @@ def test_writer_derives_extent_thresholds_for_meta_less_lod_group() -> None:
             ]
         )
 
-    # finest-first: 800 small (scale 1) + 50 large (scale 4). No authored meta.
+    # coarsest-first: 50 large (scale 4) then 800 small (scale 1). No authored meta.
     grp = GSplatLodGroup(
-        children=[_leaf(800, 1.0, 1), _leaf(50, 4.0, 0)], default_level=0
+        children=[_leaf(50, 4.0, 0), _leaf(800, 1.0, 1)]
     )
     assert "min_pixel_size" not in grp.children[0].meta
     assert "min_pixel_size" not in grp.children[1].meta
