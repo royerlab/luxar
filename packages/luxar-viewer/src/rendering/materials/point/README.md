@@ -28,8 +28,7 @@ divergence.
 
 Each point is one instance of a 4-vertex unit-quad (`aQuadCorner ∈ [-1, 1]²`,
 the base geometry from `../../point-geometry.ts`). Per-instance attributes —
-supplied as `InstancedBufferAttribute`s by `setupInstancedPointsMesh` — drive
-the vertex stage:
+supplied by the gpu-buffer-pool points adapter — drive the vertex stage:
 
 | Attribute    | Type  | Meaning                                                                                                                                                         |
 | ------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |

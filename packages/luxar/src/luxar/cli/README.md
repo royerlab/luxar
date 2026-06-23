@@ -193,11 +193,12 @@ luxar gsplat filter input.gsplats.zarr out.gsplats.zarr --mass-min 0.01
 **Criteria**: `--bbox`, `--amplitude-min/max`, `--volume-min/max`, `--eccentricity-min/max`, `--mass-min/max`, `--sigma-axis`/`--sigma-min/max`. Supports `--*-normalized` flags.
 
 #### `luxar gsplat partition`
-Partition a dataset into multiple parts.
+Partition a dataset into a single `kind=partition` file via spatial BSP
+(`--rule median|midpoint|sah`).
 ```bash
-luxar gsplat partition input.gsplats.zarr output_dir/ --parts 4
-luxar gsplat partition input.gsplats.zarr output_dir/ --indices "100,500"
-luxar gsplat partition input.gsplats.zarr output_dir/ --parts 3 --compress zip
+luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --parts 4
+luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --max-elements 100000
+luxar gsplat partition input.gsplats.zarr part.gsplats.zarr --parts 3 --rule sah --compress zip
 ```
 
 #### `luxar gsplat slice`
@@ -227,10 +228,10 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to format v2.0. Three input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), and a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`). All migrate to a single v2.0 `.gsplats.zarr`.
+Convert a legacy `.gsplats.zarr` layout to the current v3.0 node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single v3.0 `.gsplats.zarr`.
 ```bash
-luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr   # single file
-luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr             # substitutive directory
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr   # single file
+luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr             # substitutive directory
 ```
 
 **Options**: `--overwrite`, `--quiet/-q`.

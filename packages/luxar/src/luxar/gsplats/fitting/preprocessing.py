@@ -185,7 +185,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
             seed_centers = _generate_seeds(
                 V,
                 None,
-                None,
                 config.seed_method,
                 config.verbose,
                 init_ctx=init_ctx,
@@ -196,7 +195,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         with asection(f"Generating seeds using '{config.seed_method}' method"):
             seed_centers = _generate_seeds(
                 V,
-                None,
                 seeds,
                 config.seed_method,
                 config.verbose,
@@ -216,7 +214,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         with asection(f"Generating seeds using '{config.seed_method}' method"):
             seed_centers = _generate_seeds(
                 V,
-                None,  # proportion no longer used
                 target_count,
                 config.seed_method,
                 config.verbose,
@@ -313,7 +310,6 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
 
 def _generate_seeds(
     V: np.ndarray,
-    proportion: float | None,
     target_count: int | None,
     seed_method: str,
     verbose: bool,
@@ -327,9 +323,6 @@ def _generate_seeds(
     ----------
     V : np.ndarray
         Input image/volume
-    proportion : float | None
-        Deprecated parameter, no longer used. Kept for API compatibility.
-        Use target_count instead.
     target_count : int | None
         Target number of seeds to generate. If specified:
         - If more seeds detected: subsample to exact count (keep highest intensity)
