@@ -1040,3 +1040,115 @@ class TestMergeOrchestrator:
         assert reloaded.n_substitutive == 2
         assert reloaded.at_substitutive(0).n_splats == 40
         assert reloaded.at_substitutive(1).n_splats == 10
+
+    # ----------------------------------------------------------------
+    # --timepoints / --channels slicing: tile filenames carry the REAL
+    # dataset indices (e.g. t0072, not t01), so the merge must resolve
+    # them through manifest.timepoint_indices / channel_indices via the
+    # shared _tile_indices / _tile_path helpers. Both the partition and
+    # the flat path go through those helpers; cover both.
+    # ----------------------------------------------------------------
+    def _write_sliced_tiles(
+        self,
+        tiles_dir: Path,
+        t_indices: list[int],
+        c_indices: list[int],
+        n_k: int,
+    ) -> int:
+        """Write tiles named by REAL dataset indices, exactly as the sbatch fit
+        job does (``slurm_gen.generate_fit_sbatch``): printf widths derived from
+        the MAX real index, not the selection count. Reproduced independently of
+        ``output_filename`` so the test pins the fit-side ↔ merge-side naming
+        contract rather than tautologically reusing the merge's own helper.
+        """
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        # Mirror slurm_gen.py:106-108 (t_width/c_width/k_width).
+        t_w = max(2, len(str(max(t_indices))))
+        c_w = max(2, len(str(max(c_indices))))
+        k_w = max(3, len(str(max(0, n_k - 1))))
+        total = 0
+        seed = 0
+        for t in t_indices:
+            for c in c_indices:
+                for k in range(n_k):
+                    fname = (
+                        f"t{t:0{t_w}d}_c{c:0{c_w}d}_tile{k:0{k_w}d}.gsplats.zarr"
+                    )
+                    tile = self._tile(4, seed)
+                    tile.save(tiles_dir / fname)
+                    total += tile.n_splats
+                    seed += 1
+        return total
+
+    def test_partition_merge_resolves_sliced_real_indices(
+        self, tmp_path: Path
+    ) -> None:
+        """--timepoints/--channels slicing → partition merge resolves the real
+        filename indices AND places splats at the real timepoint coordinates.
+
+        Regression guard: a merge that used sequential indices (0,1) instead of
+        the manifest's real indices (5,72) would either raise FileNotFoundError
+        (wrong filename) or stack splats at the wrong time coordinate.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        t_indices = [5, 72]  # real, non-sequential, two-digit (width 2)
+        c_indices = [1, 3]
+        n_k = 2
+        total = self._write_sliced_tiles(out_dir / "tiles", t_indices, c_indices, n_k)
+
+        manifest = BatchManifest(
+            n_timepoints=len(t_indices),
+            n_channels=len(c_indices),
+            n_tiles=n_k,
+            timepoint_indices=t_indices,
+            channel_indices=c_indices,
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        assert total_splats(node) == total
+
+        # Each part stacked its 2 timepoints → 4D, and the stacked time
+        # coordinate (last appended axis) is the REAL index set {5, 72},
+        # not the sequential {0, 1}.
+        for child in node.children:
+            for leaf in self._leaves(child):
+                centers = leaf.additive_sublods[0].centers
+                assert centers.shape[1] == 4  # promoted to 4D
+                time_coords = np.unique(np.round(centers[:, -1]).astype(int))
+                np.testing.assert_array_equal(time_coords, np.array([5, 72]))
+
+    def test_flat_merge_resolves_sliced_real_indices(self, tmp_path: Path) -> None:
+        """The legacy --flat path shares _tile_indices/_tile_path, so it must
+        resolve the same real (5,72)/(1,3) filenames and conserve all splats."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        t_indices = [5, 72]
+        c_indices = [1, 3]
+        n_k = 2
+        total = self._write_sliced_tiles(out_dir / "tiles", t_indices, c_indices, n_k)
+
+        manifest = BatchManifest(
+            n_timepoints=len(t_indices),
+            n_channels=len(c_indices),
+            n_tiles=n_k,
+            timepoint_indices=t_indices,
+            channel_indices=c_indices,
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total
+        assert merged.ndim == 4
+        time_coords = np.unique(np.round(merged.centers[:, -1]).astype(int))
+        np.testing.assert_array_equal(time_coords, np.array([5, 72]))
