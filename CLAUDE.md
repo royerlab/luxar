@@ -233,8 +233,18 @@ luxar gsplat batch plan data.zarr.zip output/ -p gpu \
     --timepoints '::10' --channels '0:2'                                # Subset selection
 luxar gsplat batch plan data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
+luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+    --merge-recipe substitutive --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
 luxar gsplat batch status output/                                       # Check job status
-luxar gsplat batch merge output/                                        # Merge completed tiles
+luxar gsplat batch merge output/                                        # Merge completed tiles → kind=partition
+luxar gsplat batch merge output/ --recipe additive --n-lods 6           # + per-part additive ladder (partitioned)
+luxar gsplat batch merge output/ --recipe substitutive -K 4 -L 3        # + per-part coarse↔fine lod (mosaic)
+# `--recipe` gives each spatial tile-part its own LOD ladder AS IT STREAMS — the
+# memory-safe way to add LOD to tiled output (the `lod` command rejects a
+# partition, so cal→fit→lod can't otherwise LOD a tiled merge). additive →
+# partitioned topology; substitutive → mosaic. The stacked-timepoint axis stays a
+# hard coarsening barrier. `batch plan --merge-recipe ...` bakes it into the merge
+# Slurm job. Without `--recipe`, parts are bare leaves (frustum culling only).
 luxar gsplat batch validate output/                                     # Validate tile integrity
 luxar gsplat batch validate output/ --fix                               # Delete corrupt/stale tiles for re-fitting
 luxar gsplat batch cancel output/                                       # Cancel all Slurm jobs for a batch run
