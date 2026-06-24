@@ -740,8 +740,19 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
+    @staticmethod
+    def _read_tree(path: Path):
+        """Read a written .gsplats.zarr (any node kind) as a tree + root attrs."""
+        import zarr
+
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+        root = zarr.open_group(str(path), mode="r")
+        node = read_gsplat_node(root, root)
+        return node, dict(root.attrs)
+
     def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
-        """T=1, C=2, K=2: Level-1 concatenate then Level-3 channel-color merge."""
+        """T=1, C=2, K=2 (--flat): Level-1 concat then Level-3 color merge."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.gsplat_data import GSplatData
@@ -755,6 +766,7 @@ class TestMergeOrchestrator:
             out_dir,
             channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
             verbose=False,
+            flat=True,
         )
         assert final.exists()
         merged = GSplatData.load(final)
@@ -763,7 +775,7 @@ class TestMergeOrchestrator:
         assert merged.colors is not None
 
     def test_stack_timepoints_round_trips(self, tmp_path: Path) -> None:
-        """T=2, C=1, K=1: Level-2 combine_as_new_dimension lifts 3D->4D."""
+        """T=2, C=1, K=1 (--flat): Level-2 combine_as_new_dimension lifts 3D->4D."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.gsplat_data import GSplatData
@@ -772,11 +784,218 @@ class TestMergeOrchestrator:
         total = self._write_tiles(out_dir / "tiles", n_t=2, n_c=1, n_k=1)
 
         manifest = BatchManifest(n_timepoints=2, n_channels=1, n_tiles=1)
-        final = merge_batch_results(manifest, out_dir, verbose=False)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
         assert final.exists()
         merged = GSplatData.load(final)
         assert merged.n_splats == total
         assert merged.ndim == 4  # promoted by the timepoint stack
+
+    # ── Default partition path (tile-outer, streaming) ──────────────
+
+    def test_default_merge_is_partition_with_one_part_per_tile(
+        self, tmp_path: Path
+    ) -> None:
+        """K>1 default → kind=partition, K parts, total splats conserved.
+
+        The ``kind == "partition"`` assertion FAILS on the pre-change flat-leaf
+        output (which had no ``kind`` attr) — pinning the new default.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        n_k = 3
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=n_k)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        assert final.exists()
+
+        node, attrs = self._read_tree(final)
+        # Would FAIL on the old flat-leaf output (a leaf has no kind=partition).
+        assert attrs["kind"] == "partition"
+        assert attrs["type"] == "group"
+        assert attrs["display_type"] == "gsplats"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        # Total splat count conserved vs the flat-concat path.
+        assert total_splats(node) == total
+
+    def test_partition_matches_flat_total_and_has_tight_bounds(
+        self, tmp_path: Path
+    ) -> None:
+        """Partition total == flat total; per-part + union bounds are tight."""
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import total_splats
+
+        # Flat reference total.
+        flat_dir = tmp_path / "flat"
+        total = self._write_tiles(flat_dir / "tiles", n_t=1, n_c=1, n_k=3)
+        m1 = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        flat_final = merge_batch_results(m1, flat_dir, verbose=False, flat=True)
+        flat_total = GSplatData.load(flat_final).n_splats
+        assert flat_total == total
+
+        # Partition over the SAME tiles.
+        part_dir = tmp_path / "part"
+        self._write_tiles(part_dir / "tiles", n_t=1, n_c=1, n_k=3)
+        m2 = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        part_final = merge_batch_results(m2, part_dir, verbose=False)
+
+        node, attrs = self._read_tree(part_final)
+        assert total_splats(node) == flat_total
+
+        # Each part's position_bounds is the TIGHT actual-splat extent.
+        root = zarr.open_group(str(part_final), mode="r")
+        from luxar.gsplats.tree import center_bounds
+
+        union_min = None
+        union_max = None
+        for i, child in enumerate(node.children):
+            pb = dict(root[f"part_{i}"].attrs["position_bounds"])
+            cb = center_bounds(child)
+            assert cb is not None
+            lo, hi = cb
+            np.testing.assert_allclose(pb["min"], lo, rtol=1e-5, atol=1e-4)
+            np.testing.assert_allclose(pb["max"], hi, rtol=1e-5, atol=1e-4)
+            union_min = lo if union_min is None else np.minimum(union_min, lo)
+            union_max = hi if union_max is None else np.maximum(union_max, hi)
+        # Root union bounds correct.
+        np.testing.assert_allclose(
+            attrs["position_bounds"]["min"], union_min, rtol=1e-5, atol=1e-4
+        )
+        np.testing.assert_allclose(
+            attrs["position_bounds"]["max"], union_max, rtol=1e-5, atol=1e-4
+        )
+
+    def test_single_tile_emits_bare_leaf_not_partition(self, tmp_path: Path) -> None:
+        """K=1 → bare leaf, no partition wrapper."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import GSplatLeaf
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=1)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        node, attrs = self._read_tree(final)
+        assert attrs.get("kind") != "partition"
+        assert isinstance(node, GSplatLeaf)
+        # A bare leaf round-trips through GSplatData.load (matrix-shaped).
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total
+
+    def test_flat_flag_emits_single_leaf(self, tmp_path: Path) -> None:
+        """--flat → single flat leaf (old behavior), loadable as GSplatData."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import GSplatLeaf
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=3)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+        node, attrs = self._read_tree(final)
+        assert attrs.get("kind") != "partition"
+        assert isinstance(node, GSplatLeaf)
+        assert GSplatData.load(final).n_splats == total
+
+    def test_partition_4d_parts_carry_stacked_timepoints(
+        self, tmp_path: Path
+    ) -> None:
+        """T=2, C=1, K=2 → partition whose parts are 4D (timepoints stacked)."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=2, n_c=1, n_k=2)
+
+        manifest = BatchManifest(n_timepoints=2, n_channels=1, n_tiles=2)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        # Each part stacked its 2 timepoints → 4D, and holds both tps' splats.
+        for child in node.children:
+            assert child.ndim == 4
+            assert total_splats(child) == 8  # 2 timepoints * 4 splats
+        assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
+
+    def test_partition_multichannel_parts_carry_colors(
+        self, tmp_path: Path
+    ) -> None:
+        """T=1, C=2, K=2 with colors → partition; each part is color-merged."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=2, n_k=2)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=2, n_tiles=2)
+        final = merge_batch_results(
+            manifest,
+            out_dir,
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            verbose=False,
+        )
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        for child in node.children:
+            # Each part merged its 2 channels' splats and carries colors.
+            assert total_splats(child) == 8  # 2 channels * 4 splats
+            for leaf in self._leaves(child):
+                assert leaf.additive_sublods[0].colors is not None
+        assert total_splats(node) == total
+
+    @staticmethod
+    def _leaves(node):
+        from luxar.gsplats.tree import iter_leaves
+
+        return list(iter_leaves(node))
+
+    def test_partition_path_never_concatenates_all_tiles(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """OOM-fix guard: the partition path must NOT concatenate across tiles.
+
+        ``concatenate`` is legitimately used WITHIN a part only for multi-channel
+        (no-color) merges; for the single-channel case here it must never run
+        over the full tile set. We spy on it and assert it is not called.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=4)
+
+        calls = {"n": 0}
+        real = GSplatData.concatenate.__func__  # type: ignore[attr-defined]
+
+        def _spy(cls, datasets):
+            calls["n"] += 1
+            return real(cls, datasets)
+
+        monkeypatch.setattr(GSplatData, "concatenate", classmethod(_spy))
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=4)
+        merge_batch_results(manifest, out_dir, verbose=False)
+        assert calls["n"] == 0
 
     def test_concatenate_preserves_pyramid_per_cell(self, tmp_path: Path) -> None:
         """Multi-substitutive concatenate keeps every (substitutive, additive)
