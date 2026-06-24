@@ -359,6 +359,33 @@ def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
     return laddered.tree
 
 
+#: Per-part recipes — the recipes that have a single-part form (the building
+#: block of ``partitioned``/``mosaic``), usable for streaming per-part assembly
+#: such as the tiled-batch merge. ``additive`` → a prefix-sum ladder
+#: (partitioned), ``substitutive`` → a coarse↔fine lod group (mosaic).
+PER_PART_RECIPES: tuple[str, ...] = ("additive", "substitutive")
+
+
+def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSplatNode:
+    """Give ONE partition child its own per-part LOD, with depth clamped to the
+    part's splat count (so a small part never synthesises degenerate levels).
+
+    This is the exact building block :func:`build_partitioned` (``additive``) and
+    :func:`build_mosaic` (``substitutive``) apply to every part — exposed so a
+    streaming assembler (e.g. the tiled-batch merge) can LOD one part at a time
+    without materialising the whole partition. Returns the per-part node:
+    a leaf-with-ladder (``additive``) or a substitutive ``GSplatLodGroup``.
+    """
+    if recipe == "additive":
+        return _ladder_for_part(part, params)
+    if recipe == "substitutive":
+        return _substitutive_for_part(part, params)
+    raise ValueError(
+        f"build_part_lod: {recipe!r} has no per-part form; "
+        f"choose from {', '.join(PER_PART_RECIPES)}"
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Dispatcher
 # ────────────────────────────────────────────────────────────────────────
