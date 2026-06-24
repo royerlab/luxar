@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import typer
 from arbol import aprint, asection
 
 if TYPE_CHECKING:
     import numpy as np
+
+    from luxar.gsplats.lod.recipes import RecipeParams
 
 
 app_batch = typer.Typer(help="HPC batch fitting for large OME-Zarr datasets")
@@ -137,6 +139,30 @@ def batch_plan(
     # Merge
     channel_colors: Optional[str] = typer.Option(
         None, "--channel-colors", help="Hex colors for per-channel merge"
+    ),
+    merge_recipe: Optional[str] = typer.Option(
+        None,
+        "--merge-recipe",
+        help=(
+            "Per-part LOD recipe applied to each spatial tile-part by the merge "
+            "job: 'additive' (partitioned topology) or 'substitutive' (mosaic). "
+            "Default: bare-leaf parts. The merge sbatch script invokes "
+            "`batch merge --recipe <r>` with the knobs below."
+        ),
+    ),
+    merge_n_lods: Optional[int] = typer.Option(
+        None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe."
+    ),
+    merge_compression_factor: Optional[int] = typer.Option(
+        None, "--merge-compression-factor", help="Substitutive K for --merge-recipe."
+    ),
+    merge_levels: Optional[int] = typer.Option(
+        None, "--merge-levels", help="Substitutive level count for --merge-recipe."
+    ),
+    merge_substitutive_method: Optional[str] = typer.Option(
+        None,
+        "--merge-substitutive-method",
+        help="Substitutive coarsening method for --merge-recipe.",
     ),
     # Dataset structure override
     axes: Optional[str] = typer.Option(
@@ -525,6 +551,27 @@ def batch_plan(
         if channel_colors:
             colors_list = [c.strip() for c in channel_colors.split(",")]
 
+        # Per-part LOD recipe for the merge job (stored in the manifest; the merge
+        # sbatch script turns it into `batch merge --recipe ...`).
+        merge_recipe_args: dict = {}
+        if merge_recipe is not None:
+            from luxar.gsplats.lod.recipes import PER_PART_RECIPES
+
+            if merge_recipe not in PER_PART_RECIPES:
+                raise typer.BadParameter(
+                    f"--merge-recipe {merge_recipe!r} is not supported; choose from "
+                    f"{', '.join(sorted(PER_PART_RECIPES))} (the composed recipes "
+                    "re-partition their input, but each tile is already one part)."
+                )
+            if merge_n_lods is not None:
+                merge_recipe_args["n-lods"] = str(merge_n_lods)
+            if merge_compression_factor is not None:
+                merge_recipe_args["compression-factor"] = str(merge_compression_factor)
+            if merge_levels is not None:
+                merge_recipe_args["levels"] = str(merge_levels)
+            if merge_substitutive_method is not None:
+                merge_recipe_args["substitutive-method"] = merge_substitutive_method
+
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
         if preemptible:
@@ -597,6 +644,8 @@ def batch_plan(
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
+            merge_recipe=merge_recipe,
+            merge_recipe_args=merge_recipe_args,
             denoise=batch_denoise,
             denoise_2d=batch_denoise_2d,
             denoise_h=batch_denoise_h,
@@ -1151,6 +1200,53 @@ def batch_cancel_cmd(
         raise typer.Exit(1)
 
 
+def _build_merge_recipe_params(
+    stored: dict,
+    *,
+    n_lods: Optional[int],
+    compression_factor: Optional[int],
+    levels: Optional[int],
+    substitutive_method: Optional[str],
+    coarsen_dims: Optional[str],
+) -> "RecipeParams":
+    """Build a ``RecipeParams`` for the per-part merge recipe.
+
+    Each knob is resolved CLI-first, then the value recorded at plan time
+    (``manifest.merge_recipe_args``, string-valued), then the ``RecipeParams``
+    default. ``coarsen_dims`` is parsed from a comma string to a tuple of ints;
+    leaving it unset lets the merge default it per part (spatial dims only).
+    """
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    def _resolve(key: str, cli: Any, cast: Callable[[Any], Any]) -> Any:
+        if cli is not None:
+            return cli
+        raw = stored.get(key)
+        return cast(raw) if raw is not None else None
+
+    def _parse_dims(raw: Any) -> tuple:
+        return tuple(int(x) for x in str(raw).split(",") if x.strip() != "")
+
+    overrides: dict = {}
+    nl = _resolve("n-lods", n_lods, int)
+    if nl is not None:
+        overrides["n_lods"] = nl
+    cf = _resolve("compression-factor", compression_factor, int)
+    if cf is not None:
+        overrides["compression_factor"] = cf
+    lv = _resolve("levels", levels, int)
+    if lv is not None:
+        overrides["levels"] = lv
+    sm = _resolve("substitutive-method", substitutive_method, str)
+    if sm is not None:
+        overrides["substitutive_method"] = sm
+    cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")
+    if cd is not None:
+        overrides["coarsen_dims"] = _parse_dims(cd)
+
+    return RecipeParams(**overrides)
+
+
 @app_batch.command("merge")
 def batch_merge_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
@@ -1166,6 +1262,39 @@ def batch_merge_cmd(
             "memory-safe kind=partition with one part per spatial tile."
         ),
     ),
+    recipe: Optional[str] = typer.Option(
+        None,
+        "--recipe",
+        help=(
+            "Per-part LOD recipe applied to each spatial tile-part as it streams: "
+            "'additive' (each part a prefix-sum ladder → partitioned topology) or "
+            "'substitutive' (each part its own coarse↔fine lod group → mosaic). "
+            "Default: bare-leaf parts (no per-part LOD). Closes the tiled-data LOD "
+            "gap without re-loading the whole volume. Falls back to the recipe "
+            "recorded at plan time. Mutually exclusive with --flat."
+        ),
+    ),
+    n_lods: Optional[int] = typer.Option(
+        None, "--n-lods", help="Additive ladder depth (additive/pyramid recipes)."
+    ),
+    compression_factor: Optional[int] = typer.Option(
+        None, "-K", "--compression-factor", help="Substitutive reduction factor."
+    ),
+    levels: Optional[int] = typer.Option(
+        None, "-L", "--levels", help="Substitutive level count (substitutive/pyramid)."
+    ),
+    substitutive_method: Optional[str] = typer.Option(
+        None, "--substitutive-method", help="Substitutive coarsening method."
+    ),
+    coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help=(
+            "Comma-separated center-column indices substitutive coarsening may "
+            "merge over; the rest become hard barriers. Default: spatial dims only "
+            "(stacked-timepoint axis is a barrier)."
+        ),
+    ),
 ) -> None:
     """Run the merge step for a completed batch job.
 
@@ -1178,10 +1307,18 @@ def batch_merge_cmd(
     culling. Pass ``--flat`` for the legacy single-leaf concatenation (reloads
     every tile into memory).
 
+    Pass ``--recipe`` to give each tile-part its own LOD ladder as it streams —
+    the memory-safe way to add level-of-detail to tiled output (the canonical
+    ``cal → fit → lod`` chain otherwise can't, since ``lod`` rejects a partition).
+
     Examples:
         luxar gsplat batch merge output_dir/
 
         luxar gsplat batch merge output_dir/ --flat
+
+        luxar gsplat batch merge output_dir/ --recipe additive --n-lods 6
+
+        luxar gsplat batch merge output_dir/ --recipe substitutive -K 4 -L 3
 
         luxar gsplat batch merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
@@ -1199,6 +1336,20 @@ def batch_merge_cmd(
         if color_source:
             colors = [parse_hex_color(c.strip()) for c in color_source.split(",")]
 
+        # Resolve the per-part recipe + its knobs, CLI overriding the values
+        # recorded at plan time (manifest.merge_recipe / merge_recipe_args).
+        eff_recipe = recipe or manifest.merge_recipe
+        recipe_params = None
+        if eff_recipe is not None:
+            recipe_params = _build_merge_recipe_params(
+                manifest.merge_recipe_args,
+                n_lods=n_lods,
+                compression_factor=compression_factor,
+                levels=levels,
+                substitutive_method=substitutive_method,
+                coarsen_dims=coarsen_dims,
+            )
+
         with asection(f"Merging batch results: {output_dir}"):
             final_path = merge_batch_results(
                 manifest=manifest,
@@ -1206,6 +1357,8 @@ def batch_merge_cmd(
                 channel_colors=colors,
                 force=force,
                 flat=flat,
+                recipe=eff_recipe,
+                recipe_params=recipe_params,
             )
             aprint(f"\nFinal output: {final_path}")
 

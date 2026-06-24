@@ -448,6 +448,12 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     if manifest.channel_colors:
         colors_str = ",".join(manifest.channel_colors)
         merge_cmd += f" --channel-colors {shlex.quote(colors_str)}"
+    # Per-part LOD recipe (if planned): emit `--recipe <r>` + its knobs so the
+    # merge job streams a partition of LOD'd parts rather than bare leaves.
+    if manifest.merge_recipe:
+        merge_cmd += f" --recipe {shlex.quote(manifest.merge_recipe)}"
+        for flag, value in manifest.merge_recipe_args.items():
+            merge_cmd += f" --{flag} {shlex.quote(str(value))}"
 
     lines.append(merge_cmd)
     lines.append("")
