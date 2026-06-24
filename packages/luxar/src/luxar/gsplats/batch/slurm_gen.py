@@ -411,7 +411,8 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
 def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the merge sbatch script (dependent job).
 
-    Calls ``luxar gsplat batch merge`` to run the 3-level fan-in merge.
+    Calls ``luxar gsplat batch merge`` (no ``--flat``), which streams the tiles
+    into a ``kind=partition`` file — one part per spatial tile — by default.
 
     Args:
         manifest: Fully populated batch manifest.
