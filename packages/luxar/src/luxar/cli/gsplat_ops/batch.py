@@ -1158,14 +1158,30 @@ def batch_merge_cmd(
         None, "--channel-colors", help="Hex colors for channel merge"
     ),
     force: bool = typer.Option(False, "--force", help="Re-merge even if outputs exist"),
+    flat: bool = typer.Option(
+        False,
+        "--flat",
+        help=(
+            "Concatenate all tiles into a single flat leaf (legacy). Default is a "
+            "memory-safe kind=partition with one part per spatial tile."
+        ),
+    ),
 ) -> None:
     """Run the merge step for a completed batch job.
 
     Normally runs as a dependent Slurm job, but this command allows
     running it manually or re-running if the merge job failed.
 
+    By default the tiles are assembled into a ``kind=partition`` file (one part
+    per spatial tile) — streamed tile-by-tile so peak memory is a single
+    tile-region, and the spatial structure is preserved for per-part frustum
+    culling. Pass ``--flat`` for the legacy single-leaf concatenation (reloads
+    every tile into memory).
+
     Examples:
         luxar gsplat batch merge output_dir/
+
+        luxar gsplat batch merge output_dir/ --flat
 
         luxar gsplat batch merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
@@ -1189,6 +1205,7 @@ def batch_merge_cmd(
                 output_dir=output_dir,
                 channel_colors=colors,
                 force=force,
+                flat=flat,
             )
             aprint(f"\nFinal output: {final_path}")
 

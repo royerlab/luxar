@@ -14,7 +14,7 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 - **`get_slurm_scheduler_info()`** / **`is_slurm_mps_available()`** / **`detect_preemptible_gpu_partition()`** / **`validate_partition_access()`** — `scontrol`/`sinfo`-backed cluster introspection used at plan time to tune array packing and preemptible submission.
 - **`estimate_tile_wall_seconds()`** / **`estimate_slurm_time_limit()`** — Log-interpolate GPU profile throughput tables to estimate per-tile wall time (with safety margin), then round up to a Slurm `--time` string.
 - **`check_batch_status()`** / **`format_status_report()`** — Aggregate job status (`BatchStatus`) from output files and `sacct` queries, and render a human-readable report.
-- **`merge_batch_results()`** — 3-level fan-in merge: tiles per (T,C), timepoints per channel, then channels with optional color assignment.
+- **`merge_batch_results()`** — Merge completed tiles into the final `.gsplats.zarr`. Default: a streaming `kind=partition` (one part per spatial tile, ≤1 tile-region resident at a time, preserving spatial structure for per-part frustum culling). `flat=True` uses the legacy single-leaf 3-level fan-in (tiles per (T,C) → timepoints per channel → channels with optional color assignment), which reloads all tiles into memory.
 
 ## Module Structure
 
@@ -25,7 +25,7 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 | `env_capture.py` | Environment detection (conda, venv, modules, env vars), Slurm scheduler queries, env preamble generation |
 | `time_estimate.py` | Wall-time estimation from GPU benchmark profiles via log-log interpolation |
 | `status.py` | Batch status checking via output file existence and `sacct` queries |
-| `merge_orchestrator.py` | Post-batch 3-level fan-in merge: tiles -> per-(T,C) -> per-C -> final |
+| `merge_orchestrator.py` | Post-batch merge: default streaming `kind=partition` (one part per tile); `--flat` for the legacy single-leaf fan-in (tiles -> per-(T,C) -> per-C -> final) |
 
 ## Usage
 
