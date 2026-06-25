@@ -1449,3 +1449,75 @@ class TestMergeOrchestrator:
         for child in node.children:
             assert isinstance(child, GSplatLodGroup)  # substitutive → mosaic
         assert node.n_splats == total
+
+    def test_merge_recipe_params_rejects_invalid_substitutive_method(self) -> None:
+        """An unknown --substitutive-method is rejected UP FRONT with a clean
+        typer.BadParameter (mirroring `gsplat lod`), not deferred to a deep
+        make_substitutive_lod ValueError. Fails pre-fix (no validation → the bad
+        string was wrapped into RecipeParams unchecked)."""
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="substitutive-method"):
+            _build_merge_recipe_params(
+                {},
+                n_lods=None,
+                compression_factor=None,
+                levels=None,
+                substitutive_method="kmeans-typo",
+                coarsen_dims=None,
+            )
+
+    def test_merge_recipe_params_rejects_non_numeric_coarsen_dims(self) -> None:
+        """Bad --coarsen-dims tokens raise a clean typer.BadParameter, not a raw
+        ValueError surfaced as a traceback. Fails pre-fix (unwrapped int())."""
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="coarsen-dims"):
+            _build_merge_recipe_params(
+                {},
+                n_lods=None,
+                compression_factor=None,
+                levels=None,
+                substitutive_method=None,
+                coarsen_dims="0,x,2",
+            )
+
+    def test_batch_merge_invalid_method_writes_no_output(
+        self, tmp_path: Path
+    ) -> None:
+        """An invalid --substitutive-method must fail BEFORE the streaming writer
+        overwrites final.gsplats.zarr — otherwise a corrected re-run (without
+        --force) would silently skip the broken stub. Asserts non-zero exit AND
+        that no output file was created. Fails pre-fix (deep raise left a stub)."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_ops.batch import app_batch
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(2):
+            self._tile(32, k).save(tiles_dir / output_filename(0, 0, k, 1, 1, 2))
+        save_manifest(
+            BatchManifest(
+                output_dir=str(out_dir), n_timepoints=1, n_channels=1, n_tiles=2
+            ),
+            out_dir,
+        )
+
+        result = CliRunner().invoke(
+            app_batch,
+            ["merge", str(out_dir), "--recipe", "substitutive",
+             "--substitutive-method", "kmeans-typo"],
+        )
+        assert result.exit_code != 0
+        assert not (out_dir / "merged" / "final.gsplats.zarr").exists()

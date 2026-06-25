@@ -577,7 +577,18 @@ def batch_plan(
             if merge_levels is not None:
                 merge_recipe_args["levels"] = str(merge_levels)
             if merge_substitutive_method is not None:
-                merge_recipe_args["substitutive-method"] = merge_substitutive_method
+                # Validate now (fail-fast) so a bad method is caught before the
+                # Slurm fit array runs, not hours later in the merge job.
+                from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
+
+                sm_norm = merge_substitutive_method.strip().replace("-", "_")
+                if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+                    raise typer.BadParameter(
+                        f"--merge-substitutive-method must be one of "
+                        f"{list(_VALID_SUBSTITUTIVE_METHODS)}; "
+                        f"got {merge_substitutive_method!r}"
+                    )
+                merge_recipe_args["substitutive-method"] = sm_norm
             if merge_coarsen_dims is not None:
                 merge_recipe_args["coarsen-dims"] = merge_coarsen_dims
 
@@ -1225,6 +1236,7 @@ def _build_merge_recipe_params(
     default. ``coarsen_dims`` is parsed from a comma string to a tuple of ints;
     leaving it unset lets the merge default it per part (spatial dims only).
     """
+    from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
     from luxar.gsplats.lod.recipes import RecipeParams
 
     def _resolve(key: str, cli: Any, cast: Callable[[Any], Any]) -> Any:
@@ -1234,7 +1246,12 @@ def _build_merge_recipe_params(
         return cast(raw) if raw is not None else None
 
     def _parse_dims(raw: Any) -> tuple:
-        return tuple(int(x) for x in str(raw).split(",") if x.strip() != "")
+        try:
+            return tuple(int(x) for x in str(raw).split(",") if x.strip() != "")
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"--coarsen-dims must be comma-separated integers; got {raw!r}"
+            ) from e
 
     overrides: dict = {}
     nl = _resolve("n-lods", n_lods, int)
@@ -1250,8 +1267,17 @@ def _build_merge_recipe_params(
     if sm is not None:
         # Normalise hyphens to underscores so the documented CLI spelling
         # (`kmeans-lloyd`) maps to the canonical method name (`kmeans_lloyd`),
-        # matching the `gsplat lod` command (see cli/lod.py).
-        overrides["substitutive_method"] = sm.strip().replace("-", "_")
+        # then validate up front — both halves of the `gsplat lod` contract
+        # (cli/lod.py:381-386). Validating here means a bad method fails cleanly
+        # BEFORE the streaming writer overwrites final.gsplats.zarr, rather than
+        # raising deep in the merge and leaving a stub a non-`--force` re-run skips.
+        sm_norm = sm.strip().replace("-", "_")
+        if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+            raise typer.BadParameter(
+                f"--substitutive-method must be one of "
+                f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {sm!r}"
+            )
+        overrides["substitutive_method"] = sm_norm
     cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")
     if cd is not None:
         overrides["coarsen_dims"] = _parse_dims(cd)
@@ -1374,7 +1400,9 @@ def batch_merge_cmd(
             )
             aprint(f"\nFinal output: {final_path}")
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
+        # Usage errors (e.g. an invalid --substitutive-method) surface cleanly
+        # instead of being swallowed into an "Error: ..." traceback below.
         raise
     except Exception as e:
         aprint(f"Error: {e}")
