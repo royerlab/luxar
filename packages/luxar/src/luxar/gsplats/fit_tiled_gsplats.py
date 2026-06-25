@@ -259,7 +259,6 @@ def fit_tiled(
     specs = compute_tile_specs(volume_shape, tile_size, overlap)
 
     results: list[GSplatData] = []
-    total_splats = 0
     t0 = time.perf_counter()
 
     with asection(
@@ -284,13 +283,71 @@ def fit_tiled(
                     **fit_kwargs,
                 )
                 n = tile_result.n_splats
-                total_splats += n
                 if verbose:
                     t_tile = tile_result.stats.get("time_seconds", 0)
                     aprint(f"{n:,} splats ({t_tile:.1f}s)")
                 results.append(tile_result)
 
-    # Concatenate all tile results
+    elapsed = time.perf_counter() - t0
+    return merge_tile_results(
+        results,
+        volume_shape=volume_shape,
+        tile_size=tile_size,
+        overlap=overlap,
+        num_tiles=len(specs),
+        progressive=progressive,
+        cull_retention=cull_retention,
+        elapsed=elapsed,
+        verbose=verbose,
+    )
+
+
+def merge_tile_results(
+    results: list[GSplatData],
+    *,
+    volume_shape: tuple[int, ...],
+    tile_size: int | Sequence[int],
+    overlap: int | Sequence[int],
+    num_tiles: int,
+    progressive: bool,
+    cull_retention: float | None,
+    elapsed: float,
+    verbose: bool = True,
+) -> GSplatData:
+    """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
+
+    Shared by both the sequential :func:`fit_tiled` loop and the parallel
+    orchestrator in ``fit_tiled_parallel``.  Concatenates tile results
+    (LOD-aware when ``progressive``), stamps tiled-fitting stats, and applies
+    a single post-fit cumulative cull on the merged result.
+
+    Parameters
+    ----------
+    results : list of GSplatData
+        Per-tile fit results, already translated to global coordinates. May
+        be empty.
+    volume_shape : tuple of int
+        Full (possibly downscaled) volume shape, recorded in stats and used to
+        build an empty result when ``results`` is empty.
+    tile_size, overlap : int or sequence of int
+        Tiling geometry, recorded in stats.
+    num_tiles : int
+        Number of tiles in the grid (``len(specs)``).
+    progressive : bool
+        Whether tiles were fit progressively (selects LOD-aware merge).
+    cull_retention : float or None
+        Post-fit cumulative culling fraction on the merged result (0--1).
+        ``None`` or outside (0, 1) disables culling.
+    elapsed : float
+        Wall-clock seconds for the fitting stage, recorded in stats.
+    verbose : bool, default True
+        Print a summary line via arbol.
+
+    Returns
+    -------
+    GSplatData
+        Merged result. Multi-LOD if ``progressive`` and tiles carry sublods.
+    """
     if len(results) == 0:
         ndim = len(volume_shape)
         from luxar.gsplats.utils.trils import tril_size
@@ -310,12 +367,11 @@ def fit_tiled(
         merged = GSplatData.concatenate(results)
 
     # Build merged stats
-    elapsed = time.perf_counter() - t0
     merged.stats.update(
         {
             "tiled_fitting": True,
             "progressive": progressive,
-            "num_tiles": len(specs),
+            "num_tiles": num_tiles,
             "tile_size": tile_size,
             "overlap": overlap,
             "volume_shape": volume_shape,
@@ -327,7 +383,7 @@ def fit_tiled(
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
         aprint(
-            f"Total: {merged.n_splats:,} splats from {len(specs)} tiles "
+            f"Total: {merged.n_splats:,} splats from {num_tiles} tiles "
             f"in {elapsed:.1f}s{lod_info}"
         )
 
