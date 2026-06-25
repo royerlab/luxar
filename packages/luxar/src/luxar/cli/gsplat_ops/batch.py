@@ -164,6 +164,13 @@ def batch_plan(
         "--merge-substitutive-method",
         help="Substitutive coarsening method for --merge-recipe.",
     ),
+    merge_coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--merge-coarsen-dims",
+        help="Comma-separated center-column indices --merge-recipe substitutive "
+        "may coarsen over (the rest stay hard barriers). Default: spatial dims "
+        "only (the stacked-timepoint axis is a barrier).",
+    ),
     # Dataset structure override
     axes: Optional[str] = typer.Option(
         None,
@@ -571,6 +578,8 @@ def batch_plan(
                 merge_recipe_args["levels"] = str(merge_levels)
             if merge_substitutive_method is not None:
                 merge_recipe_args["substitutive-method"] = merge_substitutive_method
+            if merge_coarsen_dims is not None:
+                merge_recipe_args["coarsen-dims"] = merge_coarsen_dims
 
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
@@ -1239,7 +1248,10 @@ def _build_merge_recipe_params(
         overrides["levels"] = lv
     sm = _resolve("substitutive-method", substitutive_method, str)
     if sm is not None:
-        overrides["substitutive_method"] = sm
+        # Normalise hyphens to underscores so the documented CLI spelling
+        # (`kmeans-lloyd`) maps to the canonical method name (`kmeans_lloyd`),
+        # matching the `gsplat lod` command (see cli/lod.py).
+        overrides["substitutive_method"] = sm.strip().replace("-", "_")
     cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")
     if cd is not None:
         overrides["coarsen_dims"] = _parse_dims(cd)
@@ -1275,13 +1287,13 @@ def batch_merge_cmd(
         ),
     ),
     n_lods: Optional[int] = typer.Option(
-        None, "--n-lods", help="Additive ladder depth (additive/pyramid recipes)."
+        None, "--n-lods", help="Additive ladder depth (additive recipe)."
     ),
     compression_factor: Optional[int] = typer.Option(
         None, "-K", "--compression-factor", help="Substitutive reduction factor."
     ),
     levels: Optional[int] = typer.Option(
-        None, "-L", "--levels", help="Substitutive level count (substitutive/pyramid)."
+        None, "-L", "--levels", help="Substitutive level count (substitutive recipe)."
     ),
     substitutive_method: Optional[str] = typer.Option(
         None, "--substitutive-method", help="Substitutive coarsening method."

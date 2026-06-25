@@ -56,7 +56,7 @@ def merge_batch_results(
             memory (the OOM the partition path avoids); use only for small scenes.
         recipe: Optional per-part LOD recipe applied to each spatial tile-part as
             it streams (one of :data:`PER_PART_RECIPES`: ``additive`` →
-            ``partitioned`` topology, ``substitutive`` → ``mosaic``, ``pyramid``).
+            ``partitioned`` topology, ``substitutive`` → ``mosaic``).
             ``None`` keeps the historical bare-leaf parts. Mutually exclusive with
             ``flat`` (flat has no parts to give a ladder to).
         recipe_params: Knobs for ``recipe`` (a :class:`RecipeParams`); ignored when
