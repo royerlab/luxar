@@ -109,7 +109,7 @@ class BatchManifest:
 
     merge_recipe: Optional[str] = None
     """Per-part LOD recipe applied to each spatial tile-part at merge time
-    (``additive`` / ``substitutive`` / ``pyramid``). ``None`` = bare-leaf parts
+    (``additive`` / ``substitutive``). ``None`` = bare-leaf parts
     (no per-part LOD; the historical partition output). ``additive`` yields the
     ``partitioned`` topology (each part a prefix-sum ladder); ``substitutive``
     yields the ``mosaic`` topology (each part its own coarse↔fine lod group)."""
