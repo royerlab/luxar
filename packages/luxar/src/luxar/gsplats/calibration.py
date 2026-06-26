@@ -29,7 +29,7 @@ import itertools
 import json
 import math
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
@@ -198,6 +198,355 @@ def held_out_psnr(
     if data_range == 0.0:
         return float("inf")
     return float(10.0 * math.log10(data_range**2 / mse))
+
+
+# =============================================================================
+# Content-aware metrics (regime-robust extensions)
+# =============================================================================
+#
+# The min--max-range held-out PSNR above is *correct for raw/noisy data at a
+# manageable scale* (the manuscript regime), but it is **background-dominated**
+# on large sparse volumes: a trivial predict-zero reconstruction already scores
+# 40-60 dB, so the absolute PSNR — and the shape of the K-sweep curve — is
+# dominated by empty space rather than signal fidelity. The two helpers below
+# give regime-robust alternatives:
+#   * gain-over-baseline: dB the fit beats predict-zero (plateaus meaningfully),
+#   * foreground-restricted PSNR: error only where there is signal.
+# Both are *additive* — the default K* selection still uses the min--max metric.
+
+
+def predict_zero_baseline_mse(V_original: np.ndarray, mask: np.ndarray) -> float:
+    """MSE of the trivial all-zeros reconstruction at masked voxels.
+
+    This is the "free" error floor any fit must beat. On sparse data it is
+    small (most masked voxels are background ~0), which is exactly why the
+    raw held-out PSNR looks deceptively high.
+    """
+    held = V_original[mask]
+    if held.size == 0:
+        return float("nan")
+    return float(np.mean(held.astype(np.float64) ** 2))
+
+
+def held_out_gain_db(held_mse: float, baseline_mse: float) -> float:
+    """dB improvement of the fit over the predict-zero baseline.
+
+    ``10 * log10(baseline_mse / held_mse)``. 0 dB means "no better than
+    predicting zeros"; this metric plateaus meaningfully (it is not inflated
+    by trivially-reconstructed background), so it is the recommended
+    K*-selection metric for sparse / noise-free data.
+    """
+    if not math.isfinite(baseline_mse) or baseline_mse <= 0.0:
+        return float("nan")
+    if held_mse <= 0.0:
+        return float("inf")
+    return float(10.0 * math.log10(baseline_mse / held_mse))
+
+
+def _otsu_threshold(V: np.ndarray) -> float:
+    """Otsu threshold (subsampled for speed); falls back to ``V.min()``."""
+    v = np.asarray(V)
+    flat = v.reshape(-1)
+    if flat.size > 5_000_000:  # cap histogram sample on gigavoxel volumes
+        flat = flat[:: max(1, flat.size // 5_000_000)]
+    try:
+        from skimage.filters import threshold_otsu  # lazy: optional dep
+
+        return float(threshold_otsu(flat.astype(np.float32, copy=False)))  # type: ignore[no-untyped-call]
+    except Exception:
+        return float(v.min())
+
+
+def foreground_mask_otsu(V: np.ndarray) -> np.ndarray:
+    """Boolean foreground mask via Otsu's threshold (``V > thr``)."""
+    v = np.asarray(V)
+    return v > _otsu_threshold(v)
+
+
+def held_out_psnr_foreground(
+    V_hat: np.ndarray,
+    V_original: np.ndarray,
+    held_mask: np.ndarray,
+    foreground_mask: np.ndarray,
+    data_range: Optional[float] = None,
+) -> float:
+    """Held-out PSNR restricted to voxels that are both held out AND foreground.
+
+    Strips the background-domination from :func:`held_out_psnr` so the curve
+    reflects how well actual signal (not empty space) is reconstructed.
+    Returns ``nan`` when the held-out∩foreground set is empty.
+    """
+    sel = held_mask & foreground_mask
+    pred = V_hat[sel]
+    true = V_original[sel]
+    if pred.size == 0:
+        return float("nan")
+    mse = float(np.mean((pred - true) ** 2))
+    if mse == 0.0:
+        return float("inf")
+    if data_range is None:
+        data_range = float(V_original.max() - V_original.min())
+    if data_range == 0.0:
+        return float("inf")
+    return float(10.0 * math.log10(data_range**2 / mse))
+
+
+# =============================================================================
+# Content / feature estimation (shared metric for density + planner)
+# =============================================================================
+
+
+def count_features(
+    V: np.ndarray,
+    method: str = "peaks",
+    *,
+    threshold_abs: Optional[float] = None,
+    **kwargs: Any,
+) -> int:
+    """Estimate the feature content of a volume — the predictor of splat need.
+
+    The empirical investigation found local-maxima count (``peaks``) the best
+    predictor of how many splats a region needs (better than intensity-sum or
+    foreground-count), so it is the default. ``edges`` (summed Sobel gradient
+    magnitude, thresholded) suits non-punctate structure (filaments,
+    membranes); ``intensity`` is a robust foreground-voxel count.
+
+    Parameters
+    ----------
+    V : np.ndarray
+        Input volume.
+    method : {"peaks", "edges", "intensity"}, default="peaks"
+        Feature estimator. Pluggable so non-nuclear data can choose ``edges``.
+    threshold_abs : float, optional
+        Absolute detection level (the value :func:`feature_threshold` returns).
+        When given, every method counts at this *shared* level instead of a
+        per-volume relative one — so counts on different crops compose (required
+        when ranking sliding windows; a per-crop relative threshold lets a
+        faint-noise window out-score a real one). ``peaks``/``edges`` threshold
+        the blurred / gradient field at it; ``intensity`` counts ``V > thr``
+        (strict ``>``, matching :func:`foreground_mask_otsu`).
+    **kwargs
+        Forwarded to the underlying estimator (e.g. ``radius``,
+        ``threshold_rel`` for ``peaks``).
+
+    Returns
+    -------
+    int
+        A non-negative feature count.
+    """
+    v = np.asarray(V, dtype=np.float32)
+    if method == "peaks":
+        from luxar.gsplats.seeds.utils import count_local_maxima
+
+        return int(count_local_maxima(v, threshold_abs=threshold_abs, **kwargs))
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        mag = np.asarray(_compute_nd_sobel_magnitude(v))
+        if threshold_abs is not None:
+            thr = float(threshold_abs)
+        else:
+            m = float(mag.max())
+            if m <= 0.0:
+                return 0
+            thr = float(kwargs.get("threshold_rel", 0.1)) * m
+        return int(np.count_nonzero(mag >= thr))
+    if method == "intensity":
+        if threshold_abs is not None:
+            return int(np.count_nonzero(v > float(threshold_abs)))
+        return int(np.count_nonzero(foreground_mask_otsu(v)))
+    raise ValueError(
+        f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
+    )
+
+
+def feature_threshold(
+    V: np.ndarray, method: str = "peaks", threshold_rel: float = 0.1
+) -> float:
+    """The *exact absolute intensity level* :func:`count_features` thresholds at.
+
+    Single source of truth for the cal→planner contract: the calibration records
+    this so the planner's ``scan_content`` counts on the identical scale (the
+    detectors threshold relative to a *blurred* / gradient / Otsu level, NOT the
+    raw max, so a naive ``0.1*max`` drifts — badly with hot outliers).
+
+    * ``peaks``     → ``threshold_rel * max(soft_blur(V))`` (matches count_local_maxima)
+    * ``edges``     → ``threshold_rel * max(|∇V|)``
+    * ``intensity`` → the Otsu cut
+    """
+    v = np.asarray(V, dtype=np.float32)
+    if v.size == 0:
+        return 0.0
+    if method == "peaks":
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        return float(threshold_rel * float(np.asarray(soft_blur_nd(v)).max()))
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        return float(
+            threshold_rel * float(np.asarray(_compute_nd_sobel_magnitude(v)).max())
+        )
+    if method == "intensity":
+        return _otsu_threshold(v)
+    raise ValueError(
+        f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
+    )
+
+
+def _robust_feature_level(
+    V: np.ndarray,
+    method: str = "peaks",
+    threshold_rel: float = 0.1,
+    q: float = 99.9,
+    **_: Any,
+) -> float:
+    """Outlier-robust analogue of :func:`feature_threshold` for window ranking.
+
+    Identical in spirit to :func:`feature_threshold` but bases the level on the
+    ``q``-th percentile of the (method-transformed) field instead of its **max**,
+    so a handful of hot voxels (dead/stuck pixels, cosmic-ray hits) cannot set the
+    global signal level above genuine content — which would otherwise gate every
+    real window to zero and let the lone-outlier window win
+    (:func:`select_calibration_region`). Used ONLY for ranking; the cal→planner
+    contract still records the max-based :func:`feature_threshold` on the chosen
+    crop, so this does not perturb the transferred density.
+    """
+    v = np.asarray(V, dtype=np.float32)
+    if v.size == 0:
+        return 0.0
+
+    def _subsample(field: np.ndarray) -> np.ndarray:
+        flat = field.reshape(-1)
+        if flat.size > 5_000_000:  # bound the percentile cost on gigavoxel volumes
+            flat = flat[:: max(1, flat.size // 5_000_000)]
+        return flat
+
+    if method == "peaks":
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        field = _subsample(np.asarray(soft_blur_nd(v)))
+        return float(threshold_rel * float(np.percentile(field, q)))
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        field = _subsample(np.asarray(_compute_nd_sobel_magnitude(v)))
+        return float(threshold_rel * float(np.percentile(field, q)))
+    if method == "intensity":
+        flat = _subsample(v)
+        hi = float(np.percentile(flat, q))
+        return _otsu_threshold(np.minimum(flat, hi))  # Otsu on winsorised values
+    raise ValueError(
+        f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
+    )
+
+
+@dataclass
+class RegionSelection:
+    """Provenance of an auto-selected calibration sub-region."""
+
+    origin: List[int]
+    """Top-left corner of the crop in the original volume's coordinates."""
+    size: List[int]
+    """Crop shape actually used (clamped per-axis to the volume)."""
+    strategy: str
+    """``densest`` | ``median`` | ``whole``."""
+    n_features: int
+    """Feature count inside the chosen crop."""
+    score: float
+    """Feature *density* (features / voxel) used to rank candidate windows."""
+
+
+def select_calibration_region(
+    V: np.ndarray,
+    region_size: int = 256,
+    strategy: str = "densest",
+    feature: str = "peaks",
+    **feature_kwargs: Any,
+) -> Tuple[np.ndarray, RegionSelection]:
+    """Pick a content-rich sub-region to calibrate at the *fitting* scale.
+
+    The manuscript calibrates on crops ≤~20 M voxels; on a large sparse volume
+    the held-out metric is background-dominated and the absolute K wrong-scale.
+    This slides non-overlapping ``region_size`` windows, scores each by feature
+    density (:func:`count_features`), and returns the chosen crop + provenance.
+
+    ``strategy="densest"`` picks the highest-density window (worst case for
+    splat budget); ``"median"`` picks the median-density window (representative,
+    avoids the single brightest outlier). For volumes no larger than
+    ``region_size`` on every axis the whole volume is returned
+    (``strategy="whole"``).
+    """
+    v = np.asarray(V)
+    if v.ndim != 3:
+        raise ValueError(
+            f"select_calibration_region expects a 3-D volume, got shape {v.shape}"
+        )
+    shape = v.shape
+    size = [int(min(region_size, s)) for s in shape]
+
+    def _origins(n: int, t: int) -> List[int]:
+        os_ = list(range(0, n - t + 1, t))
+        if not os_ or os_[-1] != n - t:
+            os_.append(max(0, n - t))
+        return os_
+
+    # whole-volume short-circuit (no cross-window ranking needed)
+    if all(size[d] == shape[d] for d in range(v.ndim)):
+        n = count_features(v, method=feature, **feature_kwargs)
+        return v, RegionSelection(
+            origin=[0] * v.ndim,
+            size=list(size),
+            strategy="whole",
+            n_features=int(n),
+            score=float(n) / max(1, v.size),
+        )
+
+    # One *shared, outlier-robust* absolute level for all windows. Counting each
+    # window at this fixed level (not its own relative max) makes counts compose
+    # across windows — and using a high percentile rather than the raw max means a
+    # lone hot voxel can't raise the bar above genuine signal and gate every real
+    # window to zero (which previously let the single-outlier window win).
+    global_thr = _robust_feature_level(v, feature, **feature_kwargs)
+
+    axis_origins = [_origins(shape[d], size[d]) for d in range(v.ndim)]
+    # Each candidate ranked primarily by feature count, ties broken by total
+    # intensity (so equal-count windows prefer the one with more signal, not a
+    # faint blob tail). `score` reported = feature density (features / voxel).
+    candidates: List[Tuple[int, float, List[int], int]] = []
+    for origin in itertools.product(*axis_origins):
+        sl = tuple(slice(origin[d], origin[d] + size[d]) for d in range(v.ndim))
+        crop = v[sl]
+        # Count at the shared absolute level: a background window scores 0
+        # naturally (no voxel reaches the level), so no separate gate is needed —
+        # and the previous gate compared a *raw* crop max against a *blurred*-field
+        # threshold (a units mismatch that mis-gated sharp single-voxel features).
+        n = count_features(
+            crop, method=feature, threshold_abs=global_thr, **feature_kwargs
+        )
+        candidates.append((int(n), float(crop.sum()), list(origin), int(n)))
+
+    if not candidates:  # pragma: no cover - defensive
+        n = count_features(v, method=feature, **feature_kwargs)
+        return v, RegionSelection([0] * v.ndim, list(size), "whole", int(n), 0.0)
+
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    if strategy == "densest":
+        _, _, best_origin, n = candidates[-1]
+    elif strategy == "median":
+        _, _, best_origin, n = candidates[len(candidates) // 2]
+    else:
+        raise ValueError(f"unknown strategy {strategy!r}; use 'densest' or 'median'")
+
+    sl = tuple(slice(best_origin[d], best_origin[d] + size[d]) for d in range(v.ndim))
+    crop = v[sl]
+    return crop, RegionSelection(
+        origin=list(best_origin),
+        size=list(size),
+        strategy=strategy,
+        n_features=int(n),
+        score=float(n) / max(1, crop.size),
+    )
 
 
 # =============================================================================
@@ -443,9 +792,11 @@ def find_k_star(
     1. **Peak**: the argmax is strictly interior AND both ``mean(pre-argmax)``
        and ``mean(post-argmax)`` are at least 0.1 dB below the peak. Return
        the argmax.
-    2. **Signal-limited**: the argmax is the last K and the curve rose by
-       ≥ 0.3 dB across the sweep (monotone rise in range). Return the
-       last K.
+    2. **Signal-limited**: the argmax is the last K, the curve rose by
+       ≥ 0.3 dB across the sweep, AND it is *still climbing at the top*
+       (the last finite step is ≥ 0.1 dB). Return the last K. The tail
+       check stops a flat-topped plateau (whose noisy max lands on the
+       last K) from being misread as signal-limited.
     3. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
        maximum — the onset of diminishing returns.
     """
@@ -487,9 +838,28 @@ def find_k_star(
                 confidence_db=margin,
             )
 
-    # 2. Signal-limited
-    first_finite_psnr = float(psnr_arr[finite][0])
-    if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3:
+    # 2. Signal-limited: argmax is the last K, the curve rose meaningfully overall,
+    #    AND it is still climbing at the top (the last finite step is not flat).
+    #    The tail check prevents a flat-topped *plateau* whose noisy maximum merely
+    #    lands on the last K from being mislabelled signal-limited — which would also
+    #    inflate any K*-derived splat density (observed on deconvolved tile cal).
+    fin_idx = np.flatnonzero(finite)
+    first_finite_psnr = float(psnr_arr[fin_idx[0]])
+    # "Still climbing at the top" = mean per-step rise over the trailing run of
+    # *adjacent* finite K's (up to 3 steps). Adjacency guards against a NaN/inf gap
+    # reading as a climb (M1); averaging guards against a single sub-0.1 dB final
+    # step demoting a steadily-climbing curve to plateau (M2).
+    tail_rise = 0.0
+    if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1:
+        run = [int(fin_idx[-1])]
+        for j in range(fin_idx.size - 2, -1, -1):
+            if int(fin_idx[j + 1] - fin_idx[j]) == 1 and len(run) < 4:
+                run.append(int(fin_idx[j]))
+            else:
+                break
+        seg = psnr_arr[np.array(sorted(run))]
+        tail_rise = float(np.mean(np.diff(seg))) if seg.size >= 2 else 0.0
+    if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3 and tail_rise >= 0.1:
         return HeldOutPeak(
             k_star=int(k_arr[-1]),
             type="signal_limited",
@@ -507,6 +877,125 @@ def find_k_star(
         k_star=int(k_arr[smallest_above]),
         type="plateau",
         confidence_db=plateau_spread,
+    )
+
+
+# =============================================================================
+# Transferable splat density (cal -> planner interface)
+# =============================================================================
+
+
+@dataclass
+class SplatDensity:
+    """Transferable splat budget derived from one calibration.
+
+    The investigation found splats-to-saturate scales **sub-linearly** with
+    feature content (``K ~ features^alpha``, alpha≈0.44; n_peaks the best
+    predictor). This packages K* + the reference feature count + the exponent
+    so any tile can get a budget via :meth:`predict_k` without re-calibrating —
+    the cal→planner interface. Assumes tiles of roughly the reference scale
+    ("calibrate at the scale you fit at").
+    """
+
+    feature_method: str
+    n_features_reference: int
+    k_star_reference: int
+    saturation_exponent: float
+    """Sub-linear exponent ``alpha`` in ``K ~ features^alpha`` (default 0.44)."""
+    saturation_cap: int
+    """Effective K beyond which the reference region overfits / plateaus."""
+    splats_per_feature: float
+    """Linear reference density ``k_star / n_features`` (for reporting)."""
+    feature_threshold: float = 0.0
+    """Absolute intensity threshold used to count ``n_features_reference``. The
+    planner must scan at this same absolute level so its per-box counts are on the
+    same scale as the reference (threshold-relative-to-local-max does not compose
+    across regions, especially with hot outliers)."""
+
+    def predict_k(self, n_features: int) -> int:
+        """Predict the splat budget for a region with ``n_features`` features."""
+        if self.n_features_reference <= 0:
+            k = float(self.k_star_reference)
+        else:
+            ratio = max(0.0, float(n_features)) / float(self.n_features_reference)
+            k = float(self.k_star_reference) * (ratio**self.saturation_exponent)
+        return int(min(max(round(k), 0), self.saturation_cap))
+
+
+# =============================================================================
+# Parametric rate-distortion model
+# =============================================================================
+
+
+@dataclass
+class RDModel:
+    """Parametric fit of held-out error vs K: ``error ≈ floor + a·K^-beta``.
+
+    Lets us extrapolate the sweep cheaply and, crucially, flag when a curve is
+    still climbing at K_max (``converged_fraction`` < 1) — the cheap detector
+    that would have caught the original ``signal_limited`` false alarm without
+    an expensive dense high-K sweep.
+    """
+
+    floor: float
+    a: float
+    beta: float
+    rmse: float
+    n_points: int
+    converged_fraction: float
+    """Fraction of the achievable error drop realised by K_max (1 = converged)."""
+
+    def predict_error(self, k: float) -> float:
+        return float(self.floor + self.a * (float(k) ** (-self.beta)))
+
+    def k_for_error(self, target_error: float) -> float:
+        """Invert the model: smallest K reaching ``target_error`` (inf if < floor)."""
+        if target_error <= self.floor or self.a <= 0.0 or self.beta <= 0.0:
+            return float("inf")
+        return float((self.a / (target_error - self.floor)) ** (1.0 / self.beta))
+
+
+def fit_rd_model(
+    k_values: Sequence[float], error_values: Sequence[float]
+) -> Optional[RDModel]:
+    """Fit ``error ≈ floor + a·K^-beta`` (least-squares). ``None`` if <3 finite
+    points or the fit fails. ``error_values`` should be held-out MSE."""
+    k = np.asarray(list(k_values), dtype=float)
+    e = np.asarray(list(error_values), dtype=float)
+    finite = np.isfinite(k) & np.isfinite(e) & (k > 0) & (e > 0)
+    k, e = k[finite], e[finite]
+    if k.size < 3:
+        return None
+    try:
+        from scipy.optimize import curve_fit
+    except Exception:  # pragma: no cover - scipy is a dependency
+        return None
+
+    def _model(kk: np.ndarray, floor: float, a: float, beta: float) -> np.ndarray:
+        return np.asarray(floor + a * np.power(kk, -beta), dtype=float)
+
+    floor0 = max(0.0, float(e.min()) * 0.5)
+    a0 = float(max(e.max() - floor0, 1e-12)) * (float(k.min()) ** 0.5)
+    p0 = [floor0, a0, 0.5]
+    bounds = ([0.0, 0.0, 1e-2], [float(e.max()) if e.max() > 0 else 1.0, np.inf, 5.0])
+    try:
+        popt, _ = curve_fit(_model, k, e, p0=p0, bounds=bounds, maxfev=10_000)
+    except Exception:
+        return None
+    floor, a, beta = (float(x) for x in popt)
+    pred = _model(k, floor, a, beta)
+    rmse = float(np.sqrt(np.mean((pred - e) ** 2)))
+    e_kmin = float(_model(np.array([k.min()]), floor, a, beta)[0])
+    e_kmax = float(_model(np.array([k.max()]), floor, a, beta)[0])
+    denom = e_kmin - floor
+    converged = float((e_kmin - e_kmax) / denom) if denom > 1e-12 else 1.0
+    return RDModel(
+        floor=floor,
+        a=a,
+        beta=beta,
+        rmse=rmse,
+        n_points=int(k.size),
+        converged_fraction=float(np.clip(converged, 0.0, 1.0)),
     )
 
 
@@ -563,6 +1052,28 @@ class CalibrationResult:
     volume_dtype: str
     timestamp: str
 
+    # --- regime-robust extensions (all optional; old cal.json still loads) ---
+    held_out_psnr_fg_db: List[float] = field(default_factory=list)
+    """Foreground-restricted held-out PSNR (background-domination removed)."""
+    held_out_gain_db: List[float] = field(default_factory=list)
+    """dB the fit beats the predict-zero baseline (plateaus meaningfully)."""
+    predict_zero_baseline_mse: float = float("nan")
+    """MSE of the trivial all-zeros reconstruction at masked voxels."""
+    k_star_metric: str = "psnr_minmax"
+    """Metric used for ``held_out_peak_selected`` (psnr_minmax|psnr_foreground|gain)."""
+    held_out_peak_selected: Optional[HeldOutPeak] = None
+    """K* under ``k_star_metric`` (None when it equals the default psnr_minmax)."""
+    calibration_region: Optional[Dict[str, Any]] = None
+    """Provenance when an auto-selected sub-region was calibrated (else None)."""
+    original_volume_shape: Optional[List[int]] = None
+    """Shape of the full input before any region crop (disambiguates cropped PSNR)."""
+    splat_density: Optional[Dict[str, Any]] = None
+    """Transferable :class:`SplatDensity` (as dict) for the planner."""
+    rd_model: Optional[Dict[str, Any]] = None
+    """Parametric :class:`RDModel` (as dict) of held-out error vs K."""
+    not_converged: bool = False
+    """True when the held-out curve was still climbing at K_max (RD model)."""
+
     def to_json(self, path: Path) -> None:
         """Serialise to JSON. Non-finite floats become ``null``."""
 
@@ -614,6 +1125,17 @@ class CalibrationResult:
             if nf_raw["psnr_max_db"] is not None
             else float("inf"),
         )
+        sel_raw = raw.get("held_out_peak_selected")
+        peak_selected = (
+            HeldOutPeak(
+                k_star=int(sel_raw["k_star"]),
+                type=sel_raw["type"],
+                confidence_db=float(sel_raw["confidence_db"]),
+            )
+            if sel_raw
+            else None
+        )
+        baseline = raw.get("predict_zero_baseline_mse")
         return cls(
             k_values_requested=[int(x) for x in raw["k_values_requested"]],
             k_values_effective=[int(x) for x in raw["k_values_effective"]],
@@ -633,6 +1155,23 @@ class CalibrationResult:
             volume_shape=[int(x) for x in raw["volume_shape"]],
             volume_dtype=str(raw["volume_dtype"]),
             timestamp=str(raw["timestamp"]),
+            # --- regime-robust extensions (default-hydrated for old files) ---
+            held_out_psnr_fg_db=_hydrate_float_list(raw.get("held_out_psnr_fg_db", [])),
+            held_out_gain_db=_hydrate_float_list(raw.get("held_out_gain_db", [])),
+            predict_zero_baseline_mse=float("nan")
+            if baseline is None
+            else float(baseline),
+            k_star_metric=str(raw.get("k_star_metric", "psnr_minmax")),
+            held_out_peak_selected=peak_selected,
+            calibration_region=raw.get("calibration_region"),
+            original_volume_shape=(
+                [int(x) for x in raw["original_volume_shape"]]
+                if raw.get("original_volume_shape") is not None
+                else None
+            ),
+            splat_density=_rehydrate_nan_dict(raw.get("splat_density")),
+            rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
+            not_converged=bool(raw.get("not_converged", False)),
         )
 
 
@@ -655,6 +1194,10 @@ def calibrate(
     donut_radius: int = 1,
     keep_fits: Optional[Path] = None,
     progress_callback: Optional[ProgressCallback] = None,
+    k_star_metric: str = "psnr_minmax",
+    feature_method: str = "peaks",
+    saturation_exponent: float = 0.44,
+    compute_rd_model: bool = True,
 ) -> CalibrationResult:
     """Run a blind-spot CV sweep over ``k_grid`` on volume ``V``.
 
@@ -728,14 +1271,46 @@ def calibrate(
         data_range = 1.0
     mask_t = torch.from_numpy(mask)
 
+    # Regime-robust extras: predict-zero baseline (the "free" error floor) and a
+    # foreground mask so we can strip background-domination from the held-out
+    # metric. Both kept on the same device as the rendered tensor in-loop.
+    baseline_mse = predict_zero_baseline_mse(V, mask)
+    fg_mask = foreground_mask_otsu(V)
+    fg_t = torch.from_numpy(fg_mask)
+
     k_values_eff: List[int] = []
     held_psnr: List[float] = []
+    held_psnr_fg: List[float] = []
+    held_gain: List[float] = []
     train_psnr: List[float] = []
     held_mse: List[float] = []
     full_psnr: List[float] = []
     full_ssim: List[float] = []
     fit_times: List[float] = []
     splat_paths: List[str] = []
+
+    # Resolve the render device ONCE and hoist the loop-invariant device copies
+    # (original volume + masks) out of the per-K loop — they were re-copied to the
+    # GPU and never freed every iteration (M9). The held∩foreground mask and the
+    # train (unmasked) mask are also invariant, so build them once.
+    device_pref = fit_kwargs.get("device")
+    render_device = device_pref
+    if render_device in (None, "auto"):
+        render_device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else (
+                "mps"
+                if getattr(torch.backends, "mps", None)
+                and torch.backends.mps.is_available()
+                else "cpu"
+            )
+        )
+    ref_dev = V_orig_t.to(render_device)
+    mask_dev = mask_t.to(render_device)
+    fg_dev = fg_t.to(render_device)
+    train_mask_dev = ~mask_dev
+    held_fg_dev = mask_dev & fg_dev
 
     # 2-3. Fit at each K
     for i, K in enumerate(k_grid):
@@ -746,19 +1321,14 @@ def calibrate(
         elapsed = time.perf_counter() - t0
         fit_times.append(elapsed)
 
-        # Render on the same device the splats live on (or CPU as a fallback)
-        device_pref = fit_kwargs.get("device")
         with torch.no_grad():
             rendered = render_to_volume_tensor(
-                splats, shape=V.shape, device=device_pref
+                splats, shape=V.shape, device=render_device
             )
-            ref_t = V_orig_t.to(rendered.device)
-            mask_dev = mask_t.to(rendered.device)
-
             held_pred = rendered[mask_dev]
-            held_true = ref_t[mask_dev]
-            train_pred = rendered[~mask_dev]
-            train_true = ref_t[~mask_dev]
+            held_true = ref_dev[mask_dev]
+            train_pred = rendered[train_mask_dev]
+            train_true = ref_dev[train_mask_dev]
 
             held_mse_val = float(torch.mean((held_pred - held_true) ** 2).item())
             held_mse.append(held_mse_val)
@@ -769,6 +1339,21 @@ def calibrate(
             )
             held_psnr.append(held_psnr_val)
 
+            # Foreground-restricted held-out PSNR (background-domination removed)
+            fg_pred = rendered[held_fg_dev]
+            fg_true = ref_dev[held_fg_dev]
+            if fg_pred.numel() == 0:
+                held_psnr_fg.append(float("nan"))
+            else:
+                fg_mse = float(torch.mean((fg_pred - fg_true) ** 2).item())
+                held_psnr_fg.append(
+                    float("inf")
+                    if fg_mse == 0.0
+                    else float(10.0 * math.log10(data_range**2 / fg_mse))
+                )
+            # Gain over the predict-zero baseline (plateaus meaningfully)
+            held_gain.append(held_out_gain_db(held_mse_val, baseline_mse))
+
             train_mse = float(torch.mean((train_pred - train_true) ** 2).item())
             train_psnr_val = (
                 float("inf")
@@ -777,12 +1362,13 @@ def calibrate(
             )
             train_psnr.append(train_psnr_val)
 
-            full_psnr_val = compute_psnr(rendered, ref_t, data_range=data_range)
+            full_psnr_val = compute_psnr(rendered, ref_dev, data_range=data_range)
             full_psnr.append(float(full_psnr_val))
-            full_ssim_val = compute_ssim(rendered, ref_t, data_range=data_range)
+            full_ssim_val = compute_ssim(rendered, ref_dev, data_range=data_range)
             full_ssim.append(float(full_ssim_val))
 
-            del rendered, ref_t, mask_dev
+            # free only the per-iteration tensors; the hoisted device copies persist
+            del rendered, held_pred, held_true, train_pred, train_true, fg_pred, fg_true
 
         eff_k = int(splats.n_splats)
         k_values_eff.append(eff_k)
@@ -805,8 +1391,13 @@ def calibrate(
             )
 
         del splats
-        if device_pref and device_pref.startswith("cuda"):
+        if str(render_device).startswith("cuda"):
             torch.cuda.empty_cache()
+
+    # release the hoisted device copies
+    del ref_dev, mask_dev, fg_dev, train_mask_dev, held_fg_dev
+    if str(render_device).startswith("cuda"):
+        torch.cuda.empty_cache()
 
     # 4. Noise floor (on the original volume; needs [0, 1] for the PSNR ceiling
     # to be meaningful — the manuscript and fit_gaussian_splats both work in
@@ -820,8 +1411,66 @@ def calibrate(
         Vn_norm = Vn - vmin
     noise_floor = estimate_noise_floor(Vn_norm)
 
-    # 5. Peak detection
+    # 5. Peak detection — default metric is min--max PSNR (manuscript behaviour,
+    #    and the report/back-compat depend on `peak`). NEVER replaced.
     peak = find_k_star(list(k_grid), held_psnr)
+
+    # 5b. Optional regime-robust K* under a different metric (purely additive).
+    _metric_curves: Dict[str, List[float]] = {
+        "psnr_minmax": held_psnr,
+        "psnr_foreground": held_psnr_fg,
+        "gain": held_gain,
+    }
+    if k_star_metric not in _metric_curves:
+        raise ValueError(
+            f"unknown k_star_metric {k_star_metric!r}; use "
+            "'psnr_minmax', 'psnr_foreground', or 'gain'"
+        )
+    peak_selected: Optional[HeldOutPeak] = None
+    if k_star_metric != "psnr_minmax":
+        curve = _metric_curves[k_star_metric]
+        if bool(np.isfinite(np.asarray(curve, dtype=float)).any()):
+            peak_selected = find_k_star(list(k_grid), curve)
+
+    # 5c. Parametric R-D model on held-out MSE vs effective K + convergence flag.
+    rd: Optional[RDModel] = None
+    not_converged = False
+    if compute_rd_model:
+        rd = fit_rd_model([float(k) for k in k_values_eff], held_mse)
+        if rd is not None:
+            # converged_fraction is structurally < 1 for any power law (a clean
+            # beta~0.5 sweep lands ~0.9); only flag genuinely splat-starved curves
+            # that are still steeply climbing at K_max.
+            not_converged = rd.converged_fraction < 0.85
+
+    # 5d. Transferable splat density: feature count of the calibrated volume +
+    #     the (regime-appropriate) K* mapped to its effective splat count.
+    selected_peak = peak_selected if peak_selected is not None else peak
+    n_features = count_features(V, method=feature_method)
+    try:
+        star_idx = list(k_grid).index(selected_peak.k_star)
+        k_star_eff = int(k_values_eff[star_idx])
+    except (ValueError, IndexError):
+        k_star_eff = int(selected_peak.k_star)
+    # Cap per-box budgets at the largest *measured* effective K (the empirical
+    # ceiling), regardless of convergence — collapsing it to k_star_eff would
+    # truncate denser-than-reference tiles to the reference budget (M3).
+    saturation_cap = int(k_values_eff[-1]) if k_values_eff else k_star_eff
+    # Exact absolute level the detector counted at (method-aware: blurred-max for
+    # peaks, Otsu for intensity, sobel-max for edges) — recorded so the planner's
+    # scan_content counts on the identical scale (a naive 0.1*raw_max drifts).
+    feat_thr = feature_threshold(V, feature_method)
+    density = SplatDensity(
+        feature_method=feature_method,
+        n_features_reference=int(n_features),
+        k_star_reference=k_star_eff,
+        saturation_exponent=float(saturation_exponent),
+        saturation_cap=int(max(saturation_cap, k_star_eff)),
+        splats_per_feature=(
+            float(k_star_eff) / n_features if n_features > 0 else float("nan")
+        ),
+        feature_threshold=feat_thr,
+    )
 
     return CalibrationResult(
         k_values_requested=[int(k) for k in k_grid],
@@ -842,7 +1491,25 @@ def calibrate(
         volume_shape=list(V.shape),
         volume_dtype=str(V.dtype),
         timestamp=datetime.now(timezone.utc).isoformat(),
+        held_out_psnr_fg_db=held_psnr_fg,
+        held_out_gain_db=held_gain,
+        predict_zero_baseline_mse=baseline_mse,
+        k_star_metric=k_star_metric,
+        held_out_peak_selected=peak_selected,
+        splat_density=asdict(density),
+        rd_model=asdict(rd) if rd is not None else None,
+        not_converged=not_converged,
     )
+
+
+def _rehydrate_nan_dict(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Restore float-symmetry on reload: ``to_json`` writes NaN/inf as ``null``,
+    so a ``None`` inside a nested ``splat_density`` / ``rd_model`` dict means a
+    non-finite float. Map it back to ``nan`` so consumers (planner) don't choke
+    on ``float(None)``. Keys (all-string) are never None, so this is safe."""
+    if d is None:
+        return None
+    return {k: (float("nan") if v is None else v) for k, v in d.items()}
 
 
 def _json_safe(v: Any) -> bool:
@@ -859,11 +1526,21 @@ __all__ = [
     "HeldOutPeak",
     "NoiseFloor",
     "ProgressCallback",
+    "RDModel",
+    "RegionSelection",
+    "SplatDensity",
     "build_k_grid",
     "calibrate",
+    "count_features",
     "cv_mask",
     "donut_median_fill",
     "estimate_noise_floor",
     "find_k_star",
+    "fit_rd_model",
+    "foreground_mask_otsu",
+    "held_out_gain_db",
     "held_out_psnr",
+    "held_out_psnr_foreground",
+    "predict_zero_baseline_mse",
+    "select_calibration_region",
 ]

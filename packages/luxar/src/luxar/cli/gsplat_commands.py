@@ -21,6 +21,7 @@ from .gsplat_ops.benchmark import register_benchmark_commands
 from .gsplat_ops.encoding import _resolve_encoding_mode
 from .gsplat_ops.fitting import register_fitting_commands
 from .gsplat_ops.inspect import info_dataset, register_inspect_commands
+from .gsplat_ops.planner import register_planner_commands
 from .gsplat_ops.scene import register_scene_commands
 from .gsplat_ops.transforms import register_transforms_commands
 from .lod import register_lod_command
@@ -31,6 +32,7 @@ app_gsplat = typer.Typer(help="Gaussian splat tools")
 register_inspect_commands(app_gsplat)
 register_transforms_commands(app_gsplat)
 register_fitting_commands(app_gsplat)
+register_planner_commands(app_gsplat)
 register_scene_commands(app_gsplat)
 register_benchmark_commands(app_gsplat)
 register_lod_command(app_gsplat)
