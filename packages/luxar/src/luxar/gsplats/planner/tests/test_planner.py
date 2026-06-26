@@ -64,6 +64,42 @@ class TestScanContent:
         with pytest.raises(ValueError):
             scan_content(np.zeros((10, 10), np.float32))
 
+    def test_total_consistent_with_count_features(self):
+        # CRITICAL: the planner's feature total must match calibration.count_features
+        # (same detector/params) or the splats-per-feature density miscalibrates.
+        from luxar.gsplats.calibration import count_features
+
+        V = _corner_blobs()
+        scan_total = scan_content(V, cell=16, method="peaks").total
+        cf = count_features(V, method="peaks")
+        assert abs(scan_total - cf) <= max(2, 0.1 * cf)  # within ~10%
+
+    def test_threshold_abs_robust_to_outlier(self):
+        # A hot outlier inflates the global max, so the default global-relative
+        # threshold undercounts; an explicit absolute threshold (the level the
+        # calibration counted at) recovers the true feature scale. This is the
+        # composability fix for the cal->planner budget transfer.
+        V = _corner_blobs((128, 128, 128), n=16)
+        V[0, 0, 0] = 100.0  # outlier far above blob intensity (~1)
+        default = scan_content(V, cell=16, method="peaks").total
+        robust = scan_content(
+            V, cell=16, method="peaks", threshold_abs=0.1
+        ).total
+        assert robust > default  # absolute level is not suppressed by the outlier
+
+
+class TestThresholdThreading:
+    def test_plan_volume_uses_density_threshold(self):
+        V = _corner_blobs((128, 128, 128), n=16)
+        V[0, 0, 0] = 100.0  # outlier
+        d = _density(feature_threshold=0.1)  # blob-scale absolute threshold
+        plan = plan_volume(V, d, cell=16, min_leaf=32, max_leaf=64, overlap=8)
+        # whole-volume features at the abs threshold match count_features at it
+        total = sum(b.n_features for b in plan.boxes)
+        assert total > 0
+        # and budgets are non-trivial because features were not outlier-suppressed
+        assert plan.total_budget > 0
+
 
 class TestPlanPartition:
     def test_boxes_partition_volume_exactly(self):

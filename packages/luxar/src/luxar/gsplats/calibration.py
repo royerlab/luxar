@@ -781,6 +781,11 @@ class SplatDensity:
     """Effective K beyond which the reference region overfits / plateaus."""
     splats_per_feature: float
     """Linear reference density ``k_star / n_features`` (for reporting)."""
+    feature_threshold: float = 0.0
+    """Absolute intensity threshold used to count ``n_features_reference``. The
+    planner must scan at this same absolute level so its per-box counts are on the
+    same scale as the reference (threshold-relative-to-local-max does not compose
+    across regions, especially with hot outliers)."""
 
     def predict_k(self, n_features: int) -> int:
         """Predict the splat budget for a region with ``n_features`` features."""
@@ -1299,6 +1304,9 @@ def calibrate(
     saturation_cap = (
         int(k_values_eff[-1]) if (not_converged and k_values_eff) else k_star_eff
     )
+    # Absolute level count_features/count_local_maxima used (threshold_rel=0.1 of
+    # the calibrated array's max) — recorded so the planner counts on the same scale.
+    feature_threshold = 0.1 * float(np.max(V)) if V.size else 0.0
     density = SplatDensity(
         feature_method=feature_method,
         n_features_reference=int(n_features),
@@ -1308,6 +1316,7 @@ def calibrate(
         splats_per_feature=(
             float(k_star_eff) / n_features if n_features > 0 else float("nan")
         ),
+        feature_threshold=feature_threshold,
     )
 
     return CalibrationResult(

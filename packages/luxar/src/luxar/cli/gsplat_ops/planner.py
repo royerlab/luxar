@@ -44,6 +44,13 @@ def plan_command(
     saturation_cap: Optional[int] = typer.Option(
         None, "--saturation-cap", help="Per-box splat cap (default: 4x k_star_ref)."
     ),
+    feature_threshold: Optional[float] = typer.Option(
+        None,
+        "--feature-threshold",
+        help="Absolute intensity threshold for feature counting (the level the "
+        "calibration counted at). Taken from --cal automatically; pass explicitly "
+        "when using --k-star-ref/--n-features-ref so box counts match the reference.",
+    ),
     # planner knobs
     feature_metric: str = typer.Option(
         "peaks", "--feature-metric", help="Content metric: peaks | edges | intensity."
@@ -93,6 +100,7 @@ def plan_command(
                 saturation_exponent,
                 saturation_cap,
                 feature_metric,
+                feature_threshold,
             )
             aprint(
                 f"Density: {density.k_star_reference:,} splats / "
@@ -171,6 +179,7 @@ def _resolve_density(
     saturation_exponent: float,
     saturation_cap: Optional[int],
     feature_metric: str,
+    feature_threshold: Optional[float] = None,
 ) -> "SplatDensity":
     from luxar.gsplats.calibration import CalibrationResult, SplatDensity
 
@@ -180,7 +189,10 @@ def _resolve_density(
             raise typer.BadParameter(
                 f"{cal} has no splat_density (re-run `gsplat cal` to emit it)."
             )
-        return SplatDensity(**result.splat_density)
+        dens = SplatDensity(**result.splat_density)
+        if feature_threshold is not None:  # explicit override
+            dens.feature_threshold = float(feature_threshold)
+        return dens
     if k_star_ref is None or n_features_ref is None:
         raise typer.BadParameter(
             "provide --cal CAL.json, or both --k-star-ref and --n-features-ref."
@@ -193,6 +205,7 @@ def _resolve_density(
         saturation_exponent=float(saturation_exponent),
         saturation_cap=int(cap),
         splats_per_feature=float(k_star_ref) / max(1, int(n_features_ref)),
+        feature_threshold=float(feature_threshold or 0.0),
     )
 
 

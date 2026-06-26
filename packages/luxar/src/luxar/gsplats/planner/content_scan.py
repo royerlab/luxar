@@ -10,7 +10,7 @@ which the orientation-aware BSP planner consumes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterator, Optional, Tuple
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -75,11 +75,20 @@ def scan_content(
     volume: np.ndarray,
     cell: int = 16,
     method: str = "peaks",
-    downsample: int = 2,
+    downsample: int = 1,
     threshold_rel: float = 0.1,
+    threshold_abs: Optional[float] = None,
     device: Optional[str] = None,
 ) -> ContentField:
     """Compute a coarse feature-density field over ``volume`` (CPU, one pass).
+
+    The total feature count is **consistent with ``calibration.count_features``**
+    (same detector, same params) so the calibration's splats-per-feature density
+    transfers correctly to the planner's per-box counts. This is why the default
+    ``downsample=1``: a coarser scan would shrink the feature counts relative to
+    the calibrated reference and miscalibrate the budgets. ``downsample>1`` trades
+    that consistency for speed and must only be used if the density was
+    calibrated at the same downsample.
 
     Parameters
     ----------
@@ -89,57 +98,95 @@ def scan_content(
         Coarse-cell edge (full-res voxels). Sets the planner's spatial resolution.
     method : {"peaks", "edges", "intensity"}, default="peaks"
         Feature detector — matches ``calibration.count_features``.
-    downsample : int, default=2
-        Detect features on a ``downsample``-strided volume for speed (peaks/edges);
-        coordinates are mapped back to full-res before binning.
+    downsample : int, default=1
+        Detect features on a ``downsample``-strided volume (1 = consistent with
+        ``count_features``); coordinates are mapped back to full-res before binning.
     threshold_rel : float, default=0.1
         Relative intensity threshold for peak / edge / foreground detection.
     """
     v = np.asarray(volume, dtype=np.float32)
     if v.ndim != 3:
         raise ValueError(f"scan_content expects a 3-D volume, got shape {v.shape}")
-    Z, Y, X = v.shape
-    gz, gy, gx = (Z + cell - 1) // cell, (Y + cell - 1) // cell, (X + cell - 1) // cell
-    dens = np.zeros((gz, gy, gx), np.float64)
-
-    ds = max(1, int(downsample))
-    d = v[::ds, ::ds, ::ds]
-    thr = float(d.max()) * threshold_rel
-
-    if method == "peaks":
-        from luxar.gsplats.seeds.utils import soft_blur_nd
-
-        db = soft_blur_nd(d)
-        mx = ndi.maximum_filter(db, size=3)
-        coords = np.argwhere((db == mx) & (db > thr))
-        if coords.size:
-            coords = coords * ds  # back to full-res
-            np.add.at(
-                dens,
-                (coords[:, 0] // cell, coords[:, 1] // cell, coords[:, 2] // cell),
-                1.0,
-            )
-    elif method == "edges":
-        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
-
-        mag = np.asarray(_compute_nd_sobel_magnitude(d, device=device))
-        m = float(mag.max())
-        if m > 0:
-            ez, ey, ex = np.nonzero(mag >= threshold_rel * m)
-            if ez.size:
-                ez, ey, ex = ez * ds, ey * ds, ex * ds
-                np.add.at(dens, (ez // cell, ey // cell, ex // cell), 1.0)
-    elif method == "intensity":
-        fz, fy, fx = np.nonzero(d > thr)
-        if fz.size:
-            fz, fy, fx = fz * ds, fy * ds, fx * ds
-            np.add.at(dens, (fz // cell, fy // cell, fx // cell), 1.0)
-    else:
+    if method not in ("peaks", "edges", "intensity"):
         raise ValueError(
             f"unknown method {method!r}; use 'peaks', 'edges', or 'intensity'"
         )
+    Z, Y, X = v.shape
+    gz, gy, gx = (Z + cell - 1) // cell, (Y + cell - 1) // cell, (X + cell - 1) // cell
+    dens = np.zeros((gz, gy, gx), np.float64)
+    ds = max(1, int(downsample))
+
+    # Global threshold (single cheap reduction, no temporary). A *global* level
+    # makes per-box counts compose for the budget transfer; it also matches
+    # count_features on the densest region (whose max ≈ global max), so the
+    # calibration's reference count stays consistent.
+    global_max = float(v.max())
+    if global_max <= 0:
+        return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
+
+    # edges threshold is relative to a global gradient-magnitude max (one extra
+    # streamed reduction); peaks/intensity threshold relative to the global max.
+    edge_max = 0.0
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        for z0 in range(0, Z, _SLAB):
+            sl = v[z0 : min(Z, z0 + _SLAB) : ds, ::ds, ::ds]
+            if sl.size:
+                edge_max = max(edge_max, float(_compute_nd_sobel_magnitude(sl).max()))
+        if edge_max <= 0:
+            return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
+
+    # Prefer an explicit absolute threshold (the level the calibration counted at)
+    # so per-box counts compose with the density's reference; else fall back to a
+    # global-relative level. Absolute is outlier-robust and composes across boxes.
+    thr = float(threshold_abs) if threshold_abs is not None else global_max * threshold_rel
+    halo = 2 * ds  # blur(1) + max-filter(1), scaled by downsample
+
+    for z0, z1, a0, a1 in _z_slabs(Z, cell, ds, halo=halo):
+        block = v[a0:a1:ds, ::ds, ::ds]
+        zoff = (z0 - a0 + ds - 1) // ds  # first interior row within the (strided) block
+        zlen = (z1 - z0 + ds - 1) // ds
+        if method == "peaks":
+            from luxar.gsplats.seeds.utils import soft_blur_nd
+
+            db = soft_blur_nd(block)
+            mask = (db == ndi.maximum_filter(db, size=3)) & (db > thr)
+        elif method == "edges":
+            from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+            mask = np.asarray(_compute_nd_sobel_magnitude(block)) >= (
+                threshold_rel * edge_max
+            )
+        else:  # intensity
+            mask = block > thr
+        coords = np.argwhere(mask)
+        if coords.size == 0:
+            continue
+        interior = (coords[:, 0] >= zoff) & (coords[:, 0] < zoff + zlen)
+        coords = coords[interior]
+        if coords.size == 0:
+            continue
+        gzc = (coords[:, 0] * ds + a0) // cell
+        gyc = (coords[:, 1] * ds) // cell
+        gxc = (coords[:, 2] * ds) // cell
+        np.add.at(dens, (gzc, gyc, gxc), 1.0)
 
     return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
+
+
+_SLAB = 64  # z-planes per streamed block (bounds peak-scan memory on huge volumes)
+
+
+def _z_slabs(
+    Z: int, cell: int, ds: int, halo: int = 0
+) -> "Iterator[Tuple[int, int, int, int]]":
+    """Yield ``(z0, z1, a0, a1)`` z-slabs with halo (full-res coords)."""
+    for z0 in range(0, Z, _SLAB):
+        z1 = min(Z, z0 + _SLAB)
+        a0 = max(0, z0 - halo)
+        a1 = min(Z, z1 + halo)
+        yield z0, z1, a0, a1
 
 
 __all__ = ["ContentField", "scan_content"]

@@ -141,14 +141,27 @@ def plan_volume(
     max_leaf: int = 512,
     overlap: int = 32,
     device: Optional[str] = None,
+    threshold_abs: Optional[float] = None,
 ) -> FitPlan:
-    """Convenience: scan ``volume`` then plan. Returns a :class:`FitPlan`."""
+    """Convenience: scan ``volume`` then plan. Returns a :class:`FitPlan`.
+
+    ``threshold_abs`` defaults to the density's recorded ``feature_threshold`` so
+    the scan counts features on the same absolute scale as the calibration's
+    reference — the only way the per-box budgets are correctly scaled.
+    """
+    dens = _density_from(density)
+    if threshold_abs is None and getattr(dens, "feature_threshold", 0.0) > 0:
+        threshold_abs = dens.feature_threshold
     field = scan_content(
-        volume, cell=cell, method=feature_method, device=device
+        volume,
+        cell=cell,
+        method=feature_method,
+        threshold_abs=threshold_abs,
+        device=device,
     )
     return plan_partition(
         field,
-        density,
+        dens,
         target_features=target_features,
         min_leaf=min_leaf,
         max_leaf=max_leaf,
