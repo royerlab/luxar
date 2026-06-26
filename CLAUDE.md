@@ -217,6 +217,12 @@ luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config te
 # Tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
 luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
+# Parallel tiles on ONE GPU (no Slurm): spawn N `fit --tile` worker subprocesses,
+# then merge. Default -j 1 = sequential. `-j auto` sizes N from free VRAM.
+# Saturates the GPU when a single tile under-utilizes it (the local counterpart
+# of `batch plan --parallel`). --keep-tiles keeps the per-tile temp outputs.
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32 -j 4
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiled -j auto
 
 # HPC batch fitting (plans + submits Slurm array jobs)
 luxar gsplat batch plan data.zarr.zip output/ -p gpu                    # Dry-run plan

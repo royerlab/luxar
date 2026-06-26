@@ -210,6 +210,29 @@ def fit_volume(
         "--tile",
         help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
     ),
+    jobs: str = typer.Option(
+        "1",
+        "--jobs",
+        "-j",
+        help="With --tiled: number of tiles to fit concurrently as subprocesses "
+        "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
+        "sequential. Ignored without --tiled or with --tile.",
+    ),
+    keep_tiles: bool = typer.Option(
+        False,
+        "--keep-tiles",
+        help="With --tiled --jobs>1: keep the per-tile temporary .gsplats.zarr "
+        "outputs (and any .empty markers for skipped tiles) instead of "
+        "deleting them after the merge.",
+    ),
+    allow_empty_tile: bool = typer.Option(
+        False,
+        "--allow-empty-tile",
+        hidden=True,
+        help="Single-tile mode only: if the tile has no signal (0 splats), "
+        "write an empty marker and exit 0 instead of erroring. Used internally "
+        "by parallel --tiled --jobs so an empty tile is skipped at merge.",
+    ),
     # Progressive fitting
     progressive: bool = typer.Option(
         False,
@@ -270,10 +293,10 @@ def fit_volume(
     full control over all ~35 parameters.
 
     Presets:
-        draft    - Fast preview (500 iters)
-        standard - Balanced quality/speed (3000 iters)
-        hifi     - High quality (6000 iters)
-        ultra    - Maximum quality (10000 iters)
+        draft    - Fast preview (2000 iters)
+        standard - Balanced quality/speed (5000 iters)
+        hifi     - High quality (10000 iters)
+        ultra    - Maximum quality (20000 iters)
 
     Examples:
         luxar gsplat fit volume.npy splats.gsplats.zarr --preset draft --seeds 1000
@@ -436,6 +459,149 @@ def fit_volume(
                 parsed_downscale if parsed_downscale is not None else fc_downscale
             )
 
+            # 5b. Parallel tiled fitting: spawn one subprocess per tile.
+            # Branch BEFORE the in-memory downscale below — the parent skips the
+            # in-memory downscale (it only needs the shape to compute the grid);
+            # each worker re-invokes `fit --tile i/M`, loading and downscaling
+            # its own region and rescaling back to original coords, then we
+            # reload + merge. (The parent still holds the volume loaded above —
+            # only its shape is used here.) When --jobs resolves to 1 (e.g.
+            # `-j auto` on a CPU/MPS box, or an explicit `-j 0/1`), fall through
+            # to the in-process sequential path instead of spawning a subprocess.
+            if tiled and tile is None and jobs != "1":
+                import math
+
+                from luxar.gsplats.fit_tiled_parallel import (
+                    build_worker_cmd,
+                    fit_tiled_parallel,
+                    luxar_argv0,
+                    resolve_jobs,
+                )
+                from luxar.gsplats.fitting.downscale import normalize_downscale
+                from luxar.gsplats.tiling import compute_tile_specs
+
+                # Compute the tile grid on the POST-downscale shape (shape math
+                # only — decimation is volume[::f]) so the parent and workers
+                # agree on the tile count M.
+                ds_factors = (
+                    normalize_downscale(effective_downscale, volume.ndim)
+                    if effective_downscale is not None
+                    else None
+                )
+                if ds_factors is not None:
+                    grid_shape = tuple(
+                        len(range(0, s, f)) for s, f in zip(volume.shape, ds_factors)
+                    )
+                else:
+                    grid_shape = tuple(volume.shape)
+
+                specs = compute_tile_specs(grid_shape, tile_size, tile_overlap)
+                n_tiles = len(specs)
+                tile_voxels = max(
+                    (int(math.prod(s.shape)) for s in specs), default=1
+                )
+
+                try:
+                    n_jobs = resolve_jobs(
+                        jobs,
+                        tile_voxels=tile_voxels,
+                        num_tiles=n_tiles,
+                        device=device,
+                    )
+                except ValueError:
+                    aprint(f"Error: --jobs must be an integer or 'auto', got '{jobs}'")
+                    raise typer.Exit(1)
+
+                # Only spawn workers when there is genuine concurrency to gain.
+                # Otherwise (n_jobs == 1) fall through to the sequential tiled
+                # path below — no subprocess overhead for a single worker.
+                if n_jobs > 1:
+                    aprint(
+                        f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
+                        f"{n_jobs} concurrent worker(s)"
+                    )
+
+                    # Format downscale for worker argv (scalar or per-axis).
+                    ds_arg: Optional[str] = None
+                    if effective_downscale is not None:
+                        if isinstance(effective_downscale, (list, tuple)):
+                            ds_arg = ",".join(str(int(x)) for x in effective_downscale)
+                        else:
+                            ds_arg = str(int(effective_downscale))
+
+                    argv0 = luxar_argv0()
+
+                    def _worker_cmd(i: int, m: int, out_path: Path) -> list[str]:
+                        return build_worker_cmd(
+                            argv0,
+                            input_path,
+                            out_path,
+                            i,
+                            m,
+                            tile_size,
+                            tile_overlap,
+                            seeds=seeds,
+                            iters=iters,
+                            device=device,
+                            preset=preset,
+                            config=config,
+                            loss=loss,
+                            lr=lr,
+                            seed_method=seed_method,
+                            downscale=ds_arg,
+                            channel=channel,
+                            timepoint=timepoint,
+                            array_key=array_key,
+                            progressive=progressive,
+                            max_splats_per_pass=max_splats_per_pass,
+                            psnr_patience=psnr_patience,
+                            max_passes=max_passes,
+                            denoise=denoise,
+                            denoise_h=_denoise_effective_h,
+                            denoise_patch_size=denoise_patch_size,
+                            denoise_search_distance=denoise_search_distance,
+                            denoise_backend=denoise_backend,
+                            denoise_2d=denoise_2d,
+                            # Empty (windowed-to-zero) tiles must not crash the
+                            # whole run: the worker writes an .empty marker and
+                            # exits 0; the orchestrator skips it at merge.
+                            allow_empty_tile=True,
+                        )
+
+                    tmp_dir = output_path.parent / f".{output_path.name}.tiles"
+                    merge_cull = fit_config.get("cull_retention")
+
+                    with asection("Optimization (parallel tiles)"):
+                        result = fit_tiled_parallel(
+                            num_tiles=n_tiles,
+                            jobs=n_jobs,
+                            tmp_dir=tmp_dir,
+                            worker_cmd_builder=_worker_cmd,
+                            volume_shape=grid_shape,
+                            tile_size=tile_size,
+                            overlap=tile_overlap,
+                            progressive=progressive,
+                            cull_retention=merge_cull,
+                            verbose=verbose,
+                            keep_tiles=keep_tiles,
+                        )
+
+                    with asection(f"Saving to {output_path.name}"):
+                        result.save(output_path, compress=compress)
+                        n_splats = result.n_splats
+                        aprint(f"Saved {n_splats:,} splats")
+                        if output_path.exists():
+                            aprint(
+                                f"File size: "
+                                f"{format_memory_size(output_path.stat().st_size)}"
+                            )
+
+                    time_s = result.stats.get("time_seconds", 0)
+                    aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
+                    raise typer.Exit(0)
+
+                aprint("--jobs resolved to 1 worker; using sequential tiled fitting")
+
             # For tiled modes, downscale the volume before tiling
             tiled_downscale_factors = None
             if effective_downscale is not None and (tile is not None or tiled):
@@ -593,13 +759,23 @@ def fit_volume(
 
             # 7. Save
             with asection(f"Saving to {output_path.name}"):
-                result.save(output_path, compress=compress)
                 n_splats = result.n_splats
-                aprint(f"Saved {n_splats:,} splats")
-                if output_path.exists():
-                    aprint(
-                        f"File size: {format_memory_size(output_path.stat().st_size)}"
-                    )
+                if allow_empty_tile and tile is not None and n_splats == 0:
+                    # Empty tile (windowed to near-zero signal): the gsplats
+                    # writer enforces a no-empty policy, so instead of erroring
+                    # we drop an .empty marker that the parallel orchestrator
+                    # treats as a legitimately-skipped tile at merge time.
+                    marker = Path(str(output_path) + ".empty")
+                    marker.write_text("0 splats\n")
+                    aprint("Empty tile (0 splats): wrote marker, skipped save")
+                else:
+                    result.save(output_path, compress=compress)
+                    aprint(f"Saved {n_splats:,} splats")
+                    if output_path.exists():
+                        aprint(
+                            f"File size: "
+                            f"{format_memory_size(output_path.stat().st_size)}"
+                        )
 
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
