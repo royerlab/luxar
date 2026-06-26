@@ -291,6 +291,25 @@ class TestFindKStar:
         assert out.k_star in ks
         assert math.isfinite(out.confidence_db)
 
+    def test_flat_top_with_max_at_last_k_is_plateau(self):
+        # Regression for the real deconvolved-tile cal: curve rises then goes
+        # flat, but its noisy maximum lands on the LAST K. Total rise > 0.3 dB,
+        # yet the tail is flat (<0.1 dB) → must be 'plateau', not 'signal_limited'
+        # (the latter would inflate the K*-derived splat density).
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [42.15, 43.29, 43.50, 43.49, 43.52]  # last step +0.03 dB (flat)
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_star == 64000  # diminishing-returns onset, not 512k
+
+    def test_still_climbing_tail_stays_signal_limited(self):
+        # A genuinely starved curve (large last step) is unchanged.
+        ks = [16000, 64000, 128000, 256000, 512000]
+        psnr = [45.4, 45.9, 46.2, 47.8, 49.3]  # last step +1.5 dB
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+        assert out.k_star == 512000
+
     def test_length_mismatch_raises(self):
         with pytest.raises(ValueError):
             find_k_star([1, 2, 4], [10.0, 20.0])

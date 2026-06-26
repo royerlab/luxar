@@ -676,9 +676,11 @@ def find_k_star(
     1. **Peak**: the argmax is strictly interior AND both ``mean(pre-argmax)``
        and ``mean(post-argmax)`` are at least 0.1 dB below the peak. Return
        the argmax.
-    2. **Signal-limited**: the argmax is the last K and the curve rose by
-       ≥ 0.3 dB across the sweep (monotone rise in range). Return the
-       last K.
+    2. **Signal-limited**: the argmax is the last K, the curve rose by
+       ≥ 0.3 dB across the sweep, AND it is *still climbing at the top*
+       (the last finite step is ≥ 0.1 dB). Return the last K. The tail
+       check stops a flat-topped plateau (whose noisy max lands on the
+       last K) from being misread as signal-limited.
     3. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
        maximum — the onset of diminishing returns.
     """
@@ -720,9 +722,19 @@ def find_k_star(
                 confidence_db=margin,
             )
 
-    # 2. Signal-limited
-    first_finite_psnr = float(psnr_arr[finite][0])
-    if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3:
+    # 2. Signal-limited: argmax is the last K, the curve rose meaningfully overall,
+    #    AND it is still climbing at the top (the last finite step is not flat).
+    #    The tail check prevents a flat-topped *plateau* whose noisy maximum merely
+    #    lands on the last K from being mislabelled signal-limited — which would also
+    #    inflate any K*-derived splat density (observed on deconvolved tile cal).
+    finite_vals = psnr_arr[finite]
+    first_finite_psnr = float(finite_vals[0])
+    tail_rise = (
+        float(finite_vals[-1] - finite_vals[-2])
+        if finite_vals.size >= 2
+        else float("inf")
+    )
+    if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3 and tail_rise >= 0.1:
         return HeldOutPeak(
             k_star=int(k_arr[-1]),
             type="signal_limited",
