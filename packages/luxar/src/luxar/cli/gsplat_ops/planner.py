@@ -52,8 +52,12 @@ def plan_command(
         "when using --k-star-ref/--n-features-ref so box counts match the reference.",
     ),
     # planner knobs
-    feature_metric: str = typer.Option(
-        "peaks", "--feature-metric", help="Content metric: peaks | edges | intensity."
+    feature_metric: Optional[str] = typer.Option(
+        None,
+        "--feature-metric",
+        help="Content metric: peaks | edges | intensity. Defaults to the density's "
+        "calibrated metric (from --cal); must match it or budgets mis-scale. "
+        "With --k-star-ref it defaults to 'peaks'.",
     ),
     cell: int = typer.Option(16, "--cell", help="Content-scan cell size (voxels)."),
     target_features: Optional[int] = typer.Option(
@@ -108,13 +112,28 @@ def plan_command(
                 f"→ K ~ features^{density.saturation_exponent:.2f} (cap {density.saturation_cap:,})"
             )
 
+            # Reconcile the scan metric with the density's calibrated metric — they
+            # MUST match or per-box budgets are silently mis-scaled (predict_k
+            # divides by a reference counted with a different detector).
+            scan_metric = feature_metric or density.feature_method
+            if (
+                feature_metric is not None
+                and cal is not None
+                and feature_metric != density.feature_method
+            ):
+                aprint(
+                    f"⚠ --feature-metric '{feature_metric}' differs from the calibrated "
+                    f"density.feature_method '{density.feature_method}' — per-box budgets "
+                    f"will be mis-scaled. Use matching metrics."
+                )
+
             # 2. Scan + plan
             with asection("Scanning content + planning"):
                 t0 = time.perf_counter()
                 plan = plan_volume(
                     volume,
                     density,
-                    feature_method=feature_metric,
+                    feature_method=scan_metric,
                     cell=cell,
                     target_features=target_features,
                     min_leaf=min_leaf,
@@ -181,7 +200,7 @@ def _resolve_density(
     n_features_ref: Optional[int],
     saturation_exponent: float,
     saturation_cap: Optional[int],
-    feature_metric: str,
+    feature_metric: Optional[str],
     feature_threshold: Optional[float] = None,
 ) -> "SplatDensity":
     from luxar.gsplats.calibration import CalibrationResult, SplatDensity
@@ -202,7 +221,7 @@ def _resolve_density(
         )
     cap = saturation_cap if saturation_cap is not None else int(k_star_ref * 4)
     return SplatDensity(
-        feature_method=feature_metric,
+        feature_method=feature_metric or "peaks",
         n_features_reference=int(n_features_ref),
         k_star_reference=int(k_star_ref),
         saturation_exponent=float(saturation_exponent),

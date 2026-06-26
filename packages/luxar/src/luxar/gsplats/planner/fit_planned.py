@@ -51,6 +51,10 @@ def fit_planned(
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
 
+    # Per-tile saturation cap (from the calibration): the halo inflation below must
+    # not push the fit past the K the calibration measured as over-saturated.
+    cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
+
     cs: list[np.ndarray] = []
     amps: list[np.ndarray] = []
     chols: list[np.ndarray] = []
@@ -64,9 +68,12 @@ def fit_planned(
         px0, px1 = max(0, x0 - pad), min(X, x1 + pad)
         sub = V[pz0:pz1, py0:py1, px0:px1]
         # scale the budget up for the padded volume so the core keeps ~b.budget
-        # splats (capped at 4x to bound cost on thin slabs)
+        # splats (capped at 4x to bound cost on thin slabs, and at the calibrated
+        # saturation cap so we never fit past the over-saturated regime)
         core_vox = max(1, b.voxels)
         budget = int(min(b.budget * sub.size / core_vox, b.budget * 4))
+        if cap > 0:
+            budget = min(budget, cap)
         if budget <= 0:
             continue
         if progress_callback is not None:
@@ -97,7 +104,7 @@ def fit_planned(
         if device and str(device).startswith("cuda"):
             torch.cuda.empty_cache()
 
-    if not cs:
+    if sum(int(c.shape[0]) for c in cs) == 0:
         raise ValueError("fit_planned produced no splats (all boxes empty?)")
     merged = GSplatData(
         centers=np.concatenate(cs).astype(np.float32),

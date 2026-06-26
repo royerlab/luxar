@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -87,6 +89,39 @@ class TestScanContent:
         ).total
         assert robust > default  # absolute level is not suppressed by the outlier
 
+    def test_scan_matches_count_features_at_recorded_threshold(self):
+        # C1/H5 regression: scanning at the EXACT level the calibration recorded
+        # (feature_threshold = 0.1*blurred_max) reproduces count_features even with
+        # a hot outlier present — the cal->planner counts are on one scale.
+        from luxar.gsplats.calibration import count_features, feature_threshold
+
+        V = _corner_blobs((128, 128, 128), n=16)
+        V[0, 0, 0] = 100.0  # hot outlier
+        thr = feature_threshold(V, "peaks")
+        scan = scan_content(V, cell=16, method="peaks", threshold_abs=thr).total
+        cf = count_features(V, method="peaks")
+        assert abs(scan - cf) <= max(2, 0.1 * cf)
+
+
+class TestSpecFitPlan:
+    def test_overlap_fraction_two_sided_halo(self):
+        # M7: boxes GROW by 2*overlap per axis at fit time; overhead is
+        # 1 - (L/(L+2*overlap))^3, not the old (L-overlap)/L model.
+        from luxar.gsplats.planner import FitPlan, PlanBox
+
+        plan = FitPlan(
+            volume_shape=[256, 256, 256],
+            boxes=[PlanBox(box=[0, 256, 0, 256, 0, 256], n_features=100, budget=1000)],
+            overlap=32,
+            feature_method="peaks",
+            min_leaf=256,
+            max_leaf=512,
+        )
+        med, mx = plan.overlap_fraction()
+        expected = 1.0 - (256 / (256 + 64)) ** 3  # ~0.488
+        assert math.isclose(med, expected, rel_tol=1e-6)
+        assert math.isclose(mx, expected, rel_tol=1e-6)
+
 
 class TestFitPlanned:
     def test_fit_planned_cpu_smoke(self):
@@ -111,6 +146,31 @@ class TestFitPlanned:
         # all splats fall inside the volume bounds
         assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
         assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
+
+
+class TestPlanCliResolveDensity:
+    def test_explicit_flags_build_density(self):
+        from luxar.cli.gsplat_ops.planner import _resolve_density
+
+        d = _resolve_density(None, 40000, 5000, 0.44, None, "peaks", 900.0)
+        assert d.k_star_reference == 40000 and d.n_features_reference == 5000
+        assert d.saturation_cap == 160000  # 4x default
+        assert d.feature_threshold == 900.0
+        assert d.feature_method == "peaks"
+
+    def test_missing_flags_raise(self):
+        import typer
+
+        from luxar.cli.gsplat_ops.planner import _resolve_density
+
+        with pytest.raises(typer.BadParameter):
+            _resolve_density(None, None, None, 0.44, None, None, None)
+
+    def test_none_metric_defaults_to_peaks(self):
+        from luxar.cli.gsplat_ops.planner import _resolve_density
+
+        d = _resolve_density(None, 1000, 100, 0.44, None, None, None)
+        assert d.feature_method == "peaks"
 
 
 class TestThresholdThreading:

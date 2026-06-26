@@ -243,25 +243,24 @@ def held_out_gain_db(held_mse: float, baseline_mse: float) -> float:
     return float(10.0 * math.log10(baseline_mse / held_mse))
 
 
-def foreground_mask_otsu(V: np.ndarray) -> np.ndarray:
-    """Boolean foreground mask via Otsu's threshold (``V > thr``).
-
-    Subsamples large volumes for the threshold estimate (Otsu only needs the
-    histogram). Falls back to ``V > V.min()`` if Otsu is unavailable or the
-    volume is constant.
-    """
+def _otsu_threshold(V: np.ndarray) -> float:
+    """Otsu threshold (subsampled for speed); falls back to ``V.min()``."""
     v = np.asarray(V)
     flat = v.reshape(-1)
-    # cap the histogram sample for speed on gigavoxel volumes
-    if flat.size > 5_000_000:
+    if flat.size > 5_000_000:  # cap histogram sample on gigavoxel volumes
         flat = flat[:: max(1, flat.size // 5_000_000)]
     try:
         from skimage.filters import threshold_otsu  # lazy: optional dep
 
-        thr = float(threshold_otsu(flat.astype(np.float32, copy=False)))  # type: ignore[no-untyped-call]
+        return float(threshold_otsu(flat.astype(np.float32, copy=False)))  # type: ignore[no-untyped-call]
     except Exception:
-        thr = float(v.min())
-    return v > thr
+        return float(v.min())
+
+
+def foreground_mask_otsu(V: np.ndarray) -> np.ndarray:
+    """Boolean foreground mask via Otsu's threshold (``V > thr``)."""
+    v = np.asarray(V)
+    return v > _otsu_threshold(v)
 
 
 def held_out_psnr_foreground(
@@ -342,6 +341,36 @@ def count_features(V: np.ndarray, method: str = "peaks", **kwargs: Any) -> int:
     )
 
 
+def feature_threshold(V: np.ndarray, method: str = "peaks", threshold_rel: float = 0.1) -> float:
+    """The *exact absolute intensity level* :func:`count_features` thresholds at.
+
+    Single source of truth for the cal→planner contract: the calibration records
+    this so the planner's ``scan_content`` counts on the identical scale (the
+    detectors threshold relative to a *blurred* / gradient / Otsu level, NOT the
+    raw max, so a naive ``0.1*max`` drifts — badly with hot outliers).
+
+    * ``peaks``     → ``threshold_rel * max(soft_blur(V))`` (matches count_local_maxima)
+    * ``edges``     → ``threshold_rel * max(|∇V|)``
+    * ``intensity`` → the Otsu cut
+    """
+    v = np.asarray(V, dtype=np.float32)
+    if v.size == 0:
+        return 0.0
+    if method == "peaks":
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        return float(threshold_rel * float(np.asarray(soft_blur_nd(v)).max()))
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        return float(threshold_rel * float(np.asarray(_compute_nd_sobel_magnitude(v)).max()))
+    if method == "intensity":
+        return _otsu_threshold(v)
+    raise ValueError(
+        f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
+    )
+
+
 @dataclass
 class RegionSelection:
     """Provenance of an auto-selected calibration sub-region."""
@@ -379,8 +408,16 @@ def select_calibration_region(
     (``strategy="whole"``).
     """
     v = np.asarray(V)
+    if v.ndim != 3:
+        raise ValueError(
+            f"select_calibration_region expects a 3-D volume, got shape {v.shape}"
+        )
     shape = v.shape
     size = [int(min(region_size, s)) for s in shape]
+    # One global absolute threshold so a flat-noise window (whose tiny *local* max
+    # would otherwise spawn spurious maxima under the per-crop relative threshold)
+    # cannot out-score a real content window.
+    global_thr = feature_threshold(v, feature)
 
     def _origins(n: int, t: int) -> List[int]:
         os_ = list(range(0, n - t + 1, t))
@@ -407,7 +444,13 @@ def select_calibration_region(
     for origin in itertools.product(*axis_origins):
         sl = tuple(slice(origin[d], origin[d] + size[d]) for d in range(v.ndim))
         crop = v[sl]
-        n = count_features(crop, method=feature, **feature_kwargs)
+        # gate near-empty windows: if a window has no voxel above the global
+        # threshold it is background and scores 0 (not a calibration candidate).
+        n = (
+            count_features(crop, method=feature, **feature_kwargs)
+            if float(crop.max()) >= global_thr
+            else 0
+        )
         candidates.append((int(n), float(crop.sum()), list(origin), int(n)))
 
     if not candidates:  # pragma: no cover - defensive
@@ -727,12 +770,15 @@ def find_k_star(
     #    The tail check prevents a flat-topped *plateau* whose noisy maximum merely
     #    lands on the last K from being mislabelled signal-limited — which would also
     #    inflate any K*-derived splat density (observed on deconvolved tile cal).
-    finite_vals = psnr_arr[finite]
-    first_finite_psnr = float(finite_vals[0])
+    fin_idx = np.flatnonzero(finite)
+    first_finite_psnr = float(psnr_arr[fin_idx[0]])
+    # Credit a climbing tail ONLY when the last two finite samples are *adjacent*
+    # K's — a NaN/inf gap before the last K (psnr_foreground appends NaN, gain can
+    # be inf) must not be misread as a single-step climb.
     tail_rise = (
-        float(finite_vals[-1] - finite_vals[-2])
-        if finite_vals.size >= 2
-        else float("inf")
+        float(psnr_arr[fin_idx[-1]] - psnr_arr[fin_idx[-2]])
+        if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1
+        else 0.0
     )
     if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3 and tail_rise >= 0.1:
         return HeldOutPeak(
@@ -1044,8 +1090,8 @@ class CalibrationResult:
                 if raw.get("original_volume_shape") is not None
                 else None
             ),
-            splat_density=raw.get("splat_density"),
-            rd_model=raw.get("rd_model"),
+            splat_density=_rehydrate_nan_dict(raw.get("splat_density")),
+            rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
             not_converged=bool(raw.get("not_converged", False)),
         )
 
@@ -1290,7 +1336,10 @@ def calibrate(
     if compute_rd_model:
         rd = fit_rd_model([float(k) for k in k_values_eff], held_mse)
         if rd is not None:
-            not_converged = rd.converged_fraction < 0.95
+            # converged_fraction is structurally < 1 for any power law (a clean
+            # beta~0.5 sweep lands ~0.9); only flag genuinely splat-starved curves
+            # that are still steeply climbing at K_max.
+            not_converged = rd.converged_fraction < 0.85
 
     # 5d. Transferable splat density: feature count of the calibrated volume +
     #     the (regime-appropriate) K* mapped to its effective splat count.
@@ -1304,9 +1353,10 @@ def calibrate(
     saturation_cap = (
         int(k_values_eff[-1]) if (not_converged and k_values_eff) else k_star_eff
     )
-    # Absolute level count_features/count_local_maxima used (threshold_rel=0.1 of
-    # the calibrated array's max) — recorded so the planner counts on the same scale.
-    feature_threshold = 0.1 * float(np.max(V)) if V.size else 0.0
+    # Exact absolute level the detector counted at (method-aware: blurred-max for
+    # peaks, Otsu for intensity, sobel-max for edges) — recorded so the planner's
+    # scan_content counts on the identical scale (a naive 0.1*raw_max drifts).
+    feat_thr = feature_threshold(V, feature_method)
     density = SplatDensity(
         feature_method=feature_method,
         n_features_reference=int(n_features),
@@ -1316,7 +1366,7 @@ def calibrate(
         splats_per_feature=(
             float(k_star_eff) / n_features if n_features > 0 else float("nan")
         ),
-        feature_threshold=feature_threshold,
+        feature_threshold=feat_thr,
     )
 
     return CalibrationResult(
@@ -1347,6 +1397,16 @@ def calibrate(
         rd_model=asdict(rd) if rd is not None else None,
         not_converged=not_converged,
     )
+
+
+def _rehydrate_nan_dict(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Restore float-symmetry on reload: ``to_json`` writes NaN/inf as ``null``,
+    so a ``None`` inside a nested ``splat_density`` / ``rd_model`` dict means a
+    non-finite float. Map it back to ``nan`` so consumers (planner) don't choke
+    on ``float(None)``. Keys (all-string) are never None, so this is safe."""
+    if d is None:
+        return None
+    return {k: (float("nan") if v is None else v) for k, v in d.items()}
 
 
 def _json_safe(v: Any) -> bool:

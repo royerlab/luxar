@@ -30,13 +30,19 @@ from .spec import FitPlan, PlanBox
 def _density_from(obj: Union[SplatDensity, dict]) -> SplatDensity:
     if isinstance(obj, SplatDensity):
         return obj
+
+    def _f(key: str, default: float) -> float:
+        v = obj.get(key, default)
+        return float(default) if v is None else float(v)  # None == round-tripped NaN
+
     return SplatDensity(
         feature_method=str(obj.get("feature_method", "peaks")),
         n_features_reference=int(obj["n_features_reference"]),
         k_star_reference=int(obj["k_star_reference"]),
-        saturation_exponent=float(obj.get("saturation_exponent", 0.44)),
+        saturation_exponent=_f("saturation_exponent", 0.44),
         saturation_cap=int(obj["saturation_cap"]),
-        splats_per_feature=float(obj.get("splats_per_feature", float("nan"))),
+        splats_per_feature=_f("splats_per_feature", float("nan")),
+        feature_threshold=_f("feature_threshold", 0.0),
     )
 
 

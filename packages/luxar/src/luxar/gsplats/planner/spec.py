@@ -67,14 +67,19 @@ class FitPlan:
         return len(self.boxes)
 
     def overlap_fraction(self) -> Tuple[float, float]:
-        """(median, max) per-box overlap volume fraction for the configured halo."""
+        """(median, max) per-box halo overhead fraction.
+
+        ``fit_planned`` pads each box by ``overlap`` on *both* sides of every axis,
+        so the fitted volume is ``(L + 2*overlap)`` per axis; the wasted (halo)
+        fraction is ``1 - prod(L / (L + 2*overlap))``.
+        """
         if not self.boxes:
             return 0.0, 0.0
         fracs = []
         for b in self.boxes:
             core = 1.0
             for L in b.dims:
-                core *= max(L - self.overlap, 1) / L
+                core *= L / (L + 2 * self.overlap)
             fracs.append(1.0 - core)
         fracs.sort()
         return fracs[len(fracs) // 2], fracs[-1]

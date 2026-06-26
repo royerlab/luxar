@@ -1189,6 +1189,9 @@ def calibrate_command(
             )
             aprint(f"  Noise floor:    σ = {sigma_str}, PSNR ceiling = {ceil_str}")
             aprint("")
+            # The headline / table marker track the metric the user selected
+            # (falls back to the legacy min--max peak when no metric switch).
+            selected_peak = result.held_out_peak_selected or result.held_out_peak
             aprint(
                 "    K_req     K_eff    PSNR_train  PSNR_held-out   PSNR_full   SSIM_full   fit (s)"
             )
@@ -1208,21 +1211,21 @@ def calibrate_command(
                         return "  inf"
                     return f"{x:6.2f}"
 
-                marker = "★" if k_req == result.held_out_peak.k_star else " "
+                marker = "★" if k_req == selected_peak.k_star else " "
                 aprint(
                     f"  {marker} {k_req:7d}  {k_eff:7d}    {_f(pt)} dB     {_f(ph)} dB    {_f(pf)} dB    {sf:5.3f}    {ft:6.1f}"
                 )
             aprint("")
+            # Headline = the K* under the metric the user actually selected.
             aprint(
-                f"  ★ Recommended K* = {result.held_out_peak.k_star:,}  "
-                f"(type: {result.held_out_peak.type}, "
-                f"confidence: {result.held_out_peak.confidence_db:.2f} dB)"
+                f"  ★ Recommended K* = {selected_peak.k_star:,}  "
+                f"(metric: {result.k_star_metric}, type: {selected_peak.type}, "
+                f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
             if result.held_out_peak_selected is not None:
-                sp = result.held_out_peak_selected
                 aprint(
-                    f"  ★ K* [{result.k_star_metric}] = {sp.k_star:,}  "
-                    f"(type: {sp.type}, confidence: {sp.confidence_db:.2f} dB)"
+                    f"    (psnr_minmax K* = {result.held_out_peak.k_star:,}, "
+                    f"type: {result.held_out_peak.type})"
                 )
             if result.splat_density is not None:
                 sd = result.splat_density

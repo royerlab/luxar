@@ -124,23 +124,44 @@ def scan_content(
     if global_max <= 0:
         return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
 
-    # edges threshold is relative to a global gradient-magnitude max (one extra
-    # streamed reduction); peaks/intensity threshold relative to the global max.
-    edge_max = 0.0
+    # Determine the absolute threshold to use, per method, so the detector here is
+    # IDENTICAL to calibration.count_features (else per-box counts drift — badly
+    # with hot outliers). Prefer an explicit threshold_abs (the exact level the
+    # calibration recorded); otherwise reconstruct the same global level.
     if method == "edges":
         from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
 
+        if threshold_abs is not None:
+            thr = float(threshold_abs)
+        else:
+            edge_max = 0.0
+            for z0 in range(0, Z, _SLAB):
+                sl = v[z0 : min(Z, z0 + _SLAB) : ds, ::ds, ::ds]
+                if sl.size:
+                    edge_max = max(
+                        edge_max, float(_compute_nd_sobel_magnitude(sl).max())
+                    )
+            thr = threshold_rel * edge_max
+    elif method == "peaks" and threshold_abs is None:
+        # count_local_maxima thresholds the *blurred* field at threshold_rel*blurred_max
+        # (NOT raw max) — reconstruct the global blurred max so we match it.
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        bmax = 0.0
         for z0 in range(0, Z, _SLAB):
             sl = v[z0 : min(Z, z0 + _SLAB) : ds, ::ds, ::ds]
             if sl.size:
-                edge_max = max(edge_max, float(_compute_nd_sobel_magnitude(sl).max()))
-        if edge_max <= 0:
-            return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
+                bmax = max(bmax, float(np.asarray(soft_blur_nd(sl)).max()))
+        thr = threshold_rel * bmax
+    else:
+        thr = (
+            float(threshold_abs)
+            if threshold_abs is not None
+            else global_max * threshold_rel
+        )
+    if thr <= 0:
+        return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
 
-    # Prefer an explicit absolute threshold (the level the calibration counted at)
-    # so per-box counts compose with the density's reference; else fall back to a
-    # global-relative level. Absolute is outlier-robust and composes across boxes.
-    thr = float(threshold_abs) if threshold_abs is not None else global_max * threshold_rel
     halo = 2 * ds  # blur(1) + max-filter(1), scaled by downsample
 
     for z0, z1, a0, a1 in _z_slabs(Z, cell, ds, halo=halo):
@@ -151,15 +172,14 @@ def scan_content(
             from luxar.gsplats.seeds.utils import soft_blur_nd
 
             db = soft_blur_nd(block)
-            mask = (db == ndi.maximum_filter(db, size=3)) & (db > thr)
+            # match count_local_maxima exactly: blurred field, '>=' threshold
+            mask = (db == ndi.maximum_filter(db, size=3)) & (db >= thr)
         elif method == "edges":
             from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
 
-            mask = np.asarray(_compute_nd_sobel_magnitude(block)) >= (
-                threshold_rel * edge_max
-            )
+            mask = np.asarray(_compute_nd_sobel_magnitude(block)) >= thr
         else:  # intensity
-            mask = block > thr
+            mask = block >= thr
         coords = np.argwhere(mask)
         if coords.size == 0:
             continue
