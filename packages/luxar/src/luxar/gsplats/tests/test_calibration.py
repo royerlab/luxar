@@ -656,12 +656,7 @@ class TestContentAwareMetric:
 class TestCountFeatures:
     def test_recovers_separated_blobs(self):
         # 8 well-separated blobs on a coarse grid -> ~8 peaks.
-        centers = [
-            (z, y, x)
-            for z in (8, 24)
-            for y in (8, 24)
-            for x in (8, 24)
-        ]
+        centers = [(z, y, x) for z in (8, 24) for y in (8, 24) for x in (8, 24)]
         V = _sparse_blobs((32, 32, 32), centers=centers, sigma2=2.0)
         n = count_features(V, method="peaks")
         assert 6 <= n <= 10  # recovers ~8
@@ -692,6 +687,33 @@ class TestSelectRegion:
         assert reg.strategy == "whole"
         assert crop.shape == V.shape
 
+    def test_densest_robust_to_hot_outlier(self):
+        # A single hot voxel (dead/stuck pixel) used to inflate the global level so
+        # that every genuine-content window was gated to 0 features while the lone
+        # outlier window scored 1 — so "densest" picked the outlier. The robust
+        # (percentile-based) level + shared-absolute counting must pick the real
+        # content window instead.
+        V = np.zeros((64, 64, 64), np.float32)
+        zz, yy, xx = np.mgrid[0:64, 0:64, 0:64]
+        for cz, cy, cx in [
+            (40, 40, 40),
+            (40, 52, 52),
+            (52, 40, 52),
+            (52, 52, 40),
+            (44, 48, 40),
+            (40, 44, 52),
+        ]:  # six blobs all inside the [32:64]^3 window
+            V += np.exp(
+                -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+            ).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        V[8, 8, 8] = 300.0  # hot outlier in the [0:32]^3 window
+
+        _, reg = select_calibration_region(V, region_size=32, strategy="densest")
+        assert reg.origin == [32, 32, 32]  # the genuine-content window
+        assert reg.origin != [0, 0, 0]  # NOT the lone-outlier window (pre-fix bug)
+        assert reg.n_features >= 5  # recovered the blobs, not the single outlier
+
     def test_unknown_strategy_raises(self):
         V = _sparse_blobs((48, 48, 48))
         with pytest.raises(ValueError):
@@ -710,7 +732,9 @@ class TestRDModel:
         assert rd.converged_fraction > 0.9  # broad sweep -> converged
 
     def test_k_for_error_inverts(self):
-        rd = RDModel(floor=0.01, a=4.0, beta=0.5, rmse=0.0, n_points=5, converged_fraction=1.0)
+        rd = RDModel(
+            floor=0.01, a=4.0, beta=0.5, rmse=0.0, n_points=5, converged_fraction=1.0
+        )
         k = rd.k_for_error(0.05)
         assert math.isfinite(k)
         assert math.isclose(rd.predict_error(k), 0.05, rel_tol=1e-6)

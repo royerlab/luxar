@@ -296,7 +296,13 @@ def held_out_psnr_foreground(
 # =============================================================================
 
 
-def count_features(V: np.ndarray, method: str = "peaks", **kwargs: Any) -> int:
+def count_features(
+    V: np.ndarray,
+    method: str = "peaks",
+    *,
+    threshold_abs: Optional[float] = None,
+    **kwargs: Any,
+) -> int:
     """Estimate the feature content of a volume — the predictor of splat need.
 
     The empirical investigation found local-maxima count (``peaks``) the best
@@ -311,6 +317,14 @@ def count_features(V: np.ndarray, method: str = "peaks", **kwargs: Any) -> int:
         Input volume.
     method : {"peaks", "edges", "intensity"}, default="peaks"
         Feature estimator. Pluggable so non-nuclear data can choose ``edges``.
+    threshold_abs : float, optional
+        Absolute detection level (the value :func:`feature_threshold` returns).
+        When given, every method counts at this *shared* level instead of a
+        per-volume relative one — so counts on different crops compose (required
+        when ranking sliding windows; a per-crop relative threshold lets a
+        faint-noise window out-score a real one). ``peaks``/``edges`` threshold
+        the blurred / gradient field at it; ``intensity`` counts ``V > thr``
+        (strict ``>``, matching :func:`foreground_mask_otsu`).
     **kwargs
         Forwarded to the underlying estimator (e.g. ``radius``,
         ``threshold_rel`` for ``peaks``).
@@ -324,24 +338,31 @@ def count_features(V: np.ndarray, method: str = "peaks", **kwargs: Any) -> int:
     if method == "peaks":
         from luxar.gsplats.seeds.utils import count_local_maxima
 
-        return int(count_local_maxima(v, **kwargs))
+        return int(count_local_maxima(v, threshold_abs=threshold_abs, **kwargs))
     if method == "edges":
         from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
 
-        thr_rel = float(kwargs.get("threshold_rel", 0.1))
         mag = np.asarray(_compute_nd_sobel_magnitude(v))
-        m = float(mag.max())
-        if m <= 0.0:
-            return 0
-        return int(np.count_nonzero(mag >= thr_rel * m))
+        if threshold_abs is not None:
+            thr = float(threshold_abs)
+        else:
+            m = float(mag.max())
+            if m <= 0.0:
+                return 0
+            thr = float(kwargs.get("threshold_rel", 0.1)) * m
+        return int(np.count_nonzero(mag >= thr))
     if method == "intensity":
+        if threshold_abs is not None:
+            return int(np.count_nonzero(v > float(threshold_abs)))
         return int(np.count_nonzero(foreground_mask_otsu(v)))
     raise ValueError(
         f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
     )
 
 
-def feature_threshold(V: np.ndarray, method: str = "peaks", threshold_rel: float = 0.1) -> float:
+def feature_threshold(
+    V: np.ndarray, method: str = "peaks", threshold_rel: float = 0.1
+) -> float:
     """The *exact absolute intensity level* :func:`count_features` thresholds at.
 
     Single source of truth for the cal→planner contract: the calibration records
@@ -363,9 +384,58 @@ def feature_threshold(V: np.ndarray, method: str = "peaks", threshold_rel: float
     if method == "edges":
         from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
 
-        return float(threshold_rel * float(np.asarray(_compute_nd_sobel_magnitude(v)).max()))
+        return float(
+            threshold_rel * float(np.asarray(_compute_nd_sobel_magnitude(v)).max())
+        )
     if method == "intensity":
         return _otsu_threshold(v)
+    raise ValueError(
+        f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
+    )
+
+
+def _robust_feature_level(
+    V: np.ndarray,
+    method: str = "peaks",
+    threshold_rel: float = 0.1,
+    q: float = 99.9,
+    **_: Any,
+) -> float:
+    """Outlier-robust analogue of :func:`feature_threshold` for window ranking.
+
+    Identical in spirit to :func:`feature_threshold` but bases the level on the
+    ``q``-th percentile of the (method-transformed) field instead of its **max**,
+    so a handful of hot voxels (dead/stuck pixels, cosmic-ray hits) cannot set the
+    global signal level above genuine content — which would otherwise gate every
+    real window to zero and let the lone-outlier window win
+    (:func:`select_calibration_region`). Used ONLY for ranking; the cal→planner
+    contract still records the max-based :func:`feature_threshold` on the chosen
+    crop, so this does not perturb the transferred density.
+    """
+    v = np.asarray(V, dtype=np.float32)
+    if v.size == 0:
+        return 0.0
+
+    def _subsample(field: np.ndarray) -> np.ndarray:
+        flat = field.reshape(-1)
+        if flat.size > 5_000_000:  # bound the percentile cost on gigavoxel volumes
+            flat = flat[:: max(1, flat.size // 5_000_000)]
+        return flat
+
+    if method == "peaks":
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        field = _subsample(np.asarray(soft_blur_nd(v)))
+        return float(threshold_rel * float(np.percentile(field, q)))
+    if method == "edges":
+        from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
+
+        field = _subsample(np.asarray(_compute_nd_sobel_magnitude(v)))
+        return float(threshold_rel * float(np.percentile(field, q)))
+    if method == "intensity":
+        flat = _subsample(v)
+        hi = float(np.percentile(flat, q))
+        return _otsu_threshold(np.minimum(flat, hi))  # Otsu on winsorised values
     raise ValueError(
         f"unknown feature method {method!r}; use 'peaks', 'edges', or 'intensity'"
     )
@@ -414,10 +484,6 @@ def select_calibration_region(
         )
     shape = v.shape
     size = [int(min(region_size, s)) for s in shape]
-    # One global absolute threshold so a flat-noise window (whose tiny *local* max
-    # would otherwise spawn spurious maxima under the per-crop relative threshold)
-    # cannot out-score a real content window.
-    global_thr = feature_threshold(v, feature)
 
     def _origins(n: int, t: int) -> List[int]:
         os_ = list(range(0, n - t + 1, t))
@@ -425,7 +491,7 @@ def select_calibration_region(
             os_.append(max(0, n - t))
         return os_
 
-    # whole-volume short-circuit
+    # whole-volume short-circuit (no cross-window ranking needed)
     if all(size[d] == shape[d] for d in range(v.ndim)):
         n = count_features(v, method=feature, **feature_kwargs)
         return v, RegionSelection(
@@ -436,6 +502,13 @@ def select_calibration_region(
             score=float(n) / max(1, v.size),
         )
 
+    # One *shared, outlier-robust* absolute level for all windows. Counting each
+    # window at this fixed level (not its own relative max) makes counts compose
+    # across windows — and using a high percentile rather than the raw max means a
+    # lone hot voxel can't raise the bar above genuine signal and gate every real
+    # window to zero (which previously let the single-outlier window win).
+    global_thr = _robust_feature_level(v, feature, **feature_kwargs)
+
     axis_origins = [_origins(shape[d], size[d]) for d in range(v.ndim)]
     # Each candidate ranked primarily by feature count, ties broken by total
     # intensity (so equal-count windows prefer the one with more signal, not a
@@ -444,12 +517,12 @@ def select_calibration_region(
     for origin in itertools.product(*axis_origins):
         sl = tuple(slice(origin[d], origin[d] + size[d]) for d in range(v.ndim))
         crop = v[sl]
-        # gate near-empty windows: if a window has no voxel above the global
-        # threshold it is background and scores 0 (not a calibration candidate).
-        n = (
-            count_features(crop, method=feature, **feature_kwargs)
-            if float(crop.max()) >= global_thr
-            else 0
+        # Count at the shared absolute level: a background window scores 0
+        # naturally (no voxel reaches the level), so no separate gate is needed —
+        # and the previous gate compared a *raw* crop max against a *blurred*-field
+        # threshold (a units mismatch that mis-gated sharp single-voxel features).
+        n = count_features(
+            crop, method=feature, threshold_abs=global_thr, **feature_kwargs
         )
         candidates.append((int(n), float(crop.sum()), list(origin), int(n)))
 

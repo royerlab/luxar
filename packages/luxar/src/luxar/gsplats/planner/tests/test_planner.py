@@ -84,9 +84,7 @@ class TestScanContent:
         V = _corner_blobs((128, 128, 128), n=16)
         V[0, 0, 0] = 100.0  # outlier far above blob intensity (~1)
         default = scan_content(V, cell=16, method="peaks").total
-        robust = scan_content(
-            V, cell=16, method="peaks", threshold_abs=0.1
-        ).total
+        robust = scan_content(V, cell=16, method="peaks", threshold_abs=0.1).total
         assert robust > default  # absolute level is not suppressed by the outlier
 
     def test_scan_matches_count_features_at_recorded_threshold(self):
@@ -101,6 +99,47 @@ class TestScanContent:
         scan = scan_content(V, cell=16, method="peaks", threshold_abs=thr).total
         cf = count_features(V, method="peaks")
         assert abs(scan - cf) <= max(2, 0.1 * cf)
+
+    def test_intensity_scan_reconstructs_otsu_not_relative(self):
+        # scan_content("intensity") with no threshold_abs must reconstruct the Otsu
+        # cut (calibration's single source of truth), NOT 0.1*max — else a dim
+        # population between 0.1*max and Otsu is miscounted, mis-scaling box budgets.
+        from luxar.gsplats.calibration import _otsu_threshold, count_features
+
+        V = np.zeros((48, 48, 48), np.float32)
+        V[:8] = 0.2  # dim: above 0.1*max(=0.08) but below the Otsu cut
+        V[40:] = 0.8  # bright
+        otsu = _otsu_threshold(V)
+        assert 0.2 < otsu < 0.8  # Otsu separates dim from bright
+        cf = count_features(V, method="intensity")  # count(V > otsu): bright only
+        scan = scan_content(V, cell=16, method="intensity").total
+        assert scan == cf  # pre-fix scanned at 0.1*max and also counted the dim slab
+        assert cf == int(np.count_nonzero(V > otsu))
+
+    def test_intensity_strict_gt_matches_calibration(self):
+        # foreground_mask_otsu uses strict '>'; scan_content intensity must match,
+        # so voxels exactly AT the threshold are excluded (pre-fix used '>=').
+        from luxar.gsplats.calibration import count_features
+
+        V = np.zeros((32, 32, 32), np.float32)
+        V[:16] = 5.0  # exactly at the threshold -> must be EXCLUDED
+        V[16:] = 10.0  # above -> included
+        thr = 5.0
+        cf = count_features(V, method="intensity", threshold_abs=thr)
+        scan = scan_content(V, cell=16, method="intensity", threshold_abs=thr).total
+        assert scan == cf
+        assert cf == int(np.count_nonzero(V > thr))  # the 10.0 slab only, once
+
+    def test_no_double_count_at_slab_boundary_downsample(self):
+        # zlen off-by-one double-counted a feature sitting at a strided slab
+        # boundary when downsample>1; it must be counted exactly once.
+        Z = 132  # spans the _SLAB=64 boundaries at 64 and 128
+        V = np.zeros((Z, 16, 16), np.float32)
+        V[129, 9, 9] = 1.0  # z=129 (129%3==0) is a strided sample at the boundary
+        total = scan_content(
+            V, cell=16, method="intensity", downsample=3, threshold_abs=0.5
+        ).total
+        assert total == 1.0  # pre-fix counted it in both adjacent slabs (== 2.0)
 
 
 class TestSpecFitPlan:
@@ -129,9 +168,7 @@ class TestFitPlanned:
         from luxar.gsplats.planner import fit_planned
 
         V = _corner_blobs((64, 64, 64), n=6, corner=48)
-        plan = plan_volume(
-            V, _density(), cell=8, min_leaf=16, max_leaf=32, overlap=4
-        )
+        plan = plan_volume(V, _density(), cell=8, min_leaf=16, max_leaf=32, overlap=4)
         merged = fit_planned(
             V,
             plan,
@@ -235,8 +272,6 @@ class TestPlanPartition:
 
     def test_plan_volume_convenience(self):
         V = _corner_blobs()
-        plan = plan_volume(
-            V, _density(), cell=16, min_leaf=32, max_leaf=64, overlap=8
-        )
+        plan = plan_volume(V, _density(), cell=16, min_leaf=32, max_leaf=64, overlap=8)
         assert plan.n_boxes >= 1
         assert plan.total_budget > 0

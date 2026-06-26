@@ -155,12 +155,19 @@ def scan_content(
             if sl.size:
                 bmax = max(bmax, float(np.asarray(soft_blur_nd(sl)).max()))
         thr = threshold_rel * bmax
-    else:
-        thr = (
-            float(threshold_abs)
-            if threshold_abs is not None
-            else global_max * threshold_rel
-        )
+    elif threshold_abs is not None:
+        # peaks-with-threshold_abs and intensity-with-threshold_abs both use the
+        # exact recorded level.
+        thr = float(threshold_abs)
+    elif method == "intensity":
+        # count_features("intensity") thresholds at the Otsu cut, NOT a relative
+        # level — reconstruct the SAME (single source of truth) so per-box counts
+        # stay on the calibration's scale.
+        from luxar.gsplats.calibration import _otsu_threshold
+
+        thr = _otsu_threshold(v)
+    else:  # defensive — peaks-without-abs is handled above
+        thr = global_max * threshold_rel
     if thr <= 0:
         return ContentField(density=dens, cell=cell, shape=(Z, Y, X), method=method)
 
@@ -168,24 +175,30 @@ def scan_content(
 
     for z0, z1, a0, a1 in _z_slabs(Z, cell, ds, halo=halo):
         block = v[a0:a1:ds, ::ds, ::ds]
+        # Interior = strided block rows whose full-res z lands in [z0, z1). The
+        # exclusive upper bound is ceil over the LAST in-range full-res index from
+        # a0 — `zoff + zlen` (sum of two independent ceils from different origins)
+        # over-counts by one row when ds>1, double-counting features at the slab
+        # boundary. (Identical to the old value at the production default ds=1.)
         zoff = (z0 - a0 + ds - 1) // ds  # first interior row within the (strided) block
-        zlen = (z1 - z0 + ds - 1) // ds
+        z_end = (z1 - 1 - a0) // ds + 1  # exclusive last interior row
         if method == "peaks":
             from luxar.gsplats.seeds.utils import soft_blur_nd
 
             db = soft_blur_nd(block)
-            # match count_local_maxima exactly: blurred field, '>=' threshold
-            mask = (db == ndi.maximum_filter(db, size=3)) & (db >= thr)
+            # match count_local_maxima exactly: blurred field, mode='nearest'
+            # maximum_filter, '>=' threshold.
+            mask = (db == ndi.maximum_filter(db, size=3, mode="nearest")) & (db >= thr)
         elif method == "edges":
             from luxar.gsplats.seeds.edges import _compute_nd_sobel_magnitude
 
             mask = np.asarray(_compute_nd_sobel_magnitude(block)) >= thr
-        else:  # intensity
-            mask = block >= thr
+        else:  # intensity — strict '>' matches calibration.foreground_mask_otsu
+            mask = block > thr
         coords = np.argwhere(mask)
         if coords.size == 0:
             continue
-        interior = (coords[:, 0] >= zoff) & (coords[:, 0] < zoff + zlen)
+        interior = (coords[:, 0] >= zoff) & (coords[:, 0] < z_end)
         coords = coords[interior]
         if coords.size == 0:
             continue
