@@ -142,6 +142,9 @@ def plan_command(
                     preset=preset, config_path=None, cli_overrides={"device": device}
                 )
                 fit_kwargs.pop("seeds", None)
+                # device is passed explicitly to fit_planned; drop it from the
+                # forwarded kwargs to avoid a duplicate keyword argument.
+                fit_kwargs.pop("device", None)
                 fit_kwargs["verbose"] = False
                 with asection(f"Fitting {plan.n_boxes} boxes"):
                     t0 = time.perf_counter()

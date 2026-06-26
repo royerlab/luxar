@@ -88,6 +88,31 @@ class TestScanContent:
         assert robust > default  # absolute level is not suppressed by the outlier
 
 
+class TestFitPlanned:
+    def test_fit_planned_cpu_smoke(self):
+        # End-to-end: plan a small volume then fit it on CPU; expect splats back.
+        from luxar.gsplats.planner import fit_planned
+
+        V = _corner_blobs((64, 64, 64), n=6, corner=48)
+        plan = plan_volume(
+            V, _density(), cell=8, min_leaf=16, max_leaf=32, overlap=4
+        )
+        merged = fit_planned(
+            V,
+            plan,
+            device="cpu",
+            n_iters=30,
+            early_stop_patience=30,
+            use_cuda=False,
+            use_metal=False,
+        )
+        assert merged.n_splats > 0
+        c = merged.centers
+        # all splats fall inside the volume bounds
+        assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
+        assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
+
+
 class TestThresholdThreading:
     def test_plan_volume_uses_density_threshold(self):
         V = _corner_blobs((128, 128, 128), n=16)
