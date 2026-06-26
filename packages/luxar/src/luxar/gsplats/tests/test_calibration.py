@@ -13,13 +13,22 @@ from luxar.gsplats.calibration import (
     CalibrationResult,
     HeldOutPeak,
     NoiseFloor,
+    RDModel,
+    SplatDensity,
     build_k_grid,
     calibrate,
+    count_features,
     cv_mask,
     donut_median_fill,
     estimate_noise_floor,
     find_k_star,
+    fit_rd_model,
+    foreground_mask_otsu,
+    held_out_gain_db,
     held_out_psnr,
+    held_out_psnr_foreground,
+    predict_zero_baseline_mse,
+    select_calibration_region,
 )
 
 # -----------------------------------------------------------------------------
@@ -515,3 +524,235 @@ class TestCalibrateSmoke:
         result.to_json(out_json)
         round_trip = CalibrationResult.from_json(out_json)
         assert round_trip.held_out_peak.k_star == result.held_out_peak.k_star
+
+    def test_default_behaviour_unchanged(self):
+        # Reproducibility guardrail: with default flags, K* is EXACTLY the legacy
+        # min--max blind-spot peak and no metric switch engages. The regime-robust
+        # additions never alter the manuscript default path.
+        rng = np.random.default_rng(1)
+        Y, X, Z = np.meshgrid(
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            np.linspace(0, 1, 16),
+            indexing="ij",
+        )
+        signal = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) * 8)
+        V = np.clip(signal + 0.05 * rng.standard_normal(signal.shape), 0, 1).astype(
+            np.float32
+        )
+        result = calibrate(
+            V,
+            k_grid=[20, 80, 200],
+            fit_kwargs={
+                "n_iters": 50,
+                "device": "cpu",
+                "verbose": False,
+                "early_stop_patience": 50,
+                "use_cuda": False,
+                "use_metal": False,
+            },
+        )
+        # Default metric, no selected-peak override
+        assert result.k_star_metric == "psnr_minmax"
+        assert result.held_out_peak_selected is None
+        # K* is byte-identical to recomputing find_k_star on the min--max curve
+        legacy = find_k_star(result.k_values_requested, result.held_out_psnr_db)
+        assert result.held_out_peak.k_star == legacy.k_star
+        assert result.held_out_peak.type == legacy.type
+        # Transferable density still emitted (additive, doesn't affect K*)
+        assert result.splat_density is not None
+        assert result.splat_density["feature_method"] == "peaks"
+
+
+# -----------------------------------------------------------------------------
+# Content-aware metrics (regime-robust extensions)
+# -----------------------------------------------------------------------------
+
+
+def _sparse_blobs(shape=(40, 40, 40), centers=None, sigma2=3.0):
+    """Mostly-zero volume with a few Gaussian blobs (sparse fluorescence-like)."""
+    if centers is None:
+        centers = [(8, 8, 8), (10, 12, 9), (7, 11, 13)]
+    zz, yy, xx = np.mgrid[0 : shape[0], 0 : shape[1], 0 : shape[2]]
+    V = np.zeros(shape, np.float32)
+    for cz, cy, cx in centers:
+        V += np.exp(
+            -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / sigma2)
+        ).astype(np.float32)
+    return np.clip(V, 0, 1)
+
+
+class TestContentAwareMetric:
+    def test_gain_zero_when_no_better_than_baseline(self):
+        V = _sparse_blobs()
+        mask = cv_mask(V.shape, 0.05, 42)
+        base = predict_zero_baseline_mse(V, mask)
+        # A predict-zero "reconstruction": held MSE == baseline -> 0 dB gain.
+        assert math.isclose(held_out_gain_db(base, base), 0.0, abs_tol=1e-9)
+        # Perfect reconstruction -> infinite gain.
+        assert math.isinf(held_out_gain_db(0.0, base))
+
+    def test_minmax_psnr_inflated_but_gain_flat_for_predict_zero(self):
+        # The crux: on sparse data the min--max PSNR of a predict-zero recon is
+        # HIGH (background-dominated) while gain-over-baseline is ~0 dB.
+        V = _sparse_blobs()
+        mask = cv_mask(V.shape, 0.05, 42)
+        zeros = np.zeros_like(V)
+        base = predict_zero_baseline_mse(V, mask)
+        held_mse = float(np.mean((zeros[mask] - V[mask]) ** 2))
+        psnr_minmax = held_out_psnr(zeros, V, mask)
+        gain = held_out_gain_db(held_mse, base)
+        assert psnr_minmax > 20.0  # deceptively high
+        assert abs(gain) < 1e-6  # but truthfully ~0 over baseline
+
+    def test_foreground_psnr_restricts_to_signal(self):
+        V = _sparse_blobs()
+        mask = cv_mask(V.shape, 0.05, 42)
+        fg = foreground_mask_otsu(V)
+        assert fg.sum() > 0 and fg.sum() < V.size  # a real subset
+        # Perfect recon -> inf in both; a wrong recon -> finite foreground PSNR.
+        assert math.isinf(held_out_psnr_foreground(V, V, mask, fg))
+        wrong = V + 0.5
+        p = held_out_psnr_foreground(wrong, V, mask, fg)
+        assert math.isfinite(p)
+
+
+class TestCountFeatures:
+    def test_recovers_separated_blobs(self):
+        # 8 well-separated blobs on a coarse grid -> ~8 peaks.
+        centers = [
+            (z, y, x)
+            for z in (8, 24)
+            for y in (8, 24)
+            for x in (8, 24)
+        ]
+        V = _sparse_blobs((32, 32, 32), centers=centers, sigma2=2.0)
+        n = count_features(V, method="peaks")
+        assert 6 <= n <= 10  # recovers ~8
+
+    def test_methods_run_and_are_nonnegative(self):
+        V = _sparse_blobs()
+        assert count_features(V, method="peaks") >= 0
+        assert count_features(V, method="edges") >= 0
+        assert count_features(V, method="intensity") >= 0
+
+    def test_unknown_method_raises(self):
+        with pytest.raises(ValueError):
+            count_features(_sparse_blobs(), method="bogus")
+
+
+class TestSelectRegion:
+    def test_densest_picks_content_corner(self):
+        V = _sparse_blobs((48, 48, 48))  # blobs near the origin corner
+        crop, reg = select_calibration_region(V, region_size=24, strategy="densest")
+        assert reg.origin == [0, 0, 0]
+        assert reg.size == [24, 24, 24]
+        assert crop.shape == (24, 24, 24)
+        assert reg.n_features >= 1
+
+    def test_small_volume_returns_whole(self):
+        V = _sparse_blobs((16, 16, 16))
+        crop, reg = select_calibration_region(V, region_size=32)
+        assert reg.strategy == "whole"
+        assert crop.shape == V.shape
+
+    def test_unknown_strategy_raises(self):
+        V = _sparse_blobs((48, 48, 48))
+        with pytest.raises(ValueError):
+            select_calibration_region(V, region_size=24, strategy="bogus")
+
+
+class TestRDModel:
+    def test_recovers_known_exponent(self):
+        ks = [1000, 4000, 16000, 64000, 256000]
+        floor, a, beta = 0.02, 5.0, 0.5
+        errs = [floor + a * k**-beta for k in ks]
+        rd = fit_rd_model(ks, errs)
+        assert rd is not None
+        assert abs(rd.beta - beta) < 0.05
+        assert abs(rd.floor - floor) < 0.01
+        assert rd.converged_fraction > 0.9  # broad sweep -> converged
+
+    def test_k_for_error_inverts(self):
+        rd = RDModel(floor=0.01, a=4.0, beta=0.5, rmse=0.0, n_points=5, converged_fraction=1.0)
+        k = rd.k_for_error(0.05)
+        assert math.isfinite(k)
+        assert math.isclose(rd.predict_error(k), 0.05, rel_tol=1e-6)
+        assert math.isinf(rd.k_for_error(0.005))  # below floor -> unreachable
+
+    def test_too_few_points_returns_none(self):
+        assert fit_rd_model([1000, 2000], [0.1, 0.05]) is None
+
+    def test_not_converged_when_still_climbing(self):
+        # A curve far from its floor across the sampled range -> partial convergence.
+        ks = [100, 200, 400]
+        floor, a, beta = 0.0, 1.0, 0.3
+        errs = [floor + a * k**-beta for k in ks]
+        rd = fit_rd_model(ks, errs)
+        assert rd is not None
+        assert rd.converged_fraction < 0.95
+
+
+class TestSplatDensity:
+    def test_predict_k_power_law_and_cap(self):
+        d = SplatDensity(
+            feature_method="peaks",
+            n_features_reference=100,
+            k_star_reference=1000,
+            saturation_exponent=0.5,
+            saturation_cap=4000,
+            splats_per_feature=10.0,
+        )
+        assert d.predict_k(100) == 1000  # ratio 1
+        assert d.predict_k(400) == 2000  # 1000 * 4^0.5
+        assert d.predict_k(1_000_000) == 4000  # capped
+
+
+# -----------------------------------------------------------------------------
+# Backward-compatibility: old cal.json (no new keys) must still load
+# -----------------------------------------------------------------------------
+
+
+class TestBackwardCompat:
+    def test_old_json_loads_with_defaults(self, tmp_path: Path):
+        # A minimal pre-extension cal.json (none of the new keys present).
+        old = {
+            "k_values_requested": [100, 500],
+            "k_values_effective": [98, 488],
+            "held_out_psnr_db": [25.1, 27.3],
+            "train_psnr_db": [25.4, 28.0],
+            "held_out_mse": [3.1e-3, 2.0e-3],
+            "full_psnr_db": [25.4, 27.9],
+            "full_ssim": [0.7, 0.85],
+            "held_out_peak": {"k_star": 500, "type": "peak", "confidence_db": 1.3},
+            "noise_floor": {
+                "sigma_hat": 0.01,
+                "sigma_laplacian": 0.011,
+                "sigma_haar": 0.009,
+                "sigma_background": 0.005,
+                "psnr_max_db": 40.0,
+            },
+            "fit_times_seconds": [1.2, 2.1],
+            "splat_paths": None,
+            "mask_seed": 42,
+            "mask_fraction": 0.05,
+            "donut_radius": 1,
+            "fit_config": {"preset": "n2s"},
+            "volume_shape": [32, 32, 32],
+            "volume_dtype": "float32",
+            "timestamp": "2026-05-06T12:00:00+00:00",
+        }
+        p = tmp_path / "old_cal.json"
+        p.write_text(json.dumps(old))
+        loaded = CalibrationResult.from_json(p)
+        # Existing fields intact
+        assert loaded.held_out_peak.k_star == 500
+        # New fields default gracefully
+        assert loaded.k_star_metric == "psnr_minmax"
+        assert loaded.held_out_peak_selected is None
+        assert loaded.splat_density is None
+        assert loaded.rd_model is None
+        assert loaded.not_converged is False
+        assert loaded.held_out_gain_db == []
+        assert loaded.calibration_region is None
+        assert math.isnan(loaded.predict_zero_baseline_mse)

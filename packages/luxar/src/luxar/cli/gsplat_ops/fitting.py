@@ -954,6 +954,54 @@ def calibrate_command(
     array_key: Optional[str] = typer.Option(
         None, "--array-key", help="Array key within .npz / nested zarr"
     ),
+    # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
+    k_star_metric: str = typer.Option(
+        "psnr_minmax",
+        "--k-star-metric",
+        help=(
+            "Metric for K* selection: psnr_minmax (default, manuscript) | "
+            "psnr_foreground | gain. For sparse/noise-free data, 'gain' "
+            "(dB over the predict-zero baseline) is far more reliable than the "
+            "background-dominated min--max PSNR."
+        ),
+    ),
+    auto_region: bool = typer.Option(
+        False,
+        "--auto-region/--no-auto-region",
+        help=(
+            "Calibrate on an auto-selected content-rich sub-region (recommended "
+            "for large/sparse volumes: calibrate at the scale you fit at)."
+        ),
+    ),
+    region_size: int = typer.Option(
+        256,
+        "--region-size",
+        help="Edge length of the auto-selected calibration region (voxels).",
+    ),
+    region_strategy: str = typer.Option(
+        "densest", "--region-strategy", help="Auto-region pick: densest | median."
+    ),
+    feature_metric: str = typer.Option(
+        "peaks",
+        "--feature-metric",
+        help=(
+            "Content metric for region density + splat-density transfer: "
+            "peaks (default, best for nuclei) | edges | intensity."
+        ),
+    ),
+    saturation_exponent: float = typer.Option(
+        0.44,
+        "--saturation-exponent",
+        help=(
+            "Sub-linear exponent alpha in the K~features^alpha density transfer "
+            "(empirical default 0.44; adjustable/discoverable)."
+        ),
+    ),
+    rd_model: bool = typer.Option(
+        True,
+        "--rd-model/--no-rd-model",
+        help="Fit a parametric error-vs-K model (extrapolation + 'not-converged' flag).",
+    ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
         None,
@@ -997,7 +1045,11 @@ def calibrate_command(
         import math
 
         from luxar.cli.gsplat_config import load_fit_config, load_volume
-        from luxar.gsplats.calibration import build_k_grid, calibrate
+        from luxar.gsplats.calibration import (
+            build_k_grid,
+            calibrate,
+            select_calibration_region,
+        )
 
         # 1. Resolve K grid
         explicit: Optional[list[int]] = None
@@ -1022,10 +1074,31 @@ def calibrate_command(
                     array_key=array_key,
                 )
 
+            # Optionally calibrate on a content-rich sub-region (the manuscript
+            # itself crops to ~20 M voxels; this automates that at tile scale).
+            original_shape = list(volume.shape)
+            region_info: Optional[dict] = None
+            if auto_region:
+                from dataclasses import asdict as _asdict
+
+                with asection("Selecting content-rich calibration region"):
+                    volume, region = select_calibration_region(
+                        volume,
+                        region_size=region_size,
+                        strategy=region_strategy,
+                        feature=feature_metric,
+                    )
+                    region_info = _asdict(region)
+                    aprint(
+                        f"Region [{region.strategy}]: origin={region.origin} "
+                        f"size={region.size} n_features={region.n_features}"
+                    )
+
             aprint(
                 f"Mask: {mask_fraction * 100:.1f}% (seed={mask_seed}); donut radius=1"
             )
             aprint(f"K grid ({len(ks)} points): {ks}")
+            aprint(f"K*-metric: {k_star_metric}; feature metric: {feature_metric}")
 
             # 3. Build fit kwargs from preset + YAML config + CLI overrides
             fit_kwargs = load_fit_config(
@@ -1055,8 +1128,18 @@ def calibrate_command(
                     mask_fraction=mask_fraction,
                     keep_fits=keep_fits,
                     progress_callback=_on_progress,
+                    k_star_metric=k_star_metric,
+                    feature_method=feature_metric,
+                    saturation_exponent=saturation_exponent,
+                    compute_rd_model=rd_model,
                 )
                 elapsed = time.perf_counter() - t0
+
+            # Record region provenance (calibrate() works on whatever array it
+            # is handed; the CLI owns the crop, so it stamps the provenance).
+            result.original_volume_shape = original_shape
+            if region_info is not None:
+                result.calibration_region = region_info
 
             # 5. Write JSON
             with asection("Writing results"):
@@ -1135,6 +1218,31 @@ def calibrate_command(
                 f"(type: {result.held_out_peak.type}, "
                 f"confidence: {result.held_out_peak.confidence_db:.2f} dB)"
             )
+            if result.held_out_peak_selected is not None:
+                sp = result.held_out_peak_selected
+                aprint(
+                    f"  ★ K* [{result.k_star_metric}] = {sp.k_star:,}  "
+                    f"(type: {sp.type}, confidence: {sp.confidence_db:.2f} dB)"
+                )
+            if result.splat_density is not None:
+                sd = result.splat_density
+                aprint(
+                    f"  Density: {sd['k_star_reference']:,} splats / "
+                    f"{sd['n_features_reference']:,} {sd['feature_method']} features"
+                    f"  →  K ~ features^{sd['saturation_exponent']:.2f}"
+                )
+            # Regime warnings — warn-by-default, no behaviour change
+            sig = result.noise_floor.sigma_hat
+            if math.isfinite(sig) and sig < 1e-4:
+                aprint(
+                    "  ⚠ σ̂≈0 (noise-free/deconvolved): the blind-spot peak may not "
+                    "appear; prefer --k-star-metric gain (and --auto-region)."
+                )
+            if result.not_converged:
+                aprint(
+                    "  ⚠ held-out curve still climbing at K_max (not converged): "
+                    "extend --k-max or use the R-D-model extrapolation."
+                )
             aprint(f"  Total wall-clock: {elapsed:.1f} s")
             aprint("═" * 64)
 
