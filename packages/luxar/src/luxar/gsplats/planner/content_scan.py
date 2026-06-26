@@ -134,13 +134,15 @@ def scan_content(
         if threshold_abs is not None:
             thr = float(threshold_abs)
         else:
+            # max over the SAME haloed slabs / interior the detection pass uses, so
+            # the reference level is consistent at slab boundaries (M5).
             edge_max = 0.0
-            for z0 in range(0, Z, _SLAB):
-                sl = v[z0 : min(Z, z0 + _SLAB) : ds, ::ds, ::ds]
-                if sl.size:
-                    edge_max = max(
-                        edge_max, float(_compute_nd_sobel_magnitude(sl).max())
-                    )
+            for z0, z1, a0, a1 in _z_slabs(Z, cell, ds, halo=2 * ds):
+                mag = np.asarray(_compute_nd_sobel_magnitude(v[a0:a1:ds, ::ds, ::ds]))
+                zoff = (z0 - a0 + ds - 1) // ds
+                interior = mag[zoff : zoff + (z1 - z0 + ds - 1) // ds]
+                if interior.size:
+                    edge_max = max(edge_max, float(interior.max()))
             thr = threshold_rel * edge_max
     elif method == "peaks" and threshold_abs is None:
         # count_local_maxima thresholds the *blurred* field at threshold_rel*blurred_max
@@ -205,6 +207,7 @@ def _z_slabs(
     for z0 in range(0, Z, _SLAB):
         z1 = min(Z, z0 + _SLAB)
         a0 = max(0, z0 - halo)
+        a0 -= a0 % ds  # snap to stride phase so v[a0::ds] stays on the global grid (M4)
         a1 = min(Z, z1 + halo)
         yield z0, z1, a0, a1
 

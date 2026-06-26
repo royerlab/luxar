@@ -318,6 +318,23 @@ class TestFindKStar:
         with pytest.raises(ValueError):
             find_k_star([10], [25.0])
 
+    def test_slow_steady_climb_stays_signal_limited(self):
+        # M2: a steadily-climbing curve whose single final step is < 0.1 dB must
+        # NOT be demoted to plateau — the tail is averaged over the last few steps.
+        ks = [1000, 4000, 16000, 64000, 256000]
+        psnr = [40.0, 40.5, 41.0, 41.5, 41.58]  # last step 0.08, but mean tail >0.1
+        out = find_k_star(ks, psnr)
+        assert out.type == "signal_limited"
+
+    def test_nan_gap_before_last_k_not_signal_limited(self):
+        # M1 regression: a NaN before the last K must NOT be read as a one-step
+        # climb (the "last finite step" spans 2 K's). Total rise > 0.3 dB but the
+        # last finite pair is non-adjacent -> plateau, not signal_limited.
+        ks = [1000, 4000, 16000, 64000]
+        psnr = [40.0, 43.0, float("nan"), 43.5]
+        out = find_k_star(ks, psnr)
+        assert out.type != "signal_limited"
+
 
 # -----------------------------------------------------------------------------
 # estimate_noise_floor
@@ -710,6 +727,74 @@ class TestRDModel:
         rd = fit_rd_model(ks, errs)
         assert rd is not None
         assert rd.converged_fraction < 0.95
+
+
+class TestRegimeFixes:
+    """Regressions for the deep-review findings (C1/H1/H3/H4)."""
+
+    def test_feature_threshold_method_aware(self):
+        from luxar.gsplats.calibration import feature_threshold
+        from luxar.gsplats.seeds.utils import soft_blur_nd
+
+        V = _sparse_blobs()
+        # peaks: must equal 0.1 * blurred-max (NOT 0.1 * raw max) — the C1 fix.
+        peaks_thr = feature_threshold(V, "peaks")
+        assert math.isclose(peaks_thr, 0.1 * float(soft_blur_nd(V).max()), rel_tol=1e-5)
+        assert peaks_thr <= 0.1 * float(V.max()) + 1e-9  # blurred max <= raw max
+        # intensity: the Otsu cut (>0 for this volume)
+        assert feature_threshold(V, "intensity") > 0
+
+    def test_clean_shallow_curve_not_flagged_not_converged(self):
+        # H3: a clean beta~0.5 power law must clear the not_converged gate (0.85).
+        ks = [1000, 4000, 16000, 64000, 256000]
+        errs = [0.02 + 5.0 * k**-0.5 for k in ks]
+        rd = fit_rd_model(ks, errs)
+        assert rd is not None and rd.converged_fraction >= 0.85
+
+    def test_nan_density_round_trips_as_nan(self, tmp_path: Path):
+        # H4: a non-finite nested float (splats_per_feature=nan) must reload as
+        # nan, not None, so planner consumers (float(...)) don't crash.
+        from luxar.gsplats.planner.bsp_boxes import _density_from
+
+        result = CalibrationResult(
+            k_values_requested=[100],
+            k_values_effective=[98],
+            held_out_psnr_db=[25.0],
+            train_psnr_db=[25.0],
+            held_out_mse=[1e-3],
+            full_psnr_db=[25.0],
+            full_ssim=[0.7],
+            held_out_peak=HeldOutPeak(k_star=100, type="plateau", confidence_db=0.0),
+            noise_floor=NoiseFloor(0.01, 0.01, 0.01, 0.01, 40.0),
+            fit_times_seconds=[1.0],
+            splat_paths=None,
+            mask_seed=42,
+            mask_fraction=0.05,
+            donut_radius=1,
+            fit_config={},
+            volume_shape=[16, 16, 16],
+            volume_dtype="float32",
+            timestamp="2026-06-26T00:00:00+00:00",
+            splat_density={
+                "feature_method": "peaks",
+                "n_features_reference": 0,
+                "k_star_reference": 100,
+                "saturation_exponent": 0.44,
+                "saturation_cap": 100,
+                "splats_per_feature": float("nan"),  # n_features==0 -> nan
+                "feature_threshold": 5.0,
+            },
+        )
+        out = tmp_path / "cal.json"
+        result.to_json(out)
+        raw = json.loads(out.read_text())
+        assert raw["splat_density"]["splats_per_feature"] is None  # nan -> null on disk
+        loaded = CalibrationResult.from_json(out)
+        assert math.isnan(loaded.splat_density["splats_per_feature"])  # back to nan
+        # planner consumer accepts it without crashing
+        d = _density_from(loaded.splat_density)
+        assert math.isnan(d.splats_per_feature)
+        assert d.feature_threshold == 5.0  # preserved (H2)
 
 
 class TestSplatDensity:

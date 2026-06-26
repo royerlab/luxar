@@ -772,14 +772,20 @@ def find_k_star(
     #    inflate any K*-derived splat density (observed on deconvolved tile cal).
     fin_idx = np.flatnonzero(finite)
     first_finite_psnr = float(psnr_arr[fin_idx[0]])
-    # Credit a climbing tail ONLY when the last two finite samples are *adjacent*
-    # K's — a NaN/inf gap before the last K (psnr_foreground appends NaN, gain can
-    # be inf) must not be misread as a single-step climb.
-    tail_rise = (
-        float(psnr_arr[fin_idx[-1]] - psnr_arr[fin_idx[-2]])
-        if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1
-        else 0.0
-    )
+    # "Still climbing at the top" = mean per-step rise over the trailing run of
+    # *adjacent* finite K's (up to 3 steps). Adjacency guards against a NaN/inf gap
+    # reading as a climb (M1); averaging guards against a single sub-0.1 dB final
+    # step demoting a steadily-climbing curve to plateau (M2).
+    tail_rise = 0.0
+    if fin_idx.size >= 2 and int(fin_idx[-1] - fin_idx[-2]) == 1:
+        run = [int(fin_idx[-1])]
+        for j in range(fin_idx.size - 2, -1, -1):
+            if int(fin_idx[j + 1] - fin_idx[j]) == 1 and len(run) < 4:
+                run.append(int(fin_idx[j]))
+            else:
+                break
+        seg = psnr_arr[np.array(sorted(run))]
+        tail_rise = float(np.mean(np.diff(seg))) if seg.size >= 2 else 0.0
     if argmax == n - 1 and (peak - first_finite_psnr) >= 0.3 and tail_rise >= 0.1:
         return HeldOutPeak(
             k_star=int(k_arr[-1]),
@@ -1210,6 +1216,29 @@ def calibrate(
     fit_times: List[float] = []
     splat_paths: List[str] = []
 
+    # Resolve the render device ONCE and hoist the loop-invariant device copies
+    # (original volume + masks) out of the per-K loop — they were re-copied to the
+    # GPU and never freed every iteration (M9). The held∩foreground mask and the
+    # train (unmasked) mask are also invariant, so build them once.
+    device_pref = fit_kwargs.get("device")
+    render_device = device_pref
+    if render_device in (None, "auto"):
+        render_device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else (
+                "mps"
+                if getattr(torch.backends, "mps", None)
+                and torch.backends.mps.is_available()
+                else "cpu"
+            )
+        )
+    ref_dev = V_orig_t.to(render_device)
+    mask_dev = mask_t.to(render_device)
+    fg_dev = fg_t.to(render_device)
+    train_mask_dev = ~mask_dev
+    held_fg_dev = mask_dev & fg_dev
+
     # 2-3. Fit at each K
     for i, K in enumerate(k_grid):
         if progress_callback is not None:
@@ -1219,19 +1248,14 @@ def calibrate(
         elapsed = time.perf_counter() - t0
         fit_times.append(elapsed)
 
-        # Render on the same device the splats live on (or CPU as a fallback)
-        device_pref = fit_kwargs.get("device")
         with torch.no_grad():
             rendered = render_to_volume_tensor(
-                splats, shape=V.shape, device=device_pref
+                splats, shape=V.shape, device=render_device
             )
-            ref_t = V_orig_t.to(rendered.device)
-            mask_dev = mask_t.to(rendered.device)
-
             held_pred = rendered[mask_dev]
-            held_true = ref_t[mask_dev]
-            train_pred = rendered[~mask_dev]
-            train_true = ref_t[~mask_dev]
+            held_true = ref_dev[mask_dev]
+            train_pred = rendered[train_mask_dev]
+            train_true = ref_dev[train_mask_dev]
 
             held_mse_val = float(torch.mean((held_pred - held_true) ** 2).item())
             held_mse.append(held_mse_val)
@@ -1243,9 +1267,8 @@ def calibrate(
             held_psnr.append(held_psnr_val)
 
             # Foreground-restricted held-out PSNR (background-domination removed)
-            held_fg_dev = mask_dev & fg_t.to(rendered.device)
             fg_pred = rendered[held_fg_dev]
-            fg_true = ref_t[held_fg_dev]
+            fg_true = ref_dev[held_fg_dev]
             if fg_pred.numel() == 0:
                 held_psnr_fg.append(float("nan"))
             else:
@@ -1266,12 +1289,13 @@ def calibrate(
             )
             train_psnr.append(train_psnr_val)
 
-            full_psnr_val = compute_psnr(rendered, ref_t, data_range=data_range)
+            full_psnr_val = compute_psnr(rendered, ref_dev, data_range=data_range)
             full_psnr.append(float(full_psnr_val))
-            full_ssim_val = compute_ssim(rendered, ref_t, data_range=data_range)
+            full_ssim_val = compute_ssim(rendered, ref_dev, data_range=data_range)
             full_ssim.append(float(full_ssim_val))
 
-            del rendered, ref_t, mask_dev
+            # free only the per-iteration tensors; the hoisted device copies persist
+            del rendered, held_pred, held_true, train_pred, train_true, fg_pred, fg_true
 
         eff_k = int(splats.n_splats)
         k_values_eff.append(eff_k)
@@ -1294,8 +1318,13 @@ def calibrate(
             )
 
         del splats
-        if device_pref and device_pref.startswith("cuda"):
+        if str(render_device).startswith("cuda"):
             torch.cuda.empty_cache()
+
+    # release the hoisted device copies
+    del ref_dev, mask_dev, fg_dev, train_mask_dev, held_fg_dev
+    if str(render_device).startswith("cuda"):
+        torch.cuda.empty_cache()
 
     # 4. Noise floor (on the original volume; needs [0, 1] for the PSNR ceiling
     # to be meaningful — the manuscript and fit_gaussian_splats both work in
@@ -1350,9 +1379,10 @@ def calibrate(
         k_star_eff = int(k_values_eff[star_idx])
     except (ValueError, IndexError):
         k_star_eff = int(selected_peak.k_star)
-    saturation_cap = (
-        int(k_values_eff[-1]) if (not_converged and k_values_eff) else k_star_eff
-    )
+    # Cap per-box budgets at the largest *measured* effective K (the empirical
+    # ceiling), regardless of convergence — collapsing it to k_star_eff would
+    # truncate denser-than-reference tiles to the reference budget (M3).
+    saturation_cap = int(k_values_eff[-1]) if k_values_eff else k_star_eff
     # Exact absolute level the detector counted at (method-aware: blurred-max for
     # peaks, Otsu for intensity, sobel-max for edges) — recorded so the planner's
     # scan_content counts on the identical scale (a naive 0.1*raw_max drifts).

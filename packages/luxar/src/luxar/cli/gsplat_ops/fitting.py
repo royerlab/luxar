@@ -1179,6 +1179,17 @@ def calibrate_command(
             aprint(
                 f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}"
             )
+            # Surface region provenance: under --auto-region the Volume / PSNR_full
+            # below are CROP-scoped, not whole-volume (M12).
+            if result.calibration_region is not None:
+                reg = result.calibration_region
+                aprint(
+                    f"  Region:         [{reg['strategy']}] origin={reg['origin']} "
+                    f"of full {tuple(result.original_volume_shape or [])}"
+                )
+                aprint(
+                    "                  (Volume / PSNR_full above are for this crop)"
+                )
             sigma = result.noise_floor.sigma_hat
             ceil_db = result.noise_floor.psnr_max_db
             sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"

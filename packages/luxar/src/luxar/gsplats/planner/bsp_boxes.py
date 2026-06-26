@@ -105,8 +105,12 @@ def plan_partition(
         cdf = np.cumsum(m)
         cell_idx = int(np.searchsorted(cdf, cdf[-1] / 2.0))
         origin = [z0, y0, x0][ax]
-        cut = origin + int(
-            np.clip((cell_idx + 1) * c, min_leaf, dims[ax] - min_leaf)
+        # The marginal sub-grid starts at the cell boundary (origin//c)*c, so the
+        # cut must be anchored there — not at `origin` — or a non-cell-aligned child
+        # drifts the split by up to (origin mod cell) voxels off the centroid (M8).
+        base = (origin // c) * c
+        cut = int(
+            np.clip(base + (cell_idx + 1) * c, origin + min_leaf, origin + dims[ax] - min_leaf)
         )
         lo, hi = list(box), list(box)
         lo[2 * ax + 1] = cut
