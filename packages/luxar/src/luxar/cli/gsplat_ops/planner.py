@@ -78,6 +78,7 @@ def run_content_fit(
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
+    axes: Optional[str] = None,
     verbose: bool = True,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
@@ -100,7 +101,11 @@ def run_content_fit(
         if volume is not None:
             return volume
         return load_volume(
-            input_path, channel=channel, timepoint=timepoint, array_key=array_key
+            input_path,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
+            axes=axes,
         )
 
     def _fit_kwargs() -> dict:
@@ -263,6 +268,7 @@ def run_content_fit(
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,
+            axes=axes,
         )
         tmp_dir = output.parent / f".{output.name}.boxes"
         with asection(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):

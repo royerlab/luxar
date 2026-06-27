@@ -331,13 +331,25 @@ def fit_volume(
     ),
     # Input selection for multi-array formats
     channel: Optional[int] = typer.Option(
-        None, "--channel", help="Channel index for 5D OME-ZARR"
+        None, "--channel", help="Channel index for 5D OME-ZARR",
+        rich_help_panel="Input selection",
     ),
     timepoint: Optional[int] = typer.Option(
-        None, "--timepoint", help="Timepoint index for 5D OME-ZARR"
+        None, "--timepoint", help="Timepoint index for 5D OME-ZARR",
+        rich_help_panel="Input selection",
     ),
     array_key: Optional[str] = typer.Option(
-        None, "--array-key", help="Array key within .npz or .zarr"
+        None, "--array-key", help="Array key within .npz or .zarr",
+        rich_help_panel="Input selection",
+    ),
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Per-dimension axis labels overriding the positional "
+        "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
+        "data's axis order differs. Time/channel axes are sliced (by "
+        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        rich_help_panel="Input selection",
     ),
     # Frequently used fit params
     lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
@@ -376,12 +388,14 @@ def fit_volume(
         rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(
-        32, "--overlap", help="Overlap between tiles in voxels"
+        32, "--overlap", help="Overlap between tiles in voxels",
+        rich_help_panel="Tiling",
     ),
     tile: Optional[str] = typer.Option(
         None,
         "--tile",
         help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
+        rich_help_panel="Tiling",
     ),
     jobs: str = typer.Option(
         "1",
@@ -391,6 +405,7 @@ def fit_volume(
         "concurrently as subprocesses "
         "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
         "sequential. Ignored with --tiling none or --tile.",
+        rich_help_panel="Tiling",
     ),
     keep_tiles: bool = typer.Option(
         False,
@@ -398,6 +413,7 @@ def fit_volume(
         help="With --tiling --jobs>1: keep the per-tile/box temporary .gsplats.zarr "
         "outputs (and any .empty markers for skipped tiles) instead of "
         "deleting them after the merge.",
+        rich_help_panel="Tiling",
     ),
     allow_empty_tile: bool = typer.Option(
         False,
@@ -571,21 +587,25 @@ def fit_volume(
         help="Enable progressive fitting: fit in multiple passes on residuals, "
         "producing a multi-LOD result. Each pass adds detail to the previous. "
         "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",
+        rich_help_panel="Progressive fitting",
     ),
     max_splats_per_pass: int = typer.Option(
         5000,
         "--splats-per-pass",
         help="Maximum splats per progressive pass (actual may be fewer after culling)",
+        rich_help_panel="Progressive fitting",
     ),
     psnr_patience: float = typer.Option(
         0.5,
         "--psnr-patience",
         help="Stop progressive fitting if ΔPSNR between passes < this value (dB)",
+        rich_help_panel="Progressive fitting",
     ),
     max_passes: Optional[int] = typer.Option(
         None,
         "--max-passes",
         help="Maximum number of progressive passes (default: unlimited, stops by budget or PSNR patience)",
+        rich_help_panel="Progressive fitting",
     ),
     # Post-fit culling
     cull_retention: Optional[float] = typer.Option(
@@ -599,22 +619,28 @@ def fit_volume(
     ),
     # Denoising
     denoise: bool = typer.Option(
-        False, "--denoise", help="Denoise volume before fitting (NLM)"
+        False, "--denoise", help="Denoise volume before fitting (NLM)",
+        rich_help_panel="Denoising",
     ),
     denoise_h: Optional[float] = typer.Option(
-        None, "--denoise-h", help="Manual NLM h value (skip auto-calibration)"
+        None, "--denoise-h", help="Manual NLM h value (skip auto-calibration)",
+        rich_help_panel="Denoising",
     ),
     denoise_2d: bool = typer.Option(
-        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D"
+        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D",
+        rich_help_panel="Denoising",
     ),
     denoise_patch_size: int = typer.Option(
-        3, "--denoise-patch-size", help="NLM patch size (odd integer)"
+        3, "--denoise-patch-size", help="NLM patch size (odd integer)",
+        rich_help_panel="Denoising",
     ),
     denoise_search_distance: int = typer.Option(
-        5, "--denoise-search-distance", help="NLM search window half-size"
+        5, "--denoise-search-distance", help="NLM search window half-size",
+        rich_help_panel="Denoising",
     ),
     denoise_backend: str = typer.Option(
-        "auto", "--denoise-backend", help="NLM backend: auto/cuda/pytorch/skimage"
+        "auto", "--denoise-backend", help="NLM backend: auto/cuda/pytorch/skimage",
+        rich_help_panel="Denoising",
     ),
 ) -> None:
     """Fit Gaussian splats to a volume.
@@ -676,7 +702,9 @@ def fit_volume(
         with asection(f"Fitting Gaussian Splats: {input_path.name}"):
             # 1. Load volume
             with asection("Loading volume"):
-                volume = load_volume(input_path, channel, timepoint, array_key)
+                volume = load_volume(
+                    input_path, channel, timepoint, array_key, axes=axes
+                )
                 aprint(f"Volume shape: {volume.shape}")
 
             # 1a. Resolve the decomposition. `--tiling auto` → none (fits one
@@ -817,6 +845,7 @@ def fit_volume(
                     channel=channel,
                     timepoint=timepoint,
                     array_key=array_key,
+                    axes=axes,
                     verbose=verbose,
                 )
                 raise typer.Exit(0)
@@ -1448,6 +1477,13 @@ def calibrate_command(
     array_key: Optional[str] = typer.Option(
         None, "--array-key", help="Array key within .npz / nested zarr"
     ),
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Per-dimension axis labels overriding the TCZYX/CZYX/ZYX heuristic "
+        "(e.g. 'z,c,y,x'). Time/channel axes are sliced by --timepoint/--channel "
+        "and dropped; spatial axes kept in the given order.",
+    ),
     # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
     k_star_metric: str = typer.Option(
         "psnr_minmax",
@@ -1586,6 +1622,7 @@ def calibrate_command(
                     channel=channel,
                     timepoint=timepoint,
                     array_key=array_key,
+                    axes=axes,
                 )
 
             # Optionally calibrate on a content-rich sub-region (the manuscript
@@ -1857,7 +1894,9 @@ def calibrate_command(
 
 def register_fitting_commands(app: typer.Typer) -> None:
     """Register the fitting commands onto ``app_gsplat``."""
-    app.command("denoise")(denoise_volume_cmd)
+    # Workflow order: fit and cal (the core pre-/fit steps) lead; render and
+    # denoise (utilities) follow.
     app.command("fit")(fit_volume)
-    app.command("render")(render_to_file)
     app.command("cal")(calibrate_command)
+    app.command("render")(render_to_file)
+    app.command("denoise")(denoise_volume_cmd)

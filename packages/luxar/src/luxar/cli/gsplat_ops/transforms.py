@@ -545,8 +545,10 @@ def partition_dataset(
         None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
     ),
 ) -> None:
-    """Spatially partition a Gaussian splat dataset (BSP) into ONE
-    ``kind=partition`` ``.gsplats.zarr`` file.
+    """Spatially partition a Gaussian splat dataset into one partitioned file.
+
+    Splits the splats by position (BSP) into a single kind=partition
+    .gsplats.zarr (one spatial part per region) for per-part frustum culling.
 
     Recursively splits the splats by position so each ``part_<i>`` holds at
     most ``--max-elements`` splats (each part carries its own ``position_bounds``
@@ -1235,9 +1237,10 @@ def merge_datasets(
 
 def register_transforms_commands(app: typer.Typer) -> None:
     """Register the transforms commands onto ``app_gsplat``."""
-    app.command("cull")(cull_dataset)
-    app.command("filter")(filter_dataset)
-    app.command("partition")(partition_dataset)
-    app.command("slice")(slice_dataset)
+    # Lead with the most common editing ops; partition/slice are more advanced.
     app.command("transform")(transform_dataset)
     app.command("merge")(merge_datasets)
+    app.command("cull")(cull_dataset)
+    app.command("filter")(filter_dataset)
+    app.command("slice")(slice_dataset)
+    app.command("partition")(partition_dataset)

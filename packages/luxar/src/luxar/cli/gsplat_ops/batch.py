@@ -160,39 +160,49 @@ def batch_submit(
         False,
         "--denoise",
         help="Denoise volumes before fitting (NLM). Auto-calibrates h per channel.",
+        rich_help_panel="Denoising",
     ),
     batch_denoise_h: Optional[float] = typer.Option(
-        None, "--denoise-h", help="Manual NLM h (skip calibration)"
+        None, "--denoise-h", help="Manual NLM h (skip calibration)",
+        rich_help_panel="Denoising",
     ),
     batch_denoise_2d: bool = typer.Option(
-        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D"
+        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D",
+        rich_help_panel="Denoising",
     ),
     batch_denoise_patch_size: int = typer.Option(
-        3, "--denoise-patch-size", help="NLM patch size"
+        3, "--denoise-patch-size", help="NLM patch size",
+        rich_help_panel="Denoising",
     ),
     batch_denoise_search_distance: int = typer.Option(
-        5, "--denoise-search-distance", help="NLM search distance"
+        5, "--denoise-search-distance", help="NLM search distance",
+        rich_help_panel="Denoising",
     ),
     batch_denoise_backend: str = typer.Option(
-        "auto", "--denoise-backend", help="NLM backend"
+        "auto", "--denoise-backend", help="NLM backend",
+        rich_help_panel="Denoising",
     ),
     batch_calibration_samples: int = typer.Option(
-        5, "--calibration-samples", help="Timepoints to sample for h calibration"
+        5, "--calibration-samples", help="Timepoints to sample for h calibration",
+        rich_help_panel="Denoising",
     ),
     batch_preprocess: Optional[bool] = typer.Option(
         None,
         "--preprocess/--no-preprocess",
         help="Write denoised volumes to zarr before fitting (default: off, denoise per-tile on-the-fly).",
+        rich_help_panel="Denoising",
     ),
     # Slurm params
     partition: Optional[str] = typer.Option(
-        None, "--partition", "-p", help="Slurm partition"
+        None, "--partition", "-p", help="Slurm partition (required)",
+        rich_help_panel="Slurm resources",
     ),
     max_concurrent: Optional[int] = typer.Option(
         None,
         "--max-concurrent",
         help="Maximum simultaneous Slurm array tasks (limits cluster usage). "
         "Maps to --array=0-N%%MAX. No limit if omitted.",
+        rich_help_panel="Slurm resources",
     ),
     preemptible: bool = typer.Option(
         False,
@@ -200,35 +210,52 @@ def batch_submit(
         help="Also submit tasks on a preemptible partition for extra throughput. "
         "Auto-detects the preemptible partition. Preempted tasks are automatically "
         "requeued. Uses atomic tile writes to handle interruptions safely.",
+        rich_help_panel="Slurm resources",
     ),
     preemptible_partition_opt: Optional[str] = typer.Option(
         None,
         "--preemptible-partition",
         help="Explicit preemptible partition name (skip auto-detection).",
+        rich_help_panel="Slurm resources",
     ),
     preemptible_concurrent: Optional[int] = typer.Option(
         None,
         "--preemptible-concurrent",
         help="Max concurrent tasks on preemptible partition. "
         "Defaults to same as --max-concurrent.",
+        rich_help_panel="Slurm resources",
     ),
-    account: Optional[str] = typer.Option(None, "--account", "-A"),
-    qos: Optional[str] = typer.Option(None, "--qos"),
-    gpus: int = typer.Option(1, "--gpus", help="GPUs per task"),
-    cpus: int = typer.Option(4, "--cpus", help="CPUs per task"),
-    mem: int = typer.Option(32, "--mem", help="Memory per task (GB)"),
+    account: Optional[str] = typer.Option(
+        None, "--account", "-A", rich_help_panel="Slurm resources"
+    ),
+    qos: Optional[str] = typer.Option(
+        None, "--qos", rich_help_panel="Slurm resources"
+    ),
+    gpus: int = typer.Option(
+        1, "--gpus", help="GPUs per task", rich_help_panel="Slurm resources"
+    ),
+    cpus: int = typer.Option(
+        4, "--cpus", help="CPUs per task", rich_help_panel="Slurm resources"
+    ),
+    mem: int = typer.Option(
+        32, "--mem", help="Memory per task (GB)", rich_help_panel="Slurm resources"
+    ),
     time_limit: Optional[str] = typer.Option(
-        None, "--time", help="Wall time per task override (HH:MM:SS)"
+        None, "--time", help="Wall time per task override (HH:MM:SS)",
+        rich_help_panel="Slurm resources",
     ),
     gpu_name_opt: Optional[str] = typer.Option(
-        None, "--gpu", help="GPU name from profile (auto-detect if omitted)"
+        None, "--gpu", help="GPU name from profile (auto-detect if omitted)",
+        rich_help_panel="Slurm resources",
     ),
     gpu_mem: Optional[int] = typer.Option(
-        None, "--gpu-mem", help="Target GPU memory in GB (picks closest profile)"
+        None, "--gpu-mem", help="Target GPU memory in GB (picks closest profile)",
+        rich_help_panel="Slurm resources",
     ),
     # Merge
     channel_colors: Optional[str] = typer.Option(
-        None, "--channel-colors", help="Hex colors for per-channel merge"
+        None, "--channel-colors", help="Hex colors for per-channel merge",
+        rich_help_panel="Merge LOD",
     ),
     merge_recipe: Optional[str] = typer.Option(
         None,
@@ -239,32 +266,39 @@ def batch_submit(
             "Default: bare-leaf parts. The merge sbatch script invokes "
             "`slurm-fit merge --recipe <r>` with the knobs below."
         ),
+        rich_help_panel="Merge LOD",
     ),
     merge_n_lods: Optional[int] = typer.Option(
-        None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe."
+        None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe.",
+        rich_help_panel="Merge LOD",
     ),
     merge_additive_method: Optional[str] = typer.Option(
         None,
         "--merge-additive-method",
         help="Additive ladder method for --merge-recipe additive "
         "(greedy | self_energy).",
+        rich_help_panel="Merge LOD",
     ),
     merge_breakpoints: Optional[str] = typer.Option(
         None,
         "--merge-breakpoints",
         help="Additive ladder breakpoints for --merge-recipe additive "
         "('equal-count' | 'counts:...' | 'energy:...').",
+        rich_help_panel="Merge LOD",
     ),
     merge_compression_factor: Optional[int] = typer.Option(
-        None, "--merge-compression-factor", help="Substitutive K for --merge-recipe."
+        None, "--merge-compression-factor", help="Substitutive K for --merge-recipe.",
+        rich_help_panel="Merge LOD",
     ),
     merge_levels: Optional[int] = typer.Option(
-        None, "--merge-levels", help="Substitutive level count for --merge-recipe."
+        None, "--merge-levels", help="Substitutive level count for --merge-recipe.",
+        rich_help_panel="Merge LOD",
     ),
     merge_substitutive_method: Optional[str] = typer.Option(
         None,
         "--merge-substitutive-method",
         help="Substitutive coarsening method for --merge-recipe.",
+        rich_help_panel="Merge LOD",
     ),
     merge_coarsen_dims: Optional[str] = typer.Option(
         None,
@@ -272,12 +306,14 @@ def batch_submit(
         help="Comma-separated center-column indices --merge-recipe substitutive "
         "may coarsen over (the rest stay hard barriers). Default: spatial dims "
         "only (the stacked-timepoint axis is a barrier).",
+        rich_help_panel="Merge LOD",
     ),
     merge_lod_method: Optional[str] = typer.Option(
         None,
         "--merge-lod-method",
         help="LOD switch threshold for --merge-recipe substitutive "
         "(extent | count).",
+        rich_help_panel="Merge LOD",
     ),
     # Dataset structure override
     axes: Optional[str] = typer.Option(

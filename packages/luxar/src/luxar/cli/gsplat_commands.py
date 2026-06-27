@@ -25,15 +25,28 @@ from .gsplat_ops.scene import register_scene_commands
 from .gsplat_ops.transforms import register_transforms_commands
 from .lod import register_lod_command
 
-app_gsplat = typer.Typer(help="Gaussian splat tools")
+app_gsplat = typer.Typer(
+    help=(
+        "Gaussian splat tools — fit nD images/volumes (.tiff/.npy/.npz/.zarr) to "
+        "oriented Gaussians and view them.\n\n"
+        "Getting started:\n"
+        "  luxar demo                                   # quick end-to-end demo\n"
+        "  luxar gsplat fit stack.tiff out.gsplats.zarr # fit a volume (auto settings)\n"
+        "  luxar gsplat view out.gsplats.zarr           # open it in the web viewer\n\n"
+        "Non-canonical axis order? pass --axes (e.g. 'z,c,y,x') to fit/cal. "
+        "Large/HPC data? see `slurm-fit`."
+    )
+)
 
-# Register each thematic command group (source-order preserved for --help).
-register_inspect_commands(app_gsplat)
-register_transforms_commands(app_gsplat)
-register_fitting_commands(app_gsplat)
-register_scene_commands(app_gsplat)
-register_benchmark_commands(app_gsplat)
-register_lod_command(app_gsplat)
+# Register each thematic command group. Registration order = --help display
+# order, so lead with the core workflow (fit -> cal -> lod -> scene/view ->
+# inspect), then editing ops, then cluster/benchmark.
+register_fitting_commands(app_gsplat)  # fit, cal, render, denoise
+register_lod_command(app_gsplat)  # lod
+register_scene_commands(app_gsplat)  # convert, migrate-format
+register_inspect_commands(app_gsplat)  # info, view, napari, compare
+register_transforms_commands(app_gsplat)  # transform, cull, filter, slice, merge, partition
+register_benchmark_commands(app_gsplat)  # benchmark
 app_gsplat.add_typer(app_batch, name="slurm-fit")
 
 __all__ = [

@@ -46,6 +46,7 @@ def _default_worker_cmd_builder(
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
+    axes: Optional[str] = None,
 ) -> WorkerCmdBuilder:
     """Build a ``luxar gsplat fit <in> <out> --tiling content --plan <plan>
     --plan-box i ...`` argv.
@@ -81,6 +82,8 @@ def _default_worker_cmd_builder(
             cmd += ["--timepoint", str(timepoint)]
         if array_key:
             cmd += ["--array-key", array_key]
+        if axes:
+            cmd += ["--axes", axes]
         return cmd
 
     return builder

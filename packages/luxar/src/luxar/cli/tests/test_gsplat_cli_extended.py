@@ -3151,3 +3151,54 @@ class TestMigrateFormatCommand:
         assert result.exit_code == 0, f"--quiet failed:\n{result.stdout}"
         assert "Detected legacy format: v1.0" in result.stdout
         assert "Wrote v2.0 file" not in result.stdout
+
+
+class TestAxesSpec:
+    """--axes lets single-volume fit/cal consume non-canonically-ordered nD data
+    (the single-volume counterpart of slurm-fit submit --axes)."""
+
+    def test_apply_axes_spec_slices_channel_axis(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        # ZCYX volume (channel is axis 1, not the canonical CZYX axis 0)
+        arr = np.arange(2 * 3 * 4 * 5, dtype=np.float32).reshape(2, 3, 4, 5)
+        out = _apply_axes_spec(arr, "z,c,y,x", channel=1, timepoint=None)
+        assert out.shape == (2, 4, 5)  # c dropped, z/y/x kept in order
+        np.testing.assert_array_equal(out, arr[:, 1, :, :])
+
+    def test_apply_axes_spec_time_and_channel(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        # TZCYX → pick t=2, c=1
+        arr = np.random.rand(3, 4, 2, 5, 6).astype(np.float32)
+        out = _apply_axes_spec(arr, "t,z,c,y,x", channel=1, timepoint=2)
+        assert out.shape == (4, 5, 6)
+        np.testing.assert_array_equal(out, arr[2, :, 1, :, :])
+
+    def test_apply_axes_spec_defaults_to_zero(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.random.rand(2, 3, 4, 5).astype(np.float32)
+        out = _apply_axes_spec(arr, "c,z,y,x", channel=None, timepoint=None)
+        np.testing.assert_array_equal(out, arr[0])  # channel defaults to 0
+
+    def test_apply_axes_spec_validates(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="labels but the array"):
+            _apply_axes_spec(arr, "z,y", channel=None, timepoint=None)  # too few
+        with pytest.raises(ValueError, match="not recognised"):
+            _apply_axes_spec(arr, "z,bogus,x", channel=None, timepoint=None)
+
+    def test_load_volume_axes_override_npy(self, tmp_path: Path) -> None:
+        """load_volume(axes=...) reorders/slices a non-canonical .npy stack."""
+        from luxar.cli.gsplat_config import load_volume
+
+        # a 4D ZCYX stack (would be mis-read as CZYX by the positional heuristic)
+        arr = np.random.rand(6, 2, 8, 9).astype(np.float32)
+        p = tmp_path / "zcyx.npy"
+        np.save(p, arr)
+        vol = load_volume(p, channel=1, axes="z,c,y,x")
+        assert vol.shape == (6, 8, 9)
+        np.testing.assert_array_equal(vol, arr[:, 1, :, :])
