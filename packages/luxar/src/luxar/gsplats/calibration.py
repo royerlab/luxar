@@ -922,6 +922,106 @@ class SplatDensity:
         return int(min(max(round(k), 0), self.saturation_cap))
 
 
+@dataclass
+class ExponentFit:
+    """Multi-scale fit of the saturation exponent ``alpha`` in ``K ~ features^alpha``.
+
+    The single-scale calibration assumes the empirical default ``alpha=0.44``;
+    this *measures* it by calibrating K* at several region scales (each a
+    different feature count) and regressing ``log K*`` on ``log n_features``.
+    The slope is ``alpha``; the per-scale ``(n_features, k_star)`` points and the
+    fit ``r_squared`` are kept for reporting / provenance.
+    """
+
+    alpha: float
+    """Fitted sub-linear exponent (the regression slope in log-log space)."""
+    intercept: float
+    """Log-space intercept ``log C`` (so ``K = exp(intercept)·features^alpha``)."""
+    r_squared: float
+    """Goodness-of-fit of the log-log regression (1 = perfect power law). **NaN**
+    when it cannot be assessed: fewer than 3 *distinct* feature counts (a line
+    through 2 points is trivially perfect), or zero K* variance (a flat/degenerate
+    fit). A NaN here means "treat the exponent as provisional"."""
+    n_points: int
+    """Total scales measured (before collapsing duplicate feature counts)."""
+    n_distinct: int
+    """Distinct feature counts actually regressed (the meaningful sample size).
+    ``< 3`` ⇒ ``r_squared`` is NaN (under-determined)."""
+    scales: List[int]
+    """Region edge lengths (voxels), one per distinct regressed point."""
+    n_features: List[int]
+    """Feature count of each distinct regressed point (shared-threshold count)."""
+    k_star: List[int]
+    """Effective K* at each distinct regressed point."""
+
+
+def fit_saturation_exponent(
+    points: "Sequence[Tuple[int, float, float]]",
+) -> Optional[ExponentFit]:
+    """Least-squares fit of ``alpha`` in ``K ~ features^alpha`` (log-log regression).
+
+    ``points`` is a sequence of ``(scale, n_features, k_star)`` triples (one per
+    calibrated region scale). Duplicate feature counts (scales that clamped to the
+    same crop) are collapsed to one point. Returns ``None`` when fewer than two
+    *distinct* feature counts remain (no spread to fit a slope).
+
+    ``r_squared`` is set to **NaN** when it cannot be meaningfully assessed —
+    fewer than three distinct points (a 2-point line is always perfect), or zero
+    K* variance (a degenerate flat fit, ``alpha≈0``) — so a caller's
+    goodness-of-fit gate is not fooled by a structural ``R²==1.0``.
+    """
+    clean = [
+        (int(s), float(nf), float(k))
+        for (s, nf, k) in points
+        if np.isfinite(nf) and np.isfinite(k) and nf > 0 and k > 0
+    ]
+    if len(clean) < 2:
+        return None
+
+    # Collapse duplicate feature counts (clamped/identical crops → one region):
+    # keep the smallest scale and the mean K* per distinct feature count, so the
+    # regression — and its reported sample size — reflect distinct evidence only.
+    by_feat: Dict[float, List[Tuple[int, float]]] = {}
+    for s, nf, k in clean:
+        by_feat.setdefault(nf, []).append((s, k))
+    distinct_feats = sorted(by_feat)
+    if len(distinct_feats) < 2:
+        return None  # degenerate: every scale had the same feature count
+
+    scales_out = [min(s for s, _ in by_feat[feat]) for feat in distinct_feats]
+    nf_arr = np.asarray(distinct_feats, dtype=float)
+    ks_arr = np.asarray(
+        [float(np.mean([k for _, k in by_feat[f]])) for f in distinct_feats],
+        dtype=float,
+    )
+
+    x = np.log(nf_arr)
+    y = np.log(ks_arr)
+    A = np.vstack([x, np.ones_like(x)]).T
+    sol, *_ = np.linalg.lstsq(A, y, rcond=None)
+    alpha, intercept = float(sol[0]), float(sol[1])
+    pred = alpha * x + intercept
+    ss_res = float(np.sum((y - pred) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    n_distinct = len(distinct_feats)
+    # A 2-point line is trivially perfect (ss_res==0); a flat fit (ss_tot==0) is
+    # degenerate, not perfect. Report NaN rather than a misleading R²==1.0.
+    if n_distinct < 3 or ss_tot == 0.0:
+        r2 = float("nan")
+    else:
+        r2 = 1.0 - ss_res / ss_tot
+    return ExponentFit(
+        alpha=alpha,
+        intercept=intercept,
+        r_squared=float(r2),
+        n_points=len(clean),
+        n_distinct=n_distinct,
+        scales=scales_out,
+        n_features=[int(v) for v in nf_arr],
+        k_star=[int(round(v)) for v in ks_arr],
+    )
+
+
 # =============================================================================
 # Parametric rate-distortion model
 # =============================================================================
@@ -1073,6 +1173,9 @@ class CalibrationResult:
     """Parametric :class:`RDModel` (as dict) of held-out error vs K."""
     not_converged: bool = False
     """True when the held-out curve was still climbing at K_max (RD model)."""
+    exponent_fit: Optional[Dict[str, Any]] = None
+    """Multi-scale :class:`ExponentFit` (as dict) when ``cal --fit-exponent`` ran;
+    its ``alpha`` is also written into ``splat_density.saturation_exponent``."""
 
     def to_json(self, path: Path) -> None:
         """Serialise to JSON. Non-finite floats become ``null``."""
@@ -1172,6 +1275,7 @@ class CalibrationResult:
             splat_density=_rehydrate_nan_dict(raw.get("splat_density")),
             rd_model=_rehydrate_nan_dict(raw.get("rd_model")),
             not_converged=bool(raw.get("not_converged", False)),
+            exponent_fit=_rehydrate_nan_dict(raw.get("exponent_fit")),
         )
 
 
@@ -1500,6 +1604,65 @@ def calibrate(
         rd_model=asdict(rd) if rd is not None else None,
         not_converged=not_converged,
     )
+
+
+def calibrate_saturation_exponent(
+    V: np.ndarray,
+    scales: Sequence[int],
+    *,
+    k_grid: Sequence[int],
+    fit_kwargs: Optional[Dict[str, Any]] = None,
+    feature_method: str = "peaks",
+    region_strategy: str = "densest",
+    k_star_metric: str = "psnr_minmax",
+    mask_seed: int = 42,
+    mask_fraction: float = 0.05,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> Optional[ExponentFit]:
+    """Measure ``alpha`` in ``K ~ features^alpha`` by calibrating at several scales.
+
+    For each edge length in ``scales`` a content-rich sub-region of that size is
+    selected (:func:`select_calibration_region`) and calibrated
+    (:func:`calibrate`, RD model skipped) to obtain its K*. Feature counts are
+    taken at a **single shared absolute level** derived from the full volume
+    (:func:`_robust_feature_level`) so the per-scale counts compose — a per-crop
+    relative threshold would make the slope (``alpha``) inconsistent. ``K*`` is
+    detected with the same ``k_star_metric`` the caller uses for the main sweep,
+    so the regressed K* and the reported anchor are the same definition. The
+    points are regressed in log-log space by :func:`fit_saturation_exponent`.
+
+    Returns the :class:`ExponentFit`, or ``None`` when fewer than two scales yield
+    distinct feature counts (e.g. every scale collapsed to the whole volume).
+    Runtime is roughly ``len(scales)`` × a single :func:`calibrate` sweep.
+    """
+    # One shared absolute feature level for ALL scales (counts compose; a per-crop
+    # relative level would bias the regression slope — see select_calibration_region).
+    shared_thr = _robust_feature_level(np.asarray(V), feature_method)
+    points: List[Tuple[int, float, float]] = []
+    n = len(scales)
+    for i, scale in enumerate(scales):
+        crop, _region = select_calibration_region(
+            V, region_size=int(scale), strategy=region_strategy, feature=feature_method
+        )
+        n_feat = float(
+            count_features(crop, method=feature_method, threshold_abs=shared_thr)
+        )
+        if progress_callback is not None:
+            progress_callback(i, n, f"scale {scale}: region n_features≈{int(n_feat)}")
+        result = calibrate(
+            crop,
+            k_grid=k_grid,
+            fit_kwargs=fit_kwargs,
+            mask_seed=mask_seed,
+            mask_fraction=mask_fraction,
+            k_star_metric=k_star_metric,
+            feature_method=feature_method,
+            compute_rd_model=False,
+        )
+        density = result.splat_density or {}
+        k_star = float(density.get("k_star_reference", result.held_out_peak.k_star))
+        points.append((int(scale), n_feat, k_star))
+    return fit_saturation_exponent(points)
 
 
 def _rehydrate_nan_dict(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

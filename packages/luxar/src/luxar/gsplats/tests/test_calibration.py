@@ -881,6 +881,159 @@ class TestBackwardCompat:
         assert loaded.splat_density is None
         assert loaded.rd_model is None
         assert loaded.not_converged is False
+        assert loaded.exponent_fit is None
         assert loaded.held_out_gain_db == []
         assert loaded.calibration_region is None
         assert math.isnan(loaded.predict_zero_baseline_mse)
+
+
+# -----------------------------------------------------------------------------
+# Saturation-exponent fit (cal --fit-exponent core)
+# -----------------------------------------------------------------------------
+
+
+class TestFitSaturationExponent:
+    def test_recovers_known_exponent(self):
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        alpha_true, c = 0.6, 5.0
+        scales = [64, 128, 256, 512]
+        feats = [100.0, 400.0, 1600.0, 6400.0]
+        pts = [(s, nf, c * nf**alpha_true) for s, nf in zip(scales, feats)]
+        fit = fit_saturation_exponent(pts)
+        assert fit is not None
+        assert fit.alpha == pytest.approx(alpha_true, abs=1e-6)
+        assert fit.intercept == pytest.approx(math.log(c), abs=1e-6)
+        assert fit.r_squared == pytest.approx(1.0, abs=1e-9)
+        assert fit.n_points == 4
+        assert fit.scales == scales
+
+    def test_too_few_points_returns_none(self):
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        assert fit_saturation_exponent([(64, 100.0, 1000.0)]) is None
+        assert fit_saturation_exponent([]) is None
+
+    def test_degenerate_equal_features_returns_none(self):
+        """No spread in feature count → no slope to fit."""
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        assert (
+            fit_saturation_exponent([(64, 100.0, 1000.0), (128, 100.0, 1500.0)]) is None
+        )
+
+    def test_drops_nonpositive_and_nonfinite_points(self):
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        pts = [
+            (64, 100.0, 1000.0),
+            (128, 400.0, 2000.0),
+            (256, 0.0, 5.0),  # zero features → dropped
+            (512, float("nan"), 3.0),  # non-finite → dropped
+        ]
+        fit = fit_saturation_exponent(pts)
+        assert fit is not None
+        assert fit.n_points == 2  # only the two valid points survive
+
+    def test_noisy_power_law_has_imperfect_r2(self):
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        rng = np.random.default_rng(0)
+        feats = [100.0, 400.0, 1600.0, 6400.0, 25600.0]
+        pts = [
+            (i, nf, 5.0 * nf**0.5 * float(1.0 + 0.3 * rng.standard_normal()))
+            for i, nf in enumerate(feats)
+        ]
+        fit = fit_saturation_exponent(pts)
+        assert fit is not None
+        assert 0.0 <= fit.r_squared < 1.0  # noise → not a perfect fit
+
+    def test_two_distinct_points_report_nan_r2(self):
+        """A line through 2 points is trivially perfect; R² must be NaN (not 1.0)
+        so a goodness-of-fit gate is not fooled."""
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        fit = fit_saturation_exponent([(128, 100.0, 1000.0), (256, 400.0, 2000.0)])
+        assert fit is not None
+        assert fit.n_distinct == 2
+        assert fit.alpha == pytest.approx(0.5)
+        assert math.isnan(fit.r_squared)
+
+    def test_flat_kstar_is_degenerate_nan_r2(self):
+        """Distinct features but constant K* (alpha≈0) is a degenerate fit, not a
+        perfect one — R² must be NaN, not 1.0 (the ss_tot==0 trap)."""
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        fit = fit_saturation_exponent(
+            [(128, 100.0, 1000.0), (192, 200.0, 1000.0), (256, 400.0, 1000.0)]
+        )
+        assert fit is not None
+        assert fit.n_distinct == 3
+        assert abs(fit.alpha) < 1e-6  # flat → slope ≈ 0
+        assert math.isnan(fit.r_squared)
+
+    def test_duplicate_feature_counts_are_collapsed(self):
+        """Scales that clamp to the same crop (identical feature counts) collapse
+        to one regressed point — n_distinct < n_points."""
+        from luxar.gsplats.calibration import fit_saturation_exponent
+
+        # scales 192 and 256 both gave n_features=400 (clamped to the same crop)
+        pts = [(128, 100.0, 1000.0), (192, 400.0, 2000.0), (256, 400.0, 2000.0)]
+        fit = fit_saturation_exponent(pts)
+        assert fit is not None
+        assert fit.n_points == 3  # all three measured
+        assert fit.n_distinct == 2  # but only two distinct feature counts
+        assert fit.n_features == [100, 400]
+        assert math.isnan(fit.r_squared)  # 2 distinct → not assessable
+
+
+class TestExponentFitSerialization:
+    def test_exponent_fit_round_trips(self, tmp_path: Path):
+        from dataclasses import asdict
+
+        from luxar.gsplats.calibration import ExponentFit
+
+        efit = ExponentFit(
+            alpha=0.53,
+            intercept=1.8,
+            r_squared=0.97,
+            n_points=3,
+            n_distinct=3,
+            scales=[128, 192, 256],
+            n_features=[120, 260, 460],
+            k_star=[1500, 2300, 3100],
+        )
+        result = CalibrationResult(
+            k_values_requested=[100, 500],
+            k_values_effective=[98, 488],
+            held_out_psnr_db=[25.1, 27.3],
+            train_psnr_db=[25.4, 28.0],
+            held_out_mse=[3.1e-3, 2.0e-3],
+            full_psnr_db=[25.4, 27.9],
+            full_ssim=[0.7, 0.85],
+            held_out_peak=HeldOutPeak(k_star=500, type="peak", confidence_db=1.3),
+            noise_floor=NoiseFloor(
+                sigma_hat=0.01,
+                sigma_laplacian=0.011,
+                sigma_haar=0.009,
+                sigma_background=0.005,
+                psnr_max_db=40.0,
+            ),
+            fit_times_seconds=[1.2, 2.1],
+            splat_paths=None,
+            mask_seed=42,
+            mask_fraction=0.05,
+            donut_radius=1,
+            fit_config={"preset": "draft"},
+            volume_shape=[32, 32, 32],
+            volume_dtype="float32",
+            timestamp="2026-05-06T12:00:00+00:00",
+            exponent_fit=asdict(efit),
+        )
+        out = tmp_path / "cal.json"
+        result.to_json(out)
+        loaded = CalibrationResult.from_json(out)
+        assert loaded.exponent_fit is not None
+        assert loaded.exponent_fit["alpha"] == pytest.approx(0.53)
+        assert loaded.exponent_fit["scales"] == [128, 192, 256]
+        assert loaded.exponent_fit["r_squared"] == pytest.approx(0.97)

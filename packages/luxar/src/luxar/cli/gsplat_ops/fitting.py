@@ -1438,6 +1438,25 @@ def calibrate_command(
         "--rd-model/--no-rd-model",
         help="Fit a parametric error-vs-K model (extrapolation + 'not-converged' flag).",
     ),
+    fit_exponent: bool = typer.Option(
+        False,
+        "--fit-exponent",
+        help=(
+            "Measure the saturation exponent alpha (K~features^alpha) instead of "
+            "assuming the default 0.44: calibrate K* at several region scales "
+            "(--exponent-scales) and regress log K* on log n_features. The fitted "
+            "alpha is written into splat_density. WARNING: multiplies runtime by "
+            "the number of scales (each is a full K-sweep)."
+        ),
+    ),
+    exponent_scales: Optional[str] = typer.Option(
+        None,
+        "--exponent-scales",
+        help=(
+            "Comma-separated region edge lengths for --fit-exponent "
+            "(default '128,192,256'). Each yields one (n_features, K*) point."
+        ),
+    ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
         None,
@@ -1513,6 +1532,9 @@ def calibrate_command(
             # Optionally calibrate on a content-rich sub-region (the manuscript
             # itself crops to ~20 M voxels; this automates that at tile scale).
             original_shape = list(volume.shape)
+            # Keep the pre-crop volume so --fit-exponent can select its own
+            # per-scale regions from the full data (independent of --auto-region).
+            volume_full = volume
             region_info: Optional[dict] = None
             if auto_region:
                 from dataclasses import asdict as _asdict
@@ -1576,6 +1598,76 @@ def calibrate_command(
             result.original_volume_shape = original_shape
             if region_info is not None:
                 result.calibration_region = region_info
+
+            # 4b. Optional multi-scale fit of the saturation exponent alpha.
+            #     Calibrates K* at several region scales and regresses log K* on
+            #     log n_features; the fitted alpha overrides the assumed default
+            #     in splat_density (which the planner / fit --tiling content read).
+            if fit_exponent:
+                from dataclasses import asdict as _asdict_fit
+
+                from luxar.gsplats.calibration import calibrate_saturation_exponent
+
+                scales = (
+                    [int(x) for x in exponent_scales.split(",") if x.strip()]
+                    if exponent_scales
+                    else [128, 192, 256]
+                )
+                with asection(
+                    f"Fitting saturation exponent over {len(scales)} scale(s)"
+                ):
+                    aprint(
+                        f"⚠ --fit-exponent runs {len(scales)} extra K-sweeps "
+                        f"(scales={scales}); this multiplies runtime accordingly."
+                    )
+                    efit = calibrate_saturation_exponent(
+                        volume_full,
+                        scales,
+                        k_grid=ks,
+                        fit_kwargs=fit_kwargs,
+                        feature_method=feature_metric,
+                        region_strategy=region_strategy,
+                        k_star_metric=k_star_metric,
+                        mask_seed=mask_seed,
+                        mask_fraction=mask_fraction,
+                        progress_callback=_on_progress,
+                    )
+                if efit is None:
+                    aprint(
+                        "⚠ exponent fit failed (need ≥2 scales with distinct "
+                        f"feature counts); keeping α={saturation_exponent}."
+                    )
+                else:
+                    # Always record the fit for provenance/inspection.
+                    result.exponent_fit = _asdict_fit(efit)
+                    r2 = efit.r_squared
+                    r2_str = "n/a" if not math.isfinite(r2) else f"{r2:.3f}"
+                    alpha_usable = math.isfinite(efit.alpha) and efit.alpha > 0.0
+                    if not alpha_usable:
+                        # A non-positive / non-finite slope means the power law
+                        # didn't hold (e.g. K* flat across scales → α≈0, which
+                        # would collapse predict_k to a constant). Keep the default
+                        # rather than silently disabling the density transfer.
+                        aprint(
+                            f"⚠ degenerate exponent (α={efit.alpha:.3g}, R²={r2_str}, "
+                            f"{efit.n_distinct} distinct scales); keeping default "
+                            f"α={saturation_exponent}. (Fit recorded for inspection.)"
+                        )
+                    else:
+                        if result.splat_density is not None:
+                            result.splat_density["saturation_exponent"] = efit.alpha
+                        aprint(
+                            f"Fitted α={efit.alpha:.3f} (R²={r2_str}, "
+                            f"{efit.n_distinct} distinct scales); was "
+                            f"{saturation_exponent}"
+                        )
+                        if not math.isfinite(r2) or r2 < 0.5:
+                            aprint(
+                                "⚠ low/unassessable confidence (need ≥3 distinct "
+                                "scales with varied feature counts and K*); treat "
+                                "α as provisional — consider more/varied "
+                                "--exponent-scales or keep the default."
+                            )
 
             # 5. Write JSON
             with asection("Writing results"):

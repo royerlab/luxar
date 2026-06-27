@@ -1938,6 +1938,24 @@ def fast_fit_config(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def multiblob_volume(tmp_path: Path) -> Path:
+    """A 40^3 volume with many blobs so feature count grows with crop size —
+    needed by --fit-exponent (distinct n_features across region scales)."""
+    rng = np.random.default_rng(0)
+    V = np.zeros((40, 40, 40), np.float32)
+    zz, yy, xx = np.mgrid[0:40, 0:40, 0:40]
+    for _ in range(24):
+        cz, cy, cx = rng.integers(4, 36, 3)
+        V += np.exp(
+            -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)
+        ).astype(np.float32)
+    V = np.clip(V, 0, 1)
+    path = tmp_path / "multiblob.npy"
+    np.save(str(path), V)
+    return path
+
+
 class TestCalibrateCommand:
     def test_cal_basic(
         self,
@@ -2011,6 +2029,74 @@ class TestCalibrateCommand:
 
         # Stdout shows the recommended K* line
         assert "Recommended K" in result.stdout
+
+    def test_cal_fit_exponent_writes_fitted_alpha(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--fit-exponent calibrates K* at several scales and writes a fitted
+        alpha into both exponent_fit and splat_density (overriding the 0.44
+        default), which the planner / `fit --tiling content` then read."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "cal", str(multiblob_volume), str(out_json),
+                "--n-grid", "2", "--k-min", "50", "--k-max", "300",
+                "--preset", "draft", "--config", str(fast_fit_config),
+                "--device", "cpu",
+                "--fit-exponent", "--exponent-scales", "16,28",
+            ],
+        )
+        assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
+        with open(out_json) as f:
+            data = json.load(f)
+        ef = data["exponent_fit"]
+        assert ef is not None, "exponent_fit not written"
+        assert ef["n_points"] == 2
+        assert ef["scales"] == [16, 28]
+        # the fitted alpha is mirrored into splat_density (what the planner reads)
+        assert data["splat_density"]["saturation_exponent"] == pytest.approx(
+            ef["alpha"]
+        )
+        # stdout reports the fitted exponent
+        assert "Fitted" in result.stdout
+
+    def test_cal_fit_exponent_degenerate_keeps_default_alpha(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """When the scales can't yield ≥2 distinct feature counts (a single-blob
+        16³ volume), --fit-exponent must NOT clobber the default α=0.44: it keeps
+        the default and reports the failure (the invariant the None branch holds)."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "cal", str(smooth_blob_volume), str(out_json),
+                "--n-grid", "2", "--k-min", "20", "--k-max", "100",
+                "--preset", "draft", "--config", str(fast_fit_config),
+                "--device", "cpu",
+                "--fit-exponent", "--exponent-scales", "8,12",
+            ],
+        )
+        assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
+        with open(out_json) as f:
+            data = json.load(f)
+        # the default α survives (either the fit failed → None, or it was degenerate)
+        assert data["splat_density"]["saturation_exponent"] == pytest.approx(0.44)
+        # and the run told the user it kept the default
+        assert "keeping" in result.stdout.lower()
 
     def test_cal_explicit_grid_overrides(
         self,
