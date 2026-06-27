@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import math
+import sys
+import textwrap
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,10 +13,13 @@ import pytest
 from luxar.gsplats.calibration import SplatDensity
 from luxar.gsplats.planner import (
     FitPlan,
+    PlanBox,
+    fit_planned_parallel,
     plan_partition,
     plan_volume,
     scan_content,
 )
+from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
 
 def _corner_blobs(shape=(128, 128, 128), n=16, corner=64, seed=0):
@@ -275,3 +281,178 @@ class TestPlanPartition:
         plan = plan_volume(V, _density(), cell=16, min_leaf=32, max_leaf=64, overlap=8)
         assert plan.n_boxes >= 1
         assert plan.total_budget > 0
+
+
+# ── parallel box fitting (driver exercised with a fake per-box worker) ────────
+
+
+def _toy_plan(n_boxes: int = 3, budget: int = 100, width: int = 16) -> FitPlan:
+    """A FitPlan tiling x into ``n_boxes`` columns; no scan needed by the driver."""
+    boxes = [
+        PlanBox(
+            box=[0, width, 0, width, j * width, (j + 1) * width],
+            n_features=10,
+            budget=budget,
+        )
+        for j in range(n_boxes)
+    ]
+    return FitPlan(
+        volume_shape=[width, width, n_boxes * width],
+        boxes=boxes,
+        overlap=4,
+        feature_method="peaks",
+        min_leaf=8,
+        max_leaf=16,
+        density={"saturation_cap": 10_000},
+    )
+
+
+def _fake_box_builder(n_per_box: int = 5):
+    """Worker builder writing ``n_per_box`` deterministic splats — no torch/GPU."""
+
+    def builder(i: int, out_path: Path) -> list[str]:
+        script = textwrap.dedent(
+            f"""
+            import numpy as np
+            from luxar.gsplats.gsplat_data import GSplatData
+            rng = np.random.default_rng({i} + 1)
+            k = {n_per_box}
+            centers = rng.random((k, 3)).astype(np.float32) * 10.0
+            amps = rng.random(k).astype(np.float32) + 0.1
+            chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (k, 1))
+            GSplatData(centers=centers, amplitudes=amps,
+                       cholesky_factors=chol).save(r"{out_path}")
+            """
+        )
+        return [sys.executable, "-c", script]
+
+    return builder
+
+
+def _empty_marker_for(*box_idxs: int, n_per_box: int = 5):
+    """Builder where the given boxes write a 0-splat ``.empty`` marker instead."""
+    ok = _fake_box_builder(n_per_box)
+
+    def builder(i: int, out_path: Path) -> list[str]:
+        if i in box_idxs:
+            return [
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path(r'{out_path}' + '.empty').write_text('')",
+            ]
+        return ok(i, out_path)
+
+    return builder
+
+
+class TestFitPlannedParallel:
+    def test_merges_all_budgeted_boxes(self, tmp_path):
+        plan = _toy_plan(n_boxes=3)
+        d = tmp_path / "boxes"
+        merged = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            verbose=False,
+        )
+        assert merged.n_splats == 5 * 3
+        assert merged.stats["n_boxes"] == 3
+        assert merged.stats["n_boxes_fit"] == 3
+        assert merged.stats["parallel_jobs"] == 2
+        assert not d.exists()  # tmp removed on success
+
+    def test_empty_box_marker_skipped(self, tmp_path):
+        plan = _toy_plan(n_boxes=3)
+        merged = fit_planned_parallel(
+            plan,
+            jobs=2,
+            tmp_dir=tmp_path / "boxes",
+            worker_cmd_builder=_empty_marker_for(1),
+            verbose=False,
+        )
+        assert merged.n_splats == 5 * 2  # boxes 0 and 2 contribute
+        assert merged.stats["n_boxes_fit"] == 3  # the empty box still "ran"
+
+    def test_only_budgeted_boxes_spawned(self, tmp_path):
+        plan = _toy_plan(n_boxes=3)
+        plan.boxes[2].budget = 0  # zero-budget box must be skipped, not spawned
+        spawned: list[int] = []
+        base = _fake_box_builder(5)
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            spawned.append(i)
+            return base(i, out_path)
+
+        merged = fit_planned_parallel(
+            plan, jobs=2, tmp_dir=tmp_path / "boxes", worker_cmd_builder=builder
+        )
+        assert sorted(spawned) == [0, 1]  # box 2 (budget 0) never spawned
+        assert merged.n_splats == 5 * 2
+
+    def test_worker_failure_raises_and_retains_tmp(self, tmp_path):
+        plan = _toy_plan(n_boxes=3)
+        d = tmp_path / "boxes"
+        ok = _fake_box_builder(5)
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            if i == 1:
+                return [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.write('BOOM\\n'); sys.exit(3)",
+                ]
+            return ok(i, out_path)
+
+        with pytest.raises(RuntimeError, match="box fits failed"):
+            fit_planned_parallel(
+                plan, jobs=2, tmp_dir=d, worker_cmd_builder=builder, verbose=False
+            )
+        assert d.exists()  # retained for inspection on failure
+
+    def test_clean_exit_no_output_raises(self, tmp_path):
+        plan = _toy_plan(n_boxes=2)
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            return [sys.executable, "-c", "pass"]  # exit 0, writes nothing
+
+        with pytest.raises(RuntimeError, match="wrote no output"):
+            fit_planned_parallel(
+                plan, jobs=1, tmp_dir=tmp_path / "boxes", worker_cmd_builder=builder
+            )
+
+    def test_all_empty_raises_valueerror(self, tmp_path):
+        plan = _toy_plan(n_boxes=2)
+        with pytest.raises(ValueError, match="no splats"):
+            fit_planned_parallel(
+                plan,
+                jobs=2,
+                tmp_dir=tmp_path / "boxes",
+                worker_cmd_builder=_empty_marker_for(0, 1),
+            )
+
+    def test_keep_boxes_retains_tmp(self, tmp_path):
+        plan = _toy_plan(n_boxes=2)
+        d = tmp_path / "boxes"
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            keep_boxes=True,
+        )
+        assert d.exists() and any(d.iterdir())
+
+
+class TestMaxPaddedBoxVoxels:
+    def test_returns_largest_padded_budgeted_box(self):
+        # volume 16 x 16 x 48, three 16-wide x-columns, overlap 4 (clamped to vol).
+        # box0 x[0:16]->pad[0:20]=20; box1 x[16:32]->pad[12:36]=24; box2 x[32:48]->[28:48]=20
+        plan = _toy_plan(n_boxes=3, width=16)
+        assert max_padded_box_voxels(plan) == 16 * 16 * 24  # the middle box, 6144
+
+    def test_ignores_zero_budget_boxes(self):
+        plan = _toy_plan(n_boxes=3, width=16)
+        plan.boxes[1].budget = 0  # the largest padded box is now unbudgeted
+        # remaining budgeted boxes pad to 20 in x -> 16*16*20
+        assert max_padded_box_voxels(plan) == 16 * 16 * 20
