@@ -1738,6 +1738,164 @@ class TestTransformCommand:
             atol=1e-3,
         )
 
+    def test_transform_preserves_partition(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Tree-aware transform keeps a kind=partition a partition (PR-4).
+
+        Pre-fix, `transform` did GSplatData.load → ValueError on a partition
+        root → exit 1 with no output. Now it walks the tree leaf-by-leaf,
+        preserving the part structure and total splat count.
+        """
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import (
+            GSplatPartition,
+            global_amplitude_max,
+            total_splats,
+        )
+
+        part = tmp_path / "part.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+            ).exit_code
+            == 0
+        )
+        src_node, _ = load_gsplat_node(part)
+        assert isinstance(src_node, GSplatPartition)
+        n_parts, n_splats = src_node.n_children, total_splats(src_node)
+
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "transform", str(part), str(out),
+                "--scale", "2,2,2", "--center", "--normalize-intensity", "1.0",
+            ],
+        )
+        assert result.exit_code == 0, f"transform on partition failed: {result.stdout}"
+
+        dst_node, _ = load_gsplat_node(out)
+        assert isinstance(dst_node, GSplatPartition)
+        assert dst_node.n_children == n_parts
+        assert total_splats(dst_node) == n_splats
+        # --normalize-intensity 1.0 → the GLOBAL max amplitude is exactly 1.0
+        assert global_amplitude_max(dst_node) == pytest.approx(1.0, abs=1e-5)
+
+    def test_transform_partition_center_uses_global_centroid(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--center on a partition moves the GLOBAL amplitude-weighted centroid
+        to the origin (a single global shift, not per-part centering)."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import amplitude_weighted_centroid
+
+        part = tmp_path / "part.gsplats.zarr"
+        runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(part), str(out), "--center"]
+        )
+        assert result.exit_code == 0, f"--center on partition failed: {result.stdout}"
+        dst_node, _ = load_gsplat_node(out)
+        np.testing.assert_allclose(
+            amplitude_weighted_centroid(dst_node), 0.0, atol=1e-4
+        )
+
+    def test_transform_partition_scales_geometry(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A scale-only transform on a partition actually scales the geometry
+        (its center-bounds extent doubles). Without an assertion tied to the
+        scaled centers, a regression dropping the tree-path scale ships green."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, center_bounds
+
+        part = tmp_path / "part.gsplats.zarr"
+        runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        src_node, _ = load_gsplat_node(part)
+        lo, hi = center_bounds(src_node)
+        src_extent = hi - lo
+
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(part), str(out), "--scale", "2,2,2"]
+        )
+        assert result.exit_code == 0, f"--scale on partition failed: {result.stdout}"
+        dst_node, _ = load_gsplat_node(out)
+        assert isinstance(dst_node, GSplatPartition)
+        lo2, hi2 = center_bounds(dst_node)
+        # extent scaled ~2x on every spatial axis
+        np.testing.assert_allclose(hi2 - lo2, src_extent * 2.0, rtol=1e-4, atol=1e-4)
+
+    def test_transform_nested_group_rederives_min_pixel_size(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A spatial scale on a multiscale-style tree (a lod group whose finest
+        child is a partition carrying its OWN min_pixel_size) must NOT leave the
+        stale group-node threshold on disk — the writer re-derives it from the
+        transformed extents.
+
+        Pre-fix, the tree path scrubbed min_pixel_size only from leaves while
+        ``map_leaves`` copied the partition GROUP meta verbatim, so the stale
+        value survived (and the partition writer branch re-applied it).
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+        def _leaf(scale: float, seed: int) -> GSplatLeaf:
+            rng = np.random.default_rng(seed)
+            n = 8
+            centers = (rng.uniform(0, 10, size=(n, 3)) * scale).astype(np.float32)
+            chol = np.zeros((n, 6), dtype=np.float32)
+            chol[:, [0, 2, 5]] = 1.0  # positive diagonal
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=centers,
+                        amplitudes=rng.uniform(0.1, 1.0, size=(n,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
+        # deliberately-wrong min_pixel_size on the partition GROUP node.
+        STALE = 12345.0
+        fine = GSplatPartition(
+            children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"min_pixel_size": STALE}
+        )
+        root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
+
+        src = tmp_path / "multiscale.gsplats.zarr"
+        write_gsplats_tree(src, root)
+        # confirm the stale value round-trips on load (the precondition for the bug)
+        loaded, _ = load_gsplat_node(src)
+        assert loaded.children[1].meta.get("min_pixel_size") == pytest.approx(STALE)
+
+        out = tmp_path / "scaled.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(src), str(out), "--scale", "4,4,4"]
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        dst, _ = load_gsplat_node(out)
+        assert isinstance(dst, GSplatLodGroup)
+        # the partition group's min_pixel_size was re-derived, not the stale value
+        new_mps = dst.children[1].meta.get("min_pixel_size")
+        assert new_mps is not None
+        assert new_mps != pytest.approx(STALE), (
+            f"stale group-node min_pixel_size survived the scale: {new_mps}"
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Calibrate (cal) command tests

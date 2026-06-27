@@ -372,3 +372,136 @@ def test_min_pixel_size_explicit_meta_preserved():
     node = tree_from_substitutive_levels(levels)
     # setdefault: derived values are present (no explicit override path here)
     assert all("min_pixel_size" in c.meta for c in node.children)
+
+
+# ── map_leaves / default-selection global stats (PR-4 tree-aware transform) ──
+
+
+def _leaf_xyz(centers: np.ndarray, amps) -> GSplatLeaf:
+    """Build a single-sublod leaf with explicit centers + amplitudes (3D)."""
+    centers = np.asarray(centers, dtype=np.float32)
+    n, ndim = centers.shape
+    k = ndim * (ndim + 1) // 2
+    chol = np.zeros((n, k), dtype=np.float32)
+    diag = np.cumsum(np.arange(1, ndim + 1)) - 1
+    chol[:, diag] = 1.0
+    return GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=centers,
+                amplitudes=np.asarray(amps, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        ]
+    )
+
+
+def test_map_leaves_preserves_partition_shape_and_meta():
+    from luxar.gsplats.tree import map_leaves
+
+    leaf_a, leaf_b = _leaf(4, seed=0), _leaf(6, seed=1)
+    tree = GSplatPartition(
+        children=[leaf_a, leaf_b], max_elements=7, meta={"foo": "bar"}
+    )
+    out = map_leaves(
+        tree,
+        lambda lf: GSplatLeaf(additive_sublods=lf.additive_sublods, meta={"tagged": 1}),
+    )
+    assert isinstance(out, GSplatPartition)
+    assert out.max_elements == 7
+    assert out.meta == {"foo": "bar"}  # group meta copied, not mutated
+    assert out.n_children == 2
+    assert all(c.meta == {"tagged": 1} for c in out.children)
+    # original tree is untouched (immutable rebuild)
+    assert tree.children[0].meta == {} and tree.meta == {"foo": "bar"}
+
+
+def test_map_leaves_nested_lod_inside_partition_visits_every_leaf():
+    from luxar.gsplats.tree import map_leaves
+
+    inner = GSplatLodGroup(children=[_leaf(2, seed=1), _leaf(8, seed=0)], meta={"m": 1})
+    tree = GSplatPartition(children=[inner, _leaf(3, seed=2)])
+    seen: list[int] = []
+
+    def fn(lf: GSplatLeaf) -> GSplatLeaf:
+        seen.append(lf.n_splats)
+        return lf
+
+    out = map_leaves(tree, fn)
+    assert isinstance(out, GSplatPartition)
+    assert isinstance(out.children[0], GSplatLodGroup)
+    assert out.children[0].meta == {"m": 1}
+    # fn applied to every leaf (both lod-group children + the standalone leaf)
+    assert sorted(seen) == [2, 3, 8]
+
+
+def test_amplitude_weighted_centroid_partition():
+    from luxar.gsplats.tree import amplitude_weighted_centroid
+
+    a = _leaf_xyz([[0.0, 0.0, 0.0]], [1.0])
+    b = _leaf_xyz([[10.0, 0.0, 0.0]], [3.0])
+    c = amplitude_weighted_centroid(GSplatPartition(children=[a, b]))
+    # weighted mean: (0·1 + 10·3) / 4 = 7.5
+    assert np.allclose(c, [7.5, 0.0, 0.0])
+
+
+def test_global_stats_ignore_coarse_substitutive_levels():
+    """A lod group contributes only its default (finest) child to global stats."""
+    from luxar.gsplats.tree import amplitude_weighted_centroid, global_amplitude_max
+
+    coarse = _leaf_xyz([[100.0, 0.0, 0.0]], [50.0])  # would dominate if counted
+    fine = _leaf_xyz([[2.0, 0.0, 0.0]], [1.0])
+    grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest; default=fine
+    assert np.allclose(amplitude_weighted_centroid(grp), [2.0, 0.0, 0.0])
+    assert global_amplitude_max(grp) == pytest.approx(1.0)
+
+
+def test_global_amplitude_max_partition():
+    from luxar.gsplats.tree import global_amplitude_max
+
+    a = _leaf_xyz([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [0.2, 0.9])
+    b = _leaf_xyz([[5.0, 0.0, 0.0]], [0.5])
+    assert global_amplitude_max(GSplatPartition(children=[a, b])) == pytest.approx(0.9)
+
+
+def test_amplitude_weighted_centroid_zero_amplitude_falls_back_to_mean():
+    from luxar.gsplats.tree import amplitude_weighted_centroid
+
+    leaf = _leaf_xyz([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]], [0.0, 0.0])
+    assert np.allclose(amplitude_weighted_centroid(leaf), [2.0, 0.0, 0.0])
+
+
+def test_without_meta_key_scrubs_group_and_leaf_meta():
+    """``without_meta_key`` drops the key from EVERY node — including group
+    nodes that ``map_leaves`` copies verbatim — while preserving other meta.
+
+    This is the mechanism that fixes the stale-``min_pixel_size`` bug on the
+    transform tree path for multiscale / mosaic topologies.
+    """
+    from luxar.gsplats.tree import map_leaves, without_meta_key
+
+    leaf_a = GSplatLeaf(
+        additive_sublods=[_sublod(4, seed=0)],
+        meta={"min_pixel_size": 1.0, "compression_factor": 4},
+    )
+    # multiscale-like: a lod group whose finest child is a partition that itself
+    # carries a min_pixel_size on its GROUP meta.
+    fine = GSplatPartition(
+        children=[leaf_a, GSplatLeaf(additive_sublods=[_sublod(6, seed=1)])],
+        meta={"min_pixel_size": 99.0},
+    )
+    root = GSplatLodGroup(children=[_leaf(3, seed=2), fine], meta={"min_pixel_size": 5.0})
+
+    scrubbed = without_meta_key(root, "min_pixel_size")
+    assert "min_pixel_size" not in scrubbed.meta  # root group
+    assert "min_pixel_size" not in scrubbed.children[1].meta  # the partition group
+    scrubbed_leaf = scrubbed.children[1].children[0]
+    assert "min_pixel_size" not in scrubbed_leaf.meta
+    assert scrubbed_leaf.meta["compression_factor"] == 4  # other provenance kept
+    # original tree untouched (immutable rebuild)
+    assert root.meta["min_pixel_size"] == 5.0 and fine.meta["min_pixel_size"] == 99.0
+
+    # Contrast: map_leaves copies GROUP meta verbatim — it does NOT scrub the
+    # partition's stale min_pixel_size (the bug this helper exists to close).
+    mapped = map_leaves(root, lambda lf: lf)
+    assert mapped.children[1].meta["min_pixel_size"] == 99.0

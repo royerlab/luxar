@@ -7,7 +7,7 @@ the shared ``app_gsplat`` Typer (package-refactor-plan P3/P4/P6).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -844,9 +844,22 @@ def transform_dataset(
         luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale-intensity 0.5
     """
     try:
+        from dataclasses import replace
+
         import numpy as np
 
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import (
+            amplitude_weighted_centroid,
+            center_bounds,
+            global_amplitude_max,
+            is_matrix_shaped,
+            map_leaves,
+            node_ndim,
+            total_splats,
+        )
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
 
@@ -868,128 +881,218 @@ def transform_dataset(
             raise typer.Exit(1)
 
         with asection(f"Transforming: {input_path.name}"):
-            # Load
+            # Load the raw node tree so partitions / nested trees are preserved.
+            # A matrix-shaped tree (a leaf, or a lod group of leaves) flattens to a
+            # GSplatData exactly as `GSplatData.load` would; a kind=partition (or
+            # otherwise nested) tree is transformed leaf-by-leaf, keeping its shape.
             with asection("Loading dataset"):
-                data = GSplatData.load(input_path, include_stats=True)
-                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                node, stats = load_gsplat_node(input_path, include_stats=True)
+                d = node_ndim(node)
+                matrix_shaped = is_matrix_shaped(node)
+                shape_desc = "leaf/matrix" if matrix_shaped else type(node).__name__
+                aprint(
+                    f"Loaded {total_splats(node):,} splats ({d}D, {shape_desc})"
+                )
 
-            d = data.ndim
             transforms_applied: list[str] = []
 
-            # 1. Scale (per-axis)
+            # ── Parse the geometry transforms once (shared by both code paths) ──
+            scale_matrix = None
             if scale_factors is not None:
                 factors = _parse_csv_floats(scale_factors, d, "scale")
-                with asection("Applying scale"):
-                    aprint(f"Scale factors: {factors}")
-                    scale_matrix = np.diag(factors)
-                    data = data.transform(scale_matrix)
-                    transforms_applied.append(f"scale({scale_factors})")
+                scale_matrix = np.diag(factors)
+                transforms_applied.append(f"scale({scale_factors})")
 
-            # 2. Rotations (3D spatial dims only)
+            rot_matrix = None
             has_rotation = any(
                 r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg]
             )
             if has_rotation:
-                # Determine spatial dimensions
-                # For nD data, we assume the last 3 dims are spatial (XYZ)
-                # and any preceding dims are non-spatial (e.g., time)
+                # nD convention: the last 3 dims are spatial (XYZ); any preceding
+                # dims (e.g. time) are left unrotated.
                 if d < 3:
                     aprint(
                         f"❌ Rotation requires at least 3 spatial dimensions, got {d}D data"
                     )
                     raise typer.Exit(1)
+                rot3 = np.eye(3, dtype=np.float64)
+                if rotate_x_deg is not None:
+                    rad = np.radians(rotate_x_deg)
+                    c, s = np.cos(rad), np.sin(rad)
+                    rot3 = np.array([[1, 0, 0], [0, c, -s], [0, s, c]]) @ rot3
+                    transforms_applied.append(f"rotate_x({rotate_x_deg}°)")
+                if rotate_y_deg is not None:
+                    rad = np.radians(rotate_y_deg)
+                    c, s = np.cos(rad), np.sin(rad)
+                    rot3 = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]]) @ rot3
+                    transforms_applied.append(f"rotate_y({rotate_y_deg}°)")
+                if rotate_z_deg is not None:
+                    rad = np.radians(rotate_z_deg)
+                    c, s = np.cos(rad), np.sin(rad)
+                    rot3 = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]) @ rot3
+                    transforms_applied.append(f"rotate_z({rotate_z_deg}°)")
+                rot_matrix = np.eye(d, dtype=np.float64)
+                rot_matrix[d - 3 :, d - 3 :] = rot3
 
-                with asection("Applying rotation"):
-                    # Build 3x3 rotation matrix
-                    rot3 = np.eye(3, dtype=np.float64)
-                    if rotate_x_deg is not None:
-                        rad = np.radians(rotate_x_deg)
-                        c, s = np.cos(rad), np.sin(rad)
-                        rx = np.array(
-                            [[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64
-                        )
-                        rot3 = rx @ rot3
-                        aprint(f"Rotate X: {rotate_x_deg}°")
-                        transforms_applied.append(f"rotate_x({rotate_x_deg}°)")
-
-                    if rotate_y_deg is not None:
-                        rad = np.radians(rotate_y_deg)
-                        c, s = np.cos(rad), np.sin(rad)
-                        ry = np.array(
-                            [[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64
-                        )
-                        rot3 = ry @ rot3
-                        aprint(f"Rotate Y: {rotate_y_deg}°")
-                        transforms_applied.append(f"rotate_y({rotate_y_deg}°)")
-
-                    if rotate_z_deg is not None:
-                        rad = np.radians(rotate_z_deg)
-                        c, s = np.cos(rad), np.sin(rad)
-                        rz = np.array(
-                            [[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float64
-                        )
-                        rot3 = rz @ rot3
-                        aprint(f"Rotate Z: {rotate_z_deg}°")
-                        transforms_applied.append(f"rotate_z({rotate_z_deg}°)")
-
-                    # Embed 3x3 rotation into (d, d) identity matrix
-                    # Rotation applies to the last 3 dimensions
-                    full_matrix = np.eye(d, dtype=np.float64)
-                    full_matrix[d - 3 :, d - 3 :] = rot3
-                    data = data.transform(full_matrix)
-
-            # 3. Translate
+            translate_vec = None
             if translate_offset is not None:
                 offsets = _parse_csv_floats(translate_offset, d, "translate")
-                with asection("Applying translation"):
-                    aprint(f"Translation: {offsets}")
-                    data = data.translate(np.array(offsets, dtype=np.float64))
-                    transforms_applied.append(f"translate({translate_offset})")
+                translate_vec = np.array(offsets, dtype=np.float64)
+                transforms_applied.append(f"translate({translate_offset})")
 
-            # 4. Center at centroid
             if center:
-                with asection("Centering at centroid"):
-                    data = data.center_at_centroid()
-                    aprint("Centered at amplitude-weighted centroid")
-                    transforms_applied.append("center")
-
-            # 5. Scale intensity
+                transforms_applied.append("center")
             if scale_intensity_factor is not None:
-                with asection("Scaling intensity"):
-                    aprint(f"Intensity scale factor: {scale_intensity_factor}")
-                    data = data.scale_intensity(scale_intensity_factor)
-                    transforms_applied.append(
-                        f"scale_intensity({scale_intensity_factor})"
-                    )
-
-            # 6. Normalize intensity
+                transforms_applied.append(f"scale_intensity({scale_intensity_factor})")
             if normalize_intensity is not None:
-                with asection("Normalizing intensity"):
-                    current_max = float(data.amplitudes.max())
-                    aprint(
-                        f"Current max: {current_max:.4f} → target max: {normalize_intensity}"
-                    )
-                    data = data.normalize_intensity(normalize_intensity)
-                    transforms_applied.append(f"normalize({normalize_intensity})")
+                transforms_applied.append(f"normalize({normalize_intensity})")
+
+            if matrix_shaped:
+                # ── Flat path: a leaf / matrix tree → the GSplatData methods ──
+                data = GSplatData.from_tree(node, stats=stats)
+                if scale_matrix is not None:
+                    with asection("Applying scale"):
+                        aprint(f"Scale factors: {list(np.diagonal(scale_matrix))}")
+                        data = data.transform(scale_matrix)
+                if rot_matrix is not None:
+                    with asection("Applying rotation"):
+                        data = data.transform(rot_matrix)
+                if translate_vec is not None:
+                    with asection("Applying translation"):
+                        aprint(f"Translation: {list(translate_vec)}")
+                        data = data.translate(translate_vec)
+                if center:
+                    with asection("Centering at centroid"):
+                        data = data.center_at_centroid()
+                        aprint("Centered at amplitude-weighted centroid")
+                if scale_intensity_factor is not None:
+                    with asection("Scaling intensity"):
+                        aprint(f"Intensity scale factor: {scale_intensity_factor}")
+                        data = data.scale_intensity(scale_intensity_factor)
+                if normalize_intensity is not None:
+                    with asection("Normalizing intensity"):
+                        current_max = float(data.amplitudes.max())
+                        aprint(
+                            f"Current max: {current_max:.4f} → "
+                            f"target max: {normalize_intensity}"
+                        )
+                        data = data.normalize_intensity(normalize_intensity)
+                result_node = data.tree
+            else:
+                # ── Tree-walking path: kind=partition / nested (structure kept) ──
+                aprint(
+                    "Tree-structured input — transforming each part in place "
+                    "(structure preserved)."
+                )
+
+                from luxar.gsplats.tree import GSplatLeaf, GSplatNode
+
+                def _leaf_op(
+                    op: "Callable[[GSplatData], GSplatData]",
+                ) -> "Callable[[GSplatLeaf], GSplatNode]":
+                    def _fn(leaf: "GSplatLeaf") -> "GSplatNode":
+                        # GSplatData.transform/translate/... rebuild a fresh leaf with
+                        # empty meta; restore the source leaf's provenance verbatim.
+                        # A stale extent-derived min_pixel_size is scrubbed AFTER all
+                        # transforms (from leaf AND group nodes) — see below.
+                        new_leaf = op(GSplatData.from_tree(leaf)).tree
+                        return replace(new_leaf, meta=dict(leaf.meta))
+
+                    return _fn
+
+                if scale_matrix is not None:
+                    with asection("Applying scale"):
+                        aprint(f"Scale factors: {list(np.diagonal(scale_matrix))}")
+                        node = map_leaves(
+                            node, _leaf_op(lambda gd: gd.transform(scale_matrix))
+                        )
+                if rot_matrix is not None:
+                    with asection("Applying rotation"):
+                        node = map_leaves(
+                            node, _leaf_op(lambda gd: gd.transform(rot_matrix))
+                        )
+                if translate_vec is not None:
+                    with asection("Applying translation"):
+                        aprint(f"Translation: {list(translate_vec)}")
+                        node = map_leaves(
+                            node, _leaf_op(lambda gd: gd.translate(translate_vec))
+                        )
+                if center:
+                    with asection("Centering at centroid"):
+                        centroid = amplitude_weighted_centroid(node)
+                        if centroid is not None:
+                            node = map_leaves(
+                                node, _leaf_op(lambda gd: gd.translate(-centroid))
+                            )
+                            aprint("Centered at global amplitude-weighted centroid")
+                if scale_intensity_factor is not None:
+                    with asection("Scaling intensity"):
+                        aprint(f"Intensity scale factor: {scale_intensity_factor}")
+                        node = map_leaves(
+                            node,
+                            _leaf_op(lambda gd: gd.scale_intensity(scale_intensity_factor)),
+                        )
+                if normalize_intensity is not None:
+                    with asection("Normalizing intensity"):
+                        current_max = global_amplitude_max(node)
+                        aprint(
+                            f"Current global max: {current_max:.4f} → "
+                            f"target max: {normalize_intensity}"
+                        )
+                        if current_max > 0:
+                            factor = normalize_intensity / current_max
+                            node = map_leaves(
+                                node, _leaf_op(lambda gd: gd.scale_intensity(factor))
+                            )
+                # A geometry transform (scale/rotate/translate/center) invalidates
+                # the extent-derived min_pixel_size LOD-switch threshold on EVERY
+                # node — leaves AND group nodes (a multiscale partition child, a
+                # mosaic per-part lod group). Scrub it from the whole tree so the
+                # writer re-derives it from the transformed extents; intensity-only
+                # transforms leave it intact (the extents are unchanged).
+                geometry_changed = (
+                    scale_matrix is not None
+                    or rot_matrix is not None
+                    or translate_vec is not None
+                    or center
+                )
+                if geometry_changed:
+                    from luxar.gsplats.tree import without_meta_key
+
+                    node = without_meta_key(node, "min_pixel_size")
+                result_node = node
 
             # Summary
             aprint(f"\nTransforms applied: {' → '.join(transforms_applied)}")
 
-            # Print new bounding box
+            # Print new bounding box (from the result tree's center bounds)
             with asection("Result bounding box"):
-                for i in range(d):
-                    lo = data.centers[:, i].min()
-                    hi = data.centers[:, i].max()
-                    aprint(f"  Dim {i}: [{lo:.4f}, {hi:.4f}]  range: {hi - lo:.4f}")
+                bounds = center_bounds(result_node)
+                if bounds is not None:
+                    lo_all, hi_all = bounds
+                    for i in range(d):
+                        lo, hi = float(lo_all[i]), float(hi_all[i])
+                        aprint(f"  Dim {i}: [{lo:.4f}, {hi:.4f}]  range: {hi - lo:.4f}")
 
-            # Save (color SDR/HDR is auto-detected by the writer)
+            # Save (color SDR/HDR is auto-detected by the writer). The flat path
+            # keeps GSplatData.save (carries fitting provenance, unchanged); the
+            # tree path uses the v3.0 tree writer so a partition stays a partition
+            # on disk.
             with asection(f"Saving to {output_path.name}"):
-                data.save(
-                    output_path,
-                    encoding_mode=encoding_mode_obj,
-                    include_fitting_info=True,
-                    compress=compress,
-                )
+                if matrix_shaped:
+                    data.save(
+                        output_path,
+                        encoding_mode=encoding_mode_obj,
+                        include_fitting_info=True,
+                        compress=compress,
+                    )
+                else:
+                    write_gsplats_tree(
+                        output_path,
+                        result_node,
+                        encoding_mode=encoding_mode_obj,
+                        compress=compress,
+                    )
                 aprint(f"Saved: {output_path}")
 
                 if output_path.exists():
