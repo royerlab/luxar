@@ -1706,6 +1706,115 @@ class TestContentMerge:
         with pytest.raises(FileNotFoundError):
             merge_batch_results(manifest, out, verbose=False)
 
+    def _mc_manifest(self, out: Path, n_boxes: int, n_channels: int) -> "object":
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+        )
+
+        jobs = []
+        tid = 0
+        for c in range(n_channels):
+            for k in range(n_boxes):
+                jobs.append(
+                    BatchJob(
+                        task_id=tid,
+                        timepoint=0,
+                        channel=c,
+                        tile_index=k,
+                        output_filename=output_filename(
+                            0, c, k, 1, n_channels, n_boxes, label="box"
+                        ),
+                        estimated_wall_seconds=1.0,
+                    )
+                )
+                tid += 1
+        m = BatchManifest(
+            input_path="/data/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=n_channels,
+            spatial_shape=(64, 64, 64),
+            mode="content",
+            n_tiles=n_boxes,
+            plan_path=str(out / "plan.json"),
+            total_tasks=n_boxes * n_channels,
+            slurm_partition="gpu",
+        )
+        m.jobs = jobs
+        return m
+
+    def test_content_merge_channel_colors_skips_empty_channel(self, tmp_path: Path) -> None:
+        """A box empty in ONLY ONE channel must not crash --channel-colors merge:
+        the colors are subset to the surviving channels (PR-1 empty-slot skip vs
+        the fixed-length color list)."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes, n_c = 2, 2
+
+        def fn(c: int, k: int) -> str:
+            return output_filename(0, c, k, 1, n_c, n_boxes, label="box")
+
+        # box 0: present in both channels; box 1: empty in c0, present in c1.
+        self._write_box(tiles / fn(0, 0), 20, 0.0)
+        self._write_box(tiles / fn(1, 0), 25, 50.0)
+        (tiles / (fn(0, 1) + ".empty")).write_text("")
+        self._write_box(tiles / fn(1, 1), 30, 100.0)
+
+        manifest = self._mc_manifest(out, n_boxes, n_c)
+        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        # Pre-fix this raised ValueError (per_channel len 1 != 2 colors).
+        final = merge_batch_results(manifest, out, channel_colors=colors, verbose=False)
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2  # both boxes present (box 1 via its c1 splats)
+
+    def test_status_counts_empty_box_as_completed(self, tmp_path: Path) -> None:
+        """An empty content box (`.empty` marker) is COMPLETED, not failed/unknown."""
+        from luxar.gsplats.batch.manifest import output_filename, save_manifest
+        from luxar.gsplats.batch.status import check_batch_status
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0)
+        (tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")).write_text("")
+        manifest = self._content_manifest(out, n_boxes)
+        save_manifest(manifest, out)
+
+        st = check_batch_status(out)
+        assert st.completed == 2  # store + empty-marker both count as completed
+        assert st.failed == 0
+        assert st.unknown == 0
+
+    def test_validate_reports_empty_box_separately(self, tmp_path: Path) -> None:
+        """`slurm-fit validate` counts an empty box as EMPTY, not MISSING."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.batch.manifest import output_filename, save_manifest
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0)
+        (tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")).write_text("")
+        save_manifest(self._content_manifest(out, n_boxes), out)
+
+        res = CliRunner().invoke(app_gsplat, ["slurm-fit", "validate", str(out)])
+        assert res.exit_code == 0, res.output
+        assert "EMPTY:      1" in res.output
+        assert "MISSING:    0" in res.output
+
     def test_invalid_tiling_value_rejected(self, tmp_path: Path) -> None:
         """An unknown --tiling value fails loudly (not a silent fall-through to
         uniform that would submit a large array in the wrong mode)."""

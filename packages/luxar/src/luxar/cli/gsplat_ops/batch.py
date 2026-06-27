@@ -1171,6 +1171,7 @@ def batch_validate_cmd(
 
         ok = 0
         missing = 0
+        empty = 0
         corrupt = 0
         unmigrated = 0
         stale_tmp = 0
@@ -1189,7 +1190,12 @@ def batch_validate_cmd(
                     aprint(f"  Deleted: {tile_name}.tmp")
 
             if not tile_path.is_dir():
-                missing += 1
+                # A `<tile>.empty` marker = the task ran and legitimately produced
+                # 0 splats (content boxes / sparse tiles); that is NOT missing.
+                if (tiles_dir / f"{tile_name}.empty").exists():
+                    empty += 1
+                else:
+                    missing += 1
                 continue
 
             # Validate tile integrity
@@ -1211,6 +1217,7 @@ def batch_validate_cmd(
         # Summary
         aprint("")
         aprint(f"  OK:         {ok}")
+        aprint(f"  EMPTY:      {empty}")
         aprint(f"  MISSING:    {missing}")
         aprint(f"  CORRUPT:    {corrupt}")
         aprint(f"  UNMIGRATED: {unmigrated}")

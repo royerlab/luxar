@@ -58,6 +58,11 @@ def run_content_fit(
     overlap: int = 32,
     # fit
     preset: Optional[str] = None,
+    config: Optional[Path] = None,
+    iters: Optional[int] = None,
+    loss: Optional[str] = None,
+    lr: Optional[float] = None,
+    cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
     keep_boxes: bool = False,
@@ -99,12 +104,26 @@ def run_content_fit(
         )
 
     def _fit_kwargs() -> dict:
+        # Honor the user's fit knobs (None values are ignored by load_fit_config),
+        # so `fit --tiling content --iters/--config/--loss/--lr` — and the Slurm
+        # content worker, which re-invokes the same path with those flags baked in
+        # — are not silently dropped.
         fk = load_fit_config(
-            preset=preset, config_path=None, cli_overrides={"device": device}
+            preset=preset,
+            config_path=config,
+            cli_overrides={
+                "device": device,
+                "n_iters": iters,
+                "loss_type": loss,
+                "lr": lr,
+            },
         )
         fk.pop("seeds", None)
         fk.pop("device", None)
-        fk.setdefault("cull_retention", 0.999)
+        if cull_retention is not None:
+            fk["cull_retention"] = cull_retention
+        else:
+            fk.setdefault("cull_retention", 0.999)  # content default (near-lossless)
         fk["verbose"] = False
         return fk
 

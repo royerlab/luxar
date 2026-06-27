@@ -729,6 +729,23 @@ def fit_volume(
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
 
+                # Flags the content path does not implement — warn loudly rather
+                # than silently ignore (the fit knobs below ARE honored).
+                _unsupported = [
+                    name
+                    for name, on in (
+                        ("--denoise", denoise),
+                        ("--downscale", downscale is not None),
+                        ("--progressive", progressive),
+                    )
+                    if on
+                ]
+                if _unsupported and plan_box is None:
+                    aprint(
+                        f"⚠ {', '.join(_unsupported)} are not supported with "
+                        "--tiling content and are ignored."
+                    )
+
                 run_content_fit(
                     input_path,
                     output_path,
@@ -746,6 +763,11 @@ def fit_volume(
                     max_leaf=max_leaf,
                     overlap=tile_overlap,
                     preset=preset,
+                    config=config,
+                    iters=iters,
+                    loss=loss,
+                    lr=lr,
+                    cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,
                     keep_boxes=keep_tiles,

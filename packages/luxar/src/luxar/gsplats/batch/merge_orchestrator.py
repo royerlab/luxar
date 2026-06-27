@@ -168,12 +168,16 @@ def _build_part_for_tile(
     from luxar.gsplats.gsplat_data import GSplatData
 
     n_t = len(t_indices)
-    n_c = len(c_indices)
 
     # Per-channel: stack this tile's timepoints (Level-2 semantics, but scoped to
     # a single spatial tile so memory stays bounded to one tile-region).
+    # ``kept_positions`` records which channel indices survived (a slot can be
+    # empty in some channels but not others — common in content mode) so a
+    # channel-colors merge subsets the colors to the surviving channels rather
+    # than mismatching the fixed-length list.
     per_channel: List[GSplatData] = []
-    for c_real in c_indices:
+    kept_positions: List[int] = []
+    for c_pos, c_real in enumerate(c_indices):
         # Build the timepoint stack, skipping slots that are legitimately empty
         # (`_tile_path` returns None) so a box absent at some timepoints still
         # stacks the timepoints where it has signal — at their real coords.
@@ -199,15 +203,19 @@ def _build_part_for_tile(
         else:
             stacked = tc_data[0]
         per_channel.append(stacked)
+        kept_positions.append(c_pos)
 
     if not per_channel:
         return None  # empty at every (timepoint, channel) for this slot
 
-    # Across channels (Level-3 semantics, scoped to this tile).
-    if n_c == 1:
+    # Across channels (Level-3 semantics, scoped to this tile). When colors are
+    # given, subset them to the channels that actually survived (some channels
+    # may be empty in this slot); merge_with_channel_colors requires len match.
+    if channel_colors:
+        colors = [channel_colors[i] for i in kept_positions]
+        part = GSplatData.merge_with_channel_colors(per_channel, colors)
+    elif len(per_channel) == 1:
         part = per_channel[0]
-    elif channel_colors:
-        part = GSplatData.merge_with_channel_colors(per_channel, channel_colors)
     else:
         part = GSplatData.concatenate(per_channel)
 

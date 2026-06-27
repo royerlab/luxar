@@ -42,11 +42,14 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
 
     tiles_dir = output_dir / "tiles"
 
-    # 1. Check output files
+    # 1. Check output files. A slot is "completed" if its store exists OR it
+    # produced a legitimately-empty result (a `<output>.empty` marker — content
+    # boxes / sparse tiles that fit 0 splats), so those aren't miscounted as
+    # failed/unknown below.
     completed_ids: set = set()
     for job in manifest.jobs:
         tile_path = tiles_dir / job.output_filename
-        if tile_path.exists():
+        if tile_path.exists() or Path(f"{tile_path}.empty").exists():
             status.completed += 1
             completed_ids.add(job.task_id)
 

@@ -238,3 +238,41 @@ def test_bad_jobs_value_errors(tmp_path):
         ],
     )
     assert res.exit_code != 0  # --jobs must be int or 'auto'
+
+
+def test_content_fit_warns_on_unsupported_flags(tmp_path):
+    """--denoise/--downscale/--progressive are not implemented for content; the
+    CLI must warn (not silently ignore them)."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "w.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--denoise"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "not supported" in res.output.lower()
+
+
+def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
+    """--iters must reach the fit config in content mode (pre-fix it was dropped:
+    run_content_fit forwarded only preset/device). Spy on load_fit_config and
+    abort before the real fit — we only assert the override was threaded."""
+    import luxar.cli.gsplat_config as cfg
+
+    captured: dict = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        raise _Stop()
+
+    monkeypatch.setattr(cfg, "load_fit_config", _spy)
+    vol = _vol(tmp_path)
+    runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(tmp_path / "o.gsplats.zarr"), *_CONTENT, *_CPU,
+         "--iters", "7"],
+    )
+    assert captured.get("cli_overrides", {}).get("n_iters") == 7
+    assert captured.get("config_path") is None  # no --config passed
