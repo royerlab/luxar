@@ -118,12 +118,24 @@ def generate_fit_sbatch(
     has_explicit_timepoints = manifest.timepoint_indices is not None
     has_explicit_channels = manifest.channel_indices is not None
 
-    fit_cmd_parts = [
-        f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
-        f"    --tile $K/{manifest.n_tiles}",
-        f"    --tile-size {manifest.tile_size}",
-        f"    --overlap {manifest.tile_overlap}",
-    ]
+    # Spatial slot = a uniform tile (`--tile K/M`) or a content box of the shared
+    # plan (`--tiling content --plan … --plan-box K`). $K is the spatial index.
+    is_content = manifest.mode == "content"
+    slot_label = "box" if is_content else "tile"
+    if is_content:
+        fit_cmd_parts = [
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            "    --tiling content",
+            f"    --plan {shlex.quote(manifest.plan_path or '')}",
+            "    --plan-box $K",
+        ]
+    else:
+        fit_cmd_parts = [
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            f"    --tile $K/{manifest.n_tiles}",
+            f"    --tile-size {manifest.tile_size}",
+            f"    --overlap {manifest.tile_overlap}",
+        ]
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
     if manifest.n_channels > 1 or has_explicit_channels:
@@ -218,7 +230,7 @@ def generate_fit_sbatch(
             "    local C=${C_INDICES[$C_IDX]}" if has_c_map else "    local C=$C_IDX",
             "",
             f'    local OUTPUT="{manifest.output_dir}/tiles/'
-            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
+            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_{slot_label}$(printf '%0{k_width}d' $K)"
             '.gsplats.zarr"',
             "",
             "    # Clean up leftover .tmp from a previous crashed run",
