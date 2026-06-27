@@ -1,4 +1,8 @@
-"""End-to-end CLI tests for `luxar gsplat plan` (H7)."""
+"""End-to-end CLI tests for content-aware fitting (`gsplat fit --tiling content`).
+
+The standalone `gsplat plan` command was folded into `fit --tiling content`
+(+ `--plan-only` / `--plan` / hidden `--plan-box`); these exercise that surface.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,12 @@ import numpy as np
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
+from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
 runner = CliRunner()
 
 
-def _vol(tmp_path, shape=(48, 48, 48), n=10):
+def _vol(tmp_path, shape=(48, 48, 48), n=12):
     zz, yy, xx = np.mgrid[0 : shape[0], 0 : shape[1], 0 : shape[2]]
     V = np.zeros(shape, np.float32)
     rng = np.random.default_rng(0)
@@ -25,7 +30,10 @@ def _vol(tmp_path, shape=(48, 48, 48), n=10):
     return p
 
 
-_DENSITY_FLAGS = [
+# content-tiling density + small leaf bounds so a 48^3 volume yields >=2 boxes
+_CONTENT = [
+    "--tiling",
+    "content",
     "--k-star-ref",
     "4000",
     "--n-features-ref",
@@ -41,12 +49,20 @@ _DENSITY_FLAGS = [
     "--max-leaf",
     "32",
 ]
+_CPU = ["--preset", "draft", "--device", "cpu"]
 
 
-def test_plan_writes_json(tmp_path):
+def _kind(path):
+    node, _ = load_gsplat_node(path)
+    return type(node).__name__
+
+
+def test_plan_only_writes_json(tmp_path):
     vol = _vol(tmp_path)
     out = tmp_path / "plan.json"
-    res = runner.invoke(app_gsplat, ["plan", str(vol), str(out), *_DENSITY_FLAGS])
+    res = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, "--plan-only"]
+    )
     assert res.exit_code == 0, res.output
     from luxar.gsplats.planner import FitPlan
 
@@ -54,136 +70,103 @@ def test_plan_writes_json(tmp_path):
     assert plan.n_boxes >= 1 and plan.total_budget > 0
 
 
-def test_plan_fit_end_to_end(tmp_path):
+def test_content_fit_partition_by_default(tmp_path):
     vol = _vol(tmp_path)
-    out_json = tmp_path / "plan.json"
-    out_z = tmp_path / "planned.gsplats.zarr"
+    out = tmp_path / "c.gsplats.zarr"
+    res = runner.invoke(app_gsplat, ["fit", str(vol), str(out), *_CONTENT, *_CPU])
+    assert res.exit_code == 0, res.output
+    assert out.exists()
+    assert _kind(out) == "GSplatPartition"  # one part per content box
+
+
+def test_content_fit_flat_is_leaf(tmp_path):
+    vol = _vol(tmp_path)
+    out = tmp_path / "cf.gsplats.zarr"
     res = runner.invoke(
-        app_gsplat,
-        [
-            "plan",
-            str(vol),
-            str(out_json),
-            *_DENSITY_FLAGS,
-            "--fit",
-            "-o",
-            str(out_z),
-            "--preset",
-            "draft",
-            "--device",
-            "cpu",
-        ],
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--flat"]
     )
     assert res.exit_code == 0, res.output
-    assert out_z.exists()
-    from luxar.gsplats.io import load_gsplats
-
-    assert load_gsplats(out_z).n_splats > 0
+    assert _kind(out) == "GSplatLeaf"  # --flat collapses to a single leaf
 
 
-def test_missing_density_flags_errors(tmp_path):
-    vol = _vol(tmp_path)
-    res = runner.invoke(app_gsplat, ["plan", str(vol), str(tmp_path / "p.json")])
-    assert res.exit_code != 0  # neither --cal nor --k-star-ref/--n-features-ref
-
-
-def test_fit_without_output_errors(tmp_path):
+def test_content_missing_density_errors(tmp_path):
     vol = _vol(tmp_path)
     res = runner.invoke(
         app_gsplat,
-        ["plan", str(vol), str(tmp_path / "p.json"), *_DENSITY_FLAGS, "--fit"],
+        ["fit", str(vol), str(tmp_path / "o.gsplats.zarr"), "--tiling", "content"],
     )
-    assert res.exit_code != 0  # --fit requires -o
+    assert res.exit_code != 0  # no --cal / --k-star-ref
 
 
-def test_fit_box_worker_mode(tmp_path):
-    # The hidden --fit-box worker: write a plan, then fit just box 0 from it.
-    vol = _vol(tmp_path)
-    plan_json = tmp_path / "plan.json"
-    res = runner.invoke(app_gsplat, ["plan", str(vol), str(plan_json), *_DENSITY_FLAGS])
-    assert res.exit_code == 0, res.output
-
-    out = tmp_path / "box0.gsplats.zarr"
-    res = runner.invoke(
-        app_gsplat,
-        [
-            "plan",
-            str(vol),
-            str(plan_json),
-            "--fit-box",
-            "0",
-            "-o",
-            str(out),
-            "--preset",
-            "draft",
-            "--device",
-            "cpu",
-        ],
-    )
-    assert res.exit_code == 0, res.output
-    # box 0 either produced a store or a 0-splat .empty marker — never both, never neither
-    produced = out.exists()
-    empty = (tmp_path / "box0.gsplats.zarr.empty").exists()
-    assert produced ^ empty
-    if produced:
-        from luxar.gsplats.io import load_gsplats
-
-        assert load_gsplats(out).n_splats > 0
-
-
-def test_fit_box_out_of_range_errors(tmp_path):
+def test_plan_box_worker_mode(tmp_path):
+    # write a plan, then fit just box 0 from it (the -j parallel worker entry).
     vol = _vol(tmp_path)
     plan_json = tmp_path / "plan.json"
     assert (
         runner.invoke(
-            app_gsplat, ["plan", str(vol), str(plan_json), *_DENSITY_FLAGS]
+            app_gsplat, ["fit", str(vol), str(plan_json), *_CONTENT, "--plan-only"]
+        ).exit_code
+        == 0
+    )
+    out = tmp_path / "box0.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan_json),
+            "--plan-box",
+            "0",
+            *_CPU,
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    produced = out.exists()
+    empty = (tmp_path / "box0.gsplats.zarr.empty").exists()
+    assert produced ^ empty  # exactly one of a store or an .empty marker
+
+
+def test_plan_box_out_of_range_errors(tmp_path):
+    vol = _vol(tmp_path)
+    plan_json = tmp_path / "plan.json"
+    assert (
+        runner.invoke(
+            app_gsplat, ["fit", str(vol), str(plan_json), *_CONTENT, "--plan-only"]
         ).exit_code
         == 0
     )
     res = runner.invoke(
         app_gsplat,
         [
-            "plan",
+            "fit",
             str(vol),
-            str(plan_json),
-            "--fit-box",
-            "9999",
-            "-o",
             str(tmp_path / "x.gsplats.zarr"),
-            "--device",
-            "cpu",
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan_json),
+            "--plan-box",
+            "9999",
+            *_CPU,
         ],
     )
     assert res.exit_code != 0  # box index out of range
 
 
-def test_plan_fit_parallel_jobs(tmp_path):
-    # End-to-end concurrent path: -j 2 spawns per-box workers, merges to one file.
+def test_content_fit_parallel_jobs(tmp_path):
+    # concurrent path: -j 2 spawns per-box `fit --plan-box` workers, merges.
     vol = _vol(tmp_path)
     out = tmp_path / "par.gsplats.zarr"
     res = runner.invoke(
-        app_gsplat,
-        [
-            "plan",
-            str(vol),
-            str(tmp_path / "plan.json"),
-            *_DENSITY_FLAGS,
-            "--fit",
-            "-o",
-            str(out),
-            "-j",
-            "2",
-            "--preset",
-            "draft",
-            "--device",
-            "cpu",
-        ],
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, *_CPU, "-j", "2"]
     )
     assert res.exit_code == 0, res.output
     assert out.exists()
-    from luxar.gsplats.io import load_gsplats
-
-    assert load_gsplats(out).n_splats > 0
+    assert _kind(out) == "GSplatPartition"
 
 
 def test_bad_jobs_value_errors(tmp_path):
@@ -191,19 +174,13 @@ def test_bad_jobs_value_errors(tmp_path):
     res = runner.invoke(
         app_gsplat,
         [
-            "plan",
+            "fit",
             str(vol),
-            str(tmp_path / "plan.json"),
-            *_DENSITY_FLAGS,
-            "--fit",
-            "-o",
             str(tmp_path / "o.gsplats.zarr"),
+            *_CONTENT,
+            *_CPU,
             "-j",
             "notanint",
-            "--preset",
-            "draft",
-            "--device",
-            "cpu",
         ],
     )
     assert res.exit_code != 0  # --jobs must be int or 'auto'

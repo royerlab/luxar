@@ -21,7 +21,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 from arbol import aprint, asection
@@ -229,7 +229,8 @@ def fit_tiled_parallel(
     cull_retention: float | None,
     verbose: bool = True,
     keep_tiles: bool = False,
-) -> GSplatData:
+    partition: bool = False,
+) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
     Each tile ``i`` is fit by a separate process built by ``worker_cmd_builder``
@@ -370,6 +371,7 @@ def fit_tiled_parallel(
         cull_retention=cull_retention,
         elapsed=elapsed,
         verbose=verbose,
+        partition=partition,
     )
 
     if not keep_tiles:
