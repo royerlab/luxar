@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -56,7 +56,7 @@ def denoise_volume_cmd(
 
     Auto-calibrates the denoising strength h using Noise2Self unless --h is
     provided.  Runs locally (no Slurm).  For batch denoising on HPC, use
-    ``luxar gsplat batch plan --denoise``.
+    ``luxar gsplat slurm-fit submit --denoise``.
 
     Examples:
         luxar gsplat denoise volume.zarr denoised.zarr
@@ -136,6 +136,56 @@ def denoise_volume_cmd(
         raise typer.Exit(1) from e
 
 
+def _resolve_tiling(
+    tiling: str, shape: "tuple[int, ...]", tile_size: int, has_density: bool
+) -> str:
+    """Resolve ``--tiling`` to a concrete strategy: ``none | uniform | content``.
+
+    ``auto`` fits the whole volume when it fits in a single tile, else uniform —
+    or content when a transferable density (``--cal`` / ``--k-star-ref`` / a
+    ``--plan`` / ``--plan-box``) is available to size content-balanced boxes.
+    """
+    t = tiling.lower()
+    if t not in ("auto", "none", "uniform", "content"):
+        raise typer.BadParameter(
+            f"--tiling must be one of auto|none|uniform|content, got {tiling!r}"
+        )
+    if t != "auto":
+        return t
+    large = any(int(s) > int(tile_size) for s in shape)
+    if not large:
+        return "none"
+    return "content" if has_density else "uniform"
+
+
+def _save_fit_output(
+    result: Any,
+    output_path: Path,
+    *,
+    compress: "Optional[Literal['zip', 'tar.gz']]",
+    verbose: bool,
+) -> int:
+    """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
+
+    Returns the splat count for the summary line.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    if isinstance(result, GSplatData):
+        result.save(output_path, compress=compress)
+        n = int(result.n_splats)
+    else:  # a partition / tree node has no flat-matrix equivalent
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        write_gsplats_tree(output_path, result, compress=compress)
+        n = int(getattr(result, "n_splats", 0))
+    if verbose:
+        aprint(f"Saved {n:,} splats")
+        if output_path.exists():
+            aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+    return n
+
+
 def fit_volume(
     input_path: Optional[Path] = typer.Argument(
         None, help="Input volume (.npy/.npz/.tiff/.zarr)"
@@ -196,11 +246,26 @@ def fit_volume(
         "Anti-alias Gaussian blur applied before decimation.",
     ),
     # Tiled fitting
-    tiled: bool = typer.Option(
-        False, "--tiled", help="Enable tiled fitting for large volumes"
+    tiling: str = typer.Option(
+        "auto",
+        "--tiling",
+        help="Decomposition: auto | none | uniform | content. auto = whole "
+        "volume if it fits one tile, else uniform (or content when a density "
+        "--cal/--k-star-ref is given). Replaces the old --tiled.",
+        rich_help_panel="Tiling",
+    ),
+    flat: bool = typer.Option(
+        False,
+        "--flat",
+        help="Tiled fits emit a kind=partition (one part per tile/box) by "
+        "default for viewer frustum culling; --flat merges to a single leaf.",
+        rich_help_panel="Tiling",
     ),
     tile_size: int = typer.Option(
-        256, "--tile-size", help="Tile size in voxels (per axis)"
+        256,
+        "--tile-size",
+        help="Tile size in voxels (per axis)",
+        rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(
         32, "--overlap", help="Overlap between tiles in voxels"
@@ -214,14 +279,15 @@ def fit_volume(
         "1",
         "--jobs",
         "-j",
-        help="With --tiled: number of tiles to fit concurrently as subprocesses "
+        help="With --tiling uniform/content: number of tiles/boxes to fit "
+        "concurrently as subprocesses "
         "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
-        "sequential. Ignored without --tiled or with --tile.",
+        "sequential. Ignored with --tiling none or --tile.",
     ),
     keep_tiles: bool = typer.Option(
         False,
         "--keep-tiles",
-        help="With --tiled --jobs>1: keep the per-tile temporary .gsplats.zarr "
+        help="With --tiling --jobs>1: keep the per-tile/box temporary .gsplats.zarr "
         "outputs (and any .empty markers for skipped tiles) instead of "
         "deleting them after the merge.",
     ),
@@ -231,7 +297,93 @@ def fit_volume(
         hidden=True,
         help="Single-tile mode only: if the tile has no signal (0 splats), "
         "write an empty marker and exit 0 instead of erroring. Used internally "
-        "by parallel --tiled --jobs so an empty tile is skipped at merge.",
+        "by parallel --tiling uniform --jobs so an empty tile is skipped at merge.",
+    ),
+    # Content-aware tiling (--tiling content): transferable density + planner knobs
+    cal: Optional[Path] = typer.Option(
+        None,
+        "--cal",
+        help="Calibration JSON (gsplat cal) supplying the splats-per-feature density.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    k_star_ref: Optional[int] = typer.Option(
+        None,
+        "--k-star-ref",
+        help="Reference K* (effective splats) instead of --cal.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    n_features_ref: Optional[int] = typer.Option(
+        None,
+        "--n-features-ref",
+        help="Reference feature count for the density.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    saturation_exponent: float = typer.Option(
+        0.44,
+        "--saturation-exponent",
+        help="Sub-linear exponent alpha (K~feat^alpha).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    saturation_cap: Optional[int] = typer.Option(
+        None,
+        "--saturation-cap",
+        help="Per-box splat cap (default 4x k_star_ref).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    feature_threshold: Optional[float] = typer.Option(
+        None,
+        "--feature-threshold",
+        help="Absolute feature-count threshold (taken from --cal automatically).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    feature_metric: Optional[str] = typer.Option(
+        None,
+        "--feature-metric",
+        help="Content metric: peaks | edges | intensity.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    cell: int = typer.Option(
+        16,
+        "--cell",
+        help="Content-scan cell size (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    target_features: Optional[int] = typer.Option(
+        None,
+        "--target-features",
+        help="Features per content-box to split toward.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    min_leaf: int = typer.Option(
+        256,
+        "--min-leaf",
+        help="Minimum content-box edge (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    max_leaf: int = typer.Option(
+        512,
+        "--max-leaf",
+        help="Maximum content-box edge (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    # Plan I/O (content tiling)
+    plan: Optional[Path] = typer.Option(
+        None,
+        "--plan",
+        help="Fit a precomputed FitPlan JSON (skip scan/plan).",
+        rich_help_panel="Plan I/O",
+    ),
+    plan_only: bool = typer.Option(
+        False,
+        "--plan-only",
+        help="With --tiling content: write the FitPlan JSON to OUTPUT and stop.",
+        rich_help_panel="Plan I/O",
+    ),
+    plan_box: Optional[int] = typer.Option(
+        None,
+        "--plan-box",
+        hidden=True,
+        help="Internal worker: fit only box i of --plan (used by content -j).",
     ),
     # Progressive fitting
     progressive: bool = typer.Option(
@@ -308,7 +460,7 @@ def fit_volume(
 
         luxar gsplat fit data.zarr splats.gsplats.zarr --channel 1 --timepoint 0
 
-        luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+        luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 
         luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
 
@@ -347,6 +499,55 @@ def fit_volume(
             with asection("Loading volume"):
                 volume = load_volume(input_path, channel, timepoint, array_key)
                 aprint(f"Volume shape: {volume.shape}")
+
+            # 1a. Resolve the decomposition. `--tiling auto` → none (fits one
+            # tile) / uniform / content (when a density is supplied). `content`
+            # folds in the former `gsplat plan`; the rest drive the uniform
+            # branches below via the local `tiled` flag (the old --tiled bool).
+            _has_density = (
+                cal is not None
+                or k_star_ref is not None
+                or plan is not None
+                or plan_box is not None
+            )
+            resolved_tiling = _resolve_tiling(
+                tiling, volume.shape, tile_size, _has_density
+            )
+            if resolved_tiling == "content":
+                from luxar.cli.gsplat_ops.planner import run_content_fit
+
+                run_content_fit(
+                    input_path,
+                    output_path,
+                    volume=volume,
+                    cal=cal,
+                    k_star_ref=k_star_ref,
+                    n_features_ref=n_features_ref,
+                    saturation_exponent=saturation_exponent,
+                    saturation_cap=saturation_cap,
+                    feature_threshold=feature_threshold,
+                    feature_metric=feature_metric,
+                    cell=cell,
+                    target_features=target_features,
+                    min_leaf=min_leaf,
+                    max_leaf=max_leaf,
+                    overlap=tile_overlap,
+                    preset=preset,
+                    device=device,
+                    jobs=jobs,
+                    keep_boxes=keep_tiles,
+                    flat=flat,
+                    compress=compress,
+                    plan=plan,
+                    plan_only=plan_only,
+                    plan_box=plan_box,
+                    channel=channel,
+                    timepoint=timepoint,
+                    array_key=array_key,
+                    verbose=verbose,
+                )
+                raise typer.Exit(0)
+            tiled = resolved_tiling == "uniform"
 
             # 1b. Denoise (if requested)
             # Resolve effective_h (calibrate if needed), then either:
@@ -497,9 +698,7 @@ def fit_volume(
 
                 specs = compute_tile_specs(grid_shape, tile_size, tile_overlap)
                 n_tiles = len(specs)
-                tile_voxels = max(
-                    (int(math.prod(s.shape)) for s in specs), default=1
-                )
+                tile_voxels = max((int(math.prod(s.shape)) for s in specs), default=1)
 
                 try:
                     n_jobs = resolve_jobs(
@@ -584,20 +783,15 @@ def fit_volume(
                             cull_retention=merge_cull,
                             verbose=verbose,
                             keep_tiles=keep_tiles,
+                            partition=not flat,
                         )
 
                     with asection(f"Saving to {output_path.name}"):
-                        result.save(output_path, compress=compress)
-                        n_splats = result.n_splats
-                        aprint(f"Saved {n_splats:,} splats")
-                        if output_path.exists():
-                            aprint(
-                                f"File size: "
-                                f"{format_memory_size(output_path.stat().st_size)}"
-                            )
+                        n_splats = _save_fit_output(
+                            result, output_path, compress=compress, verbose=verbose
+                        )
 
-                    time_s = result.stats.get("time_seconds", 0)
-                    aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
+                    aprint(f"\nDone: {n_splats:,} splats")
                     raise typer.Exit(0)
 
                 aprint("--jobs resolved to 1 worker; using sequential tiled fitting")
@@ -682,6 +876,17 @@ def fit_volume(
                 fc_output_space = fit_config.pop("output_space", "real")
                 fc_verbose = fit_config.pop("verbose", True)
 
+                # Partition by default (one part per tile), unless --flat. With
+                # --downscale this sequential path rescales a flat merged result
+                # back to original coords below, so partition is only offered
+                # here when not downscaling (use -j>1 for a downscaled partition,
+                # whose workers rescale themselves).
+                seq_partition = (not flat) and tiled_downscale_factors is None
+                if (not flat) and tiled_downscale_factors is not None:
+                    aprint(
+                        "Note: --downscale on the sequential tiled path writes a "
+                        "flat leaf; use -j>1 for a downscaled partition."
+                    )
                 result = fit_tiled(
                     volume,
                     tile_size=tile_size,
@@ -694,6 +899,7 @@ def fit_volume(
                     psnr_patience=psnr_patience,
                     max_passes=max_passes,
                     seeds=parsed_seeds,
+                    partition=seq_partition,
                     **fit_config,
                 )
 
@@ -758,9 +964,16 @@ def fit_volume(
                 aprint(f"Rescaled {result.n_splats} splats to original coordinates")
 
             # 7. Save
+            from luxar.gsplats.gsplat_data import GSplatData
+
+            is_leaf = isinstance(result, GSplatData)
             with asection(f"Saving to {output_path.name}"):
-                n_splats = result.n_splats
-                if allow_empty_tile and tile is not None and n_splats == 0:
+                if (
+                    is_leaf
+                    and allow_empty_tile
+                    and tile is not None
+                    and result.n_splats == 0
+                ):
                     # Empty tile (windowed to near-zero signal): the gsplats
                     # writer enforces a no-empty policy, so instead of erroring
                     # we drop an .empty marker that the parallel orchestrator
@@ -768,16 +981,14 @@ def fit_volume(
                     marker = Path(str(output_path) + ".empty")
                     marker.write_text("0 splats\n")
                     aprint("Empty tile (0 splats): wrote marker, skipped save")
+                    n_splats = 0
                 else:
-                    result.save(output_path, compress=compress)
-                    aprint(f"Saved {n_splats:,} splats")
-                    if output_path.exists():
-                        aprint(
-                            f"File size: "
-                            f"{format_memory_size(output_path.stat().st_size)}"
-                        )
+                    # leaf → .save; partition node → write_gsplats_tree
+                    n_splats = _save_fit_output(
+                        result, output_path, compress=compress, verbose=verbose
+                    )
 
-        time_s = result.stats.get("time_seconds", 0)
+        time_s = result.stats.get("time_seconds", 0) if is_leaf else 0
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
 
     except typer.Exit:
@@ -1187,9 +1398,7 @@ def calibrate_command(
                     f"  Region:         [{reg['strategy']}] origin={reg['origin']} "
                     f"of full {tuple(result.original_volume_shape or [])}"
                 )
-                aprint(
-                    "                  (Volume / PSNR_full above are for this crop)"
-                )
+                aprint("                  (Volume / PSNR_full above are for this crop)")
             sigma = result.noise_floor.sigma_hat
             ceil_db = result.noise_floor.psnr_max_db
             sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"

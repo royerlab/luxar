@@ -21,7 +21,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 from arbol import aprint, asection
@@ -104,7 +104,7 @@ def build_worker_cmd(
     default to keep concurrent logs readable; ``--cull-retention 0`` defers all
     culling to the parent's merge.  ``allow_empty_tile`` makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
-    tiling driver flags ``--tiled``, ``--jobs`` and the parent's ``--compress``
+    tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
     are intentionally **never** forwarded.
     """
     cmd = [
@@ -229,7 +229,8 @@ def fit_tiled_parallel(
     cull_retention: float | None,
     verbose: bool = True,
     keep_tiles: bool = False,
-) -> GSplatData:
+    partition: bool = False,
+) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
     Each tile ``i`` is fit by a separate process built by ``worker_cmd_builder``
@@ -370,6 +371,7 @@ def fit_tiled_parallel(
         cull_retention=cull_retention,
         elapsed=elapsed,
         verbose=verbose,
+        partition=partition,
     )
 
     if not keep_tiles:
