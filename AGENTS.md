@@ -112,25 +112,29 @@ luxar gsplat fit data.zarr.zip splats.gsplats.zarr --timepoint 0 --channel 0
 luxar gsplat fit data.zarr.zip splats.gsplats.zarr --array-key h2afva/fused
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset hifi --iters 8000
 luxar gsplat fit --dump-config --preset hifi > config.yaml
-luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+# Tiling: --tiling auto (default) picks none/uniform/content. Tiled fits emit a
+# kind=partition by default (one part per tile/box); --flat for a single leaf.
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
+luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json   # content-adaptive boxes
+luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only  # emit box plan, no fit
 
-# Slurm batch planning/status/merge/validation/cancel
-luxar gsplat batch plan data.zarr.zip output/ -p gpu
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --submit
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --preset draft
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --tile-size 256
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --parallel
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --tasks-per-job 5
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --axes time,camera,channel,z,y,x
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --array-key h2afva/fused --axes time,z,y,x
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --timepoints '::10' --channels '0:2'
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --iters 8000 --seeds 100000
-luxar gsplat batch status output/
-luxar gsplat batch merge output/
-luxar gsplat batch validate output/
-luxar gsplat batch validate output/ --fix
-luxar gsplat batch cancel output/
+# Slurm fitting: submit/status/merge/validation/cancel (submit submits by default)
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --dry-run
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --preset draft
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tile-size 256
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --parallel
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --axes time,camera,channel,z,y,x
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --array-key h2afva/fused --axes time,z,y,x
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --timepoints '::10' --channels '0:2'
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --iters 8000 --seeds 100000
+luxar gsplat slurm-fit status output/
+luxar gsplat slurm-fit merge output/
+luxar gsplat slurm-fit validate output/
+luxar gsplat slurm-fit validate output/ --fix
+luxar gsplat slurm-fit cancel output/
 
 # Benchmark / convert / render / compare
 luxar gsplat benchmark --slurm --partition gpu

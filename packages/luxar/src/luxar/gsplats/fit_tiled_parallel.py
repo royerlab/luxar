@@ -104,7 +104,7 @@ def build_worker_cmd(
     default to keep concurrent logs readable; ``--cull-retention 0`` defers all
     culling to the parent's merge.  ``allow_empty_tile`` makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
-    tiling driver flags ``--tiled``, ``--jobs`` and the parent's ``--compress``
+    tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
     are intentionally **never** forwarded.
     """
     cmd = [

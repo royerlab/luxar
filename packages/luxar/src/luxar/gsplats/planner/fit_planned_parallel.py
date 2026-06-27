@@ -2,7 +2,7 @@
 
 The local, single-GPU counterpart of the sequential :func:`fit_planned`. Each
 content-balanced box of a :class:`FitPlan` is fit by a separate
-``luxar gsplat plan ... --fit-box i`` worker process (own CUDA context, shared
+``luxar gsplat fit ... --tiling content --plan ... --plan-box i`` worker process (own CUDA context, shared
 GPU memory pool); up to ``jobs`` run concurrently. After all succeed, the
 per-box ``.gsplats.zarr`` outputs are reloaded and **concatenated** — boxes are
 spatially disjoint by construction (the BSP partition tiles the volume and only

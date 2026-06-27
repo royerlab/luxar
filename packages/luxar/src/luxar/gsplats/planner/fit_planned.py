@@ -11,7 +11,7 @@ budgeted boxes instead of a uniform grid. It does not touch ``fit_tiled`` /
 
 The per-box body lives in :func:`_fit_one_box` so the **sequential** driver here
 and the **parallel** subprocess worker (``fit_planned_parallel`` /
-``gsplat plan --fit-box``) share one source of truth for budget scaling, the
+``gsplat fit --tiling content --plan-box``) share one source of truth for budget scaling, the
 padded crop, and the keep-core mask — they can never drift.
 """
 
