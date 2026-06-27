@@ -65,7 +65,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 16 - ~~**PSNR/SSIM quality metrics in CLI**~~: **DONE.** `luxar gsplat compare` command.
 
-18 - ~~**Tiled fitting for large volumes**~~: **DONE.** `luxar gsplat fit --tiled`.
+18 - ~~**Tiled fitting for large volumes**~~: **DONE.** `luxar gsplat fit --tiling uniform`.
 
 ### Rendering & Performance (completed)
 
@@ -89,7 +89,7 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 
 17 - ~~**OME-Zarr (NGFF) input support**~~: **DONE.** `luxar gsplat fit` supports OME-Zarr.
 
-19 - ~~**Slurm batch fitting**~~: **DONE.** `luxar gsplat batch` CLI command.
+19 - ~~**Slurm batch fitting**~~: **DONE.** `luxar gsplat slurm-fit` CLI command.
 
 20 - ~~**nD Transforms**~~: **DONE.** Per-dimension affine and permutation transforms.
 

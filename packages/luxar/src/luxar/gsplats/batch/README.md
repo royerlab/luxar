@@ -32,14 +32,14 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 Batch fitting is typically driven through the CLI:
 
 ```bash
-# Plan and submit a batch job
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --submit
+# Plan and submit a Slurm fitting job (submits by default; --dry-run to plan only)
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu
 
 # Check status
-luxar gsplat batch status output/
+luxar gsplat slurm-fit status output/
 
 # Merge completed tiles
-luxar gsplat batch merge output/
+luxar gsplat slurm-fit merge output/
 ```
 
 Programmatic usage:

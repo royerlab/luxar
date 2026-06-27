@@ -11,7 +11,7 @@ budgeted boxes instead of a uniform grid. It does not touch ``fit_tiled`` /
 
 The per-box body lives in :func:`_fit_one_box` so the **sequential** driver here
 and the **parallel** subprocess worker (``fit_planned_parallel`` /
-``gsplat plan --fit-box``) share one source of truth for budget scaling, the
+``gsplat fit --tiling content --plan-box``) share one source of truth for budget scaling, the
 padded crop, and the keep-core mask — they can never drift.
 """
 
@@ -131,18 +131,25 @@ def fit_planned(
     device: Optional[str] = None,
     verbose: bool = False,
     progress_callback: Optional[ProgressCallback] = None,
+    partition: bool = False,
     **fit_kwargs: Any,
 ) -> "Any":
-    """Fit every box in ``plan`` and return the merged :class:`GSplatData`.
+    """Fit every box in ``plan`` and return the merged result.
 
     ``fit_kwargs`` are forwarded to ``fit_gaussian_splats`` per box (preset /
     n_iters / loss / cull_retention / ...). Each box's seed budget comes from the
     plan; near-empty boxes (budget 0) are skipped.
 
+    With ``partition=True`` (the CLI default) the per-box splats are kept as a
+    ``kind=partition`` tree — one part per box (boxes are core-disjoint, so this
+    is exact) — for viewer frustum culling; a :class:`~luxar.gsplats.tree.GSplatNode`
+    is returned. With ``partition=False`` the boxes are concatenated into a single
+    flat :class:`GSplatData` leaf (``--flat``).
+
     Boxes are fit **sequentially**. For concurrent fitting on one GPU use
     :func:`luxar.gsplats.planner.fit_planned_parallel.fit_planned_parallel`
-    (``gsplat plan --fit -j N``), which fits each box in its own subprocess and
-    merges the same way.
+    (``gsplat fit --tiling content -j N``), which fits each box in its own
+    subprocess and merges the same way.
     """
     from luxar.gsplats.gsplat_data import GSplatData
 
@@ -158,10 +165,9 @@ def fit_planned(
     # push the fit past the K the calibration measured as over-saturated.
     cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
 
-    cs: list[np.ndarray] = []
-    amps: list[np.ndarray] = []
-    chols: list[np.ndarray] = []
+    regions: list[GSplatData] = []  # one core-kept GSplatData per fit box
     n = len(plan.boxes)
+    n_fit = 0
     for i, b in enumerate(plan.boxes):
         if b.budget <= 0:
             continue
@@ -171,24 +177,32 @@ def fit_planned(
         if progress_callback is not None:
             progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
         c, a, k = _fit_one_box(V, b, pad, cap, **fit_kwargs)
-        cs.append(c)
-        amps.append(a)
-        chols.append(k)
+        n_fit += 1
+        if c.shape[0] > 0:
+            regions.append(GSplatData(centers=c, amplitudes=a, cholesky_factors=k))
         if verbose:
             from arbol import aprint
 
             aprint(f"  box {i + 1}/{n}: kept {int(c.shape[0]):,} splats")
 
-    if sum(int(c.shape[0]) for c in cs) == 0:
+    if not regions:
         raise ValueError("fit_planned produced no splats (all boxes empty?)")
+
+    if partition:
+        # One part per box — boxes are core-disjoint, so this is an exact
+        # spatial partition (viewer frustum-culls per part). Returns a tree node.
+        return GSplatData.partition_from_regions(regions)
+
     merged = GSplatData(
-        centers=np.concatenate(cs).astype(np.float32),
-        amplitudes=np.concatenate(amps).astype(np.float32),
-        cholesky_factors=np.concatenate(chols).astype(np.float32),
+        centers=np.concatenate([r.centers for r in regions]).astype(np.float32),
+        amplitudes=np.concatenate([r.amplitudes for r in regions]).astype(np.float32),
+        cholesky_factors=np.concatenate([r.cholesky_factors for r in regions]).astype(
+            np.float32
+        ),
         stats={
             "planned_fit": True,
             "n_boxes": n,
-            "n_boxes_fit": len(cs),
+            "n_boxes_fit": n_fit,
             "overlap": pad,
             "volume_shape": list(V.shape),
         },
