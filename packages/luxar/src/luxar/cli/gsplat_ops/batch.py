@@ -1,4 +1,4 @@
-"""``luxar gsplat batch`` — HPC batch fitting via Slurm.
+"""``luxar gsplat slurm-fit`` — cluster-scale fitting via Slurm.
 
 Owns the ``app_batch`` Typer sub-app and its commands; the aggregator
 (``cli/gsplat_commands.py``) mounts it via ``add_typer``. Extracted from the
@@ -20,11 +20,14 @@ if TYPE_CHECKING:
     from luxar.gsplats.lod.recipes import RecipeParams
 
 
-app_batch = typer.Typer(help="HPC batch fitting for large OME-Zarr datasets")
+app_batch = typer.Typer(
+    help="Fit a whole nD dataset across its axes on a Slurm cluster "
+    "(the cluster-scale sibling of `gsplat fit`)."
+)
 
 
-@app_batch.command("plan")
-def batch_plan(
+@app_batch.command("submit")
+def batch_submit(
     input_path: Path = typer.Argument(..., exists=True, help="Input OME-Zarr dataset"),
     output_dir: Path = typer.Argument(..., help="Output directory for batch results"),
     # Tiling
@@ -147,7 +150,7 @@ def batch_plan(
             "Per-part LOD recipe applied to each spatial tile-part by the merge "
             "job: 'additive' (partitioned topology) or 'substitutive' (mosaic). "
             "Default: bare-leaf parts. The merge sbatch script invokes "
-            "`batch merge --recipe <r>` with the knobs below."
+            "`slurm-fit merge --recipe <r>` with the knobs below."
         ),
     ),
     merge_n_lods: Optional[int] = typer.Option(
@@ -231,29 +234,32 @@ def batch_plan(
         ),
     ),
     # Control
-    submit: bool = typer.Option(
-        False, "--submit", help="Actually submit to Slurm (default: dry-run)"
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show the plan without submitting (default: submit to Slurm).",
     ),
 ) -> None:
-    """Plan and optionally submit a batch Gaussian splat fitting job.
+    """Plan and submit a cluster Gaussian splat fitting job over an nD dataset.
 
     Discovers T/C/spatial structure from OME-Zarr metadata, loads a GPU
     profile to auto-select tile size, and generates Slurm array + merge
     jobs.
 
-    By default shows the plan without submitting. Pass --submit to submit.
+    Submits to Slurm by default. Pass --dry-run to show the plan without
+    submitting.
 
     A GPU profile from `luxar gsplat benchmark` is used to auto-select tile
     size; pass --tile-size to skip the profile requirement.
 
     Examples:
-        luxar gsplat batch data.ome.zarr output/ --partition gpu --tile-size 128
+        luxar gsplat slurm-fit submit data.ome.zarr output/ -p gpu --dry-run
 
-        luxar gsplat batch data.ome.zarr output/ --partition gpu --submit
+        luxar gsplat slurm-fit submit data.ome.zarr output/ --partition gpu
 
-        luxar gsplat batch data.ome.zarr output/ -p gpu --tile-size 256 --preset hifi
+        luxar gsplat slurm-fit submit data.ome.zarr out/ -p gpu --tile-size 256 --preset hifi
 
-        luxar gsplat batch keller.zarr.zip out/ -p gpu --tile-size 128 \\
+        luxar gsplat slurm-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
             --axes time,camera,channel,z,y,x
     """
     if partition is None:
@@ -312,7 +318,7 @@ def batch_plan(
             )
             aprint("")
             aprint("Option B — skip the profile by providing a tile size explicitly:")
-            aprint("  luxar gsplat batch ... --tile-size 128")
+            aprint("  luxar gsplat slurm-fit submit ... --tile-size 128")
             raise typer.Exit(1)
 
         recs = (summary or {}).get("recommendations", {})
@@ -559,7 +565,7 @@ def batch_plan(
             colors_list = [c.strip() for c in channel_colors.split(",")]
 
         # Per-part LOD recipe for the merge job (stored in the manifest; the merge
-        # sbatch script turns it into `batch merge --recipe ...`).
+        # sbatch script turns it into `slurm-fit merge --recipe ...`).
         merge_recipe_args: dict = {}
         if merge_recipe is not None:
             from luxar.gsplats.lod.recipes import PER_PART_RECIPES
@@ -796,8 +802,8 @@ def batch_plan(
         aprint(f"  Output: {output_dir}")
         aprint("")
 
-        if not submit:
-            aprint("Dry run -- pass --submit to actually submit.")
+        if dry_run:
+            aprint("Dry run -- omit --dry-run to actually submit.")
             raise typer.Exit(0)
 
         # 9. Submit
@@ -929,7 +935,7 @@ def batch_plan(
         save_manifest(manifest, out)
 
         aprint(f"\nManifest: {out / 'manifest.json'}")
-        aprint(f"Check status: luxar gsplat batch status {out}")
+        aprint(f"Check status: luxar gsplat slurm-fit status {out}")
 
     except typer.Exit:
         raise
@@ -954,7 +960,7 @@ def batch_status_cmd(
     for job states.
 
     Examples:
-        luxar gsplat batch status output_dir/
+        luxar gsplat slurm-fit status output_dir/
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -990,9 +996,9 @@ def batch_validate_cmd(
     so they get re-fitted on the next submit.
 
     Examples:
-        luxar gsplat batch validate output_dir/
+        luxar gsplat slurm-fit validate output_dir/
 
-        luxar gsplat batch validate output_dir/ --fix
+        luxar gsplat slurm-fit validate output_dir/ --fix
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -1142,7 +1148,7 @@ def _validate_tile(tile_path: Path) -> str:
     Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
     the consolidated metadata, the format header, and the presence of every
     required array — without decoding any data. A non-v3.0 tile is reported (so
-    ``batch validate --fix`` never silently deletes an unmigrated tile).
+    ``slurm-fit validate --fix`` never silently deletes an unmigrated tile).
     """
     import json
 
@@ -1180,7 +1186,7 @@ def batch_cancel_cmd(
     merge) and cancels them via scancel.
 
     Examples:
-        luxar gsplat batch cancel output_dir/
+        luxar gsplat slurm-fit cancel output_dir/
     """
     import subprocess
 
@@ -1350,15 +1356,15 @@ def batch_merge_cmd(
     ``cal → fit → lod`` chain otherwise can't, since ``lod`` rejects a partition).
 
     Examples:
-        luxar gsplat batch merge output_dir/
+        luxar gsplat slurm-fit merge output_dir/
 
-        luxar gsplat batch merge output_dir/ --flat
+        luxar gsplat slurm-fit merge output_dir/ --flat
 
-        luxar gsplat batch merge output_dir/ --recipe additive --n-lods 6
+        luxar gsplat slurm-fit merge output_dir/ --recipe additive --n-lods 6
 
-        luxar gsplat batch merge output_dir/ --recipe substitutive -K 4 -L 3
+        luxar gsplat slurm-fit merge output_dir/ --recipe substitutive -K 4 -L 3
 
-        luxar gsplat batch merge output_dir/ --channel-colors "#ff0080,#00ff00"
+        luxar gsplat slurm-fit merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
     try:
         from luxar.cli.gsplat_config import parse_hex_color
