@@ -230,6 +230,8 @@ def fit_tiled_parallel(
     verbose: bool = True,
     keep_tiles: bool = False,
     partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
 ) -> "Any":  # GSplatData (flat) or a GSplatNode (partition)
     """Fit all tiles via concurrent worker subprocesses, then merge.
 
@@ -372,6 +374,8 @@ def fit_tiled_parallel(
         elapsed=elapsed,
         verbose=verbose,
         partition=partition,
+        recipe=recipe,
+        recipe_params=recipe_params,
     )
 
     if not keep_tiles:

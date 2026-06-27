@@ -158,6 +158,114 @@ def _resolve_tiling(
     return "content" if has_density else "uniform"
 
 
+def _build_fit_recipe_params(
+    recipe: str,
+    *,
+    n_lods: Optional[int],
+    additive_method: Optional[str],
+    breakpoints: Optional[str],
+    compression_factor: Optional[int],
+    levels: Optional[int],
+    substitutive_method: Optional[str],
+    coarsen_dims: Optional[str],
+    lod_method: Optional[str],
+    device: Optional[str],
+    volume_ndim: int,
+) -> "Any":
+    """Validate the per-part ``--recipe`` knobs and build a ``RecipeParams``.
+
+    Mirrors the ``gsplat lod`` vocabulary (reusing its breakpoint parser and the
+    valid-method sets) so a fit-time per-part ladder is identical to a separate
+    ``gsplat lod`` pass. Only the two :data:`PER_PART_RECIPES` are accepted.
+    """
+    from luxar.cli.lod import (
+        _VALID_ADDITIVE_METHODS,
+        _VALID_SUBSTITUTIVE_METHODS,
+        _parse_lod_breakpoints,
+    )
+    from luxar.gsplats.lod.recipes import PER_PART_RECIPES, RecipeParams
+
+    if recipe not in PER_PART_RECIPES:
+        raise typer.BadParameter(
+            f"--recipe must be one of {list(PER_PART_RECIPES)} for a fit "
+            f"(additive → partitioned, substitutive → mosaic); got {recipe!r}. "
+            f"For other topologies run `gsplat lod` on a flat (--flat) fit."
+        )
+
+    # Reject knobs that don't apply to the chosen recipe (mirrors `gsplat lod`,
+    # which raises on irrelevant options rather than silently dropping them).
+    additive_only = {
+        "--n-lods": n_lods,
+        "--additive-method": additive_method,
+        "--breakpoints": breakpoints,
+    }
+    substitutive_only = {
+        "--compression-factor": compression_factor,
+        "--levels": levels,
+        "--substitutive-method": substitutive_method,
+        "--coarsen-dims": coarsen_dims,
+        "--lod-method": lod_method,
+    }
+    irrelevant = substitutive_only if recipe == "additive" else additive_only
+    provided = [flag for flag, val in irrelevant.items() if val is not None]
+    if provided:
+        other = "substitutive" if recipe == "additive" else "additive"
+        raise typer.BadParameter(
+            f"option(s) {', '.join(provided)} are not used by --recipe {recipe} "
+            f"(they configure --recipe {other}). Remove them or switch recipe."
+        )
+
+    add_norm = (additive_method or "greedy").strip().replace("-", "_")
+    if add_norm not in _VALID_ADDITIVE_METHODS:
+        raise typer.BadParameter(
+            f"--additive-method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+            f"got {additive_method!r}"
+        )
+    sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
+    if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
+        raise typer.BadParameter(
+            f"--substitutive-method must be one of "
+            f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
+        )
+    if lod_method is not None and lod_method not in ("extent", "count"):
+        raise typer.BadParameter(
+            f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
+        )
+
+    bp = _parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+
+    parsed_coarsen: Optional[tuple] = None
+    if coarsen_dims is not None:
+        try:
+            idxs = sorted({int(t) for t in coarsen_dims.split(",") if t.strip() != ""})
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"--coarsen-dims must be comma-separated integers; got {coarsen_dims!r}"
+            ) from e
+        if not idxs:
+            raise typer.BadParameter("--coarsen-dims must list >=1 index")
+        for i in idxs:
+            if i < 0 or i >= volume_ndim:
+                raise typer.BadParameter(
+                    f"--coarsen-dims index {i} out of range for {volume_ndim}D data"
+                )
+        parsed_coarsen = tuple(idxs) if len(idxs) < volume_ndim else None
+
+    return RecipeParams(
+        n_lods=n_lods if n_lods is not None else 4,
+        additive_method=add_norm,  # type: ignore[arg-type]
+        breakpoints=bp,  # type: ignore[arg-type]
+        compression_factor=(
+            compression_factor if compression_factor is not None else 4
+        ),
+        levels=levels if levels is not None else 3,
+        substitutive_method=sub_norm,
+        coarsen_dims=parsed_coarsen,
+        lod_method=lod_method if lod_method is not None else "extent",
+        device=device or "auto",
+    )
+
+
 def _save_fit_output(
     result: Any,
     output_path: Path,
@@ -298,6 +406,72 @@ def fit_volume(
         help="Single-tile mode only: if the tile has no signal (0 splats), "
         "write an empty marker and exit 0 instead of erroring. Used internally "
         "by parallel --tiling uniform --jobs so an empty tile is skipped at merge.",
+    ),
+    # Per-part LOD (tiled fits only): give each tile/box-part its own LOD ladder
+    # at fit time instead of a separate `gsplat lod` pass (which rejects a
+    # partition). additive -> partitioned topology; substitutive -> mosaic.
+    recipe: Optional[str] = typer.Option(
+        None,
+        "--recipe",
+        help="Per-part LOD for a tiled partition: additive (each part a "
+        "prefix-sum ladder -> 'partitioned' topology) or substitutive (each "
+        "part its own coarse<->fine lod group -> 'mosaic'). Requires a tiled "
+        "fit (--tiling uniform/content) and a partition output (not --flat).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_n_lods: Optional[int] = typer.Option(
+        None,
+        "--n-lods",
+        help="[--recipe additive] Number of additive sub-LODs per part (default 4).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_additive_method: Optional[str] = typer.Option(
+        None,
+        "--additive-method",
+        help="[--recipe additive] greedy (default, (1-1/e)-optimal) or "
+        "self_energy (cheap O(N log N) for very large parts).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_breakpoints: Optional[str] = typer.Option(
+        None,
+        "--breakpoints",
+        help="[--recipe additive] additive ladder breakpoints: 'equal-count' "
+        "(default), 'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_compression_factor: Optional[int] = typer.Option(
+        None,
+        "--compression-factor",
+        help="[--recipe substitutive] per-level coarsening factor K (default 4).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_levels: Optional[int] = typer.Option(
+        None,
+        "--levels",
+        help="[--recipe substitutive] number of substitutive levels L (default 3).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_substitutive_method: Optional[str] = typer.Option(
+        None,
+        "--substitutive-method",
+        help="[--recipe substitutive] auto (default) / kmeans-lloyd / greedy / "
+        "greedy-lloyd.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help="[--recipe substitutive] comma-separated center-column indices "
+        "coarsening may merge over; the rest become hard barriers (default: all "
+        "spatial dims).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_lod_method: Optional[str] = typer.Option(
+        None,
+        "--lod-method",
+        help="[--recipe substitutive] LOD switch threshold: extent (default, "
+        "physically-anchored T·W/r) or count (legacy √N proxy).",
+        rich_help_panel="Per-part LOD",
     ),
     # Content-aware tiling (--tiling content): transferable density + planner knobs
     cal: Optional[Path] = typer.Option(
@@ -513,6 +687,45 @@ def fit_volume(
             resolved_tiling = _resolve_tiling(
                 tiling, volume.shape, tile_size, _has_density
             )
+
+            # Per-part LOD recipe (tiled partition only): validate + build params.
+            recipe_params: "Any" = None
+            if recipe is not None:
+                if flat:
+                    raise typer.BadParameter(
+                        "--recipe needs a partition output; it is incompatible "
+                        "with --flat (which merges to a single leaf)."
+                    )
+                if resolved_tiling == "none":
+                    raise typer.BadParameter(
+                        "--recipe needs a tiled fit (--tiling uniform/content); a "
+                        "whole-volume fit is a single leaf. Run `gsplat lod` on it "
+                        "instead."
+                    )
+                if tile is not None:
+                    raise typer.BadParameter(
+                        "--recipe is applied when the parts are merged; it cannot "
+                        "be combined with single-tile --tile (a worker fits one "
+                        "bare leaf)."
+                    )
+                if plan_only or plan_box is not None:
+                    raise typer.BadParameter(
+                        "--recipe is incompatible with --plan-only / --plan-box."
+                    )
+                recipe_params = _build_fit_recipe_params(
+                    recipe,
+                    n_lods=recipe_n_lods,
+                    additive_method=recipe_additive_method,
+                    breakpoints=recipe_breakpoints,
+                    compression_factor=recipe_compression_factor,
+                    levels=recipe_levels,
+                    substitutive_method=recipe_substitutive_method,
+                    coarsen_dims=recipe_coarsen_dims,
+                    lod_method=recipe_lod_method,
+                    device=device,
+                    volume_ndim=volume.ndim,
+                )
+
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
 
@@ -537,6 +750,8 @@ def fit_volume(
                     jobs=jobs,
                     keep_boxes=keep_tiles,
                     flat=flat,
+                    recipe=recipe,
+                    recipe_params=recipe_params,
                     compress=compress,
                     plan=plan,
                     plan_only=plan_only,
@@ -784,6 +999,8 @@ def fit_volume(
                             verbose=verbose,
                             keep_tiles=keep_tiles,
                             partition=not flat,
+                            recipe=recipe,
+                            recipe_params=recipe_params,
                         )
 
                     with asection(f"Saving to {output_path.name}"):
@@ -883,6 +1100,12 @@ def fit_volume(
                 # whose workers rescale themselves).
                 seq_partition = (not flat) and tiled_downscale_factors is None
                 if (not flat) and tiled_downscale_factors is not None:
+                    if recipe is not None:
+                        raise typer.BadParameter(
+                            "--recipe needs a partition, but the sequential tiled "
+                            "path writes a flat leaf under --downscale. Use -j>1 "
+                            "(parallel tiles) for a downscaled partition with LOD."
+                        )
                     aprint(
                         "Note: --downscale on the sequential tiled path writes a "
                         "flat leaf; use -j>1 for a downscaled partition."
@@ -900,6 +1123,8 @@ def fit_volume(
                     max_passes=max_passes,
                     seeds=parsed_seeds,
                     partition=seq_partition,
+                    recipe=recipe,
+                    recipe_params=recipe_params,
                     **fit_config,
                 )
 

@@ -309,3 +309,83 @@ def test_spatial_partition_warns_on_multi_substitutive():
         part = pyr.to_spatial_partition(max_elements=30)
     # flattened to the default (finest) level → 60 splats partitioned
     assert sum(leaf.n_splats for leaf in iter_leaves(part)) == 60
+
+
+# ── partition_from_regions per-part LOD recipe (fit --recipe seam) ──────────
+
+
+def _region(n: int, offset: float, seed: int) -> GSplatData:
+    """A small 3D region of ``n`` splats, spatially offset so regions are disjoint."""
+    rng = np.random.default_rng(seed)
+    centers = (offset + rng.uniform(0, 10, size=(n, 3))).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    return GSplatData(
+        centers=centers,
+        amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def test_partition_from_regions_no_recipe_keeps_bare_leaves():
+    from luxar.gsplats.tree import GSplatLeaf
+
+    regions = [_region(40, 0.0, 0), _region(40, 100.0, 1)]
+    node = GSplatData.partition_from_regions(regions)
+    assert isinstance(node, GSplatPartition)
+    leaves = list(iter_leaves(node))
+    assert len(leaves) == 2
+    # bare leaves: a single (trivial) additive sub-LOD each
+    assert all(isinstance(leaf, GSplatLeaf) for leaf in leaves)
+    assert all(leaf.n_additive_sublods == 1 for leaf in leaves)
+    assert sum(leaf.n_splats for leaf in leaves) == 80
+
+
+def test_partition_from_regions_additive_recipe_gives_each_part_a_ladder():
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import GSplatLeaf
+
+    regions = [_region(40, 0.0, 0), _region(40, 100.0, 1)]
+    params = RecipeParams(n_lods=3, additive_method="greedy")
+    node = GSplatData.partition_from_regions(
+        regions, recipe="additive", recipe_params=params
+    )
+    assert isinstance(node, GSplatPartition)
+    parts = node.children
+    assert len(parts) == 2
+    # additive → each part is a leaf carrying a multi-entry additive ladder
+    assert all(isinstance(p, GSplatLeaf) for p in parts)
+    assert all(p.n_additive_sublods == 3 for p in parts)
+    # the ladder preserves the full splat set per part (prefix-sum, no loss)
+    assert all(p.n_splats == 40 for p in parts)
+
+
+def test_partition_from_regions_substitutive_recipe_gives_lod_groups():
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    regions = [_region(40, 0.0, 0), _region(40, 100.0, 1)]
+    params = RecipeParams(
+        compression_factor=2, levels=2, substitutive_method="auto", device="cpu"
+    )
+    node = GSplatData.partition_from_regions(
+        regions, recipe="substitutive", recipe_params=params
+    )
+    assert isinstance(node, GSplatPartition)
+    # substitutive → each part is its own coarse↔fine lod group (mosaic)
+    assert all(isinstance(p, GSplatLodGroup) for p in node.children)
+    # the finest (default) level of each part keeps all 40 splats
+    assert all(p.n_splats == 40 for p in node.children)
+
+
+def test_partition_from_regions_single_region_recipe_returns_bare_part_node():
+    """A single non-empty region returns the part node directly (no 1-part wrapper)
+    — but still LOD-built when a recipe is given."""
+    from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.gsplats.tree import GSplatLeaf
+
+    node = GSplatData.partition_from_regions(
+        [_region(40, 0.0, 0)], recipe="additive", recipe_params=RecipeParams(n_lods=3)
+    )
+    assert isinstance(node, GSplatLeaf)  # not wrapped in a GSplatPartition
+    assert node.n_additive_sublods == 3

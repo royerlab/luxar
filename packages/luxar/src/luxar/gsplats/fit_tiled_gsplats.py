@@ -193,6 +193,8 @@ def fit_tiled(
     max_passes: Optional[int] = None,
     cull_retention: float | None = 0.95,
     partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
@@ -301,6 +303,8 @@ def fit_tiled(
         elapsed=elapsed,
         verbose=verbose,
         partition=partition,
+        recipe=recipe,
+        recipe_params=recipe_params,
     )
 
 
@@ -316,6 +320,8 @@ def merge_tile_results(
     elapsed: float,
     verbose: bool = True,
     partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -391,11 +397,14 @@ def merge_tile_results(
                 cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
                 stats={},
             )
-        node = GSplatData.partition_from_regions(regions)
+        node = GSplatData.partition_from_regions(
+            regions, recipe=recipe, recipe_params=recipe_params
+        )
         if verbose:
+            lod_note = f", per-part recipe={recipe}" if recipe else ""
             aprint(
                 f"Total: {sum(r.n_splats for r in regions):,} splats from "
-                f"{len(regions)} tile-parts (partition) in {elapsed:.1f}s"
+                f"{len(regions)} tile-parts (partition{lod_note}) in {elapsed:.1f}s"
             )
         return node
 

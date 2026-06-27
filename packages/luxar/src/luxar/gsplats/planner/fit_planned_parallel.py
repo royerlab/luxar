@@ -94,6 +94,8 @@ def fit_planned_parallel(
     worker_cmd_builder: WorkerCmdBuilder,
     keep_boxes: bool = False,
     partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
     verbose: bool = True,
 ) -> "Any":
     """Fit every budgeted box via concurrent worker subprocesses, then merge.
@@ -216,7 +218,11 @@ def fit_planned_parallel(
     elapsed = time.perf_counter() - t0
     if partition:
         # One part per box — boxes are core-disjoint, an exact spatial partition.
-        result: Any = GSplatData.partition_from_regions(regions)
+        # ``recipe`` gives each part its own LOD ladder/group at assembly time
+        # (the per-box workers only fit bare leaves).
+        result: Any = GSplatData.partition_from_regions(
+            regions, recipe=recipe, recipe_params=recipe_params
+        )
     else:
         result = GSplatData(
             centers=np.concatenate([r.centers for r in regions]).astype(np.float32),

@@ -62,6 +62,8 @@ def run_content_fit(
     jobs: str = "1",
     keep_boxes: bool = False,
     flat: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: Any = None,
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
     # plan I/O
     plan: Optional[Path] = None,
@@ -252,6 +254,8 @@ def run_content_fit(
                 worker_cmd_builder=builder,
                 keep_boxes=keep_boxes,
                 partition=partition,
+                recipe=recipe,
+                recipe_params=recipe_params,
             )
     else:
         fk = _fit_kwargs()
@@ -265,6 +269,8 @@ def run_content_fit(
                 fitplan,
                 device=device,
                 partition=partition,
+                recipe=recipe,
+                recipe_params=recipe_params,
                 progress_callback=_prog,
                 **fk,
             )

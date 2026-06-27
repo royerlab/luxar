@@ -204,3 +204,106 @@ def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
     assert r2.exit_code == 0, r2.output
 
     assert GSplatData.load(seq_out).n_splats == GSplatData.load(par_out).n_splats
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_tiled_recipe_additive_gives_partition_of_ladders(tmp_path: Path) -> None:
+    """`fit --tiling uniform --recipe additive` → a kind=partition whose parts
+    each carry their own additive ladder (the 'partitioned' topology), built at
+    fit time without a separate `gsplat lod` pass."""
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import GSplatLeaf, iter_leaves
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "lod.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "uniform", "--tile-size", "24", "--overlap", "4",
+            "-j", "2", "--recipe", "additive", "--n-lods", "2",
+            "--seeds", "12", "-n", "15", "--device", "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    node, _ = load_gsplat_node(out)
+    assert type(node).__name__ == "GSplatPartition"
+    leaves = list(iter_leaves(node))
+    assert all(isinstance(leaf, GSplatLeaf) for leaf in leaves)
+    # the additive recipe ran: at least one part has a >1-entry ladder
+    assert any(leaf.n_additive_sublods > 1 for leaf in leaves), (
+        f"no additive ladder built: {[leaf.n_additive_sublods for leaf in leaves]}"
+    )
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_recipe_rejects_flat(tmp_path: Path) -> None:
+    """--recipe needs a partition output, so it is rejected with --flat."""
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "uniform", "--tile-size", "24",
+            "--recipe", "additive", "--flat", "--device", "cpu",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "flat" in result.output.lower() and "partition" in result.output.lower()
+    assert not out.exists()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_recipe_rejects_tiling_none(tmp_path: Path) -> None:
+    """--recipe needs a tiled fit; a whole-volume (--tiling none) fit is rejected."""
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "none", "--recipe", "additive", "--device", "cpu",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "tiled" in result.output.lower()
+    assert not out.exists()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
+    """--recipe additive must reject substitutive-only knobs (and vice-versa) —
+    mirroring `gsplat lod`, which errors on irrelevant options rather than
+    silently dropping them. No fit is performed (validation fails first)."""
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+
+    # additive recipe + a substitutive-only knob → rejected
+    res = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "uniform", "--tile-size", "24",
+            "--recipe", "additive", "--compression-factor", "8", "--device", "cpu",
+        ],
+    )
+    assert res.exit_code != 0
+    assert "--compression-factor" in res.output and "not used" in res.output.lower()
+    assert not out.exists()
+
+    # substitutive recipe + an additive-only knob → rejected
+    res2 = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "uniform", "--tile-size", "24",
+            "--recipe", "substitutive", "--n-lods", "5", "--device", "cpu",
+        ],
+    )
+    assert res2.exit_code != 0
+    assert "--n-lods" in res2.output and "not used" in res2.output.lower()
