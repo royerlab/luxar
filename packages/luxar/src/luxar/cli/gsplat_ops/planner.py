@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -20,16 +20,21 @@ if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity
 
 
-def _save_fit_result(result: Any, output: Path) -> None:
+def _save_fit_result(
+    result: Any,
+    output: Path,
+    *,
+    compress: "Optional[Literal['zip', 'tar.gz']]" = None,
+) -> None:
     """Save either a flat ``GSplatData`` leaf or a ``kind=partition`` tree node."""
     from luxar.gsplats.gsplat_data import GSplatData
 
     if isinstance(result, GSplatData):
-        result.save(output, include_fitting_info=True)
+        result.save(output, include_fitting_info=True, compress=compress)
     else:  # a GSplatNode (partition / leaf tree) has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
-        write_gsplats_tree(output, result)
+        write_gsplats_tree(output, result, compress=compress)
 
 
 def run_content_fit(
@@ -57,6 +62,7 @@ def run_content_fit(
     jobs: str = "1",
     keep_boxes: bool = False,
     flat: bool = False,
+    compress: "Optional[Literal['zip', 'tar.gz']]" = None,
     # plan I/O
     plan: Optional[Path] = None,
     plan_only: bool = False,
@@ -264,7 +270,7 @@ def run_content_fit(
             )
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    _save_fit_result(result, output)
+    _save_fit_result(result, output, compress=compress)
     kind = "partition" if partition else "leaf"
     aprint(
         f"Fit {fitplan.n_boxes} boxes → {kind} "

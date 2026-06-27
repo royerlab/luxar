@@ -279,14 +279,15 @@ def fit_volume(
         "1",
         "--jobs",
         "-j",
-        help="With --tiled: number of tiles to fit concurrently as subprocesses "
+        help="With --tiling uniform/content: number of tiles/boxes to fit "
+        "concurrently as subprocesses "
         "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
-        "sequential. Ignored without --tiled or with --tile.",
+        "sequential. Ignored with --tiling none or --tile.",
     ),
     keep_tiles: bool = typer.Option(
         False,
         "--keep-tiles",
-        help="With --tiled --jobs>1: keep the per-tile temporary .gsplats.zarr "
+        help="With --tiling --jobs>1: keep the per-tile/box temporary .gsplats.zarr "
         "outputs (and any .empty markers for skipped tiles) instead of "
         "deleting them after the merge.",
     ),
@@ -459,7 +460,7 @@ def fit_volume(
 
         luxar gsplat fit data.zarr splats.gsplats.zarr --channel 1 --timepoint 0
 
-        luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+        luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 
         luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
 
@@ -536,6 +537,7 @@ def fit_volume(
                     jobs=jobs,
                     keep_boxes=keep_tiles,
                     flat=flat,
+                    compress=compress,
                     plan=plan,
                     plan_only=plan_only,
                     plan_box=plan_box,

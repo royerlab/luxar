@@ -1,4 +1,4 @@
-"""Tests for parallel tiled fitting (``fit --tiled --jobs N``).
+"""Tests for parallel tiled fitting (``fit --tiling uniform --jobs N``).
 
 The orchestrator (``fit_tiled_parallel``) is exercised with a *fake* worker
 command builder that writes deterministic tiny ``.gsplats.zarr`` files via a
@@ -63,8 +63,7 @@ def _failing_worker_builder(fail_on: int):
             return [
                 sys.executable,
                 "-c",
-                "import sys; sys.stderr.write('BOOM tile failure\\n'); "
-                "sys.exit(3)",
+                "import sys; sys.stderr.write('BOOM tile failure\\n'); sys.exit(3)",
             ]
         return ok(i, m, out_path)
 
@@ -157,9 +156,7 @@ class TestResolveJobs:
 
         monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: 300_000_000)
         monkeypatch.setattr(device_mod, "resolve_torch_device", lambda *a, **k: None)
-        n = resolve_jobs(
-            "auto", tile_voxels=10_000_000, num_tiles=10, device="cuda"
-        )
+        n = resolve_jobs("auto", tile_voxels=10_000_000, num_tiles=10, device="cuda")
         assert n == 3
 
     def test_auto_clamped_to_num_tiles(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,7 +206,7 @@ class TestBuildWorkerCmd:
 
     def test_never_forwards_driver_flags(self) -> None:
         cmd = self._cmd(downscale="1,4,4", seeds="8000")
-        assert "--tiled" not in cmd
+        assert "--tiling" not in cmd
         assert "--jobs" not in cmd
         assert "-j" not in cmd
         assert "--compress" not in cmd
@@ -217,9 +214,17 @@ class TestBuildWorkerCmd:
     def test_forwards_values_not_just_flags(self) -> None:
         # Guard against a mutation that drops/garbles a passthrough VALUE.
         cmd = self._cmd(
-            seeds="8000", iters=5000, device="cuda", preset="hifi",
-            lr=0.02, loss="mse", seed_method="edges", downscale="1,4,4",
-            channel=2, timepoint=7, array_key="h2afva/fused",
+            seeds="8000",
+            iters=5000,
+            device="cuda",
+            preset="hifi",
+            lr=0.02,
+            loss="mse",
+            seed_method="edges",
+            downscale="1,4,4",
+            channel=2,
+            timepoint=7,
+            array_key="h2afva/fused",
         )
 
         def val(flag):
@@ -242,10 +247,15 @@ class TestBuildWorkerCmd:
         # denoise VALUES, not just flag presence).
         cmd = self._cmd(
             config="cfg.yaml",
-            progressive=True, max_splats_per_pass=1234,
-            psnr_patience=0.3, max_passes=7,
-            denoise=True, denoise_h=0.041, denoise_patch_size=5,
-            denoise_search_distance=11, denoise_backend="cuda",
+            progressive=True,
+            max_splats_per_pass=1234,
+            psnr_patience=0.3,
+            max_passes=7,
+            denoise=True,
+            denoise_h=0.041,
+            denoise_patch_size=5,
+            denoise_search_distance=11,
+            denoise_backend="cuda",
         )
 
         def val(flag):
@@ -273,9 +283,18 @@ class TestBuildWorkerCmd:
 
     def test_passthrough_only_when_set(self) -> None:
         cmd = self._cmd()  # nothing optional set
-        for flag in ("--seeds", "--iters", "--preset", "--config", "--downscale",
-                     "--channel", "--timepoint", "--array-key", "--progressive",
-                     "--denoise"):
+        for flag in (
+            "--seeds",
+            "--iters",
+            "--preset",
+            "--config",
+            "--downscale",
+            "--channel",
+            "--timepoint",
+            "--array-key",
+            "--progressive",
+            "--denoise",
+        ):
             assert flag not in cmd
 
     def test_denoise_injects_calibrated_h(self) -> None:
@@ -285,8 +304,9 @@ class TestBuildWorkerCmd:
         assert cmd[cmd.index("--denoise-h") + 1] == "0.037"
 
     def test_progressive_flags(self) -> None:
-        cmd = self._cmd(progressive=True, max_splats_per_pass=1000,
-                        psnr_patience=0.3, max_passes=4)
+        cmd = self._cmd(
+            progressive=True, max_splats_per_pass=1000, psnr_patience=0.3, max_passes=4
+        )
         assert "--progressive" in cmd
         assert "--splats-per-pass" in cmd and "1000" in cmd
         assert "--max-passes" in cmd and "4" in cmd
@@ -421,6 +441,7 @@ class TestFitTiledParallel:
 
     def test_launch_failure_is_reported_not_raw(self, tmp_path: Path) -> None:
         """A worker that can't even launch (bogus argv) → curated RuntimeError."""
+
         def bogus_builder(i: int, m: int, out_path: Path) -> list[str]:
             return ["this-binary-does-not-exist-xyz", "--tile", f"{i}/{m}"]
 

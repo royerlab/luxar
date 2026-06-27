@@ -169,6 +169,21 @@ def test_content_fit_parallel_jobs(tmp_path):
     assert _kind(out) == "GSplatPartition"
 
 
+def test_content_fit_honors_compress(tmp_path):
+    # --compress must thread through the content save path (was silently dropped):
+    # a compressed store is a single archive FILE, not a .gsplats.zarr directory.
+    vol = _vol(tmp_path)
+    out = tmp_path / "cz.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--compress", "zip"],
+    )
+    assert res.exit_code == 0, res.output
+    assert (
+        out.is_file()
+    )  # compressed → archive file; pre-fix it was an uncompressed dir
+
+
 def test_bad_jobs_value_errors(tmp_path):
     vol = _vol(tmp_path)
     res = runner.invoke(
