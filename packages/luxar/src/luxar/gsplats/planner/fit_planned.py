@@ -154,7 +154,7 @@ def fit_planned(
     fit_kwargs.setdefault("verbose", False)
     fit_kwargs["device"] = device
 
-    # Per-tile saturation cap (from the calibration): the halo inflation must not
+    # Per-box saturation cap (from the calibration): the halo inflation must not
     # push the fit past the K the calibration measured as over-saturated.
     cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
 
