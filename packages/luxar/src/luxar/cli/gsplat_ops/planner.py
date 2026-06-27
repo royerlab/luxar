@@ -81,11 +81,72 @@ def plan_command(
     ),
     preset: str = typer.Option("standard", "--preset", help="Fit preset (with --fit)."),
     device: Optional[str] = typer.Option(None, "--device", "-d"),
+    jobs: str = typer.Option(
+        "1",
+        "--jobs",
+        "-j",
+        help="With --fit: number of boxes to fit concurrently as subprocesses on "
+        "one GPU (int, or 'auto' to size from free VRAM). Default 1 = sequential.",
+    ),
+    keep_boxes: bool = typer.Option(
+        False,
+        "--keep-boxes",
+        help="With --fit --jobs>1: keep the per-box temporary .gsplats.zarr "
+        "outputs (and .empty markers) instead of deleting them after the merge.",
+    ),
+    fit_box: Optional[int] = typer.Option(
+        None,
+        "--fit-box",
+        hidden=True,
+        help="Internal worker mode: fit ONLY box i of an existing plan.json and "
+        "save it to --output (used by --jobs>1 subprocess workers).",
+    ),
 ) -> None:
     """Plan a content-balanced tiling of a volume; optionally fit it."""
     try:
         from luxar.cli.gsplat_config import load_fit_config, load_volume
         from luxar.gsplats.planner import plan_volume
+
+        # Internal worker mode: fit ONLY box `fit_box` of an EXISTING plan.json
+        # and write it to --output (or a sibling .empty marker for a 0-splat box).
+        # Reuses _fit_one_box so the parallel path's per-box logic is identical to
+        # the sequential fit_planned. No scan / no plan rewrite.
+        if fit_box is not None:
+            from luxar.gsplats.gsplat_data import GSplatData
+            from luxar.gsplats.planner import FitPlan
+            from luxar.gsplats.planner.fit_planned import _fit_one_box
+
+            if output is None:
+                raise typer.BadParameter("--fit-box requires --output/-o")
+            plan = FitPlan.from_json(plan_json)
+            if fit_box < 0 or fit_box >= len(plan.boxes):
+                raise typer.BadParameter(
+                    f"--fit-box {fit_box} out of range [0, {len(plan.boxes)})"
+                )
+            volume = load_volume(
+                input_path, channel=channel, timepoint=timepoint, array_key=array_key
+            )
+            fit_kwargs = load_fit_config(
+                preset=preset, config_path=None, cli_overrides={"device": device}
+            )
+            fit_kwargs.pop("seeds", None)
+            fit_kwargs.pop("device", None)
+            fit_kwargs.setdefault("cull_retention", 0.999)
+            fit_kwargs["verbose"] = False
+            fit_kwargs["device"] = device
+            cap = int(plan.density.get("saturation_cap", 0)) if plan.density else 0
+            c, a, k = _fit_one_box(
+                volume, plan.boxes[fit_box], int(plan.overlap), cap, **fit_kwargs
+            )
+            output.parent.mkdir(parents=True, exist_ok=True)
+            if c.shape[0] == 0:
+                # the gsplats writer rejects empty stores -> drop an .empty marker
+                Path(str(output) + ".empty").write_text("")
+            else:
+                GSplatData(centers=c, amplitudes=a, cholesky_factors=k).save(
+                    output, include_fitting_info=False
+                )
+            return
 
         with asection(f"Plan: {input_path.name}"):
             with asection("Loading volume"):
@@ -151,39 +212,84 @@ def plan_command(
                 )
                 aprint(f"Wrote {plan_json}")
 
-            # 3. Optional fit
+            # 3. Optional fit (sequential, or concurrent box subprocesses with -j)
             if fit:
                 if output is None:
                     raise typer.BadParameter("--fit requires --output/-o")
-                from luxar.gsplats.planner import fit_planned
-
-                fit_kwargs = load_fit_config(
-                    preset=preset, config_path=None, cli_overrides={"device": device}
+                from luxar.gsplats.fit_tiled_parallel import resolve_jobs
+                from luxar.gsplats.planner.fit_planned_parallel import (
+                    max_padded_box_voxels,
                 )
-                fit_kwargs.pop("seeds", None)
-                # device is passed explicitly to fit_planned; drop it from the
-                # forwarded kwargs to avoid a duplicate keyword argument.
-                fit_kwargs.pop("device", None)
-                fit_kwargs["verbose"] = False
-                with asection(f"Fitting {plan.n_boxes} boxes"):
-                    t0 = time.perf_counter()
 
-                    def _prog(i: int, n: int, msg: str) -> None:
-                        aprint(f"  [{i + 1}/{n}] {msg}")
-
-                    merged = fit_planned(
-                        volume,
-                        plan,
+                n_budgeted = sum(1 for b in plan.boxes if b.budget > 0)
+                try:
+                    n_jobs = resolve_jobs(
+                        jobs,
+                        tile_voxels=max_padded_box_voxels(plan),
+                        num_tiles=max(1, n_budgeted),
                         device=device,
-                        progress_callback=_prog,
-                        **fit_kwargs,
                     )
-                    output.parent.mkdir(parents=True, exist_ok=True)
-                    merged.save(output, include_fitting_info=True)
-                    aprint(
-                        f"Fit {merged.n_splats:,} splats from {plan.n_boxes} boxes "
-                        f"in {time.perf_counter() - t0:.1f}s → {output}"
+                except ValueError:
+                    aprint(f"Error: --jobs must be an integer or 'auto', got '{jobs}'")
+                    raise typer.Exit(1)
+
+                output.parent.mkdir(parents=True, exist_ok=True)
+                t0 = time.perf_counter()
+                if n_jobs > 1:
+                    # Concurrent: one subprocess per box (own CUDA context). Workers
+                    # re-read the plan_json we just wrote and re-load the volume.
+                    from luxar.gsplats.planner.fit_planned_parallel import (
+                        _default_worker_cmd_builder,
+                        fit_planned_parallel,
                     )
+
+                    builder = _default_worker_cmd_builder(
+                        input_path,
+                        plan_json,
+                        preset=preset,
+                        device=device,
+                        channel=channel,
+                        timepoint=timepoint,
+                        array_key=array_key,
+                    )
+                    tmp_dir = output.parent / f".{output.name}.boxes"
+                    merged = fit_planned_parallel(
+                        plan,
+                        jobs=n_jobs,
+                        tmp_dir=tmp_dir,
+                        worker_cmd_builder=builder,
+                        keep_boxes=keep_boxes,
+                    )
+                else:
+                    from luxar.gsplats.planner import fit_planned
+
+                    fit_kwargs = load_fit_config(
+                        preset=preset,
+                        config_path=None,
+                        cli_overrides={"device": device},
+                    )
+                    fit_kwargs.pop("seeds", None)
+                    # device is passed explicitly to fit_planned; drop it from the
+                    # forwarded kwargs to avoid a duplicate keyword argument.
+                    fit_kwargs.pop("device", None)
+                    fit_kwargs["verbose"] = False
+                    with asection(f"Fitting {plan.n_boxes} boxes"):
+
+                        def _prog(i: int, n: int, msg: str) -> None:
+                            aprint(f"  [{i + 1}/{n}] {msg}")
+
+                        merged = fit_planned(
+                            volume,
+                            plan,
+                            device=device,
+                            progress_callback=_prog,
+                            **fit_kwargs,
+                        )
+                merged.save(output, include_fitting_info=True)
+                aprint(
+                    f"Fit {merged.n_splats:,} splats from {plan.n_boxes} boxes "
+                    f"in {time.perf_counter() - t0:.1f}s → {output}"
+                )
     except typer.Exit:
         raise
     except Exception as exc:
