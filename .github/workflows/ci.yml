@@ -35,7 +35,7 @@ jobs:
       # every PR's checkout fail catastrophically when the repo's GitHub
       # LFS budget was exhausted; the LFS pointer files in the work tree
       # are sufficient for the test suite.
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -71,7 +71,7 @@ jobs:
       # real comparison and the smoke test verifies the artefacts are present.
       LUXAR_REQUIRE_WASM_TESTS: '1'
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
@@ -148,7 +148,7 @@ jobs:
       run:
         working-directory: packages/luxar-viewer
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
         with:
@@ -227,7 +227,7 @@ jobs:
       # made the checkout step itself fail when the repo's LFS budget
       # was exhausted. If a future e2e job actually needs the demo
       # payloads, re-enable `lfs: true` on that job specifically.
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
