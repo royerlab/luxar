@@ -1835,3 +1835,170 @@ class TestContentMerge:
         )
         assert res.exit_code != 0
         assert "uniform|content" in res.output
+
+
+class TestSubmitRecipeValidation:
+    """slurm-fit submit --merge-recipe must reject cross-recipe knobs (fail-fast,
+    matching `fit --recipe` and `gsplat lod`) instead of silently dropping them."""
+
+    def test_merge_recipe_rejects_cross_recipe_knob(self, tmp_path: Path) -> None:
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        # additive merge recipe + a substitutive-only knob -> rejected before submit
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "slurm-fit", "submit", str(src), str(tmp_path / "o"),
+                "-p", "gpu", "--tile-size", "24", "--overlap", "4",
+                "--axes", "z,y,x", "--dry-run",
+                "--merge-recipe", "additive", "--merge-compression-factor", "4",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "--merge-compression-factor" in res.output
+        assert "not used" in res.output.lower()
+
+
+class TestMergeRecipeAdditiveKnobs:
+    """slurm-fit merge/submit reach parity with fit --recipe / gsplat lod: the
+    additive ladder method/breakpoints and the lod-method are tunable."""
+
+    def test_build_merge_recipe_params_additive_knobs(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        # stored (plan-time) values; CLI overrides None → use stored.
+        params = _build_merge_recipe_params(
+            {"additive-method": "self_energy", "breakpoints": "counts:100,500", "n-lods": "5"},
+            n_lods=None,
+            additive_method=None,
+            breakpoints=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method=None,
+            coarsen_dims=None,
+            lod_method=None,
+        )
+        assert params.additive_method == "self_energy"
+        assert params.breakpoints == [100, 500]
+        assert params.n_lods == 5
+
+    def test_build_merge_recipe_params_lod_method_and_validation(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        params = _build_merge_recipe_params(
+            {}, n_lods=None, additive_method=None, breakpoints=None,
+            compression_factor=None, levels=None, substitutive_method=None,
+            coarsen_dims=None, lod_method="count",
+        )
+        assert params.lod_method == "count"
+        # a bad additive method fails fast
+        import typer
+
+        with pytest.raises(typer.BadParameter):
+            _build_merge_recipe_params(
+                {}, n_lods=None, additive_method="nope", breakpoints=None,
+                compression_factor=None, levels=None, substitutive_method=None,
+                coarsen_dims=None, lod_method=None,
+            )
+
+    def test_submit_threads_additive_knobs_into_sbatch(self, tmp_path: Path) -> None:
+        """`slurm-fit submit --merge-recipe additive --merge-additive-method ...`
+        records the knobs in the manifest and the merge sbatch invokes them."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.batch.manifest import load_manifest
+        from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        out = tmp_path / "o"
+        # Mock sbatch so the (non-dry-run) submit writes the manifest without Slurm.
+        from unittest.mock import patch
+
+        class _R:
+            returncode = 0
+            stdout = "123"
+            stderr = ""
+
+        with patch("subprocess.run", return_value=_R()):
+            res = CliRunner().invoke(
+                app_gsplat,
+                [
+                    "slurm-fit", "submit", str(src), str(out),
+                    "-p", "gpu", "--tile-size", "24", "--overlap", "4",
+                    "--axes", "z,y,x",
+                    "--merge-recipe", "additive", "--merge-additive-method",
+                    "self_energy", "--merge-breakpoints", "energy:0.5,1.0",
+                ],
+            )
+        assert res.exit_code == 0, res.output
+        manifest = load_manifest(out)
+        assert manifest.merge_recipe_args.get("additive-method") == "self_energy"
+        assert manifest.merge_recipe_args.get("breakpoints") == "energy:0.5,1.0"
+        script = generate_merge_sbatch(manifest, "")
+        assert "--additive-method self_energy" in script
+        assert "--breakpoints energy:0.5,1.0" in script
+
+    def test_submit_rejects_malformed_merge_breakpoints(self, tmp_path: Path) -> None:
+        """A malformed --merge-breakpoints fails fast at submit (parity with the
+        other merge knobs), not hours later in the merge job."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "slurm-fit", "submit", str(src), str(tmp_path / "o"),
+                "-p", "gpu", "--tile-size", "24", "--overlap", "4", "--axes", "z,y,x",
+                "--dry-run", "--merge-recipe", "additive",
+                "--merge-breakpoints", "counts:not_a_number",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "breakpoints" in res.output.lower()
+
+
+class TestStatusPartitionMergeDetection:
+    def test_single_channel_partition_merge_detected_completed(self, tmp_path: Path) -> None:
+        """The partition-default merge writes merged/final.gsplats.zarr for ALL
+        shapes; status must report a single-channel batch's merge as completed
+        (pre-fix it looked only for t00_c00.gsplats.zarr)."""
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+        from luxar.gsplats.batch.status import check_batch_status
+
+        out = tmp_path / "batch"
+        (out / "tiles").mkdir(parents=True)
+        (out / "merged").mkdir(parents=True)
+        m = BatchManifest(
+            input_path="/d/x.zarr", output_dir=str(out),
+            n_timepoints=1, n_channels=1, spatial_shape=(64, 64, 64),
+            n_tiles=1, total_tasks=1, slurm_partition="gpu",
+        )
+        m.jobs = [
+            BatchJob(0, 0, 0, 0, output_filename(0, 0, 0, 1, 1, 1), 1.0)
+        ]
+        save_manifest(m, out)
+        # the partition-default merge output (NOT the per-shape t00_c00 name)
+        (out / "merged" / "final.gsplats.zarr").mkdir()
+
+        st = check_batch_status(out)
+        assert st.merge_status == "completed"

@@ -412,6 +412,7 @@ def fit_volume(
     # partition). additive -> partitioned topology; substitutive -> mosaic.
     recipe: Optional[str] = typer.Option(
         None,
+        "-r",
         "--recipe",
         help="Per-part LOD for a tiled partition: additive (each part a "
         "prefix-sum ladder -> 'partitioned' topology) or substitutive (each "
@@ -427,6 +428,7 @@ def fit_volume(
     ),
     recipe_additive_method: Optional[str] = typer.Option(
         None,
+        "-m",
         "--additive-method",
         help="[--recipe additive] greedy (default, (1-1/e)-optimal) or "
         "self_energy (cheap O(N log N) for very large parts).",
@@ -434,6 +436,7 @@ def fit_volume(
     ),
     recipe_breakpoints: Optional[str] = typer.Option(
         None,
+        "-b",
         "--breakpoints",
         help="[--recipe additive] additive ladder breakpoints: 'equal-count' "
         "(default), 'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
@@ -441,12 +444,14 @@ def fit_volume(
     ),
     recipe_compression_factor: Optional[int] = typer.Option(
         None,
+        "-K",
         "--compression-factor",
         help="[--recipe substitutive] per-level coarsening factor K (default 4).",
         rich_help_panel="Per-part LOD",
     ),
     recipe_levels: Optional[int] = typer.Option(
         None,
+        "-L",
         "--levels",
         help="[--recipe substitutive] number of substitutive levels L (default 3).",
         rich_help_panel="Per-part LOD",
@@ -688,6 +693,28 @@ def fit_volume(
                 tiling, volume.shape, tile_size, _has_density
             )
 
+            # Content density knobs only apply to content tiling — warn if the
+            # decomposition didn't resolve to content (e.g. an explicit
+            # --tiling uniform/none), so the flags aren't silently no-ops.
+            if resolved_tiling != "content" and plan_box is None:
+                _density_flags = [
+                    name
+                    for name, on in (
+                        ("--cal", cal is not None),
+                        ("--k-star-ref", k_star_ref is not None),
+                        ("--n-features-ref", n_features_ref is not None),
+                        ("--feature-threshold", feature_threshold is not None),
+                        ("--feature-metric", feature_metric is not None),
+                        ("--target-features", target_features is not None),
+                    )
+                    if on
+                ]
+                if _density_flags:
+                    aprint(
+                        f"⚠ {', '.join(_density_flags)} apply only to "
+                        f"--tiling content; ignored under --tiling {resolved_tiling}."
+                    )
+
             # Per-part LOD recipe (tiled partition only): validate + build params.
             recipe_params: "Any" = None
             if recipe is not None:
@@ -744,6 +771,15 @@ def fit_volume(
                     aprint(
                         f"⚠ {', '.join(_unsupported)} are not supported with "
                         "--tiling content and are ignored."
+                    )
+                # --seeds is superseded by the content plan (per-box budgets from
+                # the density), not unsupported — note it so the user isn't
+                # surprised the explicit count had no effect.
+                if seeds is not None and plan_box is None:
+                    aprint(
+                        "⚠ --seeds is ignored with --tiling content; per-box "
+                        "budgets come from the density plan (use --cal / "
+                        "--k-star-ref to size them)."
                     )
 
                 run_content_fit(
@@ -1509,8 +1545,9 @@ def calibrate_command(
     in the Luxar manuscript's model-selection analysis.
 
     Canonical end-to-end pipeline: ``cal`` → ``fit --seeds K*`` →
-    ``lod additive`` (or ``lod substitutive``) for a streaming-ready
-    multi-resolution dataset.
+    ``lod --recipe additive`` (or ``substitutive`` / ``partitioned`` / ...) for a
+    streaming-ready multi-resolution dataset. Use ``--fit-exponent`` to measure
+    the density exponent that ``fit --tiling content`` consumes.
 
     Examples:
         luxar gsplat cal kidney_dapi.tiff cal.json

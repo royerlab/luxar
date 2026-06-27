@@ -6,6 +6,24 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Added — GSplat fitting follow-ups (transform partitions, fit/merge per-part LOD, fitted density exponent, cluster content fan-out)
+
+Four gsplat additions, each deep-double-checked:
+
+- **`gsplat transform` is tree-aware** — it now preserves a `kind=partition`
+  (and `mosaic`/`multiscale` trees) instead of flattening/rejecting it, walking
+  the tree leaf-by-leaf with global `--center` / `--normalize-intensity` stats
+  and re-deriving the extent-based `min_pixel_size` LOD thresholds.
+- **`fit --recipe additive|substitutive`** — a tiled fit can emit per-part LOD
+  (the `partitioned` / `mosaic` topology) at fit time, without a separate `lod`
+  pass (which rejects a partition). Mirrors the `lod` knobs.
+- **`cal --fit-exponent` / `--exponent-scales`** — measures the saturation
+  exponent α in `K ~ features^α` (instead of assuming 0.44) by regressing K\* over
+  several region scales; the fitted α flows into `fit --tiling content` budgets.
+- **`slurm-fit submit --tiling content`** — the cluster sibling of
+  `fit --tiling content`: one shared content-balanced box plan fanned across the
+  Slurm array (`--plan-timepoint`, density knobs), merged into a `kind=partition`.
+
 #### Fixed — Large LOD scenes exhausted the browser (unbounded chunk fetches)
 
 A `kind=lod` scene whose finest level holds many millions of points (e.g. a

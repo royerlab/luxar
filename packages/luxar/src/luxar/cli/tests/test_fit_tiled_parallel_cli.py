@@ -307,3 +307,24 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
     )
     assert res2.exit_code != 0
     assert "--n-lods" in res2.output and "not used" in res2.output.lower()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_recipe_short_flags_parse(tmp_path: Path) -> None:
+    """fit --recipe gains lod's short flags (-r/-K/-L/-m/-b). Drive them into the
+    cross-recipe rejection (validation runs before any fit): `-r additive -K 8`
+    proves -r->recipe and -K->compression_factor without a fit."""
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+    res = runner.invoke(
+        app,
+        [
+            "gsplat", "fit", str(vol), str(out),
+            "--tiling", "uniform", "--tile-size", "24", "--overlap", "4",
+            "-r", "additive", "-K", "8", "--device", "cpu",
+        ],
+    )
+    # -r=additive + -K (a substitutive-only knob) → cross-recipe rejection
+    assert res.exit_code != 0
+    assert "--compression-factor" in res.output and "not used" in res.output.lower()

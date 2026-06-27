@@ -276,3 +276,16 @@ def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
     )
     assert captured.get("cli_overrides", {}).get("n_iters") == 7
     assert captured.get("config_path") is None  # no --config passed
+
+
+def test_content_fit_warns_on_ignored_seeds(tmp_path):
+    """--seeds is superseded by the content plan; the CLI must say so (not drop
+    it silently). Uses --plan-only so no fit runs."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "plan.json"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, "--plan-only", "--seeds", "5000"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "--seeds is ignored" in res.output

@@ -77,20 +77,20 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     else:
         status.unknown = remaining
 
-    # 3. Check merge status
+    # 3. Check merge status. The DEFAULT (partition) merge always writes
+    # merged/final.gsplats.zarr regardless of shape; the legacy --flat merge
+    # writes shape-dependent names (c00_4d / t00_c00 for a single channel).
+    # Check every candidate so a single-channel partition merge isn't reported
+    # as not-started.
     merged_dir = output_dir / "merged"
-    # The final output depends on dataset shape:
-    #   C>1: merged/final.gsplats.zarr
-    #   C==1, T>1: merged/c00_4d.gsplats.zarr
-    #   C==1, T==1: merged/t00_c00.gsplats.zarr
-    if manifest.n_channels > 1:
-        final_path = merged_dir / "final.gsplats.zarr"
-    elif manifest.n_timepoints > 1:
-        final_path = merged_dir / "c00_4d.gsplats.zarr"
-    else:
-        final_path = merged_dir / "t00_c00.gsplats.zarr"
+    final_candidates = [merged_dir / "final.gsplats.zarr"]
+    if manifest.n_channels == 1:
+        final_candidates.append(
+            merged_dir
+            / ("c00_4d.gsplats.zarr" if manifest.n_timepoints > 1 else "t00_c00.gsplats.zarr")
+        )
 
-    if final_path.exists():
+    if any(p.exists() for p in final_candidates):
         status.merge_status = "completed"
     elif manifest.merge_job_id is not None:
         merge_state = _query_single_job_state(manifest.merge_job_id)

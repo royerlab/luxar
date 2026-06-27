@@ -151,7 +151,9 @@ def batch_submit(
         "--cull-retention",
         help="After fitting each tile, remove the weakest splats that "
         "collectively contribute less than (1 - value) of the total amplitude. "
-        "Default 0.95 (discard bottom 5%%). Set to 0 to keep every splat.",
+        "When omitted, each tile uses the per-fit default (0.95 for uniform "
+        "tiles, 0.999 near-lossless for content boxes). Set to 0 to keep every "
+        "splat.",
     ),
     # Denoising
     batch_denoise: bool = typer.Option(
@@ -241,6 +243,18 @@ def batch_submit(
     merge_n_lods: Optional[int] = typer.Option(
         None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe."
     ),
+    merge_additive_method: Optional[str] = typer.Option(
+        None,
+        "--merge-additive-method",
+        help="Additive ladder method for --merge-recipe additive "
+        "(greedy | self_energy).",
+    ),
+    merge_breakpoints: Optional[str] = typer.Option(
+        None,
+        "--merge-breakpoints",
+        help="Additive ladder breakpoints for --merge-recipe additive "
+        "('equal-count' | 'counts:...' | 'energy:...').",
+    ),
     merge_compression_factor: Optional[int] = typer.Option(
         None, "--merge-compression-factor", help="Substitutive K for --merge-recipe."
     ),
@@ -258,6 +272,12 @@ def batch_submit(
         help="Comma-separated center-column indices --merge-recipe substitutive "
         "may coarsen over (the rest stay hard barriers). Default: spatial dims "
         "only (the stacked-timepoint axis is a barrier).",
+    ),
+    merge_lod_method: Optional[str] = typer.Option(
+        None,
+        "--merge-lod-method",
+        help="LOD switch threshold for --merge-recipe substitutive "
+        "(extent | count).",
     ),
     # Dataset structure override
     axes: Optional[str] = typer.Option(
@@ -522,6 +542,19 @@ def batch_submit(
                     feature_metric,
                     feature_threshold,
                 )
+                # Mismatched scan vs calibrated metric mis-scales per-box budgets
+                # (parity with the local `fit --tiling content` warning).
+                if (
+                    feature_metric is not None
+                    and cal is not None
+                    and feature_metric != density.feature_method
+                ):
+                    aprint(
+                        f"⚠ --feature-metric '{feature_metric}' differs from the "
+                        f"calibrated density.feature_method "
+                        f"'{density.feature_method}' — per-box budgets will be "
+                        "mis-scaled. Use matching metrics."
+                    )
                 content_plan = plan_volume(
                     rep_vol,
                     density,
@@ -714,8 +747,63 @@ def batch_submit(
                     f"{', '.join(sorted(PER_PART_RECIPES))} (the composed recipes "
                     "re-partition their input, but each tile is already one part)."
                 )
+            # Reject knobs that don't apply to the chosen recipe — fail-fast before
+            # the (hours-long) Slurm fit array, matching `fit --recipe` and `gsplat
+            # lod` (which both reject irrelevant options rather than silently drop).
+            _additive_only = {
+                "--merge-n-lods": merge_n_lods,
+                "--merge-additive-method": merge_additive_method,
+                "--merge-breakpoints": merge_breakpoints,
+            }
+            _substitutive_only = {
+                "--merge-compression-factor": merge_compression_factor,
+                "--merge-levels": merge_levels,
+                "--merge-substitutive-method": merge_substitutive_method,
+                "--merge-coarsen-dims": merge_coarsen_dims,
+                "--merge-lod-method": merge_lod_method,
+            }
+            _irrelevant = (
+                _substitutive_only if merge_recipe == "additive" else _additive_only
+            )
+            _provided = [flag for flag, val in _irrelevant.items() if val is not None]
+            if _provided:
+                _other = "substitutive" if merge_recipe == "additive" else "additive"
+                raise typer.BadParameter(
+                    f"option(s) {', '.join(_provided)} are not used by "
+                    f"--merge-recipe {merge_recipe} (they configure "
+                    f"--merge-recipe {_other}). Remove them or switch recipe."
+                )
             if merge_n_lods is not None:
                 merge_recipe_args["n-lods"] = str(merge_n_lods)
+            if merge_additive_method is not None:
+                # Validate now (fail-fast, before the Slurm array) like the
+                # substitutive method below.
+                from luxar.cli.lod import _VALID_ADDITIVE_METHODS
+
+                am_norm = merge_additive_method.strip().replace("-", "_")
+                if am_norm not in _VALID_ADDITIVE_METHODS:
+                    raise typer.BadParameter(
+                        f"--merge-additive-method must be one of "
+                        f"{list(_VALID_ADDITIVE_METHODS)}; got {merge_additive_method!r}"
+                    )
+                merge_recipe_args["additive-method"] = am_norm
+            if merge_breakpoints is not None:
+                # Validate the spec form now (fail-fast, before the Slurm array),
+                # like the sibling knobs — _parse_lod_breakpoints needs no splat
+                # count, so a malformed spec is caught at submit, not hours later
+                # in the merge job. The original string is stored for the
+                # manifest/sbatch round-trip.
+                from luxar.cli.lod import _parse_lod_breakpoints
+
+                _parse_lod_breakpoints(merge_breakpoints)
+                merge_recipe_args["breakpoints"] = merge_breakpoints
+            if merge_lod_method is not None:
+                if merge_lod_method not in ("extent", "count"):
+                    raise typer.BadParameter(
+                        f"--merge-lod-method must be 'extent' or 'count'; "
+                        f"got {merge_lod_method!r}"
+                    )
+                merge_recipe_args["lod-method"] = merge_lod_method
             if merge_compression_factor is not None:
                 merge_recipe_args["compression-factor"] = str(merge_compression_factor)
             if merge_levels is not None:
@@ -1391,20 +1479,29 @@ def batch_cancel_cmd(
 def _build_merge_recipe_params(
     stored: dict,
     *,
-    n_lods: Optional[int],
-    compression_factor: Optional[int],
-    levels: Optional[int],
-    substitutive_method: Optional[str],
-    coarsen_dims: Optional[str],
+    n_lods: Optional[int] = None,
+    additive_method: Optional[str] = None,
+    breakpoints: Optional[str] = None,
+    compression_factor: Optional[int] = None,
+    levels: Optional[int] = None,
+    substitutive_method: Optional[str] = None,
+    coarsen_dims: Optional[str] = None,
+    lod_method: Optional[str] = None,
 ) -> "RecipeParams":
     """Build a ``RecipeParams`` for the per-part merge recipe.
 
     Each knob is resolved CLI-first, then the value recorded at plan time
     (``manifest.merge_recipe_args``, string-valued), then the ``RecipeParams``
     default. ``coarsen_dims`` is parsed from a comma string to a tuple of ints;
-    leaving it unset lets the merge default it per part (spatial dims only).
+    leaving it unset lets the merge default it per part (spatial dims only). The
+    additive knobs (``additive_method`` / ``breakpoints`` / ``lod_method``) bring
+    the merge recipe to parity with ``fit --recipe`` and ``gsplat lod``.
     """
-    from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
+    from luxar.cli.lod import (
+        _VALID_ADDITIVE_METHODS,
+        _VALID_SUBSTITUTIVE_METHODS,
+        _parse_lod_breakpoints,
+    )
     from luxar.gsplats.lod.recipes import RecipeParams
 
     def _resolve(key: str, cli: Any, cast: Callable[[Any], Any]) -> Any:
@@ -1425,6 +1522,25 @@ def _build_merge_recipe_params(
     nl = _resolve("n-lods", n_lods, int)
     if nl is not None:
         overrides["n_lods"] = nl
+    am = _resolve("additive-method", additive_method, str)
+    if am is not None:
+        am_norm = am.strip().replace("-", "_")
+        if am_norm not in _VALID_ADDITIVE_METHODS:
+            raise typer.BadParameter(
+                f"--additive-method must be one of "
+                f"{list(_VALID_ADDITIVE_METHODS)}; got {am!r}"
+            )
+        overrides["additive_method"] = am_norm
+    bp = _resolve("breakpoints", breakpoints, str)
+    if bp is not None:
+        overrides["breakpoints"] = _parse_lod_breakpoints(bp)
+    lm = _resolve("lod-method", lod_method, str)
+    if lm is not None:
+        if lm not in ("extent", "count"):
+            raise typer.BadParameter(
+                f"--lod-method must be 'extent' or 'count'; got {lm!r}"
+            )
+        overrides["lod_method"] = lm
     cf = _resolve("compression-factor", compression_factor, int)
     if cf is not None:
         overrides["compression_factor"] = cf
@@ -1483,6 +1599,17 @@ def batch_merge_cmd(
     n_lods: Optional[int] = typer.Option(
         None, "--n-lods", help="Additive ladder depth (additive recipe)."
     ),
+    additive_method: Optional[str] = typer.Option(
+        None,
+        "--additive-method",
+        help="Additive ladder method: greedy (default) or self_energy (additive recipe).",
+    ),
+    breakpoints: Optional[str] = typer.Option(
+        None,
+        "--breakpoints",
+        help="Additive ladder breakpoints: 'equal-count' (default), 'counts:...' "
+        "or 'energy:...' (additive recipe).",
+    ),
     compression_factor: Optional[int] = typer.Option(
         None, "-K", "--compression-factor", help="Substitutive reduction factor."
     ),
@@ -1500,6 +1627,11 @@ def batch_merge_cmd(
             "merge over; the rest become hard barriers. Default: spatial dims only "
             "(stacked-timepoint axis is a barrier)."
         ),
+    ),
+    lod_method: Optional[str] = typer.Option(
+        None,
+        "--lod-method",
+        help="LOD switch threshold (substitutive recipe): extent (default) or count.",
     ),
 ) -> None:
     """Run the merge step for a completed batch job.
@@ -1550,10 +1682,13 @@ def batch_merge_cmd(
             recipe_params = _build_merge_recipe_params(
                 manifest.merge_recipe_args,
                 n_lods=n_lods,
+                additive_method=additive_method,
+                breakpoints=breakpoints,
                 compression_factor=compression_factor,
                 levels=levels,
                 substitutive_method=substitutive_method,
                 coarsen_dims=coarsen_dims,
+                lod_method=lod_method,
             )
 
         with asection(f"Merging batch results: {output_dir}"):
