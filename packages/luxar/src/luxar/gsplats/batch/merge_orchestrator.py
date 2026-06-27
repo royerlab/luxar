@@ -110,17 +110,37 @@ def _tile_indices(manifest: BatchManifest) -> Tuple[List[int], List[int]]:
     return t_indices, c_indices
 
 
-def _tile_path(tiles_dir: Path, t_real: int, c_real: int, k: int, t_max: int, c_max: int, n_k: int) -> Path:
-    """Resolve a single tile output path (matches sbatch output naming)."""
-    fname = output_filename(t_real, c_real, k, t_max + 1, c_max + 1, n_k)
+def _tile_path(
+    tiles_dir: Path,
+    t_real: int,
+    c_real: int,
+    k: int,
+    t_max: int,
+    c_max: int,
+    n_k: int,
+    label: str = "tile",
+) -> "Optional[Path]":
+    """Resolve a single spatial-slot output path (matches the sbatch naming).
+
+    ``label`` is ``tile`` (uniform) or ``box`` (content) — it MUST match the
+    label the fit array wrote, or the lookup misses every output. Returns
+    ``None`` when the slot is legitimately empty: an array task that fit 0
+    splats writes a sibling ``<path>.empty`` marker instead of a store (the
+    same convention the local parallel path uses), so the merge skips it rather
+    than treating it as failure. A genuinely missing output (no store, no
+    marker = the task never completed) still raises.
+    """
+    fname = output_filename(t_real, c_real, k, t_max + 1, c_max + 1, n_k, label=label)
     tile_path = tiles_dir / fname
-    if not tile_path.exists():
-        raise FileNotFoundError(
-            f"Missing tile output: {tile_path}\n"
-            f"Run `luxar gsplat slurm-fit status {tiles_dir.parent}` "
-            f"to check job status."
-        )
-    return tile_path
+    if tile_path.exists():
+        return tile_path
+    if Path(f"{tile_path}.empty").exists():
+        return None  # ran, legitimately produced 0 splats — skip this slot
+    raise FileNotFoundError(
+        f"Missing tile output: {tile_path}\n"
+        f"Run `luxar gsplat slurm-fit status {tiles_dir.parent}` "
+        f"to check job status."
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -135,6 +155,7 @@ def _build_part_for_tile(
     c_indices: List[int],
     n_k: int,
     channel_colors: Optional[List[Tuple[float, float, float]]],
+    label: str = "tile",
 ) -> "Optional[GSplatData]":
     """Assemble the full nD leaf-``GSplatData`` for spatial tile-region ``k``.
 
@@ -153,21 +174,34 @@ def _build_part_for_tile(
     # a single spatial tile so memory stays bounded to one tile-region).
     per_channel: List[GSplatData] = []
     for c_real in c_indices:
+        # Build the timepoint stack, skipping slots that are legitimately empty
+        # (`_tile_path` returns None) so a box absent at some timepoints still
+        # stacks the timepoints where it has signal — at their real coords.
         tc_data: List[GSplatData] = []
+        tc_values: List[float] = []
         for t_real in t_indices:
             tile_path = _tile_path(
-                tiles_dir, t_real, c_real, k, max(t_indices), max(c_indices), n_k
+                tiles_dir, t_real, c_real, k, max(t_indices), max(c_indices), n_k, label
             )
+            if tile_path is None:
+                continue
             tc_data.append(GSplatData.load(tile_path))
-        if n_t > 1:
+            tc_values.append(float(t_real))
+        if not tc_data:
+            continue  # this (channel, slot) is empty at every timepoint
+        if n_t > 1 and len(tc_data) > 1:
             stacked = GSplatData.combine_as_new_dimension(
-                tc_data,
-                values=[float(t) for t in t_indices],
-                sigma=0.0,
+                tc_data, values=tc_values, sigma=0.0
             )
+        elif n_t > 1:
+            # one surviving timepoint but a 4D dataset — embed its real coord
+            stacked = tc_data[0].embed_dimension(tc_values[0], sigma=0.0)
         else:
             stacked = tc_data[0]
         per_channel.append(stacked)
+
+    if not per_channel:
+        return None  # empty at every (timepoint, channel) for this slot
 
     # Across channels (Level-3 semantics, scoped to this tile).
     if n_c == 1:
@@ -245,13 +279,15 @@ def _merge_partition(
 
     n_k = manifest.n_tiles
     t_indices, c_indices = _tile_indices(manifest)
+    # Slot label MUST match what the fit array wrote (uniform=tile, content=box).
+    label = "box" if manifest.mode == "content" else "tile"
 
     # Single tile (K=1) → emit a bare leaf (or, with a recipe, a single lod
     # group / leaf-with-ladder), NOT a 1-part partition.
     if n_k == 1:
         with asection("Merging single tile-region (no partition wrapper)"):
             part = _build_part_for_tile(
-                tiles_dir, 0, t_indices, c_indices, n_k, channel_colors
+                tiles_dir, 0, t_indices, c_indices, n_k, channel_colors, label
             )
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
@@ -282,11 +318,11 @@ def _merge_partition(
         kept = 0
         for k in range(n_k):
             part = _build_part_for_tile(
-                tiles_dir, k, t_indices, c_indices, n_k, channel_colors
+                tiles_dir, k, t_indices, c_indices, n_k, channel_colors, label
             )
             if part is None:
                 if verbose:
-                    aprint(f"  tile {k}: empty, skipping")
+                    aprint(f"  {label} {k}: empty, skipping")
                 continue
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
@@ -345,6 +381,7 @@ def _merge_flat(
     n_t = manifest.n_timepoints
     n_c = manifest.n_channels
     n_k = manifest.n_tiles
+    label = "box" if manifest.mode == "content" else "tile"
 
     t_indices, c_indices = _tile_indices(manifest)
 
@@ -369,22 +406,29 @@ def _merge_flat(
                         aprint(f"  t={t_real} c={c_real}: exists, skipping")
                     continue
 
+                # Skip legitimately-empty slots (`_tile_path` returns None).
                 tile_files = []
                 for k in range(n_k):
-                    tile_files.append(
-                        _tile_path(
-                            tiles_dir,
-                            t_real,
-                            c_real,
-                            k,
-                            max(t_indices),
-                            max(c_indices),
-                            n_k,
-                        )
+                    p = _tile_path(
+                        tiles_dir,
+                        t_real,
+                        c_real,
+                        k,
+                        max(t_indices),
+                        max(c_indices),
+                        n_k,
+                        label,
                     )
+                    if p is not None:
+                        tile_files.append(p)
 
-                if n_k == 1:
-                    # Single tile — just copy/symlink
+                if not tile_files:
+                    raise ValueError(
+                        f"t={t_real} c={c_real}: all {n_k} {label}s empty — "
+                        "nothing to merge for this (timepoint, channel)"
+                    )
+                if len(tile_files) == 1:
+                    # Single non-empty slot — just copy.
                     import shutil
 
                     if out_path.exists():
@@ -396,7 +440,10 @@ def _merge_flat(
                     merged.save(out_path)
 
                 if verbose:
-                    aprint(f"  t={t_real} c={c_real}: merged {n_k} tiles")
+                    aprint(
+                        f"  t={t_real} c={c_real}: merged {len(tile_files)} "
+                        f"{label}s"
+                    )
 
     # ================================================================
     # Level 2: Stack timepoints per channel (if T > 1)

@@ -268,6 +268,26 @@ def generate_fit_sbatch(
         [
             f"    {fit_cmd}",
             "    local FIT_RC=$?",
+        ]
+    )
+    if is_content:
+        # A content box that fits 0 splats writes a sibling `${OUTPUT}.tmp.empty`
+        # marker (the writer rejects empty stores) instead of the `.tmp` store.
+        # Treat that as a clean, legitimately-empty result: leave a `${OUTPUT}.empty`
+        # marker the merge skips, and exit 0 (NOT a failed task).
+        lines.extend(
+            [
+                '    if [ "$FIT_RC" -eq 0 ] && [ -f "${OUTPUT}.tmp.empty" ]; then',
+                '        echo "Empty box (0 splats): ${OUTPUT}.empty"',
+                '        rm -f "${OUTPUT}.tmp.empty"',
+                '        rm -rf "${OUTPUT}.tmp"',
+                '        touch "${OUTPUT}.empty"',
+                "        return 0",
+                "    fi",
+            ]
+        )
+    lines.extend(
+        [
             '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${OUTPUT}.tmp" ]; then',
             '        echo "ERROR: fit failed (rc=$FIT_RC), cleaning up"',
             '        rm -rf "${OUTPUT}.tmp"',

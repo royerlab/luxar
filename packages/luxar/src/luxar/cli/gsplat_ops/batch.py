@@ -37,6 +37,91 @@ def batch_submit(
         help="Tile size in voxels (auto from GPU profile if omitted)",
     ),
     tile_overlap: int = typer.Option(32, "--overlap", help="Tile overlap in voxels"),
+    tiling: str = typer.Option(
+        "uniform",
+        "--tiling",
+        help="Spatial decomposition fanned across the Slurm array: 'uniform' (a "
+        "regular tile grid, the default) or 'content' (a content-balanced box "
+        "plan built once from a representative timepoint and REUSED for every "
+        "(t,c) — the cluster sibling of `fit --tiling content`). Content mode "
+        "needs a density (--cal or --k-star-ref/--n-features-ref) and no GPU "
+        "profile.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    plan_timepoint: Optional[int] = typer.Option(
+        None,
+        "--plan-timepoint",
+        help="[--tiling content] Representative timepoint to scan for the shared "
+        "box plan (default: the first selected timepoint).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    cal: Optional[Path] = typer.Option(
+        None,
+        "--cal",
+        help="[--tiling content] Calibration JSON (gsplat cal) supplying the "
+        "splats-per-feature density.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    k_star_ref: Optional[int] = typer.Option(
+        None,
+        "--k-star-ref",
+        help="[--tiling content] Reference K* (with --n-features-ref) if no --cal.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    n_features_ref: Optional[int] = typer.Option(
+        None,
+        "--n-features-ref",
+        help="[--tiling content] Reference feature count (with --k-star-ref).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    saturation_exponent: float = typer.Option(
+        0.44,
+        "--saturation-exponent",
+        help="[--tiling content] Sub-linear exponent alpha in K~features^alpha.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    saturation_cap: Optional[int] = typer.Option(
+        None,
+        "--saturation-cap",
+        help="[--tiling content] Per-box budget cap.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    feature_threshold: Optional[float] = typer.Option(
+        None,
+        "--feature-threshold",
+        help="[--tiling content] Absolute feature-detection level.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    feature_metric: Optional[str] = typer.Option(
+        None,
+        "--feature-metric",
+        help="[--tiling content] Content metric: peaks | edges | intensity.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    cell: int = typer.Option(
+        16,
+        "--cell",
+        help="[--tiling content] Coarse feature-grid cell size (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    target_features: Optional[int] = typer.Option(
+        None,
+        "--target-features",
+        help="[--tiling content] Target features per box (BSP split threshold).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    min_leaf: int = typer.Option(
+        256,
+        "--min-leaf",
+        help="[--tiling content] Minimum box edge length (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    max_leaf: int = typer.Option(
+        512,
+        "--max-leaf",
+        help="[--tiling content] Maximum box edge length (voxels).",
+        rich_help_panel="Content-aware tiling",
+    ),
     # Fit params
     preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
     config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
@@ -266,6 +351,14 @@ def batch_submit(
         aprint("Error: --partition is required")
         raise typer.Exit(1)
 
+    # Normalize + validate --tiling up front (mirrors `gsplat fit`'s
+    # _resolve_tiling) so a typo fails loudly instead of silently submitting a
+    # large uniform array in the wrong mode.
+    tiling = tiling.lower()
+    if tiling not in ("uniform", "content"):
+        aprint(f"Error: --tiling must be uniform|content, got {tiling!r}")
+        raise typer.Exit(1)
+
     try:
         import datetime
         import subprocess
@@ -308,7 +401,7 @@ def batch_submit(
             gpu_name=gpu_name_opt,
             gpu_mem=float(gpu_mem) if gpu_mem else None,
         )
-        if summary is None and tile_size is None:
+        if summary is None and tile_size is None and tiling != "content":
             aprint("Error: No GPU benchmark profile found.")
             aprint("")
             aprint("Option A — run the benchmark first (recommended):")
@@ -391,62 +484,107 @@ def batch_submit(
             if timepoints_slice or channels_slice:
                 aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
 
-        # 3. Pick tile size
-        #
-        # The goal is to choose the largest tile that fits in GPU memory.
-        # For anisotropic volumes (e.g. 108×1352×532) the old logic
-        # `min(peak_shape[0], *spatial)` would cap at the smallest dim (108),
-        # producing hundreds of tiny tiles even when the whole volume fits.
-        #
-        # New logic: compare total spatial voxels against max safe voxel
-        # count from the benchmark.  If the volume fits, skip tiling entirely.
+        # 3. Decompose the spatial volume into the slots fanned across the array.
         import math
 
-        auto_tile = tile_size is None
-
-        # Compute max safe shape from GPU profile (used by both auto-tile
-        # and tasks-per-job packing).  Falls back to a conservative default.
+        mode = "content" if tiling == "content" else "uniform"
+        content_plan = None  # the shared FitPlan in content mode
+        plan_path_str: Optional[str] = None
         peak_shape = peak.get("shape", [])
         oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
         max_shape = oom.get("max_successful_shape", peak_shape)
         total_voxels = math.prod(spatial)
 
-        if auto_tile:
-            assert summary is not None
+        if mode == "content":
+            # Build ONE content-balanced box plan from a representative (t, c) and
+            # reuse it for every (t, c) — each array task fits one box of this plan
+            # (`fit --tiling content --plan plan.json --plan-box $K`). No GPU
+            # profile needed; tile_size is irrelevant (the sbatch omits it).
+            from luxar.cli.gsplat_config import load_volume
+            from luxar.cli.gsplat_ops.planner import _resolve_density
+            from luxar.gsplats.planner import plan_volume
+            from luxar.gsplats.planner.fit_planned_parallel import (
+                max_padded_box_voxels,
+            )
 
-            max_safe_voxels = math.prod(max_shape) if max_shape else 256**3
+            rep_t = plan_timepoint if plan_timepoint is not None else t_indices[0]
+            rep_c = c_indices[0]
+            with asection(f"Content plan (scan t={rep_t}, c={rep_c})"):
+                rep_vol = load_volume(
+                    input_path, channel=rep_c, timepoint=rep_t, array_key=array_key
+                )
+                density = _resolve_density(
+                    cal,
+                    k_star_ref,
+                    n_features_ref,
+                    saturation_exponent,
+                    saturation_cap,
+                    feature_metric,
+                    feature_threshold,
+                )
+                content_plan = plan_volume(
+                    rep_vol,
+                    density,
+                    feature_method=(feature_metric or density.feature_method),
+                    cell=cell,
+                    target_features=target_features,
+                    min_leaf=min_leaf,
+                    max_leaf=max_leaf,
+                    overlap=tile_overlap,
+                )
+                # Drop budget<=0 boxes (matches the local `fit_planned` skip): the
+                # array fits one box PER task, so a 0-budget box would just emit an
+                # empty marker. Filtering keeps --plan-box K indexing the SAME plan
+                # the workers read, with no empty array tasks.
+                import dataclasses as _dc
 
-            if total_voxels <= max_safe_voxels:
-                # Whole volume fits — set tile_size large enough that
-                # stride (= tile_size - overlap) exceeds every spatial dim,
-                # guaranteeing compute_tile_specs produces exactly 1 tile.
-                tile_size = max(spatial) + tile_overlap
+                kept_boxes = [b for b in content_plan.boxes if b.budget > 0]
+                if not kept_boxes:
+                    aprint("Error: content plan has no boxes with budget > 0")
+                    raise typer.Exit(1)
+                content_plan = _dc.replace(content_plan, boxes=kept_boxes)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                plan_path_obj = output_dir.resolve() / "plan.json"
+                content_plan.to_json(plan_path_obj)
+                plan_path_str = str(plan_path_obj)
+                med, mx = content_plan.overlap_fraction()
+                aprint(
+                    f"Plan: {content_plan.n_boxes} boxes, total budget "
+                    f"{content_plan.total_budget:,} splats, overlap median "
+                    f"{med:.0%} / max {mx:.0%} → {plan_path_obj}"
+                )
+            n_tiles = content_plan.n_boxes
+            needs_tiling = n_tiles > 1
+            tile_size = 0  # sentinel; unused by the content sbatch
+            tile_voxels = max_padded_box_voxels(content_plan)
+            auto_tile = False  # no GPU-profile auto-sizing in content mode
+        else:
+            # Uniform: pick the largest tile that fits in GPU memory (auto from the
+            # benchmark profile, or an explicit --tile-size).
+            auto_tile = tile_size is None
+            if auto_tile:
+                assert summary is not None
+                max_safe_voxels = math.prod(max_shape) if max_shape else 256**3
+                if total_voxels <= max_safe_voxels:
+                    # Whole volume fits — make the stride exceed every dim so
+                    # compute_tile_specs yields exactly one tile.
+                    tile_size = max(spatial) + tile_overlap
+                else:
+                    tile_edge = int(max_safe_voxels ** (1.0 / len(spatial)))
+                    tile_size = min(tile_edge, max(spatial))
+            assert tile_size is not None  # narrowed by branches above
+
+            # compute_tile_specs is authoritative (overlap can add tiles even when
+            # volume_shape == tile_size).
+            specs = compute_tile_specs(spatial, tile_size, tile_overlap)
+            n_tiles = len(specs)
+            needs_tiling = n_tiles > 1
+            if needs_tiling:
+                tile_voxels = tile_size ** len(spatial)
             else:
-                # Volume is too large — tile it.  Use the cube root of max
-                # safe voxels as the isotropic tile edge length, clamped to
-                # the largest spatial dim.
-                tile_edge = int(max_safe_voxels ** (1.0 / len(spatial)))
-                tile_size = min(tile_edge, max(spatial))
-
-        assert tile_size is not None  # narrowed by branches above
-
-        # 4. Compute tile grid — always use compute_tile_specs to get the
-        # authoritative tile count (overlap can create extra tiles even when
-        # volume_shape == tile_size).
-        specs = compute_tile_specs(spatial, tile_size, tile_overlap)
-        n_tiles = len(specs)
-        needs_tiling = n_tiles > 1
+                tile_voxels = total_voxels
 
         total_tasks = n_t * n_c * n_tiles
-
-        # 5. Estimate wall time per task
-        if needs_tiling:
-            tile_voxels = tile_size ** len(spatial)
-        else:
-            # Single tile — use the actual volume size
-            tile_voxels = 1
-            for s in spatial:
-                tile_voxels *= s
 
         throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
 
@@ -642,9 +780,11 @@ def batch_submit(
             channel_axes=ome_info.channel_axes,
             channel_shape=ome_info.channel_shape,
             spatial_shape=spatial,
+            mode=mode,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
             n_tiles=n_tiles,
+            plan_path=plan_path_str,
             total_tasks=total_tasks,
             preset=preset,
             fit_args=fit_args,
@@ -703,7 +843,13 @@ def batch_submit(
                     channel=c_real,
                     tile_index=k,
                     output_filename=output_filename(
-                        t_real, c_real, k, t_width_base, c_width_base, n_tiles
+                        t_real,
+                        c_real,
+                        k,
+                        t_width_base,
+                        c_width_base,
+                        n_tiles,
+                        label="box" if mode == "content" else "tile",
                     ),
                     estimated_wall_seconds=est_seconds,
                     channel_coords=decode_flat_channel_index(
@@ -756,7 +902,12 @@ def batch_submit(
         aprint("=" * 60)
         aprint(f"  Input: {input_path.name} (T={n_t}, C={n_c}, spatial={spatial_str})")
         aprint(f"  GPU: {resolved_gpu} (peak: {peak_gvs} GV/s at {peak_shape_str})")
-        if needs_tiling:
+        if mode == "content":
+            aprint(
+                f"  Decomposition: content plan, {n_tiles} boxes/volume "
+                f"(overlap={tile_overlap}); shared across all (t,c)"
+            )
+        elif needs_tiling:
             aprint(
                 f"  Tile: {tile_size}^{len(spatial)}"
                 f" ({'auto' if auto_tile else 'manual'})"
@@ -764,7 +915,11 @@ def batch_submit(
             )
         else:
             aprint("  Tile: not needed (volume fits in GPU memory)")
-        aprint(f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks")
+        slot = "boxes" if mode == "content" else "tiles"
+        aprint(
+            f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks "
+            f"({slot})"
+        )
         if tasks_per_job > 1:
             mode = "parallel" if parallel else "sequential"
             mps_note = ""

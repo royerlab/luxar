@@ -328,6 +328,41 @@ class TestSlurmGen:
         assert "--tile $K/4" in script
         assert "--tile-size 256" in script
 
+    def test_fit_script_content_mode(self) -> None:
+        """A content-mode manifest fans the SHARED plan across the array: each
+        task fits one box via `fit --tiling content --plan … --plan-box $K`, and
+        the uniform `--tile/--tile-size` flags are absent."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+        manifest = BatchManifest(
+            input_path="/data/test.zarr",
+            output_dir="/output",
+            mode="content",
+            plan_path="/output/plan.json",
+            n_channels=2,
+            n_tiles=5,  # box count in content mode
+            total_tasks=10,
+            preset="standard",
+            slurm_partition="gpu",
+            slurm_time_limit="01:00:00",
+        )
+
+        script = generate_fit_sbatch(manifest, "")
+        assert "--tiling content" in script
+        assert "--plan /output/plan.json" in script
+        assert "--plan-box $K" in script
+        assert "N_TILES=5" in script
+        # the uniform-only flags must NOT appear
+        assert "--tile $K/" not in script
+        assert "--tile-size" not in script
+        # outputs use the box label, not tile
+        assert "_box$(printf" in script
+        # a legitimately-empty box (.tmp.empty marker) is a clean exit-0, not a
+        # failed task — the script records a ${OUTPUT}.empty marker for the merge.
+        assert "${OUTPUT}.tmp.empty" in script
+        assert 'touch "${OUTPUT}.empty"' in script
+
     def test_merge_script(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
@@ -1521,3 +1556,173 @@ class TestMergeOrchestrator:
         )
         assert result.exit_code != 0
         assert not (out_dir / "merged" / "final.gsplats.zarr").exists()
+
+
+class TestContentSubmitDryRun:
+    """End-to-end wiring of `slurm-fit submit --tiling content` (no Slurm needed):
+    it builds the shared box plan from a representative (t,c) and would fan it
+    across the array. --dry-run writes plan.json during planning, then exits."""
+
+    def test_content_dry_run_writes_plan_and_reports_boxes(self, tmp_path: Path) -> None:
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.planner import FitPlan
+
+        # Synthetic 3D (ZYX) volume with blobs so the planner finds content.
+        rng = np.random.default_rng(0)
+        V = np.zeros((64, 64, 64), np.float32)
+        zz, yy, xx = np.mgrid[0:64, 0:64, 0:64]
+        for _ in range(20):
+            cz, cy, cx = rng.integers(6, 58, 3)
+            V += np.exp(
+                -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+            ).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(
+            str(src), mode="w", shape=V.shape, chunks=(32, 32, 32), dtype="f4"
+        )
+        z[:] = V
+
+        out = tmp_path / "batch_out"
+        runner = CliRunner()
+        res = runner.invoke(
+            app_gsplat,
+            [
+                "slurm-fit", "submit", str(src), str(out),
+                "-p", "gpu", "--tiling", "content", "--axes", "z,y,x",
+                "--k-star-ref", "4000", "--n-features-ref", "200",
+                "--feature-threshold", "0.1", "--feature-metric", "peaks",
+                "--cell", "8", "--min-leaf", "16", "--max-leaf", "32",
+                "--dry-run",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        # plan.json is written during planning (before the dry-run exit) and is
+        # a usable FitPlan — the shared plan every array task would consume.
+        plan_json = out / "plan.json"
+        assert plan_json.exists()
+        plan = FitPlan.from_json(plan_json)
+        assert plan.n_boxes >= 1 and plan.total_budget > 0
+        # the summary reflects content mode (boxes, not tiles)
+        assert "content plan" in res.output.lower()
+        assert "boxes" in res.output.lower()
+
+
+class TestContentMerge:
+    """The content fan-out writes `_box{k}` outputs; the merge must look for that
+    label (not the default `_tile{k}`) and skip legitimately-empty boxes."""
+
+    @staticmethod
+    def _write_box(path: Path, n: int, offset: float) -> None:
+        rng = np.random.default_rng(int(offset))
+        centers = (offset + rng.uniform(0, 8, size=(n, 3))).astype(np.float32)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        from luxar.gsplats.io.save_gsplats import save_gsplats
+
+        save_gsplats(
+            str(path),
+            centers=centers,
+            amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+            cholesky_factors=chol,
+        )
+
+    def _content_manifest(self, out: Path, n_boxes: int) -> "object":
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+        )
+
+        jobs = [
+            BatchJob(
+                task_id=k,
+                timepoint=0,
+                channel=0,
+                tile_index=k,
+                output_filename=output_filename(0, 0, k, 1, 1, n_boxes, label="box"),
+                estimated_wall_seconds=1.0,
+            )
+            for k in range(n_boxes)
+        ]
+        m = BatchManifest(
+            input_path="/data/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=(64, 64, 64),
+            mode="content",
+            n_tiles=n_boxes,
+            plan_path=str(out / "plan.json"),
+            total_tasks=n_boxes,
+            slurm_partition="gpu",
+        )
+        m.jobs = jobs
+        return m
+
+    def test_content_merge_finds_box_outputs_and_skips_empty(self, tmp_path: Path) -> None:
+        """Merge assembles a kind=partition from `_box{k}` outputs (the label bug
+        would FileNotFound on `_tile{k}`), and an empty box (`.empty` marker, no
+        store) is skipped rather than crashing the merge."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+
+        n_boxes = 3
+        # boxes 0 and 2 have splats; box 1 is legitimately empty (.empty marker).
+        self._write_box(tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0)
+        (tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")).write_text("")
+        self._write_box(tiles / output_filename(0, 0, 2, 1, 1, n_boxes, label="box"), 40, 100.0)
+
+        manifest = self._content_manifest(out, n_boxes)
+        final = merge_batch_results(manifest, out, verbose=False)
+
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2  # the empty box was skipped
+        assert total_splats(node) == 70
+
+    def test_content_merge_missing_box_raises(self, tmp_path: Path) -> None:
+        """A box with neither a store nor an `.empty` marker (the task never ran)
+        still raises — distinct from a legitimately-empty box."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0)
+        # box 1 absent entirely
+        manifest = self._content_manifest(out, n_boxes)
+        with pytest.raises(FileNotFoundError):
+            merge_batch_results(manifest, out, verbose=False)
+
+    def test_invalid_tiling_value_rejected(self, tmp_path: Path) -> None:
+        """An unknown --tiling value fails loudly (not a silent fall-through to
+        uniform that would submit a large array in the wrong mode)."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(8, 8, 8), dtype="f4")
+        z[:] = 0.0
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "slurm-fit", "submit", str(src), str(tmp_path / "o"),
+                "-p", "gpu", "--tiling", "bogus", "--axes", "z,y,x", "--dry-run",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "uniform|content" in res.output
