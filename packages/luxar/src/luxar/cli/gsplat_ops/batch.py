@@ -956,7 +956,9 @@ def batch_submit(
 
     except typer.Exit:
         raise
-    except typer.Exit:
+    except typer.BadParameter:
+        # A user-input error (bad --merge-recipe knob, empty content plan, …):
+        # let Typer/Click render it cleanly instead of dumping a traceback.
         raise
     except Exception as e:
         aprint(f"Error: {e}")
@@ -1351,6 +1353,9 @@ def batch_run(
         aprint(f"Validate tiles: luxar gsplat batch-fit validate {output_dir}")
 
     except typer.Exit:
+        raise
+    except typer.BadParameter:
+        # User-input error: render cleanly (no traceback).
         raise
     except Exception as e:
         aprint(f"Error: {e}")

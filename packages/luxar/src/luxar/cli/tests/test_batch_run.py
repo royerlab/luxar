@@ -91,8 +91,10 @@ def test_run_uniform_auto_tile_without_profile_errors(tmp_path: Path) -> None:
             "cpu",
         ],
     )
-    # Either a clear tile-size error (no profile) or a successful single-tile plan
-    # if the volume fits; both are acceptable, but it must not crash uncaught.
-    assert res.exit_code in (0, 1)
-    if res.exit_code == 1:
+    # Either a clear tile-size error (no GPU profile -> typer.BadParameter, which
+    # Typer renders cleanly as a usage error, exit 2) or a successful single-tile
+    # plan if the volume fits and a profile is present (exit 0). Never an uncaught
+    # crash, and any error must name --tile-size / the profile.
+    assert res.exit_code in (0, 1, 2)
+    if res.exit_code != 0:
         assert "tile-size" in res.output.lower() or "profile" in res.output.lower()
