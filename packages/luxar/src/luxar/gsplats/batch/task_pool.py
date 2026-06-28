@@ -23,9 +23,11 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Callable, Hashable, Optional, Sequence
+from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar
 
-TaskKey = Hashable
+# Task keys are any hashable; the generic ``T`` lets callers keep their concrete
+# key type (e.g. int task ids) through the callbacks without casts.
+T = TypeVar("T", bound=Hashable)
 
 
 @dataclass
@@ -34,10 +36,12 @@ class TaskResult:
 
     ``returncode`` is the subprocess exit code, or ``-1`` when the argv could not
     be built/launched (the error text is in ``output``).  ``skipped`` is True for
-    a resume-skip (no subprocess was launched; ``returncode`` is 0).
+    a resume-skip (no subprocess was launched; ``returncode`` is 0).  ``key`` is
+    the task key the caller supplied (typed ``Any`` so it indexes the caller's own
+    maps without a cast).
     """
 
-    key: TaskKey
+    key: Any
     returncode: int
     output: str
     skipped: bool = False
@@ -48,12 +52,12 @@ class TaskResult:
 
 
 def run_task_pool(
-    tasks: Sequence[TaskKey],
+    tasks: Sequence[T],
     *,
     max_workers: int,
-    argv_builder: Callable[[TaskKey], "list[str]"],
-    env_builder: Optional[Callable[[TaskKey], dict[str, str]]] = None,
-    skip_if: Optional[Callable[[TaskKey], bool]] = None,
+    argv_builder: Callable[[T], "list[str]"],
+    env_builder: Optional[Callable[[T], dict[str, str]]] = None,
+    skip_if: Optional[Callable[[T], bool]] = None,
     on_done: Optional[Callable[[TaskResult, int, int], None]] = None,
     verbose: bool = True,
 ) -> list[TaskResult]:
@@ -89,7 +93,7 @@ def run_task_pool(
     """
     total = len(tasks)
 
-    def _run(key: TaskKey) -> TaskResult:
+    def _run(key: T) -> TaskResult:
         if skip_if is not None and skip_if(key):
             return TaskResult(key=key, returncode=0, output="", skipped=True)
         try:
