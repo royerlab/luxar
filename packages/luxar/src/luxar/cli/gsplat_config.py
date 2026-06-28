@@ -464,7 +464,10 @@ def load_volume(
     # Explicit axis spec (overrides the positional heuristic): slice/drop the
     # time & channel axes and keep the spatial axes in the given order.
     if axes is not None:
-        volume = _apply_axes_spec(np.asarray(volume), axes, channel, timepoint)
+        # Pass `volume` as-is (a lazy zarr array for .zarr inputs) so
+        # _apply_axes_spec slices the time/channel axes BEFORE materializing —
+        # do NOT np.asarray() here or a huge nD movie loads fully into RAM.
+        volume = _apply_axes_spec(volume, axes, channel, timepoint)
         # The spec already fixed the shape (time/channel dropped, spatial kept) —
         # do NOT squeeze, or a deliberately-kept size-1 spatial axis (e.g. a
         # single z-plane via --axes z,y,x) would be silently dropped.
@@ -552,8 +555,11 @@ def _load_zarr_volume(
     aprint(f"  Raw array shape: {shape} ({ndim}D)")
 
     if raw:
-        # Explicit --axes path: hand back the full array; the caller slices it.
-        return np.array(arr)
+        # Explicit --axes path: hand back the LAZY zarr array (NOT np.array(arr)) so
+        # the caller's _apply_axes_spec slices the requested timepoint/channel BEFORE
+        # materializing — otherwise a whole nD movie (e.g. a 329-timepoint stack,
+        # >1 TiB) would be loaded into RAM just to extract one 3D volume.
+        return arr  # type: ignore[no-any-return]
 
     # Slice the array down to a 2D/3D spatial volume.
     # For nD data where ndim > 5, consume leading dimensions using

@@ -63,6 +63,21 @@ def test_run_dry_run_reports_plan_without_fitting(tmp_path: Path) -> None:
     assert not (out / "tiles").exists() or not list((out / "tiles").glob("*.zarr"))
 
 
+def test_run_rejects_npy_input_with_clear_message(tmp_path: Path) -> None:
+    """batch-fit needs OME-Zarr; a .npy input must fail fast with a clear pointer
+    (not an opaque zarr 'not a directory' error)."""
+    npy = tmp_path / "vol.npy"
+    np.save(npy, np.zeros((16, 16, 16), np.float32))
+    res = runner.invoke(
+        app_gsplat,
+        ["batch-fit", "run", str(npy), str(tmp_path / "o"), "--gpus", "cpu"],
+    )
+    assert res.exit_code != 0
+    assert "OME-Zarr" in res.output and "gsplat fit" in res.output
+    # Clean usage-error rendering (typer.BadParameter), not a raw traceback.
+    assert "Traceback" not in res.output
+
+
 def test_run_rejects_bad_tiling(tmp_path: Path) -> None:
     src = tmp_path / "vol.zarr"
     _make_zarr(src)

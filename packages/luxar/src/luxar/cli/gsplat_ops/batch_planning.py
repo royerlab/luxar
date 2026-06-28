@@ -334,6 +334,17 @@ def plan_batch(
     from luxar.gsplats.batch.time_estimate import estimate_tile_wall_seconds
     from luxar.gsplats.tiling import compute_tile_specs
 
+    # batch-fit fans a whole nD dataset across its axes — it needs a chunked,
+    # randomly-addressable OME-Zarr store (so each task reads only its tile/box,
+    # and a huge movie is never fully materialized). A flat .npy/.tiff/.h5 would
+    # force a full in-RAM load per task. Fail fast with a clear pointer.
+    if input_path.suffix.lower() in (".npy", ".npz", ".tif", ".tiff", ".h5", ".hdf5"):
+        raise typer.BadParameter(
+            f"batch-fit needs an OME-Zarr input (.zarr or .zarr.zip); got "
+            f"'{input_path.name}'. Convert it to zarr first, or use `gsplat fit` "
+            f"for a single {input_path.suffix.lower()} volume."
+        )
+
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":

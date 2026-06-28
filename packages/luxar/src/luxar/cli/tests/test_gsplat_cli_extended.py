@@ -3381,3 +3381,39 @@ class TestAxesThreadingAndSqueeze:
         arr = np.zeros((2, 3, 4, 5), dtype=np.float32)  # c=2 on axis 0
         with pytest.raises(ValueError, match="out of range"):
             _apply_axes_spec(arr, "c,z,y,x", channel=5, timepoint=None)
+
+    def test_load_zarr_raw_returns_lazy_array_not_materialized(
+        self, tmp_path: Path
+    ) -> None:
+        """--axes path must hand _apply_axes_spec a LAZY zarr array, so a huge nD
+        movie is sliced to one 3D volume WITHOUT loading the whole thing into RAM.
+        Regression: raw=True used to `return np.array(arr)` (materialized all of it)
+        → OOM on a real 329-timepoint stack."""
+        import zarr
+
+        from luxar.cli.gsplat_config import _load_zarr_volume
+
+        p = tmp_path / "movie.zarr"
+        z = zarr.open_array(
+            str(p), mode="w", shape=(4, 8, 8, 8), chunks=(1, 8, 8, 8), dtype="f4"
+        )
+        z[:] = np.arange(4 * 8 * 8 * 8, dtype=np.float32).reshape(4, 8, 8, 8)
+        arr = _load_zarr_volume(p, None, 2, None, raw=True)
+        assert isinstance(arr, zarr.Array)  # lazy handle, NOT a materialized ndarray
+
+    def test_load_volume_axes_slices_zarr_timepoint(self, tmp_path: Path) -> None:
+        """load_volume(--axes t,z,y,x, timepoint=k) returns the correct 3D slice
+        of a 4D zarr movie (the lazily-sliced path)."""
+        import zarr
+
+        from luxar.cli.gsplat_config import load_volume
+
+        p = tmp_path / "movie.zarr"
+        data = np.arange(4 * 8 * 8 * 8, dtype=np.float32).reshape(4, 8, 8, 8)
+        z = zarr.open_array(
+            str(p), mode="w", shape=data.shape, chunks=(1, 8, 8, 8), dtype="f4"
+        )
+        z[:] = data
+        vol = load_volume(p, timepoint=2, axes="t,z,y,x")
+        assert vol.shape == (8, 8, 8)
+        np.testing.assert_array_equal(vol, data[2])
