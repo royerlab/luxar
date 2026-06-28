@@ -23,7 +23,7 @@ from typing import Any, List, Optional, Tuple
 from arbol import aprint, asection
 
 from luxar.gsplats.batch.fit_command import build_task_fit_argv
-from luxar.gsplats.batch.manifest import BatchJob, BatchManifest
+from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.task_pool import TaskResult, run_task_pool
 from luxar.gsplats.utils.device import resolve_gpu_selection, resolve_jobs_per_gpu
@@ -131,6 +131,10 @@ def run_batch_local(
     tiles_dir = output_dir / "tiles"
     tiles_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "merged").mkdir(parents=True, exist_ok=True)
+
+    # Persist the manifest so `batch-fit status` / `validate` (which load_manifest)
+    # work against a local run's output, exactly as for a Slurm submit.
+    save_manifest(manifest, output_dir)
 
     gpu_indices = resolve_gpu_selection(gpus)
     task_ids = [j.task_id for j in manifest.jobs]

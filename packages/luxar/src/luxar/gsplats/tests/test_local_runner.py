@@ -15,7 +15,6 @@ from luxar.gsplats.batch.local_runner import (
 )
 from luxar.gsplats.batch.manifest import BatchManifest
 
-
 # ---------------------------------------------------------------------------
 # Device assignment (weighted round-robin)
 # ---------------------------------------------------------------------------
@@ -158,6 +157,12 @@ def test_run_batch_local_cpu_end_to_end(tmp_path: Path) -> None:
     # Both per-timepoint tile outputs were written.
     tiles = sorted((out / "tiles").glob("*.gsplats.zarr"))
     assert len(tiles) == 2
+    # The manifest is persisted so `batch-fit status`/`validate` work locally.
+    assert (out / "manifest.json").exists()
+    from luxar.gsplats.batch.status import check_batch_status
+
+    status = check_batch_status(out)
+    assert status.completed == 2
 
 
 @pytest.mark.slow
