@@ -6,6 +6,7 @@ import math
 import shlex
 from typing import Optional
 
+from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
 
 
@@ -144,14 +145,17 @@ def generate_fit_sbatch(
         fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
-    for key, value in manifest.fit_args.items():
-        if value is not None:
-            flag = f"--{key.replace('_', '-')}"
-            if value == "":
-                # Boolean flag (no value)
-                fit_cmd_parts.append(f"    {flag}")
-            else:
-                fit_cmd_parts.append(f"    {flag} {shlex.quote(str(value))}")
+    # Shared fit_args -> flag mapping (single source: fit_command.iter_fit_arg_flags),
+    # formatted here as quoted bash lines.
+    for flag, value in iter_fit_arg_flags(manifest.fit_args):
+        if value is None:
+            fit_cmd_parts.append(f"    {flag}")  # boolean flag
+        else:
+            fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
+    if manifest.axes:
+        # Forward the explicit axis order so each task loads the same shape the
+        # planner discovered (else the positional heuristic can mis-order axes).
+        fit_cmd_parts.append(f"    --axes {shlex.quote(manifest.axes)}")
     # For on-the-fly denoise with auto-calibration, read h from JSON at runtime
     if (
         manifest.denoise

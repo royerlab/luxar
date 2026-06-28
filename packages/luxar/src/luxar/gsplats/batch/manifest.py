@@ -51,6 +51,12 @@ class BatchManifest:
     array_key: Optional[str] = None
     """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
 
+    axes: Optional[str] = None
+    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used both to discover
+    the dataset shape AND forwarded to every fit task (``fit --axes``). Without
+    it, tasks fall back to the positional ndim heuristic — which must then agree
+    with the shape the planner used, or the tile grid / merge corrupts."""
+
     # Dataset shape
     n_timepoints: int = 1
     n_channels: int = 1
