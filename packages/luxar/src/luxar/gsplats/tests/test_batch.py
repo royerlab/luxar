@@ -1679,6 +1679,80 @@ class TestContentSubmitDryRun:
         assert "content plan" in res.output.lower()
         assert "boxes" in res.output.lower()
 
+    def test_content_plan_threads_axes_into_load_volume(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The content-plan scan must load with the user's --axes spec, not the
+        positional heuristic — else an --axes dataset is scanned with a wrong-
+        shaped/ordered volume and the box plan is wrong. Pre-fix the two
+        max-projection load_volume calls omitted axes (received axes=None)."""
+        import zarr
+        from typer.testing import CliRunner
+
+        import luxar.cli.gsplat_config as gc
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        rng = np.random.default_rng(1)
+        V = np.zeros((64, 64, 64), np.float32)
+        zz, yy, xx = np.mgrid[0:64, 0:64, 0:64]
+        for _ in range(20):
+            cz, cy, cx = rng.integers(6, 58, 3)
+            V += np.exp(
+                -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+            ).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(
+            str(src), mode="w", shape=V.shape, chunks=(32, 32, 32), dtype="f4"
+        )
+        z[:] = V
+
+        seen_axes: list = []
+        real_load = gc.load_volume
+
+        def _spy(*a, **kw):
+            seen_axes.append(kw.get("axes"))
+            return real_load(*a, **kw)
+
+        monkeypatch.setattr(gc, "load_volume", _spy)
+
+        out = tmp_path / "batch_out"
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "slurm-fit",
+                "submit",
+                str(src),
+                str(out),
+                "-p",
+                "gpu",
+                "--tiling",
+                "content",
+                "--axes",
+                "z,y,x",
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--feature-threshold",
+                "0.1",
+                "--feature-metric",
+                "peaks",
+                "--cell",
+                "8",
+                "--min-leaf",
+                "16",
+                "--max-leaf",
+                "32",
+                "--dry-run",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        assert "z,y,x" in seen_axes, (
+            f"content-plan load_volume never received axes='z,y,x'; saw {seen_axes} "
+            "(the --axes spec was not threaded into the plan scan)"
+        )
+
 
 class TestContentMerge:
     """The content fan-out writes `_box{k}` outputs; the merge must look for that
@@ -1856,6 +1930,55 @@ class TestContentMerge:
         node, _ = load_gsplat_node(final)
         assert isinstance(node, GSplatPartition)
         assert node.n_children == 2  # both boxes present (box 1 via its c1 splats)
+
+    def test_single_channel_colors_keep_fitted_not_tinted(self, tmp_path: Path) -> None:
+        """n_c=1 + --channel-colors must NOT tint — fitted colors are preserved,
+        matching the --flat path's `n_c > 1` gate. Pre-fix the partition path
+        applied `merge_with_channel_colors` for a single channel too, overwriting
+        every splat with the lone channel color (a flat-vs-partition divergence)."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import iter_leaves
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        for k in range(n_boxes):
+            self._write_box(
+                tiles / output_filename(0, 0, k, 1, 1, n_boxes, label="box"),
+                20,
+                float(k * 50),
+            )
+        manifest = self._content_manifest(out, n_boxes)  # single channel
+        final = merge_batch_results(
+            manifest, out, channel_colors=[(1.0, 0.0, 0.0)], verbose=False
+        )
+        node, _ = load_gsplat_node(final)
+        # _write_box leaves colors=None; a single channel must keep that (no tint).
+        # Pre-fix, merge_with_channel_colors ran for n_c=1 and wrote a red color
+        # array onto every part.
+        for leaf in iter_leaves(node):
+            gd = GSplatData.from_tree(leaf)
+            assert gd.colors is None, (
+                "single-channel merge tinted splats with the channel color — it "
+                "should preserve the fitted colors (matching the flat n_c>1 gate)"
+            )
+
+    def test_flat_rejected_for_content_mode(self, tmp_path: Path) -> None:
+        """`--flat` on a content batch is rejected: content places boxes once from a
+        representative timepoint, so a (t,c) slot can be empty across every box and
+        the flat 3-level fan-in (dense-grid assumption) would crash. Pre-fix this
+        reached _merge_flat and failed with an unrelated error."""
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out = tmp_path / "batch"
+        (out / "tiles").mkdir(parents=True)
+        manifest = self._content_manifest(out, n_boxes=2)
+        with pytest.raises(ValueError, match="not supported for content"):
+            merge_batch_results(manifest, out, flat=True, verbose=False)
 
     def test_status_counts_empty_box_as_completed(self, tmp_path: Path) -> None:
         """An empty content box (`.empty` marker) is COMPLETED, not failed/unknown."""

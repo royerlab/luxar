@@ -650,12 +650,20 @@ def batch_submit(
                     channel=rep_c,
                     timepoint=plan_t_samples[0],
                     array_key=array_key,
+                    axes=axes,
                 )
                 # Stream the max-projection one timepoint at a time (peak memory =
                 # two volumes), so a long movie never loads all samples at once.
+                # `axes=axes` keeps the plan scan on the SAME axis interpretation
+                # the array tasks use (else --axes datasets scan with the positional
+                # heuristic → wrong-shaped volume → wrong box plan).
                 for _t in plan_t_samples[1:]:
                     _v = load_volume(
-                        input_path, channel=rep_c, timepoint=_t, array_key=array_key
+                        input_path,
+                        channel=rep_c,
+                        timepoint=_t,
+                        array_key=array_key,
+                        axes=axes,
                     )
                     rep_vol = _np.maximum(rep_vol, _v)
                 density = _resolve_density(
@@ -1806,13 +1814,10 @@ def batch_merge_cmd(
 
         # Resolve the per-part recipe + its knobs, CLI overriding the values
         # recorded at plan time (manifest.merge_recipe / merge_recipe_args).
+        # NOTE: the uniform+per-part-LOD warning now fires inside
+        # merge_batch_results (the library boundary), so every caller — this CLI,
+        # the Slurm merge job, and any direct API use — gets it exactly once.
         eff_recipe = recipe or manifest.merge_recipe
-        if eff_recipe is not None:
-            from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
-
-            _w = uniform_per_part_lod_warning(manifest.mode, eff_recipe)
-            if _w:
-                aprint(f"⚠ {_w}")
         recipe_params = None
         if eff_recipe is not None:
             recipe_params = _build_merge_recipe_params(

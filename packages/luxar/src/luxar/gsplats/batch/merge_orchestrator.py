@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode
 
 
-
 def merge_batch_results(
     manifest: BatchManifest,
     output_dir: Path,
@@ -72,6 +71,16 @@ def merge_batch_results(
             "the flat path produces a single leaf with no spatial parts to carry "
             "a per-part LOD ladder. Drop --flat to get a per-part LOD partition."
         )
+    if flat and manifest.mode == "content":
+        raise ValueError(
+            "merge_batch_results: `flat` is not supported for content-mode batches. "
+            "Content fitting places boxes once from a representative timepoint, so a "
+            "(timepoint, channel) slot can be legitimately empty across every box; "
+            "the flat 3-level fan-in assumes a dense (t, c) grid and would crash on "
+            "that gap (and reloads every box into memory, defeating content tiling "
+            "on the large volumes it targets). Drop --flat to use the default "
+            "streaming partition merge, which skips empty slots correctly."
+        )
     if recipe is not None:
         from luxar.gsplats.lod.recipes import PER_PART_RECIPES
 
@@ -82,6 +91,15 @@ def merge_batch_results(
                 "(partitioned/multiscale/mosaic) re-partition their input, but each "
                 "tile is already one spatial part."
             )
+        # Per-part LOD on uniform (Hann-apodized) tiles only holds the halo
+        # partition-of-unity at the finest level — warn here, the library boundary,
+        # so the CLI, the Slurm merge job, and any direct API caller (e.g. the local
+        # runner) all get it exactly once.
+        from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
+
+        _w = uniform_per_part_lod_warning(manifest.mode, recipe)
+        if _w:
+            aprint(f"⚠ {_w}")
     if flat:
         return _merge_flat(manifest, output_dir, channel_colors, force, verbose)
     return _merge_partition(
@@ -208,10 +226,14 @@ def _build_part_for_tile(
     if not per_channel:
         return None  # empty at every (timepoint, channel) for this slot
 
-    # Across channels (Level-3 semantics, scoped to this tile). When colors are
-    # given, subset them to the channels that actually survived (some channels
-    # may be empty in this slot); merge_with_channel_colors requires len match.
-    if channel_colors:
+    # Across channels (Level-3 semantics, scoped to this tile). Apply colors only
+    # for a genuinely multi-channel dataset (`len(c_indices) > 1`) — matching the
+    # flat path's `n_c > 1` gate, so a single-channel dataset keeps its fitted
+    # colors instead of being tinted. Subset to the channels that actually survived
+    # in THIS slot (some may be empty here); merge_with_channel_colors needs a
+    # length match. A multi-channel dataset where only one channel survives in this
+    # tile still tints that channel (its color), which is correct.
+    if channel_colors and len(c_indices) > 1:
         colors = [channel_colors[i] for i in kept_positions]
         part = GSplatData.merge_with_channel_colors(per_channel, colors)
     elif len(per_channel) == 1:
@@ -255,9 +277,7 @@ def _finalize_part_node(
         # Stacked-timepoint axis (the last column) is a barrier; coarsen the rest.
         n_spatial = part.ndim - (1 if n_timepoints > 1 else 0)
         if n_spatial < part.ndim:
-            params = dataclasses.replace(
-                params, coarsen_dims=tuple(range(n_spatial))
-            )
+            params = dataclasses.replace(params, coarsen_dims=tuple(range(n_spatial)))
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
     # synthesise degenerate levels) — the exact per-part logic of partitioned/mosaic.
     return build_part_lod(part.tree, recipe, params)
@@ -302,9 +322,7 @@ def _merge_partition(
             if recipe is None:
                 part.save(final_path)
                 if verbose:
-                    aprint(
-                        f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D"
-                    )
+                    aprint(f"  Wrote bare leaf: {part.n_splats:,} splats, {part.ndim}D")
             else:
                 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
@@ -360,9 +378,7 @@ def _merge_partition(
             max_elements=0,
         )
         if verbose:
-            aprint(
-                f"  Wrote kind=partition with {n_written} parts{recipe_label}"
-            )
+            aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")
 
     return final_path
 
@@ -449,8 +465,7 @@ def _merge_flat(
 
                 if verbose:
                     aprint(
-                        f"  t={t_real} c={c_real}: merged {len(tile_files)} "
-                        f"{label}s"
+                        f"  t={t_real} c={c_real}: merged {len(tile_files)} {label}s"
                     )
 
     # ================================================================
