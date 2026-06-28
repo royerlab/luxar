@@ -220,10 +220,28 @@ def test_tiled_recipe_additive_gives_partition_of_ladders(tmp_path: Path) -> Non
     result = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "uniform", "--tile-size", "24", "--overlap", "4",
-            "-j", "2", "--recipe", "additive", "--n-lods", "2",
-            "--seeds", "12", "-n", "15", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--recipe",
+            "additive",
+            "--n-lods",
+            "2",
+            "--seeds",
+            "12",
+            "-n",
+            "15",
+            "--device",
+            "cpu",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -246,9 +264,19 @@ def test_recipe_rejects_flat(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "uniform", "--tile-size", "24",
-            "--recipe", "additive", "--flat", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--recipe",
+            "additive",
+            "--flat",
+            "--device",
+            "cpu",
         ],
     )
     assert result.exit_code != 0
@@ -265,8 +293,16 @@ def test_recipe_rejects_tiling_none(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "none", "--recipe", "additive", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "none",
+            "--recipe",
+            "additive",
+            "--device",
+            "cpu",
         ],
     )
     assert result.exit_code != 0
@@ -287,9 +323,20 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "uniform", "--tile-size", "24",
-            "--recipe", "additive", "--compression-factor", "8", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--recipe",
+            "additive",
+            "--compression-factor",
+            "8",
+            "--device",
+            "cpu",
         ],
     )
     assert res.exit_code != 0
@@ -300,9 +347,20 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
     res2 = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "uniform", "--tile-size", "24",
-            "--recipe", "substitutive", "--n-lods", "5", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--recipe",
+            "substitutive",
+            "--n-lods",
+            "5",
+            "--device",
+            "cpu",
         ],
     )
     assert res2.exit_code != 0
@@ -320,9 +378,22 @@ def test_recipe_short_flags_parse(tmp_path: Path) -> None:
     res = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiling", "uniform", "--tile-size", "24", "--overlap", "4",
-            "-r", "additive", "-K", "8", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-r",
+            "additive",
+            "-K",
+            "8",
+            "--device",
+            "cpu",
         ],
     )
     # -r=additive + -K (a substitutive-only knob) → cross-recipe rejection

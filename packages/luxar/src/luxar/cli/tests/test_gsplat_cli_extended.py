@@ -1770,8 +1770,15 @@ class TestTransformCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "transform", str(part), str(out),
-                "--scale", "2,2,2", "--center", "--normalize-intensity", "1.0",
+                "gsplat",
+                "transform",
+                str(part),
+                str(out),
+                "--scale",
+                "2,2,2",
+                "--center",
+                "--normalize-intensity",
+                "1.0",
             ],
         )
         assert result.exit_code == 0, f"transform on partition failed: {result.stdout}"
@@ -1947,9 +1954,9 @@ def multiblob_volume(tmp_path: Path) -> Path:
     zz, yy, xx = np.mgrid[0:40, 0:40, 0:40]
     for _ in range(24):
         cz, cy, cx = rng.integers(4, 36, 3)
-        V += np.exp(
-            -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)
-        ).astype(np.float32)
+        V += np.exp(-(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)).astype(
+            np.float32
+        )
     V = np.clip(V, 0, 1)
     path = tmp_path / "multiblob.npy"
     np.save(str(path), V)
@@ -2046,11 +2053,25 @@ class TestCalibrateCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "cal", str(multiblob_volume), str(out_json),
-                "--n-grid", "2", "--k-min", "50", "--k-max", "300",
-                "--preset", "draft", "--config", str(fast_fit_config),
-                "--device", "cpu",
-                "--fit-exponent", "--exponent-scales", "16,28",
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "50",
+                "--k-max",
+                "300",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--fit-exponent",
+                "--exponent-scales",
+                "16,28",
             ],
         )
         assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
@@ -2083,11 +2104,25 @@ class TestCalibrateCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "cal", str(smooth_blob_volume), str(out_json),
-                "--n-grid", "2", "--k-min", "20", "--k-max", "100",
-                "--preset", "draft", "--config", str(fast_fit_config),
-                "--device", "cpu",
-                "--fit-exponent", "--exponent-scales", "8,12",
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "20",
+                "--k-max",
+                "100",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--fit-exponent",
+                "--exponent-scales",
+                "8,12",
             ],
         )
         assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
@@ -2285,8 +2320,17 @@ class TestLODCommand:
         """--coarsen-dims is a substitutive-only knob; additive must reject it."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "additive", "--coarsen-dims", "0,1"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--coarsen-dims",
+                "0,1",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2297,8 +2341,17 @@ class TestLODCommand:
         """An index >= ndim (3D data) is a clean BadParameter, writes nothing."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "0,1,5"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "0,1,5",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2308,8 +2361,17 @@ class TestLODCommand:
     ) -> None:
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "a,b"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "a,b",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2322,8 +2384,17 @@ class TestLODCommand:
 
         out = tmp_path / "sub.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "0,1"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "0,1",
+            ],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert GSplatData.load(out).n_substitutive >= 2
@@ -2415,11 +2486,26 @@ class TestLODCommand:
         import zarr
 
         def _fine_threshold(*flags: str) -> tuple[list[float], list[int]]:
-            out = tmp_path / ("sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr")
+            out = tmp_path / (
+                "sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr"
+            )
             r = runner.invoke(
                 app,
-                ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe",
-                 "substitutive", "-K", "2", "-L", "2", "--device", "cpu", *flags],
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(out),
+                    "--recipe",
+                    "substitutive",
+                    "-K",
+                    "2",
+                    "-L",
+                    "2",
+                    "--device",
+                    "cpu",
+                    *flags,
+                ],
             )
             assert r.exit_code == 0, f"substitutive {flags} failed:\n{r.stdout}"
             g = zarr.open_group(str(out), mode="r")
@@ -2562,10 +2648,20 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic",
-                "--max-elements", "12", "-K", "2", "--levels", "1",
-                "--device", "cpu",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--max-elements",
+                "12",
+                "-K",
+                "2",
+                "--levels",
+                "1",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"mosaic failed:\n{result.stdout}"
@@ -2594,9 +2690,20 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic", "--parts", "4",
-                "-K", "2", "--levels", "1", "--device", "cpu",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--parts",
+                "4",
+                "-K",
+                "2",
+                "--levels",
+                "1",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"mosaic --parts failed:\n{result.stdout}"
@@ -2614,8 +2721,14 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic", "--n-lods", "4",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--n-lods",
+                "4",
             ],
         )
         assert result.exit_code != 0
@@ -2627,10 +2740,21 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(src), str(out),
-                "--recipe", "multiscale",
-                "--max-elements", "12", "--n-lods", "2", "-K", "2",
-                "--device", "cpu", *flags,
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--max-elements",
+                "12",
+                "--n-lods",
+                "2",
+                "-K",
+                "2",
+                "--device",
+                "cpu",
+                *flags,
             ],
         )
         assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
@@ -2685,8 +2809,16 @@ class TestLODCommand:
         for flag, val in (("--base-pixel-size", "200"), ("--lod-method", "count")):
             result = runner.invoke(
                 app,
-                ["gsplat", "lod", str(medium_gsplats), str(out),
-                 "--recipe", "additive", flag, val],
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(out),
+                    "--recipe",
+                    "additive",
+                    flag,
+                    val,
+                ],
             )
             assert result.exit_code != 0, f"{flag} should be rejected for additive"
             assert not out.exists()
@@ -3202,3 +3334,50 @@ class TestAxesSpec:
         vol = load_volume(p, channel=1, axes="z,c,y,x")
         assert vol.shape == (6, 8, 9)
         np.testing.assert_array_equal(vol, arr[:, 1, :, :])
+
+
+class TestAxesThreadingAndSqueeze:
+    """Regressions for review #4: --axes must reach the uniform parallel tile
+    workers, and an explicitly-kept size-1 spatial axis must not be squeezed."""
+
+    def test_uniform_worker_cmd_forwards_axes(self) -> None:
+        """build_worker_cmd emits --axes so parallel `fit --tile` workers load
+        with the same axis spec the parent used (else grids disagree / corrupt)."""
+        from luxar.gsplats.fit_tiled_parallel import build_worker_cmd
+
+        cmd = build_worker_cmd(
+            ["luxar"],
+            "in.zarr",
+            "out.zarr",
+            0,
+            4,
+            256,
+            32,
+            channel=1,
+            axes="z,c,y,x",
+        )
+        assert "--axes" in cmd
+        assert cmd[cmd.index("--axes") + 1] == "z,c,y,x"
+        # without axes, no --axes flag (back-compat)
+        cmd2 = build_worker_cmd(["luxar"], "in.zarr", "out.zarr", 0, 4, 256, 32)
+        assert "--axes" not in cmd2
+
+    def test_load_volume_axes_keeps_size_one_spatial_axis(self, tmp_path: Path) -> None:
+        """A single-z-plane stack kept via --axes z,y,x must stay 3D (1,Y,X) —
+        np.squeeze must NOT drop the declared z axis."""
+        from luxar.cli.gsplat_config import load_volume
+
+        arr = np.random.rand(1, 8, 9).astype(np.float32)  # (z=1, y, x)
+        p = tmp_path / "thin.npy"
+        np.save(p, arr)
+        vol = load_volume(p, axes="z,y,x")
+        assert vol.shape == (1, 8, 9)  # z axis preserved (no squeeze)
+        # contrast: WITHOUT --axes, squeeze drops the size-1 leading dim
+        assert load_volume(p).shape == (8, 9)
+
+    def test_apply_axes_spec_rejects_out_of_range_index(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 4, 5), dtype=np.float32)  # c=2 on axis 0
+        with pytest.raises(ValueError, match="out of range"):
+            _apply_axes_spec(arr, "c,z,y,x", channel=5, timepoint=None)

@@ -360,10 +360,18 @@ def _apply_axes_spec(
     kinds = [_kind(label) for label in labels]
     index: list = [slice(None)] * arr.ndim
     for i, k in enumerate(kinds):
-        if k == "t":
-            index[i] = timepoint if timepoint is not None else 0
-        elif k == "c":
-            index[i] = channel if channel is not None else 0
+        if k in ("t", "c"):
+            which, idx = (
+                ("--timepoint", timepoint) if k == "t" else ("--channel", channel)
+            )
+            idx = 0 if idx is None else int(idx)
+            size = arr.shape[i]
+            if not (0 <= idx < size):
+                raise ValueError(
+                    f"{which} index {idx} is out of range for the '{labels[i]}' "
+                    f"axis of size {size} (valid 0..{size - 1})."
+                )
+            index[i] = idx
     return np.asarray(arr[tuple(index)])
 
 
@@ -457,10 +465,14 @@ def load_volume(
     # time & channel axes and keep the spatial axes in the given order.
     if axes is not None:
         volume = _apply_axes_spec(np.asarray(volume), axes, channel, timepoint)
-
-    # Post-process
-    volume = np.asarray(volume, dtype=np.float32)
-    volume = np.squeeze(volume)
+        # The spec already fixed the shape (time/channel dropped, spatial kept) —
+        # do NOT squeeze, or a deliberately-kept size-1 spatial axis (e.g. a
+        # single z-plane via --axes z,y,x) would be silently dropped.
+        volume = np.asarray(volume, dtype=np.float32)
+    else:
+        # Post-process: drop incidental size-1 dims from the positional heuristic.
+        volume = np.asarray(volume, dtype=np.float32)
+        volume = np.squeeze(volume)
 
     if volume.ndim < 2:
         raise ValueError(

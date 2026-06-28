@@ -87,7 +87,11 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
     if manifest.n_channels == 1:
         final_candidates.append(
             merged_dir
-            / ("c00_4d.gsplats.zarr" if manifest.n_timepoints > 1 else "t00_c00.gsplats.zarr")
+            / (
+                "c00_4d.gsplats.zarr"
+                if manifest.n_timepoints > 1
+                else "t00_c00.gsplats.zarr"
+            )
         )
 
     if any(p.exists() for p in final_candidates):

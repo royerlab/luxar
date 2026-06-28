@@ -85,6 +85,7 @@ def build_worker_cmd(
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
+    axes: Optional[str] = None,
     progressive: bool = False,
     max_splats_per_pass: int = 5000,
     psnr_patience: float = 0.5,
@@ -147,6 +148,11 @@ def build_worker_cmd(
         cmd += ["--timepoint", str(timepoint)]
     if array_key:
         cmd += ["--array-key", array_key]
+    if axes:
+        # Workers re-load the full store in single-tile mode; without --axes they
+        # would fall back to the positional heuristic and load a differently-
+        # shaped/ordered volume than the parent's tile grid (corrupt merge).
+        cmd += ["--axes", axes]
     if progressive:
         cmd += [
             "--progressive",

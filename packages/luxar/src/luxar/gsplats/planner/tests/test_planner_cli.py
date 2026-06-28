@@ -179,8 +179,15 @@ def test_content_fit_recipe_additive_gives_partition_of_ladders(tmp_path):
     res = runner.invoke(
         app_gsplat,
         [
-            "fit", str(vol), str(out), *_CONTENT, *_CPU,
-            "--recipe", "additive", "--n-lods", "2",
+            "fit",
+            str(vol),
+            str(out),
+            *_CONTENT,
+            *_CPU,
+            "--recipe",
+            "additive",
+            "--n-lods",
+            "2",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -200,8 +207,14 @@ def test_content_fit_recipe_rejects_flat(tmp_path):
     res = runner.invoke(
         app_gsplat,
         [
-            "fit", str(vol), str(out), *_CONTENT, *_CPU,
-            "--recipe", "additive", "--flat",
+            "fit",
+            str(vol),
+            str(out),
+            *_CONTENT,
+            *_CPU,
+            "--recipe",
+            "additive",
+            "--flat",
         ],
     )
     assert res.exit_code != 0
@@ -271,8 +284,15 @@ def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
     vol = _vol(tmp_path)
     runner.invoke(
         app_gsplat,
-        ["fit", str(vol), str(tmp_path / "o.gsplats.zarr"), *_CONTENT, *_CPU,
-         "--iters", "7"],
+        [
+            "fit",
+            str(vol),
+            str(tmp_path / "o.gsplats.zarr"),
+            *_CONTENT,
+            *_CPU,
+            "--iters",
+            "7",
+        ],
     )
     assert captured.get("cli_overrides", {}).get("n_iters") == 7
     assert captured.get("config_path") is None  # no --config passed
