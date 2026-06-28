@@ -362,7 +362,7 @@ def generate_fit_sbatch(
 def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate sbatch script for NLM calibration job.
 
-    Single GPU, ~10 min. Runs ``luxar gsplat slurm-fit denoise-calibrate``
+    Single GPU, ~10 min. Runs ``luxar gsplat batch-fit denoise-calibrate``
     which calibrates h per channel and writes results to manifest + JSON.
     """
     lines = [
@@ -387,7 +387,7 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
     lines.append(env_preamble)
     lines.append("")
     lines.append(
-        f"luxar gsplat slurm-fit denoise-calibrate {shlex.quote(manifest.output_dir)}"
+        f"luxar gsplat batch-fit denoise-calibrate {shlex.quote(manifest.output_dir)}"
     )
     lines.append("")
 
@@ -436,7 +436,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
     lines.append(
-        f"luxar gsplat slurm-fit denoise-preprocess "
+        f"luxar gsplat batch-fit denoise-preprocess "
         f"{shlex.quote(manifest.output_dir)} $SLURM_ARRAY_TASK_ID"
     )
     lines.append("")
@@ -447,7 +447,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
 def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the merge sbatch script (dependent job).
 
-    Calls ``luxar gsplat slurm-fit merge`` (no ``--flat``), which streams the tiles
+    Calls ``luxar gsplat batch-fit merge`` (no ``--flat``), which streams the tiles
     into a ``kind=partition`` file — one part per spatial tile — by default.
 
     Args:
@@ -480,7 +480,7 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
 
     # Merge command
-    merge_cmd = f"luxar gsplat slurm-fit merge {shlex.quote(manifest.output_dir)}"
+    merge_cmd = f"luxar gsplat batch-fit merge {shlex.quote(manifest.output_dir)}"
     if manifest.channel_colors:
         colors_str = ",".join(manifest.channel_colors)
         merge_cmd += f" --channel-colors {shlex.quote(colors_str)}"

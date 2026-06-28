@@ -34,7 +34,8 @@ app_gsplat = typer.Typer(
         "  luxar gsplat fit stack.tiff out.gsplats.zarr # fit a volume (auto settings)\n"
         "  luxar gsplat view out.gsplats.zarr           # open it in the web viewer\n\n"
         "Non-canonical axis order? pass --axes (e.g. 'z,c,y,x') to fit/cal. "
-        "Large/HPC data? see `slurm-fit`."
+        "Whole timelapse / large data? see `batch-fit` (`run` = local multi-GPU, "
+        "`submit` = Slurm)."
     )
 )
 
@@ -45,9 +46,11 @@ register_fitting_commands(app_gsplat)  # fit, cal, render, denoise
 register_lod_command(app_gsplat)  # lod
 register_scene_commands(app_gsplat)  # convert, migrate-format
 register_inspect_commands(app_gsplat)  # info, view, napari, compare
-register_transforms_commands(app_gsplat)  # transform, cull, filter, slice, merge, partition
+register_transforms_commands(
+    app_gsplat
+)  # transform, cull, filter, slice, merge, partition
 register_benchmark_commands(app_gsplat)  # benchmark
-app_gsplat.add_typer(app_batch, name="slurm-fit")
+app_gsplat.add_typer(app_batch, name="batch-fit")  # run (local) + submit (Slurm)
 
 __all__ = [
     "app_gsplat",

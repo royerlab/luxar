@@ -56,7 +56,7 @@ def denoise_volume_cmd(
 
     Auto-calibrates the denoising strength h using Noise2Self unless --h is
     provided.  Runs locally (no Slurm).  For batch denoising on HPC, use
-    ``luxar gsplat slurm-fit submit --denoise``.
+    ``luxar gsplat batch-fit submit --denoise``.
 
     Examples:
         luxar gsplat denoise volume.zarr denoised.zarr

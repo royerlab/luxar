@@ -1,4 +1,4 @@
-"""``luxar gsplat slurm-fit`` — cluster-scale fitting via Slurm.
+"""``luxar gsplat batch-fit`` — cluster-scale fitting via Slurm.
 
 Owns the ``app_batch`` Typer sub-app and its commands; the aggregator
 (``cli/gsplat_commands.py``) mounts it via ``add_typer``. Extracted from the
@@ -21,40 +21,16 @@ if TYPE_CHECKING:
 
 
 app_batch = typer.Typer(
-    help="Fit a whole nD dataset across its axes on a Slurm cluster "
-    "(the cluster-scale sibling of `gsplat fit`)."
+    help="Fit a whole nD dataset across its axes — locally across GPUs "
+    "(`batch-fit run`) or on a Slurm cluster (`batch-fit submit`). The "
+    "scheduler-agnostic, scaled-up sibling of `gsplat fit`."
 )
 
-
-def _select_plan_timepoints(
-    t_indices: list[int], plan_timepoint: Optional[int], plan_samples: int
-) -> list[int]:
-    """Pick which timepoints to scan when building the shared content box plan.
-
-    A pinned ``plan_timepoint`` scans just that timepoint (it must be one of the
-    selected ``t_indices``); otherwise return up to ``plan_samples`` evenly-spaced
-    timepoints (endpoints included, deduplicated) to max-project — so the plan
-    covers any region with signal at ANY timepoint rather than leaving holes where
-    content moved over time. Raises :class:`typer.BadParameter` on invalid input.
-    """
-    if plan_timepoint is not None:
-        if plan_timepoint not in t_indices:
-            raise typer.BadParameter(
-                f"--plan-timepoint {plan_timepoint} is not in the selected "
-                f"timepoints {t_indices[0]}..{t_indices[-1]} "
-                f"({len(t_indices)} total)."
-            )
-        return [plan_timepoint]
-    if plan_samples < 1:
-        raise typer.BadParameter(f"--plan-samples must be >= 1, got {plan_samples}.")
-    if len(t_indices) <= plan_samples:
-        return list(t_indices)
-    import numpy as _np
-
-    idx = _np.unique(
-        _np.linspace(0, len(t_indices) - 1, plan_samples).round().astype(int)
-    )
-    return [t_indices[i] for i in idx]
+# Re-exported from batch_planning (single source); kept importable here for
+# back-compat with callers/tests that import it from this module.
+from luxar.cli.gsplat_ops.batch_planning import (  # noqa: E402,F401
+    _select_plan_timepoints,
+)
 
 
 @app_batch.command("submit")
@@ -326,7 +302,7 @@ def batch_submit(
             "Per-part LOD recipe applied to each spatial tile-part by the merge "
             "job: 'additive' (partitioned topology) or 'substitutive' (mosaic). "
             "Default: bare-leaf parts. The merge sbatch script invokes "
-            "`slurm-fit merge --recipe <r>` with the knobs below."
+            "`batch-fit merge --recipe <r>` with the knobs below."
         ),
         rich_help_panel="Merge LOD",
     ),
@@ -461,13 +437,13 @@ def batch_submit(
     size; pass --tile-size to skip the profile requirement.
 
     Examples:
-        luxar gsplat slurm-fit submit data.ome.zarr output/ -p gpu --dry-run
+        luxar gsplat batch-fit submit data.ome.zarr output/ -p gpu --dry-run
 
-        luxar gsplat slurm-fit submit data.ome.zarr output/ --partition gpu
+        luxar gsplat batch-fit submit data.ome.zarr output/ --partition gpu
 
-        luxar gsplat slurm-fit submit data.ome.zarr out/ -p gpu --tile-size 256 --preset hifi
+        luxar gsplat batch-fit submit data.ome.zarr out/ -p gpu --tile-size 256 --preset hifi
 
-        luxar gsplat slurm-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
+        luxar gsplat batch-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
             --axes time,camera,channel,z,y,x
     """
     if partition is None:
@@ -483,13 +459,17 @@ def batch_submit(
         raise typer.Exit(1)
 
     try:
-        import datetime
+        import math
         import subprocess
 
-        from luxar.cli.gsplat_config import (
-            PRESETS,
-            decode_flat_channel_index,
-            discover_ome_zarr_shape,
+        from luxar.cli.gsplat_config import PRESETS
+        from luxar.cli.gsplat_ops.batch_planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+            resolve_merge_recipe_args,
         )
         from luxar.gsplats.batch.env_capture import (
             capture_environment,
@@ -497,26 +477,17 @@ def batch_submit(
             get_slurm_scheduler_info,
             is_slurm_mps_available,
         )
-        from luxar.gsplats.batch.manifest import (
-            BatchJob,
-            BatchManifest,
-            output_filename,
-            save_manifest,
-        )
+        from luxar.gsplats.batch.manifest import save_manifest
         from luxar.gsplats.batch.slurm_gen import (
             generate_fit_sbatch,
             generate_merge_sbatch,
         )
-        from luxar.gsplats.batch.time_estimate import (
-            estimate_slurm_time_limit,
-            estimate_tile_wall_seconds,
-        )
+        from luxar.gsplats.batch.time_estimate import estimate_slurm_time_limit
         from luxar.gsplats.gpu_profile import (
             get_gpu_summary,
             get_gpu_throughput_table,
             load_profiles,
         )
-        from luxar.gsplats.tiling import compute_tile_specs
 
         # 1. Load GPU profile (required only for auto tile-size)
         axes_list = [a.strip() for a in axes.split(",")] if axes else None
@@ -534,7 +505,7 @@ def batch_submit(
             )
             aprint("")
             aprint("Option B — skip the profile by providing a tile size explicitly:")
-            aprint("  luxar gsplat slurm-fit submit ... --tile-size 128")
+            aprint("  luxar gsplat batch-fit submit ... --tile-size 128")
             raise typer.Exit(1)
 
         recs = (summary or {}).get("recommendations", {})
@@ -552,217 +523,99 @@ def batch_submit(
             resolved_gpu = next(iter(profiles["gpus"]))
         resolved_gpu = resolved_gpu or "unknown"
 
-        # 2. Discover dataset shape
-        # Helper: parse Python-style slice string "start:stop:step"
-        def _parse_slice(s: str, max_val: int) -> list[int]:
-            parts = s.split(":")
-            if len(parts) == 1:
-                # Single index
-                return [int(parts[0])]
-            start = int(parts[0]) if parts[0] else 0
-            stop = int(parts[1]) if len(parts) > 1 and parts[1] else max_val
-            step = int(parts[2]) if len(parts) > 2 and parts[2] else 1
-            return list(range(start, stop, step))
-
-        with asection("Discovering dataset shape"):
-            ome_info = discover_ome_zarr_shape(
-                input_path, axes_override=axes_list, array_key=array_key
-            )
-            n_t_full = ome_info.n_timepoints
-            n_c_full = ome_info.n_channels
-            spatial = ome_info.spatial_shape
-            aprint(f"Axes: {ome_info.axes}")
-            aprint(f"Shape: {ome_info.shape}")
-            aprint(
-                f"T={n_t_full}, C={n_c_full}, spatial={'x'.join(str(s) for s in spatial)}"
-            )
-
-            # Apply --timepoints / --channels slicing
-            t_indices = (
-                _parse_slice(timepoints_slice, n_t_full)
-                if timepoints_slice
-                else list(range(n_t_full))
-            )
-            c_indices = (
-                _parse_slice(channels_slice, n_c_full)
-                if channels_slice
-                else list(range(n_c_full))
-            )
-            if not t_indices:
-                raise ValueError("--timepoints selected no timepoints")
-            if not c_indices:
-                raise ValueError("--channels selected no channels")
-            bad_t = [idx for idx in t_indices if idx < 0 or idx >= n_t_full]
-            bad_c = [idx for idx in c_indices if idx < 0 or idx >= n_c_full]
-            if bad_t:
-                raise ValueError(
-                    f"--timepoints selected out-of-range indices {bad_t}; valid range is 0..{n_t_full - 1}"
-                )
-            if bad_c:
-                raise ValueError(
-                    f"--channels selected out-of-range flat channel indices {bad_c}; valid range is 0..{n_c_full - 1}"
-                )
-            n_t = len(t_indices)
-            n_c = len(c_indices)
-            if timepoints_slice or channels_slice:
-                aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
-
-        # 3. Decompose the spatial volume into the slots fanned across the array.
-        import math
-
-        mode = "content" if tiling == "content" else "uniform"
-        content_plan = None  # the shared FitPlan in content mode
-        plan_path_str: Optional[str] = None
+        # 1b. GPU-profile-derived sizing inputs (uniform auto tile-size + ETA).
         peak_shape = peak.get("shape", [])
         oom = (summary or {}).get("oom_boundaries", {}).get("3d", {})
         max_shape = oom.get("max_successful_shape", peak_shape)
-        total_voxels = math.prod(spatial)
-
-        if mode == "content":
-            # Build ONE content-balanced box plan from a representative (t, c) and
-            # reuse it for every (t, c) — each array task fits one box of this plan
-            # (`fit --tiling content --plan plan.json --plan-box $K`). No GPU
-            # profile needed; tile_size is irrelevant (the sbatch omits it).
-            import numpy as _np
-
-            from luxar.cli.gsplat_config import load_volume
-            from luxar.cli.gsplat_ops.planner import _resolve_density
-            from luxar.gsplats.planner import plan_volume
-            from luxar.gsplats.planner.fit_planned_parallel import (
-                max_padded_box_voxels,
-            )
-
-            rep_c = c_indices[0]
-            # Which timepoints to scan for the shared plan: a pinned single
-            # timepoint, or an evenly-spaced sample to max-project (so boxes cover
-            # any region with signal at ANY timepoint — content can move over time).
-            plan_t_samples = _select_plan_timepoints(
-                t_indices, plan_timepoint, plan_samples
-            )
-            scan_desc = (
-                f"t={plan_t_samples[0]}"
-                if len(plan_t_samples) == 1
-                else f"max-proj of {len(plan_t_samples)} timepoints"
-            )
-            with asection(f"Content plan (scan {scan_desc}, c={rep_c})"):
-                rep_vol = load_volume(
-                    input_path,
-                    channel=rep_c,
-                    timepoint=plan_t_samples[0],
-                    array_key=array_key,
-                    axes=axes,
-                )
-                # Stream the max-projection one timepoint at a time (peak memory =
-                # two volumes), so a long movie never loads all samples at once.
-                # `axes=axes` keeps the plan scan on the SAME axis interpretation
-                # the array tasks use (else --axes datasets scan with the positional
-                # heuristic → wrong-shaped volume → wrong box plan).
-                for _t in plan_t_samples[1:]:
-                    _v = load_volume(
-                        input_path,
-                        channel=rep_c,
-                        timepoint=_t,
-                        array_key=array_key,
-                        axes=axes,
-                    )
-                    rep_vol = _np.maximum(rep_vol, _v)
-                density = _resolve_density(
-                    cal,
-                    k_star_ref,
-                    n_features_ref,
-                    saturation_exponent,
-                    saturation_cap,
-                    feature_metric,
-                    feature_threshold,
-                )
-                # Mismatched scan vs calibrated metric mis-scales per-box budgets
-                # (parity with the local `fit --tiling content` warning).
-                if (
-                    feature_metric is not None
-                    and cal is not None
-                    and feature_metric != density.feature_method
-                ):
-                    aprint(
-                        f"⚠ --feature-metric '{feature_metric}' differs from the "
-                        f"calibrated density.feature_method "
-                        f"'{density.feature_method}' — per-box budgets will be "
-                        "mis-scaled. Use matching metrics."
-                    )
-                content_plan = plan_volume(
-                    rep_vol,
-                    density,
-                    feature_method=(feature_metric or density.feature_method),
-                    cell=cell,
-                    target_features=target_features,
-                    min_leaf=min_leaf,
-                    max_leaf=max_leaf,
-                    overlap=tile_overlap,
-                )
-                # Drop budget<=0 boxes (matches the local `fit_planned` skip): the
-                # array fits one box PER task, so a 0-budget box would just emit an
-                # empty marker. Filtering keeps --plan-box K indexing the SAME plan
-                # the workers read, with no empty array tasks.
-                import dataclasses as _dc
-
-                kept_boxes = [b for b in content_plan.boxes if b.budget > 0]
-                if not kept_boxes:
-                    aprint("Error: content plan has no boxes with budget > 0")
-                    raise typer.Exit(1)
-                content_plan = _dc.replace(content_plan, boxes=kept_boxes)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                plan_path_obj = output_dir.resolve() / "plan.json"
-                content_plan.to_json(plan_path_obj)
-                plan_path_str = str(plan_path_obj)
-                med, mx = content_plan.overlap_fraction()
-                aprint(
-                    f"Plan: {content_plan.n_boxes} boxes, total budget "
-                    f"{content_plan.total_budget:,} splats, overlap median "
-                    f"{med:.0%} / max {mx:.0%} → {plan_path_obj}"
-                )
-            n_tiles = content_plan.n_boxes
-            needs_tiling = n_tiles > 1
-            tile_size = 0  # sentinel; unused by the content sbatch
-            tile_voxels = max_padded_box_voxels(content_plan)
-            auto_tile = False  # no GPU-profile auto-sizing in content mode
-        else:
-            # Uniform: pick the largest tile that fits in GPU memory (auto from the
-            # benchmark profile, or an explicit --tile-size).
-            auto_tile = tile_size is None
-            if auto_tile:
-                assert summary is not None
-                max_safe_voxels = math.prod(max_shape) if max_shape else 256**3
-                if total_voxels <= max_safe_voxels:
-                    # Whole volume fits — make the stride exceed every dim so
-                    # compute_tile_specs yields exactly one tile.
-                    tile_size = max(spatial) + tile_overlap
-                else:
-                    tile_edge = int(max_safe_voxels ** (1.0 / len(spatial)))
-                    tile_size = min(tile_edge, max(spatial))
-            assert tile_size is not None  # narrowed by branches above
-
-            # compute_tile_specs is authoritative (overlap can add tiles even when
-            # volume_shape == tile_size).
-            specs = compute_tile_specs(spatial, tile_size, tile_overlap)
-            n_tiles = len(specs)
-            needs_tiling = n_tiles > 1
-            if needs_tiling:
-                tile_voxels = tile_size ** len(spatial)
-            else:
-                tile_voxels = total_voxels
-
-        total_tasks = n_t * n_c * n_tiles
-
         throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
 
+        # 2-6. Discover + decompose + build the manifest/jobs. This whole half is
+        # shared verbatim with `batch-fit run` (the local runner) via plan_batch.
+        fit_cfg = FitConfig(
+            preset=preset,
+            seeds=seeds,
+            iters=iters,
+            config=config,
+            progressive=batch_progressive,
+            splats_per_pass=batch_splats_per_pass,
+            psnr_patience=batch_psnr_patience,
+            max_passes=batch_max_passes,
+            cull_retention=batch_cull_retention,
+        )
+        denoise_cfg = DenoiseConfig(
+            denoise=batch_denoise,
+            denoise_h=batch_denoise_h,
+            denoise_2d=batch_denoise_2d,
+            patch_size=batch_denoise_patch_size,
+            search_distance=batch_denoise_search_distance,
+            backend=batch_denoise_backend,
+            calibration_samples=batch_calibration_samples,
+            preprocess=batch_preprocess,
+        )
+        content_cfg = ContentKnobs(
+            cal=cal,
+            k_star_ref=k_star_ref,
+            n_features_ref=n_features_ref,
+            saturation_exponent=saturation_exponent,
+            saturation_cap=saturation_cap,
+            feature_threshold=feature_threshold,
+            feature_metric=feature_metric,
+            cell=cell,
+            target_features=target_features,
+            min_leaf=min_leaf,
+            max_leaf=max_leaf,
+            plan_timepoint=plan_timepoint,
+            plan_samples=plan_samples,
+        )
+        merge_cfg = MergeConfig(
+            recipe=merge_recipe,
+            channel_colors=channel_colors,
+            n_lods=merge_n_lods,
+            additive_method=merge_additive_method,
+            breakpoints=merge_breakpoints,
+            compression_factor=merge_compression_factor,
+            levels=merge_levels,
+            substitutive_method=merge_substitutive_method,
+            coarsen_dims=merge_coarsen_dims,
+            lod_method=merge_lod_method,
+        )
+        merge_recipe_args = resolve_merge_recipe_args(merge_cfg)
+
+        plan = plan_batch(
+            input_path=input_path,
+            output_dir=output_dir,
+            tiling=tiling,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            axes_list=axes_list,
+            array_key=array_key,
+            timepoints_slice=timepoints_slice,
+            channels_slice=channels_slice,
+            fit=fit_cfg,
+            denoise=denoise_cfg,
+            content=content_cfg,
+            merge=merge_cfg,
+            merge_recipe_args=merge_recipe_args,
+            max_shape=max_shape,
+            throughput_table=throughput_table,
+            resolved_gpu=resolved_gpu,
+        )
+        manifest = plan.manifest
+        n_t = manifest.n_timepoints
+        n_c = manifest.n_channels
+        spatial = manifest.spatial_shape
+        mode = manifest.mode
+        n_tiles = manifest.n_tiles
+        total_tasks = manifest.total_tasks
+        tile_voxels = plan.tile_voxels
+        needs_tiling = plan.needs_tiling
+        est_seconds = manifest.estimated_seconds_per_task
+        denoise_mode = manifest.denoise_mode
+        # auto_tile is purely for the printed plan (manifest.tile_size is resolved).
+        auto_tile = (tile_size is None) and mode != "content"
+        tile_size = manifest.tile_size
         preset_config = PRESETS.get(preset, PRESETS["standard"])
         n_iters = iters if iters is not None else preset_config.get("n_iters", 3000)
-
-        if throughput_table:
-            est_seconds = estimate_tile_wall_seconds(
-                tile_voxels, n_iters, throughput_table
-            )
-        else:
-            est_seconds = 600.0
 
         # 5b. Compute tasks-per-job packing
         #
@@ -813,155 +666,10 @@ def batch_submit(
         slurm_time = time_limit or estimate_slurm_time_limit(est_seconds_per_job)
         total_gpu_hours = est_seconds * total_tasks / 3600.0
 
-        # 6. Build manifest
-        fit_args = {}
-        if seeds:
-            fit_args["seeds"] = seeds
-        if iters is not None:
-            fit_args["iters"] = str(iters)
-        if config:
-            fit_args["config"] = str(config)
-        if batch_progressive:
-            fit_args["progressive"] = ""  # boolean flag, no value
-        if batch_splats_per_pass is not None:
-            fit_args["splats-per-pass"] = str(batch_splats_per_pass)
-        if batch_psnr_patience is not None:
-            fit_args["psnr-patience"] = str(batch_psnr_patience)
-        if batch_max_passes is not None:
-            fit_args["max-passes"] = str(batch_max_passes)
-        if batch_cull_retention is not None:
-            fit_args["cull-retention"] = str(batch_cull_retention)
-
-        # Denoise mode detection
-        denoise_mode = None
-        denoised_zarr_path = None
-        if batch_denoise:
-            if batch_preprocess is True:
-                denoise_mode = "preprocess"
-            elif batch_preprocess is False:
-                denoise_mode = "on-the-fly"
-            else:
-                # Default: on-the-fly (denoise per-tile inside each fit task).
-                # Use --preprocess to write denoised zarr separately.
-                denoise_mode = "on-the-fly"
-            aprint(f"Denoise mode: {denoise_mode}")
-
-            if denoise_mode == "preprocess":
-                denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
-
-            # For on-the-fly mode, pass denoise flags to fit tasks
-            if denoise_mode == "on-the-fly":
-                fit_args["denoise"] = ""
-                if batch_denoise_2d:
-                    fit_args["denoise-2d"] = ""
-                if batch_denoise_patch_size != 3:
-                    fit_args["denoise-patch-size"] = str(batch_denoise_patch_size)
-                if batch_denoise_search_distance != 5:
-                    fit_args["denoise-search-distance"] = str(
-                        batch_denoise_search_distance
-                    )
-                if batch_denoise_backend != "auto":
-                    fit_args["denoise-backend"] = batch_denoise_backend
-                # Note: --denoise-h is passed at runtime from h_values JSON
-
-        colors_list = None
-        if channel_colors:
-            colors_list = [c.strip() for c in channel_colors.split(",")]
-
-        # Per-part LOD recipe for the merge job (stored in the manifest; the merge
-        # sbatch script turns it into `slurm-fit merge --recipe ...`).
-        merge_recipe_args: dict = {}
-        if merge_recipe is not None:
-            from luxar.gsplats.lod.recipes import PER_PART_RECIPES
-
-            if merge_recipe not in PER_PART_RECIPES:
-                raise typer.BadParameter(
-                    f"--merge-recipe {merge_recipe!r} is not supported; choose from "
-                    f"{', '.join(sorted(PER_PART_RECIPES))} (the composed recipes "
-                    "re-partition their input, but each tile is already one part)."
-                )
-            # Reject knobs that don't apply to the chosen recipe — fail-fast before
-            # the (hours-long) Slurm fit array, matching `fit --recipe` and `gsplat
-            # lod` (which both reject irrelevant options rather than silently drop).
-            _additive_only = {
-                "--merge-n-lods": merge_n_lods,
-                "--merge-additive-method": merge_additive_method,
-                "--merge-breakpoints": merge_breakpoints,
-            }
-            _substitutive_only = {
-                "--merge-compression-factor": merge_compression_factor,
-                "--merge-levels": merge_levels,
-                "--merge-substitutive-method": merge_substitutive_method,
-                "--merge-coarsen-dims": merge_coarsen_dims,
-                "--merge-lod-method": merge_lod_method,
-            }
-            _irrelevant = (
-                _substitutive_only if merge_recipe == "additive" else _additive_only
-            )
-            _provided = [flag for flag, val in _irrelevant.items() if val is not None]
-            if _provided:
-                _other = "substitutive" if merge_recipe == "additive" else "additive"
-                raise typer.BadParameter(
-                    f"option(s) {', '.join(_provided)} are not used by "
-                    f"--merge-recipe {merge_recipe} (they configure "
-                    f"--merge-recipe {_other}). Remove them or switch recipe."
-                )
-            if merge_n_lods is not None:
-                merge_recipe_args["n-lods"] = str(merge_n_lods)
-            if merge_additive_method is not None:
-                # Validate now (fail-fast, before the Slurm array) like the
-                # substitutive method below.
-                from luxar.cli.lod import _VALID_ADDITIVE_METHODS
-
-                am_norm = merge_additive_method.strip().replace("-", "_")
-                if am_norm not in _VALID_ADDITIVE_METHODS:
-                    raise typer.BadParameter(
-                        f"--merge-additive-method must be one of "
-                        f"{list(_VALID_ADDITIVE_METHODS)}; got {merge_additive_method!r}"
-                    )
-                merge_recipe_args["additive-method"] = am_norm
-            if merge_breakpoints is not None:
-                # Validate the spec form now (fail-fast, before the Slurm array),
-                # like the sibling knobs — _parse_lod_breakpoints needs no splat
-                # count, so a malformed spec is caught at submit, not hours later
-                # in the merge job. The original string is stored for the
-                # manifest/sbatch round-trip.
-                from luxar.cli.lod import _parse_lod_breakpoints
-
-                _parse_lod_breakpoints(merge_breakpoints)
-                merge_recipe_args["breakpoints"] = merge_breakpoints
-            if merge_lod_method is not None:
-                if merge_lod_method not in ("extent", "count"):
-                    raise typer.BadParameter(
-                        f"--merge-lod-method must be 'extent' or 'count'; "
-                        f"got {merge_lod_method!r}"
-                    )
-                merge_recipe_args["lod-method"] = merge_lod_method
-            if merge_compression_factor is not None:
-                merge_recipe_args["compression-factor"] = str(merge_compression_factor)
-            if merge_levels is not None:
-                merge_recipe_args["levels"] = str(merge_levels)
-            if merge_substitutive_method is not None:
-                # Validate now (fail-fast) so a bad method is caught before the
-                # Slurm fit array runs, not hours later in the merge job.
-                from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
-
-                sm_norm = merge_substitutive_method.strip().replace("-", "_")
-                if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
-                    raise typer.BadParameter(
-                        f"--merge-substitutive-method must be one of "
-                        f"{list(_VALID_SUBSTITUTIVE_METHODS)}; "
-                        f"got {merge_substitutive_method!r}"
-                    )
-                merge_recipe_args["substitutive-method"] = sm_norm
-            if merge_coarsen_dims is not None:
-                merge_recipe_args["coarsen-dims"] = merge_coarsen_dims
-
-            from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
-
-            _w = uniform_per_part_lod_warning(mode, merge_recipe)
-            if _w:
-                aprint(f"⚠ {_w}")
+        # 6. Build manifest — fit_args, denoise mode, channel colors, and the
+        # per-part merge-recipe args were all resolved inside plan_batch /
+        # resolve_merge_recipe_args above; the manifest is plan.manifest. We only
+        # add the Slurm-specific fields (partition, packing, preemptible) here.
 
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
@@ -996,95 +704,23 @@ def batch_submit(
                 else:
                     aprint(f"Preemptible partition: {preempt_partition}")
 
-        manifest = BatchManifest(
-            version=1,
-            created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            input_path=str(input_path.resolve()),
-            output_dir=str(output_dir.resolve()),
-            array_key=array_key,
-            n_timepoints=n_t,
-            n_channels=n_c,
-            channel_axes=ome_info.channel_axes,
-            channel_shape=ome_info.channel_shape,
-            spatial_shape=spatial,
-            mode=mode,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
-            n_tiles=n_tiles,
-            plan_path=plan_path_str,
-            total_tasks=total_tasks,
-            preset=preset,
-            fit_args=fit_args,
-            gpu_name=resolved_gpu,
-            estimated_seconds_per_task=est_seconds,
-            slurm_time_limit=slurm_time,
-            slurm_partition=partition,
-            slurm_account=account,
-            slurm_qos=qos,
-            slurm_gpus=gpus,
-            slurm_cpus=cpus,
-            slurm_mem_gb=mem,
-            tasks_per_job=tasks_per_job,
-            parallel_tasks_per_job=parallel,
-            max_concurrent=max_concurrent,
-            preemptible=preempt_partition is not None,
-            preemptible_partition=preempt_partition,
-            preemptible_max_concurrent=(
-                (preemptible_concurrent or max_concurrent)
-                if preempt_partition
-                else None
-            ),
-            timepoint_indices=t_indices if timepoints_slice else None,
-            channel_indices=c_indices if channels_slice else None,
-            channel_colors=colors_list,
-            merge_recipe=merge_recipe,
-            merge_recipe_args=merge_recipe_args,
-            denoise=batch_denoise,
-            denoise_2d=batch_denoise_2d,
-            denoise_h=batch_denoise_h,
-            denoise_patch_size=batch_denoise_patch_size,
-            denoise_search_distance=batch_denoise_search_distance,
-            denoise_backend=batch_denoise_backend,
-            denoise_mode=denoise_mode,
-            denoised_zarr_path=denoised_zarr_path,
-            calibration_samples=batch_calibration_samples,
+        # plan_batch built the manifest + jobs (dataset/decomposition/fit/merge/
+        # denoise fields). Stamp the Slurm-specific fields onto it here.
+        manifest.slurm_time_limit = slurm_time
+        manifest.slurm_partition = partition
+        manifest.slurm_account = account
+        manifest.slurm_qos = qos
+        manifest.slurm_gpus = gpus
+        manifest.slurm_cpus = cpus
+        manifest.slurm_mem_gb = mem
+        manifest.tasks_per_job = tasks_per_job
+        manifest.parallel_tasks_per_job = parallel
+        manifest.max_concurrent = max_concurrent
+        manifest.preemptible = preempt_partition is not None
+        manifest.preemptible_partition = preempt_partition
+        manifest.preemptible_max_concurrent = (
+            (preemptible_concurrent or max_concurrent) if preempt_partition else None
         )
-
-        # Build job list. Store real dataset indices in filenames so status,
-        # merge, and generated Slurm scripts agree when --timepoints/--channels
-        # select non-contiguous values.
-        jobs = []
-        t_width_base = max(t_indices) + 1
-        c_width_base = max(c_indices) + 1
-        for task_id in range(total_tasks):
-            t_seq = task_id // (n_c * n_tiles)
-            r = task_id % (n_c * n_tiles)
-            c_seq = r // n_tiles
-            k = r % n_tiles
-            t_real = t_indices[t_seq]
-            c_real = c_indices[c_seq]
-            jobs.append(
-                BatchJob(
-                    task_id=task_id,
-                    timepoint=t_real,
-                    channel=c_real,
-                    tile_index=k,
-                    output_filename=output_filename(
-                        t_real,
-                        c_real,
-                        k,
-                        t_width_base,
-                        c_width_base,
-                        n_tiles,
-                        label="box" if mode == "content" else "tile",
-                    ),
-                    estimated_wall_seconds=est_seconds,
-                    channel_coords=decode_flat_channel_index(
-                        c_real, ome_info.channel_shape
-                    ),
-                )
-            )
-        manifest.jobs = jobs
 
         # 7. Capture environment + generate scripts
         env = capture_environment()
@@ -1316,10 +952,404 @@ def batch_submit(
         save_manifest(manifest, out)
 
         aprint(f"\nManifest: {out / 'manifest.json'}")
-        aprint(f"Check status: luxar gsplat slurm-fit status {out}")
+        aprint(f"Check status: luxar gsplat batch-fit status {out}")
 
     except typer.Exit:
         raise
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+@app_batch.command("run")
+def batch_run(
+    input_path: Path = typer.Argument(..., exists=True, help="Input OME-Zarr dataset"),
+    output_dir: Path = typer.Argument(..., help="Output directory for batch results"),
+    # Tiling
+    tile_size: Optional[int] = typer.Option(
+        None,
+        "--tile-size",
+        help="Tile size in voxels (uniform mode). Required for a multi-tile "
+        "uniform fit unless a GPU benchmark profile is available.",
+    ),
+    tile_overlap: int = typer.Option(32, "--overlap", help="Tile overlap in voxels"),
+    tiling: str = typer.Option(
+        "uniform",
+        "--tiling",
+        help="Spatial decomposition: 'uniform' (a regular tile grid) or 'content' "
+        "(a content-balanced box plan built once from a representative timepoint "
+        "and reused for every (t,c)). Content needs a density "
+        "(--cal or --k-star-ref/--n-features-ref).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    plan_timepoint: Optional[int] = typer.Option(
+        None,
+        "--plan-timepoint",
+        help="[--tiling content] Scan ONLY this timepoint for the shared box plan "
+        "(default: max-project up to --plan-samples timepoints).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    plan_samples: int = typer.Option(
+        16,
+        "--plan-samples",
+        help="[--tiling content] Max evenly-spaced timepoints to max-project for "
+        "the shared box plan.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    cal: Optional[Path] = typer.Option(
+        None,
+        "--cal",
+        help="[--tiling content] Calibration JSON supplying the density.",
+        rich_help_panel="Content-aware tiling",
+    ),
+    k_star_ref: Optional[int] = typer.Option(
+        None, "--k-star-ref", rich_help_panel="Content-aware tiling"
+    ),
+    n_features_ref: Optional[int] = typer.Option(
+        None, "--n-features-ref", rich_help_panel="Content-aware tiling"
+    ),
+    saturation_exponent: float = typer.Option(
+        0.44, "--saturation-exponent", rich_help_panel="Content-aware tiling"
+    ),
+    saturation_cap: Optional[int] = typer.Option(
+        None, "--saturation-cap", rich_help_panel="Content-aware tiling"
+    ),
+    feature_threshold: Optional[float] = typer.Option(
+        None, "--feature-threshold", rich_help_panel="Content-aware tiling"
+    ),
+    feature_metric: Optional[str] = typer.Option(
+        None,
+        "--feature-metric",
+        help="peaks | edges | intensity",
+        rich_help_panel="Content-aware tiling",
+    ),
+    cell: int = typer.Option(16, "--cell", rich_help_panel="Content-aware tiling"),
+    target_features: Optional[int] = typer.Option(
+        None, "--target-features", rich_help_panel="Content-aware tiling"
+    ),
+    min_leaf: int = typer.Option(
+        256, "--min-leaf", rich_help_panel="Content-aware tiling"
+    ),
+    max_leaf: int = typer.Option(
+        512, "--max-leaf", rich_help_panel="Content-aware tiling"
+    ),
+    # Fit params
+    preset: str = typer.Option("standard", "--preset", help="Fitting preset"),
+    config: Optional[Path] = typer.Option(None, "--config", help="YAML fit config"),
+    seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
+    iters: Optional[int] = typer.Option(
+        None, "--iters", "-n", help="Max optimization iterations (overrides preset)"
+    ),
+    batch_progressive: bool = typer.Option(
+        False, "--progressive", help="Progressive fitting per tile (multi-LOD)."
+    ),
+    batch_splats_per_pass: Optional[int] = typer.Option(
+        None, "--splats-per-pass", help="Max splats per progressive pass"
+    ),
+    batch_psnr_patience: Optional[float] = typer.Option(
+        None, "--psnr-patience", help="PSNR patience for progressive fitting (dB)"
+    ),
+    batch_max_passes: Optional[int] = typer.Option(
+        None, "--max-passes", help="Max progressive passes per tile"
+    ),
+    batch_cull_retention: Optional[float] = typer.Option(
+        None,
+        "--cull-retention",
+        help="Per-tile amplitude retention after fitting (default per-fit; 0 keeps all).",
+    ),
+    # Denoising
+    batch_denoise: bool = typer.Option(
+        False,
+        "--denoise",
+        help="Denoise volumes before fitting (NLM, on-the-fly per tile).",
+        rich_help_panel="Denoising",
+    ),
+    batch_denoise_h: Optional[float] = typer.Option(
+        None, "--denoise-h", help="Manual NLM h", rich_help_panel="Denoising"
+    ),
+    batch_denoise_2d: bool = typer.Option(
+        False, "--denoise-2d", help="2D NLM", rich_help_panel="Denoising"
+    ),
+    batch_denoise_patch_size: int = typer.Option(
+        3, "--denoise-patch-size", rich_help_panel="Denoising"
+    ),
+    batch_denoise_search_distance: int = typer.Option(
+        5, "--denoise-search-distance", rich_help_panel="Denoising"
+    ),
+    batch_denoise_backend: str = typer.Option(
+        "auto", "--denoise-backend", rich_help_panel="Denoising"
+    ),
+    # Local GPUs
+    gpus: str = typer.Option(
+        "auto",
+        "--gpus",
+        help="GPUs to use: 'auto' (every visible card above a free-VRAM floor, "
+        "skipping small cards) | 'all' (every visible card) | 'cpu' | an explicit "
+        "list like '0,1,3'.",
+        rich_help_panel="Local GPUs",
+    ),
+    jobs_per_gpu: str = typer.Option(
+        "auto",
+        "--jobs-per-gpu",
+        help="Concurrent fit workers per GPU. 'auto' sizes each card from its own "
+        "free VRAM; an integer applies uniformly. Use 1 to be safe on small cards.",
+        rich_help_panel="Local GPUs",
+    ),
+    no_resume: bool = typer.Option(
+        False,
+        "--no-resume",
+        help="Re-fit every task even if its output already exists "
+        "(default: resume — skip completed tiles).",
+        rich_help_panel="Local GPUs",
+    ),
+    # Merge
+    channel_colors: Optional[str] = typer.Option(
+        None,
+        "--channel-colors",
+        help="Hex colors for per-channel merge",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_recipe: Optional[str] = typer.Option(
+        None,
+        "--merge-recipe",
+        help="Per-part LOD recipe applied to each tile-part at merge: 'additive' "
+        "(partitioned) or 'substitutive' (mosaic). Default: bare-leaf parts.",
+        rich_help_panel="Merge LOD",
+    ),
+    merge_n_lods: Optional[int] = typer.Option(
+        None, "--merge-n-lods", rich_help_panel="Merge LOD"
+    ),
+    merge_additive_method: Optional[str] = typer.Option(
+        None, "--merge-additive-method", rich_help_panel="Merge LOD"
+    ),
+    merge_breakpoints: Optional[str] = typer.Option(
+        None, "--merge-breakpoints", rich_help_panel="Merge LOD"
+    ),
+    merge_compression_factor: Optional[int] = typer.Option(
+        None, "--merge-compression-factor", rich_help_panel="Merge LOD"
+    ),
+    merge_levels: Optional[int] = typer.Option(
+        None, "--merge-levels", rich_help_panel="Merge LOD"
+    ),
+    merge_substitutive_method: Optional[str] = typer.Option(
+        None, "--merge-substitutive-method", rich_help_panel="Merge LOD"
+    ),
+    merge_coarsen_dims: Optional[str] = typer.Option(
+        None, "--merge-coarsen-dims", rich_help_panel="Merge LOD"
+    ),
+    merge_lod_method: Optional[str] = typer.Option(
+        None, "--merge-lod-method", rich_help_panel="Merge LOD"
+    ),
+    # Dataset structure / selection
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Comma-separated axis names overriding auto-detection, e.g. "
+        "'time,channel,z,y,x'.",
+    ),
+    timepoints_slice: Optional[str] = typer.Option(
+        None, "--timepoints", help="Python-style slice to select timepoints."
+    ),
+    channels_slice: Optional[str] = typer.Option(
+        None, "--channels", help="Python-style slice to select channels."
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Key path to an array within the zarr store."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the plan without fitting."
+    ),
+) -> None:
+    """Fit a whole nD dataset locally across multiple GPUs, then merge.
+
+    The local (non-Slurm) sibling of `batch-fit submit`: plans the decomposition
+    once (uniform tiles or a shared content box plan), fits every (t,c,slot) task
+    with a multi-GPU subprocess pool (one worker pinned per GPU via
+    CUDA_VISIBLE_DEVICES, per-GPU concurrency sized from free VRAM), then runs the
+    memory-safe streaming merge to a single kind=partition .gsplats.zarr. Resumable
+    — re-running skips tiles already on disk.
+
+    Examples:
+        luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256
+
+        luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json \\
+            --gpus auto --merge-recipe additive --n-lods 4 -K...
+
+        luxar gsplat batch-fit run vol.zarr out/ --gpus cpu   # CPU fallback
+    """
+    tiling = tiling.lower()
+    if tiling not in ("uniform", "content"):
+        aprint(f"Error: --tiling must be uniform|content, got {tiling!r}")
+        raise typer.Exit(1)
+
+    try:
+        from luxar.cli.gsplat_config import parse_hex_color
+        from luxar.cli.gsplat_ops.batch_planning import (
+            ContentKnobs,
+            DenoiseConfig,
+            FitConfig,
+            MergeConfig,
+            plan_batch,
+            resolve_merge_recipe_args,
+        )
+        from luxar.gsplats.batch.local_runner import run_batch_local
+        from luxar.gsplats.gpu_profile import (
+            get_gpu_summary,
+            get_gpu_throughput_table,
+            load_profiles,
+        )
+        from luxar.gsplats.utils.device import resolve_gpu_selection
+
+        axes_list = [a.strip() for a in axes.split(",")] if axes else None
+
+        # Optional GPU profile — only used to auto-size uniform tiles; not required.
+        summary = get_gpu_summary()
+        resolved_gpu = "local"
+        max_shape = None
+        throughput_table = None
+        if summary is not None:
+            recs = summary.get("recommendations", {})
+            peak = recs.get("peak_throughput_3d", {})
+            oom = summary.get("oom_boundaries", {}).get("3d", {})
+            max_shape = oom.get("max_successful_shape", peak.get("shape", []))
+            profiles = load_profiles()
+            for name, entry in profiles.get("gpus", {}).items():
+                if entry.get("summary") == summary:
+                    resolved_gpu = name
+                    break
+            throughput_table = get_gpu_throughput_table(gpu_name=resolved_gpu)
+
+        fit_cfg = FitConfig(
+            preset=preset,
+            seeds=seeds,
+            iters=iters,
+            config=config,
+            progressive=batch_progressive,
+            splats_per_pass=batch_splats_per_pass,
+            psnr_patience=batch_psnr_patience,
+            max_passes=batch_max_passes,
+            cull_retention=batch_cull_retention,
+        )
+        denoise_cfg = DenoiseConfig(
+            denoise=batch_denoise,
+            denoise_h=batch_denoise_h,
+            denoise_2d=batch_denoise_2d,
+            patch_size=batch_denoise_patch_size,
+            search_distance=batch_denoise_search_distance,
+            backend=batch_denoise_backend,
+            preprocess=False,  # local runner denoises on-the-fly per tile
+        )
+        content_cfg = ContentKnobs(
+            cal=cal,
+            k_star_ref=k_star_ref,
+            n_features_ref=n_features_ref,
+            saturation_exponent=saturation_exponent,
+            saturation_cap=saturation_cap,
+            feature_threshold=feature_threshold,
+            feature_metric=feature_metric,
+            cell=cell,
+            target_features=target_features,
+            min_leaf=min_leaf,
+            max_leaf=max_leaf,
+            plan_timepoint=plan_timepoint,
+            plan_samples=plan_samples,
+        )
+        merge_cfg = MergeConfig(
+            recipe=merge_recipe,
+            channel_colors=channel_colors,
+            n_lods=merge_n_lods,
+            additive_method=merge_additive_method,
+            breakpoints=merge_breakpoints,
+            compression_factor=merge_compression_factor,
+            levels=merge_levels,
+            substitutive_method=merge_substitutive_method,
+            coarsen_dims=merge_coarsen_dims,
+            lod_method=merge_lod_method,
+        )
+        merge_recipe_args = resolve_merge_recipe_args(merge_cfg)
+
+        plan = plan_batch(
+            input_path=input_path,
+            output_dir=output_dir,
+            tiling=tiling,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            axes_list=axes_list,
+            array_key=array_key,
+            timepoints_slice=timepoints_slice,
+            channels_slice=channels_slice,
+            fit=fit_cfg,
+            denoise=denoise_cfg,
+            content=content_cfg,
+            merge=merge_cfg,
+            merge_recipe_args=merge_recipe_args,
+            max_shape=max_shape,
+            throughput_table=throughput_table,
+            resolved_gpu=resolved_gpu,
+        )
+        manifest = plan.manifest
+
+        # Resolve merge colors + recipe params for the streaming merge.
+        colors = None
+        if manifest.channel_colors:
+            colors = [parse_hex_color(c.strip()) for c in manifest.channel_colors]
+        recipe_params = None
+        if manifest.merge_recipe is not None:
+            recipe_params = _build_merge_recipe_params(manifest.merge_recipe_args)
+
+        # Plan summary (which GPUs, how many tasks already done).
+        try:
+            sel = resolve_gpu_selection(gpus)
+            gpu_desc = "CPU" if not sel else f"GPU(s) {sel}"
+        except ValueError as exc:
+            gpu_desc = f"<{exc}>"
+        slot = "boxes" if manifest.mode == "content" else "tiles"
+        aprint("")
+        aprint("=" * 60)
+        aprint("LOCAL BATCH FIT")
+        aprint("=" * 60)
+        aprint(
+            f"  Input: {input_path.name} "
+            f"(T={manifest.n_timepoints}, C={manifest.n_channels}, "
+            f"spatial={'x'.join(str(s) for s in manifest.spatial_shape)})"
+        )
+        aprint(
+            f"  Decomposition: {manifest.mode}, {manifest.n_tiles} {slot}/volume "
+            f"(overlap={tile_overlap})"
+        )
+        aprint(
+            f"  Tasks: {manifest.n_timepoints} x {manifest.n_channels} x "
+            f"{manifest.n_tiles} = {manifest.total_tasks} fits"
+        )
+        aprint(f"  Devices: {gpu_desc} (--jobs-per-gpu {jobs_per_gpu})")
+        if manifest.merge_recipe:
+            aprint(f"  Merge recipe: {manifest.merge_recipe}")
+        aprint(f"  Output: {output_dir}")
+        aprint("")
+
+        if dry_run:
+            aprint("Dry run -- omit --dry-run to actually fit.")
+            raise typer.Exit(0)
+
+        final_path = run_batch_local(
+            manifest,
+            output_dir,
+            gpus=gpus,
+            jobs_per_gpu=jobs_per_gpu,
+            resume=not no_resume,
+            channel_colors=colors,
+            recipe=manifest.merge_recipe,
+            recipe_params=recipe_params,
+        )
+        aprint(f"\nFinal output: {final_path}")
+        aprint(f"Inspect: luxar gsplat info {final_path}")
+        aprint(f"Validate tiles: luxar gsplat batch-fit validate {output_dir}")
+
     except typer.Exit:
         raise
     except Exception as e:
@@ -1341,7 +1371,7 @@ def batch_status_cmd(
     for job states.
 
     Examples:
-        luxar gsplat slurm-fit status output_dir/
+        luxar gsplat batch-fit status output_dir/
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -1377,9 +1407,9 @@ def batch_validate_cmd(
     so they get re-fitted on the next submit.
 
     Examples:
-        luxar gsplat slurm-fit validate output_dir/
+        luxar gsplat batch-fit validate output_dir/
 
-        luxar gsplat slurm-fit validate output_dir/ --fix
+        luxar gsplat batch-fit validate output_dir/ --fix
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -1536,7 +1566,7 @@ def _validate_tile(tile_path: Path) -> str:
     Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
     the consolidated metadata, the format header, and the presence of every
     required array — without decoding any data. A non-v3.0 tile is reported (so
-    ``slurm-fit validate --fix`` never silently deletes an unmigrated tile).
+    ``batch-fit validate --fix`` never silently deletes an unmigrated tile).
     """
     import json
 
@@ -1574,7 +1604,7 @@ def batch_cancel_cmd(
     merge) and cancels them via scancel.
 
     Examples:
-        luxar gsplat slurm-fit cancel output_dir/
+        luxar gsplat batch-fit cancel output_dir/
     """
     import subprocess
 
@@ -1788,15 +1818,15 @@ def batch_merge_cmd(
     ``cal → fit → lod`` chain otherwise can't, since ``lod`` rejects a partition).
 
     Examples:
-        luxar gsplat slurm-fit merge output_dir/
+        luxar gsplat batch-fit merge output_dir/
 
-        luxar gsplat slurm-fit merge output_dir/ --flat
+        luxar gsplat batch-fit merge output_dir/ --flat
 
-        luxar gsplat slurm-fit merge output_dir/ --recipe additive --n-lods 6
+        luxar gsplat batch-fit merge output_dir/ --recipe additive --n-lods 6
 
-        luxar gsplat slurm-fit merge output_dir/ --recipe substitutive -K 4 -L 3
+        luxar gsplat batch-fit merge output_dir/ --recipe substitutive -K 4 -L 3
 
-        luxar gsplat slurm-fit merge output_dir/ --channel-colors "#ff0080,#00ff00"
+        luxar gsplat batch-fit merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
     try:
         from luxar.cli.gsplat_config import parse_hex_color

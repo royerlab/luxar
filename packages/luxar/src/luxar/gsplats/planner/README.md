@@ -7,7 +7,7 @@ splats-per-feature density (`SplatDensity`). Noise-agnostic — the calibration
 owns the tiling / scale / budget axis.
 
 This is the implementation behind **`gsplat fit --tiling content`** (and its
-cluster sibling **`gsplat slurm-fit submit --tiling content`**). It was promoted
+cluster sibling **`gsplat batch-fit submit --tiling content`**). It was promoted
 from the former standalone `gsplat plan` command.
 
 ## Pipeline
@@ -41,5 +41,5 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
 
 - `cli/gsplat_ops/fitting.py::fit_volume` (`fit --tiling content`) and
   `cli/gsplat_ops/planner.py::run_content_fit`.
-- `cli/gsplat_ops/batch.py::batch_submit` (`slurm-fit submit --tiling content`)
+- `cli/gsplat_ops/batch.py::batch_submit` (`batch-fit submit --tiling content`)
   builds one shared `FitPlan` and fans its boxes across a Slurm array.

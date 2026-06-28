@@ -3287,7 +3287,7 @@ class TestMigrateFormatCommand:
 
 class TestAxesSpec:
     """--axes lets single-volume fit/cal consume non-canonically-ordered nD data
-    (the single-volume counterpart of slurm-fit submit --axes)."""
+    (the single-volume counterpart of batch-fit submit --axes)."""
 
     def test_apply_axes_spec_slices_channel_axis(self) -> None:
         from luxar.cli.gsplat_config import _apply_axes_spec

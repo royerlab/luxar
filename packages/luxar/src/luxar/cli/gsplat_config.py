@@ -335,7 +335,7 @@ def _apply_axes_spec(
     (``z``/``y``/``x``/``depth``/``height``/``width``). Each time/channel axis is
     indexed (by ``timepoint``/``channel``, default 0) and dropped; the remaining
     spatial axes are kept in their given order. This is the single-volume
-    counterpart of ``slurm-fit submit --axes`` — it lets ``fit``/``cal`` consume
+    counterpart of ``batch-fit submit --axes`` — it lets ``fit``/``cal`` consume
     data whose axis order isn't the assumed TCZYX/CZYX/ZYX.
     """
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]

@@ -555,30 +555,30 @@ to `module load gcc/14.2` before submitting fit jobs.
 
 ### Batch fitting on Slurm
 
-After building the CUDA extension, use `luxar gsplat slurm-fit submit` to plan and
+After building the CUDA extension, use `luxar gsplat batch-fit submit` to plan and
 submit large-scale fitting jobs. It submits by default; pass `--dry-run` to plan
 without submitting:
 
 ```bash
 # Plan without submitting
-hatch run luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --dry-run
+hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run
 
 # Override axis labels for non-standard zarr layouts
-hatch run luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
+hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x
 
 # Submit with sequential task packing (default)
-hatch run luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu
+hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu
 
 # Parallel task packing (multiple fits sharing one GPU)
-hatch run luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --parallel
+hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --parallel
 
 # Manual control
-hatch run luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
+hatch run luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --tile-size 256 --tasks-per-job 3 --preset draft
 ```
 
-**Key CLI options for `slurm-fit submit`:**
+**Key CLI options for `batch-fit submit`:**
 
 | Option | Purpose |
 |--------|---------|

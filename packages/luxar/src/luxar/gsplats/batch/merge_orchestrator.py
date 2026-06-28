@@ -156,7 +156,7 @@ def _tile_path(
         return None  # ran, legitimately produced 0 splats — skip this slot
     raise FileNotFoundError(
         f"Missing tile output: {tile_path}\n"
-        f"Run `luxar gsplat slurm-fit status {tiles_dir.parent}` "
+        f"Run `luxar gsplat batch-fit status {tiles_dir.parent}` "
         f"to check job status."
     )
 

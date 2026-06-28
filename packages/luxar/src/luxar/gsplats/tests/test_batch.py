@@ -433,7 +433,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat slurm-fit merge" in script
+        assert "luxar gsplat batch-fit merge" in script
         assert "#SBATCH --job-name=luxar-merge" in script
         # No recipe planned → plain partition merge (no --recipe flag).
         assert "--recipe" not in script
@@ -452,7 +452,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat slurm-fit merge" in script
+        assert "luxar gsplat batch-fit merge" in script
         assert "--recipe substitutive" in script
         assert "--compression-factor 4" in script
         assert "--levels 2" in script
@@ -1505,13 +1505,13 @@ class TestMergeOrchestrator:
         )
         save_manifest(manifest, out_dir)
 
-        # Extract the exact `luxar gsplat slurm-fit merge ...` line the Slurm job runs.
+        # Extract the exact `luxar gsplat batch-fit merge ...` line the Slurm job runs.
         script = generate_merge_sbatch(manifest, "# env\n")
-        merge_line = next(ln for ln in script.splitlines() if "slurm-fit merge" in ln)
+        merge_line = next(ln for ln in script.splitlines() if "batch-fit merge" in ln)
         tokens = shlex.split(merge_line)
         merge_idx = tokens.index("merge")
-        # app_batch is the `slurm-fit` sub-app, so keep `merge` as its subcommand;
-        # drop only the `luxar gsplat slurm-fit` prefix.
+        # app_batch is the `batch-fit` sub-app, so keep `merge` as its subcommand;
+        # drop only the `luxar gsplat batch-fit` prefix.
         cli_args = tokens[merge_idx:]
         # Point the (absolute) output_dir arg at the tmp dir (already is).
         assert "--recipe" in cli_args and "substitutive" in cli_args
@@ -1607,7 +1607,7 @@ class TestMergeOrchestrator:
 
 
 class TestContentSubmitDryRun:
-    """End-to-end wiring of `slurm-fit submit --tiling content` (no Slurm needed):
+    """End-to-end wiring of `batch-fit submit --tiling content` (no Slurm needed):
     it builds the shared box plan from a representative (t,c) and would fan it
     across the array. --dry-run writes plan.json during planning, then exits."""
 
@@ -1641,7 +1641,7 @@ class TestContentSubmitDryRun:
         res = runner.invoke(
             app_gsplat,
             [
-                "slurm-fit",
+                "batch-fit",
                 "submit",
                 str(src),
                 str(out),
@@ -1720,7 +1720,7 @@ class TestContentSubmitDryRun:
         res = CliRunner().invoke(
             app_gsplat,
             [
-                "slurm-fit",
+                "batch-fit",
                 "submit",
                 str(src),
                 str(out),
@@ -2004,7 +2004,7 @@ class TestContentMerge:
         assert st.unknown == 0
 
     def test_validate_reports_empty_box_separately(self, tmp_path: Path) -> None:
-        """`slurm-fit validate` counts an empty box as EMPTY, not MISSING."""
+        """`batch-fit validate` counts an empty box as EMPTY, not MISSING."""
         from typer.testing import CliRunner
 
         from luxar.cli.gsplat_commands import app_gsplat
@@ -2022,7 +2022,7 @@ class TestContentMerge:
         ).write_text("")
         save_manifest(self._content_manifest(out, n_boxes), out)
 
-        res = CliRunner().invoke(app_gsplat, ["slurm-fit", "validate", str(out)])
+        res = CliRunner().invoke(app_gsplat, ["batch-fit", "validate", str(out)])
         assert res.exit_code == 0, res.output
         assert "EMPTY:      1" in res.output
         assert "MISSING:    0" in res.output
@@ -2041,7 +2041,7 @@ class TestContentMerge:
         res = CliRunner().invoke(
             app_gsplat,
             [
-                "slurm-fit",
+                "batch-fit",
                 "submit",
                 str(src),
                 str(tmp_path / "o"),
@@ -2059,7 +2059,7 @@ class TestContentMerge:
 
 
 class TestSubmitRecipeValidation:
-    """slurm-fit submit --merge-recipe must reject cross-recipe knobs (fail-fast,
+    """batch-fit submit --merge-recipe must reject cross-recipe knobs (fail-fast,
     matching `fit --recipe` and `gsplat lod`) instead of silently dropping them."""
 
     def test_merge_recipe_rejects_cross_recipe_knob(self, tmp_path: Path) -> None:
@@ -2075,7 +2075,7 @@ class TestSubmitRecipeValidation:
         res = CliRunner().invoke(
             app_gsplat,
             [
-                "slurm-fit",
+                "batch-fit",
                 "submit",
                 str(src),
                 str(tmp_path / "o"),
@@ -2100,7 +2100,7 @@ class TestSubmitRecipeValidation:
 
 
 class TestMergeRecipeAdditiveKnobs:
-    """slurm-fit merge/submit reach parity with fit --recipe / gsplat lod: the
+    """batch-fit merge/submit reach parity with fit --recipe / gsplat lod: the
     additive ladder method/breakpoints and the lod-method are tunable."""
 
     def test_build_merge_recipe_params_additive_knobs(self) -> None:
@@ -2158,7 +2158,7 @@ class TestMergeRecipeAdditiveKnobs:
             )
 
     def test_submit_threads_additive_knobs_into_sbatch(self, tmp_path: Path) -> None:
-        """`slurm-fit submit --merge-recipe additive --merge-additive-method ...`
+        """`batch-fit submit --merge-recipe additive --merge-additive-method ...`
         records the knobs in the manifest and the merge sbatch invokes them."""
         import zarr
         from typer.testing import CliRunner
@@ -2183,7 +2183,7 @@ class TestMergeRecipeAdditiveKnobs:
             res = CliRunner().invoke(
                 app_gsplat,
                 [
-                    "slurm-fit",
+                    "batch-fit",
                     "submit",
                     str(src),
                     str(out),
@@ -2225,7 +2225,7 @@ class TestMergeRecipeAdditiveKnobs:
         res = CliRunner().invoke(
             app_gsplat,
             [
-                "slurm-fit",
+                "batch-fit",
                 "submit",
                 str(src),
                 str(tmp_path / "o"),
