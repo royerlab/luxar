@@ -331,15 +331,21 @@ def fit_volume(
     ),
     # Input selection for multi-array formats
     channel: Optional[int] = typer.Option(
-        None, "--channel", help="Channel index for 5D OME-ZARR",
+        None,
+        "--channel",
+        help="Channel index for 5D OME-ZARR",
         rich_help_panel="Input selection",
     ),
     timepoint: Optional[int] = typer.Option(
-        None, "--timepoint", help="Timepoint index for 5D OME-ZARR",
+        None,
+        "--timepoint",
+        help="Timepoint index for 5D OME-ZARR",
         rich_help_panel="Input selection",
     ),
     array_key: Optional[str] = typer.Option(
-        None, "--array-key", help="Array key within .npz or .zarr",
+        None,
+        "--array-key",
+        help="Array key within .npz or .zarr",
         rich_help_panel="Input selection",
     ),
     axes: Optional[str] = typer.Option(
@@ -388,7 +394,9 @@ def fit_volume(
         rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(
-        32, "--overlap", help="Overlap between tiles in voxels",
+        32,
+        "--overlap",
+        help="Overlap between tiles in voxels",
         rich_help_panel="Tiling",
     ),
     tile: Optional[str] = typer.Option(
@@ -619,27 +627,39 @@ def fit_volume(
     ),
     # Denoising
     denoise: bool = typer.Option(
-        False, "--denoise", help="Denoise volume before fitting (NLM)",
+        False,
+        "--denoise",
+        help="Denoise volume before fitting (NLM)",
         rich_help_panel="Denoising",
     ),
     denoise_h: Optional[float] = typer.Option(
-        None, "--denoise-h", help="Manual NLM h value (skip auto-calibration)",
+        None,
+        "--denoise-h",
+        help="Manual NLM h value (skip auto-calibration)",
         rich_help_panel="Denoising",
     ),
     denoise_2d: bool = typer.Option(
-        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D",
+        False,
+        "--denoise-2d",
+        help="Use 2D NLM (slice-by-slice) instead of 3D",
         rich_help_panel="Denoising",
     ),
     denoise_patch_size: int = typer.Option(
-        3, "--denoise-patch-size", help="NLM patch size (odd integer)",
+        3,
+        "--denoise-patch-size",
+        help="NLM patch size (odd integer)",
         rich_help_panel="Denoising",
     ),
     denoise_search_distance: int = typer.Option(
-        5, "--denoise-search-distance", help="NLM search window half-size",
+        5,
+        "--denoise-search-distance",
+        help="NLM search window half-size",
         rich_help_panel="Denoising",
     ),
     denoise_backend: str = typer.Option(
-        "auto", "--denoise-backend", help="NLM backend: auto/cuda/pytorch/skimage",
+        "auto",
+        "--denoise-backend",
+        help="NLM backend: auto/cuda/pytorch/skimage",
         rich_help_panel="Denoising",
     ),
 ) -> None:
@@ -780,6 +800,11 @@ def fit_volume(
                     device=device,
                     volume_ndim=volume.ndim,
                 )
+                from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
+
+                _w = uniform_per_part_lod_warning(resolved_tiling, recipe)
+                if _w:
+                    aprint(f"⚠ {_w}")
 
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
@@ -1053,6 +1078,7 @@ def fit_volume(
                             channel=channel,
                             timepoint=timepoint,
                             array_key=array_key,
+                            axes=axes,
                             progressive=progressive,
                             max_splats_per_pass=max_splats_per_pass,
                             psnr_patience=psnr_patience,
@@ -1704,11 +1730,44 @@ def calibrate_command(
 
                 from luxar.gsplats.calibration import calibrate_saturation_exponent
 
-                scales = (
-                    [int(x) for x in exponent_scales.split(",") if x.strip()]
-                    if exponent_scales
-                    else [128, 192, 256]
-                )
+                if exponent_scales:
+                    try:
+                        raw_scales = [
+                            int(x) for x in exponent_scales.split(",") if x.strip()
+                        ]
+                    except ValueError as e:
+                        raise typer.BadParameter(
+                            "--exponent-scales must be comma-separated integers; "
+                            f"got {exponent_scales!r}"
+                        ) from e
+                else:
+                    raw_scales = [128, 192, 256]
+                if any(s <= 0 for s in raw_scales):
+                    raise typer.BadParameter(
+                        f"--exponent-scales must be positive; got {raw_scales}"
+                    )
+                # Dedupe (preserve order) — duplicate scales just waste a K-sweep
+                # and collapse to one regression point.
+                scales = list(dict.fromkeys(raw_scales))
+                if len(scales) < len(raw_scales):
+                    aprint(f"⚠ --exponent-scales: dropped duplicates → {scales}")
+                # Drop scales larger than every spatial axis: they clamp to the
+                # whole volume and collapse to identical feature counts (the silent
+                # regression killer the agent review flagged).
+                _max_dim = int(max(volume_full.shape))
+                _too_big = [s for s in scales if s > _max_dim]
+                if _too_big:
+                    scales = [s for s in scales if s <= _max_dim]
+                    aprint(
+                        f"⚠ --exponent-scales: dropped {_too_big} > volume "
+                        f"({_max_dim} vox) — they clamp to the whole volume."
+                    )
+                if len(scales) < 2:
+                    raise typer.BadParameter(
+                        "--exponent-scales needs ≥2 distinct scales within the "
+                        f"volume ({_max_dim} vox) to regress an exponent; "
+                        f"got {scales}."
+                    )
                 with asection(
                     f"Fitting saturation exponent over {len(scales)} scale(s)"
                 ):

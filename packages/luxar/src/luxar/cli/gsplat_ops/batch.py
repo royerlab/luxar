@@ -26,6 +26,37 @@ app_batch = typer.Typer(
 )
 
 
+def _select_plan_timepoints(
+    t_indices: list[int], plan_timepoint: Optional[int], plan_samples: int
+) -> list[int]:
+    """Pick which timepoints to scan when building the shared content box plan.
+
+    A pinned ``plan_timepoint`` scans just that timepoint (it must be one of the
+    selected ``t_indices``); otherwise return up to ``plan_samples`` evenly-spaced
+    timepoints (endpoints included, deduplicated) to max-project — so the plan
+    covers any region with signal at ANY timepoint rather than leaving holes where
+    content moved over time. Raises :class:`typer.BadParameter` on invalid input.
+    """
+    if plan_timepoint is not None:
+        if plan_timepoint not in t_indices:
+            raise typer.BadParameter(
+                f"--plan-timepoint {plan_timepoint} is not in the selected "
+                f"timepoints {t_indices[0]}..{t_indices[-1]} "
+                f"({len(t_indices)} total)."
+            )
+        return [plan_timepoint]
+    if plan_samples < 1:
+        raise typer.BadParameter(f"--plan-samples must be >= 1, got {plan_samples}.")
+    if len(t_indices) <= plan_samples:
+        return list(t_indices)
+    import numpy as _np
+
+    idx = _np.unique(
+        _np.linspace(0, len(t_indices) - 1, plan_samples).round().astype(int)
+    )
+    return [t_indices[i] for i in idx]
+
+
 @app_batch.command("submit")
 def batch_submit(
     input_path: Path = typer.Argument(..., exists=True, help="Input OME-Zarr dataset"),
@@ -51,8 +82,18 @@ def batch_submit(
     plan_timepoint: Optional[int] = typer.Option(
         None,
         "--plan-timepoint",
-        help="[--tiling content] Representative timepoint to scan for the shared "
-        "box plan (default: the first selected timepoint).",
+        help="[--tiling content] Scan ONLY this single timepoint for the shared "
+        "box plan. Default (unset): max-project up to --plan-samples timepoints so "
+        "boxes cover any region with signal at ANY timepoint (avoids holes where "
+        "content moves over time).",
+        rich_help_panel="Content-aware tiling",
+    ),
+    plan_samples: int = typer.Option(
+        16,
+        "--plan-samples",
+        help="[--tiling content] Max number of evenly-spaced timepoints to "
+        "max-project when building the shared box plan (default 16; ignored when "
+        "--plan-timepoint pins a single timepoint).",
         rich_help_panel="Content-aware tiling",
     ),
     cal: Optional[Path] = typer.Option(
@@ -163,27 +204,39 @@ def batch_submit(
         rich_help_panel="Denoising",
     ),
     batch_denoise_h: Optional[float] = typer.Option(
-        None, "--denoise-h", help="Manual NLM h (skip calibration)",
+        None,
+        "--denoise-h",
+        help="Manual NLM h (skip calibration)",
         rich_help_panel="Denoising",
     ),
     batch_denoise_2d: bool = typer.Option(
-        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D",
+        False,
+        "--denoise-2d",
+        help="Use 2D NLM (slice-by-slice) instead of 3D",
         rich_help_panel="Denoising",
     ),
     batch_denoise_patch_size: int = typer.Option(
-        3, "--denoise-patch-size", help="NLM patch size",
+        3,
+        "--denoise-patch-size",
+        help="NLM patch size",
         rich_help_panel="Denoising",
     ),
     batch_denoise_search_distance: int = typer.Option(
-        5, "--denoise-search-distance", help="NLM search distance",
+        5,
+        "--denoise-search-distance",
+        help="NLM search distance",
         rich_help_panel="Denoising",
     ),
     batch_denoise_backend: str = typer.Option(
-        "auto", "--denoise-backend", help="NLM backend",
+        "auto",
+        "--denoise-backend",
+        help="NLM backend",
         rich_help_panel="Denoising",
     ),
     batch_calibration_samples: int = typer.Option(
-        5, "--calibration-samples", help="Timepoints to sample for h calibration",
+        5,
+        "--calibration-samples",
+        help="Timepoints to sample for h calibration",
         rich_help_panel="Denoising",
     ),
     batch_preprocess: Optional[bool] = typer.Option(
@@ -194,7 +247,10 @@ def batch_submit(
     ),
     # Slurm params
     partition: Optional[str] = typer.Option(
-        None, "--partition", "-p", help="Slurm partition (required)",
+        None,
+        "--partition",
+        "-p",
+        help="Slurm partition (required)",
         rich_help_panel="Slurm resources",
     ),
     max_concurrent: Optional[int] = typer.Option(
@@ -228,9 +284,7 @@ def batch_submit(
     account: Optional[str] = typer.Option(
         None, "--account", "-A", rich_help_panel="Slurm resources"
     ),
-    qos: Optional[str] = typer.Option(
-        None, "--qos", rich_help_panel="Slurm resources"
-    ),
+    qos: Optional[str] = typer.Option(None, "--qos", rich_help_panel="Slurm resources"),
     gpus: int = typer.Option(
         1, "--gpus", help="GPUs per task", rich_help_panel="Slurm resources"
     ),
@@ -241,20 +295,28 @@ def batch_submit(
         32, "--mem", help="Memory per task (GB)", rich_help_panel="Slurm resources"
     ),
     time_limit: Optional[str] = typer.Option(
-        None, "--time", help="Wall time per task override (HH:MM:SS)",
+        None,
+        "--time",
+        help="Wall time per task override (HH:MM:SS)",
         rich_help_panel="Slurm resources",
     ),
     gpu_name_opt: Optional[str] = typer.Option(
-        None, "--gpu", help="GPU name from profile (auto-detect if omitted)",
+        None,
+        "--gpu",
+        help="GPU name from profile (auto-detect if omitted)",
         rich_help_panel="Slurm resources",
     ),
     gpu_mem: Optional[int] = typer.Option(
-        None, "--gpu-mem", help="Target GPU memory in GB (picks closest profile)",
+        None,
+        "--gpu-mem",
+        help="Target GPU memory in GB (picks closest profile)",
         rich_help_panel="Slurm resources",
     ),
     # Merge
     channel_colors: Optional[str] = typer.Option(
-        None, "--channel-colors", help="Hex colors for per-channel merge",
+        None,
+        "--channel-colors",
+        help="Hex colors for per-channel merge",
         rich_help_panel="Merge LOD",
     ),
     merge_recipe: Optional[str] = typer.Option(
@@ -269,7 +331,9 @@ def batch_submit(
         rich_help_panel="Merge LOD",
     ),
     merge_n_lods: Optional[int] = typer.Option(
-        None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe.",
+        None,
+        "--merge-n-lods",
+        help="Additive ladder depth for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),
     merge_additive_method: Optional[str] = typer.Option(
@@ -287,11 +351,15 @@ def batch_submit(
         rich_help_panel="Merge LOD",
     ),
     merge_compression_factor: Optional[int] = typer.Option(
-        None, "--merge-compression-factor", help="Substitutive K for --merge-recipe.",
+        None,
+        "--merge-compression-factor",
+        help="Substitutive K for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),
     merge_levels: Optional[int] = typer.Option(
-        None, "--merge-levels", help="Substitutive level count for --merge-recipe.",
+        None,
+        "--merge-levels",
+        help="Substitutive level count for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),
     merge_substitutive_method: Optional[str] = typer.Option(
@@ -311,8 +379,7 @@ def batch_submit(
     merge_lod_method: Optional[str] = typer.Option(
         None,
         "--merge-lod-method",
-        help="LOD switch threshold for --merge-recipe substitutive "
-        "(extent | count).",
+        help="LOD switch threshold for --merge-recipe substitutive (extent | count).",
         rich_help_panel="Merge LOD",
     ),
     # Dataset structure override
@@ -556,6 +623,8 @@ def batch_submit(
             # reuse it for every (t, c) — each array task fits one box of this plan
             # (`fit --tiling content --plan plan.json --plan-box $K`). No GPU
             # profile needed; tile_size is irrelevant (the sbatch omits it).
+            import numpy as _np
+
             from luxar.cli.gsplat_config import load_volume
             from luxar.cli.gsplat_ops.planner import _resolve_density
             from luxar.gsplats.planner import plan_volume
@@ -563,12 +632,32 @@ def batch_submit(
                 max_padded_box_voxels,
             )
 
-            rep_t = plan_timepoint if plan_timepoint is not None else t_indices[0]
             rep_c = c_indices[0]
-            with asection(f"Content plan (scan t={rep_t}, c={rep_c})"):
+            # Which timepoints to scan for the shared plan: a pinned single
+            # timepoint, or an evenly-spaced sample to max-project (so boxes cover
+            # any region with signal at ANY timepoint — content can move over time).
+            plan_t_samples = _select_plan_timepoints(
+                t_indices, plan_timepoint, plan_samples
+            )
+            scan_desc = (
+                f"t={plan_t_samples[0]}"
+                if len(plan_t_samples) == 1
+                else f"max-proj of {len(plan_t_samples)} timepoints"
+            )
+            with asection(f"Content plan (scan {scan_desc}, c={rep_c})"):
                 rep_vol = load_volume(
-                    input_path, channel=rep_c, timepoint=rep_t, array_key=array_key
+                    input_path,
+                    channel=rep_c,
+                    timepoint=plan_t_samples[0],
+                    array_key=array_key,
                 )
+                # Stream the max-projection one timepoint at a time (peak memory =
+                # two volumes), so a long movie never loads all samples at once.
+                for _t in plan_t_samples[1:]:
+                    _v = load_volume(
+                        input_path, channel=rep_c, timepoint=_t, array_key=array_key
+                    )
+                    rep_vol = _np.maximum(rep_vol, _v)
                 density = _resolve_density(
                     cal,
                     k_star_ref,
@@ -860,6 +949,12 @@ def batch_submit(
             if merge_coarsen_dims is not None:
                 merge_recipe_args["coarsen-dims"] = merge_coarsen_dims
 
+            from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
+
+            _w = uniform_per_part_lod_warning(mode, merge_recipe)
+            if _w:
+                aprint(f"⚠ {_w}")
+
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
         if preemptible:
@@ -1041,8 +1136,7 @@ def batch_submit(
             aprint("  Tile: not needed (volume fits in GPU memory)")
         slot = "boxes" if mode == "content" else "tiles"
         aprint(
-            f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks "
-            f"({slot})"
+            f"  Jobs: {n_t} x {n_c} x {n_tiles} = {total_tasks} fitting tasks ({slot})"
         )
         if tasks_per_job > 1:
             mode = "parallel" if parallel else "sequential"
@@ -1713,6 +1807,12 @@ def batch_merge_cmd(
         # Resolve the per-part recipe + its knobs, CLI overriding the values
         # recorded at plan time (manifest.merge_recipe / merge_recipe_args).
         eff_recipe = recipe or manifest.merge_recipe
+        if eff_recipe is not None:
+            from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
+
+            _w = uniform_per_part_lod_warning(manifest.mode, eff_recipe)
+            if _w:
+                aprint(f"⚠ {_w}")
         recipe_params = None
         if eff_recipe is not None:
             recipe_params = _build_merge_recipe_params(

@@ -258,16 +258,19 @@ luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu                    # 
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tile-size 256    # Manual tile size (skips GPU profile)
-# Content-aware cluster fan-out: build ONE content-balanced box plan (from a
-# representative timepoint, --plan-timepoint) and reuse it for every (t,c) — the
-# cluster sibling of `fit --tiling content`. Needs a density (--cal or
-# --k-star-ref/--n-features-ref); no GPU profile required. Each array task fits
-# one box; merge streams a kind=partition. Density knobs match `fit`: --cal /
-# --k-star-ref / --n-features-ref / --saturation-exponent / --feature-metric /
-# --cell / --min-leaf / --max-leaf / --target-features.
+# Content-aware cluster fan-out: build ONE content-balanced box plan and reuse it
+# for every (t,c) — the cluster sibling of `fit --tiling content`. By default the
+# plan is scanned from a temporal MAX-PROJECTION over up to --plan-samples
+# (default 16) evenly-spaced timepoints, so boxes cover any region with signal at
+# ANY timepoint (no holes where content moves over time); --plan-timepoint N pins
+# a single timepoint instead. Needs a density (--cal or --k-star-ref/
+# --n-features-ref); no GPU profile required. Each array task fits one box; merge
+# streams a kind=partition. Density knobs match `fit`: --cal / --k-star-ref /
+# --n-features-ref / --saturation-exponent / --feature-metric / --cell /
+# --min-leaf / --max-leaf / --target-features.
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tiling content --cal cal.json
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tiling content \
-    --k-star-ref 60000 --n-features-ref 5000 --plan-timepoint 100   # density knobs + rep timepoint
+    --k-star-ref 60000 --n-features-ref 5000 --plan-samples 24   # density knobs + 24-timepoint max-proj plan
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
 luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \

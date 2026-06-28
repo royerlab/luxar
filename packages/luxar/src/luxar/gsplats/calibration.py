@@ -997,6 +997,13 @@ def fit_saturation_exponent(
 
     x = np.log(nf_arr)
     y = np.log(ks_arr)
+    # Guard an ill-conditioned slope: distinct-but-near-identical feature counts
+    # (e.g. 1e6 vs 1e6+1 on a huge volume) give a near-zero x-spread in log space,
+    # so lstsq returns a noise-dominated alpha. ptp(x) < 1e-3 ≈ a <0.1% feature
+    # ratio between the extremes — too little spread to regress. Treat as
+    # un-fittable (caller keeps the default exponent) rather than emit garbage.
+    if float(np.ptp(x)) < 1e-3:
+        return None
     A = np.vstack([x, np.ones_like(x)]).T
     sol, *_ = np.linalg.lstsq(A, y, rcond=None)
     alpha, intercept = float(sol[0]), float(sol[1])

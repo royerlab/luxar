@@ -16,13 +16,37 @@ Four gsplat additions, each deep-double-checked:
   and re-deriving the extent-based `min_pixel_size` LOD thresholds.
 - **`fit --recipe additive|substitutive`** — a tiled fit can emit per-part LOD
   (the `partitioned` / `mosaic` topology) at fit time, without a separate `lod`
-  pass (which rejects a partition). Mirrors the `lod` knobs.
+  pass (which rejects a partition). Mirrors the `lod` knobs. **Any** per-part
+  recipe on `--tiling uniform` (Hann-apodized, overlapping) tiles now warns: the
+  halos form a partition of unity that holds only at the finest level, so per-part
+  coarsening is approximate at coarse levels — `additive` drops the low-amplitude
+  halo splats (overlap dims to a seam), `substitutive` merges them per-part
+  (overlap smears). `--tiling content` (disjoint core-keep parts) stays exact.
+  The warning fires from all three entry points (`fit --recipe`,
+  `slurm-fit submit --merge-recipe`, `slurm-fit merge --recipe`).
 - **`cal --fit-exponent` / `--exponent-scales`** — measures the saturation
   exponent α in `K ~ features^α` (instead of assuming 0.44) by regressing K\* over
   several region scales; the fitted α flows into `fit --tiling content` budgets.
 - **`slurm-fit submit --tiling content`** — the cluster sibling of
   `fit --tiling content`: one shared content-balanced box plan fanned across the
   Slurm array (`--plan-timepoint`, density knobs), merged into a `kind=partition`.
+  The shared plan is now built from a **temporal max-projection** over up to
+  `--plan-samples` (default 16) evenly-spaced timepoints, so boxes cover any
+  region with signal at *any* timepoint — fixing silent spatial holes where
+  content moved over time and a single representative timepoint missed it.
+  `--plan-timepoint` still pins a single timepoint when desired and is now
+  range-checked at submit.
+
+#### Fixed — review follow-ups (per-part-LOD-on-uniform warning, content 4D holes, cal exponent validation)
+
+- Broadened the uniform per-part-LOD warning to cover `additive` (not just
+  `substitutive`) — both break the halo partition-of-unity at coarse levels.
+- `slurm-fit submit --tiling content` plans from a capped temporal max-projection
+  (see above) instead of one timepoint, and range-checks `--plan-timepoint`.
+- `cal --fit-exponent` validates `--exponent-scales` (positive, deduplicated,
+  dropped when larger than the volume, ≥2 distinct required, friendly parse
+  errors) and the log-log regression now rejects a near-zero feature-count spread
+  (ill-conditioned slope) rather than emitting a garbage exponent.
 
 #### Fixed — Large LOD scenes exhausted the browser (unbounded chunk fetches)
 
