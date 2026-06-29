@@ -525,10 +525,11 @@ class TestConvertCommand:
         assert "gsplats" in store
         gsplats_group = store["gsplats"]
         assert gsplats_group.attrs.get("type") == "gsplats"
-        # Should have data arrays
+        # Should have data arrays (v3.1 splits Cholesky into diag + offdiag)
         assert "centers" in gsplats_group
         assert "amplitudes" in gsplats_group
-        assert "cholesky_factors" in gsplats_group
+        assert "cholesky_factors_diag" in gsplats_group
+        assert "cholesky_factors_offdiag" in gsplats_group
 
 
 class TestRenderCommand:
@@ -3201,6 +3202,31 @@ class TestMigrateFormatCommand:
         assert data.n_substitutive == 1
         assert data.n_additive_sublods == 1
         assert data.n_splats == 7
+
+    def test_migrate_v1_0_lossless_flag(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`--lossless` preserves legacy float32 Cholesky factors exactly."""
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "lossless.gsplats.zarr"
+        self._make_v1_0(legacy, n=7)
+        src_chol = np.asarray(
+            zarr.open_group(str(legacy), mode="r")["splats"]["cholesky_factors"]
+        )
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out), "--lossless"],
+        )
+        assert result.exit_code == 0, f"--lossless migrate failed:\n{result.stdout}"
+        data = GSplatData.load(out)
+        np.testing.assert_array_equal(
+            data.additive_sublods[0].cholesky_factors, src_chol
+        )
 
     def test_migrate_v1_1(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData

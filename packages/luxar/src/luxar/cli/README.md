@@ -228,20 +228,21 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to the current v3.0 node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single v3.0 `.gsplats.zarr`.
+Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single current-format `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16 per-column quantization (~2× smaller); pass `--lossless` to keep them float32 for archival fidelity.
 ```bash
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr   # single file
-luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr             # substitutive directory
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
+luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                        # substitutive directory
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # preserve float32 Cholesky exactly
 ```
 
-**Options**: `--overwrite`, `--quiet/-q`.
+**Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
 
 #### `luxar gsplat lod`
 Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
 required `--recipe` flag. Recipes are scale-ordered: `flat`, `additive`,
 `partitioned`, `multiscale`, `mosaic`, plus the `substitutive` and `pyramid`
 primitives.
-Output is a standalone v3.0 `.gsplats.zarr` (graft into a scene from Python via
+Output is a standalone `.gsplats.zarr` (graft into a scene from Python via
 `add_gsplats_from_file` / `gsplat convert`).
 
 ```bash

@@ -107,6 +107,34 @@ def test_partition_requires_children():
         GSplatPartition(children=[])
 
 
+# ── mixed-dimensionality rejection ───────────────────────────────────────
+# ndim is read from the first sub-LOD/child; a mix would silently mis-describe
+# the rest (and serialize/recombine inconsistently), so it must be rejected.
+
+
+def test_leaf_rejects_mixed_ndim_sublods():
+    with pytest.raises(ValueError, match="share one dimensionality"):
+        GSplatLeaf(additive_sublods=[_sublod(10, ndim=3), _sublod(5, ndim=2)])
+
+
+def test_lod_group_rejects_mixed_ndim_children():
+    with pytest.raises(ValueError, match="share one dimensionality"):
+        GSplatLodGroup(children=[_leaf(10, ndim=3), _leaf(5, ndim=4)])
+
+
+def test_partition_rejects_mixed_ndim_children():
+    with pytest.raises(ValueError, match="share one dimensionality"):
+        GSplatPartition(children=[_leaf(30, ndim=3), _leaf(20, ndim=2)])
+
+
+def test_nested_mixed_ndim_rejected_at_inner_node():
+    # The inner lod group is built first and raises before the partition sees it.
+    with pytest.raises(ValueError, match="share one dimensionality"):
+        GSplatPartition(
+            children=[GSplatLodGroup(children=[_leaf(10, ndim=3), _leaf(5, ndim=2)])]
+        )
+
+
 # ── structural helpers ──────────────────────────────────────────────────
 
 
@@ -490,7 +518,9 @@ def test_without_meta_key_scrubs_group_and_leaf_meta():
         children=[leaf_a, GSplatLeaf(additive_sublods=[_sublod(6, seed=1)])],
         meta={"min_pixel_size": 99.0},
     )
-    root = GSplatLodGroup(children=[_leaf(3, seed=2), fine], meta={"min_pixel_size": 5.0})
+    root = GSplatLodGroup(
+        children=[_leaf(3, seed=2), fine], meta={"min_pixel_size": 5.0}
+    )
 
     scrubbed = without_meta_key(root, "min_pixel_size")
     assert "min_pixel_size" not in scrubbed.meta  # root group

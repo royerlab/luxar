@@ -1514,13 +1514,39 @@ def batch_validate_cmd(
 
 
 def _validate_leaf_arrays(node_dir: Path, label: str) -> str:
-    """Check a v3.0 gsplats leaf's required array sub-dirs (no decode)."""
-    for arr_name in ("centers", "amplitudes", "cholesky_factors"):
+    """Check a v3.x gsplats leaf's required array sub-dirs (no decode)."""
+    import json
+
+    # Cholesky factors are stored as the v3.1 split (``cholesky_factors_diag``,
+    # optionally + ``cholesky_factors_offdiag``) or a single v3.0
+    # ``cholesky_factors`` array. The diagonal is the marker for the split.
+    diag_dir = node_dir / "cholesky_factors_diag"
+    is_split = diag_dir.is_dir()
+    chol_name = "cholesky_factors_diag" if is_split else "cholesky_factors"
+    for arr_name in ("centers", "amplitudes", chol_name):
         arr_dir = node_dir / arr_name
         if not arr_dir.is_dir():
             return f"missing_{arr_name}@{label}"
         if not (arr_dir / ".zarray").exists():
             return f"no_zarray_{arr_name}@{label}"
+
+    # v3.1 split: for d > 1 the off-diagonal array is mandatory — only d == 1
+    # omits it. A leaf with the diagonal but no off-diagonal is a partial /
+    # corrupt write; surface it (recoverable via re-fit) rather than passing.
+    if is_split:
+        try:
+            d = int(json.loads((diag_dir / ".zarray").read_text())["shape"][1])
+        except (
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            IndexError,
+            TypeError,  # shape is null / scalar / non-subscriptable
+            ValueError,
+        ):
+            return f"no_zarray_cholesky_factors_diag@{label}"
+        if d > 1 and not (node_dir / "cholesky_factors_offdiag" / ".zarray").exists():
+            return f"missing_cholesky_factors_offdiag@{label}"
     return "ok"
 
 
@@ -1590,8 +1616,10 @@ def _validate_tile(tile_path: Path) -> str:
     if attrs.get("format_type") != "gsplats_zarr":
         return f"bad_format_type: {attrs.get('format_type')}"
 
+    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+
     version = attrs.get("format_version")
-    if version != "3.0":
+    if version not in SUPPORTED_FORMAT_VERSIONS:
         # Not corrupt — just unmigrated. Surface it instead of classifying it as
         # corrupt (which would let --fix delete a recoverable tile).
         return f"unsupported_format_version: {version} (run gsplat migrate-format)"

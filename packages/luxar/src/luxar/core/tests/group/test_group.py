@@ -87,7 +87,9 @@ class TestGroupAddData:
         assert ctrs.shape == (1, 3)
         np.testing.assert_allclose(ctrs, centers)
         assert node["amplitudes"].shape[0] == 1
-        assert "cholesky_factors" in node
+        # v3.1: Cholesky stored as a diagonal + off-diagonal split.
+        assert "cholesky_factors_diag" in node
+        assert "cholesky_factors_offdiag" in node
 
     def test_nested_groups(self, tmp_path) -> None:
         """Test nested groups: group.add_group('sub').add_points(...)."""
@@ -233,10 +235,10 @@ class TestMultiLODGSplats:
         assert "substitutive_0" not in grp
         assert grp["additive_0"].attrs["n_splats"] == 5
         assert grp["additive_1"].attrs["n_splats"] == 3
-        # Per-additive arrays
+        # Per-additive arrays (v3.1 splits Cholesky into diag + offdiag)
         assert "centers" in grp["additive_0"]
         assert "amplitudes" in grp["additive_0"]
-        assert "cholesky_factors" in grp["additive_0"]
+        assert "cholesky_factors_diag" in grp["additive_0"]
 
     def test_multi_lod_preserves_per_lod_stats(self, tmp_path) -> None:
         """Per-additive-sub-LOD stats land on each ``additive_<i>`` group."""

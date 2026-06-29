@@ -1,7 +1,7 @@
 /**
  * Standalone .gsplats.zarr bare-node load (Phase 4 end-to-end proof).
  *
- * A v3.0 standalone .gsplats.zarr is a *detached gsplats leaf node*, not a
+ * A v3.x standalone .gsplats.zarr is a *detached gsplats leaf node*, not a
  * scene. Opening it via ?src= must:
  *   1. dispatch the file root as a gsplats leaf (not an empty 'scene'
  *      container) — proven by getState().totalGSplats > 0;

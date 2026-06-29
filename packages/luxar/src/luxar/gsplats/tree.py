@@ -83,6 +83,13 @@ class GSplatLeaf:
     def __post_init__(self) -> None:
         if not self.additive_sublods:
             raise ValueError("GSplatLeaf must contain at least one AdditiveSubLOD")
+        ndims = {int(sub.ndim) for sub in self.additive_sublods}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatLeaf additive sub-LODs must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The leaf's ndim is read from "
+                f"the first sub-LOD, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def n_additive_sublods(self) -> int:
@@ -126,6 +133,13 @@ class GSplatLodGroup:
     def __post_init__(self) -> None:
         if not self.children:
             raise ValueError("GSplatLodGroup must contain at least one child")
+        ndims = {int(c.ndim) for c in self.children}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatLodGroup children must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The group's ndim is read from "
+                f"the first child, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def default_level(self) -> int:
@@ -167,6 +181,13 @@ class GSplatPartition:
     def __post_init__(self) -> None:
         if not self.children:
             raise ValueError("GSplatPartition must contain at least one child")
+        ndims = {int(c.ndim) for c in self.children}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatPartition children must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The partition's ndim is read "
+                f"from the first child, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def n_children(self) -> int:
@@ -291,7 +312,9 @@ def node_percentile_radius(
 # ────────────────────────────────────────────────────────────────────────
 
 
-def map_leaves(node: GSplatNode, fn: "Callable[[GSplatLeaf], GSplatNode]") -> GSplatNode:
+def map_leaves(
+    node: GSplatNode, fn: "Callable[[GSplatLeaf], GSplatNode]"
+) -> GSplatNode:
     """Rebuild the tree with ``fn`` applied to every leaf, preserving its shape.
 
     Walks the (immutable, frozen) tree depth-first and returns a NEW tree of the
@@ -491,9 +514,7 @@ def tree_from_substitutive_levels(
     # chokepoint for substitutive gsplats (save / recipes / .tree all route through
     # this). The CLI validates too; the #4 writers pass a hardcoded literal.
     if lod_method not in ("extent", "count"):
-        raise ValueError(
-            f"lod_method must be 'extent' or 'count', got {lod_method!r}"
-        )
+        raise ValueError(f"lod_method must be 'extent' or 'count', got {lod_method!r}")
     node = node_from_substitutive_levels(levels)
     if isinstance(node, GSplatLeaf):
         return node

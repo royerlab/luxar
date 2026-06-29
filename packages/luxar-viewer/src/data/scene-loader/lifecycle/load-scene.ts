@@ -232,13 +232,20 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
-  // A stale (non-v3.0) standalone .gsplats.zarr opened directly won't render
-  // correctly — surface a migrate hint rather than failing silently.
+  // A stale standalone .gsplats.zarr opened directly won't render correctly —
+  // surface a migrate hint rather than failing silently. v3.0 and v3.1 are both
+  // current (v3.1 splits the Cholesky factors into diag + offdiag); keep this in
+  // sync with Python's SUPPORTED_FORMAT_VERSIONS (gsplats/io/save_gsplats.py).
+  const SUPPORTED_GSPLATS_FORMAT_VERSIONS = ['3.0', '3.1'];
   const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
-  if (fmtType === 'gsplats_zarr' && fmtVersion !== '3.0') {
+  if (
+    fmtType === 'gsplats_zarr' &&
+    !SUPPORTED_GSPLATS_FORMAT_VERSIONS.includes(String(fmtVersion))
+  ) {
     notifier.toast(
-      `This .gsplats.zarr is format ${String(fmtVersion)} (expected 3.0). ` +
+      `This .gsplats.zarr is format ${String(fmtVersion)} (expected one of ` +
+        `${SUPPORTED_GSPLATS_FORMAT_VERSIONS.join(', ')}). ` +
         'Convert it with `luxar gsplat migrate-format <in> <out>`.',
       6000
     );

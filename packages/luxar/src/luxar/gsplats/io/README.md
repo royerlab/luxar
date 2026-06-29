@@ -1,6 +1,6 @@
 # luxar.gsplats.io
 
-I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.0** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely).
+I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.1** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely; v3.1 splits the Cholesky factors into `cholesky_factors_diag` + `cholesky_factors_offdiag`, v3.0 single-array files are still read).
 
 ## Purpose
 
@@ -155,7 +155,8 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 |-------|---------------|---------------------|
 | `centers` | COORDINATE | `float32` (coordinates stay float32 — never quantized) |
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
-| `cholesky_factors` | CHOLESKY | `float32` |
+| `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u16` (AUTO) / `u8` (MEMORY) / `float32` (PRECISION) |
+| `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u16` / `u8` / `float32`; absent if d==1 |
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR, auto-detected) |
 
 **COORDINATE centers always stay float32** for TypeScript/WebGL compatibility:
@@ -175,7 +176,7 @@ float16 on coordinates is a precision footgun, so the v3.0 writer disables it
 
 ## File Format
 
-### Zarr Structure (format v3.0 — node tree)
+### Zarr Structure (format v3.x — node tree)
 
 The file root IS the node. `save_gsplats()` writes the trivial single-leaf
 shape; `write_gsplats_tree()` accepts any `GSplatNode` (leaf / kind=lod /
@@ -190,12 +191,13 @@ fitted.gsplats.zarr/
 │                    #   amplitude_range, center_bounds, position_bounds,
 │                    #   truncation_radius, opacity/gamma/intensity/offset,
 │                    #   blending_mode,
-│                    #   format_version: "3.0", format_type: "gsplats_zarr",
+│                    #   format_version: "3.1", format_type: "gsplats_zarr",
 │                    #   timestamp, luxar_gsplats_version, description?
 ├── .zmetadata       # Consolidated metadata
-├── centers          # (N, d) float32, spatially ordered
-├── amplitudes       # (N,) or (1,) float32
-├── cholesky_factors # (N, k) float32  k = d*(d+1)/2
+├── centers                   # (N, d) float32, spatially ordered
+├── amplitudes                # (N,) or (1,) float32
+├── cholesky_factors_diag     # (N, d) float32          (diagonal of L)
+├── cholesky_factors_offdiag  # (N, d*(d-1)/2) float32  (off-diagonal; absent if d==1)
 ├── colors           # (N, 3) float32/uint8  (optional)
 ├── chunk_bounds     # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/         # Optimization info (optional)
@@ -222,7 +224,7 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for full ASCII trees of all five shapes.
 
 ```json
 {
-  "format_version": "3.0",
+  "format_version": "3.1",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "0.1.0",
@@ -389,9 +391,14 @@ Migration mappings:
 - **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.0 node tree
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 
-Migrated arrays are written with `ordering="none"` so the rewrap is a pure
-byte-equivalent re-pack; fitting/provenance groups are spliced back onto the
-output. The CLI entry point is `luxar gsplat migrate-format`.
+Migrated arrays are written with `ordering="none"` so element order is
+preserved (no Morton/Hilbert re-sort), but **encoding follows the v3.0 policy**:
+under the default `EncodingMode.AUTO`, legacy float32 Cholesky factors are
+re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16
+per-column quantization. Pass `encoding_mode=EncodingMode.PRECISION`
+(`--lossless` on the CLI) for an exact float32 archival migration.
+Fitting/provenance groups are spliced back onto the output. The CLI entry point
+is `luxar gsplat migrate-format`.
 
 ## Architecture
 

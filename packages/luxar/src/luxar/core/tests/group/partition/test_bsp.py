@@ -335,9 +335,10 @@ class TestAddGSplatsPartition:
         for child in sorted(grp.keys()):
             assert grp[child].attrs["type"] == "gsplats"
             total_amps += grp[child]["amplitudes"].shape[0]
-            # cholesky_factors is present on each part (the writer compresses
-            # uniform-Cholesky inputs to a 1-D shape, so the row count varies).
-            assert "cholesky_factors" in grp[child]
+            # Cholesky factors are present on each part. v3.1 stores them as a
+            # diagonal + off-diagonal split (the writer compresses
+            # uniform-Cholesky inputs, so the row count varies).
+            assert "cholesky_factors_diag" in grp[child]
         assert total_amps == 300
 
 
