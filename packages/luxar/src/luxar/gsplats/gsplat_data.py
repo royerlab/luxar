@@ -11,7 +11,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from luxar.encoding import EncodingMode
-    from luxar.gsplats.tree import GSplatNode, GSplatPartition
+    from luxar.gsplats.tree import GSplatLeaf, GSplatNode, GSplatPartition
 
 
 #: Sentinel for ``GSplatData.save(compressor=...)`` distinguishing "not specified"
@@ -67,13 +67,19 @@ def _readonly_opt(arr: "Optional[np.ndarray]") -> "Optional[np.ndarray]":
 
 
 def _readonly_sublod(lod: "AdditiveSubLOD") -> "AdditiveSubLOD":
-    """Rebuild ``lod`` with read-only (zero-copy) array views."""
+    """Rebuild ``lod`` as a fully detached, read-only view.
+
+    Arrays become zero-copy read-only views; ``stats`` is shallow-copied so the
+    view is immutable through-and-through. (A bare ``stats=lod.stats`` alias would
+    let a caller mutate the source node's ``lod_stats`` via a "read-only" view —
+    the same aliasing hazard the array views guard against.)
+    """
     return AdditiveSubLOD(
         centers=_readonly(lod.centers),
         amplitudes=_readonly(lod.amplitudes),
         cholesky_factors=_readonly(lod.cholesky_factors),
         colors=_readonly_opt(lod.colors),
-        stats=lod.stats,
+        stats=dict(lod.stats),
         truncation_radius=lod.truncation_radius,
     )
 
@@ -411,9 +417,26 @@ class GSplatData(_SplatArrayMixin):
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
         substitutive_levels: Optional[List[SubstitutiveLevel]] = None,
         truncation_radius: float = 3.0,
+        _node: "Optional[GSplatNode]" = None,
     ) -> None:
-        if substitutive_levels is not None:
-            # New 2-D construction: full substitutive × additive matrix
+        """Build the single in-memory ground truth: a matrix-shaped node tree.
+
+        The historical ``substitutive_levels`` / ``additive_sublods`` matrix API is
+        preserved as **derived finest-first views** over ``self._node`` (which is
+        stored coarsest-first, matching disk). ``_node`` is the internal fast path
+        (used by :meth:`from_tree`) that stores a pre-built node verbatim.
+        """
+        from luxar.gsplats.tree import (
+            GSplatLeaf,
+            node_from_substitutive_levels,
+        )
+
+        if _node is not None:
+            # Internal: store a pre-built matrix-shaped node verbatim (preserves
+            # authored meta such as min_pixel_size — e.g. straight off disk).
+            self._node: "GSplatNode" = _node
+        elif substitutive_levels is not None:
+            # 2-D construction: full substitutive × additive matrix (finest-first).
             if len(substitutive_levels) == 0:
                 raise ValueError(
                     "substitutive_levels must contain at least one SubstitutiveLevel"
@@ -424,18 +447,7 @@ class GSplatData(_SplatArrayMixin):
                         f"Each entry must be a SubstitutiveLevel, got "
                         f"{type(s).__name__}"
                     )
-            self.substitutive_levels: List[SubstitutiveLevel] = list(
-                substitutive_levels
-            )
-            # The data-model default is fixed at the FINEST level (index 0) — it
-            # is not a settable, persistable concept (the on-disk default_level
-            # is the viewer's separate coarsest-first render hint). Kept as a
-            # constant attribute so accessors document "return the finest".
-            self.default_substitutive: int = 0
-            # Derived: the "primary" additive ladder is the finest level's.
-            self.additive_sublods: List[AdditiveSubLOD] = list(
-                self.substitutive_levels[0].additive_sublods
-            )
+            self._node = node_from_substitutive_levels(list(substitutive_levels))
         elif additive_sublods is not None:
             # Single-substitutive construction with explicit additive sub-LODs
             if len(additive_sublods) == 0:
@@ -448,23 +460,13 @@ class GSplatData(_SplatArrayMixin):
                         f"Each additive sub-LOD must be an AdditiveSubLOD, got "
                         f"{type(sub).__name__}"
                     )
-            self.additive_sublods = list(additive_sublods)
-            # Single substitutive level wrapping the additive ladder
-            self.substitutive_levels = [
-                SubstitutiveLevel(
-                    additive_sublods=list(additive_sublods),
-                    compression_factor=1,
-                    parent_method=None,
-                    level_index=0,
-                )
-            ]
-            self.default_substitutive = 0
+            self._node = GSplatLeaf(additive_sublods=list(additive_sublods))
         elif (
             centers is not None
             and amplitudes is not None
             and cholesky_factors is not None
         ):
-            # Convenience constructor — wrap into single LOD, single substitutive level
+            # Convenience constructor — wrap into a single-LOD leaf.
             single_lod = AdditiveSubLOD(
                 centers=centers,
                 amplitudes=amplitudes,
@@ -473,52 +475,96 @@ class GSplatData(_SplatArrayMixin):
                 stats=stats if stats is not None else {},
                 truncation_radius=truncation_radius,
             )
-            self.additive_sublods = [single_lod]
-            self.substitutive_levels = [
-                SubstitutiveLevel(
-                    additive_sublods=[single_lod],
-                    compression_factor=1,
-                    parent_method=None,
-                    level_index=0,
-                )
-            ]
-            self.default_substitutive = 0
+            self._node = GSplatLeaf(additive_sublods=[single_lod])
         else:
             raise ValueError(
                 "Provide either substitutive_levels=[...], "
                 "additive_sublods=[...], or (centers, amplitudes, cholesky_factors)"
             )
 
-        # Compute cached concatenations from LODs
-        if len(self.additive_sublods) == 1:
+        # Cached concatenations from the FINEST leaf's additive ladder (the
+        # ``.centers``/etc. accessors return the finest/full-resolution level).
+        finest_sublods = self._finest_leaf().additive_sublods
+        if len(finest_sublods) == 1:
             # Fast path: single LOD, no copy
-            lod0 = self.additive_sublods[0]
+            lod0 = finest_sublods[0]
             self.centers = lod0.centers
             self.amplitudes = lod0.amplitudes
             self.cholesky_factors = lod0.cholesky_factors
             self.colors = lod0.colors
         else:
             self.centers = np.concatenate(
-                [lod.centers for lod in self.additive_sublods], axis=0
+                [lod.centers for lod in finest_sublods], axis=0
             )
             self.amplitudes = np.concatenate(
-                [lod.amplitudes for lod in self.additive_sublods]
+                [lod.amplitudes for lod in finest_sublods]
             )
             self.cholesky_factors = np.concatenate(
-                [lod.cholesky_factors for lod in self.additive_sublods], axis=0
+                [lod.cholesky_factors for lod in finest_sublods], axis=0
             )
-            self.colors = _merge_lod_colors(self.additive_sublods)
+            self.colors = _merge_lod_colors(finest_sublods)
 
         # Top-level stats (separate from per-LOD stats)
         if stats is not None:
             self.stats: Dict[str, Any] = stats
-        elif additive_sublods is not None or substitutive_levels is not None:
-            # When constructed via additive_sublods=/substitutive_levels=,
+        elif (
+            _node is not None
+            or additive_sublods is not None
+            or substitutive_levels is not None
+        ):
+            # When constructed via a node / additive_sublods= / substitutive_levels=,
             # start with empty top-level stats
             self.stats = {}
         else:
             # Convenience constructor already set stats on the LOD; mirror it
-            self.stats = dict(self.additive_sublods[0].stats)
+            self.stats = dict(finest_sublods[0].stats)
+
+    def _finest_leaf(self) -> "GSplatLeaf":
+        """The finest :class:`GSplatLeaf` of the matrix-shaped ground-truth node.
+
+        The node is coarsest-first, so the finest level is a bare leaf itself or
+        the last child of the lod group.
+        """
+        from luxar.gsplats.tree import GSplatLeaf
+
+        node = self._node
+        if isinstance(node, GSplatLeaf):
+            return node
+        return node.children[-1]  # type: ignore[return-value]
+
+    # ── Derived matrix views over the ground-truth node (finest-first) ──────
+
+    @property
+    def substitutive_levels(self) -> List[SubstitutiveLevel]:
+        """Finest-first substitutive × additive matrix view, derived from the node.
+
+        Reconstructed on access from ``self._node`` (the single ground truth). Index
+        0 is the finest level — the historical matrix convention — independent of
+        the node's coarsest-first storage order.
+        """
+        from luxar.gsplats.tree import substitutive_levels_from_tree
+
+        return substitutive_levels_from_tree(self._node)[0]
+
+    @property
+    def additive_sublods(self) -> List[AdditiveSubLOD]:
+        """The finest level's additive ladder (the "primary" sub-LODs).
+
+        Returns a fresh list (the ``AdditiveSubLOD`` elements are shared) so a
+        caller mutating it cannot corrupt the ground-truth node or desync the
+        cached ``centers``/``n_splats`` — matching the pre-refactor defensive copy
+        and the sibling ``substitutive_levels`` view's semantics.
+        """
+        return list(self._finest_leaf().additive_sublods)
+
+    @property
+    def default_substitutive(self) -> int:
+        """Index of the data-model default substitutive level (finest = 0).
+
+        Fixed in the finest-first matrix view; not settable. Distinct from the
+        on-disk ``default_level`` (the viewer's coarsest-first progressive-load hint).
+        """
+        return 0
 
     @property
     def truncation_radius(self) -> float:
@@ -664,12 +710,10 @@ class GSplatData(_SplatArrayMixin):
     @property
     def n_substitutive(self) -> int:
         """Number of substitutive levels (always >= 1)."""
-        return len(self.substitutive_levels)
+        from luxar.gsplats.tree import GSplatLeaf
 
-    @property
-    def default_substitutive_level(self) -> SubstitutiveLevel:
-        """The substitutive level pointed to by ``default_substitutive``."""
-        return self.substitutive_levels[self.default_substitutive]
+        node = self._node
+        return 1 if isinstance(node, GSplatLeaf) else node.n_children
 
     def at_substitutive(self, level: int) -> "GSplatData":
         """Return a single-substitutive-level view as a new ``GSplatData``.
@@ -686,7 +730,16 @@ class GSplatData(_SplatArrayMixin):
             raise IndexError(
                 f"substitutive level {level} out of range [0, {self.n_substitutive})"
             )
-        src_level = self.substitutive_levels[level]
+        return self._view_of_level(self.substitutive_levels[level])
+
+    def _view_of_level(self, src_level: SubstitutiveLevel) -> "GSplatData":
+        """Wrap an already-fetched ``SubstitutiveLevel`` as a single-level view.
+
+        Extracted from :meth:`at_substitutive` so per-level loops can pass the
+        level they already hold (from one ``substitutive_levels`` read) instead of
+        re-indexing the property — which would reconstruct the whole matrix each
+        call, making an L-level map O(L²).
+        """
         ro_level = SubstitutiveLevel(
             additive_sublods=[
                 _readonly_sublod(lod) for lod in src_level.additive_sublods
@@ -701,28 +754,6 @@ class GSplatData(_SplatArrayMixin):
             stats=dict(self.stats),
         )
 
-    def cell(self, substitutive: int, additive: int) -> AdditiveSubLOD:
-        """Direct 2-D matrix access: cell at ``(substitutive, additive)``.
-
-        Args:
-            substitutive: Substitutive level index.
-            additive: Additive sub-LOD index within that substitutive level.
-
-        Returns:
-            The :class:`AdditiveSubLOD` at the requested matrix cell.
-        """
-        if not 0 <= substitutive < self.n_substitutive:
-            raise IndexError(
-                f"substitutive level {substitutive} out of range "
-                f"[0, {self.n_substitutive})"
-            )
-        level = self.substitutive_levels[substitutive]
-        if not 0 <= additive < level.n_additive_lods:
-            raise IndexError(
-                f"additive sub-LOD {additive} out of range "
-                f"[0, {level.n_additive_lods}) at substitutive level {substitutive}"
-            )
-        return level.additive_sublods[additive]
 
     # ── Node-tree bridge (v3.0 unified representation) ──────
 
@@ -730,16 +761,16 @@ class GSplatData(_SplatArrayMixin):
     def tree(self) -> "GSplatNode":
         """This dataset as a :mod:`luxar.gsplats.tree` node subtree.
 
-        The tree is the unified representation behind the v3.0 ``.gsplats.zarr``
-        format and the scene gsplat-node subtree. For the historical
-        ``substitutive × additive`` matrix this is exactly one shape: a single
+        The tree is the single in-memory ground truth (this just returns the
+        stored node), behind the v3.0 ``.gsplats.zarr`` format and the scene
+        gsplat-node subtree. For the matrix shape it is one of: a single
         :class:`~luxar.gsplats.tree.GSplatLeaf` (one substitutive level) or a
         :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (multiple levels,
-        finest first). Per-level provenance rides in each leaf's ``meta``.
+        coarsest first). Per-level provenance rides in each leaf's ``meta``. The
+        view-driven ``min_pixel_size`` thresholds are derived at serialize time
+        (see :meth:`save` / the writer), not stored here.
         """
-        from luxar.gsplats.tree import tree_from_substitutive_levels
-
-        return tree_from_substitutive_levels(self.substitutive_levels)
+        return self._node
 
     @classmethod
     def from_tree(
@@ -755,16 +786,18 @@ class GSplatData(_SplatArrayMixin):
         non-leaf children) have no flat ``GSplatData`` equivalent and raise —
         they must be consumed through the tree directly.
         """
-        from luxar.gsplats.tree import substitutive_levels_from_tree
+        from luxar.gsplats.tree import is_matrix_shaped
 
-        # The on-disk default_level is the viewer's coarsest-first render hint,
-        # not a data-model default — the accessors always return the finest
-        # level (index 0), so it is intentionally ignored here.
-        levels, _default = substitutive_levels_from_tree(node)
-        return cls(
-            substitutive_levels=levels,
-            stats=stats,
-        )
+        if not is_matrix_shaped(node):
+            raise ValueError(
+                "GSplatData.from_tree: node is not matrix-shaped (a partition, or "
+                "a lod group with non-leaf children, has no flat GSplatData "
+                "equivalent — consume the tree directly)"
+            )
+        # Store the node verbatim as the ground truth — preserves its authored
+        # meta (e.g. min_pixel_size straight off disk) and avoids a needless
+        # matrix round-trip. The matrix views derive finest-first on access.
+        return cls(_node=node, stats=stats)
 
     # ── Filtering ───────────────────────────────────────────
 
@@ -943,7 +976,7 @@ class GSplatData(_SplatArrayMixin):
         if self.n_substitutive > 1:
             new_levels: List[SubstitutiveLevel] = []
             for s, src in enumerate(self.substitutive_levels):
-                filtered = self.at_substitutive(s).filter_by(
+                filtered = self._view_of_level(src).filter_by(
                     bbox=bbox,
                     volume_min=volume_min,
                     volume_max=volume_max,
@@ -1191,10 +1224,17 @@ class GSplatData(_SplatArrayMixin):
         # Multi-substitutive path: merge per (substitutive, additive) cell so
         # the full pyramid survives.
         if n_sub > 1:
-            template = non_empty[0].substitutive_levels
+            # Read each source's finest-first level list ONCE (the property
+            # reconstructs the whole matrix per call); index per level below so
+            # the merge stays O(L·D) rather than O(L²·D).
+            levels_per_source = [d.substitutive_levels for d in non_empty]
+            template = levels_per_source[0]
             sub_levels: List[SubstitutiveLevel] = []
             for s in range(n_sub):
-                views_s = [d.at_substitutive(s) for d in non_empty]
+                views_s = [
+                    d._view_of_level(levels_per_source[di][s])
+                    for di, d in enumerate(non_empty)
+                ]
                 ref = template[s]
                 sub_levels.append(
                     SubstitutiveLevel(
@@ -1363,6 +1403,34 @@ class GSplatData(_SplatArrayMixin):
             )
         return GSplatPartition(children=children, max_elements=max_elements)
 
+    @staticmethod
+    def partition_from_regions(
+        regions: "List[GSplatData]",
+    ) -> "GSplatNode":
+        """Assemble a ``kind=partition`` tree from pre-decomposed spatial regions.
+
+        Unlike :meth:`to_spatial_partition` (which BSP-splits a flat splat set),
+        this keeps the **given** spatial decomposition: each region becomes one
+        partition part, preserving the exact tile/box boundaries the fitter
+        already produced. Used by tiled / content-aware fitting, where the
+        regions are the per-tile (apodized) or per-box (core-kept) splats — both
+        sum correctly as additive partition parts, so the partitioned render
+        equals the flat concatenation with no double-count.
+
+        Empty regions (0 splats) are dropped. With a single non-empty region the
+        bare leaf is returned (no 1-part partition wrapper); with none, raises.
+        Returns a tree node (write with ``write_gsplats_tree`` or embed in a
+        scene) — a partition has no flat-matrix ``GSplatData`` equivalent.
+        """
+        from .tree import GSplatPartition
+
+        nonempty = [r for r in regions if r.n_splats > 0]
+        if not nonempty:
+            raise ValueError("partition_from_regions: all regions are empty")
+        if len(nonempty) == 1:
+            return nonempty[0].tree  # single part -> bare leaf, not a wrapper
+        return GSplatPartition(children=[r.tree for r in nonempty])
+
     def embed_dimension(
         self,
         values: "np.ndarray | float",
@@ -1498,7 +1566,7 @@ class GSplatData(_SplatArrayMixin):
         """
         new_levels: List[SubstitutiveLevel] = []
         for s, src in enumerate(self.substitutive_levels):
-            out = fn(self.at_substitutive(s))
+            out = fn(self._view_of_level(src))
             new_levels.append(
                 SubstitutiveLevel(
                     additive_sublods=out.substitutive_levels[0].additive_sublods,
@@ -2107,7 +2175,7 @@ class GSplatData(_SplatArrayMixin):
         if self.n_substitutive > 1:
             culled_levels: List[SubstitutiveLevel] = []
             for s, src in enumerate(self.substitutive_levels):
-                culled_level = self.at_substitutive(s).cull(
+                culled_level = self._view_of_level(src).cull(
                     target,
                     method=method,
                     shape=shape,

@@ -28,6 +28,55 @@ def _sublod(n: int, ndim: int = 3, seed: int = 0) -> AdditiveSubLOD:
     )
 
 
+def test_additive_sublods_property_is_a_defensive_copy():
+    """Mutating the list returned by ``.additive_sublods`` must NOT corrupt the
+    ground-truth node or desync the cached ``centers``/``n_splats``.
+
+    Regression: after the tree-backing refactor the property returned the node's
+    internal list by reference (it was a defensive copy before), so
+    ``data.additive_sublods.append(...)`` leaked into ``data._node`` and left
+    ``n_additive_sublods`` (=len of the mutated list) inconsistent with the
+    stale cached ``n_splats``.
+    """
+    data = GSplatData.from_additive_sublods([_sublod(10, seed=0)])
+    assert data.n_additive_sublods == 1
+
+    returned = data.additive_sublods
+    returned.append(_sublod(7, seed=1))  # mutate the returned list in place
+
+    # The node, the derived view, and the cached arrays must all be untouched.
+    assert data.n_additive_sublods == 1
+    assert len(data.additive_sublods) == 1
+    assert isinstance(data.tree, GSplatLeaf)
+    assert len(data.tree.additive_sublods) == 1  # node not corrupted
+    assert data.n_splats == 10  # cached centers still consistent
+
+
+def test_readonly_view_stats_are_detached():
+    """A read-only single-level view (at_substitutive / flattened / additive_prefix)
+    must be immutable through-and-through: mutating the view's per-sublod ``stats``
+    must NOT leak into the source node's lod_stats.
+
+    Regression: ``_readonly_sublod`` made arrays read-only but aliased the stats
+    dict (``stats=lod.stats``), so a "read-only" view could still corrupt the
+    node's on-disk-bound lod_stats via ``view.additive_sublod(0).stats[k] = v``.
+    """
+    sub = AdditiveSubLOD(
+        centers=_sublod(8, seed=0).centers,
+        amplitudes=_sublod(8, seed=0).amplitudes,
+        cholesky_factors=_sublod(8, seed=0).cholesky_factors,
+        stats={"psnr": 40.0},
+    )
+    data = GSplatData.from_additive_sublods([sub])
+
+    view = data.at_substitutive(0)
+    view.additive_sublod(0).stats["psnr"] = 999.0  # mutate the read-only view's stats
+
+    # The source node's lod stats must be untouched.
+    assert data.additive_sublod(0).stats["psnr"] == 40.0
+    assert data.tree.additive_sublods[0].stats["psnr"] == 40.0
+
+
 def test_single_substitutive_tree_is_a_leaf():
     data = GSplatData(
         centers=_sublod(20).centers,
@@ -66,7 +115,12 @@ def test_multi_substitutive_tree_is_a_lod_group():
     node = data.tree
     assert isinstance(node, GSplatLodGroup)
     assert node.n_children == 2
-    assert node.default_level == 0
+    # tree default_level is the derived finest = last child (coarsest-first storage)
+    assert node.default_level == node.n_children - 1
+    # tree children are coarsest-first; the matrix view stays finest-first
+    assert node.children[0].n_splats == 25
+    assert node.children[-1].n_splats == 100
+    assert [lvl.n_splats_total for lvl in data.substitutive_levels] == [100, 25]
 
 
 def test_round_trip_preserves_arrays_metadata_and_stats():

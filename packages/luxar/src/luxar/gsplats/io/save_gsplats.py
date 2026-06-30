@@ -18,11 +18,14 @@ import datetime
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional
 
 import numpy as np
 import zarr
 from zarr.storage import DirectoryStore
+
+if TYPE_CHECKING:
+    from luxar.gsplats.tree import GSplatNode
 
 from luxar.encoding import EncodingMode
 from luxar.io._compiler.gsplat_tree import (
@@ -215,6 +218,109 @@ def write_gsplats_tree(
 
     if compress:
         _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
+
+
+def write_partition_streaming(
+    path: str | Path,
+    part_nodes: Callable[[], Iterator["GSplatNode"]],
+    *,
+    max_elements: int = 0,
+    ordering: Literal["morton", "hilbert", "none"] = "hilbert",
+    encoding_mode: EncodingMode = EncodingMode.AUTO,
+    fitting_info: Optional[Dict[str, Any]] = None,
+    fitting_config: Optional[Dict[str, Any]] = None,
+    provenance_info: Optional[Dict[str, Any]] = None,
+    description: Optional[str] = None,
+    compressor: Optional[Any] = DEFAULT_COMP,
+) -> int:
+    """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
+
+    This is the **streaming** sibling of :func:`write_gsplats_tree`: rather than
+    take a whole in-memory :class:`~luxar.gsplats.tree.GSplatPartition` (which
+    would materialize every part at once — the OOM the tiled-batch merge must
+    avoid), it pulls each part subtree one at a time from ``part_nodes()`` and
+    writes it straight into ``part_<i>/`` via the shared leaf/node walker
+    (:func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`), so the on-disk
+    bytes are identical to the standalone partition writer's. Only the producer's
+    single yielded subtree is resident at any moment.
+
+    The root group is stamped with the same ``kind=partition`` attrs the standalone
+    writer emits (``type``/``kind``/``display_type``/``max_elements`` + a union
+    ``position_bounds``), plus the v3.0 self-identifying header. Each part carries
+    a ``child_index`` for napari-style sibling ordering — matching
+    :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
+
+    The producer is responsible for skipping empty tile-regions (it must yield
+    only non-empty subtrees). Compression is intentionally not supported here
+    (the streaming use case writes a directory store); use
+    :func:`write_gsplats_tree` for a compressed standalone partition.
+
+    Returns the number of parts actually written.
+    """
+    from luxar.io._compiler.gsplat_tree import (
+        _union_bounds,
+        make_dataset_ctx,
+        make_ordering_ctx,
+        write_gsplat_node,
+    )
+
+    path = Path(path)
+    store = DirectoryStore(str(path))
+    root = zarr.group(store=store, overwrite=True)
+
+    dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+    ordering_ctx = make_ordering_ctx(ordering)
+
+    child_bounds: List[Dict[str, List[float]]] = []
+    n_written = 0
+    for node in part_nodes():
+        part_group = root.require_group(f"part_{n_written}")
+        cmeta = write_gsplat_node(
+            part_group,
+            node,
+            dataset_ctx=dataset_ctx,
+            ordering_ctx=ordering_ctx,
+            store=root,
+            # Insertion order for the viewer's sibling sort — matches the
+            # standalone partition writer (prevents part_10 < part_2 reorder).
+            attrs={"child_index": n_written},
+        )
+        if "position_bounds" in cmeta:
+            child_bounds.append(cmeta["position_bounds"])
+        n_written += 1
+
+    if n_written == 0:
+        raise ValueError("write_partition_streaming: no non-empty parts to write")
+
+    # Root partition attrs — byte-identical to the GSplatPartition branch of
+    # write_gsplat_node (type/kind/display_type/max_elements/position_bounds).
+    root.attrs["type"] = "group"
+    root.attrs["kind"] = "partition"
+    root.attrs["display_type"] = "gsplats"
+    root.attrs["max_elements"] = int(max_elements)
+    bounds = _union_bounds(child_bounds)
+    if bounds is not None:
+        root.attrs["position_bounds"] = bounds
+
+    # Self-identifying v3.0 header (disjoint from the node's structural attrs).
+    root.attrs["format_version"] = FORMAT_VERSION
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+    root.attrs.setdefault("layer", True)
+    if description:
+        root.attrs["description"] = description
+
+    if fitting_info is not None:
+        fitting_group = root.create_group("fitting")
+        fitting_group.attrs.update(fitting_info)
+        if fitting_config is not None:
+            fitting_group.create_group("config").attrs.update(fitting_config)
+    if provenance_info is not None:
+        root.create_group("provenance").attrs.update(provenance_info)
+
+    zarr.consolidate_metadata(store)
+    return n_written
 
 
 def save_gsplats(
