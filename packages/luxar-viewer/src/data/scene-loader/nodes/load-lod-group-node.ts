@@ -436,7 +436,9 @@ export async function loadLodGroupNode(
       Modules.SCENE_LOADER,
       `lod_group ${node.path}: child min_pixel_size thresholds are not strictly ` +
         `ascending (${before.join(', ')}). The pixel-size selector needs distinct ` +
-        'coarsest-to-finest thresholds; re-sorted to ascending. Fix the producer ' +
+        'coarsest-to-finest thresholds; re-sorted to ascending. Common causes: a ' +
+        'non-geometry group (e.g. a metadata sidecar) was adopted as a child and ' +
+        'defaulted to min_pixel_size=0, or the producer emitted a malformed ladder ' +
         '(derive_min_pixel_sizes guarantees strictly ascending thresholds).'
     );
   }

@@ -95,6 +95,26 @@ export async function buildSceneGraph(
     const group = await zarr.open(loc, { kind: 'group' });
     const attrs = group.attrs as ZarrNodeAttrs;
 
+    // Skip metadata-sidecar groups. A standalone `.gsplats.zarr` carries a
+    // provenance group (`fitting/`, written by `save_gsplats` via a raw
+    // `create_group`) alongside the real nodes. It is NOT renderable geometry.
+    // Every genuine scene node is stamped with an explicit `type` (leaf →
+    // points/lines/gsplats; container → "group" via `add_group`) and lod /
+    // partition groups additionally carry `kind`; a raw `create_group` sidecar
+    // has neither. Without this skip, a sidecar sibling of a standalone
+    // `kind=lod` / `kind=partition` root is adopted as a phantom LOD/partition
+    // child — it has no `min_pixel_size` (the selector defaults it to 0) and no
+    // `child_index` (so it sorts last), corrupting the ascending `min_pixel_size`
+    // ladder and firing a spurious "thresholds not strictly ascending" warning
+    // that misblames the producer. Mark the subtree internal so any nested
+    // metadata (e.g. `fitting/config`) is skipped too. (The `/overlays` skip
+    // above is path-based; this attr-based rule covers any future sidecar.)
+    const kind = (attrs as Record<string, unknown> | null)?.kind;
+    if (attrs?.type == null && kind == null) {
+      internalSubtreePrefixes.push(`${entry.path}/`);
+      continue;
+    }
+
     // We no longer check for spatial index here - PointsSpatialIndexLoader handles it
     const node: SceneNode = {
       path: entry.path,
