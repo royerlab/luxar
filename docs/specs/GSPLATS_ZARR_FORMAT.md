@@ -170,11 +170,15 @@ fitted.gsplats.zarr/
 ```
 
 Children are written **coarsest→finest** on disk (child_0 = coarsest,
-child_{N-1} = finest). `default_level` is 0-based in the same coarsest-first
-order: `default_level = (n-1) - default_substitutive`, so `default_substitutive=0`
-(finest) maps to `default_level = n-1` (the last, finest, child). Each child
-carries `min_pixel_size`; the coarsest child conventionally has `min_pixel_size: 0`.
-Any node shape (bare leaf, additive ladder) is valid as a child.
+child_{N-1} = finest) — the SAME order the in-memory tree
+(`GSplatLodGroup.children`) uses, so the serializer writes them straight through
+with no reversal. The on-disk `default_level` is `0` (the coarsest child) — the
+viewer's progressive-load hint (render cheap first, then refine). This is a
+distinct concept from the data-model default (the finest level the `.centers`
+accessor returns); they are deliberately decoupled, so the writer stamps
+`default_level: 0` independently. Each child carries `min_pixel_size`; the
+coarsest child conventionally has `min_pixel_size: 0`. Any node shape (bare leaf,
+additive ladder) is valid as a child.
 
 ### Shape 4 — spatial partition (`kind=partition` group)
 

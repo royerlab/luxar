@@ -35,8 +35,6 @@ export interface EffectiveRadiusConfig {
   spatialExtendDims: boolean[];
   /** Maximum radius in the dataset for query optimization */
   maxRadius: number;
-  /** Which dimensions are discrete (for exact matching) - DEPRECATED: non-spatial is always discrete */
-  discreteDims?: boolean[];
 }
 
 // ============================================================================

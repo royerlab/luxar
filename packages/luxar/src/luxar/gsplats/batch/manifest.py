@@ -107,6 +107,18 @@ class BatchManifest:
     # Merge config
     channel_colors: Optional[List[str]] = None
 
+    merge_recipe: Optional[str] = None
+    """Per-part LOD recipe applied to each spatial tile-part at merge time
+    (``additive`` / ``substitutive``). ``None`` = bare-leaf parts
+    (no per-part LOD; the historical partition output). ``additive`` yields the
+    ``partitioned`` topology (each part a prefix-sum ladder); ``substitutive``
+    yields the ``mosaic`` topology (each part its own coarse↔fine lod group)."""
+
+    merge_recipe_args: Dict[str, Any] = field(default_factory=dict)
+    """Extra knobs for the per-part merge recipe, mirroring the ``lod`` CLI:
+    ``n-lods`` / ``compression-factor`` / ``levels`` / ``substitutive-method`` /
+    ``coarsen-dims``. Threaded verbatim into the merge sbatch command."""
+
     # Index arrays (when --timepoints/--channels slicing is used)
     timepoint_indices: Optional[List[int]] = None
     """Actual timepoint indices into the dataset, or None for contiguous 0..n_t-1."""

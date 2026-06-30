@@ -1,4 +1,4 @@
-"""``luxar gsplat batch`` — HPC batch fitting via Slurm.
+"""``luxar gsplat slurm-fit`` — cluster-scale fitting via Slurm.
 
 Owns the ``app_batch`` Typer sub-app and its commands; the aggregator
 (``cli/gsplat_commands.py``) mounts it via ``add_typer``. Extracted from the
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import typer
 from arbol import aprint, asection
@@ -17,12 +17,17 @@ from arbol import aprint, asection
 if TYPE_CHECKING:
     import numpy as np
 
+    from luxar.gsplats.lod.recipes import RecipeParams
 
-app_batch = typer.Typer(help="HPC batch fitting for large OME-Zarr datasets")
+
+app_batch = typer.Typer(
+    help="Fit a whole nD dataset across its axes on a Slurm cluster "
+    "(the cluster-scale sibling of `gsplat fit`)."
+)
 
 
-@app_batch.command("plan")
-def batch_plan(
+@app_batch.command("submit")
+def batch_submit(
     input_path: Path = typer.Argument(..., exists=True, help="Input OME-Zarr dataset"),
     output_dir: Path = typer.Argument(..., help="Output directory for batch results"),
     # Tiling
@@ -138,6 +143,37 @@ def batch_plan(
     channel_colors: Optional[str] = typer.Option(
         None, "--channel-colors", help="Hex colors for per-channel merge"
     ),
+    merge_recipe: Optional[str] = typer.Option(
+        None,
+        "--merge-recipe",
+        help=(
+            "Per-part LOD recipe applied to each spatial tile-part by the merge "
+            "job: 'additive' (partitioned topology) or 'substitutive' (mosaic). "
+            "Default: bare-leaf parts. The merge sbatch script invokes "
+            "`slurm-fit merge --recipe <r>` with the knobs below."
+        ),
+    ),
+    merge_n_lods: Optional[int] = typer.Option(
+        None, "--merge-n-lods", help="Additive ladder depth for --merge-recipe."
+    ),
+    merge_compression_factor: Optional[int] = typer.Option(
+        None, "--merge-compression-factor", help="Substitutive K for --merge-recipe."
+    ),
+    merge_levels: Optional[int] = typer.Option(
+        None, "--merge-levels", help="Substitutive level count for --merge-recipe."
+    ),
+    merge_substitutive_method: Optional[str] = typer.Option(
+        None,
+        "--merge-substitutive-method",
+        help="Substitutive coarsening method for --merge-recipe.",
+    ),
+    merge_coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--merge-coarsen-dims",
+        help="Comma-separated center-column indices --merge-recipe substitutive "
+        "may coarsen over (the rest stay hard barriers). Default: spatial dims "
+        "only (the stacked-timepoint axis is a barrier).",
+    ),
     # Dataset structure override
     axes: Optional[str] = typer.Option(
         None,
@@ -198,29 +234,32 @@ def batch_plan(
         ),
     ),
     # Control
-    submit: bool = typer.Option(
-        False, "--submit", help="Actually submit to Slurm (default: dry-run)"
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show the plan without submitting (default: submit to Slurm).",
     ),
 ) -> None:
-    """Plan and optionally submit a batch Gaussian splat fitting job.
+    """Plan and submit a cluster Gaussian splat fitting job over an nD dataset.
 
     Discovers T/C/spatial structure from OME-Zarr metadata, loads a GPU
     profile to auto-select tile size, and generates Slurm array + merge
     jobs.
 
-    By default shows the plan without submitting. Pass --submit to submit.
+    Submits to Slurm by default. Pass --dry-run to show the plan without
+    submitting.
 
     A GPU profile from `luxar gsplat benchmark` is used to auto-select tile
     size; pass --tile-size to skip the profile requirement.
 
     Examples:
-        luxar gsplat batch data.ome.zarr output/ --partition gpu --tile-size 128
+        luxar gsplat slurm-fit submit data.ome.zarr output/ -p gpu --dry-run
 
-        luxar gsplat batch data.ome.zarr output/ --partition gpu --submit
+        luxar gsplat slurm-fit submit data.ome.zarr output/ --partition gpu
 
-        luxar gsplat batch data.ome.zarr output/ -p gpu --tile-size 256 --preset hifi
+        luxar gsplat slurm-fit submit data.ome.zarr out/ -p gpu --tile-size 256 --preset hifi
 
-        luxar gsplat batch keller.zarr.zip out/ -p gpu --tile-size 128 \\
+        luxar gsplat slurm-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
             --axes time,camera,channel,z,y,x
     """
     if partition is None:
@@ -279,7 +318,7 @@ def batch_plan(
             )
             aprint("")
             aprint("Option B — skip the profile by providing a tile size explicitly:")
-            aprint("  luxar gsplat batch ... --tile-size 128")
+            aprint("  luxar gsplat slurm-fit submit ... --tile-size 128")
             raise typer.Exit(1)
 
         recs = (summary or {}).get("recommendations", {})
@@ -525,6 +564,40 @@ def batch_plan(
         if channel_colors:
             colors_list = [c.strip() for c in channel_colors.split(",")]
 
+        # Per-part LOD recipe for the merge job (stored in the manifest; the merge
+        # sbatch script turns it into `slurm-fit merge --recipe ...`).
+        merge_recipe_args: dict = {}
+        if merge_recipe is not None:
+            from luxar.gsplats.lod.recipes import PER_PART_RECIPES
+
+            if merge_recipe not in PER_PART_RECIPES:
+                raise typer.BadParameter(
+                    f"--merge-recipe {merge_recipe!r} is not supported; choose from "
+                    f"{', '.join(sorted(PER_PART_RECIPES))} (the composed recipes "
+                    "re-partition their input, but each tile is already one part)."
+                )
+            if merge_n_lods is not None:
+                merge_recipe_args["n-lods"] = str(merge_n_lods)
+            if merge_compression_factor is not None:
+                merge_recipe_args["compression-factor"] = str(merge_compression_factor)
+            if merge_levels is not None:
+                merge_recipe_args["levels"] = str(merge_levels)
+            if merge_substitutive_method is not None:
+                # Validate now (fail-fast) so a bad method is caught before the
+                # Slurm fit array runs, not hours later in the merge job.
+                from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
+
+                sm_norm = merge_substitutive_method.strip().replace("-", "_")
+                if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+                    raise typer.BadParameter(
+                        f"--merge-substitutive-method must be one of "
+                        f"{list(_VALID_SUBSTITUTIVE_METHODS)}; "
+                        f"got {merge_substitutive_method!r}"
+                    )
+                merge_recipe_args["substitutive-method"] = sm_norm
+            if merge_coarsen_dims is not None:
+                merge_recipe_args["coarsen-dims"] = merge_coarsen_dims
+
         # Preemptible partition detection
         preempt_partition: Optional[str] = None
         if preemptible:
@@ -597,6 +670,8 @@ def batch_plan(
             timepoint_indices=t_indices if timepoints_slice else None,
             channel_indices=c_indices if channels_slice else None,
             channel_colors=colors_list,
+            merge_recipe=merge_recipe,
+            merge_recipe_args=merge_recipe_args,
             denoise=batch_denoise,
             denoise_2d=batch_denoise_2d,
             denoise_h=batch_denoise_h,
@@ -727,8 +802,8 @@ def batch_plan(
         aprint(f"  Output: {output_dir}")
         aprint("")
 
-        if not submit:
-            aprint("Dry run -- pass --submit to actually submit.")
+        if dry_run:
+            aprint("Dry run -- omit --dry-run to actually submit.")
             raise typer.Exit(0)
 
         # 9. Submit
@@ -860,7 +935,7 @@ def batch_plan(
         save_manifest(manifest, out)
 
         aprint(f"\nManifest: {out / 'manifest.json'}")
-        aprint(f"Check status: luxar gsplat batch status {out}")
+        aprint(f"Check status: luxar gsplat slurm-fit status {out}")
 
     except typer.Exit:
         raise
@@ -885,7 +960,7 @@ def batch_status_cmd(
     for job states.
 
     Examples:
-        luxar gsplat batch status output_dir/
+        luxar gsplat slurm-fit status output_dir/
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -921,9 +996,9 @@ def batch_validate_cmd(
     so they get re-fitted on the next submit.
 
     Examples:
-        luxar gsplat batch validate output_dir/
+        luxar gsplat slurm-fit validate output_dir/
 
-        luxar gsplat batch validate output_dir/ --fix
+        luxar gsplat slurm-fit validate output_dir/ --fix
     """
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -1073,7 +1148,7 @@ def _validate_tile(tile_path: Path) -> str:
     Walks the node-tree structure (leaf / kind=lod / kind=partition) checking for
     the consolidated metadata, the format header, and the presence of every
     required array — without decoding any data. A non-v3.0 tile is reported (so
-    ``batch validate --fix`` never silently deletes an unmigrated tile).
+    ``slurm-fit validate --fix`` never silently deletes an unmigrated tile).
     """
     import json
 
@@ -1111,7 +1186,7 @@ def batch_cancel_cmd(
     merge) and cancels them via scancel.
 
     Examples:
-        luxar gsplat batch cancel output_dir/
+        luxar gsplat slurm-fit cancel output_dir/
     """
     import subprocess
 
@@ -1151,6 +1226,71 @@ def batch_cancel_cmd(
         raise typer.Exit(1)
 
 
+def _build_merge_recipe_params(
+    stored: dict,
+    *,
+    n_lods: Optional[int],
+    compression_factor: Optional[int],
+    levels: Optional[int],
+    substitutive_method: Optional[str],
+    coarsen_dims: Optional[str],
+) -> "RecipeParams":
+    """Build a ``RecipeParams`` for the per-part merge recipe.
+
+    Each knob is resolved CLI-first, then the value recorded at plan time
+    (``manifest.merge_recipe_args``, string-valued), then the ``RecipeParams``
+    default. ``coarsen_dims`` is parsed from a comma string to a tuple of ints;
+    leaving it unset lets the merge default it per part (spatial dims only).
+    """
+    from luxar.cli.lod import _VALID_SUBSTITUTIVE_METHODS
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    def _resolve(key: str, cli: Any, cast: Callable[[Any], Any]) -> Any:
+        if cli is not None:
+            return cli
+        raw = stored.get(key)
+        return cast(raw) if raw is not None else None
+
+    def _parse_dims(raw: Any) -> tuple:
+        try:
+            return tuple(int(x) for x in str(raw).split(",") if x.strip() != "")
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"--coarsen-dims must be comma-separated integers; got {raw!r}"
+            ) from e
+
+    overrides: dict = {}
+    nl = _resolve("n-lods", n_lods, int)
+    if nl is not None:
+        overrides["n_lods"] = nl
+    cf = _resolve("compression-factor", compression_factor, int)
+    if cf is not None:
+        overrides["compression_factor"] = cf
+    lv = _resolve("levels", levels, int)
+    if lv is not None:
+        overrides["levels"] = lv
+    sm = _resolve("substitutive-method", substitutive_method, str)
+    if sm is not None:
+        # Normalise hyphens to underscores so the documented CLI spelling
+        # (`kmeans-lloyd`) maps to the canonical method name (`kmeans_lloyd`),
+        # then validate up front — both halves of the `gsplat lod` contract
+        # (cli/lod.py:381-386). Validating here means a bad method fails cleanly
+        # BEFORE the streaming writer overwrites final.gsplats.zarr, rather than
+        # raising deep in the merge and leaving a stub a non-`--force` re-run skips.
+        sm_norm = sm.strip().replace("-", "_")
+        if sm_norm not in _VALID_SUBSTITUTIVE_METHODS:
+            raise typer.BadParameter(
+                f"--substitutive-method must be one of "
+                f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {sm!r}"
+            )
+        overrides["substitutive_method"] = sm_norm
+    cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")
+    if cd is not None:
+        overrides["coarsen_dims"] = _parse_dims(cd)
+
+    return RecipeParams(**overrides)
+
+
 @app_batch.command("merge")
 def batch_merge_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
@@ -1158,16 +1298,73 @@ def batch_merge_cmd(
         None, "--channel-colors", help="Hex colors for channel merge"
     ),
     force: bool = typer.Option(False, "--force", help="Re-merge even if outputs exist"),
+    flat: bool = typer.Option(
+        False,
+        "--flat",
+        help=(
+            "Concatenate all tiles into a single flat leaf (legacy). Default is a "
+            "memory-safe kind=partition with one part per spatial tile."
+        ),
+    ),
+    recipe: Optional[str] = typer.Option(
+        None,
+        "--recipe",
+        help=(
+            "Per-part LOD recipe applied to each spatial tile-part as it streams: "
+            "'additive' (each part a prefix-sum ladder → partitioned topology) or "
+            "'substitutive' (each part its own coarse↔fine lod group → mosaic). "
+            "Default: bare-leaf parts (no per-part LOD). Closes the tiled-data LOD "
+            "gap without re-loading the whole volume. Falls back to the recipe "
+            "recorded at plan time. Mutually exclusive with --flat."
+        ),
+    ),
+    n_lods: Optional[int] = typer.Option(
+        None, "--n-lods", help="Additive ladder depth (additive recipe)."
+    ),
+    compression_factor: Optional[int] = typer.Option(
+        None, "-K", "--compression-factor", help="Substitutive reduction factor."
+    ),
+    levels: Optional[int] = typer.Option(
+        None, "-L", "--levels", help="Substitutive level count (substitutive recipe)."
+    ),
+    substitutive_method: Optional[str] = typer.Option(
+        None, "--substitutive-method", help="Substitutive coarsening method."
+    ),
+    coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help=(
+            "Comma-separated center-column indices substitutive coarsening may "
+            "merge over; the rest become hard barriers. Default: spatial dims only "
+            "(stacked-timepoint axis is a barrier)."
+        ),
+    ),
 ) -> None:
     """Run the merge step for a completed batch job.
 
     Normally runs as a dependent Slurm job, but this command allows
     running it manually or re-running if the merge job failed.
 
-    Examples:
-        luxar gsplat batch merge output_dir/
+    By default the tiles are assembled into a ``kind=partition`` file (one part
+    per spatial tile) — streamed tile-by-tile so peak memory is a single
+    tile-region, and the spatial structure is preserved for per-part frustum
+    culling. Pass ``--flat`` for the legacy single-leaf concatenation (reloads
+    every tile into memory).
 
-        luxar gsplat batch merge output_dir/ --channel-colors "#ff0080,#00ff00"
+    Pass ``--recipe`` to give each tile-part its own LOD ladder as it streams —
+    the memory-safe way to add level-of-detail to tiled output (the canonical
+    ``cal → fit → lod`` chain otherwise can't, since ``lod`` rejects a partition).
+
+    Examples:
+        luxar gsplat slurm-fit merge output_dir/
+
+        luxar gsplat slurm-fit merge output_dir/ --flat
+
+        luxar gsplat slurm-fit merge output_dir/ --recipe additive --n-lods 6
+
+        luxar gsplat slurm-fit merge output_dir/ --recipe substitutive -K 4 -L 3
+
+        luxar gsplat slurm-fit merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
     try:
         from luxar.cli.gsplat_config import parse_hex_color
@@ -1183,16 +1380,35 @@ def batch_merge_cmd(
         if color_source:
             colors = [parse_hex_color(c.strip()) for c in color_source.split(",")]
 
+        # Resolve the per-part recipe + its knobs, CLI overriding the values
+        # recorded at plan time (manifest.merge_recipe / merge_recipe_args).
+        eff_recipe = recipe or manifest.merge_recipe
+        recipe_params = None
+        if eff_recipe is not None:
+            recipe_params = _build_merge_recipe_params(
+                manifest.merge_recipe_args,
+                n_lods=n_lods,
+                compression_factor=compression_factor,
+                levels=levels,
+                substitutive_method=substitutive_method,
+                coarsen_dims=coarsen_dims,
+            )
+
         with asection(f"Merging batch results: {output_dir}"):
             final_path = merge_batch_results(
                 manifest=manifest,
                 output_dir=output_dir,
                 channel_colors=colors,
                 force=force,
+                flat=flat,
+                recipe=eff_recipe,
+                recipe_params=recipe_params,
             )
             aprint(f"\nFinal output: {final_path}")
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
+        # Usage errors (e.g. an invalid --substitutive-method) surface cleanly
+        # instead of being swallowed into an "Error: ..." traceback below.
         raise
     except Exception as e:
         aprint(f"Error: {e}")

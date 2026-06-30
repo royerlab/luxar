@@ -898,7 +898,7 @@ class TestGSplatData2DAccessors:
         assert data.n_substitutive == 1
         assert data.default_substitutive == 0
         # The single substitutive level wraps a single additive sub-LOD
-        level = data.default_substitutive_level
+        level = data.substitutive_levels[0]
         assert level.n_additive_lods == 1
         assert level.n_splats_total == 5
         assert level.compression_factor == 1
@@ -911,7 +911,7 @@ class TestGSplatData2DAccessors:
         # Existing lods accessor still works and matches default substitutive level
         assert data.n_additive_sublods == 2
         assert list(data.additive_sublods) == list(
-            data.default_substitutive_level.additive_sublods
+            data.substitutive_levels[0].additive_sublods
         )
 
     def test_substitutive_levels_form_yields_multi(self):
@@ -978,26 +978,6 @@ class TestGSplatData2DAccessors:
         with pytest.raises(IndexError, match="substitutive"):
             data.at_substitutive(-1)
 
-    def test_cell_direct_2d_access(self):
-        levels = [
-            self._make_substitutive_level(n_additive=3, n_per=4),
-            self._make_substitutive_level(n_additive=2, n_per=2, compression=4),
-        ]
-        data = GSplatData.from_substitutive_levels(levels)
-        c00 = data.cell(0, 0)
-        c11 = data.cell(1, 1)
-        assert isinstance(c00, AdditiveSubLOD)
-        assert isinstance(c11, AdditiveSubLOD)
-        assert c00.n_splats == 4
-        assert c11.n_splats == 2
-
-    def test_cell_out_of_range_raises(self):
-        data = GSplatData(additive_sublods=[self._make_additive(3)])
-        with pytest.raises(IndexError, match="substitutive"):
-            data.cell(5, 0)
-        with pytest.raises(IndexError, match="additive"):
-            data.cell(0, 5)
-
     def test_array_caches_reflect_default_substitutive(self):
         """``data.centers/amplitudes/cholesky_factors`` reflect default level."""
         levels = [
@@ -1038,7 +1018,7 @@ class TestImmutableViews:
         d = GSplatData.from_additive_sublods(lods)
         prefix = d.additive_prefix(0)
         with pytest.raises(ValueError, match="read-only|read only"):
-            prefix.cell(0, 0).centers[0, 0] = 5.0
+            prefix.additive_sublod(0).centers[0, 0] = 5.0
 
     def test_additive_prefix_out_of_range_raises_clearly(self):
         d = _make_3d_gsplat(n=4)  # single additive level
@@ -1066,6 +1046,6 @@ class TestImmutableViews:
             out = make_substitutive_lod(d, compression_factor=2, levels=1, device="cpu")
         assert out.n_substitutive == 2
         assert not any("writable" in str(w.message).lower() for w in caught)
-        # The stored level arrays are normal writable arrays (cell() returns
-        # the backing AdditiveSubLOD, not a read-only view).
-        assert out.cell(0, 0).centers.flags.writeable
+        # The stored level arrays are normal writable arrays (additive_sublod()
+        # returns the backing AdditiveSubLOD, not a read-only view).
+        assert out.additive_sublod(0).centers.flags.writeable

@@ -19,8 +19,9 @@ On-disk grammar (the v3.0 node tree):
 * **leaf** → ``type=gsplats``; a single splat set writes arrays directly, an
   additive ladder writes ``additive_<i>/`` subgroups + ``n_additive_sublods``.
 * **lod group** → ``type=group, kind=lod``; children written **coarsest→finest**
-  as ``child_<i>/`` (the in-memory tree is finest-first — this writer reverses),
-  each carrying its ``min_pixel_size`` selector threshold + LOD provenance.
+  as ``child_<i>/`` (the in-memory tree is also coarsest-first, so the writer
+  writes them straight through with no reversal), each carrying its
+  ``min_pixel_size`` selector threshold + LOD provenance.
 * **partition group** → ``type=group, kind=partition``; children as ``part_<i>/``.
 
 Every node carries a ``position_bounds`` attr (groups = union of children) so the
@@ -372,16 +373,19 @@ def write_gsplat_node(
             total_splats,
         )
 
-        # In-memory children are finest→coarsest; on disk child_0 = coarsest.
-        on_disk = list(reversed(node.children))
+        # In-memory children are coarsest→finest, the SAME order as the on-disk
+        # child_<i> layout (child_0 = coarsest) — written straight through.
+        on_disk = list(node.children)
         n = len(on_disk)
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
         # leaf OR nested Group — is viewer-selectable. Default to the physically-
         # anchored ``extent`` method (T·W/r₉₀), matching the builders; ``lod_thresholds``
         # falls back to the count √N method when extents/W are unavailable. An authored
-        # min_pixel_size on the child (leaf meta / group meta) still takes precedence
-        # (applied via setdefault below / _leaf_child_attrs for leaves), so this only
-        # sets the threshold for meta-less (e.g. hand-built) trees. Without it a nested
+        # min_pixel_size on the child still takes precedence: for a leaf child it is
+        # merged over these passed attrs by ``_leaf_child_attrs`` in the leaf writer;
+        # for a nested group child it is reapplied from ``node.meta`` by that group's
+        # branch. So this only sets the threshold for meta-less (e.g. hand-built)
+        # trees. Without it a nested
         # lod-of-Group child carried no threshold and the selector was stuck always-finest.
         derived_mps = lod_thresholds(
             "extent",
@@ -526,19 +530,16 @@ def read_gsplat_node(
 
     if kind == "lod":
         n = sum(1 for name in group if str(name).startswith("child_"))
-        on_disk = [
+        # On disk child_0 = coarsest; the in-memory tree is also coarsest-first,
+        # so children are read straight through with no reversal. The on-disk
+        # ``default_level`` is the viewer's coarsest-first progressive-load hint,
+        # NOT the data-model default (which is the derived finest child) — so we
+        # don't carry it onto the node.
+        children = [
             read_gsplat_node(group[f"child_{i}"], root, decoder) for i in range(n)
         ]
-        # On disk child_0 = coarsest; restore finest-first in memory.
-        children = list(reversed(on_disk))
-        # The on-disk ``default_level`` is the viewer's coarsest-first initial
-        # level (a progressive-load hint), NOT the data-model default. The tree /
-        # GSplatData default substitutive is the finest level (index 0 in the
-        # finest-first ordering), matching GSplatData.default_substitutive's
-        # convention — so we don't derive it from the viewer hint.
         return GSplatLodGroup(
             children=children,
-            default_level=0,
             meta=_node_meta_from_attrs(group),
         )
 
