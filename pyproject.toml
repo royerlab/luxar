@@ -145,6 +145,11 @@ exclude = [
     # are only meaningful in the source tree.
     "**/.gitignore",
     "**/.gitkeep",
+    # Demo data (~237 MB of Git-LFS catalogs/zarrs/parquets) must NOT ship in
+    # the wheel: it blows past PyPI's 100 MB per-file limit, and in CI (no
+    # `git lfs pull`) it would otherwise ship as broken ~130-byte pointer files.
+    # Demo *scripts* stay; the data is fetched/regenerated separately.
+    "**/demos/data/**",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
@@ -168,7 +173,9 @@ exclude = [
     "__pycache__",
     ".pytest_cache",
     ".mypy_cache",
-    "htmlcov"
+    "htmlcov",
+    # See wheel-target note: demo data is too large for PyPI and is LFS-tracked.
+    "**/demos/data/**",
 ]
 
 # Development environments
@@ -245,8 +252,13 @@ run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
 # Publishing configuration
+# Luxar publishes ONLY via the tag-triggered GitHub Actions workflow
+# (.github/workflows/publish.yml) using PyPI trusted publishing (OIDC).
+# `disable = true` makes a stray local `hatch publish` refuse by default — a
+# token upload from a dev machine would bypass OIDC and ship a wheel built
+# without the viewer (and with a host launcher binary). Use `make release`.
 [tool.hatch.publish.index]
-disable = false  # Enable publishing to PyPI
+disable = true
 
 # ---------------------------------------------
 # Development tool configurations

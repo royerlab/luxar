@@ -32,12 +32,12 @@ option, plus the UI overlays it mounts into the `container` you provide
 (defaulting to `document.body`).
 
 ```bash
-npm install luxar-viewer three   # three is a peer dep
+npm install @royerlab/luxar-viewer three   # three is a peer dep
 ```
 
 ```ts
-import { LuxarApp } from 'luxar-viewer';
-import 'luxar-viewer/styles.css'; // component styles, prefixed under .luxar-*
+import { LuxarApp } from '@royerlab/luxar-viewer';
+import '@royerlab/luxar-viewer/styles.css'; // component styles, prefixed under .luxar-*
 
 const canvas = document.querySelector<HTMLCanvasElement>('#viewer-canvas')!;
 const app = new LuxarApp();
