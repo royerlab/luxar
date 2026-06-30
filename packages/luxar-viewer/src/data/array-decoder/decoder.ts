@@ -780,8 +780,86 @@ export class ArrayDecoder {
       name === 'broadcasted' ||
       name === 'array_ref' ||
       ArrayDecoder.isLUTEncodingName(name) ||
-      ArrayDecoder.isQuantizedEncodingName(name)
+      ArrayDecoder.isQuantizedEncodingName(name) ||
+      ArrayDecoder.isPerChannelQuantEncodingName(name)
     );
+  }
+
+  /**
+   * Generic per-channel quantization encodings: per-column (per-channel) log
+   * (`log_perchannel_u8/u16`, non-negative) and signed-log
+   * (`signed_log_perchannel_u8/u16`, signed). They carry per-channel scale arrays
+   * (`col_lo/col_hi`) rather than global bounds, so they are NOT in
+   * {@link isQuantizedEncodingName} (the global-scale dequant path). They load as
+   * raw integer levels (`direct`); per-channel dequant is applied by the consumer
+   * (e.g. the gsplats loader recombining the split Cholesky). First consumer:
+   * Cholesky diagonal / off-diagonal — but the scheme is geometry-agnostic.
+   */
+  static isPerChannelQuantEncodingName(name: string | undefined): boolean {
+    return !!(
+      name === 'log_perchannel_u8' ||
+      name === 'log_perchannel_u16' ||
+      name === 'signed_log_perchannel_u8' ||
+      name === 'signed_log_perchannel_u16'
+    );
+  }
+
+  /**
+   * Build the per-channel dequantizer for a `log_perchannel_*` /
+   * `signed_log_perchannel_*` array. Mirrors the Python decoders
+   * (`_decode_log_perchannel` / `_decode_signed_log_perchannel`):
+   *   log:        `x = expm1(lo[c] + level/levels·(hi[c]-lo[c]))`
+   *   signed-log: `y = lo[c] + level/levels·(hi[c]-lo[c]); x = sign(y)·expm1(|y|)`
+   * For any other / float32 / direct encoding it returns the identity, so a raw
+   * value passes through unchanged.
+   *
+   * @returns `(level, col) => value` — `level` is the raw stored integer (as float).
+   */
+  static makePerChannelDequant(
+    encoding: { name?: string; bits?: number; col_lo?: number[]; col_hi?: number[] } | undefined,
+    numCols: number
+  ): (level: number, col: number) => number {
+    const name = encoding?.name;
+    const isLog = name === 'log_perchannel_u8' || name === 'log_perchannel_u16';
+    const isSlog =
+      name === 'signed_log_perchannel_u8' || name === 'signed_log_perchannel_u16';
+    if (!isLog && !isSlog) {
+      return (level: number) => level; // float32 / direct: identity
+    }
+    // Per-channel scales are mandatory and must match the column count. Failing
+    // loud beats silently dequantizing against zero/undefined scales (which would
+    // produce NaN or all-zero covariance with no error). Mirrors the Python
+    // decoder, which requires col_lo/col_hi and errors on a length mismatch.
+    const lo = encoding!.col_lo;
+    const hi = encoding!.col_hi;
+    if (!Array.isArray(lo) || !Array.isArray(hi) || lo.length !== numCols || hi.length !== numCols) {
+      throw new Error(
+        `[ArrayDecoder] ${name}: col_lo/col_hi must each have ${numCols} entries ` +
+          `(got ${lo?.length} / ${hi?.length}). Corrupt or malformed encoding metadata.`
+      );
+    }
+    // Finiteness + ordering, matching the Python decoder's `_perchannel_scales`:
+    // a non-finite scale would propagate NaN into every covariance, and hi < lo
+    // would silently invert the range. Fail loud instead. (hi === lo is valid —
+    // a constant column decodes every level to lo.)
+    for (let c = 0; c < numCols; c++) {
+      if (!Number.isFinite(lo[c]) || !Number.isFinite(hi[c]) || hi[c] < lo[c]) {
+        throw new Error(
+          `[ArrayDecoder] ${name}: col_lo/col_hi must be finite with col_hi >= col_lo ` +
+            `(column ${c}: lo=${lo[c]}, hi=${hi[c]}). Corrupt or malformed encoding metadata.`
+        );
+      }
+    }
+    const bits = encoding!.bits ?? (name!.endsWith('u8') ? 8 : 16);
+    const levels = (1 << bits) - 1;
+    const rng = lo.map((l, i) => Math.max(hi[i] - l, 1e-30));
+    if (isLog) {
+      return (level: number, c: number) => Math.expm1(lo[c] + (level / levels) * rng[c]);
+    }
+    return (level: number, c: number) => {
+      const y = lo[c] + (level / levels) * rng[c];
+      return Math.sign(y) * Math.expm1(Math.abs(y));
+    };
   }
 
   /**

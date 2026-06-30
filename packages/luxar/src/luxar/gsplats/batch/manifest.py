@@ -51,15 +51,29 @@ class BatchManifest:
     array_key: Optional[str] = None
     """Key path to a specific array within the zarr store (e.g. 'h2afva/fused')."""
 
+    axes: Optional[str] = None
+    """Explicit axis-order override (e.g. ``'t,c,z,y,x'``) used both to discover
+    the dataset shape AND forwarded to every fit task (``fit --axes``). Without
+    it, tasks fall back to the positional ndim heuristic — which must then agree
+    with the shape the planner used, or the tile grid / merge corrupts."""
+
     # Dataset shape
     n_timepoints: int = 1
     n_channels: int = 1
     spatial_shape: Tuple[int, ...] = ()
 
     # Tiling
+    mode: str = "uniform"
+    """Decomposition: ``uniform`` (a regular tile grid) or ``content`` (a shared
+    content-balanced ``FitPlan`` of boxes — see ``plan_path``)."""
     tile_size: int = 256
     tile_overlap: int = 32
     n_tiles: int = 1
+    """Spatial slots per (t,c): tile count in ``uniform`` mode, box count in
+    ``content`` mode (kept as one field so task-id decode / packing are shared)."""
+    plan_path: Optional[str] = None
+    """``content`` mode: path to the shared ``FitPlan`` JSON (relative to
+    ``output_dir``) every array task reads via ``fit --plan … --plan-box``."""
     total_tasks: int = 1
 
     # Fit config
@@ -236,12 +250,14 @@ def output_filename(
     n_timepoints: int = 100,
     n_channels: int = 100,
     n_tiles: int = 1000,
+    label: str = "tile",
 ) -> str:
     """Generate canonical output filename for a task.
 
     Widths are computed from the max index so filenames sort lexicographically.
+    ``label`` is ``tile`` (uniform) or ``box`` (content) — the spatial-slot kind.
     """
     tw = max(2, len(str(max(0, n_timepoints - 1))))
     cw = max(2, len(str(max(0, n_channels - 1))))
     kw = max(3, len(str(max(0, n_tiles - 1))))
-    return f"t{t:0{tw}d}_c{c:0{cw}d}_tile{k:0{kw}d}.gsplats.zarr"
+    return f"t{t:0{tw}d}_c{c:0{cw}d}_{label}{k:0{kw}d}.gsplats.zarr"

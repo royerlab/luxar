@@ -58,10 +58,17 @@ def run_content_fit(
     overlap: int = 32,
     # fit
     preset: Optional[str] = None,
+    config: Optional[Path] = None,
+    iters: Optional[int] = None,
+    loss: Optional[str] = None,
+    lr: Optional[float] = None,
+    cull_retention: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
     keep_boxes: bool = False,
     flat: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: Any = None,
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
     # plan I/O
     plan: Optional[Path] = None,
@@ -71,6 +78,7 @@ def run_content_fit(
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
+    axes: Optional[str] = None,
     verbose: bool = True,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
@@ -93,16 +101,34 @@ def run_content_fit(
         if volume is not None:
             return volume
         return load_volume(
-            input_path, channel=channel, timepoint=timepoint, array_key=array_key
+            input_path,
+            channel=channel,
+            timepoint=timepoint,
+            array_key=array_key,
+            axes=axes,
         )
 
     def _fit_kwargs() -> dict:
+        # Honor the user's fit knobs (None values are ignored by load_fit_config),
+        # so `fit --tiling content --iters/--config/--loss/--lr` — and the Slurm
+        # content worker, which re-invokes the same path with those flags baked in
+        # — are not silently dropped.
         fk = load_fit_config(
-            preset=preset, config_path=None, cli_overrides={"device": device}
+            preset=preset,
+            config_path=config,
+            cli_overrides={
+                "device": device,
+                "n_iters": iters,
+                "loss_type": loss,
+                "lr": lr,
+            },
         )
         fk.pop("seeds", None)
         fk.pop("device", None)
-        fk.setdefault("cull_retention", 0.999)
+        if cull_retention is not None:
+            fk["cull_retention"] = cull_retention
+        else:
+            fk.setdefault("cull_retention", 0.999)  # content default (near-lossless)
         fk["verbose"] = False
         return fk
 
@@ -242,6 +268,7 @@ def run_content_fit(
             channel=channel,
             timepoint=timepoint,
             array_key=array_key,
+            axes=axes,
         )
         tmp_dir = output.parent / f".{output.name}.boxes"
         with asection(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
@@ -252,6 +279,8 @@ def run_content_fit(
                 worker_cmd_builder=builder,
                 keep_boxes=keep_boxes,
                 partition=partition,
+                recipe=recipe,
+                recipe_params=recipe_params,
             )
     else:
         fk = _fit_kwargs()
@@ -265,6 +294,8 @@ def run_content_fit(
                 fitplan,
                 device=device,
                 partition=partition,
+                recipe=recipe,
+                recipe_params=recipe_params,
                 progress_callback=_prog,
                 **fk,
             )

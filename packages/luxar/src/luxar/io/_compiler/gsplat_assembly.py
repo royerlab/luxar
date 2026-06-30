@@ -229,26 +229,61 @@ def write_gsplat_arrays(
             float(amplitudes.max()),
         ]
 
-    # Write cholesky_factors
+    # Write cholesky_factors as two arrays. The diagonal (positive, scale-like)
+    # and the off-diagonal (signed, zero-centred) are split so each can be
+    # encoded/quantised independently on disk. They are recombined into the
+    # packed (N, k) form immediately on read (Python reader + viewer loader),
+    # so nothing downstream of the storage boundary sees the split.
+    from ...gsplats.utils.trils import split_tril
+
+    chol_diag, chol_offdiag = split_tril(cholesky_factors, n_dims)
+
     if cholesky_is_uniform:
-        n_elems_chol = n_splats
-        chunks_cholesky = None
+        n_elems_chol: Optional[int] = n_splats
+        chunks_diag: Optional[tuple] = None
+        chunks_offdiag: Optional[tuple] = None
     else:
         n_elems_chol = None
-        chunks_cholesky = calculate_intelligent_chunks(
+        # Chunk both halves with the SAME row-chunk size (derived from the
+        # packed shape) so the viewer's aligned per-chunk range reads line up.
+        chunk_rows = calculate_intelligent_chunks(
             cholesky_factors.shape, spatial_index_data=ordering_data
-        )
+        )[0]
+        chunks_diag = (chunk_rows, chol_diag.shape[1])
+        chunks_offdiag = (chunk_rows, chol_offdiag.shape[1])
 
+    # deduplicate=False: the per-channel quantized encodings keep their scales
+    # (col_lo/col_hi) in the array's OWN encoding attrs, and the viewer reads
+    # those attrs directly to dequantize (loadCholeskyRanges). If a byte-identical
+    # array were stored as an ``array_ref`` instead, the viewer would find no
+    # scales on the ref and silently skip dequant. So always materialise these
+    # (same reason line vertices/segments opt out of dedup).
     ctx.encoder.encode(
-        data=cholesky_factors,
+        data=chol_diag,
         zarr_group=group,
-        name="cholesky_factors",
-        semantic_type=SemanticType.CHOLESKY,
+        name="cholesky_factors_diag",
+        semantic_type=SemanticType.CHOLESKY_DIAG,
         mode=ctx.encoding_mode,
         n_elements=n_elems_chol,
-        chunks=chunks_cholesky,
+        chunks=chunks_diag,
         compressor=ctx.compressor,
+        deduplicate=False,
     )
+
+    # 1D gsplats (n_dims == 1) have no off-diagonal terms; skip the empty array.
+    # The reader reconstructs an empty off-diagonal block when it is absent.
+    if chol_offdiag.shape[1] > 0:
+        ctx.encoder.encode(
+            data=chol_offdiag,
+            zarr_group=group,
+            name="cholesky_factors_offdiag",
+            semantic_type=SemanticType.CHOLESKY_OFFDIAG,
+            mode=ctx.encoding_mode,
+            n_elements=n_elems_chol,
+            chunks=chunks_offdiag,
+            compressor=ctx.compressor,
+            deduplicate=False,
+        )
 
     # Compute metadata
     if n_splats > 0:

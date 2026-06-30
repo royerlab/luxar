@@ -1,6 +1,6 @@
 # luxar.gsplats.batch
 
-HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm array jobs, captures execution environments, estimates wall times from GPU profiles, tracks job status, and orchestrates post-batch tile merging.
+Batch fitting orchestration for large OME-Zarr datasets, fanning a whole nD timelapse (T×C × tiles/boxes) across **either** a multi-GPU local machine (`batch-fit run`) **or** a Slurm cluster (`batch-fit submit`). Generates Slurm array jobs, runs a local subprocess pool, captures execution environments, estimates wall times from GPU profiles, tracks job status, and orchestrates the post-batch streaming merge. Planning (dataset discovery + decomposition + manifest) is shared by both execution backends and lives in `cli/gsplat_ops/batch_planning.py` (CLI layer); this package owns the manifest, the two execution backends, and the merge.
 
 ## Key Classes and Functions
 
@@ -14,6 +14,9 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 - **`get_slurm_scheduler_info()`** / **`is_slurm_mps_available()`** / **`detect_preemptible_gpu_partition()`** / **`validate_partition_access()`** — `scontrol`/`sinfo`-backed cluster introspection used at plan time to tune array packing and preemptible submission.
 - **`estimate_tile_wall_seconds()`** / **`estimate_slurm_time_limit()`** — Log-interpolate GPU profile throughput tables to estimate per-tile wall time (with safety margin), then round up to a Slurm `--time` string.
 - **`check_batch_status()`** / **`format_status_report()`** — Aggregate job status (`BatchStatus`) from output files and `sacct` queries, and render a human-readable report.
+- **`run_batch_local()`** (`local_runner.py`) — The local execution backend: fit every `(t,c,slot)` task of a planned manifest with a multi-GPU subprocess pool (one worker pinned per GPU via `CUDA_VISIBLE_DEVICES`, per-GPU concurrency sized from free VRAM, weighted round-robin assignment), promote each `.tmp` atomically, then call `merge_batch_results()`. Resumable (skips outputs/`.empty` markers already on disk). The local sibling of the Slurm fit array + merge.
+- **`run_task_pool()`** / **`TaskResult`** (`task_pool.py`) — Generic subprocess pool (`ThreadPoolExecutor`) with a per-task `env_builder` hook (for `CUDA_VISIBLE_DEVICES` pinning) and a `skip_if` resume hook; returns every result, never raises on a worker failure.
+- **`build_task_fit_argv()`** / **`iter_fit_arg_flags()`** (`fit_command.py`) — Build the concrete `luxar gsplat fit` argv for one batch task (the pure-python twin of the Slurm bash template); `iter_fit_arg_flags` is the single source for the `fit_args`→flag mapping shared by both.
 - **`merge_batch_results()`** — Merge completed tiles into the final `.gsplats.zarr`. Default: a streaming `kind=partition` (one part per spatial tile, ≤1 tile-region resident at a time, preserving spatial structure for per-part frustum culling). Pass `recipe=` (`additive`/`substitutive`, see `PER_PART_RECIPES`) to give each tile-part its own LOD ladder as it streams — `additive` → the `partitioned` topology, `substitutive` → `mosaic` — the memory-safe way to add level-of-detail to tiled output (the `lod` command rejects a partition outright). `flat=True` uses the legacy single-leaf 3-level fan-in (tiles per (T,C) → timepoints per channel → channels with optional color assignment), which reloads all tiles into memory; mutually exclusive with `recipe`.
 
 ## Module Structure
@@ -21,6 +24,9 @@ HPC batch fitting orchestration for large OME-Zarr datasets. Generates Slurm arr
 | File | Description |
 |------|-------------|
 | `manifest.py` | `BatchManifest` and `BatchJob` dataclasses, JSON serialization, task ID encoding/decoding |
+| `fit_command.py` | Per-task `luxar gsplat fit` argv builder (`build_task_fit_argv`) + the shared `fit_args`→flag mapping (`iter_fit_arg_flags`), used by both the local runner and the Slurm bash template |
+| `task_pool.py` | Generic subprocess task pool with per-task env (GPU pinning) + resume-skip hooks |
+| `local_runner.py` | Local (non-Slurm) multi-GPU execution backend (`run_batch_local`) + merge |
 | `slurm_gen.py` | Sbatch script generation for fit, calibrate, denoise, and merge jobs |
 | `env_capture.py` | Environment detection (conda, venv, modules, env vars), Slurm scheduler queries, env preamble generation |
 | `time_estimate.py` | Wall-time estimation from GPU benchmark profiles via log-log interpolation |
@@ -33,13 +39,13 @@ Batch fitting is typically driven through the CLI:
 
 ```bash
 # Plan and submit a Slurm fitting job (submits by default; --dry-run to plan only)
-luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu
 
 # Check status
-luxar gsplat slurm-fit status output/
+luxar gsplat batch-fit status output/
 
 # Merge completed tiles
-luxar gsplat slurm-fit merge output/
+luxar gsplat batch-fit merge output/
 ```
 
 Programmatic usage:

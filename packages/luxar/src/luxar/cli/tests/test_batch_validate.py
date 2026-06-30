@@ -169,3 +169,33 @@ def test_bad_format_type_is_corrupt(tmp_path):
     (p / ".zmetadata").write_text("{}")
     (p / ".zattrs").write_text(json.dumps({"format_type": "not_gsplats"}))
     assert _validate_tile(p).startswith("bad_format_type")
+
+
+def test_missing_offdiag_for_dgt1_is_corrupt(tmp_path):
+    """v3.1: a d>1 leaf with the diagonal but no off-diagonal array is a
+    partial/corrupt write — the validator must flag it (recoverable via re-fit)
+    rather than passing it as 'ok' (which would let --fix delete real data only
+    after a confusing later decode failure)."""
+    import shutil
+
+    p = tmp_path / "t.gsplats.zarr"
+    save_gsplats(path=p, **_splats(20), ordering="none")  # 3D → offdiag present
+    assert (p / "cholesky_factors_offdiag").is_dir()  # precondition
+    shutil.rmtree(p / "cholesky_factors_offdiag")
+    assert "missing_cholesky_factors_offdiag" in _validate_tile(p)
+
+
+def test_1d_tile_no_offdiag_is_ok(tmp_path):
+    """A 1D leaf legitimately has no off-diagonal array (k - d == 0); the
+    d>1 offdiag-required check must NOT false-flag it as corrupt."""
+    rng = np.random.default_rng(0)
+    p = tmp_path / "t1d.gsplats.zarr"
+    save_gsplats(
+        path=p,
+        centers=rng.uniform(0, 50, size=(20, 1)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, size=(20,)).astype(np.float32),
+        cholesky_factors=rng.uniform(0.5, 2.0, size=(20, 1)).astype(np.float32),
+        ordering="none",
+    )
+    assert not (p / "cholesky_factors_offdiag").exists()  # precondition: 1D
+    assert _validate_tile(p) == "ok"

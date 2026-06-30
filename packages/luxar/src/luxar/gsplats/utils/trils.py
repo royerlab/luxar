@@ -1,7 +1,7 @@
 # -------------------------------
 # Pack / unpack lower-triangular matrices
 # -------------------------------
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -167,6 +167,186 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
     rows, cols = np.tril_indices(d)
     L[:, rows, cols] = v
     return L
+
+
+def diag_indices(d: int) -> np.ndarray:
+    """Packed-vector positions of the diagonal elements of a d×d tril matrix.
+
+    For row-major lower-triangular packing
+    ``[L00, L10, L11, L20, L21, L22, ...]`` the diagonal element ``(i, i)``
+    lives at packed position ``(i+1)*(i+2)//2 - 1``.
+
+    Parameters
+    ----------
+    d : int
+        Dimension of the square matrix.
+
+    Returns
+    -------
+    np.ndarray, shape (d,)
+        Integer positions of the diagonal elements within the packed vector.
+
+    Examples
+    --------
+    >>> diag_indices(3)
+    array([0, 2, 5])
+    """
+    return np.cumsum(np.arange(1, d + 1)) - 1
+
+
+def offdiag_indices(d: int) -> np.ndarray:
+    """Packed-vector positions of the off-diagonal (strictly lower) elements.
+
+    Complement of :func:`diag_indices` within ``range(tril_size(d))``,
+    preserving the row-major lower-triangular order. Empty for ``d == 1``.
+
+    Parameters
+    ----------
+    d : int
+        Dimension of the square matrix.
+
+    Returns
+    -------
+    np.ndarray, shape (d*(d-1)//2,)
+        Integer positions of the off-diagonal elements within the packed vector.
+
+    Examples
+    --------
+    >>> offdiag_indices(3)
+    array([1, 3, 4])
+    """
+    mask = np.ones(tril_size(d), dtype=bool)
+    mask[diag_indices(d)] = False
+    return np.nonzero(mask)[0]
+
+
+def split_tril(packed: np.ndarray, d: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Split packed Cholesky factors into diagonal and off-diagonal parts.
+
+    The diagonal of a Cholesky factor is positive and scale-like while the
+    off-diagonal is signed and zero-centred; splitting them lets each be
+    encoded/quantised independently on disk. Operates on the last axis, so
+    it accepts per-splat ``(N, k)``, broadcast ``(1, k)`` and uniform
+    ``(k,)`` inputs alike.
+
+    Parameters
+    ----------
+    packed : np.ndarray, shape (..., k) where k = d*(d+1)//2
+        Packed lower-triangular Cholesky factors (row-major).
+    d : int
+        Number of dimensions.
+
+    Returns
+    -------
+    diag : np.ndarray, shape (..., d)
+        Diagonal elements in dimension order.
+    offdiag : np.ndarray, shape (..., d*(d-1)//2)
+        Off-diagonal elements in row-major lower-triangular order
+        (empty trailing axis when ``d == 1``).
+
+    See Also
+    --------
+    merge_tril : inverse operation.
+    """
+    expected_k = tril_size(d)
+    if packed.shape[-1] != expected_k:
+        raise ValueError(
+            f"Packed Cholesky factors have wrong size for {d}D: "
+            f"expected last axis {expected_k}, got shape {packed.shape}"
+        )
+    return packed[..., diag_indices(d)], packed[..., offdiag_indices(d)]
+
+
+def merge_tril(diag: np.ndarray, offdiag: np.ndarray, d: int) -> np.ndarray:
+    """Recombine diagonal and off-diagonal parts into packed Cholesky factors.
+
+    Inverse of :func:`split_tril`. Scatters the two column groups back to
+    their row-major lower-triangular positions. Operates on the last axis.
+
+    Parameters
+    ----------
+    diag : np.ndarray, shape (..., d)
+        Diagonal elements (as returned by :func:`split_tril`).
+    offdiag : np.ndarray, shape (..., d*(d-1)//2)
+        Off-diagonal elements (as returned by :func:`split_tril`).
+    d : int
+        Number of dimensions.
+
+    Returns
+    -------
+    np.ndarray, shape (..., d*(d+1)//2)
+        Packed lower-triangular Cholesky factors (row-major).
+    """
+    expected_diag = d
+    expected_off = tril_size(d) - d
+    if diag.shape[-1] != expected_diag:
+        raise ValueError(
+            f"Diagonal part has wrong size for {d}D: "
+            f"expected last axis {expected_diag}, got shape {diag.shape}"
+        )
+    if offdiag.shape[-1] != expected_off:
+        raise ValueError(
+            f"Off-diagonal part has wrong size for {d}D: "
+            f"expected last axis {expected_off}, got shape {offdiag.shape}"
+        )
+    out = np.empty(
+        diag.shape[:-1] + (tril_size(d),),
+        dtype=np.result_type(diag.dtype, offdiag.dtype),
+    )
+    out[..., diag_indices(d)] = diag
+    out[..., offdiag_indices(d)] = offdiag
+    return out
+
+
+def recombine_cholesky(
+    decode: Callable[[str], Optional[np.ndarray]],
+) -> Optional[np.ndarray]:
+    """Recombine on-disk Cholesky factors into the packed ``(N, k)`` form.
+
+    Single source of truth for the read side of the v3.1 split layout, shared by
+    every reader (the scene reader and the gsplat-tree decoder) so the version
+    handling, corruption invariant, and error message live in ONE place.
+
+    ``decode(name)`` returns the named array decoded to a NumPy array, or
+    ``None`` when that array is absent from the store. Two layouts are handled:
+
+    - **v3.1 split**: ``cholesky_factors_diag`` ``(N, d)`` +
+      ``cholesky_factors_offdiag`` ``(N, k-d)`` → merged via :func:`merge_tril`.
+    - **v3.0 single**: ``cholesky_factors`` ``(N, k)`` → returned as-is (the
+      fallback taken when no diagonal array is present).
+
+    The off-diagonal array is legitimately absent ONLY for 1D gsplats (no
+    off-diagonal terms); for ``d > 1`` its absence means a corrupt or
+    partially-written store and raises ``ValueError`` rather than silently
+    dropping every splat's off-diagonal covariance. Returns ``None`` when no
+    Cholesky array is present at all (matching the legacy single-array reader).
+
+    Parameters
+    ----------
+    decode : Callable[[str], Optional[np.ndarray]]
+        Resolves an array name to its decoded values, or ``None`` if absent.
+
+    Returns
+    -------
+    np.ndarray or None
+        Packed lower-triangular Cholesky factors, or ``None`` if no Cholesky
+        array exists in the store.
+    """
+    diag = decode("cholesky_factors_diag")
+    if diag is None:
+        # v3.0 single packed array (or None if the store has no Cholesky at all).
+        return decode("cholesky_factors")
+    ndim = diag.shape[-1]  # the diagonal has exactly d columns
+    offdiag = decode("cholesky_factors_offdiag")
+    if offdiag is None:
+        if ndim > 1:
+            raise ValueError(
+                f"Cholesky 'cholesky_factors_offdiag' missing for {ndim}D "
+                "splats; the .gsplats.zarr is corrupt or partially written."
+            )
+        # 1D gsplats: no off-diagonal terms were written.
+        offdiag = np.empty(diag.shape[:-1] + (0,), dtype=diag.dtype)
+    return merge_tril(diag, offdiag, ndim)
 
 
 def validate_cholesky_shape(

@@ -264,9 +264,10 @@ class TestGSplatsExtendToAll:
         assert "extend_to_all" in store["colored_extended"].attrs
         assert store["colored_extended"].attrs["extend_to_all"] == ["Time"]
 
-        # Check data arrays
+        # Check data arrays (v3.1 splits Cholesky: 4D → diag=4, offdiag=10-4=6)
         assert store["colored_extended/centers"].shape == (1, 4)
-        assert store["colored_extended/cholesky_factors"].shape == (1, 10)  # 4D: k=10
+        assert store["colored_extended/cholesky_factors_diag"].shape == (1, 4)
+        assert store["colored_extended/cholesky_factors_offdiag"].shape == (1, 6)
         assert store["colored_extended/amplitudes"].shape == (1,)
         assert store["colored_extended/colors"].shape == (1, 3)
 

@@ -1,11 +1,13 @@
-"""Tests for the v3.0 ``.gsplats.zarr`` node-tree format compliance.
+"""Tests for the v3.1 ``.gsplats.zarr`` node-tree format compliance.
 
 A single splat set saved via :func:`save_gsplats` is a **leaf node at the file
-root**: the arrays (``centers`` / ``amplitudes`` / ``cholesky_factors`` /
-``chunk_bounds``) live directly under the root group, and the root ``.zattrs``
-carry both the self-identifying header (``format_version`` = ``"3.0"``) and the
-leaf's own attrs (``type`` = ``"gsplats"``, ``n_splats``, ordering metadata,
-``center_bounds``, ``position_bounds``, render defaults).
+root**: the arrays (``centers`` / ``amplitudes`` / ``cholesky_factors_diag`` /
+``cholesky_factors_offdiag`` / ``chunk_bounds``) live directly under the root
+group, and the root ``.zattrs`` carry both the self-identifying header
+(``format_version`` = ``"3.1"``) and the leaf's own attrs (``type`` =
+``"gsplats"``, ``n_splats``, ordering metadata, ``center_bounds``,
+``position_bounds``, render defaults). v3.1 splits the Cholesky factors into a
+diagonal and an off-diagonal array (v3.0 stored a single ``cholesky_factors``).
 """
 
 import tempfile
@@ -39,7 +41,7 @@ class TestFormatCompliance:
             )
             root = zarr.open_group(str(path), mode="r")
 
-            assert root.attrs["format_version"] == "3.0"
+            assert root.attrs["format_version"] == "3.1"
             assert root.attrs["format_type"] == "gsplats_zarr"
             assert "timestamp" in root.attrs
             assert "luxar_gsplats_version" in root.attrs
@@ -55,8 +57,16 @@ class TestFormatCompliance:
             # directly under root, not under splats/substitutive_0/additive_0.
             assert root.attrs["type"] == "gsplats"
             assert "splats" not in root
-            for arr in ("centers", "amplitudes", "cholesky_factors", "chunk_bounds"):
+            for arr in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+                "chunk_bounds",
+            ):
                 assert arr in root, arr
+            # v3.1 split: the single packed array is gone.
+            assert "cholesky_factors" not in root
 
     def test_leaf_root_attributes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,7 +102,9 @@ class TestFormatCompliance:
 
             assert root["centers"].shape[1] == 3
             assert len(root["amplitudes"].shape) == 1
-            assert root["cholesky_factors"].shape[1] == 6  # d*(d+1)//2, d=3
+            # v3.1 split: diagonal has d=3 columns, off-diagonal has k-d=3.
+            assert root["cholesky_factors_diag"].shape[1] == 3
+            assert root["cholesky_factors_offdiag"].shape[1] == 3
             cb = root["chunk_bounds"]
             assert cb.shape[1] == 3 and cb.shape[2] == 2
 
@@ -105,7 +117,12 @@ class TestFormatCompliance:
                 encoding_mode=EncodingMode.MEMORY,
             )
             root = zarr.open_group(str(path), mode="r")
-            for array_name in ("centers", "amplitudes", "cholesky_factors"):
+            for array_name in (
+                "centers",
+                "amplitudes",
+                "cholesky_factors_diag",
+                "cholesky_factors_offdiag",
+            ):
                 enc = root[array_name].attrs.get("encoding")
                 assert enc is not None and "name" in enc, array_name
 
@@ -179,7 +196,8 @@ class TestFormatCompliance:
                 encoding_mode=EncodingMode.PRECISION,
             )
             root = zarr.open_group(str(path), mode="r")
-            assert root["cholesky_factors"].shape[1] == 6
+            assert root["cholesky_factors_diag"].shape[1] == 3
+            assert root["cholesky_factors_offdiag"].shape[1] == 3
             assert root.attrs["ndim"] == 3
             cb = root.attrs["center_bounds"]
             assert len(cb["min"]) == 3 and len(cb["max"]) == 3

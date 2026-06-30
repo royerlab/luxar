@@ -1,4 +1,4 @@
-"""Migrate legacy .gsplats.zarr layouts to the current v3.0 node-tree format.
+"""Migrate legacy .gsplats.zarr layouts to the current node-tree format.
 
 Four input shapes are auto-detected:
 
@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import zarr
 
-from luxar.encoding import ArrayDecoder
+from luxar.encoding import ArrayDecoder, EncodingMode
 from luxar.gsplats.gsplat_data import (
     AdditiveSubLOD,
     GSplatData,
@@ -111,10 +111,10 @@ def detect_legacy_format(input_path: Path) -> str:
                 fv = root.attrs.get("format_version")
                 if fv in ("1.0", "1.1", "2.0"):
                     return f"v{fv}"
-                if fv == "3.0":
+                if fv in ("3.0", "3.1"):
                     raise ValueError(
-                        f"Input {input_path} is already format v3.0 "
-                        f"(the current node-tree format); no migration needed."
+                        f"Input {input_path} is already format v{fv} "
+                        f"(a current node-tree format); no migration needed."
                     )
         finally:
             if cleanup_temp is not None and cleanup_temp.exists():
@@ -361,9 +361,10 @@ def migrate_format(
     *,
     overwrite: bool = False,
     zip_deflate: bool = False,
+    encoding_mode: EncodingMode = EncodingMode.AUTO,
 ) -> str:
     """Convert a legacy .gsplats.zarr (v1.0 / v1.1 / v2.0) or substitutive
-    directory to the current v3.0 node-tree format.
+    directory to the current node-tree format.
 
     The **container format is preserved from the output extension**: an
     ``output_path`` ending in ``.zip`` / ``.tar.gz`` is written as a compressed
@@ -371,12 +372,21 @@ def migrate_format(
     while a plain path is written as a ``.gsplats.zarr`` directory. ``zip_deflate``
     selects DEFLATE vs the default STORED for ``.zip`` outputs.
 
+    **Encoding is not a pure rewrap.** The output uses the current node-tree
+    encoding policy (``encoding_mode``, default :data:`EncodingMode.AUTO`), so legacy
+    *float32* Cholesky factors are re-encoded as the split diagonal /
+    off-diagonal arrays with per-column quantization — uint16 (near-lossless,
+    ~0.1% relative error) under AUTO, uint8 under MEMORY. Pass
+    ``encoding_mode=EncodingMode.PRECISION`` for a lossless float32 migration of
+    archival data. Other arrays (centers, etc.) follow the same per-array policy.
+
     Returns the detected legacy format identifier (``"v1.0"``, ``"v1.1"``,
     ``"v2.0"``, or ``"substitutive_dir"``).
 
     Raises:
         ValueError: If ``output_path`` exists and ``overwrite`` is False, the
-            input is already v3.0, or the layout is unrecognised.
+            input is already in the current node-tree format (v3.0 / v3.1), or
+            the layout is unrecognised.
         FileNotFoundError: If ``input_path`` doesn't exist.
     """
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -432,13 +442,16 @@ def migrate_format(
     elif out_name.endswith(".tar.gz"):
         compress = "tar.gz"
 
-    # Write via the single v3.0 node-tree writer. ordering="none" keeps the
-    # migrated arrays byte-equivalent to the source (a pure rewrap); fitting /
-    # provenance flow through as first-class write inputs (no post-hoc splice).
+    # Write via the single v3.0 node-tree writer. ordering="none" preserves the
+    # source element order (no Morton/Hilbert re-sort); encoding still follows
+    # the v3.0 policy (encoding_mode) — so float32 Cholesky is re-encoded to the
+    # split + per-column quantization unless PRECISION is requested (see the
+    # docstring). Fitting / provenance flow through as first-class write inputs.
     write_gsplats_tree(
         output_path,
         data.tree,
         ordering="none",
+        encoding_mode=encoding_mode,
         fitting_info=fitting_info or None,
         fitting_config=fitting_config or None,
         provenance_info=provenance_info or None,

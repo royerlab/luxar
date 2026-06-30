@@ -1406,6 +1406,9 @@ class GSplatData(_SplatArrayMixin):
     @staticmethod
     def partition_from_regions(
         regions: "List[GSplatData]",
+        *,
+        recipe: "Optional[str]" = None,
+        recipe_params: "Optional[Any]" = None,
     ) -> "GSplatNode":
         """Assemble a ``kind=partition`` tree from pre-decomposed spatial regions.
 
@@ -1417,19 +1420,37 @@ class GSplatData(_SplatArrayMixin):
         sum correctly as additive partition parts, so the partitioned render
         equals the flat concatenation with no double-count.
 
+        With ``recipe`` (one of
+        :data:`~luxar.gsplats.lod.recipes.PER_PART_RECIPES`: ``additive`` →
+        ``partitioned`` topology, ``substitutive`` → ``mosaic``) each part is
+        given its OWN LOD via :func:`~luxar.gsplats.lod.recipes.build_part_lod`
+        (clamped to the part's splat count), so the output is a partition whose
+        every child carries a ladder/lod-group — the fit-time equivalent of a
+        per-part ``gsplat lod`` pass (which cannot run on a partition). Without a
+        recipe each part is a bare leaf (the historical behaviour).
+
         Empty regions (0 splats) are dropped. With a single non-empty region the
-        bare leaf is returned (no 1-part partition wrapper); with none, raises.
-        Returns a tree node (write with ``write_gsplats_tree`` or embed in a
-        scene) — a partition has no flat-matrix ``GSplatData`` equivalent.
+        bare part node is returned (no 1-part partition wrapper); with none,
+        raises. Returns a tree node (write with ``write_gsplats_tree`` or embed
+        in a scene) — a partition has no flat-matrix ``GSplatData`` equivalent.
         """
         from .tree import GSplatPartition
 
         nonempty = [r for r in regions if r.n_splats > 0]
         if not nonempty:
             raise ValueError("partition_from_regions: all regions are empty")
+
+        def _part_node(region: "GSplatData") -> "GSplatNode":
+            if recipe is None:
+                return region.tree
+            from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
+
+            params = recipe_params if recipe_params is not None else RecipeParams()
+            return build_part_lod(region.tree, recipe, params)
+
         if len(nonempty) == 1:
-            return nonempty[0].tree  # single part -> bare leaf, not a wrapper
-        return GSplatPartition(children=[r.tree for r in nonempty])
+            return _part_node(nonempty[0])  # single part -> bare part node
+        return GSplatPartition(children=[_part_node(r) for r in nonempty])
 
     def embed_dimension(
         self,

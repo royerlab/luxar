@@ -7,7 +7,12 @@ import pytest
 
 from luxar.gsplats.utils.trils import (
     calculate_gradient_dilution_factor,
+    diag_indices,
+    merge_tril,
+    offdiag_indices,
     pack_tril,
+    recombine_cholesky,
+    split_tril,
     tril_size,
     unpack_tril,
 )
@@ -430,6 +435,140 @@ class TestValidateCholeskShape:
 
         with pytest.raises(ValueError, match="must be 1D .* or 2D"):
             validate_cholesky_shape(chol, ndim=2)
+
+
+class TestDiagOffdiagIndices:
+    """Test diag_indices / offdiag_indices helpers."""
+
+    def test_diag_indices_known_values(self) -> None:
+        np.testing.assert_array_equal(diag_indices(1), [0])
+        np.testing.assert_array_equal(diag_indices(2), [0, 2])
+        np.testing.assert_array_equal(diag_indices(3), [0, 2, 5])
+        np.testing.assert_array_equal(diag_indices(4), [0, 2, 5, 9])
+
+    def test_offdiag_indices_known_values(self) -> None:
+        np.testing.assert_array_equal(offdiag_indices(1), [])
+        np.testing.assert_array_equal(offdiag_indices(2), [1])
+        np.testing.assert_array_equal(offdiag_indices(3), [1, 3, 4])
+        np.testing.assert_array_equal(offdiag_indices(4), [1, 3, 4, 6, 7, 8])
+
+    def test_diag_offdiag_partition(self) -> None:
+        """diag + offdiag indices partition range(tril_size(d)) exactly."""
+        for d in range(1, 8):
+            k = tril_size(d)
+            combined = np.concatenate([diag_indices(d), offdiag_indices(d)])
+            np.testing.assert_array_equal(np.sort(combined), np.arange(k))
+            assert len(diag_indices(d)) == d
+            assert len(offdiag_indices(d)) == k - d
+
+    def test_diag_indices_match_tril_diagonal(self) -> None:
+        """diag_indices select exactly the (i, i) positions of a packed tril."""
+        for d in [2, 3, 4, 5]:
+            L = np.arange(d * d, dtype=np.float64).reshape(d, d)
+            packed = pack_tril(L[None])[0]
+            np.testing.assert_array_equal(
+                packed[diag_indices(d)], np.diag(L)
+            )
+
+
+class TestSplitMergeTril:
+    """Test split_tril / merge_tril round-trip and shapes."""
+
+    def test_split_shapes(self) -> None:
+        for d in [1, 2, 3, 4, 5]:
+            packed = np.random.rand(7, tril_size(d)).astype(np.float32)
+            diag, offdiag = split_tril(packed, d)
+            assert diag.shape == (7, d)
+            assert offdiag.shape == (7, tril_size(d) - d)
+
+    def test_roundtrip_per_splat(self) -> None:
+        rng = np.random.default_rng(0)
+        for d in [1, 2, 3, 4, 5]:
+            for n in [0, 1, 4]:
+                packed = rng.standard_normal((n, tril_size(d))).astype(np.float32)
+                diag, offdiag = split_tril(packed, d)
+                recovered = merge_tril(diag, offdiag, d)
+                np.testing.assert_array_equal(packed, recovered)
+                assert recovered.dtype == packed.dtype
+
+    def test_roundtrip_uniform_2d_row(self) -> None:
+        """Broadcast (1, k) and bare (k,) uniform shapes both round-trip."""
+        for d in [2, 3, 4]:
+            packed_row = np.random.rand(1, tril_size(d)).astype(np.float32)
+            diag, offdiag = split_tril(packed_row, d)
+            assert diag.shape == (1, d)
+            np.testing.assert_array_equal(merge_tril(diag, offdiag, d), packed_row)
+
+            packed_flat = np.random.rand(tril_size(d)).astype(np.float32)
+            diag_f, offdiag_f = split_tril(packed_flat, d)
+            assert diag_f.shape == (d,)
+            np.testing.assert_array_equal(
+                merge_tril(diag_f, offdiag_f, d), packed_flat
+            )
+
+    def test_diag_is_actual_diagonal(self) -> None:
+        """split_tril's diagonal output equals the matrix diagonal."""
+        for d in [2, 3, 4]:
+            L = np.tril(np.random.rand(d, d).astype(np.float32))
+            packed = pack_tril(L[None])
+            diag, _ = split_tril(packed, d)
+            np.testing.assert_array_equal(diag[0], np.diag(L))
+
+    def test_split_wrong_size_raises(self) -> None:
+        bad = np.random.rand(4, 5).astype(np.float32)  # k=5 invalid for any d
+        with pytest.raises(ValueError, match="wrong size"):
+            split_tril(bad, 3)  # 3D expects k=6
+
+    def test_merge_wrong_size_raises(self) -> None:
+        with pytest.raises(ValueError, match="wrong size"):
+            merge_tril(np.zeros((4, 2)), np.zeros((4, 3)), 3)  # diag should be 3
+
+
+class TestRecombineCholesky:
+    """The shared read-side helper used by BOTH the scene reader and the
+    gsplat-tree decoder (single source of truth for the v3.1-split / v3.0-single
+    layout handling)."""
+
+    @staticmethod
+    def _store(arrays: dict):
+        """A decode callback over an in-memory {name: ndarray} mapping."""
+        return lambda name: arrays.get(name)
+
+    def test_v31_split_merges_to_packed(self) -> None:
+        rng = np.random.default_rng(0)
+        for d in [2, 3, 4]:
+            packed = rng.standard_normal((5, tril_size(d))).astype(np.float32)
+            diag, offdiag = split_tril(packed, d)
+            out = recombine_cholesky(
+                self._store(
+                    {
+                        "cholesky_factors_diag": diag,
+                        "cholesky_factors_offdiag": offdiag,
+                    }
+                )
+            )
+            np.testing.assert_array_equal(out, packed)
+
+    def test_v30_single_array_fallback(self) -> None:
+        # No diagonal array present → fall back to the legacy packed array.
+        packed = np.arange(30, dtype=np.float32).reshape(5, 6)
+        out = recombine_cholesky(self._store({"cholesky_factors": packed}))
+        np.testing.assert_array_equal(out, packed)
+
+    def test_no_cholesky_returns_none(self) -> None:
+        assert recombine_cholesky(self._store({})) is None
+
+    def test_1d_missing_offdiag_is_ok(self) -> None:
+        # 1D gsplats legitimately have no off-diagonal array.
+        diag = np.array([[1.0], [2.0], [3.0]], dtype=np.float32)
+        out = recombine_cholesky(self._store({"cholesky_factors_diag": diag}))
+        np.testing.assert_array_equal(out, diag)
+
+    def test_dgt1_missing_offdiag_raises(self) -> None:
+        # 3D diagonal but no off-diagonal array → corrupt/partial store.
+        diag = np.ones((4, 3), dtype=np.float32)
+        with pytest.raises(ValueError, match="corrupt or partially written"):
+            recombine_cholesky(self._store({"cholesky_factors_diag": diag}))
 
 
 # ── Cholesky embedding regression tests ──────────────────────

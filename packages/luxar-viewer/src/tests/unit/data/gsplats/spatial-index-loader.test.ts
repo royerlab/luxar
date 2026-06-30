@@ -30,6 +30,10 @@ vi.mock('zarrita', () => ({
   open: vi.fn(),
   get: vi.fn(),
   slice: vi.fn((start, end) => ({ start, end })),
+  // isNotFoundError (data/zarr.ts) does `error instanceof zarrita.NotFoundError`,
+  // so the mock must export the class. Missing-array rejections in this file use
+  // a "Node not found" message, which isNotFoundError also matches by heuristic.
+  NotFoundError: class NotFoundError extends Error {},
 }));
 
 const mockExecute = vi.fn();
@@ -149,7 +153,9 @@ describe('GSplatsSpatialIndexLoader', () => {
     let mockArrays: {
       centers: { shape: number[]; dtype: string; attrs?: object };
       amplitudes: { shape: number[]; dtype: string; attrs?: object };
-      cholesky_factors: { shape: number[]; dtype: string; attrs?: object };
+      // v3.1 split Cholesky layout (diagonal + off-diagonal).
+      cholesky_factors_diag: { shape: number[]; dtype: string; attrs?: object };
+      cholesky_factors_offdiag: { shape: number[]; dtype: string; attrs?: object };
       colors: { shape: number[]; dtype: string; attrs?: object };
     };
     let chunkBoundsArray: { shape: number[]; dtype: string; attrs: object };
@@ -157,11 +163,12 @@ describe('GSplatsSpatialIndexLoader', () => {
     beforeEach(() => {
       vi.clearAllMocks();
 
-      // 3D dataset → cholesky packed = 3·4/2 = 6
+      // 3D dataset → cholesky packed = 3·4/2 = 6; v3.1 split: diag=3, offdiag=3.
       mockArrays = {
         centers: { shape: [5000, 3], dtype: 'float32', attrs: {} },
         amplitudes: { shape: [5000], dtype: 'float32', attrs: {} },
-        cholesky_factors: { shape: [5000, 6], dtype: 'float32', attrs: {} },
+        cholesky_factors_diag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
+        cholesky_factors_offdiag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
         colors: { shape: [5000, 3], dtype: 'float32', attrs: {} },
       };
 
@@ -181,7 +188,11 @@ describe('GSplatsSpatialIndexLoader', () => {
         if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
         if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
         if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-        if (path.includes('cholesky_factors')) return Promise.resolve(mockArrays.cholesky_factors);
+        // Check the split names before the generic substring (both contain it).
+        if (path.includes('cholesky_factors_diag'))
+          return Promise.resolve(mockArrays.cholesky_factors_diag);
+        if (path.includes('cholesky_factors_offdiag'))
+          return Promise.resolve(mockArrays.cholesky_factors_offdiag);
         if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
         return Promise.reject(new Error(`Unknown array: ${path}`));
       });
@@ -195,7 +206,8 @@ describe('GSplatsSpatialIndexLoader', () => {
           const count = sliceSpec[0].end - sliceSpec[0].start;
           let elementsPerItem = 1;
           if (array === mockArrays.centers) elementsPerItem = 3;
-          else if (array === mockArrays.cholesky_factors) elementsPerItem = 6;
+          else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 3;
+          else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 3;
           else if (array === mockArrays.colors) elementsPerItem = 3;
           return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
         }
@@ -264,8 +276,10 @@ describe('GSplatsSpatialIndexLoader', () => {
             if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
             if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
             if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
-            if (path.includes('cholesky_factors'))
-              return Promise.resolve(mockArrays.cholesky_factors);
+            if (path.includes('cholesky_factors_diag'))
+              return Promise.resolve(mockArrays.cholesky_factors_diag);
+            if (path.includes('cholesky_factors_offdiag'))
+              return Promise.resolve(mockArrays.cholesky_factors_offdiag);
             // colors rejected
             return Promise.reject(new Error('Not found'));
           }
@@ -432,7 +446,9 @@ describe('GSplatsSpatialIndexLoader', () => {
           attrs: { ...mockNode.attrs, ndim: 4, n_splats: 100, chunk_size: 50 },
         };
         mockArrays.centers.shape = [100, 4];
-        mockArrays.cholesky_factors.shape = [100, 10];
+        // 4D split: diag=4, offdiag=10-4=6.
+        mockArrays.cholesky_factors_diag.shape = [100, 4];
+        mockArrays.cholesky_factors_offdiag.shape = [100, 6];
         mockArrays.amplitudes.shape = [100];
         mockArrays.colors.shape = [100, 3];
         chunkBoundsArray.shape = [2, 4, 2]; // 2 chunks at 50 splats each
@@ -447,7 +463,8 @@ describe('GSplatsSpatialIndexLoader', () => {
             const count = sliceSpec[0].end - sliceSpec[0].start;
             let elementsPerItem = 1;
             if (array === mockArrays.centers) elementsPerItem = 4;
-            else if (array === mockArrays.cholesky_factors) elementsPerItem = 10;
+            else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 4;
+            else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 6;
             else if (array === mockArrays.colors) elementsPerItem = 3;
             return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
           }
@@ -470,6 +487,202 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(result.positions.length).toBe(5 * 4);
         expect(result.choleskyFactors.length).toBe(5 * 10);
         expect(result.ndim).toBe(4);
+      });
+
+      it('reads the legacy v3.0 single packed cholesky_factors array', async () => {
+        // v3.0 fallback: no split arrays on disk; a single packed (N, 6) array.
+        // The split probe (`cholesky_factors_diag`) rejects, so the loader falls
+        // back to the legacy single array and produces the same packed result.
+        const legacyChol = { shape: [5000, 6], dtype: 'float32', attrs: {} };
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+            if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
+            if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
+            if (
+              path.includes('cholesky_factors_diag') ||
+              path.includes('cholesky_factors_offdiag')
+            )
+              // zarrita-style missing-node error (recognized by isNotFoundError).
+              return Promise.reject(new Error('Node not found'));
+            if (path.includes('cholesky_factors')) return Promise.resolve(legacyChol);
+            if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+            return Promise.reject(new Error(`Unknown array: ${path}`));
+          }
+        );
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === chunkBoundsArray)
+              return Promise.resolve({ data: new Float32Array(20 * 3 * 2) });
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            let elementsPerItem = 1;
+            if (array === mockArrays.centers) elementsPerItem = 3;
+            else if (array === legacyChol) elementsPerItem = 6;
+            else if (array === mockArrays.colors) elementsPerItem = 3;
+            return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
+          }
+        );
+
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          mockNode
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const result = await bodyLoader.loadGSplats(viewState);
+        expect(result.choleskyFactors).toBeInstanceOf(Float32Array);
+        expect(result.choleskyFactors.length).toBe(result.splatCount * 6);
+      });
+
+      it('throws on a corrupt d>1 split missing the off-diagonal array', async () => {
+        // 3D fixture (offLen = 6 - 3 = 3): the diagonal is present but the
+        // off-diagonal array fails to open. Silently zero/stale-filling the
+        // off-diagonals would scramble every splat's covariance, so the loader
+        // must fail loud (mirrors the Python reader's merge_tril guard).
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+            if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
+            if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
+            if (path.includes('cholesky_factors_diag'))
+              return Promise.resolve(mockArrays.cholesky_factors_diag);
+            // off-diagonal missing (corrupt / partial write) — zarrita-style
+            // missing-node error, recognized by isNotFoundError.
+            if (path.includes('cholesky_factors_offdiag'))
+              return Promise.reject(new Error('Node not found'));
+            if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+            return Promise.reject(new Error(`Unknown array: ${path}`));
+          }
+        );
+
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          mockNode
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(
+          /cholesky_factors_offdiag/
+        );
+      });
+
+      it('surfaces a transient (non-not-found) error opening the diagonal array', async () => {
+        // A network/5xx error opening cholesky_factors_diag must NOT be swallowed
+        // and mis-read as "legacy v3.0, no split"; it must propagate so the real
+        // cause is visible (only a genuine not-found means legacy single-array).
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+            if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
+            if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
+            if (path.includes('cholesky_factors_diag'))
+              return Promise.reject(new Error('HTTP 503 service unavailable'));
+            if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+            return Promise.reject(new Error(`Unknown array: ${path}`));
+          }
+        );
+
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          mockNode
+        );
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow(/503/);
+      });
+
+      it('dequantizes per-channel log/signed-log split Cholesky end-to-end', async () => {
+        // diag log_perchannel_u8: col_lo=0, col_hi=[ln3,ln5,ln9] → a top level (255)
+        // decodes to expm1(col_hi) = [2,4,8]; offdiag signed_log_perchannel_u8:
+        // col_lo=-ln2, col_hi=+ln2 → level 255 decodes to +expm1(ln2)=+1 per column.
+        const LN = (x: number) => Math.log(x);
+        const diagArr = {
+          shape: [5000, 3],
+          dtype: 'uint8',
+          attrs: {
+            encoding: {
+              name: 'log_perchannel_u8',
+              bits: 8,
+              col_lo: [0, 0, 0],
+              col_hi: [LN(3), LN(5), LN(9)],
+            },
+          },
+        };
+        const offArr = {
+          shape: [5000, 3],
+          dtype: 'uint8',
+          attrs: {
+            encoding: {
+              name: 'signed_log_perchannel_u8',
+              bits: 8,
+              col_lo: [-LN(2), -LN(2), -LN(2)],
+              col_hi: [LN(2), LN(2), LN(2)],
+            },
+          },
+        };
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (location: unknown) => {
+            const path = String(location);
+            if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+            if (path.includes('centers')) return Promise.resolve(mockArrays.centers);
+            if (path.includes('amplitudes')) return Promise.resolve(mockArrays.amplitudes);
+            if (path.includes('cholesky_factors_diag')) return Promise.resolve(diagArr);
+            if (path.includes('cholesky_factors_offdiag')) return Promise.resolve(offArr);
+            if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+            return Promise.reject(new Error(`Unknown array: ${path}`));
+          }
+        );
+        // Return top-level (255) integer levels for both split arrays.
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === chunkBoundsArray)
+              return Promise.resolve({ data: new Float32Array(20 * 3 * 2) });
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            if (array === diagArr || array === offArr) {
+              const buf = new Uint8Array(count * 3).fill(255);
+              return Promise.resolve({ data: buf });
+            }
+            const epi = array === mockArrays.centers ? 3 : 1;
+            return Promise.resolve({ data: new Float32Array(count * epi) });
+          }
+        );
+
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          mockNode
+        );
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const result = await bodyLoader.loadGSplats(viewState);
+        // packed (3D) per splat: diag at [0,2,5]=[2,4,8], off at [1,3,4]=[1,1,1]
+        const expected = [2, 1, 4, 1, 1, 8];
+        for (let i = 0; i < 6; i++) {
+          expect(result.choleskyFactors[i]).toBeCloseTo(expected[i], 4);
+        }
       });
     });
 
@@ -672,7 +885,8 @@ describe('GSplatsSpatialIndexLoader', () => {
             }
             let elementsPerItem = 1;
             if (array === mockArrays.centers) elementsPerItem = 3;
-            else if (array === mockArrays.cholesky_factors) elementsPerItem = 6;
+            else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 3;
+            else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 3;
             return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
           }
         );

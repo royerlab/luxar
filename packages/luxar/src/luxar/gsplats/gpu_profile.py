@@ -5,7 +5,7 @@ Stores and aggregates benchmark results in a YAML file at
 can have multiple benchmark runs; a summary is recomputed on every append
 using average throughput and conservative (min) OOM boundaries.
 
-This module is consumed by ``luxar gsplat slurm-fit`` to auto-select tile
+This module is consumed by ``luxar gsplat batch-fit`` to auto-select tile
 sizes and estimate wall times.
 """
 

@@ -34,6 +34,12 @@ class ArrayDecoder:
         "log_scalar_uint16",
         "rgb_uint8",
         "rgb_uint16",
+        # Generic per-channel quantization (per-column min/max log / signed-log).
+        # First used for the split Cholesky diagonal / off-diagonal.
+        "log_perchannel_u8",
+        "log_perchannel_u16",
+        "signed_log_perchannel_u8",
+        "signed_log_perchannel_u16",
     }
     SPECIAL_ENCODINGS = {"broadcasted", "array_ref", "lut_uint8", "lut_uint16"}
     KNOWN_ENCODINGS = DIRECT_ENCODINGS | QUANTIZED_ENCODINGS | SPECIAL_ENCODINGS
@@ -86,6 +92,10 @@ class ArrayDecoder:
             return self._decode_color(zarr_array, enc)
         elif name == "rgb_uint16":
             return self._decode_color(zarr_array, enc)
+        elif name in {"log_perchannel_u8", "log_perchannel_u16"}:
+            return self._decode_log_perchannel(zarr_array, enc)
+        elif name in {"signed_log_perchannel_u8", "signed_log_perchannel_u16"}:
+            return self._decode_signed_log_perchannel(zarr_array, enc)
 
         # Direct dtype encodings mean the stored values are already decoded.
         elif name in self.DIRECT_ENCODINGS:
@@ -130,6 +140,15 @@ class ArrayDecoder:
             self._require_fields(enc, name, ("max_log", "bits", "original_dtype"))
         elif name in {"rgb_uint8", "rgb_uint16"}:
             self._require_fields(enc, name, ("original_dtype",))
+        elif name in {
+            "log_perchannel_u8",
+            "log_perchannel_u16",
+            "signed_log_perchannel_u8",
+            "signed_log_perchannel_u16",
+        }:
+            self._require_fields(
+                enc, name, ("col_lo", "col_hi", "bits", "original_dtype")
+            )
 
         return enc
 
@@ -219,6 +238,69 @@ class ArrayDecoder:
         normalized = data.astype(np.float64) / (2**bits - 1)
         result = np.expm1(normalized * max_log)
         return np.asarray(result, dtype=original_dtype)
+
+    @staticmethod
+    def _perchannel_scales(data: np.ndarray, enc: dict, name: str) -> tuple:
+        """Validate + return ``(lo, hi, bits)`` for a per-channel dequant.
+
+        Mirrors the finiteness/length rigor of the scalar decoders
+        (``_decode_bounded_scalar`` / ``_decode_log_scalar``) and the viewer's
+        ``ArrayDecoder.makePerChannelDequant`` (which throws rather than
+        silently zero-filling): a malformed file with non-finite or
+        wrong-length per-column scales must raise, not corrupt silently.
+
+        Raises:
+            ValueError: If ``bits <= 0``, ``col_lo``/``col_hi`` are non-finite,
+                differ in length, mismatch the array's column count, or any
+                ``col_hi < col_lo`` (a constant column with ``hi == lo`` is
+                valid — it decodes every code to ``lo``).
+        """
+        lo = np.asarray(enc["col_lo"], dtype=np.float64)
+        hi = np.asarray(enc["col_hi"], dtype=np.float64)
+        bits = int(enc["bits"])
+        if bits <= 0:
+            raise ValueError(f"{name} requires bits > 0, got {bits}")
+        if lo.shape != hi.shape or lo.ndim != 1:
+            raise ValueError(
+                f"{name} requires equal-length 1-D col_lo/col_hi, "
+                f"got shapes {lo.shape} and {hi.shape}"
+            )
+        cols = data.shape[-1] if data.ndim >= 1 else 1
+        if lo.shape[0] != cols:
+            raise ValueError(
+                f"{name} expects {cols} per-column scales, got {lo.shape[0]}"
+            )
+        if not (np.all(np.isfinite(lo)) and np.all(np.isfinite(hi))):
+            raise ValueError(f"{name} requires finite col_lo/col_hi")
+        if np.any(hi < lo):
+            raise ValueError(f"{name} requires col_hi >= col_lo for every column")
+        return lo, hi, bits
+
+    def _decode_log_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
+        """Decode generic per-channel log quantization of an (N, C) array.
+
+        Inverse of ``_encode_log_perchannel``:
+        ``x = expm1(col_lo[c] + u/levels·(col_hi[c]-col_lo[c]))`` per column.
+        """
+        data = np.asarray(arr[:]).astype(np.float64)
+        lo, hi, bits = self._perchannel_scales(data, enc, "log_perchannel")
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
+        rng = np.maximum(hi - lo, 1e-30)
+        y = lo + data / ((1 << bits) - 1) * rng
+        return np.asarray(np.expm1(y), dtype=original_dtype)
+
+    def _decode_signed_log_perchannel(self, arr: zarr.Array, enc: dict) -> np.ndarray:
+        """Decode generic per-channel signed-log quantization of an (N, C) array.
+
+        Inverse of ``_encode_signed_log_perchannel``:
+        ``y = col_lo[c] + u/levels·(col_hi[c]-col_lo[c]); x = sign(y)·expm1(|y|)``.
+        """
+        data = np.asarray(arr[:]).astype(np.float64)
+        lo, hi, bits = self._perchannel_scales(data, enc, "signed_log_perchannel")
+        original_dtype = np.dtype(enc.get("original_dtype", "float32"))
+        rng = np.maximum(hi - lo, 1e-30)
+        y = lo + data / ((1 << bits) - 1) * rng
+        return np.asarray(np.sign(y) * np.expm1(np.abs(y)), dtype=original_dtype)
 
     def _decode_color(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode color: uint8/uint16 [0,max] → original dtype [0,1].

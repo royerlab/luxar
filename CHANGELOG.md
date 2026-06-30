@@ -6,6 +6,83 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Changed (breaking) — `.gsplats.zarr` format v3.0 → v3.1 (split Cholesky factors, per-channel differential quantization)
+
+The on-disk packed `cholesky_factors` array is split into two independently
+encoded arrays: `cholesky_factors_diag` (N, d) and `cholesky_factors_offdiag`
+(N, k−d, where k = d·(d+1)/2; absent when d == 1). Each is quantized with a
+per-channel ("differential") scheme — the diagonal uses `log_perchannel_u16`
+(AUTO) / `log_perchannel_u8` (MEMORY) / `float32` (PRECISION); the off-diagonal
+uses `signed_log_perchannel_u16` / `signed_log_perchannel_u8` / `float32`,
+selected by the new `CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` semantic types. uint8
+is measured visually lossless (≥93 dB vs the float32 render); decode is always
+to float32 so GPU/shader/WASM paths are unchanged. `FORMAT_VERSION` is bumped to
+`"3.1"` and `SUPPORTED_FORMAT_VERSIONS` is now `("3.0", "3.1")` — v3.0
+single-array files are still read transparently (loaders fall back to the packed
+`cholesky_factors` when `cholesky_factors_diag` is absent). The change is on-disk
+only: the in-memory packed `GSplatData.cholesky_factors` (shape (N, d·(d+1)/2))
+is unchanged. Both the Python scene reader and the gsplat-tree decoder share one
+`recombine_cholesky` helper. `migrate-format` gains `--lossless` (PRECISION) for
+exact archival float32 migration; the default (AUTO) re-encodes legacy Cholesky.
+
+#### Changed (breaking) — `gsplat slurm-fit` renamed to `gsplat batch-fit`, plus new local multi-GPU `batch-fit run`
+
+- **RENAME (breaking, no alias):** the `gsplat slurm-fit` command group is now
+  `gsplat batch-fit`, making whole-timelapse fitting scheduler-agnostic. Verbs:
+  `submit` (Slurm cluster array job, unchanged behavior) and the new `run`
+  below; `status` / `validate` / `merge` / `cancel` are shared across both
+  backends. `luxar gsplat slurm-fit` no longer exists.
+- **NEW `gsplat batch-fit run`** — local multi-GPU whole-timelapse fit (no
+  Slurm; the local sibling of `batch-fit submit`). Plans once (uniform tiles or
+  a shared content box plan over T×C), fits every (t, c) task with a multi-GPU
+  subprocess pool (one worker pinned per GPU, per-GPU concurrency sized from free
+  VRAM), then stream-merges to one `kind=partition`. Resumable (re-running skips
+  tiles already on disk) and writes `manifest.json` so `status` / `validate`
+  work locally. Options mirror `submit` minus Slurm, plus
+  `--gpus auto|all|cpu|'0,1,3'`, `--jobs-per-gpu`, `--no-resume`, `--dry-run`.
+
+#### Added — GSplat fitting follow-ups (transform partitions, fit/merge per-part LOD, fitted density exponent, cluster content fan-out)
+
+Four gsplat additions, each deep-double-checked:
+
+- **`gsplat transform` is tree-aware** — it now preserves a `kind=partition`
+  (and `mosaic`/`multiscale` trees) instead of flattening/rejecting it, walking
+  the tree leaf-by-leaf with global `--center` / `--normalize-intensity` stats
+  and re-deriving the extent-based `min_pixel_size` LOD thresholds.
+- **`fit --recipe additive|substitutive`** — a tiled fit can emit per-part LOD
+  (the `partitioned` / `mosaic` topology) at fit time, without a separate `lod`
+  pass (which rejects a partition). Mirrors the `lod` knobs. **Any** per-part
+  recipe on `--tiling uniform` (Hann-apodized, overlapping) tiles now warns: the
+  halos form a partition of unity that holds only at the finest level, so per-part
+  coarsening is approximate at coarse levels — `additive` drops the low-amplitude
+  halo splats (overlap dims to a seam), `substitutive` merges them per-part
+  (overlap smears). `--tiling content` (disjoint core-keep parts) stays exact.
+  The warning fires from all three entry points (`fit --recipe`,
+  `batch-fit submit --merge-recipe`, `batch-fit merge --recipe`).
+- **`cal --fit-exponent` / `--exponent-scales`** — measures the saturation
+  exponent α in `K ~ features^α` (instead of assuming 0.44) by regressing K\* over
+  several region scales; the fitted α flows into `fit --tiling content` budgets.
+- **`batch-fit submit --tiling content`** — the cluster sibling of
+  `fit --tiling content`: one shared content-balanced box plan fanned across the
+  Slurm array (`--plan-timepoint`, density knobs), merged into a `kind=partition`.
+  The shared plan is now built from a **temporal max-projection** over up to
+  `--plan-samples` (default 16) evenly-spaced timepoints, so boxes cover any
+  region with signal at *any* timepoint — fixing silent spatial holes where
+  content moved over time and a single representative timepoint missed it.
+  `--plan-timepoint` still pins a single timepoint when desired and is now
+  range-checked at submit.
+
+#### Fixed — review follow-ups (per-part-LOD-on-uniform warning, content 4D holes, cal exponent validation)
+
+- Broadened the uniform per-part-LOD warning to cover `additive` (not just
+  `substitutive`) — both break the halo partition-of-unity at coarse levels.
+- `batch-fit submit --tiling content` plans from a capped temporal max-projection
+  (see above) instead of one timepoint, and range-checks `--plan-timepoint`.
+- `cal --fit-exponent` validates `--exponent-scales` (positive, deduplicated,
+  dropped when larger than the volume, ≥2 distinct required, friendly parse
+  errors) and the log-log regression now rejects a near-zero feature-count spread
+  (ill-conditioned slope) rather than emitting a garbage exponent.
+
 #### Fixed — Large LOD scenes exhausted the browser (unbounded chunk fetches)
 
 A `kind=lod` scene whose finest level holds many millions of points (e.g. a

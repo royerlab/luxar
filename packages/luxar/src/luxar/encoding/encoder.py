@@ -753,6 +753,16 @@ class ArrayEncoder:
             )
         elif semantic_type == SemanticType.CHOLESKY:
             self._encode_cholesky(zarr_group, name, data, mode, chunks, compressor)
+        elif semantic_type == SemanticType.CHOLESKY_DIAG:
+            # Cholesky diagonal is positive → generic per-channel log encoding.
+            self._encode_log_perchannel(
+                zarr_group, name, data, mode, chunks, compressor
+            )
+        elif semantic_type == SemanticType.CHOLESKY_OFFDIAG:
+            # Cholesky off-diagonal is signed → generic per-channel signed-log.
+            self._encode_signed_log_perchannel(
+                zarr_group, name, data, mode, chunks, compressor
+            )
         elif semantic_type == SemanticType.INDEX:
             self._encode_index(zarr_group, name, data, mode, chunks, compressor)
         elif semantic_type == SemanticType.UNIT_VECTOR:
@@ -1135,6 +1145,129 @@ class ArrayEncoder:
         zarr_group.create_dataset(
             name,
             data=encoded_data,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": target_dtype.name,
+            "original_dtype": original_dtype,
+        }
+
+    @staticmethod
+    def _quantize_per_column(y: np.ndarray, bits: int) -> tuple[np.ndarray, list, list]:
+        """Quantize a 2-D (N, C) array to uint with PER-COLUMN min/max.
+
+        Returns ``(uint_array, lo, hi)`` where ``lo``/``hi`` are length-C lists
+        (one min/max per column). A constant column (lo==hi) maps every value to
+        level 0; decode then returns ``lo`` for that column.
+
+        Idempotency: quantization error does NOT compound across save/load
+        cycles. After the first encode→decode→re-encode, the decoded values lie
+        within ``[lo, hi]`` per column, so re-deriving ``lo``/``hi`` here yields
+        the same scales and the same codes — subsequent cycles add zero error.
+        """
+        levels = (1 << bits) - 1
+        udtype = np.uint8 if bits == 8 else np.uint16
+        if y.shape[0] == 0:  # defensive; empty arrays are handled before dispatch
+            lo = np.zeros(y.shape[1], dtype=np.float64)
+            hi = np.zeros(y.shape[1], dtype=np.float64)
+            return y.astype(udtype), lo.tolist(), hi.tolist()
+        lo = y.min(axis=0)
+        hi = y.max(axis=0)
+        rng = np.maximum(hi - lo, 1e-30)
+        u = np.round((np.clip(y, lo, hi) - lo) / rng * levels).astype(udtype)
+        return u, lo.astype(np.float64).tolist(), hi.astype(np.float64).tolist()
+
+    def _encode_log_perchannel(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Generic per-channel LOG quantization of a non-negative (N, C) array.
+
+        Each channel (column) gets its own ``[lo, hi]`` in log space, so a wide
+        per-channel dynamic range keeps relative precision. PRECISION → float32;
+        AUTO → ``log_perchannel_u16``; MEMORY → ``log_perchannel_u8``. (First
+        consumer: the Cholesky diagonal; reusable for any positive per-channel
+        field.) Negative inputs are clamped to 0 before the log.
+        """
+        original_dtype = str(data.dtype)
+        if mode == EncodingMode.PRECISION:
+            self._write_float(
+                zarr_group, name, data, np.dtype("float32"), chunks, compressor
+            )
+            return
+        bits = 16 if mode == EncodingMode.AUTO else 8
+        y = np.log1p(np.maximum(data.astype(np.float64), 0.0))
+        u, lo, hi = self._quantize_per_column(y, bits)
+        zarr_group.create_dataset(
+            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"log_perchannel_u{bits}",
+            "col_lo": lo,
+            "col_hi": hi,
+            "bits": bits,
+            "original_dtype": original_dtype,
+        }
+
+    def _encode_signed_log_perchannel(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        mode: EncodingMode,
+        chunks: Optional[tuple] = None,
+        compressor: Optional[Any] = None,
+    ) -> None:
+        """Generic per-channel SIGNED-LOG quantization of a signed (N, C) array.
+
+        ``y = sign(x)·log1p(|x|)`` companding gives fine resolution near zero
+        (where most mass of a zero-centred signal lives) and coarse in the tails,
+        with per-channel ``[lo, hi]``. PRECISION → float32; AUTO →
+        ``signed_log_perchannel_u16``; MEMORY → ``signed_log_perchannel_u8``.
+        (First consumer: the Cholesky off-diagonal.)
+        """
+        original_dtype = str(data.dtype)
+        if mode == EncodingMode.PRECISION:
+            self._write_float(
+                zarr_group, name, data, np.dtype("float32"), chunks, compressor
+            )
+            return
+        bits = 16 if mode == EncodingMode.AUTO else 8
+        x = data.astype(np.float64)
+        y = np.sign(x) * np.log1p(np.abs(x))
+        u, lo, hi = self._quantize_per_column(y, bits)
+        zarr_group.create_dataset(
+            name, data=u, chunks=chunks, compressor=compressor, overwrite=True
+        )
+        zarr_group[name].attrs["encoding"] = {
+            "name": f"signed_log_perchannel_u{bits}",
+            "col_lo": lo,
+            "col_hi": hi,
+            "bits": bits,
+            "original_dtype": original_dtype,
+        }
+
+    def _write_float(
+        self,
+        zarr_group: zarr.Group,
+        name: str,
+        data: np.ndarray,
+        target_dtype: "np.dtype[Any]",
+        chunks: Optional[tuple],
+        compressor: Optional[Any],
+    ) -> None:
+        """Write ``data`` cast to ``target_dtype`` with a plain dtype encoding."""
+        original_dtype = str(data.dtype)
+        zarr_group.create_dataset(
+            name,
+            data=data.astype(target_dtype),
             chunks=chunks,
             compressor=compressor,
             overwrite=True,

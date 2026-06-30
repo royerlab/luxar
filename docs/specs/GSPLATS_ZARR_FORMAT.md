@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 3.0.0
-**Last Updated**: 2026-06-09
+**Version**: 3.1.0
+**Last Updated**: 2026-06-28
 
 ## Purpose
 
@@ -56,10 +56,26 @@ Each Gaussian splat is parameterized by:
 |-------|-------|-------|---------------|-------------|
 | `centers` | (N, d) | float32 | COORDINATE | Splat center positions (not broadcastable) |
 | `amplitudes` | (N,) or (1,) | float32 | POSITIVE_SCALAR | Non-negative intensity |
-| `cholesky_factors` | (N, d*(d+1)/2) or (1, d*(d+1)/2) | float32 | CHOLESKY | Packed lower-triangular L where Σ = LLᵀ |
+| `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
+| `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
 | `colors` | (N, 3) or (1, 3) | float32/uint8 | COLOR | RGB colors (optional); uint8 [0-255] for SDR, float32 for HDR; absent if not present |
 
-**Note**: Cholesky factors are packed in row-major order. For d=3: `[L00, L10, L11, L20, L21, L22]`
+**Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
+stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the
+strictly-lower off-diagonal (`cholesky_factors_offdiag`) — so each can be encoded
+independently. Each is **differentially quantized** with a generic per-channel
+scheme (one scale per column): the diagonal (positive, wide range) with
+**per-channel log** (`log_perchannel_u8`/`u16`), the off-diagonal (signed,
+zero-centred) with **per-channel signed-log** (`signed_log_perchannel_u8`/`u16`).
+Encoding mode picks the bit depth: PRECISION→float32, AUTO→uint16 (near-lossless),
+MEMORY→uint8 (visually lossless, measured ≥93 dB vs the float32 render at ~4× less
+than float32 / ~2× less than the former float16). Per-array `encoding` metadata
+carries the per-column scales (`col_lo`/`col_hi`). Readers decode to float32 and
+recombine into the packed row-major form `[L00, L10, L11, L20, L21, L22, …]`
+(for d=3) immediately on load; everything above the storage layer sees the single
+packed (N, k) float32 array, k = d*(d+1)/2. **v3.0** files store a single packed
+`cholesky_factors` array and are still read (the loaders fall back when no split
+is present).
 
 **Semantic Types**: Each field maps to an encoding semantic type (see `luxar.encoding.SemanticType`). This determines valid encodings and quantization options for each array.
 
@@ -83,30 +99,33 @@ The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N
 
 ## Format Versions
 
-The current format is **v3.0**, a node tree (§ "On-disk grammar"). Earlier
-versions (v1.0 single-LOD; v1.1 additive multi-LOD; the pre-v2.0 substitutive
-directory + manifest.json; and the interim v2.0 `substitutive_<s>/additive_<a>/`
-matrix) are no longer read by the runtime — convert legacy files with
+The current format is **v3.1**, a node tree (§ "On-disk grammar"). It differs
+from **v3.0** only in storing the Cholesky factors as two arrays
+(`cholesky_factors_diag` + `cholesky_factors_offdiag`) instead of a single packed
+`cholesky_factors`; v3.0 files are still read transparently. Earlier versions
+(v1.0 single-LOD; v1.1 additive multi-LOD; the pre-v2.0 substitutive directory +
+manifest.json; and the interim v2.0 `substitutive_<s>/additive_<a>/` matrix) are
+no longer read by the runtime — convert legacy files with
 ``luxar gsplat migrate-format <input> <output.gsplats.zarr>``.
 
-A v3.0 file is one of (each freely nestable):
+A v3.x file is one of (each freely nestable):
 
 | Shape            | On-disk form                                                       |
 |------------------|--------------------------------------------------------------------|
-| single leaf      | `centers`/`amplitudes`/`cholesky_factors`(/`colors`) at the root   |
+| single leaf      | `centers`/`amplitudes`/`cholesky_factors_diag`(+`_offdiag`)(/`colors`) at the root |
 | additive ladder  | `additive_<i>/` sub-LOD subgroups + `n_additive_sublods`           |
 | substitutive lod | `type=group, kind=lod`; `child_<i>/` coarsest→finest + `min_pixel_size` |
 | full pyramid     | a `kind=lod` group whose `child_<i>/` are additive-ladder leaves   |
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.0"`, `format_type:"gsplats_zarr"`, `timestamp`, and
+`format_version:"3.1"`, `format_type:"gsplats_zarr"`, `timestamp`, and
 `luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
 pyramid" shape expressed as a node tree.
 
 ---
 
-## Zarr Structure (v3.0 — node tree)
+## Zarr Structure (v3.x — node tree)
 
 The file root IS the node. The same three primitives nest arbitrarily:
 
@@ -118,12 +137,13 @@ fitted.gsplats.zarr/
 │                     # ordering_min/max/bits, chunk_size, amplitude_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, gamma, intensity, offset, blending_mode,
-│                     # format_version: "3.0", format_type: "gsplats_zarr",
+│                     # format_version: "3.1", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
-├── centers           # (N, d) float32, spatially ordered
-├── amplitudes        # (N,) float32
-├── cholesky_factors  # (N, k) float32  k = d*(d+1)/2
+├── centers                   # (N, d) float32, spatially ordered
+├── amplitudes                # (N,) float32
+├── cholesky_factors_diag     # (N, d) float32       (diagonal of L)
+├── cholesky_factors_offdiag  # (N, d*(d-1)/2) float32 (off-diagonal; absent if d=1)
 ├── colors            # (N, 3) float32/uint8  (optional)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
@@ -138,9 +158,9 @@ fitted.gsplats.zarr/
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
-│                     # position_bounds, format_version: "3.0", …
+│                     # position_bounds, format_version: "3.1", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
-│   ├── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+│   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
 ├── additive_1/       # Only present when n_additive_sublods > 1
 │   └── …
@@ -157,10 +177,10 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "lod", selector: "pixel_size",
 │                     # default_level: <int>, display_type: "gsplats",
-│                     # position_bounds, format_version: "3.0", …
+│                     # position_bounds, format_version: "3.1", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
 │   ├── .zattrs       # min_pixel_size: 0.0, compression_factor, level_index, …
-│   ├── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+│   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
 │   ├── .zattrs       # min_pixel_size: <threshold>, …
@@ -185,10 +205,10 @@ additive ladder) is valid as a child.
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
-│                     # max_elements: <int>, position_bounds, format_version: "3.0", …
+│                     # max_elements: <int>, position_bounds, format_version: "3.1", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
 │   ├── .zattrs       # position_bounds (per-part bounds for frustum culling)
-│   └── centers, amplitudes, cholesky_factors, colors?, chunk_bounds?
+│   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 ├── part_1/
 │   └── …
 └── part_{P-1}/
@@ -225,7 +245,7 @@ the self-identifying file header (stamped by `write_gsplats_tree`):
 
 ```json
 {
-  "format_version": "3.0",
+  "format_version": "3.1",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "X.Y.Z",
@@ -463,9 +483,13 @@ Quantization is handled by `luxar.encoding` based on semantic types:
 
 | Field | Semantic Type | MEMORY Mode Encoding |
 |-------|---------------|---------------------|
-| `centers` | COORDINATE | `float16` (half precision) |
+| `centers` | COORDINATE | `float32` (coordinates always stay float32 for WebGL) |
 | `amplitudes` | POSITIVE_SCALAR | `positive_scalar_uint8` or `log_scalar_uint8` |
-| `cholesky_factors` | CHOLESKY | `float16` (~0.1% error, see encoding spec Section 4.5) |
+| `cholesky_factors_diag` | CHOLESKY_DIAG | `log_perchannel_u8` (per-column log) |
+| `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | `signed_log_perchannel_u8` (per-column signed-log; absent if d==1) |
+
+The Cholesky factors are stored split (diagonal + off-diagonal); bit depth follows
+the encoding mode: PRECISION→float32, AUTO→uint16 (near-lossless), MEMORY→uint8.
 
 **Log-scale amplitudes**: For high dynamic range (HDR) amplitudes, use log encoding:
 ```python
@@ -541,10 +565,11 @@ compressor = Blosc(
 from luxar.typing_utils import TARGET_CHUNK_BYTES  # 65536 (64KB)
 
 # For each array, compute elements per chunk based on its specific layout:
-# - centers (N, d) float32:     bytes_per_row = d * 4
-# - amplitudes (N,) float32:    bytes_per_row = 4
-# - cholesky_factors (N, k):    bytes_per_row = k * 4  (where k = d*(d+1)/2)
-# - colors (N, 3) uint8/float32: bytes_per_row = 3 or 12
+# - centers (N, d) float32:           bytes_per_row = d * 4
+# - amplitudes (N,) float32:          bytes_per_row = 4
+# - cholesky_factors_diag (N, d):     bytes_per_row = d * 4
+# - cholesky_factors_offdiag (N, k-d): bytes_per_row = (k-d) * 4  (k = d*(d+1)/2; absent if d==1)
+# - colors (N, 3) uint8/float32:      bytes_per_row = 3 or 12
 
 chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 ```
@@ -554,7 +579,8 @@ chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 |-------|---------------|-----------|----------------------|
 | centers | (3,) float32 | 12 | 5,461 |
 | amplitudes | () float32 | 4 | 16,384 |
-| cholesky_factors | (6,) float32 | 24 | 2,730 |
+| cholesky_factors_diag | (3,) float32 | 12 | 5,461 |
+| cholesky_factors_offdiag | (3,) float32 | 12 | 5,461 |
 | colors | (3,) float32 | 12 | 5,461 |
 
 **Note**: Each array has its own optimal chunk size. The `chunk_size` in group metadata is a **reference value** for the primary arrays (centers), not a universal constant.
@@ -564,7 +590,7 @@ chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 # 1D arrays (amplitudes)
 chunks = (chunk_elements,)
 
-# 2D arrays (centers, cholesky_factors, colors)
+# 2D arrays (centers, cholesky_factors_diag, cholesky_factors_offdiag, colors)
 chunks = (chunk_elements, n_cols)  # Keep all columns together
 ```
 
@@ -723,7 +749,7 @@ one into a scene is a graft of that subtree.
 **Purpose**: Persist fitted results as independent, directly-loadable files.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
-self-identifying header (`format_version:"3.0"`, `format_type:"gsplats_zarr"`,
+self-identifying header (`format_version:"3.1"`, `format_type:"gsplats_zarr"`,
 `timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
 
 **Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene
@@ -849,6 +875,31 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **v3.1.0** (2026-06-29): Differential Cholesky quantization (on top of the split)
+  - The split diagonal / off-diagonal arrays are now **differentially quantized**
+    with a generic per-channel scheme: diagonal → `log_perchannel_u8`/`u16`
+    (per-column log), off-diagonal → `signed_log_perchannel_u8`/`u16` (per-column
+    signed-log). Encoding mode sets the bit depth: PRECISION→float32,
+    **AUTO (default)→uint16** (near-lossless, ~2× smaller than float32),
+    **MEMORY→uint8** (visually lossless ≥93 dB vs the float32 render, ~4× raw /
+    ~10× on disk after zstd). Per-array `encoding` carries per-column `col_lo/col_hi`.
+  - The encodings are **geometry-agnostic** (semantic types `CHOLESKY_DIAG` /
+    `CHOLESKY_OFFDIAG` select them as policy; the `*_perchannel_*` encodings are
+    reusable for any positive/signed per-channel field). Decoders return float32,
+    so everything above the storage layer is unchanged.
+
+- **v3.1.0** (2026-06-28): Cholesky factors split into two arrays
+  - Leaves now store `cholesky_factors_diag` (N, d) and
+    `cholesky_factors_offdiag` (N, d*(d-1)/2) instead of a single packed
+    `cholesky_factors`, so the diagonal (positive, scale-like) and off-diagonal
+    (signed, zero-centred) can be encoded/quantised independently. The
+    off-diagonal array is omitted for d=1.
+  - Recombined into the packed (N, k) form on read; everything above the storage
+    layer is unchanged. **v3.0** files are still read transparently (the loaders
+    fall back to the single packed array when no split is present).
+  - This is an enabling step for future differential quantization; on its own it
+    leaves stored bytes ≈ unchanged.
 
 - **v3.0.0** (2026-06-09): `.gsplats.zarr` on-disk format v3.0 — node tree
   - On-disk format bumped to **v3.0**; the v2.0 `substitutive_<s>/additive_<a>/`

@@ -146,15 +146,24 @@ def migrate_format_command(
         help="Legacy .gsplats.zarr (v1.0 / v1.1 / v2.0), .gsplats.zarr.zip/.tar.gz, "
         "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
     ),
-    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (v3.0)."),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (current node-tree format)."
+    ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output if it exists."
+    ),
+    lossless: bool = typer.Option(
+        False,
+        "--lossless",
+        help="Preserve float32 Cholesky factors exactly (PRECISION encoding) "
+        "for archival migration. Default re-encodes them with the v3.0 AUTO "
+        "policy (uint16 per-column, near-lossless, ~2× smaller).",
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
     ),
 ) -> None:
-    """Convert a legacy .gsplats.zarr layout to the v3.0 node-tree format.
+    """Convert a legacy .gsplats.zarr layout to the current node-tree format.
 
     Four input shapes are auto-detected:
 
@@ -164,30 +173,45 @@ def migrate_format_command(
     * v2.0  .gsplats.zarr (2-D substitutive_<s>/additive_<a> matrix)
     * substitutive directory (manifest.json + level_<i>.gsplats.zarr files)
 
-    All migrate to a single v3.0 ``.gsplats.zarr`` node subtree.
+    All migrate to a single current-format ``.gsplats.zarr`` node subtree. By
+    default the output adopts the AUTO encoding policy, so legacy float32 Cholesky
+    factors are re-encoded with near-lossless uint16 per-column quantization;
+    pass ``--lossless`` to keep them float32 for archival fidelity.
     """
     try:
+        from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.migrate import migrate_format
+        from luxar.gsplats.io.save_gsplats import FORMAT_VERSION
 
-        with asection(f"Migrating {input_path.name} → v3.0"):
-            detected = migrate_format(input_path, output_path, overwrite=overwrite)
+        with asection(f"Migrating {input_path.name} → v{FORMAT_VERSION}"):
+            detected = migrate_format(
+                input_path,
+                output_path,
+                overwrite=overwrite,
+                encoding_mode=(
+                    EncodingMode.PRECISION if lossless else EncodingMode.AUTO
+                ),
+            )
             aprint(f"Detected legacy format: {detected}")
 
-            # Post-write read-back: confirm the output is a loadable v3.0 file
-            # rather than reporting success blind.
+            # Post-write read-back: confirm the output is a loadable current-format
+            # file rather than reporting success blind.
             import zarr
 
             verify = GSplatData.load(output_path, include_stats=False)
             out_attrs = dict(zarr.open_group(str(output_path), mode="r").attrs)
             fmt = out_attrs.get("format_version")
-            if fmt != "3.0":
-                aprint(f"❌ Migration produced format_version={fmt!r}, expected '3.0'")
+            if fmt != FORMAT_VERSION:
+                aprint(
+                    f"❌ Migration produced format_version={fmt!r}, "
+                    f"expected {FORMAT_VERSION!r}"
+                )
                 raise typer.Exit(1)
             if not quiet:
                 aprint(
-                    f"✓ Verified v3.0 output: {verify.n_splats:,} splats, "
-                    f"{verify.n_substitutive} substitutive level(s) → "
+                    f"✓ Verified v{FORMAT_VERSION} output: {verify.n_splats:,} "
+                    f"splats, {verify.n_substitutive} substitutive level(s) → "
                     f"{output_path}"
                 )
     except typer.Exit:

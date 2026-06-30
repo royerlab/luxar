@@ -9,6 +9,66 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+
+class TestSelectPlanTimepoints:
+    """The shared content-plan timepoint sampler (`--plan-timepoint`/`--plan-samples`)."""
+
+    def test_pinned_timepoint_scans_only_that_one(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        assert _select_plan_timepoints(
+            [0, 5, 10, 15], plan_timepoint=10, plan_samples=16
+        ) == [10]
+
+    def test_pinned_timepoint_out_of_range_raises(self) -> None:
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        with pytest.raises(typer.BadParameter):
+            _select_plan_timepoints([0, 5, 10], plan_timepoint=7, plan_samples=16)
+
+    def test_fewer_timepoints_than_samples_returns_all(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        assert _select_plan_timepoints(
+            [0, 1, 2, 3], plan_timepoint=None, plan_samples=16
+        ) == [
+            0,
+            1,
+            2,
+            3,
+        ]
+
+    def test_caps_to_evenly_spaced_sample_with_endpoints(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        out = _select_plan_timepoints(
+            list(range(100)), plan_timepoint=None, plan_samples=5
+        )
+        assert len(out) == 5
+        assert out[0] == 0 and out[-1] == 99  # endpoints always included
+        assert out == sorted(set(out))  # strictly increasing, deduplicated
+
+    def test_real_indices_preserved_in_sample(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        # Sliced selection (e.g. --timepoints '::10') keeps REAL dataset indices.
+        real = [0, 10, 20, 30, 40, 50, 60, 70]
+        out = _select_plan_timepoints(real, plan_timepoint=None, plan_samples=3)
+        assert len(out) == 3
+        assert set(out).issubset(set(real))
+        assert out[0] == 0 and out[-1] == 70
+
+    def test_zero_samples_raises(self) -> None:
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _select_plan_timepoints
+
+        with pytest.raises(typer.BadParameter):
+            _select_plan_timepoints([0, 1, 2], plan_timepoint=None, plan_samples=0)
+
+
 # ====================================================================
 # Manifest tests
 # ====================================================================
@@ -328,6 +388,41 @@ class TestSlurmGen:
         assert "--tile $K/4" in script
         assert "--tile-size 256" in script
 
+    def test_fit_script_content_mode(self) -> None:
+        """A content-mode manifest fans the SHARED plan across the array: each
+        task fits one box via `fit --tiling content --plan … --plan-box $K`, and
+        the uniform `--tile/--tile-size` flags are absent."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+        manifest = BatchManifest(
+            input_path="/data/test.zarr",
+            output_dir="/output",
+            mode="content",
+            plan_path="/output/plan.json",
+            n_channels=2,
+            n_tiles=5,  # box count in content mode
+            total_tasks=10,
+            preset="standard",
+            slurm_partition="gpu",
+            slurm_time_limit="01:00:00",
+        )
+
+        script = generate_fit_sbatch(manifest, "")
+        assert "--tiling content" in script
+        assert "--plan /output/plan.json" in script
+        assert "--plan-box $K" in script
+        assert "N_TILES=5" in script
+        # the uniform-only flags must NOT appear
+        assert "--tile $K/" not in script
+        assert "--tile-size" not in script
+        # outputs use the box label, not tile
+        assert "_box$(printf" in script
+        # a legitimately-empty box (.tmp.empty marker) is a clean exit-0, not a
+        # failed task — the script records a ${OUTPUT}.empty marker for the merge.
+        assert "${OUTPUT}.tmp.empty" in script
+        assert 'touch "${OUTPUT}.empty"' in script
+
     def test_merge_script(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
@@ -338,7 +433,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat slurm-fit merge" in script
+        assert "luxar gsplat batch-fit merge" in script
         assert "#SBATCH --job-name=luxar-merge" in script
         # No recipe planned → plain partition merge (no --recipe flag).
         assert "--recipe" not in script
@@ -357,7 +452,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat slurm-fit merge" in script
+        assert "luxar gsplat batch-fit merge" in script
         assert "--recipe substitutive" in script
         assert "--compression-factor 4" in script
         assert "--levels 2" in script
@@ -935,9 +1030,7 @@ class TestMergeOrchestrator:
         assert isinstance(node, GSplatLeaf)
         assert GSplatData.load(final).n_splats == total
 
-    def test_partition_4d_parts_carry_stacked_timepoints(
-        self, tmp_path: Path
-    ) -> None:
+    def test_partition_4d_parts_carry_stacked_timepoints(self, tmp_path: Path) -> None:
         """T=2, C=1, K=2 → partition whose parts are 4D (timepoints stacked)."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
@@ -958,9 +1051,7 @@ class TestMergeOrchestrator:
             assert total_splats(child) == 8  # 2 timepoints * 4 splats
         assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
 
-    def test_partition_multichannel_parts_carry_colors(
-        self, tmp_path: Path
-    ) -> None:
+    def test_partition_multichannel_parts_carry_colors(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 with colors → partition; each part is color-merged."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
@@ -1096,18 +1187,14 @@ class TestMergeOrchestrator:
         for t in t_indices:
             for c in c_indices:
                 for k in range(n_k):
-                    fname = (
-                        f"t{t:0{t_w}d}_c{c:0{c_w}d}_tile{k:0{k_w}d}.gsplats.zarr"
-                    )
+                    fname = f"t{t:0{t_w}d}_c{c:0{c_w}d}_tile{k:0{k_w}d}.gsplats.zarr"
                     tile = self._tile(4, seed)
                     tile.save(tiles_dir / fname)
                     total += tile.n_splats
                     seed += 1
         return total
 
-    def test_partition_merge_resolves_sliced_real_indices(
-        self, tmp_path: Path
-    ) -> None:
+    def test_partition_merge_resolves_sliced_real_indices(self, tmp_path: Path) -> None:
         """--timepoints/--channels slicing → partition merge resolves the real
         filename indices AND places splats at the real timepoint coordinates.
 
@@ -1211,9 +1298,7 @@ class TestMergeOrchestrator:
             seed += 1
 
         manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
-        final = merge_batch_results(
-            manifest, out_dir, verbose=False, recipe="additive"
-        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="additive")
 
         node, attrs = self._read_tree(final)
         assert attrs["kind"] == "partition"
@@ -1272,9 +1357,7 @@ class TestMergeOrchestrator:
         tile.save(tiles_dir / output_filename(0, 0, 0, 1, 1, 1))
 
         manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
-        final = merge_batch_results(
-            manifest, out_dir, verbose=False, recipe="additive"
-        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, recipe="additive")
         node, attrs = self._read_tree(final)
         assert attrs.get("kind") != "partition"
         assert isinstance(node, GSplatLeaf)
@@ -1342,9 +1425,7 @@ class TestMergeOrchestrator:
                 manifest, out_dir, verbose=False, flat=True, recipe="additive"
             )
         with pytest.raises(ValueError, match="not supported"):
-            merge_batch_results(
-                manifest, out_dir, verbose=False, recipe="partitioned"
-            )
+            merge_batch_results(manifest, out_dir, verbose=False, recipe="partitioned")
 
     def test_merge_recipe_params_normalises_hyphenated_method(self) -> None:
         """`--substitutive-method kmeans-lloyd` (the documented spelling) must map
@@ -1424,15 +1505,13 @@ class TestMergeOrchestrator:
         )
         save_manifest(manifest, out_dir)
 
-        # Extract the exact `luxar gsplat slurm-fit merge ...` line the Slurm job runs.
+        # Extract the exact `luxar gsplat batch-fit merge ...` line the Slurm job runs.
         script = generate_merge_sbatch(manifest, "# env\n")
-        merge_line = next(
-            ln for ln in script.splitlines() if "slurm-fit merge" in ln
-        )
+        merge_line = next(ln for ln in script.splitlines() if "batch-fit merge" in ln)
         tokens = shlex.split(merge_line)
         merge_idx = tokens.index("merge")
-        # app_batch is the `slurm-fit` sub-app, so keep `merge` as its subcommand;
-        # drop only the `luxar gsplat slurm-fit` prefix.
+        # app_batch is the `batch-fit` sub-app, so keep `merge` as its subcommand;
+        # drop only the `luxar gsplat batch-fit` prefix.
         cli_args = tokens[merge_idx:]
         # Point the (absolute) output_dir arg at the tmp dir (already is).
         assert "--recipe" in cli_args and "substitutive" in cli_args
@@ -1486,9 +1565,7 @@ class TestMergeOrchestrator:
                 coarsen_dims="0,x,2",
             )
 
-    def test_batch_merge_invalid_method_writes_no_output(
-        self, tmp_path: Path
-    ) -> None:
+    def test_batch_merge_invalid_method_writes_no_output(self, tmp_path: Path) -> None:
         """An invalid --substitutive-method must fail BEFORE the streaming writer
         overwrites final.gsplats.zarr — otherwise a corrected re-run (without
         --force) would silently skip the broken stub. Asserts non-zero exit AND
@@ -1516,8 +1593,700 @@ class TestMergeOrchestrator:
 
         result = CliRunner().invoke(
             app_batch,
-            ["merge", str(out_dir), "--recipe", "substitutive",
-             "--substitutive-method", "kmeans-typo"],
+            [
+                "merge",
+                str(out_dir),
+                "--recipe",
+                "substitutive",
+                "--substitutive-method",
+                "kmeans-typo",
+            ],
         )
         assert result.exit_code != 0
         assert not (out_dir / "merged" / "final.gsplats.zarr").exists()
+
+
+class TestContentSubmitDryRun:
+    """End-to-end wiring of `batch-fit submit --tiling content` (no Slurm needed):
+    it builds the shared box plan from a representative (t,c) and would fan it
+    across the array. --dry-run writes plan.json during planning, then exits."""
+
+    def test_content_dry_run_writes_plan_and_reports_boxes(
+        self, tmp_path: Path
+    ) -> None:
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.planner import FitPlan
+
+        # Synthetic 3D (ZYX) volume with blobs so the planner finds content.
+        rng = np.random.default_rng(0)
+        V = np.zeros((64, 64, 64), np.float32)
+        zz, yy, xx = np.mgrid[0:64, 0:64, 0:64]
+        for _ in range(20):
+            cz, cy, cx = rng.integers(6, 58, 3)
+            V += np.exp(
+                -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+            ).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(
+            str(src), mode="w", shape=V.shape, chunks=(32, 32, 32), dtype="f4"
+        )
+        z[:] = V
+
+        out = tmp_path / "batch_out"
+        runner = CliRunner()
+        res = runner.invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "submit",
+                str(src),
+                str(out),
+                "-p",
+                "gpu",
+                "--tiling",
+                "content",
+                "--axes",
+                "z,y,x",
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--feature-threshold",
+                "0.1",
+                "--feature-metric",
+                "peaks",
+                "--cell",
+                "8",
+                "--min-leaf",
+                "16",
+                "--max-leaf",
+                "32",
+                "--dry-run",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        # plan.json is written during planning (before the dry-run exit) and is
+        # a usable FitPlan — the shared plan every array task would consume.
+        plan_json = out / "plan.json"
+        assert plan_json.exists()
+        plan = FitPlan.from_json(plan_json)
+        assert plan.n_boxes >= 1 and plan.total_budget > 0
+        # the summary reflects content mode (boxes, not tiles)
+        assert "content plan" in res.output.lower()
+        assert "boxes" in res.output.lower()
+
+    def test_content_plan_threads_axes_into_load_volume(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The content-plan scan must load with the user's --axes spec, not the
+        positional heuristic — else an --axes dataset is scanned with a wrong-
+        shaped/ordered volume and the box plan is wrong. Pre-fix the two
+        max-projection load_volume calls omitted axes (received axes=None)."""
+        import zarr
+        from typer.testing import CliRunner
+
+        import luxar.cli.gsplat_config as gc
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        rng = np.random.default_rng(1)
+        V = np.zeros((64, 64, 64), np.float32)
+        zz, yy, xx = np.mgrid[0:64, 0:64, 0:64]
+        for _ in range(20):
+            cz, cy, cx = rng.integers(6, 58, 3)
+            V += np.exp(
+                -(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+            ).astype(np.float32)
+        V = np.clip(V, 0, 1)
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(
+            str(src), mode="w", shape=V.shape, chunks=(32, 32, 32), dtype="f4"
+        )
+        z[:] = V
+
+        seen_axes: list = []
+        real_load = gc.load_volume
+
+        def _spy(*a, **kw):
+            seen_axes.append(kw.get("axes"))
+            return real_load(*a, **kw)
+
+        monkeypatch.setattr(gc, "load_volume", _spy)
+
+        out = tmp_path / "batch_out"
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "submit",
+                str(src),
+                str(out),
+                "-p",
+                "gpu",
+                "--tiling",
+                "content",
+                "--axes",
+                "z,y,x",
+                "--k-star-ref",
+                "4000",
+                "--n-features-ref",
+                "200",
+                "--feature-threshold",
+                "0.1",
+                "--feature-metric",
+                "peaks",
+                "--cell",
+                "8",
+                "--min-leaf",
+                "16",
+                "--max-leaf",
+                "32",
+                "--dry-run",
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        assert "z,y,x" in seen_axes, (
+            f"content-plan load_volume never received axes='z,y,x'; saw {seen_axes} "
+            "(the --axes spec was not threaded into the plan scan)"
+        )
+
+
+class TestContentMerge:
+    """The content fan-out writes `_box{k}` outputs; the merge must look for that
+    label (not the default `_tile{k}`) and skip legitimately-empty boxes."""
+
+    @staticmethod
+    def _write_box(path: Path, n: int, offset: float) -> None:
+        rng = np.random.default_rng(int(offset))
+        centers = (offset + rng.uniform(0, 8, size=(n, 3))).astype(np.float32)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        from luxar.gsplats.io.save_gsplats import save_gsplats
+
+        save_gsplats(
+            str(path),
+            centers=centers,
+            amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+            cholesky_factors=chol,
+        )
+
+    def _content_manifest(self, out: Path, n_boxes: int) -> "object":
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+        )
+
+        jobs = [
+            BatchJob(
+                task_id=k,
+                timepoint=0,
+                channel=0,
+                tile_index=k,
+                output_filename=output_filename(0, 0, k, 1, 1, n_boxes, label="box"),
+                estimated_wall_seconds=1.0,
+            )
+            for k in range(n_boxes)
+        ]
+        m = BatchManifest(
+            input_path="/data/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=(64, 64, 64),
+            mode="content",
+            n_tiles=n_boxes,
+            plan_path=str(out / "plan.json"),
+            total_tasks=n_boxes,
+            slurm_partition="gpu",
+        )
+        m.jobs = jobs
+        return m
+
+    def test_content_merge_finds_box_outputs_and_skips_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """Merge assembles a kind=partition from `_box{k}` outputs (the label bug
+        would FileNotFound on `_tile{k}`), and an empty box (`.empty` marker, no
+        store) is skipped rather than crashing the merge."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+
+        n_boxes = 3
+        # boxes 0 and 2 have splats; box 1 is legitimately empty (.empty marker).
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        (
+            tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")
+        ).write_text("")
+        self._write_box(
+            tiles / output_filename(0, 0, 2, 1, 1, n_boxes, label="box"), 40, 100.0
+        )
+
+        manifest = self._content_manifest(out, n_boxes)
+        final = merge_batch_results(manifest, out, verbose=False)
+
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2  # the empty box was skipped
+        assert total_splats(node) == 70
+
+    def test_content_merge_missing_box_raises(self, tmp_path: Path) -> None:
+        """A box with neither a store nor an `.empty` marker (the task never ran)
+        still raises — distinct from a legitimately-empty box."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        # box 1 absent entirely
+        manifest = self._content_manifest(out, n_boxes)
+        with pytest.raises(FileNotFoundError):
+            merge_batch_results(manifest, out, verbose=False)
+
+    def _mc_manifest(self, out: Path, n_boxes: int, n_channels: int) -> "object":
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+        )
+
+        jobs = []
+        tid = 0
+        for c in range(n_channels):
+            for k in range(n_boxes):
+                jobs.append(
+                    BatchJob(
+                        task_id=tid,
+                        timepoint=0,
+                        channel=c,
+                        tile_index=k,
+                        output_filename=output_filename(
+                            0, c, k, 1, n_channels, n_boxes, label="box"
+                        ),
+                        estimated_wall_seconds=1.0,
+                    )
+                )
+                tid += 1
+        m = BatchManifest(
+            input_path="/data/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=n_channels,
+            spatial_shape=(64, 64, 64),
+            mode="content",
+            n_tiles=n_boxes,
+            plan_path=str(out / "plan.json"),
+            total_tasks=n_boxes * n_channels,
+            slurm_partition="gpu",
+        )
+        m.jobs = jobs
+        return m
+
+    def test_content_merge_channel_colors_skips_empty_channel(
+        self, tmp_path: Path
+    ) -> None:
+        """A box empty in ONLY ONE channel must not crash --channel-colors merge:
+        the colors are subset to the surviving channels (PR-1 empty-slot skip vs
+        the fixed-length color list)."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes, n_c = 2, 2
+
+        def fn(c: int, k: int) -> str:
+            return output_filename(0, c, k, 1, n_c, n_boxes, label="box")
+
+        # box 0: present in both channels; box 1: empty in c0, present in c1.
+        self._write_box(tiles / fn(0, 0), 20, 0.0)
+        self._write_box(tiles / fn(1, 0), 25, 50.0)
+        (tiles / (fn(0, 1) + ".empty")).write_text("")
+        self._write_box(tiles / fn(1, 1), 30, 100.0)
+
+        manifest = self._mc_manifest(out, n_boxes, n_c)
+        colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        # Pre-fix this raised ValueError (per_channel len 1 != 2 colors).
+        final = merge_batch_results(manifest, out, channel_colors=colors, verbose=False)
+        node, _ = load_gsplat_node(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2  # both boxes present (box 1 via its c1 splats)
+
+    def test_single_channel_colors_keep_fitted_not_tinted(self, tmp_path: Path) -> None:
+        """n_c=1 + --channel-colors must NOT tint — fitted colors are preserved,
+        matching the --flat path's `n_c > 1` gate. Pre-fix the partition path
+        applied `merge_with_channel_colors` for a single channel too, overwriting
+        every splat with the lone channel color (a flat-vs-partition divergence)."""
+        from luxar.gsplats.batch.manifest import output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import iter_leaves
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        for k in range(n_boxes):
+            self._write_box(
+                tiles / output_filename(0, 0, k, 1, 1, n_boxes, label="box"),
+                20,
+                float(k * 50),
+            )
+        manifest = self._content_manifest(out, n_boxes)  # single channel
+        final = merge_batch_results(
+            manifest, out, channel_colors=[(1.0, 0.0, 0.0)], verbose=False
+        )
+        node, _ = load_gsplat_node(final)
+        # _write_box leaves colors=None; a single channel must keep that (no tint).
+        # Pre-fix, merge_with_channel_colors ran for n_c=1 and wrote a red color
+        # array onto every part.
+        for leaf in iter_leaves(node):
+            gd = GSplatData.from_tree(leaf)
+            assert gd.colors is None, (
+                "single-channel merge tinted splats with the channel color — it "
+                "should preserve the fitted colors (matching the flat n_c>1 gate)"
+            )
+
+    def test_flat_rejected_for_content_mode(self, tmp_path: Path) -> None:
+        """`--flat` on a content batch is rejected: content places boxes once from a
+        representative timepoint, so a (t,c) slot can be empty across every box and
+        the flat 3-level fan-in (dense-grid assumption) would crash. Pre-fix this
+        reached _merge_flat and failed with an unrelated error."""
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out = tmp_path / "batch"
+        (out / "tiles").mkdir(parents=True)
+        manifest = self._content_manifest(out, n_boxes=2)
+        with pytest.raises(ValueError, match="not supported for content"):
+            merge_batch_results(manifest, out, flat=True, verbose=False)
+
+    def test_status_counts_empty_box_as_completed(self, tmp_path: Path) -> None:
+        """An empty content box (`.empty` marker) is COMPLETED, not failed/unknown."""
+        from luxar.gsplats.batch.manifest import output_filename, save_manifest
+        from luxar.gsplats.batch.status import check_batch_status
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        (
+            tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")
+        ).write_text("")
+        manifest = self._content_manifest(out, n_boxes)
+        save_manifest(manifest, out)
+
+        st = check_batch_status(out)
+        assert st.completed == 2  # store + empty-marker both count as completed
+        assert st.failed == 0
+        assert st.unknown == 0
+
+    def test_validate_reports_empty_box_separately(self, tmp_path: Path) -> None:
+        """`batch-fit validate` counts an empty box as EMPTY, not MISSING."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.batch.manifest import output_filename, save_manifest
+
+        out = tmp_path / "batch"
+        tiles = out / "tiles"
+        tiles.mkdir(parents=True)
+        n_boxes = 2
+        self._write_box(
+            tiles / output_filename(0, 0, 0, 1, 1, n_boxes, label="box"), 30, 0.0
+        )
+        (
+            tiles / (output_filename(0, 0, 1, 1, 1, n_boxes, label="box") + ".empty")
+        ).write_text("")
+        save_manifest(self._content_manifest(out, n_boxes), out)
+
+        res = CliRunner().invoke(app_gsplat, ["batch-fit", "validate", str(out)])
+        assert res.exit_code == 0, res.output
+        assert "EMPTY:      1" in res.output
+        assert "MISSING:    0" in res.output
+
+    def test_invalid_tiling_value_rejected(self, tmp_path: Path) -> None:
+        """An unknown --tiling value fails loudly (not a silent fall-through to
+        uniform that would submit a large array in the wrong mode)."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(8, 8, 8), dtype="f4")
+        z[:] = 0.0
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "submit",
+                str(src),
+                str(tmp_path / "o"),
+                "-p",
+                "gpu",
+                "--tiling",
+                "bogus",
+                "--axes",
+                "z,y,x",
+                "--dry-run",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "uniform|content" in res.output
+
+
+class TestSubmitRecipeValidation:
+    """batch-fit submit --merge-recipe must reject cross-recipe knobs (fail-fast,
+    matching `fit --recipe` and `gsplat lod`) instead of silently dropping them."""
+
+    def test_merge_recipe_rejects_cross_recipe_knob(self, tmp_path: Path) -> None:
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        # additive merge recipe + a substitutive-only knob -> rejected before submit
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "submit",
+                str(src),
+                str(tmp_path / "o"),
+                "-p",
+                "gpu",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "--axes",
+                "z,y,x",
+                "--dry-run",
+                "--merge-recipe",
+                "additive",
+                "--merge-compression-factor",
+                "4",
+            ],
+        )
+        assert res.exit_code != 0
+        # Strip ANSI: on CI (and any color-capable terminal) typer/Rich colorizes
+        # the error panel, inserting escape codes *inside* the option name
+        # (`\x1b[…m--merge\x1b[…m-compression-factor`), which breaks a naive
+        # contiguous-substring check. Local runs without color pass either way.
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", res.output)
+        assert "--merge-compression-factor" in clean
+        assert "not used" in clean.lower()
+
+
+class TestMergeRecipeAdditiveKnobs:
+    """batch-fit merge/submit reach parity with fit --recipe / gsplat lod: the
+    additive ladder method/breakpoints and the lod-method are tunable."""
+
+    def test_build_merge_recipe_params_additive_knobs(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        # stored (plan-time) values; CLI overrides None → use stored.
+        params = _build_merge_recipe_params(
+            {
+                "additive-method": "self_energy",
+                "breakpoints": "counts:100,500",
+                "n-lods": "5",
+            },
+            n_lods=None,
+            additive_method=None,
+            breakpoints=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method=None,
+            coarsen_dims=None,
+            lod_method=None,
+        )
+        assert params.additive_method == "self_energy"
+        assert params.breakpoints == [100, 500]
+        assert params.n_lods == 5
+
+    def test_build_merge_recipe_params_lod_method_and_validation(self) -> None:
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        params = _build_merge_recipe_params(
+            {},
+            n_lods=None,
+            additive_method=None,
+            breakpoints=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method=None,
+            coarsen_dims=None,
+            lod_method="count",
+        )
+        assert params.lod_method == "count"
+        # a bad additive method fails fast
+        import typer
+
+        with pytest.raises(typer.BadParameter):
+            _build_merge_recipe_params(
+                {},
+                n_lods=None,
+                additive_method="nope",
+                breakpoints=None,
+                compression_factor=None,
+                levels=None,
+                substitutive_method=None,
+                coarsen_dims=None,
+                lod_method=None,
+            )
+
+    def test_submit_threads_additive_knobs_into_sbatch(self, tmp_path: Path) -> None:
+        """`batch-fit submit --merge-recipe additive --merge-additive-method ...`
+        records the knobs in the manifest and the merge sbatch invokes them."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+        from luxar.gsplats.batch.manifest import load_manifest
+        from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        out = tmp_path / "o"
+        # Mock sbatch so the (non-dry-run) submit writes the manifest without Slurm.
+        from unittest.mock import patch
+
+        class _R:
+            returncode = 0
+            stdout = "123"
+            stderr = ""
+
+        with patch("subprocess.run", return_value=_R()):
+            res = CliRunner().invoke(
+                app_gsplat,
+                [
+                    "batch-fit",
+                    "submit",
+                    str(src),
+                    str(out),
+                    "-p",
+                    "gpu",
+                    "--tile-size",
+                    "24",
+                    "--overlap",
+                    "4",
+                    "--axes",
+                    "z,y,x",
+                    "--merge-recipe",
+                    "additive",
+                    "--merge-additive-method",
+                    "self_energy",
+                    "--merge-breakpoints",
+                    "energy:0.5,1.0",
+                ],
+            )
+        assert res.exit_code == 0, res.output
+        manifest = load_manifest(out)
+        assert manifest.merge_recipe_args.get("additive-method") == "self_energy"
+        assert manifest.merge_recipe_args.get("breakpoints") == "energy:0.5,1.0"
+        script = generate_merge_sbatch(manifest, "")
+        assert "--additive-method self_energy" in script
+        assert "--breakpoints energy:0.5,1.0" in script
+
+    def test_submit_rejects_malformed_merge_breakpoints(self, tmp_path: Path) -> None:
+        """A malformed --merge-breakpoints fails fast at submit (parity with the
+        other merge knobs), not hours later in the merge job."""
+        import zarr
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_commands import app_gsplat
+
+        src = tmp_path / "vol.zarr"
+        z = zarr.open_array(str(src), mode="w", shape=(32, 32, 32), dtype="f4")
+        z[:] = 0.0
+        res = CliRunner().invoke(
+            app_gsplat,
+            [
+                "batch-fit",
+                "submit",
+                str(src),
+                str(tmp_path / "o"),
+                "-p",
+                "gpu",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "--axes",
+                "z,y,x",
+                "--dry-run",
+                "--merge-recipe",
+                "additive",
+                "--merge-breakpoints",
+                "counts:not_a_number",
+            ],
+        )
+        assert res.exit_code != 0
+        assert "breakpoints" in res.output.lower()
+
+
+class TestStatusPartitionMergeDetection:
+    def test_single_channel_partition_merge_detected_completed(
+        self, tmp_path: Path
+    ) -> None:
+        """The partition-default merge writes merged/final.gsplats.zarr for ALL
+        shapes; status must report a single-channel batch's merge as completed
+        (pre-fix it looked only for t00_c00.gsplats.zarr)."""
+        from luxar.gsplats.batch.manifest import (
+            BatchJob,
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+        from luxar.gsplats.batch.status import check_batch_status
+
+        out = tmp_path / "batch"
+        (out / "tiles").mkdir(parents=True)
+        (out / "merged").mkdir(parents=True)
+        m = BatchManifest(
+            input_path="/d/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=(64, 64, 64),
+            n_tiles=1,
+            total_tasks=1,
+            slurm_partition="gpu",
+        )
+        m.jobs = [BatchJob(0, 0, 0, 0, output_filename(0, 0, 0, 1, 1, 1), 1.0)]
+        save_manifest(m, out)
+        # the partition-default merge output (NOT the per-shape t00_c00 name)
+        (out / "merged" / "final.gsplats.zarr").mkdir()
+
+        st = check_batch_status(out)
+        assert st.merge_status == "completed"
