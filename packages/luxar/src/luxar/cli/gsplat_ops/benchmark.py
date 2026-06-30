@@ -36,7 +36,7 @@ def benchmark_gpu(
 
     Runs the CUDA benchmark suite to characterize GPU throughput, OOM
     boundaries, and optimal operating points. Results are stored in
-    ~/.luxar/gpu_profiles.yaml for use by `luxar gsplat slurm-fit`.
+    ~/.luxar/gpu_profiles.yaml for use by `luxar gsplat batch-fit`.
 
     Multiple runs on the same GPU are aggregated (averaged throughput,
     conservative OOM boundaries).

@@ -336,6 +336,47 @@ export function choleskyPackedSize(ndim: number): number {
 }
 
 /**
+ * Packed-vector positions of the diagonal elements of a d×d lower-triangular
+ * matrix, in row-major packing `[L00, L10, L11, L20, L21, L22, …]`.
+ *
+ * The diagonal element `(i, i)` lives at packed position `(i+1)*(i+2)/2 - 1`.
+ * Mirrors `luxar.gsplats.utils.trils.diag_indices` (Python). Used to recombine
+ * the v3.1 split Cholesky arrays (`cholesky_factors_diag` +
+ * `cholesky_factors_offdiag`) into the packed form the GPU geometry expects.
+ *
+ * @param ndim - Number of dimensions (d)
+ * @returns Diagonal positions, e.g. d=3 → [0, 2, 5]
+ */
+export function choleskyDiagIndices(ndim: number): number[] {
+  const out: number[] = [];
+  let pos = 0;
+  for (let i = 0; i < ndim; i++) {
+    pos += i + 1; // running tril_size(i+1)
+    out.push(pos - 1);
+  }
+  return out;
+}
+
+/**
+ * Packed-vector positions of the strictly-lower off-diagonal elements —
+ * the complement of {@link choleskyDiagIndices} within `range(k)`, preserving
+ * row-major order. Empty for `ndim === 1`. Mirrors
+ * `luxar.gsplats.utils.trils.offdiag_indices` (Python).
+ *
+ * @param ndim - Number of dimensions (d)
+ * @returns Off-diagonal positions, e.g. d=3 → [1, 3, 4]
+ */
+export function choleskyOffdiagIndices(ndim: number): number[] {
+  const diag = new Set(choleskyDiagIndices(ndim));
+  const out: number[] = [];
+  for (let i = 0; i < choleskyPackedSize(ndim); i++) {
+    if (!diag.has(i)) out.push(i);
+  }
+  return out;
+}
+
+
+/**
  * Standard packed Cholesky sizes for common dimensions.
  *
  * Extended to 16D (the WASM 16-dimension ceiling — see CLAUDE.md

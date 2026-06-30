@@ -730,7 +730,7 @@ matrix = make_lod_pyramid(
 ### CLI
 
 ```bash
-# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.0 .gsplats.zarr.
+# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.1 .gsplats.zarr.
 # flat / additive — single leaf, optionally with an additive (prefix-sum) ladder
 luxar gsplat lod fit.gsplats.zarr additive.gsplats.zarr --recipe additive --n-lods 4
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive --method self_energy   # cheap O(N log N)
@@ -741,11 +741,11 @@ luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe additive -m mass -b 
 luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe partitioned --max-elements 250000
 luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe multiscale --compression-factor 8
 
-# substitutive / pyramid primitives; v3.0 kind=lod group
+# substitutive / pyramid primitives; v3.1 kind=lod group
 luxar gsplat lod fit.gsplats.zarr substitutive.gsplats.zarr --recipe substitutive -L 3 -K 4
 luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
 
-# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.0
+# Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory layouts → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
@@ -1145,7 +1145,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.0
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir layouts → v3.1
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management

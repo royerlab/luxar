@@ -6,8 +6,31 @@ import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.gsplats import GSplats
-from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+from luxar.gsplats.utils.trils import merge_tril, pack_tril, unpack_tril
 from luxar.io.compiler import LuxarZarrCompiler
+
+
+def _read_packed_cholesky(group: "zarr.Group") -> np.ndarray:
+    """Read packed Cholesky from a stored gsplats group, recombining the v3.1
+    diag/offdiag split (falls back to a single packed array for v3.0).
+
+    Decodes through ArrayDecoder so the per-channel log/signed-log quantization
+    (AUTO=uint16, MEMORY=uint8) is inverted — reading the raw zarr arrays would
+    yield integer quantization levels, not float covariance factors.
+    """
+    from luxar.encoding import ArrayDecoder
+
+    dec = ArrayDecoder()
+    if "cholesky_factors_diag" in group:
+        diag = dec.decode(group["cholesky_factors_diag"], group)
+        d = diag.shape[-1]
+        off = (
+            dec.decode(group["cholesky_factors_offdiag"], group)
+            if "cholesky_factors_offdiag" in group
+            else np.empty(diag.shape[:-1] + (0,), dtype=diag.dtype)
+        )
+        return merge_tril(diag, off, d)
+    return dec.decode(group["cholesky_factors"], group)
 
 
 def _make_4d_dims() -> Dimensions:
@@ -167,7 +190,7 @@ class TestDimOrderGSplats:
         stored_centers = store["splats"]["centers"][:]
         assert stored_centers.shape == (1, 4)
 
-        stored_chol = store["splats"]["cholesky_factors"][:]
+        stored_chol = _read_packed_cholesky(store["splats"])
         assert stored_chol.shape == (1, 10)  # 4D: k = 4*5/2 = 10
 
         # Verify the embedded covariance
@@ -209,7 +232,7 @@ class TestDimOrderGSplats:
             assert gsplats.n_splats == 2
 
         store = zarr.open(str(output), mode="r")
-        stored_chol = store["splats"]["cholesky_factors"][:]
+        stored_chol = _read_packed_cholesky(store["splats"])
         L_4d = unpack_tril(
             stored_chol.reshape(1, -1) if stored_chol.ndim == 1 else stored_chol, 4
         )
@@ -245,7 +268,7 @@ class TestDimOrderGSplats:
             )
 
         store = zarr.open(str(output), mode="r")
-        stored_chol = store["splats"]["cholesky_factors"][:]
+        stored_chol = _read_packed_cholesky(store["splats"])
         L_4d = unpack_tril(stored_chol, 4)
         Sigma_4d = L_4d @ L_4d.transpose(0, 2, 1)
 
@@ -292,7 +315,7 @@ class TestDimOrderGSplats:
 
         store = zarr.open(str(output), mode="r")
         assert store["splats"]["centers"][:].shape == (1, 4)
-        assert store["splats"]["cholesky_factors"][:].shape == (1, 10)
+        assert _read_packed_cholesky(store["splats"]).shape == (1, 10)
 
 
 class TestDimOrderValidation:

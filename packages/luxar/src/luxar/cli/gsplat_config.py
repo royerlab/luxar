@@ -321,11 +321,66 @@ def decode_flat_channel_index(
     return tuple(coords)
 
 
+def _apply_axes_spec(
+    arr: np.ndarray,
+    axes: str,
+    channel: Optional[int],
+    timepoint: Optional[int],
+) -> np.ndarray:
+    """Collapse a non-canonically-ordered nD array to its spatial volume.
+
+    ``axes`` is a comma-separated label per array dimension (e.g.
+    ``"z,c,y,x"`` or ``"t,z,y,x"``). Recognised: time (``t``/``time``),
+    channel (``c``/``channel``/``ch``/``camera``/``cam``), spatial
+    (``z``/``y``/``x``/``depth``/``height``/``width``). Each time/channel axis is
+    indexed (by ``timepoint``/``channel``, default 0) and dropped; the remaining
+    spatial axes are kept in their given order. This is the single-volume
+    counterpart of ``batch-fit submit --axes`` — it lets ``fit``/``cal`` consume
+    data whose axis order isn't the assumed TCZYX/CZYX/ZYX.
+    """
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
+    if len(labels) != arr.ndim:
+        raise ValueError(
+            f"--axes has {len(labels)} labels but the array is {arr.ndim}D "
+            f"(shape {arr.shape}); give one label per dimension."
+        )
+
+    def _kind(label: str) -> str:
+        if label in ("t", "time"):
+            return "t"
+        if label in ("c", "channel", "ch", "camera", "cam"):
+            return "c"
+        if label in ("z", "y", "x", "depth", "height", "width"):
+            return "s"
+        raise ValueError(
+            f"--axes label {label!r} not recognised; use time/t, "
+            "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
+        )
+
+    kinds = [_kind(label) for label in labels]
+    index: list = [slice(None)] * arr.ndim
+    for i, k in enumerate(kinds):
+        if k in ("t", "c"):
+            which, idx = (
+                ("--timepoint", timepoint) if k == "t" else ("--channel", channel)
+            )
+            idx = 0 if idx is None else int(idx)
+            size = arr.shape[i]
+            if not (0 <= idx < size):
+                raise ValueError(
+                    f"{which} index {idx} is out of range for the '{labels[i]}' "
+                    f"axis of size {size} (valid 0..{size - 1})."
+                )
+            index[i] = idx
+    return np.asarray(arr[tuple(index)])
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
+    axes: Optional[str] = None,
 ) -> np.ndarray:
     """Load a volume from various file formats.
 
@@ -345,6 +400,10 @@ def load_volume(
             to 0 when slicing is needed; for 4D arrays, ``None`` returns
             the array as-is.
         array_key: Array key within .npz or .zarr files
+        axes: Explicit per-dimension axis labels (e.g. ``"z,c,y,x"``) overriding
+            the positional TCZYX/CZYX/ZYX heuristic — for data whose axis order
+            differs. Time/channel axes are sliced (by ``timepoint``/``channel``)
+            and dropped; spatial axes are kept in the given order.
 
     Returns:
         Volume as float32 numpy array (>=2D)
@@ -375,8 +434,12 @@ def load_volume(
 
     elif suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
         # Handles both plain .zarr directories and .zarr.zip archives.
-        # zarr natively supports ZipStore so no extraction needed.
-        volume = _load_zarr_volume(path, channel, timepoint, array_key)
+        # zarr natively supports ZipStore so no extraction needed. With an
+        # explicit --axes the raw array is loaded and sliced by _apply_axes_spec
+        # below (bypassing the positional TCZYX/CZYX heuristic).
+        volume = _load_zarr_volume(
+            path, channel, timepoint, array_key, raw=axes is not None
+        )
 
     elif suffix in (".tiff", ".tif"):
         try:
@@ -398,9 +461,21 @@ def load_volume(
         aprint(f"Loading via imageio: {path.name}")
         volume = iio.imread(str(path))
 
-    # Post-process
-    volume = np.asarray(volume, dtype=np.float32)
-    volume = np.squeeze(volume)
+    # Explicit axis spec (overrides the positional heuristic): slice/drop the
+    # time & channel axes and keep the spatial axes in the given order.
+    if axes is not None:
+        # Pass `volume` as-is (a lazy zarr array for .zarr inputs) so
+        # _apply_axes_spec slices the time/channel axes BEFORE materializing —
+        # do NOT np.asarray() here or a huge nD movie loads fully into RAM.
+        volume = _apply_axes_spec(volume, axes, channel, timepoint)
+        # The spec already fixed the shape (time/channel dropped, spatial kept) —
+        # do NOT squeeze, or a deliberately-kept size-1 spatial axis (e.g. a
+        # single z-plane via --axes z,y,x) would be silently dropped.
+        volume = np.asarray(volume, dtype=np.float32)
+    else:
+        # Post-process: drop incidental size-1 dims from the positional heuristic.
+        volume = np.asarray(volume, dtype=np.float32)
+        volume = np.squeeze(volume)
 
     if volume.ndim < 2:
         raise ValueError(
@@ -432,8 +507,14 @@ def _load_zarr_volume(
     channel: Optional[int],
     timepoint: Optional[int],
     array_key: Optional[str],
+    raw: bool = False,
 ) -> np.ndarray:
-    """Load a volume from a zarr store, handling OME-ZARR conventions."""
+    """Load a volume from a zarr store, handling OME-ZARR conventions.
+
+    With ``raw=True`` the full array is returned WITHOUT the positional
+    TCZYX/CZYX slicing — the caller (``load_volume`` with an explicit ``--axes``)
+    applies its own axis spec instead.
+    """
     import zarr
 
     aprint(f"Loading Zarr: {path.name}")
@@ -472,6 +553,13 @@ def _load_zarr_volume(
     shape = arr.shape
     ndim = len(shape)
     aprint(f"  Raw array shape: {shape} ({ndim}D)")
+
+    if raw:
+        # Explicit --axes path: hand back the LAZY zarr array (NOT np.array(arr)) so
+        # the caller's _apply_axes_spec slices the requested timepoint/channel BEFORE
+        # materializing — otherwise a whole nD movie (e.g. a 329-timepoint stack,
+        # >1 TiB) would be loaded into RAM just to extract one 3D volume.
+        return arr  # type: ignore[no-any-return]
 
     # Slice the array down to a 2D/3D spatial volume.
     # For nD data where ndim > 5, consume leading dimensions using

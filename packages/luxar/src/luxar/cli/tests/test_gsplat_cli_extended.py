@@ -525,10 +525,11 @@ class TestConvertCommand:
         assert "gsplats" in store
         gsplats_group = store["gsplats"]
         assert gsplats_group.attrs.get("type") == "gsplats"
-        # Should have data arrays
+        # Should have data arrays (v3.1 splits Cholesky into diag + offdiag)
         assert "centers" in gsplats_group
         assert "amplitudes" in gsplats_group
-        assert "cholesky_factors" in gsplats_group
+        assert "cholesky_factors_diag" in gsplats_group
+        assert "cholesky_factors_offdiag" in gsplats_group
 
 
 class TestRenderCommand:
@@ -1738,6 +1739,171 @@ class TestTransformCommand:
             atol=1e-3,
         )
 
+    def test_transform_preserves_partition(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Tree-aware transform keeps a kind=partition a partition (PR-4).
+
+        Pre-fix, `transform` did GSplatData.load → ValueError on a partition
+        root → exit 1 with no output. Now it walks the tree leaf-by-leaf,
+        preserving the part structure and total splat count.
+        """
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import (
+            GSplatPartition,
+            global_amplitude_max,
+            total_splats,
+        )
+
+        part = tmp_path / "part.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+            ).exit_code
+            == 0
+        )
+        src_node, _ = load_gsplat_node(part)
+        assert isinstance(src_node, GSplatPartition)
+        n_parts, n_splats = src_node.n_children, total_splats(src_node)
+
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(part),
+                str(out),
+                "--scale",
+                "2,2,2",
+                "--center",
+                "--normalize-intensity",
+                "1.0",
+            ],
+        )
+        assert result.exit_code == 0, f"transform on partition failed: {result.stdout}"
+
+        dst_node, _ = load_gsplat_node(out)
+        assert isinstance(dst_node, GSplatPartition)
+        assert dst_node.n_children == n_parts
+        assert total_splats(dst_node) == n_splats
+        # --normalize-intensity 1.0 → the GLOBAL max amplitude is exactly 1.0
+        assert global_amplitude_max(dst_node) == pytest.approx(1.0, abs=1e-5)
+
+    def test_transform_partition_center_uses_global_centroid(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--center on a partition moves the GLOBAL amplitude-weighted centroid
+        to the origin (a single global shift, not per-part centering)."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import amplitude_weighted_centroid
+
+        part = tmp_path / "part.gsplats.zarr"
+        runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(part), str(out), "--center"]
+        )
+        assert result.exit_code == 0, f"--center on partition failed: {result.stdout}"
+        dst_node, _ = load_gsplat_node(out)
+        np.testing.assert_allclose(
+            amplitude_weighted_centroid(dst_node), 0.0, atol=1e-4
+        )
+
+    def test_transform_partition_scales_geometry(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A scale-only transform on a partition actually scales the geometry
+        (its center-bounds extent doubles). Without an assertion tied to the
+        scaled centers, a regression dropping the tree-path scale ships green."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, center_bounds
+
+        part = tmp_path / "part.gsplats.zarr"
+        runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        src_node, _ = load_gsplat_node(part)
+        lo, hi = center_bounds(src_node)
+        src_extent = hi - lo
+
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(part), str(out), "--scale", "2,2,2"]
+        )
+        assert result.exit_code == 0, f"--scale on partition failed: {result.stdout}"
+        dst_node, _ = load_gsplat_node(out)
+        assert isinstance(dst_node, GSplatPartition)
+        lo2, hi2 = center_bounds(dst_node)
+        # extent scaled ~2x on every spatial axis
+        np.testing.assert_allclose(hi2 - lo2, src_extent * 2.0, rtol=1e-4, atol=1e-4)
+
+    def test_transform_nested_group_rederives_min_pixel_size(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A spatial scale on a multiscale-style tree (a lod group whose finest
+        child is a partition carrying its OWN min_pixel_size) must NOT leave the
+        stale group-node threshold on disk — the writer re-derives it from the
+        transformed extents.
+
+        Pre-fix, the tree path scrubbed min_pixel_size only from leaves while
+        ``map_leaves`` copied the partition GROUP meta verbatim, so the stale
+        value survived (and the partition writer branch re-applied it).
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+        def _leaf(scale: float, seed: int) -> GSplatLeaf:
+            rng = np.random.default_rng(seed)
+            n = 8
+            centers = (rng.uniform(0, 10, size=(n, 3)) * scale).astype(np.float32)
+            chol = np.zeros((n, 6), dtype=np.float32)
+            chol[:, [0, 2, 5]] = 1.0  # positive diagonal
+            return GSplatLeaf(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=centers,
+                        amplitudes=rng.uniform(0.1, 1.0, size=(n,)).astype(np.float32),
+                        cholesky_factors=chol,
+                    )
+                ]
+            )
+
+        # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
+        # deliberately-wrong min_pixel_size on the partition GROUP node.
+        STALE = 12345.0
+        fine = GSplatPartition(
+            children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"min_pixel_size": STALE}
+        )
+        root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
+
+        src = tmp_path / "multiscale.gsplats.zarr"
+        write_gsplats_tree(src, root)
+        # confirm the stale value round-trips on load (the precondition for the bug)
+        loaded, _ = load_gsplat_node(src)
+        assert loaded.children[1].meta.get("min_pixel_size") == pytest.approx(STALE)
+
+        out = tmp_path / "scaled.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(src), str(out), "--scale", "4,4,4"]
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        dst, _ = load_gsplat_node(out)
+        assert isinstance(dst, GSplatLodGroup)
+        # the partition group's min_pixel_size was re-derived, not the stale value
+        new_mps = dst.children[1].meta.get("min_pixel_size")
+        assert new_mps is not None
+        assert new_mps != pytest.approx(STALE), (
+            f"stale group-node min_pixel_size survived the scale: {new_mps}"
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Calibrate (cal) command tests
@@ -1777,6 +1943,24 @@ def fast_fit_config(tmp_path: Path) -> Path:
     }
     path = tmp_path / "fast.yaml"
     path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+@pytest.fixture
+def multiblob_volume(tmp_path: Path) -> Path:
+    """A 40^3 volume with many blobs so feature count grows with crop size —
+    needed by --fit-exponent (distinct n_features across region scales)."""
+    rng = np.random.default_rng(0)
+    V = np.zeros((40, 40, 40), np.float32)
+    zz, yy, xx = np.mgrid[0:40, 0:40, 0:40]
+    for _ in range(24):
+        cz, cy, cx = rng.integers(4, 36, 3)
+        V += np.exp(-(((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)).astype(
+            np.float32
+        )
+    V = np.clip(V, 0, 1)
+    path = tmp_path / "multiblob.npy"
+    np.save(str(path), V)
     return path
 
 
@@ -1853,6 +2037,102 @@ class TestCalibrateCommand:
 
         # Stdout shows the recommended K* line
         assert "Recommended K" in result.stdout
+
+    def test_cal_fit_exponent_writes_fitted_alpha(
+        self,
+        runner: CliRunner,
+        multiblob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--fit-exponent calibrates K* at several scales and writes a fitted
+        alpha into both exponent_fit and splat_density (overriding the 0.44
+        default), which the planner / `fit --tiling content` then read."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(multiblob_volume),
+                str(out_json),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "50",
+                "--k-max",
+                "300",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--fit-exponent",
+                "--exponent-scales",
+                "16,28",
+            ],
+        )
+        assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
+        with open(out_json) as f:
+            data = json.load(f)
+        ef = data["exponent_fit"]
+        assert ef is not None, "exponent_fit not written"
+        assert ef["n_points"] == 2
+        assert ef["scales"] == [16, 28]
+        # the fitted alpha is mirrored into splat_density (what the planner reads)
+        assert data["splat_density"]["saturation_exponent"] == pytest.approx(
+            ef["alpha"]
+        )
+        # stdout reports the fitted exponent
+        assert "Fitted" in result.stdout
+
+    def test_cal_fit_exponent_degenerate_keeps_default_alpha(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """When the scales can't yield ≥2 distinct feature counts (a single-blob
+        16³ volume), --fit-exponent must NOT clobber the default α=0.44: it keeps
+        the default and reports the failure (the invariant the None branch holds)."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "20",
+                "--k-max",
+                "100",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--fit-exponent",
+                "--exponent-scales",
+                "8,12",
+            ],
+        )
+        assert result.exit_code == 0, f"cal --fit-exponent failed:\n{result.stdout}"
+        with open(out_json) as f:
+            data = json.load(f)
+        # the default α survives (either the fit failed → None, or it was degenerate)
+        assert data["splat_density"]["saturation_exponent"] == pytest.approx(0.44)
+        # and the run told the user it kept the default
+        assert "keeping" in result.stdout.lower()
 
     def test_cal_explicit_grid_overrides(
         self,
@@ -2041,8 +2321,17 @@ class TestLODCommand:
         """--coarsen-dims is a substitutive-only knob; additive must reject it."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "additive", "--coarsen-dims", "0,1"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "additive",
+                "--coarsen-dims",
+                "0,1",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2053,8 +2342,17 @@ class TestLODCommand:
         """An index >= ndim (3D data) is a clean BadParameter, writes nothing."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "0,1,5"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "0,1,5",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2064,8 +2362,17 @@ class TestLODCommand:
     ) -> None:
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "a,b"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "a,b",
+            ],
         )
         assert result.exit_code != 0
         assert not out.exists()
@@ -2078,8 +2385,17 @@ class TestLODCommand:
 
         out = tmp_path / "sub.gsplats.zarr"
         result = runner.invoke(
-            app, ["gsplat", "lod", str(medium_gsplats), str(out),
-                  "--recipe", "substitutive", "--coarsen-dims", "0,1"]
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "substitutive",
+                "--coarsen-dims",
+                "0,1",
+            ],
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert GSplatData.load(out).n_substitutive >= 2
@@ -2171,11 +2487,26 @@ class TestLODCommand:
         import zarr
 
         def _fine_threshold(*flags: str) -> tuple[list[float], list[int]]:
-            out = tmp_path / ("sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr")
+            out = tmp_path / (
+                "sub_" + "_".join(flags).replace("-", "") + ".gsplats.zarr"
+            )
             r = runner.invoke(
                 app,
-                ["gsplat", "lod", str(medium_gsplats), str(out), "--recipe",
-                 "substitutive", "-K", "2", "-L", "2", "--device", "cpu", *flags],
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(out),
+                    "--recipe",
+                    "substitutive",
+                    "-K",
+                    "2",
+                    "-L",
+                    "2",
+                    "--device",
+                    "cpu",
+                    *flags,
+                ],
             )
             assert r.exit_code == 0, f"substitutive {flags} failed:\n{r.stdout}"
             g = zarr.open_group(str(out), mode="r")
@@ -2318,10 +2649,20 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic",
-                "--max-elements", "12", "-K", "2", "--levels", "1",
-                "--device", "cpu",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--max-elements",
+                "12",
+                "-K",
+                "2",
+                "--levels",
+                "1",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"mosaic failed:\n{result.stdout}"
@@ -2350,9 +2691,20 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic", "--parts", "4",
-                "-K", "2", "--levels", "1", "--device", "cpu",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--parts",
+                "4",
+                "-K",
+                "2",
+                "--levels",
+                "1",
+                "--device",
+                "cpu",
             ],
         )
         assert result.exit_code == 0, f"mosaic --parts failed:\n{result.stdout}"
@@ -2370,8 +2722,14 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(medium_gsplats), str(out),
-                "--recipe", "mosaic", "--n-lods", "4",
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "mosaic",
+                "--n-lods",
+                "4",
             ],
         )
         assert result.exit_code != 0
@@ -2383,10 +2741,21 @@ class TestLODCommand:
         result = runner.invoke(
             app,
             [
-                "gsplat", "lod", str(src), str(out),
-                "--recipe", "multiscale",
-                "--max-elements", "12", "--n-lods", "2", "-K", "2",
-                "--device", "cpu", *flags,
+                "gsplat",
+                "lod",
+                str(src),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--max-elements",
+                "12",
+                "--n-lods",
+                "2",
+                "-K",
+                "2",
+                "--device",
+                "cpu",
+                *flags,
             ],
         )
         assert result.exit_code == 0, f"multiscale failed:\n{result.stdout}"
@@ -2441,8 +2810,16 @@ class TestLODCommand:
         for flag, val in (("--base-pixel-size", "200"), ("--lod-method", "count")):
             result = runner.invoke(
                 app,
-                ["gsplat", "lod", str(medium_gsplats), str(out),
-                 "--recipe", "additive", flag, val],
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(out),
+                    "--recipe",
+                    "additive",
+                    flag,
+                    val,
+                ],
             )
             assert result.exit_code != 0, f"{flag} should be rejected for additive"
             assert not out.exists()
@@ -2826,6 +3203,31 @@ class TestMigrateFormatCommand:
         assert data.n_additive_sublods == 1
         assert data.n_splats == 7
 
+    def test_migrate_v1_0_lossless_flag(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`--lossless` preserves legacy float32 Cholesky factors exactly."""
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "lossless.gsplats.zarr"
+        self._make_v1_0(legacy, n=7)
+        src_chol = np.asarray(
+            zarr.open_group(str(legacy), mode="r")["splats"]["cholesky_factors"]
+        )
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out), "--lossless"],
+        )
+        assert result.exit_code == 0, f"--lossless migrate failed:\n{result.stdout}"
+        data = GSplatData.load(out)
+        np.testing.assert_array_equal(
+            data.additive_sublods[0].cholesky_factors, src_chol
+        )
+
     def test_migrate_v1_1(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
@@ -2907,3 +3309,137 @@ class TestMigrateFormatCommand:
         assert result.exit_code == 0, f"--quiet failed:\n{result.stdout}"
         assert "Detected legacy format: v1.0" in result.stdout
         assert "Wrote v2.0 file" not in result.stdout
+
+
+class TestAxesSpec:
+    """--axes lets single-volume fit/cal consume non-canonically-ordered nD data
+    (the single-volume counterpart of batch-fit submit --axes)."""
+
+    def test_apply_axes_spec_slices_channel_axis(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        # ZCYX volume (channel is axis 1, not the canonical CZYX axis 0)
+        arr = np.arange(2 * 3 * 4 * 5, dtype=np.float32).reshape(2, 3, 4, 5)
+        out = _apply_axes_spec(arr, "z,c,y,x", channel=1, timepoint=None)
+        assert out.shape == (2, 4, 5)  # c dropped, z/y/x kept in order
+        np.testing.assert_array_equal(out, arr[:, 1, :, :])
+
+    def test_apply_axes_spec_time_and_channel(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        # TZCYX → pick t=2, c=1
+        arr = np.random.rand(3, 4, 2, 5, 6).astype(np.float32)
+        out = _apply_axes_spec(arr, "t,z,c,y,x", channel=1, timepoint=2)
+        assert out.shape == (4, 5, 6)
+        np.testing.assert_array_equal(out, arr[2, :, 1, :, :])
+
+    def test_apply_axes_spec_defaults_to_zero(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.random.rand(2, 3, 4, 5).astype(np.float32)
+        out = _apply_axes_spec(arr, "c,z,y,x", channel=None, timepoint=None)
+        np.testing.assert_array_equal(out, arr[0])  # channel defaults to 0
+
+    def test_apply_axes_spec_validates(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="labels but the array"):
+            _apply_axes_spec(arr, "z,y", channel=None, timepoint=None)  # too few
+        with pytest.raises(ValueError, match="not recognised"):
+            _apply_axes_spec(arr, "z,bogus,x", channel=None, timepoint=None)
+
+    def test_load_volume_axes_override_npy(self, tmp_path: Path) -> None:
+        """load_volume(axes=...) reorders/slices a non-canonical .npy stack."""
+        from luxar.cli.gsplat_config import load_volume
+
+        # a 4D ZCYX stack (would be mis-read as CZYX by the positional heuristic)
+        arr = np.random.rand(6, 2, 8, 9).astype(np.float32)
+        p = tmp_path / "zcyx.npy"
+        np.save(p, arr)
+        vol = load_volume(p, channel=1, axes="z,c,y,x")
+        assert vol.shape == (6, 8, 9)
+        np.testing.assert_array_equal(vol, arr[:, 1, :, :])
+
+
+class TestAxesThreadingAndSqueeze:
+    """Regressions for review #4: --axes must reach the uniform parallel tile
+    workers, and an explicitly-kept size-1 spatial axis must not be squeezed."""
+
+    def test_uniform_worker_cmd_forwards_axes(self) -> None:
+        """build_worker_cmd emits --axes so parallel `fit --tile` workers load
+        with the same axis spec the parent used (else grids disagree / corrupt)."""
+        from luxar.gsplats.fit_tiled_parallel import build_worker_cmd
+
+        cmd = build_worker_cmd(
+            ["luxar"],
+            "in.zarr",
+            "out.zarr",
+            0,
+            4,
+            256,
+            32,
+            channel=1,
+            axes="z,c,y,x",
+        )
+        assert "--axes" in cmd
+        assert cmd[cmd.index("--axes") + 1] == "z,c,y,x"
+        # without axes, no --axes flag (back-compat)
+        cmd2 = build_worker_cmd(["luxar"], "in.zarr", "out.zarr", 0, 4, 256, 32)
+        assert "--axes" not in cmd2
+
+    def test_load_volume_axes_keeps_size_one_spatial_axis(self, tmp_path: Path) -> None:
+        """A single-z-plane stack kept via --axes z,y,x must stay 3D (1,Y,X) —
+        np.squeeze must NOT drop the declared z axis."""
+        from luxar.cli.gsplat_config import load_volume
+
+        arr = np.random.rand(1, 8, 9).astype(np.float32)  # (z=1, y, x)
+        p = tmp_path / "thin.npy"
+        np.save(p, arr)
+        vol = load_volume(p, axes="z,y,x")
+        assert vol.shape == (1, 8, 9)  # z axis preserved (no squeeze)
+        # contrast: WITHOUT --axes, squeeze drops the size-1 leading dim
+        assert load_volume(p).shape == (8, 9)
+
+    def test_apply_axes_spec_rejects_out_of_range_index(self) -> None:
+        from luxar.cli.gsplat_config import _apply_axes_spec
+
+        arr = np.zeros((2, 3, 4, 5), dtype=np.float32)  # c=2 on axis 0
+        with pytest.raises(ValueError, match="out of range"):
+            _apply_axes_spec(arr, "c,z,y,x", channel=5, timepoint=None)
+
+    def test_load_zarr_raw_returns_lazy_array_not_materialized(
+        self, tmp_path: Path
+    ) -> None:
+        """--axes path must hand _apply_axes_spec a LAZY zarr array, so a huge nD
+        movie is sliced to one 3D volume WITHOUT loading the whole thing into RAM.
+        Regression: raw=True used to `return np.array(arr)` (materialized all of it)
+        → OOM on a real 329-timepoint stack."""
+        import zarr
+
+        from luxar.cli.gsplat_config import _load_zarr_volume
+
+        p = tmp_path / "movie.zarr"
+        z = zarr.open_array(
+            str(p), mode="w", shape=(4, 8, 8, 8), chunks=(1, 8, 8, 8), dtype="f4"
+        )
+        z[:] = np.arange(4 * 8 * 8 * 8, dtype=np.float32).reshape(4, 8, 8, 8)
+        arr = _load_zarr_volume(p, None, 2, None, raw=True)
+        assert isinstance(arr, zarr.Array)  # lazy handle, NOT a materialized ndarray
+
+    def test_load_volume_axes_slices_zarr_timepoint(self, tmp_path: Path) -> None:
+        """load_volume(--axes t,z,y,x, timepoint=k) returns the correct 3D slice
+        of a 4D zarr movie (the lazily-sliced path)."""
+        import zarr
+
+        from luxar.cli.gsplat_config import load_volume
+
+        p = tmp_path / "movie.zarr"
+        data = np.arange(4 * 8 * 8 * 8, dtype=np.float32).reshape(4, 8, 8, 8)
+        z = zarr.open_array(
+            str(p), mode="w", shape=data.shape, chunks=(1, 8, 8, 8), dtype="f4"
+        )
+        z[:] = data
+        vol = load_volume(p, timepoint=2, axes="t,z,y,x")
+        assert vol.shape == (8, 8, 8)
+        np.testing.assert_array_equal(vol, data[2])

@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { choleskyPackedSize, CHOLESKY_SIZES } from '../../../types/gsplats';
+import {
+  choleskyPackedSize,
+  choleskyDiagIndices,
+  choleskyOffdiagIndices,
+  CHOLESKY_SIZES,
+} from '../../../types/gsplats';
 
 describe('GSplats Types', () => {
   // [types.md/O5][P4] Replaces four sibling `should return correct size for ND`
@@ -79,6 +84,52 @@ describe('GSplats Types', () => {
       expect(CHOLESKY_SIZES['5D']).toBe(15);
       expect(CHOLESKY_SIZES['8D']).toBe(36);
       expect(CHOLESKY_SIZES['16D']).toBe(136);
+    });
+  });
+
+  // v3.1 split-Cholesky index helpers — mirror Python
+  // `luxar.gsplats.utils.trils.{diag_indices,offdiag_indices}`. The viewer
+  // loader uses these to recombine `cholesky_factors_diag` +
+  // `cholesky_factors_offdiag` into the packed (N, k) buffer the GPU expects.
+  describe('choleskyDiagIndices / choleskyOffdiagIndices', () => {
+    it.each([
+      [1, [0], []],
+      [2, [0, 2], [1]],
+      [3, [0, 2, 5], [1, 3, 4]],
+      [4, [0, 2, 5, 9], [1, 3, 4, 6, 7, 8]],
+    ])('d=%d diag/offdiag positions match Python', (d, diag, off) => {
+      expect(choleskyDiagIndices(d)).toEqual(diag);
+      expect(choleskyOffdiagIndices(d)).toEqual(off);
+    });
+
+    it.each([1, 2, 3, 4, 5, 6, 8])(
+      'd=%d: diag ∪ offdiag partitions range(k) exactly',
+      (d) => {
+        const k = choleskyPackedSize(d);
+        const combined = [...choleskyDiagIndices(d), ...choleskyOffdiagIndices(d)].sort(
+          (a, b) => a - b
+        );
+        expect(combined).toEqual(Array.from({ length: k }, (_, i) => i));
+        expect(choleskyDiagIndices(d)).toHaveLength(d);
+        expect(choleskyOffdiagIndices(d)).toHaveLength(k - d);
+      }
+    );
+
+    // Guards the loader's interleave math: scattering split halves back through
+    // these indices must reconstruct the original packed row (cf.
+    // loadCholeskyRanges + the Python merge_tril round-trip).
+    it.each([2, 3, 4, 5])('d=%d: scatter reconstructs the packed row', (d) => {
+      const k = choleskyPackedSize(d);
+      const packed = Array.from({ length: k }, (_, i) => i + 1); // [1..k]
+      const diagIdx = choleskyDiagIndices(d);
+      const offIdx = choleskyOffdiagIndices(d);
+      const diag = diagIdx.map((i) => packed[i]);
+      const offdiag = offIdx.map((i) => packed[i]);
+
+      const out = new Array<number>(k).fill(0);
+      diagIdx.forEach((idx, c) => (out[idx] = diag[c]));
+      offIdx.forEach((idx, c) => (out[idx] = offdiag[c]));
+      expect(out).toEqual(packed);
     });
   });
 });

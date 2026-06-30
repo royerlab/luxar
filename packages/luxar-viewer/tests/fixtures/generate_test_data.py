@@ -1557,7 +1557,7 @@ def generate_gsplats_test() -> None:
 
 
 def generate_standalone_gsplats_test() -> None:
-    """Standalone v3.0 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
+    """Standalone v3.1 ``.gsplats.zarr`` — a *detached* gsplats leaf node.
 
     Exercises the viewer's bare-node load path (Phase 4): opening this file via
     ``?src=`` must dispatch the root as a gsplats leaf, auto-frame it, and

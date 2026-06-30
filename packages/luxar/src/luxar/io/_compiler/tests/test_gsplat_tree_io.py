@@ -174,6 +174,61 @@ def test_partition_round_trip():
     assert out.n_splats == 50
 
 
+def test_quantized_cholesky_not_deduplicated_across_identical_leaves():
+    """Regression: identical leaves sharing the writer's encoder must NOT have
+    their per-channel-quantized Cholesky stored as an ``array_ref``. The viewer
+    reads the per-column scales (``col_lo``/``col_hi``) from each array's OWN
+    encoding attrs; an ``array_ref`` carries none, so a deduped array would
+    silently skip dequant (wrong covariance). The write seam passes
+    ``deduplicate=False`` for exactly this reason. AUTO mode → uint16 split."""
+    # Two byte-identical leaves with a realistic (non-zero, non-uniform)
+    # off-diagonal so both halves take the quantized path (a zero off-diagonal
+    # would be stored as a broadcast, not quantized). Identical data → identical
+    # quantized bytes → would dedup to array_ref if dedup were on.
+    rng = np.random.default_rng(7)
+    n, d, k = 40, 3, 6
+    centers = rng.uniform(0, 50, size=(n, d)).astype(np.float32)
+    amps = rng.uniform(0.1, 1.0, size=(n,)).astype(np.float32)
+    chol = rng.standard_normal((n, k)).astype(np.float32)
+    diag = np.cumsum(np.arange(1, d + 1)) - 1
+    chol[:, diag] = np.abs(chol[:, diag]) + 0.5  # positive diagonal
+
+    def _mk() -> GSplatLeaf:
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=centers.copy(),
+                    amplitudes=amps.copy(),
+                    cholesky_factors=chol.copy(),
+                )
+            ]
+        )
+
+    part = GSplatPartition(children=[_mk(), _mk()])
+    tmp = Path(tempfile.mkdtemp(prefix="luxar_dedup_"))
+    store = zarr.DirectoryStore(str(tmp / "t.gsplats.zarr"))
+    root = zarr.group(store=store, overwrite=True)
+    write_gsplat_node(
+        root,
+        part,
+        dataset_ctx=make_dataset_ctx(EncodingMode.AUTO),
+        ordering_ctx=make_ordering_ctx("none"),
+        store=root,
+    )
+    rr = zarr.open_group(str(tmp / "t.gsplats.zarr"), mode="r")
+    for child in ("part_0", "part_1"):
+        for arr in ("cholesky_factors_diag", "cholesky_factors_offdiag"):
+            enc = dict(rr[child][arr].attrs["encoding"])
+            assert enc["name"] != "array_ref", (
+                f"{child}/{arr} was deduplicated to array_ref — the viewer would "
+                f"lose its per-column scales"
+            )
+            assert "col_lo" in enc and "col_hi" in enc, f"{child}/{arr}: {enc['name']}"
+    # And it still recombines correctly on read.
+    out = read_gsplat_node(rr, rr)
+    assert out.n_splats == 80
+
+
 # ── Shape F: nested combos ───────────────────────────────────────────────
 
 

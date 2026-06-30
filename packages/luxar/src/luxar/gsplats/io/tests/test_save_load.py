@@ -43,9 +43,11 @@ class TestSaveGsplats:
             assert path.exists()
             root = zarr.open_group(str(path), mode="r")
             assert root.attrs["format_type"] == "gsplats_zarr"
-            assert root.attrs["format_version"] == "3.0"
-            # v3.0: leaf at root, no "splats" group.
+            assert root.attrs["format_version"] == "3.1"
+            # v3.1: leaf at root, no "splats" group; Cholesky factors split.
             assert "splats" not in root
+            assert "cholesky_factors_diag" in root
+            assert "cholesky_factors" not in root
             assert root.attrs["type"] == "gsplats"
             assert root.attrs["n_splats"] == 100
             assert root.attrs["ndim"] == 3
@@ -148,6 +150,154 @@ class TestSaveGsplats:
                         np.float32
                     ),  # wrong k
                 )
+
+
+class TestCholeskySplitRoundTrip:
+    """v3.1 splits Cholesky factors into diag + offdiag on disk and recombines
+    them on read. Verify the packed (N, k) form survives the round-trip across
+    dimensionalities, encoding modes, and the uniform/broadcast case."""
+
+    @staticmethod
+    def _splats(n: int, d: int, rng: np.random.Generator) -> dict:
+        k = d * (d + 1) // 2
+        # Realistic Cholesky factors: POSITIVE diagonal (a real L has L[i,i] > 0),
+        # signed off-diagonal. (Random unconstrained vectors would give negative
+        # diagonals the log encoder legitimately clamps — not representative.)
+        chol = rng.standard_normal((n, k)).astype(np.float32)
+        diag_idx = np.cumsum(np.arange(1, d + 1)) - 1
+        chol[:, diag_idx] = np.abs(chol[:, diag_idx]) + 0.5
+        return {
+            "centers": (rng.random((n, d)).astype(np.float32) * 10),
+            "amplitudes": rng.random(n).astype(np.float32) * 2,
+            "cholesky_factors": chol,
+        }
+
+    @staticmethod
+    def _cov_relF_p95(ref: np.ndarray, got: np.ndarray, d: int) -> float:
+        """p95 relative Frobenius error of Σ=LLᵀ between two packed sets."""
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        Lr = unpack_tril(ref.astype(np.float64), d)
+        Lg = unpack_tril(got.astype(np.float64), d)
+        Sr = Lr @ Lr.transpose(0, 2, 1)
+        Sg = Lg @ Lg.transpose(0, 2, 1)
+        rel = np.linalg.norm(Sg - Sr, axis=(1, 2)) / (
+            np.linalg.norm(Sr, axis=(1, 2)) + 1e-30
+        )
+        return float(np.percentile(rel, 95))
+
+    # ndim=1 included: it is the degenerate case where the off-diagonal array is
+    # intentionally omitted (k - d == 0), so it exercises a distinct write/read path.
+    # Per-mode precision: PRECISION=float32 (exact), AUTO=uint16 differential
+    # (near-lossless), MEMORY=uint8 differential (visually lossless).
+    _COV_P95_BOUND = {
+        EncodingMode.PRECISION: 0.0,
+        EncodingMode.AUTO: 1e-3,
+        EncodingMode.MEMORY: 0.1,
+    }
+    _DIAG_ENCODING = {
+        EncodingMode.PRECISION: "float32",
+        EncodingMode.AUTO: "log_perchannel_u16",
+        EncodingMode.MEMORY: "log_perchannel_u8",
+    }
+
+    @pytest.mark.parametrize("ndim", [1, 2, 3, 4])
+    @pytest.mark.parametrize(
+        "mode", [EncodingMode.PRECISION, EncodingMode.AUTO, EncodingMode.MEMORY]
+    )
+    def test_roundtrip_dims_and_modes(self, ndim: int, mode: EncodingMode) -> None:
+        rng = np.random.default_rng(ndim)
+        splats = self._splats(64, ndim, rng)
+        k = ndim * (ndim + 1) // 2
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "t.gsplats.zarr"
+            save_gsplats(path=path, **splats, encoding_mode=mode, ordering="none")
+
+            # On disk: split arrays, no single packed array. The off-diagonal
+            # array is present iff there are off-diagonal elements (d > 1).
+            root = zarr.open_group(str(path), mode="r")
+            assert "cholesky_factors_diag" in root
+            assert "cholesky_factors" not in root
+            assert root["cholesky_factors_diag"].shape[1] == ndim
+            assert (
+                root["cholesky_factors_diag"].attrs["encoding"]["name"]
+                == self._DIAG_ENCODING[mode]
+            )
+            if k - ndim > 0:
+                assert "cholesky_factors_offdiag" in root
+                assert root["cholesky_factors_offdiag"].shape[1] == k - ndim
+            else:
+                assert "cholesky_factors_offdiag" not in root  # d == 1
+
+            # Recombined on read into the packed (N, k) form.
+            result = load_gsplats(path)
+            assert result.cholesky_factors.shape == (64, k)
+            if mode == EncodingMode.PRECISION:
+                np.testing.assert_array_equal(
+                    result.cholesky_factors, splats["cholesky_factors"]
+                )
+            else:
+                cov_p95 = self._cov_relF_p95(
+                    splats["cholesky_factors"], result.cholesky_factors, ndim
+                )
+                assert cov_p95 <= self._COV_P95_BOUND[mode], (
+                    f"{mode} cov relF p95 {cov_p95:.2e} exceeds "
+                    f"{self._COV_P95_BOUND[mode]:.0e}"
+                )
+
+    def test_roundtrip_uniform_cholesky(self) -> None:
+        """Broadcast/uniform Cholesky (shape (1, k)) splits and recombines."""
+        rng = np.random.default_rng(7)
+        n, d = 50, 3
+        k = d * (d + 1) // 2
+        uniform = rng.standard_normal(k).astype(np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "u.gsplats.zarr"
+            save_gsplats(
+                path=path,
+                centers=(rng.random((n, d)).astype(np.float32) * 10),
+                amplitudes=rng.random(n).astype(np.float32),
+                cholesky_factors=np.tile(uniform, (n, 1)),
+                ordering="none",
+            )
+            result = load_gsplats(path)
+            for row in result.cholesky_factors:
+                np.testing.assert_allclose(row, uniform, rtol=0, atol=1e-5)
+
+    def test_roundtrip_2d_offdiag_single_column(self) -> None:
+        """2D has exactly one off-diagonal element (k-d = 1)."""
+        rng = np.random.default_rng(2)
+        splats = self._splats(40, 2, rng)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "t2.gsplats.zarr"
+            # default mode = AUTO → uint16 differential (near-lossless)
+            save_gsplats(path=path, **splats, ordering="none")
+            root = zarr.open_group(str(path), mode="r")
+            assert root["cholesky_factors_offdiag"].shape[1] == 1
+            assert (
+                root["cholesky_factors_offdiag"].attrs["encoding"]["name"]
+                == "signed_log_perchannel_u16"
+            )
+            result = load_gsplats(path)
+            assert (
+                self._cov_relF_p95(splats["cholesky_factors"], result.cholesky_factors, 2)
+                <= 1e-3
+            )
+
+    def test_corrupt_missing_offdiag_for_dgt1_raises(self) -> None:
+        """A d>1 store with the diagonal but no off-diagonal array is corrupt;
+        the reader must fail loud rather than silently drop off-diagonals."""
+        import shutil
+
+        rng = np.random.default_rng(3)
+        splats = self._splats(32, 3, rng)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "c.gsplats.zarr"
+            save_gsplats(path=path, **splats, ordering="none")
+            # Simulate a partial write: delete the off-diagonal array.
+            shutil.rmtree(path / "cholesky_factors_offdiag")
+            with pytest.raises(ValueError, match="offdiag.*missing|missing.*offdiag"):
+                load_gsplats(path)
 
 
 class TestLoadGsplats:
@@ -486,7 +636,13 @@ class TestCompression:
             root = zarr.open(str(path), "r")
             assert root["centers"].chunks[0] <= 50
             assert root["amplitudes"].chunks[0] <= 50
-            assert root["cholesky_factors"].chunks[0] <= 50
+            # Both Cholesky halves share the same row-chunk size as centers.
+            assert root["cholesky_factors_diag"].chunks[0] <= 50
+            assert root["cholesky_factors_offdiag"].chunks[0] <= 50
+            assert (
+                root["cholesky_factors_diag"].chunks[0]
+                == root["cholesky_factors_offdiag"].chunks[0]
+            )
 
     def test_gsplatdata_save_default_compression(self):
         from numcodecs import Blosc
@@ -798,9 +954,7 @@ def test_writer_derives_extent_thresholds_for_meta_less_lod_group() -> None:
         )
 
     # coarsest-first: 50 large (scale 4) then 800 small (scale 1). No authored meta.
-    grp = GSplatLodGroup(
-        children=[_leaf(50, 4.0, 0), _leaf(800, 1.0, 1)]
-    )
+    grp = GSplatLodGroup(children=[_leaf(50, 4.0, 0), _leaf(800, 1.0, 1)])
     assert "min_pixel_size" not in grp.children[0].meta
     assert "min_pixel_size" not in grp.children[1].meta
 

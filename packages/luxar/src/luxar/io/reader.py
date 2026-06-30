@@ -398,10 +398,11 @@ class LuxarScene:
             raise ValueError(
                 f"GSplats node '{name}' missing required 'amplitudes' array"
             )
-        cholesky_factors = self._decode_array(group, "cholesky_factors")
+        cholesky_factors = self._decode_cholesky(group)
         if cholesky_factors is None:
             raise ValueError(
-                f"GSplats node '{name}' missing required 'cholesky_factors' array"
+                f"GSplats node '{name}' missing required cholesky factors "
+                f"('cholesky_factors_diag' for v3.1, or 'cholesky_factors' for v3.0)"
             )
         colors = self._decode_array(group, "colors")
 
@@ -495,3 +496,17 @@ class LuxarScene:
 
         zarr_array = group[array_name]
         return self._decoder.decode(zarr_array, self._root)
+
+    def _decode_cholesky(self, group: zarr.Group) -> Optional[np.ndarray]:
+        """Decode Cholesky factors, recombining the v3.1 split layout.
+
+        Delegates the layout/version handling to the shared
+        :func:`luxar.gsplats.utils.trils.recombine_cholesky` so the v3.0
+        fallback, the corruption invariant, and the error message stay in one
+        place (the gsplat-tree decoder uses the same helper). ``_decode_array``
+        already returns ``None`` for an absent array, matching the callback
+        contract.
+        """
+        from ..gsplats.utils.trils import recombine_cholesky
+
+        return recombine_cholesky(lambda name: self._decode_array(group, name))

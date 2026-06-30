@@ -132,6 +132,8 @@ def fit_planned(
     verbose: bool = False,
     progress_callback: Optional[ProgressCallback] = None,
     partition: bool = False,
+    recipe: Optional[str] = None,
+    recipe_params: "Optional[Any]" = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit every box in ``plan`` and return the merged result.
@@ -191,7 +193,10 @@ def fit_planned(
     if partition:
         # One part per box — boxes are core-disjoint, so this is an exact
         # spatial partition (viewer frustum-culls per part). Returns a tree node.
-        return GSplatData.partition_from_regions(regions)
+        # ``recipe`` gives each part its own LOD ladder/group as it is assembled.
+        return GSplatData.partition_from_regions(
+            regions, recipe=recipe, recipe_params=recipe_params
+        )
 
     merged = GSplatData(
         centers=np.concatenate([r.centers for r in regions]).astype(np.float32),

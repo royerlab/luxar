@@ -20,7 +20,7 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
   SpatialQueryBuilder,
@@ -45,7 +45,11 @@ import type {
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import { choleskyPackedSize } from '../../types/gsplats';
+import {
+  choleskyPackedSize,
+  choleskyDiagIndices,
+  choleskyOffdiagIndices,
+} from '../../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
@@ -99,6 +103,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
+    // v3.1 split Cholesky layout (diagonal + off-diagonal)…
+    cholesky_factors_diag?: zarr.Array<zarr.DataType, zarr.Readable>;
+    cholesky_factors_offdiag?: zarr.Array<zarr.DataType, zarr.Readable>;
+    // …or the legacy v3.0 single packed array.
     cholesky_factors?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
@@ -188,9 +196,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       let amplitudesArray = await zarr.open(this.zarrLocation.resolve('amplitudes'), {
         kind: 'array',
       });
-      let choleskyArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors'), {
-        kind: 'array',
-      });
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
         centersArray = wrapWithCache(
@@ -207,22 +212,19 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           () => this._activeProbe,
           () => this._activeSignal
         );
-        choleskyArray = wrapWithCache(
-          choleskyArray,
-          this.l0Cache,
-          `${this.node.path}/cholesky_factors`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
       }
       this.arrays.centers = centersArray;
       this.arrays.amplitudes = amplitudesArray;
-      this.arrays.cholesky_factors = choleskyArray;
 
       // Register array bounds with prefetcher for upper-bounds checking
       this.registerBounds('centers', centersArray);
       this.registerBounds('amplitudes', amplitudesArray);
-      this.registerBounds('cholesky_factors', choleskyArray);
+
+      // Cholesky factors: v3.1 stores a diagonal + off-diagonal split; v3.0
+      // stores a single packed `cholesky_factors`. Presence of the diagonal
+      // array selects the layout — the loader recombines the split into the
+      // packed buffer the geometry expects (see loadCholeskyRanges).
+      await this.openCholeskyArrays();
     } catch (e) {
       log.error(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
       throw e;
@@ -320,7 +322,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   ): Promise<LoadedGSplatsData> {
     await this._onceInit.ensure(() => this.initialize());
 
-    if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
+    const hasCholesky = !!(this.arrays.cholesky_factors || this.arrays.cholesky_factors_diag);
+    if (!this.arrays.centers || !this.arrays.amplitudes || !hasCholesky) {
       throw new Error('[GSplatsLoader] Loader not properly initialized');
     }
 
@@ -414,12 +417,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       try {
         await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
         await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
-        await this.loadArrayRanges(
-          'cholesky_factors',
-          splatRanges,
-          choleskyPackedSize(attrs.ndim),
-          choleskyBuffer
-        );
+        await this.loadCholeskyRanges(splatRanges, attrs.ndim, choleskyBuffer);
 
         // Load optional arrays directly to accumulator
         if (this.arrays.colors) {
@@ -458,11 +456,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       try {
         centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
         amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
-        choleskyFactors = await this.loadArrayRanges(
-          'cholesky_factors',
-          splatRanges,
-          choleskyPackedSize(attrs.ndim)
-        );
+        choleskyFactors = await this.loadCholeskyRanges(splatRanges, attrs.ndim);
 
         // Use multi-type loadColorRanges for colors
         colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
@@ -472,11 +466,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     } else {
       centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
       amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
-      choleskyFactors = await this.loadArrayRanges(
-        'cholesky_factors',
-        splatRanges,
-        choleskyPackedSize(attrs.ndim)
-      );
+      choleskyFactors = await this.loadCholeskyRanges(splatRanges, attrs.ndim);
 
       // Use multi-type loadColorRanges for colors
       colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
@@ -600,6 +590,168 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * @param targetBuffer - Optional target buffer (for accumulator integration)
    * @returns Loaded data (new array or subarray of target)
    */
+  /**
+   * Open the Cholesky factor array(s), supporting both the v3.1 split layout
+   * (`cholesky_factors_diag` + optional `cholesky_factors_offdiag`) and the
+   * legacy v3.0 single packed `cholesky_factors`. The off-diagonal array is
+   * absent for 1D gsplats. Recombination into the packed buffer happens in
+   * {@link loadCholeskyRanges}.
+   */
+  private async openCholeskyArrays(): Promise<void> {
+    const wrap = (
+      arr: zarr.Array<zarr.DataType, zarr.Readable>,
+      name: string
+    ): zarr.Array<zarr.DataType, zarr.Readable> =>
+      this.l0Cache
+        ? wrapWithCache(
+            arr,
+            this.l0Cache,
+            `${this.node.path}/${name}`,
+            () => this._activeProbe,
+            () => this._activeSignal
+          )
+        : arr;
+
+    let diagArray: zarr.Array<zarr.DataType, zarr.Readable> | undefined;
+    try {
+      diagArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors_diag'), {
+        kind: 'array',
+      });
+    } catch (e) {
+      // Only a genuine "not found" means this is a legacy v3.0 single-array
+      // file. A transient/network/permission error must surface, not be
+      // silently misread as "no split" (which would then fail confusingly on
+      // the legacy open below).
+      if (!zarr.isNotFoundError(e)) throw e;
+      diagArray = undefined;
+    }
+
+    if (diagArray) {
+      // v3.1 split layout.
+      diagArray = wrap(diagArray, 'cholesky_factors_diag');
+      this.arrays.cholesky_factors_diag = diagArray;
+      this.registerBounds('cholesky_factors_diag', diagArray);
+
+      let offdiagArray: zarr.Array<zarr.DataType, zarr.Readable> | undefined;
+      try {
+        offdiagArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors_offdiag'), {
+          kind: 'array',
+        });
+      } catch (e) {
+        // A missing off-diagonal array is legitimate only for 1D gsplats; a
+        // transient error must surface. (loadCholeskyRanges still rejects a
+        // d > 1 store whose off-diagonal is genuinely absent.)
+        if (!zarr.isNotFoundError(e)) throw e;
+        offdiagArray = undefined; // 1D gsplats: no off-diagonal terms
+      }
+      if (offdiagArray) {
+        offdiagArray = wrap(offdiagArray, 'cholesky_factors_offdiag');
+        this.arrays.cholesky_factors_offdiag = offdiagArray;
+        this.registerBounds('cholesky_factors_offdiag', offdiagArray);
+      }
+      return;
+    }
+
+    // Legacy v3.0 single packed array (required).
+    let choleskyArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors'), {
+      kind: 'array',
+    });
+    choleskyArray = wrap(choleskyArray, 'cholesky_factors');
+    this.arrays.cholesky_factors = choleskyArray;
+    this.registerBounds('cholesky_factors', choleskyArray);
+  }
+
+  /**
+   * Load Cholesky factors into the packed (N, k) form, recombining the v3.1
+   * split arrays when present. For the legacy single-array layout this is a
+   * direct passthrough to {@link loadArrayRanges}. On success every packed
+   * position is written (diagonal ∪ off-diagonal = all k columns), so a reused
+   * target buffer never leaks stale values. The corrupt-file precondition (a
+   * d > 1 store missing the off-diagonal array) is checked BEFORE any write, so
+   * a throw never leaves the (possibly reused) target buffer half-populated.
+   *
+   * @param ranges - Visible splat ranges
+   * @param ndim - Dimensionality (k = ndim*(ndim+1)/2 packed elements/splat)
+   * @param targetBuffer - Optional packed output buffer (zero-alloc path)
+   */
+  private async loadCholeskyRanges(
+    ranges: SplatRange[],
+    ndim: number,
+    targetBuffer?: Float32Array
+  ): Promise<Float32Array> {
+    const k = choleskyPackedSize(ndim);
+
+    // Legacy v3.0: single packed array — load directly, no interleave.
+    if (this.arrays.cholesky_factors) {
+      return this.loadArrayRanges('cholesky_factors', ranges, k, targetBuffer);
+    }
+
+    const d = ndim;
+    const offLen = k - d;
+
+    // Precondition FIRST (before touching the target buffer): the off-diagonal
+    // array is legitimately absent ONLY for 1D gsplats (offLen === 0). For
+    // d > 1 a missing off-diagonal array means a corrupt / partially-written
+    // file — fail loud rather than silently zero/stale-filling the off-diagonals
+    // (which would scramble every splat's covariance). Checking up front means a
+    // throw never half-populates a reused accumulator buffer. Mirrors the Python
+    // reader, where merge_tril() raises on a size mismatch.
+    if (offLen > 0 && !this.arrays.cholesky_factors_offdiag) {
+      throw new Error(
+        `[GSplatsLoader] ${this.node.path}: missing 'cholesky_factors_offdiag' ` +
+          `for ${ndim}D splats (expected ${offLen} off-diagonal elements per splat). ` +
+          'The .gsplats.zarr is corrupt or was only partially written.'
+      );
+    }
+
+    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const packed = targetBuffer ?? new Float32Array(totalSplats * k);
+
+    // Load both halves concurrently (two independent zarr reads), then scatter
+    // each into its packed columns. Diagonal is always present in the split
+    // layout; off-diagonal is read only when it exists (d > 1).
+    const [diag, offdiag] = await Promise.all([
+      this.loadArrayRanges('cholesky_factors_diag', ranges, d),
+      offLen > 0
+        ? this.loadArrayRanges('cholesky_factors_offdiag', ranges, offLen)
+        : Promise.resolve(null),
+    ]);
+
+    // Per-column dequantizers from each array's encoding metadata. For the v3.1
+    // differential encodings (diag log-uint8/16, off signed-log-uint8/16) the
+    // arrays loaded as raw integer levels (routed to `direct`); we invert
+    // per-column here, mirroring the Python decoder. For float32/legacy arrays
+    // the dequantizer is the identity, so values pass through unchanged.
+    const diagAttrs = this.arrays.cholesky_factors_diag?.attrs as unknown as
+      | { encoding?: Parameters<typeof ArrayDecoder.makePerChannelDequant>[0] }
+      | undefined;
+    const diagDequant = ArrayDecoder.makePerChannelDequant(diagAttrs?.encoding, d);
+
+    const diagIdx = choleskyDiagIndices(ndim);
+    for (let s = 0; s < totalSplats; s++) {
+      const base = s * k;
+      const dbase = s * d;
+      for (let c = 0; c < d; c++) packed[base + diagIdx[c]] = diagDequant(diag[dbase + c], c);
+    }
+
+    if (offdiag) {
+      const offAttrs = this.arrays.cholesky_factors_offdiag?.attrs as unknown as
+        | { encoding?: Parameters<typeof ArrayDecoder.makePerChannelDequant>[0] }
+        | undefined;
+      const offDequant = ArrayDecoder.makePerChannelDequant(offAttrs?.encoding, offLen);
+      const offIdx = choleskyOffdiagIndices(ndim);
+      for (let s = 0; s < totalSplats; s++) {
+        const base = s * k;
+        const obase = s * offLen;
+        for (let c = 0; c < offLen; c++) {
+          packed[base + offIdx[c]] = offDequant(offdiag[obase + c], c);
+        }
+      }
+    }
+
+    return packed;
+  }
+
   private async loadArrayRanges(
     arrayName: string,
     ranges: SplatRange[],
@@ -700,6 +852,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const arrays = [
       this.arrays.centers,
       this.arrays.amplitudes,
+      // v3.1 split Cholesky arrays, or the legacy v3.0 single packed array.
+      this.arrays.cholesky_factors_diag,
+      this.arrays.cholesky_factors_offdiag,
       this.arrays.cholesky_factors,
       this.arrays.colors,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);

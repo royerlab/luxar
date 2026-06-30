@@ -86,7 +86,7 @@ def test_standalone_leaf_matches_scene_leaf():
         std_leaf = zarr.open_group(str(std_path), mode="r")
 
         # Arrays: byte-identical (same data, same encoding, no reordering).
-        for arr in ("centers", "amplitudes", "cholesky_factors"):
+        for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"
             )
@@ -144,7 +144,7 @@ def test_scene_additive_ladder_matches_standalone():
         assert scene_leaf.attrs["n_additive_sublods"] == 2
         assert std_leaf.attrs["n_additive_sublods"] == 2
         for i in range(2):
-            for arr in ("centers", "amplitudes", "cholesky_factors"):
+            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
                 np.testing.assert_array_equal(
                     std_leaf[f"additive_{i}"][arr][:],
                     scene_leaf[f"additive_{i}"][arr][:],
@@ -202,7 +202,7 @@ def test_scene_lod_group_matches_standalone():
             assert sc.attrs["min_pixel_size"] == st.attrs["min_pixel_size"], (
                 f"child_{i} min_pixel_size differs"
             )
-            for arr in ("centers", "amplitudes", "cholesky_factors"):
+            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
                 np.testing.assert_array_equal(
                     st[arr][:], sc[arr][:], err_msg=f"child_{i}/{arr} differs"
                 )
@@ -259,7 +259,7 @@ def test_scene_partition_matches_standalone():
         n_std = sum(1 for k in std_part if str(k).startswith("part_"))
         assert n_scene == n_std and n_scene >= 2
         for i in range(n_scene):
-            for arr in ("centers", "amplitudes", "cholesky_factors"):
+            for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
                 np.testing.assert_array_equal(
                     std_part[f"part_{i}"][arr][:],
                     scene_part[f"part_{i}"][arr][:],
@@ -302,14 +302,15 @@ def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
         for arr in (
             "centers",
             "amplitudes",
-            "cholesky_factors",
+            "cholesky_factors_diag",
+            "cholesky_factors_offdiag",
             "colors",
             "chunk_bounds",
         ):
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"
             )
-        for arr in ("centers", "amplitudes", "cholesky_factors"):
+        for arr in ("centers", "amplitudes", "cholesky_factors_diag", "cholesky_factors_offdiag"):
             assert std_leaf[arr].chunks == scene_leaf[arr].chunks, (
                 f"{arr} chunks differ"
             )

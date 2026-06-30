@@ -6,6 +6,7 @@ import math
 import shlex
 from typing import Optional
 
+from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
 
 
@@ -118,12 +119,24 @@ def generate_fit_sbatch(
     has_explicit_timepoints = manifest.timepoint_indices is not None
     has_explicit_channels = manifest.channel_indices is not None
 
-    fit_cmd_parts = [
-        f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
-        f"    --tile $K/{manifest.n_tiles}",
-        f"    --tile-size {manifest.tile_size}",
-        f"    --overlap {manifest.tile_overlap}",
-    ]
+    # Spatial slot = a uniform tile (`--tile K/M`) or a content box of the shared
+    # plan (`--tiling content --plan … --plan-box K`). $K is the spatial index.
+    is_content = manifest.mode == "content"
+    slot_label = "box" if is_content else "tile"
+    if is_content:
+        fit_cmd_parts = [
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            "    --tiling content",
+            f"    --plan {shlex.quote(manifest.plan_path or '')}",
+            "    --plan-box $K",
+        ]
+    else:
+        fit_cmd_parts = [
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            f"    --tile $K/{manifest.n_tiles}",
+            f"    --tile-size {manifest.tile_size}",
+            f"    --overlap {manifest.tile_overlap}",
+        ]
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
     if manifest.n_channels > 1 or has_explicit_channels:
@@ -132,14 +145,17 @@ def generate_fit_sbatch(
         fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
         fit_cmd_parts.append(f"    --preset {manifest.preset}")
-    for key, value in manifest.fit_args.items():
-        if value is not None:
-            flag = f"--{key.replace('_', '-')}"
-            if value == "":
-                # Boolean flag (no value)
-                fit_cmd_parts.append(f"    {flag}")
-            else:
-                fit_cmd_parts.append(f"    {flag} {shlex.quote(str(value))}")
+    # Shared fit_args -> flag mapping (single source: fit_command.iter_fit_arg_flags),
+    # formatted here as quoted bash lines.
+    for flag, value in iter_fit_arg_flags(manifest.fit_args):
+        if value is None:
+            fit_cmd_parts.append(f"    {flag}")  # boolean flag
+        else:
+            fit_cmd_parts.append(f"    {flag} {shlex.quote(value)}")
+    if manifest.axes:
+        # Forward the explicit axis order so each task loads the same shape the
+        # planner discovered (else the positional heuristic can mis-order axes).
+        fit_cmd_parts.append(f"    --axes {shlex.quote(manifest.axes)}")
     # For on-the-fly denoise with auto-calibration, read h from JSON at runtime
     if (
         manifest.denoise
@@ -218,7 +234,7 @@ def generate_fit_sbatch(
             "    local C=${C_INDICES[$C_IDX]}" if has_c_map else "    local C=$C_IDX",
             "",
             f'    local OUTPUT="{manifest.output_dir}/tiles/'
-            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_tile$(printf '%0{k_width}d' $K)"
+            f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_{slot_label}$(printf '%0{k_width}d' $K)"
             '.gsplats.zarr"',
             "",
             "    # Clean up leftover .tmp from a previous crashed run",
@@ -256,6 +272,26 @@ def generate_fit_sbatch(
         [
             f"    {fit_cmd}",
             "    local FIT_RC=$?",
+        ]
+    )
+    if is_content:
+        # A content box that fits 0 splats writes a sibling `${OUTPUT}.tmp.empty`
+        # marker (the writer rejects empty stores) instead of the `.tmp` store.
+        # Treat that as a clean, legitimately-empty result: leave a `${OUTPUT}.empty`
+        # marker the merge skips, and exit 0 (NOT a failed task).
+        lines.extend(
+            [
+                '    if [ "$FIT_RC" -eq 0 ] && [ -f "${OUTPUT}.tmp.empty" ]; then',
+                '        echo "Empty box (0 splats): ${OUTPUT}.empty"',
+                '        rm -f "${OUTPUT}.tmp.empty"',
+                '        rm -rf "${OUTPUT}.tmp"',
+                '        touch "${OUTPUT}.empty"',
+                "        return 0",
+                "    fi",
+            ]
+        )
+    lines.extend(
+        [
             '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${OUTPUT}.tmp" ]; then',
             '        echo "ERROR: fit failed (rc=$FIT_RC), cleaning up"',
             '        rm -rf "${OUTPUT}.tmp"',
@@ -326,7 +362,7 @@ def generate_fit_sbatch(
 def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate sbatch script for NLM calibration job.
 
-    Single GPU, ~10 min. Runs ``luxar gsplat slurm-fit denoise-calibrate``
+    Single GPU, ~10 min. Runs ``luxar gsplat batch-fit denoise-calibrate``
     which calibrates h per channel and writes results to manifest + JSON.
     """
     lines = [
@@ -351,7 +387,7 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
     lines.append(env_preamble)
     lines.append("")
     lines.append(
-        f"luxar gsplat slurm-fit denoise-calibrate {shlex.quote(manifest.output_dir)}"
+        f"luxar gsplat batch-fit denoise-calibrate {shlex.quote(manifest.output_dir)}"
     )
     lines.append("")
 
@@ -400,7 +436,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append(env_preamble)
     lines.append("")
     lines.append(
-        f"luxar gsplat slurm-fit denoise-preprocess "
+        f"luxar gsplat batch-fit denoise-preprocess "
         f"{shlex.quote(manifest.output_dir)} $SLURM_ARRAY_TASK_ID"
     )
     lines.append("")
@@ -411,7 +447,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
 def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     """Generate the merge sbatch script (dependent job).
 
-    Calls ``luxar gsplat slurm-fit merge`` (no ``--flat``), which streams the tiles
+    Calls ``luxar gsplat batch-fit merge`` (no ``--flat``), which streams the tiles
     into a ``kind=partition`` file — one part per spatial tile — by default.
 
     Args:
@@ -444,7 +480,7 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
 
     # Merge command
-    merge_cmd = f"luxar gsplat slurm-fit merge {shlex.quote(manifest.output_dir)}"
+    merge_cmd = f"luxar gsplat batch-fit merge {shlex.quote(manifest.output_dir)}"
     if manifest.channel_colors:
         colors_str = ",".join(manifest.channel_colors)
         merge_cmd += f" --channel-colors {shlex.quote(colors_str)}"

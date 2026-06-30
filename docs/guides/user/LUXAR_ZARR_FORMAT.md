@@ -411,7 +411,11 @@ subgroups in this convention.
   `positions` + per-element attrs (`colors` / `radii` / `sharpness` /
   `scalars`).
 - **GSplats** — per-element. Each subgroup contains a subset of
-  `centers` / `amplitudes` / `cholesky_factors` / `colors`.
+  `centers` / `amplitudes` / `cholesky_factors_diag` (+ `cholesky_factors_offdiag`) / `colors`.
+  (Since format v3.1 the in-memory packed `cholesky_factors` is stored on disk split
+  into `_diag` + `_offdiag` so each can be encoded independently; `_offdiag` is absent
+  for 1D splats. Legacy v3.0 files store a single packed `cholesky_factors`, read via a
+  presence-detect fallback.)
 - **Lines** — per-polyline. Each subgroup contains WHOLE polylines
   (vertices + their segments). Segment indices are local to the
   subgroup so topology stays valid during partial loads; the viewer

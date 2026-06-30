@@ -224,22 +224,24 @@ class TestAddPointsSubstitutiveLod:
                 == pytest.approx(g_full["child_0"].attrs["amplitude_range"]["max"]))
 
     def test_render_light_survives_writer_quantization(self, tmp_path) -> None:
-        # End-to-end: the render-light rescale must survive the writer's uint16
-        # amplitude quantization (each level stores its own amplitude_range, so a
-        # per-level scalar rescale is preserved through encode+decode).
-        from luxar.gsplats.utils.trils import unpack_tril
+        # End-to-end: the render-light rescale must survive the writer's lossy
+        # encodings (uint16 amplitudes AND the per-channel log/signed-log Cholesky
+        # quantization). Decode each array through ArrayDecoder so the per-channel
+        # Cholesky dequant + amplitude dequant are applied exactly as on load.
+        from luxar.encoding import ArrayDecoder
+        from luxar.gsplats.utils.trils import merge_tril, unpack_tril
 
         grp, _ = _build(tmp_path, levels=3)
+        dec = ArrayDecoder()
         lights = []
         for i in range(3):  # gsplat children
             child = grp[f"child_{i}"]
-            u_raw = np.asarray(child["amplitudes"])
-            amax = float(child.attrs["amplitude_range"]["max"])
-            # The encoder adaptively picks uint8 OR uint16 per node; dequantize
-            # against the stored array's own dtype max (writer: u = a/max*dtype_max).
-            qmax = float(np.iinfo(u_raw.dtype).max)
-            a = u_raw.astype(np.float64) / qmax * amax
-            L = unpack_tril(np.asarray(child["cholesky_factors"], dtype=np.float64), 3)
+            a = dec.decode(child["amplitudes"], grp).astype(np.float64)
+            # v3.1: Cholesky stored split (diag + offdiag), each per-channel
+            # quantized; decode then recombine into packed L.
+            diag = dec.decode(child["cholesky_factors_diag"], grp).astype(np.float64)
+            off = dec.decode(child["cholesky_factors_offdiag"], grp).astype(np.float64)
+            L = unpack_tril(merge_tril(diag, off, 3), 3)
             det = np.abs(np.linalg.det(L))
             lights.append(float(np.sum(a * det)))
         for li in lights[1:]:
