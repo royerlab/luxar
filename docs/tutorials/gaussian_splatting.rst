@@ -416,7 +416,7 @@ Programmatically:
    )
    # matrix.n_substitutive == 4; each level carries its own 4-step additive ladder
 
-See ``packages/luxar/src/luxar/gsplats/lod/SPECIFICATIONS.md`` for the
+See ``packages/luxar/src/luxar/gsplats/lod/README.md`` for the
 full algorithm spec (greedy vs self-energy vs mass vs amplitude
 orderings; k-means+Lloyd vs hierarchical greedy clustering; breakpoint
 strategies; complexity).

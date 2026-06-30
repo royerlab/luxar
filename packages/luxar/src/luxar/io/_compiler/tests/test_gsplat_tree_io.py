@@ -107,14 +107,15 @@ def test_additive_ladder_subgroups_and_round_trip():
 # ── Shape C: substitutive lod group (finest-first ⇄ coarsest-first) ──────
 
 
-def test_lod_group_child_reversal_and_round_trip():
-    fine = _leaf(100, seed=0)
-    mid = _leaf(25, seed=1)
+def test_lod_group_child_straight_through_round_trip():
     coarse = _leaf(6, seed=2)
-    grp = GSplatLodGroup(children=[fine, mid, coarse], default_level=0)  # finest-first
+    mid = _leaf(25, seed=1)
+    fine = _leaf(100, seed=0)
+    # in-memory children are coarsest→finest, same as the on-disk child_<i> order
+    grp = GSplatLodGroup(children=[coarse, mid, fine])
     z, out = _round_trip(grp)
 
-    # On disk: child_0 = coarsest (6), child_2 = finest (100)
+    # On disk: child_0 = coarsest (6), child_2 = finest (100) — written straight through
     assert z.attrs["kind"] == "lod"
     assert z["child_0"].attrs["n_splats"] == 6
     assert z["child_2"].attrs["n_splats"] == 100
@@ -123,17 +124,17 @@ def test_lod_group_child_reversal_and_round_trip():
     assert z.attrs["default_level"] == 0
     assert "position_bounds" in z.attrs
 
-    # Read back: finest-first restored; data-model default is the finest (index 0).
+    # Read back coarsest-first (no reversal); the derived default is the finest (last).
     assert isinstance(out, GSplatLodGroup)
-    assert out.default_level == 0
-    assert out.children[0].n_splats == 100
-    assert out.children[2].n_splats == 6
+    assert out.default_level == 2
+    assert out.children[0].n_splats == 6
+    assert out.children[2].n_splats == 100
 
 
 def test_lod_group_position_bounds_is_union():
     a = _leaf(20, seed=0, base=0.0)
     b = _leaf(20, seed=1, base=1000.0)  # far away → widens union
-    grp = GSplatLodGroup(children=[a, b], default_level=0)
+    grp = GSplatLodGroup(children=[a, b])
     z, _ = _round_trip(grp)
     pb = z.attrs["position_bounds"]
     # union max must reach into b's region (>=1000)
@@ -146,13 +147,13 @@ def test_lod_group_position_bounds_is_union():
 def test_pyramid_round_trip():
     fine = GSplatLeaf(additive_sublods=[_sublod(80, seed=0), _sublod(20, seed=5)])
     coarse = _leaf(10, seed=2)
-    grp = GSplatLodGroup(children=[fine, coarse], default_level=0)
+    grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest
     z, out = _round_trip(grp)
     assert isinstance(out, GSplatLodGroup)
-    # finest child restored with its 2-step additive ladder
-    assert out.children[0].n_additive_sublods == 2
-    assert out.children[0].n_splats == 100
-    assert out.children[1].n_splats == 10
+    # finest child (last) restored with its 2-step additive ladder
+    assert out.children[1].n_additive_sublods == 2
+    assert out.children[1].n_splats == 100
+    assert out.children[0].n_splats == 10
 
 
 # ── Shape E: partition ───────────────────────────────────────────────────
@@ -191,13 +192,14 @@ def test_nested_partition_of_lod_round_trip():
 
 def test_nested_lod_of_partition_round_trip():
     part = GSplatPartition(children=[_leaf(40, seed=0), _leaf(40, seed=1)])
-    tree = GSplatLodGroup(children=[part, _leaf(8, seed=2)], default_level=0)
+    # coarsest→finest: the small leaf is coarsest (child_0), the 80-splat partition
+    # is finest (child_1).
+    tree = GSplatLodGroup(children=[_leaf(8, seed=2), part])
     z, out = _round_trip(tree)
     assert z.attrs["kind"] == "lod"
-    # finest-first child 0 (the partition) → on disk child_1 (coarsest-first)
     assert z["child_1"].attrs["kind"] == "partition"
     assert isinstance(out, GSplatLodGroup)
-    assert isinstance(out.children[0], GSplatPartition)
+    assert isinstance(out.children[1], GSplatPartition)
 
     # Review finding #3: EVERY lod child — including a non-leaf (Group) child —
     # must carry a min_pixel_size selector threshold, else the viewer is stuck
@@ -215,8 +217,7 @@ def test_lod_group_meta_does_not_clobber_structural_attrs():
     """Finding #8: a stray meta key colliding with a structural key must NOT
     overwrite it — structural attrs are written last and win."""
     lod = GSplatLodGroup(
-        children=[_leaf(20, seed=0), _leaf(5, seed=1)],
-        default_level=0,
+        children=[_leaf(5, seed=1), _leaf(20, seed=0)],  # coarsest→finest
         meta={"kind": "garbage", "default_level": 999, "compression_factor": 4},
     )
     z, out = _round_trip(lod)
@@ -237,15 +238,15 @@ def test_min_pixel_size_and_provenance_round_trip():
         compression_factor=4,
         parent_method="kmeans_lloyd",
     )
-    grp = GSplatLodGroup(children=[fine, coarse], default_level=0)
+    grp = GSplatLodGroup(children=[coarse, fine])  # coarsest→finest
     z, out = _round_trip(grp)
     # coarse leaf is child_0 on disk; its selector threshold + provenance persisted
     assert z["child_0"].attrs["min_pixel_size"] == 4.0
     assert z["child_0"].attrs["compression_factor"] == 4
     assert z["child_0"].attrs["parent_method"] == "kmeans_lloyd"
-    # restored finest-first: children[1] is the coarse leaf
-    assert out.children[1].meta["min_pixel_size"] == 4.0
-    assert out.children[1].meta["compression_factor"] == 4
+    # restored coarsest-first: children[0] is the coarse leaf
+    assert out.children[0].meta["min_pixel_size"] == 4.0
+    assert out.children[0].meta["compression_factor"] == 4
 
 
 # ── Spatial ordering path still round-trips the splat SET ────────────────
@@ -300,26 +301,24 @@ def test_lod_group_single_additive_children_keep_sublod_stats():
         )
 
     grp = GSplatLodGroup(
-        children=[_leaf_with_psnr(100, 0, 40.0), _leaf_with_psnr(20, 1, 30.0)],
-        default_level=0,
-    )
+        children=[_leaf_with_psnr(20, 1, 30.0), _leaf_with_psnr(100, 0, 40.0)],
+    )  # coarsest→finest
     _, out = _round_trip(grp)
-    # finest-first restored; per-child sublod stats intact
-    assert out.children[0].additive_sublods[0].stats["cumulative_psnr_db"] == 40.0
-    assert out.children[1].additive_sublods[0].stats["cumulative_psnr_db"] == 30.0
+    # coarsest-first restored; per-child sublod stats intact
+    assert out.children[0].additive_sublods[0].stats["cumulative_psnr_db"] == 30.0
+    assert out.children[1].additive_sublods[0].stats["cumulative_psnr_db"] == 40.0
 
 
 def test_every_node_has_position_bounds():
     tree = GSplatLodGroup(
         children=[
-            GSplatPartition(children=[_leaf(20, seed=0), _leaf(20, seed=1)]),
-            _leaf(5, seed=2),
+            _leaf(5, seed=2),  # coarsest
+            GSplatPartition(children=[_leaf(20, seed=0), _leaf(20, seed=1)]),  # finest
         ],
-        default_level=0,
     )
     z, _ = _round_trip(tree)
     assert "position_bounds" in z.attrs
-    assert "position_bounds" in z["child_1"].attrs  # the partition (coarsest-first)
+    assert "position_bounds" in z["child_1"].attrs  # the partition (finest, child_1)
     # leaves carry center-derived bounds too
     leaf_count = sum(1 for _ in iter_leaves(tree))
     assert leaf_count == 3

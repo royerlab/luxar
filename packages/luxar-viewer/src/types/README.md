@@ -438,24 +438,21 @@ Two `Group` node variants carry a `kind` discriminant and dedicated metadata/gua
 A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime based on the projected bbox diagonal in pixels and each child's `min_pixel_size` threshold. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
 
 ```typescript
-import { isLODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
+import { type LODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
 
-if (isLODGroupMetadata(attrs)) {
-  // attrs.selector is 'pixel_size'; attrs.display_type is the user-facing label;
-  // attrs.default_level seeds the manual-override widget (0-based, coarsest-first).
-}
+// The loader matches the shape inline (attrs.type === 'group' && attrs.kind === 'lod');
+// attrs.selector is 'pixel_size'; attrs.display_type is the user-facing label;
+// attrs.default_level seeds the manual-override widget (0-based, coarsest-first).
 ```
 
-- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'pixel_size', display_type?, default_level?, ... }`.
-- **`ChildMinPixelSize`** -- the per-child `min_pixel_size` threshold (a `number`), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
+- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'pixel_size', display_type?, default_level?, ... }`. Each child carries a `min_pixel_size` threshold (a `number`), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
 - **`LODGroupSelectorMode`** -- runtime selector state: `'auto'` (view-driven, the default) or `{ lockLevel: number }` (user-locked child index, 0-based coarsest→finest).
 
 ### Partition Groups (`partition-group.ts`)
 
 A `Group` whose `kind === 'partition'` is a compile-time decomposition of one large geometry node (10M+ elements) into multiple smaller children for per-child frustum culling and per-child LOD. Unlike `kind === 'lod'`, **all children render simultaneously** (no per-frame selector), and all must resolve to the same `display_type` (homogeneity is mandatory).
 
-- **`PartitionGroupMetadata`** -- `{ type: 'group', kind: 'partition', display_type, max_elements, position_bounds?, ... }`. `position_bounds` is the union of the children's bounds so picking / framing / the scene-bounds cache can treat the layer as one entity.
-- **`isPartitionGroupMetadata(attrs)`** -- type guard matching the `{ type: 'group', kind: 'partition' }` shape.
+- **`PartitionGroupMetadata`** -- `{ type: 'group', kind: 'partition', display_type, max_elements, position_bounds?, ... }`. `position_bounds` is the union of the children's bounds so picking / framing / the scene-bounds cache can treat the layer as one entity. The loader matches the shape inline (`attrs.type === 'group' && attrs.kind === 'partition'`).
 
 Neither module is re-exported from `index.ts`; import directly from `../types/lod-group` / `../types/partition-group`.
 
@@ -807,8 +804,8 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
-- `lod-group.ts` -- `LODGroupMetadata`, `ChildMinPixelSize`, `LODGroupSelectorMode`, and the `isLODGroupMetadata` guard (the `kind === 'lod'` specialized group).
-- `partition-group.ts` -- `PartitionGroupMetadata` and the `isPartitionGroupMetadata` guard (the `kind === 'partition'` specialized group).
+- `lod-group.ts` -- `LODGroupMetadata` and `LODGroupSelectorMode` (the `kind === 'lod'` specialized group; loader matches the shape inline).
+- `partition-group.ts` -- `PartitionGroupMetadata` (the `kind === 'partition'` specialized group; loader matches the shape inline).
 - `animation.ts` -- `LoopMode`, `AnimationDirection`, `DimensionAnimationState`, `DimensionAnimationEvents`.
 - `data-monitor-types.ts` -- Data-loading monitor contracts (`MonitorEvent`, `LoaderMetrics`, `CacheMetrics`, `CacheTelemetryState`, `CacheStatusBadge`, `CacheStatsProvider`, `SceneGraphNode`, `MemoryMetrics`, `GPUPoolStats`, ...).
 - `float16array.d.ts` -- Ambient `Float16Array` typing.

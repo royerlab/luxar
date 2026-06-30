@@ -284,18 +284,17 @@ def build_mosaic(data: GSplatData, params: RecipeParams) -> GSplatPartition:
 def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     """Coarse substitutive cap (far view) + a ``partitioned`` fine branch.
 
-    The result is a ``kind=lod`` group with children **finest→coarsest in memory**
-    (``[fine_partition, coarse_leaf]``). Each child's ``min_pixel_size`` selector
-    threshold is pre-stamped onto its ``meta`` (honored by both the standalone
-    writer and the scene graft) via ``lod_thresholds``: by default the
-    physically-anchored ``extent`` method (``T·W/r``, anisotropy-aware p90 radius),
-    so the coarse cap — whose splats are fewer but LARGER — gets a correctly higher
-    fine-branch threshold and shows when the node is far/small on screen, with the
-    fine branch taking over up close. ``params.lod_method``/``extent_percentile``/
-    ``extent_anisotropy``/``base_pixel_size`` tune this (see ``RecipeParams``).
+    The result is a ``kind=lod`` group with children **coarsest→finest in memory**
+    (``[coarse_leaf, fine_partition]``, matching the on-disk order). Each child's
+    ``min_pixel_size`` selector threshold is stamped onto its ``meta`` (honored by
+    both the standalone writer and the scene graft) via ``lod_thresholds``: by
+    default the physically-anchored ``extent`` method (``T·W/r``, anisotropy-aware
+    p90 radius), so the coarse cap — whose splats are fewer but LARGER — gets a
+    correctly higher fine-branch threshold and shows when the node is far/small on
+    screen, with the fine branch taking over up close.
+    ``params.lod_method``/``extent_percentile``/``extent_anisotropy``/
+    ``base_pixel_size`` tune this (see ``RecipeParams``).
     """
-    from dataclasses import replace
-
     from luxar.core.group.lod.group import lod_thresholds
     from luxar.gsplats.tree import (
         node_extent_diagonal,
@@ -307,7 +306,8 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     fine_partition = build_partitioned(base, params)
 
     # A single coarse substitutive level (levels=1 → n_substitutive == 2, with
-    # index 1 the coarsest). Flatten its additive ladder to one representative leaf.
+    # index 1 the coarsest in the finest-first matrix view). Flatten its additive
+    # ladder to one representative leaf.
     capped = make_substitutive_lod(
         base,
         compression_factor=params.compression_factor,
@@ -321,9 +321,12 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     )
     coarse_leaf = capped.at_substitutive(capped.n_substitutive - 1).flattened().tree
 
-    group = GSplatLodGroup(children=[fine_partition, coarse_leaf], default_level=0)
+    # Children are coarsest→finest: [coarse cap, fine partition]. Build the group
+    # ONCE, derive per-child thresholds from it, and stamp min_pixel_size into the
+    # children's (mutable) meta in place — same pattern as
+    # tree_from_substitutive_levels (no throwaway group / replace()).
+    group = GSplatLodGroup(children=[coarse_leaf, fine_partition])
     pct, aniso = params.extent_percentile, params.extent_anisotropy
-    # Coarsest→finest: [coarse cap, fine partition].
     coarse_mps, fine_mps = lod_thresholds(
         params.lod_method,  # type: ignore[arg-type]
         element_counts=[total_splats(coarse_leaf), total_splats(fine_partition)],
@@ -334,13 +337,9 @@ def build_multiscale(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         node_extent=node_extent_diagonal(group),
         base_pixel_size=params.base_pixel_size,
     )
-    coarse_leaf = replace(
-        coarse_leaf, meta={**coarse_leaf.meta, "min_pixel_size": coarse_mps}
-    )
-    fine_partition = replace(
-        fine_partition, meta={**fine_partition.meta, "min_pixel_size": fine_mps}
-    )
-    return GSplatLodGroup(children=[fine_partition, coarse_leaf], default_level=0)
+    coarse_leaf.meta["min_pixel_size"] = coarse_mps
+    fine_partition.meta["min_pixel_size"] = fine_mps
+    return group
 
 
 def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
@@ -358,6 +357,33 @@ def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
         seed=params.seed,
     )
     return laddered.tree
+
+
+#: Per-part recipes — the recipes that have a single-part form (the building
+#: block of ``partitioned``/``mosaic``), usable for streaming per-part assembly
+#: such as the tiled-batch merge. ``additive`` → a prefix-sum ladder
+#: (partitioned), ``substitutive`` → a coarse↔fine lod group (mosaic).
+PER_PART_RECIPES: tuple[str, ...] = ("additive", "substitutive")
+
+
+def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSplatNode:
+    """Give ONE partition child its own per-part LOD, with depth clamped to the
+    part's splat count (so a small part never synthesises degenerate levels).
+
+    This is the exact building block :func:`build_partitioned` (``additive``) and
+    :func:`build_mosaic` (``substitutive``) apply to every part — exposed so a
+    streaming assembler (e.g. the tiled-batch merge) can LOD one part at a time
+    without materialising the whole partition. Returns the per-part node:
+    a leaf-with-ladder (``additive``) or a substitutive ``GSplatLodGroup``.
+    """
+    if recipe == "additive":
+        return _ladder_for_part(part, params)
+    if recipe == "substitutive":
+        return _substitutive_for_part(part, params)
+    raise ValueError(
+        f"build_part_lod: {recipe!r} has no per-part form; "
+        f"choose from {', '.join(PER_PART_RECIPES)}"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -273,8 +273,8 @@ function buildPointInstancedMesh(
     'aColor',
     new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
   );
-  // Match the production `setupInstancedPointsMesh` contract: the
-  // WebGLRenderer only issues an instanced draw when `instanceCount`
+  // Match the production points-mesh contract (the gpu-buffer-pool points
+  // adapter): the WebGLRenderer only issues an instanced draw when `instanceCount`
   // is finite, and the drawRange must cap at the 6 indices that
   // form the unit quad — otherwise r184 falls back to a single
   // non-instanced draw call and produces a degenerate parity image.

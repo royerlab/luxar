@@ -135,8 +135,9 @@ def graft_gsplat_node(
         from ..lod.group import lod_thresholds
 
         wrapper_attrs.setdefault("display_type", "gsplats")
-        # In-memory children are finest-first; add_lod_group wants coarsest→finest.
-        on_disk = list(reversed(node.children))
+        # In-memory children are coarsest→finest, the same order add_lod_group
+        # wants and the on-disk child_<i> layout uses — no reversal.
+        on_disk = list(node.children)
         # Per-child min_pixel_size selector thresholds: prefer each child's authored
         # ``meta`` value, else derive — defaulting to the physically-anchored
         # ``extent`` method (T·W/r₉₀), matching the standalone writer (gsplat_tree)
