@@ -1403,6 +1403,34 @@ class GSplatData(_SplatArrayMixin):
             )
         return GSplatPartition(children=children, max_elements=max_elements)
 
+    @staticmethod
+    def partition_from_regions(
+        regions: "List[GSplatData]",
+    ) -> "GSplatNode":
+        """Assemble a ``kind=partition`` tree from pre-decomposed spatial regions.
+
+        Unlike :meth:`to_spatial_partition` (which BSP-splits a flat splat set),
+        this keeps the **given** spatial decomposition: each region becomes one
+        partition part, preserving the exact tile/box boundaries the fitter
+        already produced. Used by tiled / content-aware fitting, where the
+        regions are the per-tile (apodized) or per-box (core-kept) splats — both
+        sum correctly as additive partition parts, so the partitioned render
+        equals the flat concatenation with no double-count.
+
+        Empty regions (0 splats) are dropped. With a single non-empty region the
+        bare leaf is returned (no 1-part partition wrapper); with none, raises.
+        Returns a tree node (write with ``write_gsplats_tree`` or embed in a
+        scene) — a partition has no flat-matrix ``GSplatData`` equivalent.
+        """
+        from .tree import GSplatPartition
+
+        nonempty = [r for r in regions if r.n_splats > 0]
+        if not nonempty:
+            raise ValueError("partition_from_regions: all regions are empty")
+        if len(nonempty) == 1:
+            return nonempty[0].tree  # single part -> bare leaf, not a wrapper
+        return GSplatPartition(children=[r.tree for r in nonempty])
+
     def embed_dimension(
         self,
         values: "np.ndarray | float",

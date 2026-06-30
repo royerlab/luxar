@@ -117,7 +117,7 @@ def _tile_path(tiles_dir: Path, t_real: int, c_real: int, k: int, t_max: int, c_
     if not tile_path.exists():
         raise FileNotFoundError(
             f"Missing tile output: {tile_path}\n"
-            f"Run `luxar gsplat batch status {tiles_dir.parent}` "
+            f"Run `luxar gsplat slurm-fit status {tiles_dir.parent}` "
             f"to check job status."
         )
     return tile_path

@@ -338,7 +338,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat batch merge" in script
+        assert "luxar gsplat slurm-fit merge" in script
         assert "#SBATCH --job-name=luxar-merge" in script
         # No recipe planned → plain partition merge (no --recipe flag).
         assert "--recipe" not in script
@@ -357,7 +357,7 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat batch merge" in script
+        assert "luxar gsplat slurm-fit merge" in script
         assert "--recipe substitutive" in script
         assert "--compression-factor 4" in script
         assert "--levels 2" in script
@@ -1424,15 +1424,15 @@ class TestMergeOrchestrator:
         )
         save_manifest(manifest, out_dir)
 
-        # Extract the exact `luxar gsplat batch merge ...` line the Slurm job runs.
+        # Extract the exact `luxar gsplat slurm-fit merge ...` line the Slurm job runs.
         script = generate_merge_sbatch(manifest, "# env\n")
         merge_line = next(
-            ln for ln in script.splitlines() if "batch merge" in ln
+            ln for ln in script.splitlines() if "slurm-fit merge" in ln
         )
         tokens = shlex.split(merge_line)
         merge_idx = tokens.index("merge")
-        # app_batch is the `batch` sub-app, so keep `merge` as its subcommand;
-        # drop only the `luxar gsplat batch` prefix.
+        # app_batch is the `slurm-fit` sub-app, so keep `merge` as its subcommand;
+        # drop only the `luxar gsplat slurm-fit` prefix.
         cli_args = tokens[merge_idx:]
         # Point the (absolute) output_dir arg at the tmp dir (already is).
         assert "--recipe" in cli_args and "substitutive" in cli_args
