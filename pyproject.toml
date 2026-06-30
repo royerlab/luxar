@@ -81,10 +81,7 @@ gsplats = [
 test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    # Parallel test execution (`-n auto`) — the serial 4000+ suite was ~38 min
-    # and brushed the CI timeout; xdist distributes it across cores.
-    "pytest-xdist>=3.5.0"
+    "pytest-cov>=4.1.0"
 ]
 dev = [
     "luxar[test]",
@@ -201,8 +198,8 @@ dependencies = [
 ]
 
 [tool.hatch.envs.default.scripts]
-test = "pytest -n auto {args:packages/luxar/src/luxar}"
-test-cov = "mkdir -p coverage/python && pytest -n auto --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test = "pytest {args:packages/luxar/src/luxar}"
+test-cov = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 format = [
     "ruff format packages/luxar/src",
     "ruff check --fix packages/luxar/src"
@@ -244,8 +241,8 @@ dependencies = [
 python = ["3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.test.scripts]
-run = "pytest -n auto {args:packages/luxar/src/luxar}"
-cov = "pytest -n auto --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
+run = "pytest {args:packages/luxar/src/luxar}"
+cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
 # Publishing configuration
 [tool.hatch.publish.index]

@@ -18,10 +18,13 @@ permissions:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    # 45 (was 30): the suite + coverage runs ~27-30 min on the slowest matrix
-    # interpreter (3.10), so 30 left no headroom — 3.10 was cancelled at 30:17
-    # right after pytest passed. 45 gives room as the 4000+ test suite grows.
-    timeout-minutes: 45
+    # 60 (was 45): the serial suite + coverage runs ~40 min on the slowest
+    # matrix interpreter (3.10) and grew with the differential-Cholesky
+    # quantizer (per-column work on every gsplat save), so 45 left no headroom
+    # and 3.10/3.11 hit the cap. pytest-xdist does NOT help here — GitHub's
+    # ubuntu-latest runner has 1 physical core, so `-n auto` spawns a single
+    # worker. 60 gives room.
+    timeout-minutes: 60
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12']
@@ -56,16 +59,6 @@ jobs:
         run: hatch run mypy packages/luxar/src/luxar/
 
       - name: Test with coverage
-        # Pin BLAS/torch to a single thread PER pytest-xdist worker. `-n auto`
-        # spawns one worker per core; without this each worker's numpy/torch
-        # also spawns one BLAS thread per core, so workers × cores threads
-        # thrash the runner's few CPUs and xdist delivers ~no speedup. One
-        # thread per worker lets xdist actually parallelize across the cores.
-        env:
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-          NUMEXPR_NUM_THREADS: "1"
         run: hatch run test-cov
 
   typescript-tests:
