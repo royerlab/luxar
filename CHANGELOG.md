@@ -6,6 +6,41 @@ All notable changes to Luxar are documented in this file.
 
 ### June 2026
 
+#### Changed (breaking) — `.gsplats.zarr` format v3.0 → v3.1 (split Cholesky factors, per-channel differential quantization)
+
+The on-disk packed `cholesky_factors` array is split into two independently
+encoded arrays: `cholesky_factors_diag` (N, d) and `cholesky_factors_offdiag`
+(N, k−d, where k = d·(d+1)/2; absent when d == 1). Each is quantized with a
+per-channel ("differential") scheme — the diagonal uses `log_perchannel_u16`
+(AUTO) / `log_perchannel_u8` (MEMORY) / `float32` (PRECISION); the off-diagonal
+uses `signed_log_perchannel_u16` / `signed_log_perchannel_u8` / `float32`,
+selected by the new `CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` semantic types. uint8
+is measured visually lossless (≥93 dB vs the float32 render); decode is always
+to float32 so GPU/shader/WASM paths are unchanged. `FORMAT_VERSION` is bumped to
+`"3.1"` and `SUPPORTED_FORMAT_VERSIONS` is now `("3.0", "3.1")` — v3.0
+single-array files are still read transparently (loaders fall back to the packed
+`cholesky_factors` when `cholesky_factors_diag` is absent). The change is on-disk
+only: the in-memory packed `GSplatData.cholesky_factors` (shape (N, d·(d+1)/2))
+is unchanged. Both the Python scene reader and the gsplat-tree decoder share one
+`recombine_cholesky` helper. `migrate-format` gains `--lossless` (PRECISION) for
+exact archival float32 migration; the default (AUTO) re-encodes legacy Cholesky.
+
+#### Changed (breaking) — `gsplat slurm-fit` renamed to `gsplat batch-fit`, plus new local multi-GPU `batch-fit run`
+
+- **RENAME (breaking, no alias):** the `gsplat slurm-fit` command group is now
+  `gsplat batch-fit`, making whole-timelapse fitting scheduler-agnostic. Verbs:
+  `submit` (Slurm cluster array job, unchanged behavior) and the new `run`
+  below; `status` / `validate` / `merge` / `cancel` are shared across both
+  backends. `luxar gsplat slurm-fit` no longer exists.
+- **NEW `gsplat batch-fit run`** — local multi-GPU whole-timelapse fit (no
+  Slurm; the local sibling of `batch-fit submit`). Plans once (uniform tiles or
+  a shared content box plan over T×C), fits every (t, c) task with a multi-GPU
+  subprocess pool (one worker pinned per GPU, per-GPU concurrency sized from free
+  VRAM), then stream-merges to one `kind=partition`. Resumable (re-running skips
+  tiles already on disk) and writes `manifest.json` so `status` / `validate`
+  work locally. Options mirror `submit` minus Slurm, plus
+  `--gpus auto|all|cpu|'0,1,3'`, `--jobs-per-gpu`, `--no-resume`, `--dry-run`.
+
 #### Added — GSplat fitting follow-ups (transform partitions, fit/merge per-part LOD, fitted density exponent, cluster content fan-out)
 
 Four gsplat additions, each deep-double-checked:
@@ -23,11 +58,11 @@ Four gsplat additions, each deep-double-checked:
   halo splats (overlap dims to a seam), `substitutive` merges them per-part
   (overlap smears). `--tiling content` (disjoint core-keep parts) stays exact.
   The warning fires from all three entry points (`fit --recipe`,
-  `slurm-fit submit --merge-recipe`, `slurm-fit merge --recipe`).
+  `batch-fit submit --merge-recipe`, `batch-fit merge --recipe`).
 - **`cal --fit-exponent` / `--exponent-scales`** — measures the saturation
   exponent α in `K ~ features^α` (instead of assuming 0.44) by regressing K\* over
   several region scales; the fitted α flows into `fit --tiling content` budgets.
-- **`slurm-fit submit --tiling content`** — the cluster sibling of
+- **`batch-fit submit --tiling content`** — the cluster sibling of
   `fit --tiling content`: one shared content-balanced box plan fanned across the
   Slurm array (`--plan-timepoint`, density knobs), merged into a `kind=partition`.
   The shared plan is now built from a **temporal max-projection** over up to
@@ -41,7 +76,7 @@ Four gsplat additions, each deep-double-checked:
 
 - Broadened the uniform per-part-LOD warning to cover `additive` (not just
   `substitutive`) — both break the halo partition-of-unity at coarse levels.
-- `slurm-fit submit --tiling content` plans from a capped temporal max-projection
+- `batch-fit submit --tiling content` plans from a capped temporal max-projection
   (see above) instead of one timepoint, and range-checks `--plan-timepoint`.
 - `cal --fit-exponent` validates `--exponent-scales` (positive, deduplicated,
   dropped when larger than the volume, ≥2 distinct required, friendly parse
