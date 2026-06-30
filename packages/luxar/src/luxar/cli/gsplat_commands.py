@@ -34,7 +34,7 @@ register_fitting_commands(app_gsplat)
 register_scene_commands(app_gsplat)
 register_benchmark_commands(app_gsplat)
 register_lod_command(app_gsplat)
-app_gsplat.add_typer(app_batch, name="batch")
+app_gsplat.add_typer(app_batch, name="slurm-fit")
 
 __all__ = [
     "app_gsplat",

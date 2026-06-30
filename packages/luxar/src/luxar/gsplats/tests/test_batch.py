@@ -36,6 +36,8 @@ class TestManifest:
             total_tasks=40,
             preset="standard",
             slurm_partition="gpu",
+            merge_recipe="substitutive",
+            merge_recipe_args={"compression-factor": "4", "levels": "3"},
         )
         manifest.jobs = [
             BatchJob(
@@ -60,6 +62,8 @@ class TestManifest:
         assert len(loaded.jobs) == 1
         assert loaded.jobs[0].task_id == 0
         assert loaded.jobs[0].channel_coords == (0, 0)
+        assert loaded.merge_recipe == "substitutive"
+        assert loaded.merge_recipe_args == {"compression-factor": "4", "levels": "3"}
 
     def test_decode_task_id(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest, decode_task_id
@@ -334,8 +338,29 @@ class TestSlurmGen:
         )
 
         script = generate_merge_sbatch(manifest, "# env\n")
-        assert "luxar gsplat batch merge" in script
+        assert "luxar gsplat slurm-fit merge" in script
         assert "#SBATCH --job-name=luxar-merge" in script
+        # No recipe planned → plain partition merge (no --recipe flag).
+        assert "--recipe" not in script
+
+    def test_merge_script_emits_per_part_recipe(self) -> None:
+        """A planned per-part merge recipe + knobs are threaded onto the merge
+        command so the Slurm merge job streams a partition of LOD'd parts."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
+
+        manifest = BatchManifest(
+            output_dir="/output",
+            slurm_partition="gpu",
+            merge_recipe="substitutive",
+            merge_recipe_args={"compression-factor": "4", "levels": "2"},
+        )
+
+        script = generate_merge_sbatch(manifest, "# env\n")
+        assert "luxar gsplat slurm-fit merge" in script
+        assert "--recipe substitutive" in script
+        assert "--compression-factor 4" in script
+        assert "--levels 2" in script
 
     def test_fit_script_with_account(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest
@@ -740,8 +765,19 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
+    @staticmethod
+    def _read_tree(path: Path):
+        """Read a written .gsplats.zarr (any node kind) as a tree + root attrs."""
+        import zarr
+
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+        root = zarr.open_group(str(path), mode="r")
+        node = read_gsplat_node(root, root)
+        return node, dict(root.attrs)
+
     def test_merge_channels_with_colors_round_trips(self, tmp_path: Path) -> None:
-        """T=1, C=2, K=2: Level-1 concatenate then Level-3 channel-color merge."""
+        """T=1, C=2, K=2 (--flat): Level-1 concat then Level-3 color merge."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.gsplat_data import GSplatData
@@ -755,6 +791,7 @@ class TestMergeOrchestrator:
             out_dir,
             channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
             verbose=False,
+            flat=True,
         )
         assert final.exists()
         merged = GSplatData.load(final)
@@ -763,7 +800,7 @@ class TestMergeOrchestrator:
         assert merged.colors is not None
 
     def test_stack_timepoints_round_trips(self, tmp_path: Path) -> None:
-        """T=2, C=1, K=1: Level-2 combine_as_new_dimension lifts 3D->4D."""
+        """T=2, C=1, K=1 (--flat): Level-2 combine_as_new_dimension lifts 3D->4D."""
         from luxar.gsplats.batch.manifest import BatchManifest
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.gsplat_data import GSplatData
@@ -772,11 +809,218 @@ class TestMergeOrchestrator:
         total = self._write_tiles(out_dir / "tiles", n_t=2, n_c=1, n_k=1)
 
         manifest = BatchManifest(n_timepoints=2, n_channels=1, n_tiles=1)
-        final = merge_batch_results(manifest, out_dir, verbose=False)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
         assert final.exists()
         merged = GSplatData.load(final)
         assert merged.n_splats == total
         assert merged.ndim == 4  # promoted by the timepoint stack
+
+    # ── Default partition path (tile-outer, streaming) ──────────────
+
+    def test_default_merge_is_partition_with_one_part_per_tile(
+        self, tmp_path: Path
+    ) -> None:
+        """K>1 default → kind=partition, K parts, total splats conserved.
+
+        The ``kind == "partition"`` assertion FAILS on the pre-change flat-leaf
+        output (which had no ``kind`` attr) — pinning the new default.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        n_k = 3
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=n_k)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        assert final.exists()
+
+        node, attrs = self._read_tree(final)
+        # Would FAIL on the old flat-leaf output (a leaf has no kind=partition).
+        assert attrs["kind"] == "partition"
+        assert attrs["type"] == "group"
+        assert attrs["display_type"] == "gsplats"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        # Total splat count conserved vs the flat-concat path.
+        assert total_splats(node) == total
+
+    def test_partition_matches_flat_total_and_has_tight_bounds(
+        self, tmp_path: Path
+    ) -> None:
+        """Partition total == flat total; per-part + union bounds are tight."""
+        import numpy as np
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import total_splats
+
+        # Flat reference total.
+        flat_dir = tmp_path / "flat"
+        total = self._write_tiles(flat_dir / "tiles", n_t=1, n_c=1, n_k=3)
+        m1 = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        flat_final = merge_batch_results(m1, flat_dir, verbose=False, flat=True)
+        flat_total = GSplatData.load(flat_final).n_splats
+        assert flat_total == total
+
+        # Partition over the SAME tiles.
+        part_dir = tmp_path / "part"
+        self._write_tiles(part_dir / "tiles", n_t=1, n_c=1, n_k=3)
+        m2 = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        part_final = merge_batch_results(m2, part_dir, verbose=False)
+
+        node, attrs = self._read_tree(part_final)
+        assert total_splats(node) == flat_total
+
+        # Each part's position_bounds is the TIGHT actual-splat extent.
+        root = zarr.open_group(str(part_final), mode="r")
+        from luxar.gsplats.tree import center_bounds
+
+        union_min = None
+        union_max = None
+        for i, child in enumerate(node.children):
+            pb = dict(root[f"part_{i}"].attrs["position_bounds"])
+            cb = center_bounds(child)
+            assert cb is not None
+            lo, hi = cb
+            np.testing.assert_allclose(pb["min"], lo, rtol=1e-5, atol=1e-4)
+            np.testing.assert_allclose(pb["max"], hi, rtol=1e-5, atol=1e-4)
+            union_min = lo if union_min is None else np.minimum(union_min, lo)
+            union_max = hi if union_max is None else np.maximum(union_max, hi)
+        # Root union bounds correct.
+        np.testing.assert_allclose(
+            attrs["position_bounds"]["min"], union_min, rtol=1e-5, atol=1e-4
+        )
+        np.testing.assert_allclose(
+            attrs["position_bounds"]["max"], union_max, rtol=1e-5, atol=1e-4
+        )
+
+    def test_single_tile_emits_bare_leaf_not_partition(self, tmp_path: Path) -> None:
+        """K=1 → bare leaf, no partition wrapper."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import GSplatLeaf
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=1)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        node, attrs = self._read_tree(final)
+        assert attrs.get("kind") != "partition"
+        assert isinstance(node, GSplatLeaf)
+        # A bare leaf round-trips through GSplatData.load (matrix-shaped).
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total
+
+    def test_flat_flag_emits_single_leaf(self, tmp_path: Path) -> None:
+        """--flat → single flat leaf (old behavior), loadable as GSplatData."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.tree import GSplatLeaf
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=3)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=3)
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+        node, attrs = self._read_tree(final)
+        assert attrs.get("kind") != "partition"
+        assert isinstance(node, GSplatLeaf)
+        assert GSplatData.load(final).n_splats == total
+
+    def test_partition_4d_parts_carry_stacked_timepoints(
+        self, tmp_path: Path
+    ) -> None:
+        """T=2, C=1, K=2 → partition whose parts are 4D (timepoints stacked)."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=2, n_c=1, n_k=2)
+
+        manifest = BatchManifest(n_timepoints=2, n_channels=1, n_tiles=2)
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        # Each part stacked its 2 timepoints → 4D, and holds both tps' splats.
+        for child in node.children:
+            assert child.ndim == 4
+            assert total_splats(child) == 8  # 2 timepoints * 4 splats
+        assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
+
+    def test_partition_multichannel_parts_carry_colors(
+        self, tmp_path: Path
+    ) -> None:
+        """T=1, C=2, K=2 with colors → partition; each part is color-merged."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        total = self._write_tiles(out_dir / "tiles", n_t=1, n_c=2, n_k=2)
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=2, n_tiles=2)
+        final = merge_batch_results(
+            manifest,
+            out_dir,
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            verbose=False,
+        )
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == 2
+        for child in node.children:
+            # Each part merged its 2 channels' splats and carries colors.
+            assert total_splats(child) == 8  # 2 channels * 4 splats
+            for leaf in self._leaves(child):
+                assert leaf.additive_sublods[0].colors is not None
+        assert total_splats(node) == total
+
+    @staticmethod
+    def _leaves(node):
+        from luxar.gsplats.tree import iter_leaves
+
+        return list(iter_leaves(node))
+
+    def test_partition_path_never_concatenates_all_tiles(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """OOM-fix guard: the partition path must NOT concatenate across tiles.
+
+        ``concatenate`` is legitimately used WITHIN a part only for multi-channel
+        (no-color) merges; for the single-channel case here it must never run
+        over the full tile set. We spy on it and assert it is not called.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        self._write_tiles(out_dir / "tiles", n_t=1, n_c=1, n_k=4)
+
+        calls = {"n": 0}
+        real = GSplatData.concatenate.__func__  # type: ignore[attr-defined]
+
+        def _spy(cls, datasets):
+            calls["n"] += 1
+            return real(cls, datasets)
+
+        monkeypatch.setattr(GSplatData, "concatenate", classmethod(_spy))
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=4)
+        merge_batch_results(manifest, out_dir, verbose=False)
+        assert calls["n"] == 0
 
     def test_concatenate_preserves_pyramid_per_cell(self, tmp_path: Path) -> None:
         """Multi-substitutive concatenate keeps every (substitutive, additive)
@@ -821,3 +1065,459 @@ class TestMergeOrchestrator:
         assert reloaded.n_substitutive == 2
         assert reloaded.at_substitutive(0).n_splats == 40
         assert reloaded.at_substitutive(1).n_splats == 10
+
+    # ----------------------------------------------------------------
+    # --timepoints / --channels slicing: tile filenames carry the REAL
+    # dataset indices (e.g. t0072, not t01), so the merge must resolve
+    # them through manifest.timepoint_indices / channel_indices via the
+    # shared _tile_indices / _tile_path helpers. Both the partition and
+    # the flat path go through those helpers; cover both.
+    # ----------------------------------------------------------------
+    def _write_sliced_tiles(
+        self,
+        tiles_dir: Path,
+        t_indices: list[int],
+        c_indices: list[int],
+        n_k: int,
+    ) -> int:
+        """Write tiles named by REAL dataset indices, exactly as the sbatch fit
+        job does (``slurm_gen.generate_fit_sbatch``): printf widths derived from
+        the MAX real index, not the selection count. Reproduced independently of
+        ``output_filename`` so the test pins the fit-side ↔ merge-side naming
+        contract rather than tautologically reusing the merge's own helper.
+        """
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        # Mirror slurm_gen.py:106-108 (t_width/c_width/k_width).
+        t_w = max(2, len(str(max(t_indices))))
+        c_w = max(2, len(str(max(c_indices))))
+        k_w = max(3, len(str(max(0, n_k - 1))))
+        total = 0
+        seed = 0
+        for t in t_indices:
+            for c in c_indices:
+                for k in range(n_k):
+                    fname = (
+                        f"t{t:0{t_w}d}_c{c:0{c_w}d}_tile{k:0{k_w}d}.gsplats.zarr"
+                    )
+                    tile = self._tile(4, seed)
+                    tile.save(tiles_dir / fname)
+                    total += tile.n_splats
+                    seed += 1
+        return total
+
+    def test_partition_merge_resolves_sliced_real_indices(
+        self, tmp_path: Path
+    ) -> None:
+        """--timepoints/--channels slicing → partition merge resolves the real
+        filename indices AND places splats at the real timepoint coordinates.
+
+        Regression guard: a merge that used sequential indices (0,1) instead of
+        the manifest's real indices (5,72) would either raise FileNotFoundError
+        (wrong filename) or stack splats at the wrong time coordinate.
+        """
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatPartition, total_splats
+
+        out_dir = tmp_path / "batch"
+        t_indices = [5, 72]  # real, non-sequential, two-digit (width 2)
+        c_indices = [1, 3]
+        n_k = 2
+        total = self._write_sliced_tiles(out_dir / "tiles", t_indices, c_indices, n_k)
+
+        manifest = BatchManifest(
+            n_timepoints=len(t_indices),
+            n_channels=len(c_indices),
+            n_tiles=n_k,
+            timepoint_indices=t_indices,
+            channel_indices=c_indices,
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        assert total_splats(node) == total
+
+        # Each part stacked its 2 timepoints → 4D, and the stacked time
+        # coordinate (last appended axis) is the REAL index set {5, 72},
+        # not the sequential {0, 1}.
+        for child in node.children:
+            for leaf in self._leaves(child):
+                centers = leaf.additive_sublods[0].centers
+                assert centers.shape[1] == 4  # promoted to 4D
+                time_coords = np.unique(np.round(centers[:, -1]).astype(int))
+                np.testing.assert_array_equal(time_coords, np.array([5, 72]))
+
+    def test_flat_merge_resolves_sliced_real_indices(self, tmp_path: Path) -> None:
+        """The legacy --flat path shares _tile_indices/_tile_path, so it must
+        resolve the same real (5,72)/(1,3) filenames and conserve all splats."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        t_indices = [5, 72]
+        c_indices = [1, 3]
+        n_k = 2
+        total = self._write_sliced_tiles(out_dir / "tiles", t_indices, c_indices, n_k)
+
+        manifest = BatchManifest(
+            n_timepoints=len(t_indices),
+            n_channels=len(c_indices),
+            n_tiles=n_k,
+            timepoint_indices=t_indices,
+            channel_indices=c_indices,
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False, flat=True)
+
+        merged = GSplatData.load(final)
+        assert merged.n_splats == total
+        assert merged.ndim == 4
+        time_coords = np.unique(np.round(merged.centers[:, -1]).astype(int))
+        np.testing.assert_array_equal(time_coords, np.array([5, 72]))
+
+    # ----------------------------------------------------------------
+    # Per-part LOD at merge (--recipe): each spatial tile-part gets its own
+    # LOD ladder as it streams, closing the tiled-data LOD gap (the `lod`
+    # CLI rejects a partition, so the canonical fit → lod chain can't add
+    # LODs to tiled output otherwise). additive → partitioned topology;
+    # substitutive → mosaic. Conservation is checked via node.n_splats (a
+    # partition sums each child's rendered/finest count).
+    # ----------------------------------------------------------------
+    def test_merge_recipe_additive_makes_partition_of_ladders(
+        self, tmp_path: Path
+    ) -> None:
+        """--recipe additive → kind=partition where each part is a leaf carrying
+        an additive ladder (n_additive_sublods > 1); finest total conserved."""
+        from luxar.gsplats.batch.manifest import BatchManifest
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+        out_dir = tmp_path / "batch"
+        # 6 splats/tile so a 3-bin additive ladder isn't clamped flat.
+        n_k = 3
+        total = 0
+        seed = 0
+        from luxar.gsplats.batch.manifest import output_filename
+
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(n_k):
+            tile = self._tile(6, seed)
+            tile.save(tiles_dir / output_filename(0, 0, k, 1, 1, n_k))
+            total += tile.n_splats
+            seed += 1
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe="additive"
+        )
+
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        for child in node.children:
+            assert isinstance(child, GSplatLeaf)
+            assert child.n_additive_sublods > 1  # a real ladder, not a flat leaf
+        assert node.n_splats == total  # finest count conserved across parts
+
+    def test_merge_recipe_substitutive_makes_mosaic(self, tmp_path: Path) -> None:
+        """--recipe substitutive → kind=partition where each part is its own
+        substitutive lod group (>= 2 levels); finest total conserved."""
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        out_dir = tmp_path / "batch"
+        n_k = 2
+        total = 0
+        seed = 0
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(n_k):
+            tile = self._tile(64, seed)  # enough for K=4, L>=2 coarsening
+            tile.save(tiles_dir / output_filename(0, 0, k, 1, 1, n_k))
+            total += tile.n_splats
+            seed += 1
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=n_k)
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe="substitutive"
+        )
+
+        node, attrs = self._read_tree(final)
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        for child in node.children:
+            assert isinstance(child, GSplatLodGroup)
+            assert child.n_children >= 2  # coarse↔fine levels
+        assert node.n_splats == total  # finest level per part summed
+
+    def test_merge_recipe_single_tile_emits_lod_not_partition(
+        self, tmp_path: Path
+    ) -> None:
+        """K=1 + --recipe → a bare lod group / leaf-with-ladder, NOT a partition."""
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatLeaf
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        tile = self._tile(6, 0)
+        tile.save(tiles_dir / output_filename(0, 0, 0, 1, 1, 1))
+
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe="additive"
+        )
+        node, attrs = self._read_tree(final)
+        assert attrs.get("kind") != "partition"
+        assert isinstance(node, GSplatLeaf)
+        assert node.n_additive_sublods > 1  # the ladder was applied
+        assert node.n_splats == tile.n_splats
+
+    def test_merge_recipe_4d_substitutive_barriers_on_timepoint(
+        self, tmp_path: Path
+    ) -> None:
+        """A 4D part (timepoints stacked) coarsened with --recipe substitutive
+        must NOT blend across time: the stacked-timepoint axis is a barrier, so
+        the coarsest level of each part still spans BOTH timepoints {0, 1}."""
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        out_dir = tmp_path / "batch"
+        n_t, n_k = 2, 2
+        total = 0
+        seed = 0
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for t in range(n_t):
+            for k in range(n_k):
+                tile = self._tile(40, seed)
+                tile.save(tiles_dir / output_filename(t, 0, k, n_t, 1, n_k))
+                total += tile.n_splats
+                seed += 1
+
+        manifest = BatchManifest(n_timepoints=n_t, n_channels=1, n_tiles=n_k)
+        final = merge_batch_results(
+            manifest, out_dir, verbose=False, recipe="substitutive"
+        )
+        node, _ = self._read_tree(final)
+        assert isinstance(node, GSplatPartition)
+        assert node.n_splats == total
+        for child in node.children:
+            assert isinstance(child, GSplatLodGroup)
+            assert child.ndim == 4
+            # Coarsest level (index 0, coarsest→finest) still spans both
+            # timepoints — coarsening did not merge across the time barrier.
+            coarse = child.children[0]
+            tcoords = np.unique(
+                np.round(coarse.additive_sublods[0].centers[:, -1]).astype(int)
+            )
+            np.testing.assert_array_equal(tcoords, np.array([0, 1]))
+
+    def test_merge_recipe_rejects_flat_and_composed(self, tmp_path: Path) -> None:
+        """--recipe is mutually exclusive with --flat, and composed recipes
+        (which re-partition) are rejected per-part."""
+        import pytest
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(2):
+            self._tile(6, k).save(tiles_dir / output_filename(0, 0, k, 1, 1, 2))
+        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=2)
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            merge_batch_results(
+                manifest, out_dir, verbose=False, flat=True, recipe="additive"
+            )
+        with pytest.raises(ValueError, match="not supported"):
+            merge_batch_results(
+                manifest, out_dir, verbose=False, recipe="partitioned"
+            )
+
+    def test_merge_recipe_params_normalises_hyphenated_method(self) -> None:
+        """`--substitutive-method kmeans-lloyd` (the documented spelling) must map
+        to the canonical `kmeans_lloyd`, like the `gsplat lod` command — else it
+        reaches make_substitutive_lod invalid and raises. Fails pre-fix (the raw
+        hyphenated string was passed through verbatim)."""
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        # CLI-supplied value.
+        p = _build_merge_recipe_params(
+            {},
+            n_lods=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method="kmeans-lloyd",
+            coarsen_dims=None,
+        )
+        assert p.substitutive_method == "kmeans_lloyd"
+
+        # Plan-recorded value (manifest.merge_recipe_args, string-valued).
+        p2 = _build_merge_recipe_params(
+            {"substitutive-method": "greedy-lloyd"},
+            n_lods=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method=None,
+            coarsen_dims=None,
+        )
+        assert p2.substitutive_method == "greedy_lloyd"
+
+    def test_batch_merge_cli_parses_slurm_emitted_recipe_flags(
+        self, tmp_path: Path
+    ) -> None:
+        """Round-trip the Slurm path: the flags `generate_merge_sbatch` emits for
+        a planned per-part recipe must parse back through the real `batch merge`
+        Typer command and produce a kind=partition of LOD'd parts.
+
+        Guards the write↔read seam (slurm emit ↔ CLI parse) AND the hyphenated
+        `--substitutive-method` normalisation end-to-end.
+        """
+        import shlex
+
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_ops.batch import app_batch
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+        from luxar.gsplats.batch.slurm_gen import generate_merge_sbatch
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        n_k = 2
+        total = 0
+        for k in range(n_k):
+            tile = self._tile(64, k)
+            tile.save(tiles_dir / output_filename(0, 0, k, 1, 1, n_k))
+            total += tile.n_splats
+
+        # Plan records a substitutive per-part recipe with a HYPHENATED method.
+        manifest = BatchManifest(
+            output_dir=str(out_dir),
+            n_timepoints=1,
+            n_channels=1,
+            n_tiles=n_k,
+            merge_recipe="substitutive",
+            merge_recipe_args={
+                "compression-factor": "4",
+                "levels": "2",
+                "substitutive-method": "kmeans-lloyd",
+                "coarsen-dims": "0,1,2",
+            },
+        )
+        save_manifest(manifest, out_dir)
+
+        # Extract the exact `luxar gsplat slurm-fit merge ...` line the Slurm job runs.
+        script = generate_merge_sbatch(manifest, "# env\n")
+        merge_line = next(
+            ln for ln in script.splitlines() if "slurm-fit merge" in ln
+        )
+        tokens = shlex.split(merge_line)
+        merge_idx = tokens.index("merge")
+        # app_batch is the `slurm-fit` sub-app, so keep `merge` as its subcommand;
+        # drop only the `luxar gsplat slurm-fit` prefix.
+        cli_args = tokens[merge_idx:]
+        # Point the (absolute) output_dir arg at the tmp dir (already is).
+        assert "--recipe" in cli_args and "substitutive" in cli_args
+        assert "--substitutive-method" in cli_args and "kmeans-lloyd" in cli_args
+        assert "--coarsen-dims" in cli_args and "0,1,2" in cli_args
+
+        result = CliRunner().invoke(app_batch, cli_args)
+        assert result.exit_code == 0, result.output
+
+        node, attrs = self._read_tree(out_dir / "merged" / "final.gsplats.zarr")
+        assert attrs["kind"] == "partition"
+        assert isinstance(node, GSplatPartition)
+        assert node.n_children == n_k
+        for child in node.children:
+            assert isinstance(child, GSplatLodGroup)  # substitutive → mosaic
+        assert node.n_splats == total
+
+    def test_merge_recipe_params_rejects_invalid_substitutive_method(self) -> None:
+        """An unknown --substitutive-method is rejected UP FRONT with a clean
+        typer.BadParameter (mirroring `gsplat lod`), not deferred to a deep
+        make_substitutive_lod ValueError. Fails pre-fix (no validation → the bad
+        string was wrapped into RecipeParams unchecked)."""
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="substitutive-method"):
+            _build_merge_recipe_params(
+                {},
+                n_lods=None,
+                compression_factor=None,
+                levels=None,
+                substitutive_method="kmeans-typo",
+                coarsen_dims=None,
+            )
+
+    def test_merge_recipe_params_rejects_non_numeric_coarsen_dims(self) -> None:
+        """Bad --coarsen-dims tokens raise a clean typer.BadParameter, not a raw
+        ValueError surfaced as a traceback. Fails pre-fix (unwrapped int())."""
+        import typer
+
+        from luxar.cli.gsplat_ops.batch import _build_merge_recipe_params
+
+        with pytest.raises(typer.BadParameter, match="coarsen-dims"):
+            _build_merge_recipe_params(
+                {},
+                n_lods=None,
+                compression_factor=None,
+                levels=None,
+                substitutive_method=None,
+                coarsen_dims="0,x,2",
+            )
+
+    def test_batch_merge_invalid_method_writes_no_output(
+        self, tmp_path: Path
+    ) -> None:
+        """An invalid --substitutive-method must fail BEFORE the streaming writer
+        overwrites final.gsplats.zarr — otherwise a corrected re-run (without
+        --force) would silently skip the broken stub. Asserts non-zero exit AND
+        that no output file was created. Fails pre-fix (deep raise left a stub)."""
+        from typer.testing import CliRunner
+
+        from luxar.cli.gsplat_ops.batch import app_batch
+        from luxar.gsplats.batch.manifest import (
+            BatchManifest,
+            output_filename,
+            save_manifest,
+        )
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True, exist_ok=True)
+        for k in range(2):
+            self._tile(32, k).save(tiles_dir / output_filename(0, 0, k, 1, 1, 2))
+        save_manifest(
+            BatchManifest(
+                output_dir=str(out_dir), n_timepoints=1, n_channels=1, n_tiles=2
+            ),
+            out_dir,
+        )
+
+        result = CliRunner().invoke(
+            app_batch,
+            ["merge", str(out_dir), "--recipe", "substitutive",
+             "--substitutive-method", "kmeans-typo"],
+        )
+        assert result.exit_code != 0
+        assert not (out_dir / "merged" / "final.gsplats.zarr").exists()

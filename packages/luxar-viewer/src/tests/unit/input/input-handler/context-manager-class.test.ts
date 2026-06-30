@@ -628,16 +628,12 @@ describe('InputContextManager', () => {
     });
   });
 
-  // input.md G6 fix: the existing "should allow Escape in typing
-  // context" test (lines 238-245) reflects the OLD behavior where
-  // Escape from a typing context was passed-through unhandled. The
-  // current code routes Escape through dispatchEscapeFromTypingContext,
-  // which fires the first matching Escape binding across every
-  // context (including the current one). This `it.skip` documents the
-  // post-refactor contract; un-skip when the OOS production bug is
-  // fixed.
+  // input.md G6 fix: Escape from a typing context is routed through
+  // dispatchEscapeFromTypingContext, which fires the first matching Escape
+  // binding across every context (including the current one) so a panel can
+  // close. This pins that post-refactor contract.
   describe('Escape in typing context (post-refactor contract)', () => {
-    it.skip('dispatches Escape through dispatchEscapeFromTypingContext to the navigation binding', () => {
+    it('dispatches Escape through dispatchEscapeFromTypingContext to the navigation binding', () => {
       const escapeHandler = vi.fn();
       manager.registerBinding(InputContext.NAVIGATION, {
         key: 'Escape',

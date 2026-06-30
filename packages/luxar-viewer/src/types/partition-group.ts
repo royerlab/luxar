@@ -64,11 +64,3 @@ export interface PartitionGroupMetadata {
   extend_to_all?: string[];
 }
 
-/**
- * Type guard for `PartitionGroupMetadata`.
- */
-export function isPartitionGroupMetadata(attrs: unknown): attrs is PartitionGroupMetadata {
-  if (typeof attrs !== 'object' || attrs === null) return false;
-  const record = attrs as Record<string, unknown>;
-  return record.type === 'group' && record.kind === 'partition';
-}

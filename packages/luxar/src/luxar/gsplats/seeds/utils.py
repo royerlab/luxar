@@ -119,6 +119,7 @@ def count_local_maxima(
     radius: int = 1,
     threshold_rel: float = 0.1,
     blur: bool = True,
+    threshold_abs: Optional[float] = None,
 ) -> int:
     """
     Count local maxima in an n-dimensional image.
@@ -133,8 +134,13 @@ def count_local_maxima(
         Half-width of the L∞ neighborhood (hypercube).
     threshold_rel : float, default=0.1
         Relative threshold (fraction of image max) for peak detection.
+        Ignored when ``threshold_abs`` is given.
     blur : bool, default=True
         Apply soft blur before counting to reduce noise.
+    threshold_abs : float, optional
+        Absolute peak threshold on the (blurred) field. When given it overrides
+        ``threshold_rel * max`` — used to count maxima at a *shared* level across
+        crops so counts compose (a per-crop relative level does not).
 
     Returns
     -------
@@ -148,7 +154,9 @@ def count_local_maxima(
     if max_val <= 0:
         return 0
 
-    thresh = threshold_rel * max_val
+    thresh = (
+        float(threshold_abs) if threshold_abs is not None else threshold_rel * max_val
+    )
     peaks = local_maxima(img, radius=radius, thresh=thresh, top_k=None)
     return len(peaks)
 

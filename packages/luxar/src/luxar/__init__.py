@@ -109,20 +109,15 @@ from .utils import array as array_utils
 from .utils import demos
 from .validation import base as validation
 
-# Add module aliases for backward compatibility
-sys.modules["luxar.array_utils"] = array_utils
+# Module aliases for import paths that real consumers rely on (verified live:
+# demos is dynamically imported by demo scripts; dimensions/compiler/transforms/
+# config have in-repo importers). Dead aliases with zero importers — array_utils,
+# node, points, scene, writer, types, _io — were removed (no back-compat burden).
 sys.modules["luxar.dimensions"] = dimensions
-sys.modules["luxar.node"] = node
-sys.modules["luxar.points"] = points
-sys.modules["luxar.scene"] = scene
 sys.modules["luxar.compiler"] = compiler
-sys.modules["luxar.writer"] = writer
 sys.modules["luxar.demos"] = demos
-# sys.modules["luxar.validation"] = validation  # Removed to allow proper package resolution
 sys.modules["luxar.transforms"] = transforms
-sys.modules["luxar.types"] = typing_utils
 sys.modules["luxar.config"] = typing_utils.config
-sys.modules["luxar._io"] = io.reader
 
 __all__: list[str] = [
     # Core classes
