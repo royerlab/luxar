@@ -192,8 +192,9 @@ def fit_tiled(
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
     cull_retention: float | None = 0.95,
+    partition: bool = False,
     **fit_kwargs: Any,
-) -> GSplatData:
+) -> "Any":
     """Fit Gaussian splats to a large volume using tiled decomposition.
 
     Splits the volume into overlapping tiles with cosine apodization
@@ -299,6 +300,7 @@ def fit_tiled(
         cull_retention=cull_retention,
         elapsed=elapsed,
         verbose=verbose,
+        partition=partition,
     )
 
 
@@ -313,13 +315,21 @@ def merge_tile_results(
     cull_retention: float | None,
     elapsed: float,
     verbose: bool = True,
-) -> GSplatData:
+    partition: bool = False,
+) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
     Shared by both the sequential :func:`fit_tiled` loop and the parallel
     orchestrator in ``fit_tiled_parallel``.  Concatenates tile results
     (LOD-aware when ``progressive``), stamps tiled-fitting stats, and applies
     a single post-fit cumulative cull on the merged result.
+
+    With ``partition=True`` (the CLI default) the tiles are kept as a
+    ``kind=partition`` tree — one part per (Hann-apodized) tile, which sum
+    correctly as additive parts — for viewer frustum culling; culling is applied
+    per-tile and a :class:`~luxar.gsplats.tree.GSplatNode` is returned. With
+    ``partition=False`` the tiles are concatenated into one flat leaf (``--flat``)
+    and culled globally.
 
     Parameters
     ----------
@@ -358,6 +368,36 @@ def merge_tile_results(
             cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
             stats={},
         )
+
+    # Partition: keep one part per tile (frustum culling). Apodized tiles sum
+    # correctly as additive parts; cull each tile independently (the flat path's
+    # single global cull has no meaning once tiles stay separate parts). Each
+    # region's `.tree` preserves its additive ladder, so a progressive tiled fit
+    # yields a partition of leaves-with-ladders for free.
+    if partition:
+        regions = [r for r in results if r.n_splats > 0]
+        if cull_retention is not None and 0 < cull_retention < 1.0:
+            regions = [
+                r.cull(method="cumulative", retention=cull_retention) for r in regions
+            ]
+            regions = [r for r in regions if r.n_splats > 0]
+        if not regions:
+            ndim = len(volume_shape)
+            from luxar.gsplats.utils.trils import tril_size
+
+            return GSplatData(
+                centers=np.zeros((0, ndim), dtype=np.float32),
+                amplitudes=np.zeros((0,), dtype=np.float32),
+                cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+                stats={},
+            )
+        node = GSplatData.partition_from_regions(regions)
+        if verbose:
+            aprint(
+                f"Total: {sum(r.n_splats for r in regions):,} splats from "
+                f"{len(regions)} tile-parts (partition) in {elapsed:.1f}s"
+            )
+        return node
 
     # Merge tile results — LOD-aware if progressive
     has_lods = any(r.n_additive_sublods > 1 for r in results)

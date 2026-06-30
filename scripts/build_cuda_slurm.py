@@ -618,7 +618,7 @@ def main() -> None:
     print()
     print("  Then run splat fitting on a GPU node:")
     print(
-        f"    hatch run luxar gsplat batch <input.zarr> <output/> --partition {args.partition} --submit"
+        f"    hatch run luxar gsplat slurm-fit submit <input.zarr> <output/> --partition {args.partition}"
     )
     print()
 

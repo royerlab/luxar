@@ -214,46 +214,64 @@ luxar gsplat fit data.zarr.zip splats.gsplats.zarr --array-key h2afva/fused  # N
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset hifi --iters 8000  # Override iterations
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 
-# Tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
-luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32
+# Tiling: `--tiling auto` (default) picks none/uniform/content automatically
+# (none if the volume fits one tile; content if a density is supplied; else
+# uniform). A tiled fit (`--tiling uniform` or `--tiling content`) emits a
+# `kind=partition` by default (one part per tile/box, for viewer frustum
+# culling); pass `--flat` for a single flat leaf. Whole-volume fits
+# (`--tiling none`/small auto) stay a single leaf.
+
+# Uniform tiled fitting for large volumes (Hann cosine apodization, seamless stitching)
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32  # Single tile (Slurm-ready)
 # Parallel tiles on ONE GPU (no Slurm): spawn N `fit --tile` worker subprocesses,
 # then merge. Default -j 1 = sequential. `-j auto` sizes N from free VRAM.
 # Saturates the GPU when a single tile under-utilizes it (the local counterpart
-# of `batch plan --parallel`). --keep-tiles keeps the per-tile temp outputs.
-luxar gsplat fit large.zarr splats.gsplats.zarr --tiled --tile-size 256 --overlap 32 -j 4
-luxar gsplat fit large.zarr splats.gsplats.zarr --tiled -j auto
+# of `slurm-fit submit --parallel`). --keep-tiles keeps the per-tile temp outputs.
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32 -j 4
+luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform -j auto
 
-# HPC batch fitting (plans + submits Slurm array jobs)
-luxar gsplat batch plan data.zarr.zip output/ -p gpu                    # Dry-run plan
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --submit           # Submit to Slurm
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --preset draft     # Fast preview
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --tile-size 256    # Manual tile size (skips GPU profile)
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
-luxar gsplat batch plan data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
-luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+# Content-adaptive (density-driven) tiled fitting: variable-size boxes that pack
+# more splats where the volume is busy. Drive it from a calibration (`--cal`) or
+# the density knobs (--k-star-ref, --n-features-ref, --saturation-exponent,
+# --saturation-cap, --feature-threshold, --feature-metric, --cell, --min-leaf,
+# --max-leaf, --target-features, --overlap, -j/--jobs).
+luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json
+luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json -j 8   # parallel content fit
+# Emit the content plan WITHOUT fitting (writes the box plan JSON instead):
+luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only
+
+# HPC Slurm fitting (plans + submits Slurm array jobs). `slurm-fit submit`
+# submits by default; pass --dry-run to plan without submitting.
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tile-size 256    # Manual tile size (skips GPU profile)
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --parallel         # Concurrent tasks per GPU
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --tasks-per-job 5  # Manual packing
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
     --axes time,camera,channel,z,y,x                                    # Override axis labels
-luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
     --array-key h2afva/fused --axes time,z,y,x                          # Nested zarr group
-luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
     --timepoints '::10' --channels '0:2'                                # Subset selection
-luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
-luxar gsplat batch plan data.zarr.zip output/ -p gpu \
+luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu \
     --merge-recipe substitutive --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
-luxar gsplat batch status output/                                       # Check job status
-luxar gsplat batch merge output/                                        # Merge completed tiles → kind=partition
-luxar gsplat batch merge output/ --recipe additive --n-lods 6           # + per-part additive ladder (partitioned)
-luxar gsplat batch merge output/ --recipe substitutive -K 4 -L 3        # + per-part coarse↔fine lod (mosaic)
+luxar gsplat slurm-fit status output/                                       # Check job status
+luxar gsplat slurm-fit merge output/                                        # Merge completed tiles → kind=partition
+luxar gsplat slurm-fit merge output/ --recipe additive --n-lods 6           # + per-part additive ladder (partitioned)
+luxar gsplat slurm-fit merge output/ --recipe substitutive -K 4 -L 3        # + per-part coarse↔fine lod (mosaic)
 # `--recipe` gives each spatial tile-part its own LOD ladder AS IT STREAMS — the
 # memory-safe way to add LOD to tiled output (the `lod` command rejects a
 # partition, so cal→fit→lod can't otherwise LOD a tiled merge). additive →
 # partitioned topology; substitutive → mosaic. The stacked-timepoint axis stays a
-# hard coarsening barrier. `batch plan --merge-recipe ...` bakes it into the merge
-# Slurm job. Without `--recipe`, parts are bare leaves (frustum culling only).
-luxar gsplat batch validate output/                                     # Validate tile integrity
-luxar gsplat batch validate output/ --fix                               # Delete corrupt/stale tiles for re-fitting
-luxar gsplat batch cancel output/                                       # Cancel all Slurm jobs for a batch run
+# hard coarsening barrier. `slurm-fit submit --merge-recipe ...` bakes it into the
+# merge Slurm job. Without `--recipe`, parts are bare leaves (frustum culling only).
+luxar gsplat slurm-fit validate output/                                     # Validate tile integrity
+luxar gsplat slurm-fit validate output/ --fix                               # Delete corrupt/stale tiles for re-fitting
+luxar gsplat slurm-fit cancel output/                                       # Cancel all Slurm jobs for a batch run
 
 # GPU benchmark (required for auto tile-size; --tile-size bypasses this)
 luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slurm

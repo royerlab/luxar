@@ -1,8 +1,11 @@
-"""CLI integration test for parallel tiled fitting (``fit --tiled --jobs N``).
+"""CLI integration test for parallel tiled fitting (``fit --tiling uniform -j N``).
 
 Drives the real ``luxar gsplat fit`` command end-to-end: the parallel branch
 spawns ``fit --tile i/M`` worker subprocesses, then merges.  Gated on torch
 (fitting requires it).  Kept small (2D, few iters) to stay fast.
+
+The merge-parity tests use ``--flat`` (a single comparable leaf); a separate
+test covers the partition-by-default output.
 """
 
 from __future__ import annotations
@@ -53,9 +56,25 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "gsplat", "fit", str(vol), str(out),
-            "--tiled", "--tile-size", "24", "--overlap", "4",
-            "-j", "2", "--seeds", "10", "-n", "15", "--device", "cpu",
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--flat",
+            "--seeds",
+            "10",
+            "-n",
+            "15",
+            "--device",
+            "cpu",
         ],
     )
 
@@ -66,6 +85,42 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     assert data.ndim == 2
     # the parallel temp dir must be cleaned up after a successful merge
     assert not (tmp_path / ".par.gsplats.zarr.tiles").exists()
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_tiled_parallel_partition_by_default(tmp_path: Path) -> None:
+    """Without --flat, a uniform tiled fit emits a kind=partition (one part/tile)."""
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "par.gsplats.zarr"
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--overlap",
+            "4",
+            "-j",
+            "2",
+            "--seeds",
+            "10",
+            "-n",
+            "15",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    node, _ = load_gsplat_node(out)
+    assert type(node).__name__ == "GSplatPartition"
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
@@ -83,8 +138,21 @@ def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
 
     par = tmp_path / "par.gsplats.zarr"
     seq = tmp_path / "seq.gsplats.zarr"
-    common = ["--tiled", "--tile-size", "16", "--overlap", "4",
-              "--seeds", "10", "-n", "15", "--device", "cpu"]
+    common = [
+        "--tiling",
+        "uniform",
+        "--tile-size",
+        "16",
+        "--overlap",
+        "4",
+        "--flat",
+        "--seeds",
+        "10",
+        "-n",
+        "15",
+        "--device",
+        "cpu",
+    ]
     rp = runner.invoke(app, ["gsplat", "fit", str(vol), str(par), *common, "-j", "2"])
     rs = runner.invoke(app, ["gsplat", "fit", str(vol), str(seq), *common])
 
@@ -96,16 +164,30 @@ def test_tiled_parallel_handles_empty_tiles(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
-    """`-j 2` and the default `-j 1` produce the same splat count."""
+    """`-j 2` and the default `-j 1` produce the same splat count (flat merge)."""
     from luxar.gsplats.gsplat_data import GSplatData
 
     vol = tmp_path / "vol.npy"
     _make_volume(vol)
 
     base = [
-        "gsplat", "fit", str(vol), "",
-        "--tiled", "--tile-size", "24", "--overlap", "4",
-        "--seeds", "10", "-n", "15", "--device", "cpu",
+        "gsplat",
+        "fit",
+        str(vol),
+        "",
+        "--tiling",
+        "uniform",
+        "--tile-size",
+        "24",
+        "--overlap",
+        "4",
+        "--flat",
+        "--seeds",
+        "10",
+        "-n",
+        "15",
+        "--device",
+        "cpu",
     ]
 
     seq_out = tmp_path / "seq.gsplats.zarr"
