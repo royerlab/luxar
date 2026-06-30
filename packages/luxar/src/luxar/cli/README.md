@@ -33,7 +33,7 @@ luxar info my_data.luxar.zarr --stats
 
 - `__init__.py` - Package initialization, exports the main app
 - `main.py` - Main CLI application with all commands
-- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `slurm-fit` group: submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
+- `gsplat_commands.py` - Gaussian splat subcommands (info, view, napari, cull, filter, partition, slice, transform, denoise, fit, convert, render, compare, cal, migrate-format, merge, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess)
 - `lod.py` - the unified `lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
@@ -228,20 +228,21 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 **Options**: `--k-grid` (explicit comma-separated K values), `--n-grid` (default 10), `--k-min` (default 1000), `--k-max` (default 512000), `--progression` (exp/power), `--power`, `--mask-seed`, `--mask-fraction` (default 0.05), `--preset` (default n2s), `--config`, `--device/-d`, plus volume-loader pass-through (`--channel/-c`, `--timepoint`, `--array-key`).
 
 #### `luxar gsplat migrate-format`
-Convert a legacy `.gsplats.zarr` layout to the current v3.0 node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single v3.0 `.gsplats.zarr`.
+Convert a legacy `.gsplats.zarr` layout to the current node-tree format. Four input shapes are auto-detected: v1.0 (single flat splat set), v1.1 (multi-LOD additive `/splats/lod_<i>/` subgroups), a pre-v2.0 substitutive directory (`manifest.json` + `level_<i>.gsplats.zarr`), and the v2.0 `substitutive_<s>/additive_<a>/` matrix. All migrate to a single current-format `.gsplats.zarr`. By default the output adopts the AUTO encoding policy, so legacy float32 Cholesky factors are re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16 per-column quantization (~2× smaller); pass `--lossless` to keep them float32 for archival fidelity.
 ```bash
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr   # single file
-luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr             # substitutive directory
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr             # single file (AUTO encoding)
+luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                        # substitutive directory
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # preserve float32 Cholesky exactly
 ```
 
-**Options**: `--overwrite`, `--quiet/-q`.
+**Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
 
 #### `luxar gsplat lod`
 Build a **representation topology** from a pre-fitted `.gsplats.zarr` via a single
 required `--recipe` flag. Recipes are scale-ordered: `flat`, `additive`,
 `partitioned`, `multiscale`, `mosaic`, plus the `substitutive` and `pyramid`
 primitives.
-Output is a standalone v3.0 `.gsplats.zarr` (graft into a scene from Python via
+Output is a standalone `.gsplats.zarr` (graft into a scene from Python via
 `add_gsplats_from_file` / `gsplat convert`).
 
 ```bash
@@ -296,7 +297,7 @@ luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --sc
 **Output options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz).
 
 #### `luxar gsplat denoise`
-Denoise a volume using Non-Local Means. Auto-calibrates the denoising strength `h` using Noise2Self unless `--h` is provided. Runs locally (no Slurm). For batch denoising on HPC, use `luxar gsplat slurm-fit submit --denoise`.
+Denoise a volume using Non-Local Means. Auto-calibrates the denoising strength `h` using Noise2Self unless `--h` is provided. Runs locally (no Slurm). For batch denoising on HPC, use `luxar gsplat batch-fit submit --denoise`.
 ```bash
 luxar gsplat denoise volume.zarr denoised.zarr
 luxar gsplat denoise volume.zarr denoised.npy --h 0.03
@@ -318,43 +319,57 @@ luxar gsplat benchmark --slurm --partition gpu        # Submit benchmark to Slur
 luxar gsplat benchmark --list                         # Show profiled GPUs
 ```
 
-#### `luxar gsplat slurm-fit submit`
+The `batch-fit` group fits a whole nD dataset at scale (the scaled-up sibling of `gsplat fit`), either **locally across GPUs** (`run`) or on a **Slurm cluster** (`submit`). Both plan the decomposition once (uniform tiles or a shared content box plan over T×C) and then run a memory-safe streaming merge to a single `kind=partition`. `status`/`validate`/`merge`/`cancel` are shared.
+
+#### `luxar gsplat batch-fit run`
+Fit a whole timelapse **locally** across multiple GPUs (no Slurm), then merge. One worker is pinned per GPU via `CUDA_VISIBLE_DEVICES`; per-GPU concurrency is sized from each card's free VRAM. Resumable — re-running skips tiles already on disk.
+```bash
+luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256                  # uniform, every GPU
+luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto # content plan
+luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe additive --merge-n-lods 4  # per-part LOD
+luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                                  # CPU fallback
+luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run   # plan only
+```
+`--gpus`: `auto` = visible cards above a free-VRAM floor (skips small cards; override `LUXAR_GPU_VRAM_FLOOR_GB`), `all` = every card, `cpu` = CPU, or an explicit list like `0,1,3`.
+
+#### `luxar gsplat batch-fit submit`
 Plan and submit HPC Slurm fitting jobs for large OME-Zarr datasets. Submits by default; pass `--dry-run` to plan without submitting.
 ```bash
-luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
-luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
-luxar gsplat slurm-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu                    # Submit to Slurm
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --dry-run          # Dry-run plan (no submit)
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --preset draft     # Fast preview
 ```
 
-#### `luxar gsplat slurm-fit status`
+#### `luxar gsplat batch-fit status`
 Check the status of a Slurm fitting run.
 ```bash
-luxar gsplat slurm-fit status output/
+luxar gsplat batch-fit status output/
 ```
 
-#### `luxar gsplat slurm-fit merge`
+#### `luxar gsplat batch-fit merge`
 Merge completed tiles from a Slurm fitting run into a single dataset.
 ```bash
-luxar gsplat slurm-fit merge output/
+luxar gsplat batch-fit merge output/
 ```
 
-#### `luxar gsplat slurm-fit validate`
+#### `luxar gsplat batch-fit validate`
 Validate integrity of all tiles in a Slurm output directory. Checks each tile for completeness (metadata, arrays, shapes) and reports OK, MISSING, CORRUPT, and STALE_TMP counts. Use `--fix` to delete corrupt tiles and leftover `.tmp` directories so they get re-fitted on the next submit.
 ```bash
-luxar gsplat slurm-fit validate output_dir/
-luxar gsplat slurm-fit validate output_dir/ --fix
+luxar gsplat batch-fit validate output_dir/
+luxar gsplat batch-fit validate output_dir/ --fix
 ```
 
-#### `luxar gsplat slurm-fit cancel`
+#### `luxar gsplat batch-fit cancel`
 Cancel all Slurm jobs for a Slurm fitting run. Reads the manifest to find job IDs (calibrate, denoise, fit array, merge) and cancels them via `scancel`.
 ```bash
-luxar gsplat slurm-fit cancel output_dir/
+luxar gsplat batch-fit cancel output_dir/
 ```
 
-#### `luxar gsplat slurm-fit denoise-calibrate` (internal)
+#### `luxar gsplat batch-fit denoise-calibrate` (internal)
 Internal command called by the calibration Slurm job. Reads the batch manifest, calibrates NLM `h` per channel, and writes results back to `denoise_h_values.json`. Not intended for direct use.
 
-#### `luxar gsplat slurm-fit denoise-preprocess` (internal)
+#### `luxar gsplat batch-fit denoise-preprocess` (internal)
 Internal command called by the denoise Slurm array job, one task per (timepoint, channel) pair. Reads calibrated `h` values and denoises a single volume. Not intended for direct use.
 
 

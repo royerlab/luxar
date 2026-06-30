@@ -1,4 +1,4 @@
-"""Save Gaussian splats to the v3.0 ``.gsplats.zarr`` node-tree format.
+"""Save Gaussian splats to the ``.gsplats.zarr`` node-tree format.
 
 A standalone ``.gsplats.zarr`` is a **detached scene-node subtree** written by the
 single shared authoring path
@@ -7,7 +7,8 @@ scene compiler uses for its gsplats leaves, so there is no parallel writer and
 standalone leaves are byte-identical to scene leaves.
 
 This module is the thin standalone wrapper: it builds the zarr store (handling
-optional ``.zip`` / ``.tar.gz`` compression), writes the v3.0 root header, hands
+optional ``.zip`` / ``.tar.gz`` compression), writes the self-identifying root
+header (``format_version`` = :data:`FORMAT_VERSION`), hands
 the node tree to the shared walker, attaches optional ``fitting/`` / ``provenance/``
 groups, and consolidates metadata.
 """
@@ -45,7 +46,15 @@ except ImportError:
     GSPLATS_VERSION: str = "unknown"  # type: ignore[no-redef]
 
 #: On-disk format version for the node-tree ``.gsplats.zarr`` layout.
-FORMAT_VERSION = "3.0"
+#: v3.1 splits the Cholesky factors into ``cholesky_factors_diag`` (N, d) +
+#: ``cholesky_factors_offdiag`` (N, k-d) so each can be encoded independently;
+#: v3.0 stored a single packed ``cholesky_factors`` array.
+FORMAT_VERSION = "3.1"
+
+#: Node-tree format versions the readers accept. v3.0 is still read
+#: transparently: the loaders fall back to the single packed Cholesky array
+#: when the split (``cholesky_factors_diag``) is absent.
+SUPPORTED_FORMAT_VERSIONS = ("3.0", "3.1")
 
 #: ``stats`` keys lifted into the ``fitting/`` group on save (quality metrics,
 #: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``
@@ -166,11 +175,12 @@ def write_gsplats_tree(
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
 ) -> None:
-    """Write a :class:`~luxar.gsplats.tree.GSplatNode` subtree as v3.0 ``.gsplats.zarr``.
+    """Write a :class:`~luxar.gsplats.tree.GSplatNode` subtree as ``.gsplats.zarr``.
 
     The node *is* the file root: the shared walker stamps the root group with the
     node's own attrs (``type``/``kind`` + ``position_bounds``), and this wrapper
-    adds the self-identifying v3.0 header plus optional ``fitting/`` / ``provenance/``.
+    adds the self-identifying header (``format_version`` = :data:`FORMAT_VERSION`)
+    plus optional ``fitting/`` / ``provenance/``.
     """
     path = Path(path)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
@@ -340,7 +350,7 @@ def save_gsplats(
     zip_deflate: bool = False,
     truncation_radius: float = 3.0,
 ) -> None:
-    """Save a single Gaussian-splat set to v3.0 ``.gsplats.zarr`` (a leaf node).
+    """Save a single Gaussian-splat set to ``.gsplats.zarr`` (a leaf node).
 
     Thin convenience wrapper: builds a single-leaf :class:`GSplatNode` and hands it
     to :func:`write_gsplats_tree`. Colors are written via the shared COLOR helper,

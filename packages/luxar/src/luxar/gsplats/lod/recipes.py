@@ -366,6 +366,47 @@ def _ladder_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
 PER_PART_RECIPES: tuple[str, ...] = ("additive", "substitutive")
 
 
+def uniform_per_part_lod_warning(
+    tiling_mode: Optional[str], recipe: Optional[str]
+) -> Optional[str]:
+    """Warn when ANY per-part LOD recipe is applied to uniform (apodized) tiles.
+
+    Uniform (``--tiling uniform``) tiles overlap with Hann-apodized halos that
+    form a *partition of unity*: a boundary feature is split into two tapered
+    splats in adjacent parts whose amplitudes sum to 1.0. That identity holds
+    **only at the finest level** — per-part LOD coarsens each part independently,
+    so it breaks at coarse levels for BOTH recipes (the viewer hard-switches
+    levels with no cross-level blending, so the artifact is visible):
+
+    * ``additive`` orders by mass and keeps a prefix, so the low-amplitude halo
+      splats are dropped first at coarse levels — the overlap loses signal and
+      **dims to a seam** (often the worse of the two).
+    * ``substitutive`` merges each part's halo splats into representatives
+      independently, so the complementary halves no longer align — the overlap
+      **smears** at coarse levels.
+
+    Content tiling (``--tiling content``, disjoint core-keep parts) carries no
+    shared halos, so per-part LOD is exact there for either recipe.
+
+    Returns the warning text (caller emits it) when ``tiling_mode`` is uniform
+    and ``recipe`` is a per-part recipe, else ``None``.
+    """
+    if tiling_mode != "uniform" or recipe not in PER_PART_RECIPES:
+        return None
+    consequence = (
+        "additive drops the low-amplitude halo splats at coarse levels (the "
+        "overlap dims to a seam)"
+        if recipe == "additive"
+        else "substitutive merges each part's halo splats independently (the "
+        "overlap smears at coarse levels)"
+    )
+    return (
+        f"--recipe {recipe} on uniform (Hann-apodized) tiles: the halo "
+        f"partition-of-unity holds only at the finest level — {consequence}. For "
+        "exact coarse LODs use --tiling content (disjoint core-keep parts)."
+    )
+
+
 def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSplatNode:
     """Give ONE partition child its own per-part LOD, with depth clamped to the
     part's splat count (so a small part never synthesises degenerate levels).

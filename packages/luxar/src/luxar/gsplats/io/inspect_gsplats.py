@@ -33,10 +33,13 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     if format_type != "gsplats_zarr":
         raise ValueError(f"Invalid format_type: {format_type}, expected 'gsplats_zarr'")
 
+    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+
     format_version = root.attrs.get("format_version")
-    if format_version != "3.0":
+    if format_version not in SUPPORTED_FORMAT_VERSIONS:
         raise ValueError(
-            f"Unsupported format_version: {format_version!r} (expected '3.0'). "
+            f"Unsupported format_version: {format_version!r} "
+            f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). "
             f"Convert legacy files with `luxar gsplat migrate-format`."
         )
 

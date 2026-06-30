@@ -169,6 +169,58 @@ def test_content_fit_parallel_jobs(tmp_path):
     assert _kind(out) == "GSplatPartition"
 
 
+def test_content_fit_recipe_additive_gives_partition_of_ladders(tmp_path):
+    """`fit --tiling content --recipe additive` → a kind=partition whose every
+    box-part carries its own additive ladder (per-part LOD at fit time)."""
+    from luxar.gsplats.tree import GSplatLeaf, iter_leaves
+
+    vol = _vol(tmp_path)
+    out = tmp_path / "clod.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(vol),
+            str(out),
+            *_CONTENT,
+            *_CPU,
+            "--recipe",
+            "additive",
+            "--n-lods",
+            "2",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    node, _ = load_gsplat_node(out)
+    assert type(node).__name__ == "GSplatPartition"
+    leaves = list(iter_leaves(node))
+    assert all(isinstance(leaf, GSplatLeaf) for leaf in leaves)
+    assert any(leaf.n_additive_sublods > 1 for leaf in leaves), (
+        f"no additive ladder built: {[leaf.n_additive_sublods for leaf in leaves]}"
+    )
+
+
+def test_content_fit_recipe_rejects_flat(tmp_path):
+    """--recipe is incompatible with --flat (needs a partition output)."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "x.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(vol),
+            str(out),
+            *_CONTENT,
+            *_CPU,
+            "--recipe",
+            "additive",
+            "--flat",
+        ],
+    )
+    assert res.exit_code != 0
+    assert "flat" in res.output.lower() and "partition" in res.output.lower()
+
+
 def test_content_fit_honors_compress(tmp_path):
     # --compress must thread through the content save path (was silently dropped):
     # a compressed store is a single archive FILE, not a .gsplats.zarr directory.
@@ -199,3 +251,61 @@ def test_bad_jobs_value_errors(tmp_path):
         ],
     )
     assert res.exit_code != 0  # --jobs must be int or 'auto'
+
+
+def test_content_fit_warns_on_unsupported_flags(tmp_path):
+    """--denoise/--downscale/--progressive are not implemented for content; the
+    CLI must warn (not silently ignore them)."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "w.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat, ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--denoise"]
+    )
+    assert res.exit_code == 0, res.output
+    assert "not supported" in res.output.lower()
+
+
+def test_content_fit_threads_iters_into_fit_config(tmp_path, monkeypatch):
+    """--iters must reach the fit config in content mode (pre-fix it was dropped:
+    run_content_fit forwarded only preset/device). Spy on load_fit_config and
+    abort before the real fit — we only assert the override was threaded."""
+    import luxar.cli.gsplat_config as cfg
+
+    captured: dict = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs):
+        captured.update(kwargs)
+        raise _Stop()
+
+    monkeypatch.setattr(cfg, "load_fit_config", _spy)
+    vol = _vol(tmp_path)
+    runner.invoke(
+        app_gsplat,
+        [
+            "fit",
+            str(vol),
+            str(tmp_path / "o.gsplats.zarr"),
+            *_CONTENT,
+            *_CPU,
+            "--iters",
+            "7",
+        ],
+    )
+    assert captured.get("cli_overrides", {}).get("n_iters") == 7
+    assert captured.get("config_path") is None  # no --config passed
+
+
+def test_content_fit_warns_on_ignored_seeds(tmp_path):
+    """--seeds is superseded by the content plan; the CLI must say so (not drop
+    it silently). Uses --plan-only so no fit runs."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "plan.json"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, "--plan-only", "--seeds", "5000"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "--seeds is ignored" in res.output

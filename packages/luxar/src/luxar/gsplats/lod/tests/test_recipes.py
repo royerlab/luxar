@@ -18,6 +18,7 @@ from luxar.gsplats.lod.recipes import (
     RECIPE_NAMES,
     RecipeParams,
     build_recipe,
+    uniform_per_part_lod_warning,
 )
 from luxar.gsplats.lod.substitutive import make_substitutive_lod
 from luxar.gsplats.tree import (
@@ -27,6 +28,32 @@ from luxar.gsplats.tree import (
     iter_leaves,
     total_splats,
 )
+
+
+@pytest.mark.parametrize(
+    "tiling_mode,recipe,expect_warning",
+    [
+        # BOTH per-part recipes break partition-of-unity at coarse levels on
+        # apodized uniform tiles (additive drops tapered halo splats → dims;
+        # substitutive merges them per-part → smears).
+        ("uniform", "substitutive", True),
+        ("uniform", "additive", True),
+        # Content (disjoint core-keep parts) carries no shared halos → exact.
+        ("content", "substitutive", False),
+        ("content", "additive", False),
+        ("none", "substitutive", False),  # whole-volume, no overlap
+        (None, "substitutive", False),
+        ("uniform", None, False),  # no recipe at all
+        ("uniform", "partitioned", False),  # not a per-part recipe
+    ],
+)
+def test_uniform_per_part_lod_warning(tiling_mode, recipe, expect_warning):
+    msg = uniform_per_part_lod_warning(tiling_mode, recipe)
+    if expect_warning:
+        assert msg is not None
+        assert recipe in msg and "uniform" in msg
+    else:
+        assert msg is None
 
 
 def _make_random_gsplat(n: int = 400, ndim: int = 3, seed: int = 0) -> GSplatData:
@@ -175,9 +202,9 @@ def test_extent_thresholds_are_scale_invariant():
     p = _params(max_elements=120, compression_factor=4, n_lods=3)
     # children are coarsest→finest; the fine branch (last) carries the >0 threshold.
     base_mps = build_recipe(data, "multiscale", p).children[-1].meta["min_pixel_size"]
-    scaled_mps = build_recipe(scaled, "multiscale", p).children[-1].meta[
-        "min_pixel_size"
-    ]
+    scaled_mps = (
+        build_recipe(scaled, "multiscale", p).children[-1].meta["min_pixel_size"]
+    )
     assert base_mps > 0.0
     assert scaled_mps == pytest.approx(base_mps, rel=1e-4)
 
@@ -206,7 +233,9 @@ def test_multiscale_stamps_extent_thresholds_by_default():
     assert bigger.children[-1].meta["min_pixel_size"] == pytest.approx(2 * fine_mps)
 
     # lod_method="count" reproduces the legacy √N proxy exactly.
-    cnt = build_recipe(data, "multiscale", _params(max_elements=120, lod_method="count"))
+    cnt = build_recipe(
+        data, "multiscale", _params(max_elements=120, lod_method="count")
+    )
     ccoarse, cfine = cnt.children
     assert ccoarse.meta["min_pixel_size"] == 0.0
     expected_count = 10.0 * math.sqrt(total_splats(cfine) / total_splats(ccoarse))

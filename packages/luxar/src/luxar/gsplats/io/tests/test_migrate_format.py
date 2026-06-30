@@ -391,9 +391,11 @@ class TestMigrateFormat:
         out = tmp_path / "out.gsplats.zarr"
         detected = migrate_format(legacy, out)
         assert detected == "v1.0"
-        # Out is a v3.0 node-tree leaf
+        # Out is a v3.1 node-tree leaf with the split Cholesky layout.
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.0"
+        assert root.attrs["format_version"] == "3.1"
+        assert "cholesky_factors_diag" in root
+        assert "cholesky_factors" not in root
         data = load_gsplats(out)
         assert data.n_substitutive == 1
         assert data.n_additive_sublods == 1
@@ -449,7 +451,7 @@ class TestMigrateFormat:
         detected = migrate_format(legacy, out)
         assert detected == "v2.0"
         root = zarr.open_group(str(out), mode="r")
-        assert root.attrs["format_version"] == "3.0"
+        assert root.attrs["format_version"] == "3.1"
         data = load_gsplats(out)
         assert data.n_splats == 12
         assert data.n_substitutive == 1
@@ -518,18 +520,18 @@ class TestMigrateFormat:
         assert data.n_additive_sublods == 2
         assert [s.n_splats for s in data.additive_sublods] == [8, 4]
 
-    def test_migrate_refuses_v3_0_input(self, tmp_path: Path) -> None:
+    def test_migrate_refuses_v3_input(self, tmp_path: Path) -> None:
         from luxar.gsplats import GSplatData
 
-        legacy = tmp_path / "v3.gsplats.zarr"
+        current = tmp_path / "v3.gsplats.zarr"
         GSplatData(
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=_identity_chol(3),
-        ).save(legacy)  # writes v3.0
+        ).save(current)  # writes the current v3.1 node-tree
         out = tmp_path / "out.gsplats.zarr"
-        with pytest.raises(ValueError, match="already format v3.0"):
-            migrate_format(legacy, out)
+        with pytest.raises(ValueError, match="already format v3"):
+            migrate_format(current, out)
 
     def test_migrate_refuses_existing_output(self, tmp_path: Path) -> None:
         legacy = tmp_path / "legacy.gsplats.zarr"
@@ -623,8 +625,29 @@ class TestMigrateFormat:
         np.testing.assert_array_equal(sub.centers, src_centers)
         # Amplitudes go through log-scalar quantization — within ~1% of value
         np.testing.assert_allclose(sub.amplitudes, src_amps, rtol=1e-2)
-        # Cholesky factors quantized but should remain close
+        # Cholesky factors quantized but should remain close. The default AUTO
+        # policy re-encodes float32 Cholesky as uint16 per-column log
+        # (near-lossless ~0.1% rel.); this contrived fixture has a narrow range
+        # so atol=1e-2 is comfortably loose for it.
         np.testing.assert_allclose(sub.cholesky_factors, src_chol, atol=1e-2)
+
+    def test_migrate_lossless_preserves_cholesky_float32(self, tmp_path: Path) -> None:
+        """encoding_mode=PRECISION (`--lossless`) threads through migration and
+        stores Cholesky factors as float32 (bit-identical), not quantized uint.
+        (AUTO's near-lossless quantization on varied data is covered by
+        encoding/tests/test_cholesky_split_quant.py.)"""
+        from luxar.encoding import EncodingMode
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        _make_v1_0(legacy, n=9)
+        src_chol = np.asarray(
+            zarr.open_group(str(legacy), mode="r")["splats"]["cholesky_factors"]
+        )
+
+        out_lossless = tmp_path / "lossless.gsplats.zarr"
+        migrate_format(legacy, out_lossless, encoding_mode=EncodingMode.PRECISION)
+        lossless = load_gsplats(out_lossless).additive_sublods[0]
+        np.testing.assert_array_equal(lossless.cholesky_factors, src_chol)
 
     # [P8] colors preservation (metadata roundtrip)
     def test_migrate_v1_0_with_colors_roundtrip(self, tmp_path: Path) -> None:

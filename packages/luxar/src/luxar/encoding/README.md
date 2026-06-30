@@ -317,7 +317,13 @@ encoder.encode(
 | BOUNDED_SCALAR | uint8 | float32 | uint8 |
 | POSITIVE_SCALAR | Analyze range | float32 | uint8 |
 | CHOLESKY | float32 | float32 | float16 |
+| CHOLESKY_DIAG | log_perchannel_u16 | float32 | log_perchannel_u8 |
+| CHOLESKY_OFFDIAG | signed_log_perchannel_u16 | float32 | signed_log_perchannel_u8 |
 | INDEX | Smallest uint | Smallest uint | Smallest uint |
+
+`CHOLESKY_DIAG` / `CHOLESKY_OFFDIAG` select the **generic, reusable** per-channel
+quantizers (`log_perchannel_*` for non-negative data, `signed_log_perchannel_*`
+for signed) — the semantic type is the policy; the encoding is geometry-agnostic.
 
 **Usage Example:**
 ```python

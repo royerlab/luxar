@@ -1,4 +1,4 @@
-"""Root-agnostic Gaussian-splat node-subtree serializer (v3.0).
+"""Root-agnostic Gaussian-splat node-subtree serializer (node-tree format).
 
 This is the **single authoring path** shared by the standalone ``.gsplats.zarr``
 writer and the scene gsplat-node embed — there is no parallel writer. It writes a
@@ -14,7 +14,7 @@ Because leaves go through those same functions, a standalone leaf is byte-identi
 to a scene leaf (same arrays, chunking, ordering, ``position_bounds`` + render
 attrs) by construction, and they share one chunk-size formula.
 
-On-disk grammar (the v3.0 node tree):
+On-disk grammar (the node tree):
 
 * **leaf** → ``type=gsplats``; a single splat set writes arrays directly, an
   additive ladder writes ``additive_<i>/`` subgroups + ``n_additive_sublods``.
@@ -482,13 +482,29 @@ def write_gsplat_node(
 # ────────────────────────────────────────────────────────────────────────
 
 
+def _decode_cholesky(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
+    """Decode Cholesky factors, recombining the v3.1 split layout.
+
+    Delegates to the shared
+    :func:`luxar.gsplats.utils.trils.recombine_cholesky` so the v3.0 fallback,
+    the corruption invariant, and the error message stay in one place (the scene
+    reader uses the same helper).
+    """
+    from luxar.gsplats.utils.trils import recombine_cholesky
+
+    def decode(name: str) -> Any:
+        return decoder.decode(group[name], root) if name in group else None
+
+    return recombine_cholesky(decode)
+
+
 def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
     """Decode one splat set's arrays from ``group`` into an ``AdditiveSubLOD``."""
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
     centers = decoder.decode(group["centers"], root)
     amplitudes = decoder.decode(group["amplitudes"], root)
-    cholesky = decoder.decode(group["cholesky_factors"], root)
+    cholesky = _decode_cholesky(group, root, decoder)
     colors = decoder.decode(group["colors"], root) if "colors" in group else None
     stats_raw = group.attrs.get("lod_stats", {})
     stats = dict(stats_raw) if isinstance(stats_raw, dict) else {}

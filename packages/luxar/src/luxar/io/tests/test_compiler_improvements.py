@@ -143,8 +143,15 @@ class TestChunkBoundsZarrAlignment:
             assert g["amplitudes"].chunks[0] == chunk_size, (
                 f"amplitudes chunks[0]={g['amplitudes'].chunks[0]} != chunk_size={chunk_size}"
             )
-            assert g["cholesky_factors"].chunks[0] == chunk_size, (
-                f"cholesky chunks[0]={g['cholesky_factors'].chunks[0]} != chunk_size={chunk_size}"
+            # v3.1: Cholesky stored as a diagonal + off-diagonal split; both
+            # halves share the same row-chunk size as the other arrays.
+            assert g["cholesky_factors_diag"].chunks[0] == chunk_size, (
+                f"cholesky diag chunks[0]={g['cholesky_factors_diag'].chunks[0]} "
+                f"!= chunk_size={chunk_size}"
+            )
+            assert g["cholesky_factors_offdiag"].chunks[0] == chunk_size, (
+                f"cholesky offdiag chunks[0]={g['cholesky_factors_offdiag'].chunks[0]} "
+                f"!= chunk_size={chunk_size}"
             )
             assert g["colors"].chunks[0] == chunk_size, (
                 f"colors chunks[0]={g['colors'].chunks[0]} != chunk_size={chunk_size}"

@@ -36,8 +36,18 @@ is reversed to the finest-first matrix-view convention and back.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Union
+from dataclasses import dataclass, field, replace
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 
@@ -73,6 +83,13 @@ class GSplatLeaf:
     def __post_init__(self) -> None:
         if not self.additive_sublods:
             raise ValueError("GSplatLeaf must contain at least one AdditiveSubLOD")
+        ndims = {int(sub.ndim) for sub in self.additive_sublods}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatLeaf additive sub-LODs must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The leaf's ndim is read from "
+                f"the first sub-LOD, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def n_additive_sublods(self) -> int:
@@ -116,6 +133,13 @@ class GSplatLodGroup:
     def __post_init__(self) -> None:
         if not self.children:
             raise ValueError("GSplatLodGroup must contain at least one child")
+        ndims = {int(c.ndim) for c in self.children}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatLodGroup children must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The group's ndim is read from "
+                f"the first child, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def default_level(self) -> int:
@@ -157,6 +181,13 @@ class GSplatPartition:
     def __post_init__(self) -> None:
         if not self.children:
             raise ValueError("GSplatPartition must contain at least one child")
+        ndims = {int(c.ndim) for c in self.children}
+        if len(ndims) > 1:
+            raise ValueError(
+                f"GSplatPartition children must share one dimensionality; "
+                f"got mixed ndims {sorted(ndims)}. The partition's ndim is read "
+                f"from the first child, so a mix would silently mis-describe the rest."
+            )
 
     @property
     def n_children(self) -> int:
@@ -277,6 +308,135 @@ def node_percentile_radius(
 
 
 # ────────────────────────────────────────────────────────────────────────
+# Structure-preserving map + default-selection global statistics
+# ────────────────────────────────────────────────────────────────────────
+
+
+def map_leaves(
+    node: GSplatNode, fn: "Callable[[GSplatLeaf], GSplatNode]"
+) -> GSplatNode:
+    """Rebuild the tree with ``fn`` applied to every leaf, preserving its shape.
+
+    Walks the (immutable, frozen) tree depth-first and returns a NEW tree of the
+    same shape — same group kinds, ``GSplatPartition.max_elements``, and per-node
+    ``meta`` — in which each :class:`GSplatLeaf` is replaced by ``fn(leaf)``
+    (``fn`` typically returns a transformed leaf). This is the write-side
+    workhorse for tree-aware ops (e.g. ``gsplat transform`` on a
+    ``kind=partition``) that the flat :class:`~luxar.gsplats.gsplat_data.GSplatData`
+    path — which only handles matrix-shaped trees — cannot express.
+    """
+    if isinstance(node, GSplatLeaf):
+        return fn(node)
+    if isinstance(node, GSplatLodGroup):
+        return GSplatLodGroup(
+            children=[map_leaves(c, fn) for c in node.children],
+            meta=dict(node.meta),
+        )
+    if isinstance(node, GSplatPartition):
+        return GSplatPartition(
+            children=[map_leaves(c, fn) for c in node.children],
+            max_elements=node.max_elements,
+            meta=dict(node.meta),
+        )
+    raise TypeError(  # pragma: no cover - guards against an unknown node type
+        f"Unknown gsplat node type: {type(node).__name__}"
+    )
+
+
+def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
+    """Rebuild the tree with ``key`` removed from **every** node's ``meta``.
+
+    Unlike :func:`map_leaves` (which copies group ``meta`` verbatim), this scrubs
+    a key from leaves AND group nodes. Its use is dropping the extent-derived
+    ``min_pixel_size`` LOD-switch threshold after a geometry transform: a stale
+    threshold on a *group* node (a ``multiscale`` partition child, or a
+    ``mosaic`` per-part lod group) is otherwise re-applied verbatim by the
+    serializer, so the viewer's coarse↔fine switch would fire at the wrong
+    on-screen size. With the key gone the writer re-derives it from the
+    transformed extents (the same single-sourced ``lod_thresholds`` derivation).
+    """
+    new_meta = {k: v for k, v in node.meta.items() if k != key}
+    if isinstance(node, GSplatLeaf):
+        return replace(node, meta=new_meta)
+    if isinstance(node, GSplatLodGroup):
+        return GSplatLodGroup(
+            children=[without_meta_key(c, key) for c in node.children],
+            meta=new_meta,
+        )
+    if isinstance(node, GSplatPartition):
+        return GSplatPartition(
+            children=[without_meta_key(c, key) for c in node.children],
+            max_elements=node.max_elements,
+            meta=new_meta,
+        )
+    raise TypeError(  # pragma: no cover - guards against an unknown node type
+        f"Unknown gsplat node type: {type(node).__name__}"
+    )
+
+
+def iter_default_leaves(node: GSplatNode) -> Iterator[GSplatLeaf]:
+    """Yield the leaves of the **default-rendered** selection.
+
+    Mirrors the ``n_splats`` selection semantics: a partition renders all parts,
+    but a substitutive lod group renders only its default (finest) child — so
+    coarse substitutive levels (downsampled *representations* of the same splats)
+    are skipped. Use this for global statistics (centroid, max amplitude) so the
+    same splat is not double-counted across levels. (Contrast :func:`iter_leaves`,
+    which yields every stored leaf regardless of LOD selection.)
+    """
+    if isinstance(node, GSplatLeaf):
+        yield node
+    elif isinstance(node, GSplatLodGroup):
+        yield from iter_default_leaves(node.children[node.default_level])
+    elif isinstance(node, GSplatPartition):
+        for child in node.children:
+            yield from iter_default_leaves(child)
+    else:  # pragma: no cover - guards against an unknown node type
+        raise TypeError(f"Unknown gsplat node type: {type(node).__name__}")
+
+
+def amplitude_weighted_centroid(node: GSplatNode) -> Optional[np.ndarray]:
+    """Global amplitude-weighted centroid over the default-rendered splat set.
+
+    Returns the ``(d,)`` centroid (float64), or ``None`` for an empty tree.
+    Falls back to the unweighted center mean when the total amplitude is zero —
+    matching :meth:`~luxar.gsplats.gsplat_data.GSplatData.center_at_centroid` on
+    a single leaf, so a matrix-shaped tree gives an identical result.
+    """
+    weighted: Optional[np.ndarray] = None  # Σ aᵢ·cᵢ
+    sum_centers: Optional[np.ndarray] = None  # Σ cᵢ (unweighted fallback)
+    total_amp = 0.0
+    n = 0
+    for leaf in iter_default_leaves(node):
+        for sub in leaf.additive_sublods:
+            if sub.n_splats == 0:
+                continue
+            c = sub.centers.astype(np.float64)
+            a = sub.amplitudes.astype(np.float64)
+            wc = c.T @ a
+            sc = c.sum(axis=0)
+            weighted = wc if weighted is None else weighted + wc
+            sum_centers = sc if sum_centers is None else sum_centers + sc
+            total_amp += float(a.sum())
+            n += int(sub.n_splats)
+    if sum_centers is None:
+        return None
+    if total_amp > 0 and weighted is not None:
+        return weighted / total_amp
+    return sum_centers / max(1, n)
+
+
+def global_amplitude_max(node: GSplatNode) -> float:
+    """Maximum amplitude over the default-rendered splat set (``0.0`` if empty)."""
+    mx = 0.0
+    for leaf in iter_default_leaves(node):
+        for sub in leaf.additive_sublods:
+            if sub.n_splats:
+                mx = max(mx, float(sub.amplitudes.max()))
+    return mx
+
+
+# ────────────────────────────────────────────────────────────────────────
 # Bridge: 2-D substitutive × additive matrix  ⇄  node tree
 # ────────────────────────────────────────────────────────────────────────
 
@@ -354,9 +514,7 @@ def tree_from_substitutive_levels(
     # chokepoint for substitutive gsplats (save / recipes / .tree all route through
     # this). The CLI validates too; the #4 writers pass a hardcoded literal.
     if lod_method not in ("extent", "count"):
-        raise ValueError(
-            f"lod_method must be 'extent' or 'count', got {lod_method!r}"
-        )
+        raise ValueError(f"lod_method must be 'extent' or 'count', got {lod_method!r}")
     node = node_from_substitutive_levels(levels)
     if isinstance(node, GSplatLeaf):
         return node

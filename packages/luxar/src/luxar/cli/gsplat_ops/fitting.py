@@ -56,7 +56,7 @@ def denoise_volume_cmd(
 
     Auto-calibrates the denoising strength h using Noise2Self unless --h is
     provided.  Runs locally (no Slurm).  For batch denoising on HPC, use
-    ``luxar gsplat slurm-fit submit --denoise``.
+    ``luxar gsplat batch-fit submit --denoise``.
 
     Examples:
         luxar gsplat denoise volume.zarr denoised.zarr
@@ -158,6 +158,114 @@ def _resolve_tiling(
     return "content" if has_density else "uniform"
 
 
+def _build_fit_recipe_params(
+    recipe: str,
+    *,
+    n_lods: Optional[int],
+    additive_method: Optional[str],
+    breakpoints: Optional[str],
+    compression_factor: Optional[int],
+    levels: Optional[int],
+    substitutive_method: Optional[str],
+    coarsen_dims: Optional[str],
+    lod_method: Optional[str],
+    device: Optional[str],
+    volume_ndim: int,
+) -> "Any":
+    """Validate the per-part ``--recipe`` knobs and build a ``RecipeParams``.
+
+    Mirrors the ``gsplat lod`` vocabulary (reusing its breakpoint parser and the
+    valid-method sets) so a fit-time per-part ladder is identical to a separate
+    ``gsplat lod`` pass. Only the two :data:`PER_PART_RECIPES` are accepted.
+    """
+    from luxar.cli.lod import (
+        _VALID_ADDITIVE_METHODS,
+        _VALID_SUBSTITUTIVE_METHODS,
+        _parse_lod_breakpoints,
+    )
+    from luxar.gsplats.lod.recipes import PER_PART_RECIPES, RecipeParams
+
+    if recipe not in PER_PART_RECIPES:
+        raise typer.BadParameter(
+            f"--recipe must be one of {list(PER_PART_RECIPES)} for a fit "
+            f"(additive → partitioned, substitutive → mosaic); got {recipe!r}. "
+            f"For other topologies run `gsplat lod` on a flat (--flat) fit."
+        )
+
+    # Reject knobs that don't apply to the chosen recipe (mirrors `gsplat lod`,
+    # which raises on irrelevant options rather than silently dropping them).
+    additive_only = {
+        "--n-lods": n_lods,
+        "--additive-method": additive_method,
+        "--breakpoints": breakpoints,
+    }
+    substitutive_only = {
+        "--compression-factor": compression_factor,
+        "--levels": levels,
+        "--substitutive-method": substitutive_method,
+        "--coarsen-dims": coarsen_dims,
+        "--lod-method": lod_method,
+    }
+    irrelevant = substitutive_only if recipe == "additive" else additive_only
+    provided = [flag for flag, val in irrelevant.items() if val is not None]
+    if provided:
+        other = "substitutive" if recipe == "additive" else "additive"
+        raise typer.BadParameter(
+            f"option(s) {', '.join(provided)} are not used by --recipe {recipe} "
+            f"(they configure --recipe {other}). Remove them or switch recipe."
+        )
+
+    add_norm = (additive_method or "greedy").strip().replace("-", "_")
+    if add_norm not in _VALID_ADDITIVE_METHODS:
+        raise typer.BadParameter(
+            f"--additive-method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
+            f"got {additive_method!r}"
+        )
+    sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
+    if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
+        raise typer.BadParameter(
+            f"--substitutive-method must be one of "
+            f"{list(_VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
+        )
+    if lod_method is not None and lod_method not in ("extent", "count"):
+        raise typer.BadParameter(
+            f"--lod-method must be 'extent' or 'count'; got {lod_method!r}"
+        )
+
+    bp = _parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+
+    parsed_coarsen: Optional[tuple] = None
+    if coarsen_dims is not None:
+        try:
+            idxs = sorted({int(t) for t in coarsen_dims.split(",") if t.strip() != ""})
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"--coarsen-dims must be comma-separated integers; got {coarsen_dims!r}"
+            ) from e
+        if not idxs:
+            raise typer.BadParameter("--coarsen-dims must list >=1 index")
+        for i in idxs:
+            if i < 0 or i >= volume_ndim:
+                raise typer.BadParameter(
+                    f"--coarsen-dims index {i} out of range for {volume_ndim}D data"
+                )
+        parsed_coarsen = tuple(idxs) if len(idxs) < volume_ndim else None
+
+    return RecipeParams(
+        n_lods=n_lods if n_lods is not None else 4,
+        additive_method=add_norm,  # type: ignore[arg-type]
+        breakpoints=bp,  # type: ignore[arg-type]
+        compression_factor=(
+            compression_factor if compression_factor is not None else 4
+        ),
+        levels=levels if levels is not None else 3,
+        substitutive_method=sub_norm,
+        coarsen_dims=parsed_coarsen,
+        lod_method=lod_method if lod_method is not None else "extent",
+        device=device or "auto",
+    )
+
+
 def _save_fit_output(
     result: Any,
     output_path: Path,
@@ -223,13 +331,31 @@ def fit_volume(
     ),
     # Input selection for multi-array formats
     channel: Optional[int] = typer.Option(
-        None, "--channel", help="Channel index for 5D OME-ZARR"
+        None,
+        "--channel",
+        help="Channel index for 5D OME-ZARR",
+        rich_help_panel="Input selection",
     ),
     timepoint: Optional[int] = typer.Option(
-        None, "--timepoint", help="Timepoint index for 5D OME-ZARR"
+        None,
+        "--timepoint",
+        help="Timepoint index for 5D OME-ZARR",
+        rich_help_panel="Input selection",
     ),
     array_key: Optional[str] = typer.Option(
-        None, "--array-key", help="Array key within .npz or .zarr"
+        None,
+        "--array-key",
+        help="Array key within .npz or .zarr",
+        rich_help_panel="Input selection",
+    ),
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Per-dimension axis labels overriding the positional "
+        "TCZYX/CZYX/ZYX heuristic, e.g. 'z,c,y,x' or 't,z,y,x'. Use when your "
+        "data's axis order differs. Time/channel axes are sliced (by "
+        "--timepoint/--channel) and dropped; spatial axes kept in the given order.",
+        rich_help_panel="Input selection",
     ),
     # Frequently used fit params
     lr: Optional[float] = typer.Option(None, "--lr", help="Learning rate"),
@@ -268,12 +394,16 @@ def fit_volume(
         rich_help_panel="Tiling",
     ),
     tile_overlap: int = typer.Option(
-        32, "--overlap", help="Overlap between tiles in voxels"
+        32,
+        "--overlap",
+        help="Overlap between tiles in voxels",
+        rich_help_panel="Tiling",
     ),
     tile: Optional[str] = typer.Option(
         None,
         "--tile",
         help="Fit single tile N/M (e.g., '3/16' = tile index 3 of 16 total)",
+        rich_help_panel="Tiling",
     ),
     jobs: str = typer.Option(
         "1",
@@ -283,6 +413,7 @@ def fit_volume(
         "concurrently as subprocesses "
         "on one GPU (int, or 'auto' to size from free VRAM). Default 1 = "
         "sequential. Ignored with --tiling none or --tile.",
+        rich_help_panel="Tiling",
     ),
     keep_tiles: bool = typer.Option(
         False,
@@ -290,6 +421,7 @@ def fit_volume(
         help="With --tiling --jobs>1: keep the per-tile/box temporary .gsplats.zarr "
         "outputs (and any .empty markers for skipped tiles) instead of "
         "deleting them after the merge.",
+        rich_help_panel="Tiling",
     ),
     allow_empty_tile: bool = typer.Option(
         False,
@@ -298,6 +430,77 @@ def fit_volume(
         help="Single-tile mode only: if the tile has no signal (0 splats), "
         "write an empty marker and exit 0 instead of erroring. Used internally "
         "by parallel --tiling uniform --jobs so an empty tile is skipped at merge.",
+    ),
+    # Per-part LOD (tiled fits only): give each tile/box-part its own LOD ladder
+    # at fit time instead of a separate `gsplat lod` pass (which rejects a
+    # partition). additive -> partitioned topology; substitutive -> mosaic.
+    recipe: Optional[str] = typer.Option(
+        None,
+        "-r",
+        "--recipe",
+        help="Per-part LOD for a tiled partition: additive (each part a "
+        "prefix-sum ladder -> 'partitioned' topology) or substitutive (each "
+        "part its own coarse<->fine lod group -> 'mosaic'). Requires a tiled "
+        "fit (--tiling uniform/content) and a partition output (not --flat).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_n_lods: Optional[int] = typer.Option(
+        None,
+        "--n-lods",
+        help="[--recipe additive] Number of additive sub-LODs per part (default 4).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_additive_method: Optional[str] = typer.Option(
+        None,
+        "-m",
+        "--additive-method",
+        help="[--recipe additive] greedy (default, (1-1/e)-optimal) or "
+        "self_energy (cheap O(N log N) for very large parts).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_breakpoints: Optional[str] = typer.Option(
+        None,
+        "-b",
+        "--breakpoints",
+        help="[--recipe additive] additive ladder breakpoints: 'equal-count' "
+        "(default), 'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_compression_factor: Optional[int] = typer.Option(
+        None,
+        "-K",
+        "--compression-factor",
+        help="[--recipe substitutive] per-level coarsening factor K (default 4).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_levels: Optional[int] = typer.Option(
+        None,
+        "-L",
+        "--levels",
+        help="[--recipe substitutive] number of substitutive levels L (default 3).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_substitutive_method: Optional[str] = typer.Option(
+        None,
+        "--substitutive-method",
+        help="[--recipe substitutive] auto (default) / kmeans-lloyd / greedy / "
+        "greedy-lloyd.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help="[--recipe substitutive] comma-separated center-column indices "
+        "coarsening may merge over; the rest become hard barriers (default: all "
+        "spatial dims).",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_lod_method: Optional[str] = typer.Option(
+        None,
+        "--lod-method",
+        help="[--recipe substitutive] LOD switch threshold: extent (default, "
+        "physically-anchored T·W/r) or count (legacy √N proxy).",
+        rich_help_panel="Per-part LOD",
     ),
     # Content-aware tiling (--tiling content): transferable density + planner knobs
     cal: Optional[Path] = typer.Option(
@@ -392,21 +595,25 @@ def fit_volume(
         help="Enable progressive fitting: fit in multiple passes on residuals, "
         "producing a multi-LOD result. Each pass adds detail to the previous. "
         "Tip: for tiled batch jobs, combine with --parallel to improve GPU utilization.",
+        rich_help_panel="Progressive fitting",
     ),
     max_splats_per_pass: int = typer.Option(
         5000,
         "--splats-per-pass",
         help="Maximum splats per progressive pass (actual may be fewer after culling)",
+        rich_help_panel="Progressive fitting",
     ),
     psnr_patience: float = typer.Option(
         0.5,
         "--psnr-patience",
         help="Stop progressive fitting if ΔPSNR between passes < this value (dB)",
+        rich_help_panel="Progressive fitting",
     ),
     max_passes: Optional[int] = typer.Option(
         None,
         "--max-passes",
         help="Maximum number of progressive passes (default: unlimited, stops by budget or PSNR patience)",
+        rich_help_panel="Progressive fitting",
     ),
     # Post-fit culling
     cull_retention: Optional[float] = typer.Option(
@@ -420,22 +627,40 @@ def fit_volume(
     ),
     # Denoising
     denoise: bool = typer.Option(
-        False, "--denoise", help="Denoise volume before fitting (NLM)"
+        False,
+        "--denoise",
+        help="Denoise volume before fitting (NLM)",
+        rich_help_panel="Denoising",
     ),
     denoise_h: Optional[float] = typer.Option(
-        None, "--denoise-h", help="Manual NLM h value (skip auto-calibration)"
+        None,
+        "--denoise-h",
+        help="Manual NLM h value (skip auto-calibration)",
+        rich_help_panel="Denoising",
     ),
     denoise_2d: bool = typer.Option(
-        False, "--denoise-2d", help="Use 2D NLM (slice-by-slice) instead of 3D"
+        False,
+        "--denoise-2d",
+        help="Use 2D NLM (slice-by-slice) instead of 3D",
+        rich_help_panel="Denoising",
     ),
     denoise_patch_size: int = typer.Option(
-        3, "--denoise-patch-size", help="NLM patch size (odd integer)"
+        3,
+        "--denoise-patch-size",
+        help="NLM patch size (odd integer)",
+        rich_help_panel="Denoising",
     ),
     denoise_search_distance: int = typer.Option(
-        5, "--denoise-search-distance", help="NLM search window half-size"
+        5,
+        "--denoise-search-distance",
+        help="NLM search window half-size",
+        rich_help_panel="Denoising",
     ),
     denoise_backend: str = typer.Option(
-        "auto", "--denoise-backend", help="NLM backend: auto/cuda/pytorch/skimage"
+        "auto",
+        "--denoise-backend",
+        help="NLM backend: auto/cuda/pytorch/skimage",
+        rich_help_panel="Denoising",
     ),
 ) -> None:
     """Fit Gaussian splats to a volume.
@@ -497,7 +722,9 @@ def fit_volume(
         with asection(f"Fitting Gaussian Splats: {input_path.name}"):
             # 1. Load volume
             with asection("Loading volume"):
-                volume = load_volume(input_path, channel, timepoint, array_key)
+                volume = load_volume(
+                    input_path, channel, timepoint, array_key, axes=axes
+                )
                 aprint(f"Volume shape: {volume.shape}")
 
             # 1a. Resolve the decomposition. `--tiling auto` → none (fits one
@@ -513,8 +740,100 @@ def fit_volume(
             resolved_tiling = _resolve_tiling(
                 tiling, volume.shape, tile_size, _has_density
             )
+
+            # Content density knobs only apply to content tiling — warn if the
+            # decomposition didn't resolve to content (e.g. an explicit
+            # --tiling uniform/none), so the flags aren't silently no-ops.
+            if resolved_tiling != "content" and plan_box is None:
+                _density_flags = [
+                    name
+                    for name, on in (
+                        ("--cal", cal is not None),
+                        ("--k-star-ref", k_star_ref is not None),
+                        ("--n-features-ref", n_features_ref is not None),
+                        ("--feature-threshold", feature_threshold is not None),
+                        ("--feature-metric", feature_metric is not None),
+                        ("--target-features", target_features is not None),
+                    )
+                    if on
+                ]
+                if _density_flags:
+                    aprint(
+                        f"⚠ {', '.join(_density_flags)} apply only to "
+                        f"--tiling content; ignored under --tiling {resolved_tiling}."
+                    )
+
+            # Per-part LOD recipe (tiled partition only): validate + build params.
+            recipe_params: "Any" = None
+            if recipe is not None:
+                if flat:
+                    raise typer.BadParameter(
+                        "--recipe needs a partition output; it is incompatible "
+                        "with --flat (which merges to a single leaf)."
+                    )
+                if resolved_tiling == "none":
+                    raise typer.BadParameter(
+                        "--recipe needs a tiled fit (--tiling uniform/content); a "
+                        "whole-volume fit is a single leaf. Run `gsplat lod` on it "
+                        "instead."
+                    )
+                if tile is not None:
+                    raise typer.BadParameter(
+                        "--recipe is applied when the parts are merged; it cannot "
+                        "be combined with single-tile --tile (a worker fits one "
+                        "bare leaf)."
+                    )
+                if plan_only or plan_box is not None:
+                    raise typer.BadParameter(
+                        "--recipe is incompatible with --plan-only / --plan-box."
+                    )
+                recipe_params = _build_fit_recipe_params(
+                    recipe,
+                    n_lods=recipe_n_lods,
+                    additive_method=recipe_additive_method,
+                    breakpoints=recipe_breakpoints,
+                    compression_factor=recipe_compression_factor,
+                    levels=recipe_levels,
+                    substitutive_method=recipe_substitutive_method,
+                    coarsen_dims=recipe_coarsen_dims,
+                    lod_method=recipe_lod_method,
+                    device=device,
+                    volume_ndim=volume.ndim,
+                )
+                from luxar.gsplats.lod.recipes import uniform_per_part_lod_warning
+
+                _w = uniform_per_part_lod_warning(resolved_tiling, recipe)
+                if _w:
+                    aprint(f"⚠ {_w}")
+
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit
+
+                # Flags the content path does not implement — warn loudly rather
+                # than silently ignore (the fit knobs below ARE honored).
+                _unsupported = [
+                    name
+                    for name, on in (
+                        ("--denoise", denoise),
+                        ("--downscale", downscale is not None),
+                        ("--progressive", progressive),
+                    )
+                    if on
+                ]
+                if _unsupported and plan_box is None:
+                    aprint(
+                        f"⚠ {', '.join(_unsupported)} are not supported with "
+                        "--tiling content and are ignored."
+                    )
+                # --seeds is superseded by the content plan (per-box budgets from
+                # the density), not unsupported — note it so the user isn't
+                # surprised the explicit count had no effect.
+                if seeds is not None and plan_box is None:
+                    aprint(
+                        "⚠ --seeds is ignored with --tiling content; per-box "
+                        "budgets come from the density plan (use --cal / "
+                        "--k-star-ref to size them)."
+                    )
 
                 run_content_fit(
                     input_path,
@@ -533,10 +852,17 @@ def fit_volume(
                     max_leaf=max_leaf,
                     overlap=tile_overlap,
                     preset=preset,
+                    config=config,
+                    iters=iters,
+                    loss=loss,
+                    lr=lr,
+                    cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,
                     keep_boxes=keep_tiles,
                     flat=flat,
+                    recipe=recipe,
+                    recipe_params=recipe_params,
                     compress=compress,
                     plan=plan,
                     plan_only=plan_only,
@@ -544,6 +870,7 @@ def fit_volume(
                     channel=channel,
                     timepoint=timepoint,
                     array_key=array_key,
+                    axes=axes,
                     verbose=verbose,
                 )
                 raise typer.Exit(0)
@@ -751,6 +1078,7 @@ def fit_volume(
                             channel=channel,
                             timepoint=timepoint,
                             array_key=array_key,
+                            axes=axes,
                             progressive=progressive,
                             max_splats_per_pass=max_splats_per_pass,
                             psnr_patience=psnr_patience,
@@ -784,6 +1112,8 @@ def fit_volume(
                             verbose=verbose,
                             keep_tiles=keep_tiles,
                             partition=not flat,
+                            recipe=recipe,
+                            recipe_params=recipe_params,
                         )
 
                     with asection(f"Saving to {output_path.name}"):
@@ -883,6 +1213,12 @@ def fit_volume(
                 # whose workers rescale themselves).
                 seq_partition = (not flat) and tiled_downscale_factors is None
                 if (not flat) and tiled_downscale_factors is not None:
+                    if recipe is not None:
+                        raise typer.BadParameter(
+                            "--recipe needs a partition, but the sequential tiled "
+                            "path writes a flat leaf under --downscale. Use -j>1 "
+                            "(parallel tiles) for a downscaled partition with LOD."
+                        )
                     aprint(
                         "Note: --downscale on the sequential tiled path writes a "
                         "flat leaf; use -j>1 for a downscaled partition."
@@ -900,6 +1236,8 @@ def fit_volume(
                     max_passes=max_passes,
                     seeds=parsed_seeds,
                     partition=seq_partition,
+                    recipe=recipe,
+                    recipe_params=recipe_params,
                     **fit_config,
                 )
 
@@ -1165,6 +1503,13 @@ def calibrate_command(
     array_key: Optional[str] = typer.Option(
         None, "--array-key", help="Array key within .npz / nested zarr"
     ),
+    axes: Optional[str] = typer.Option(
+        None,
+        "--axes",
+        help="Per-dimension axis labels overriding the TCZYX/CZYX/ZYX heuristic "
+        "(e.g. 'z,c,y,x'). Time/channel axes are sliced by --timepoint/--channel "
+        "and dropped; spatial axes kept in the given order.",
+    ),
     # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
     k_star_metric: str = typer.Option(
         "psnr_minmax",
@@ -1213,6 +1558,25 @@ def calibrate_command(
         "--rd-model/--no-rd-model",
         help="Fit a parametric error-vs-K model (extrapolation + 'not-converged' flag).",
     ),
+    fit_exponent: bool = typer.Option(
+        False,
+        "--fit-exponent",
+        help=(
+            "Measure the saturation exponent alpha (K~features^alpha) instead of "
+            "assuming the default 0.44: calibrate K* at several region scales "
+            "(--exponent-scales) and regress log K* on log n_features. The fitted "
+            "alpha is written into splat_density. WARNING: multiplies runtime by "
+            "the number of scales (each is a full K-sweep)."
+        ),
+    ),
+    exponent_scales: Optional[str] = typer.Option(
+        None,
+        "--exponent-scales",
+        help=(
+            "Comma-separated region edge lengths for --fit-exponent "
+            "(default '128,192,256'). Each yields one (n_features, K*) point."
+        ),
+    ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
         None,
@@ -1243,8 +1607,9 @@ def calibrate_command(
     in the Luxar manuscript's model-selection analysis.
 
     Canonical end-to-end pipeline: ``cal`` → ``fit --seeds K*`` →
-    ``lod additive`` (or ``lod substitutive``) for a streaming-ready
-    multi-resolution dataset.
+    ``lod --recipe additive`` (or ``substitutive`` / ``partitioned`` / ...) for a
+    streaming-ready multi-resolution dataset. Use ``--fit-exponent`` to measure
+    the density exponent that ``fit --tiling content`` consumes.
 
     Examples:
         luxar gsplat cal kidney_dapi.tiff cal.json
@@ -1283,11 +1648,15 @@ def calibrate_command(
                     channel=channel,
                     timepoint=timepoint,
                     array_key=array_key,
+                    axes=axes,
                 )
 
             # Optionally calibrate on a content-rich sub-region (the manuscript
             # itself crops to ~20 M voxels; this automates that at tile scale).
             original_shape = list(volume.shape)
+            # Keep the pre-crop volume so --fit-exponent can select its own
+            # per-scale regions from the full data (independent of --auto-region).
+            volume_full = volume
             region_info: Optional[dict] = None
             if auto_region:
                 from dataclasses import asdict as _asdict
@@ -1351,6 +1720,109 @@ def calibrate_command(
             result.original_volume_shape = original_shape
             if region_info is not None:
                 result.calibration_region = region_info
+
+            # 4b. Optional multi-scale fit of the saturation exponent alpha.
+            #     Calibrates K* at several region scales and regresses log K* on
+            #     log n_features; the fitted alpha overrides the assumed default
+            #     in splat_density (which the planner / fit --tiling content read).
+            if fit_exponent:
+                from dataclasses import asdict as _asdict_fit
+
+                from luxar.gsplats.calibration import calibrate_saturation_exponent
+
+                if exponent_scales:
+                    try:
+                        raw_scales = [
+                            int(x) for x in exponent_scales.split(",") if x.strip()
+                        ]
+                    except ValueError as e:
+                        raise typer.BadParameter(
+                            "--exponent-scales must be comma-separated integers; "
+                            f"got {exponent_scales!r}"
+                        ) from e
+                else:
+                    raw_scales = [128, 192, 256]
+                if any(s <= 0 for s in raw_scales):
+                    raise typer.BadParameter(
+                        f"--exponent-scales must be positive; got {raw_scales}"
+                    )
+                # Dedupe (preserve order) — duplicate scales just waste a K-sweep
+                # and collapse to one regression point.
+                scales = list(dict.fromkeys(raw_scales))
+                if len(scales) < len(raw_scales):
+                    aprint(f"⚠ --exponent-scales: dropped duplicates → {scales}")
+                # Drop scales larger than every spatial axis: they clamp to the
+                # whole volume and collapse to identical feature counts (the silent
+                # regression killer the agent review flagged).
+                _max_dim = int(max(volume_full.shape))
+                _too_big = [s for s in scales if s > _max_dim]
+                if _too_big:
+                    scales = [s for s in scales if s <= _max_dim]
+                    aprint(
+                        f"⚠ --exponent-scales: dropped {_too_big} > volume "
+                        f"({_max_dim} vox) — they clamp to the whole volume."
+                    )
+                if len(scales) < 2:
+                    raise typer.BadParameter(
+                        "--exponent-scales needs ≥2 distinct scales within the "
+                        f"volume ({_max_dim} vox) to regress an exponent; "
+                        f"got {scales}."
+                    )
+                with asection(
+                    f"Fitting saturation exponent over {len(scales)} scale(s)"
+                ):
+                    aprint(
+                        f"⚠ --fit-exponent runs {len(scales)} extra K-sweeps "
+                        f"(scales={scales}); this multiplies runtime accordingly."
+                    )
+                    efit = calibrate_saturation_exponent(
+                        volume_full,
+                        scales,
+                        k_grid=ks,
+                        fit_kwargs=fit_kwargs,
+                        feature_method=feature_metric,
+                        region_strategy=region_strategy,
+                        k_star_metric=k_star_metric,
+                        mask_seed=mask_seed,
+                        mask_fraction=mask_fraction,
+                        progress_callback=_on_progress,
+                    )
+                if efit is None:
+                    aprint(
+                        "⚠ exponent fit failed (need ≥2 scales with distinct "
+                        f"feature counts); keeping α={saturation_exponent}."
+                    )
+                else:
+                    # Always record the fit for provenance/inspection.
+                    result.exponent_fit = _asdict_fit(efit)
+                    r2 = efit.r_squared
+                    r2_str = "n/a" if not math.isfinite(r2) else f"{r2:.3f}"
+                    alpha_usable = math.isfinite(efit.alpha) and efit.alpha > 0.0
+                    if not alpha_usable:
+                        # A non-positive / non-finite slope means the power law
+                        # didn't hold (e.g. K* flat across scales → α≈0, which
+                        # would collapse predict_k to a constant). Keep the default
+                        # rather than silently disabling the density transfer.
+                        aprint(
+                            f"⚠ degenerate exponent (α={efit.alpha:.3g}, R²={r2_str}, "
+                            f"{efit.n_distinct} distinct scales); keeping default "
+                            f"α={saturation_exponent}. (Fit recorded for inspection.)"
+                        )
+                    else:
+                        if result.splat_density is not None:
+                            result.splat_density["saturation_exponent"] = efit.alpha
+                        aprint(
+                            f"Fitted α={efit.alpha:.3f} (R²={r2_str}, "
+                            f"{efit.n_distinct} distinct scales); was "
+                            f"{saturation_exponent}"
+                        )
+                        if not math.isfinite(r2) or r2 < 0.5:
+                            aprint(
+                                "⚠ low/unassessable confidence (need ≥3 distinct "
+                                "scales with varied feature counts and K*); treat "
+                                "α as provisional — consider more/varied "
+                                "--exponent-scales or keep the default."
+                            )
 
             # 5. Write JSON
             with asection("Writing results"):
@@ -1481,7 +1953,9 @@ def calibrate_command(
 
 def register_fitting_commands(app: typer.Typer) -> None:
     """Register the fitting commands onto ``app_gsplat``."""
-    app.command("denoise")(denoise_volume_cmd)
+    # Workflow order: fit and cal (the core pre-/fit steps) lead; render and
+    # denoise (utilities) follow.
     app.command("fit")(fit_volume)
-    app.command("render")(render_to_file)
     app.command("cal")(calibrate_command)
+    app.command("render")(render_to_file)
+    app.command("denoise")(denoise_volume_cmd)

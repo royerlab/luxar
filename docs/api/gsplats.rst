@@ -172,7 +172,9 @@ Contrast-Limited Adaptive Histogram Equalization for nD data.
 Batch Fitting
 -------------
 
-HPC/Slurm batch orchestration for large-scale Gaussian splat fitting.
+Scheduler-agnostic batch orchestration for fitting a whole nD dataset across its
+axes — locally across multiple GPUs (``batch-fit run``) or on a Slurm cluster
+(``batch-fit submit``).
 
 .. automodule:: luxar.gsplats.batch
    :members:

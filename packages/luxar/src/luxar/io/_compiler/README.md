@@ -98,7 +98,7 @@ The gsplat-specific pipeline sequenced by the shared walker
 |----------|------|
 | `validate_gsplat_inputs(...)` | shape/sign checks; normalizes a 1-D Cholesky (uniform covariance) to `(1, K)` and flags `cholesky_is_uniform`; returns `n_splats`, `n_dims` (`K = D(D+1)/2`) |
 | `apply_gsplat_spatial_ordering(..., ctx: OrderingCtx)` | reorders centers/amplitudes/cholesky/colors along a space-filling curve, computes per-chunk bounds, returns `ordering_data` (or `None`) |
-| `write_gsplat_arrays(..., ctx: DatasetCtx)` | encodes `centers` (COORDINATE), `amplitudes` (via the shared positive-scalar writer), `cholesky_factors` (CHOLESKY), optional `colors` (shared color writer), and `chunk_bounds`; returns a metadata dict |
+| `write_gsplat_arrays(..., ctx: DatasetCtx)` | encodes `centers` (COORDINATE), `amplitudes` (via the shared positive-scalar writer), the packed input `cholesky_factors` split on disk into `cholesky_factors_diag` (CHOLESKY_DIAG) + `cholesky_factors_offdiag` (CHOLESKY_OFFDIAG; off-diagonal omitted for 1-D gsplats), optional `colors` (shared color writer), and `chunk_bounds`; returns a metadata dict |
 | `apply_gsplat_group_attrs(...)` | resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `gamma`, `intensity`, `offset`, `blending_mode`, `truncation_radius`), then stamps authoritative `type="gsplats"` attrs and `position_bounds` |
 
 `amplitudes` and `cholesky_factors` go through `dataset_writers/scalars.py` and
