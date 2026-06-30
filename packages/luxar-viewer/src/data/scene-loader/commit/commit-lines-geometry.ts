@@ -19,6 +19,7 @@ import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
+import { stampLoadedViewVersion } from './stamp-view-version';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
 /**
@@ -35,7 +36,8 @@ export function commitLinesGeometry(
   staged: StagedLinesCommit,
   rootGroup: THREE.Group | null,
   gpuBufferPool: GPUBufferPool | null,
-  session?: UpdateSession
+  session: UpdateSession | undefined,
+  loadedViewVersion: number
 ): void {
   if (!rootGroup) return;
 
@@ -62,6 +64,8 @@ export function commitLinesGeometry(
 
     if (isLinesUserData(mesh.userData)) {
       mesh.userData.visibleSegmentCount = processed.segmentCount;
+      // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
+      stampLoadedViewVersion(mesh.userData, loadedViewVersion);
     }
 
     if (processed.segmentCount === 0) {

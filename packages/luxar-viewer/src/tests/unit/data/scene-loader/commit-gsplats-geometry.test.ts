@@ -39,6 +39,10 @@ function makeStaged(splatCount = 5): StagedGSplatsCommit {
   };
 }
 
+// The view-version stamped onto the mesh is now an explicit commit arg (shared
+// across gsplats/points/lines via stampLoadedViewVersion), not a staged field.
+const V = 0;
+
 function makeMesh(name: string): THREE.Mesh {
   const mesh = new THREE.Mesh();
   mesh.name = name;
@@ -52,11 +56,13 @@ function makeMesh(name: string): THREE.Mesh {
 
 describe('commitGSplatsGeometry', () => {
   it('no-ops when rootGroup is null', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), null, null)).not.toThrow();
+    expect(() => commitGSplatsGeometry(makeStaged(), null, null, undefined, V)).not.toThrow();
   });
 
   it('no-ops silently when mesh has gone missing', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), new THREE.Group(), null)).not.toThrow();
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(), new THREE.Group(), null, undefined, V)
+    ).not.toThrow();
   });
 
   it('writes visibleSplatCount on the mesh user-data', () => {
@@ -64,7 +70,7 @@ describe('commitGSplatsGeometry', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null);
+    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
     // C7[P2][P11]: a mutant that drops the GPU update call would still pass
@@ -77,6 +83,16 @@ describe('commitGSplatsGeometry', () => {
     ];
     expect(calledMesh).toBe(mesh);
     expect(payload.splatCount).toBe(11);
+  });
+
+  it('stamps loadedViewVersion (the explicit commit arg) onto the mesh user-data', () => {
+    // Drives the slice-aware LOD fallback: the registry reads this stamp to tell
+    // whether the level's geometry is fresh for the current view version.
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    commitGSplatsGeometry(makeStaged(3), root, null, undefined, 7);
+    expect((mesh.userData as { loadedViewVersion: number }).loadedViewVersion).toBe(7);
   });
 
   // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts.
@@ -92,7 +108,7 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
     };
-    expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool)).not.toThrow();
+    expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool, undefined, V)).not.toThrow();
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
@@ -118,7 +134,7 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
-    commitGSplatsGeometry(makeStaged(7), root, pool as never);
+    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
 
     expect(pool.acquireGSplatsGeometry).toHaveBeenCalledTimes(1);
     expect(pool.updateGSplatsGeometry).toHaveBeenCalledTimes(1);

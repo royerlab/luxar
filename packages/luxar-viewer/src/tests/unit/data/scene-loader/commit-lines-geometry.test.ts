@@ -56,13 +56,13 @@ function makeMesh(name: string): THREE.Mesh {
 describe('commitLinesGeometry', () => {
   it('no-ops when rootGroup is null', () => {
     const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed() };
-    expect(() => commitLinesGeometry(staged, null, null)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, null, null, undefined, 0)).not.toThrow();
   });
 
   it('no-ops silently when the mesh has gone missing', () => {
     const root = new THREE.Group();
     const staged: StagedLinesCommit = { path: '/missing', processed: makeProcessed() };
-    expect(() => commitLinesGeometry(staged, root, null)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, root, null, undefined, 0)).not.toThrow();
   });
 
   it('writes visibleSegmentCount on the mesh userData', () => {
@@ -72,7 +72,7 @@ describe('commitLinesGeometry', () => {
     root.add(mesh);
     const processed = makeProcessed(7);
     const staged: StagedLinesCommit = { path: '/lines', processed };
-    commitLinesGeometry(staged, root, null);
+    commitLinesGeometry(staged, root, null, undefined, 0);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
     // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
     // updateInstancedLinesMesh call would still pass the userData write.
@@ -84,6 +84,15 @@ describe('commitLinesGeometry', () => {
     ];
     expect(calledMesh).toBe(mesh);
     expect(calledProcessed).toBe(processed);
+  });
+
+  it('stamps loadedViewVersion onto the mesh user-data (three-geometry symmetry)', () => {
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(4) };
+    commitLinesGeometry(staged, root, null, undefined, 9);
+    expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
   });
 
   // data.md G3 fix: parallel coverage to commit-points-geometry.test.ts. The
@@ -105,7 +114,7 @@ describe('commitLinesGeometry', () => {
     };
     const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
     mockUpdateInstancedLinesMesh.mockReset();
-    expect(() => commitLinesGeometry(staged, root, mockPool)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, root, mockPool, undefined, 0)).not.toThrow();
     expect(mesh.userData.visibleSegmentCount).toBe(11);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();
@@ -132,7 +141,7 @@ describe('commitLinesGeometry', () => {
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
     const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(11) };
-    commitLinesGeometry(staged, root, pool as never);
+    commitLinesGeometry(staged, root, pool as never, undefined, 0);
 
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(beforeGeom);

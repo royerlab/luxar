@@ -304,7 +304,9 @@ function makeLazyChild(minPixelSize: number, ensureLoaded: () => void): LODGroup
 function makeRegistry(
   displayDims: readonly number[] = [0, 1, 2],
   residentByteBudget?: number,
-  getResidentBytes?: () => number
+  getResidentBytes?: () => number,
+  getViewVersion?: () => number,
+  requestRender?: () => void
 ) {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
@@ -313,6 +315,8 @@ function makeRegistry(
     getCamera: () => camera,
     getViewportSize: () => ({ width: 800, height: 600 }),
     getDisplayDims: () => displayDims,
+    ...(getViewVersion != null ? { getViewVersion } : {}),
+    ...(requestRender != null ? { requestRender } : {}),
     ...(residentByteBudget != null
       ? {
           getResidentByteBudget: () => residentByteBudget,
@@ -323,6 +327,19 @@ function makeRegistry(
         }
       : {}),
   });
+}
+
+/**
+ * A gsplats LOD child stamped with the view-version its (ready) geometry was
+ * committed for — what ``commitGSplatsGeometry`` writes. The registry's
+ * slice-aware fallback reads ``object.userData.{nodeType,loadedViewVersion}``;
+ * a plain ``makeChild`` (a bare ``THREE.Group`` with no ``nodeType``) is always
+ * treated as fresh, so the fallback only engages for gsplats children.
+ */
+function makeGsplatChild(minPixelSize: number, loadedViewVersion: number): LODGroupChild {
+  const child = makeChild(minPixelSize);
+  child.object.userData = { nodeType: 'gsplats', loadedViewVersion };
+  return child;
 }
 
 /**
@@ -621,6 +638,28 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(relLoading).not.toHaveBeenCalled();
   });
 
+  it('never evicts a READY level whose deferred RELOAD is in flight (B2 finding 7)', () => {
+    // Distinct from the not-ready case above: a stale fine level being reloaded
+    // keeps ready=true (prior geometry committed) while loading=true. Evicting
+    // it mid-reload would reset ready/loading via release(), and the next frame
+    // the registry would kick a SECOND concurrent ensureLoaded on the same
+    // loader. The eviction filter's `!child.loading` clause is the only thing
+    // preventing that — this test fails if that clause is removed.
+    const relReloading = vi.fn();
+    const reloading = readyLazy(100, { release: relReloading, tick: 1 });
+    reloading.loading = true; // ready=true AND loading=true → stale reload in flight
+    const children = [readyLazy(0, { tick: 9 }), reloading];
+    // residentModel counts both ready children (200 bytes) > 50 budget → the
+    // eviction pass runs and would target `reloading` (hidden, has release/tick)
+    // if not for the loading guard.
+    const reg = makeRegistry([0, 1, 2], 50, residentModel(children));
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+
+    reg.evaluatePerFrame();
+    expect(relReloading).not.toHaveBeenCalled();
+  });
+
   it('evicts a loaded level that became ready but was never shown (Fix 2 — no VRAM leak)', () => {
     // A lazy level that finished loading but was never swapped-to (camera
     // moved away mid-load) used to keep lastVisibleTick == null forever and
@@ -851,5 +890,260 @@ describe('LODGroupRegistry — frustum-aware selection & eviction', () => {
     // Both off-screen, equal tick → distance breaks the tie: furthest first.
     expect(relFar).toHaveBeenCalledTimes(1);
     expect(relNear).not.toHaveBeenCalled();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Slice-aware freshness fallback — show the coarsest level that is fresh for
+// the current view-version while the screen-desired (fine) level reloads after
+// a slice / displayDims change, then swap up once it recommits.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — slice-aware freshness fallback', () => {
+  it('displays the coarsest FRESH level while the screen-desired level is stale', () => {
+    // coarse fresh@2, fine stale@1; current version 2. Identity camera → the
+    // huge on-screen diagonal makes the finest level the aspiration, but it's
+    // stale → display falls back to the fresh coarse level.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true);
+    expect(children[1].object.visible).toBe(false);
+    // Aspiration still advanced to the finest level (it's what we want on screen).
+    expect(reg.list()[0].activeChildIndex).toBe(1);
+  });
+
+  it('swaps up to the fine level once it commits for the current version', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame(); // fine stale → coarse shown
+    expect(children[0].object.visible).toBe(true);
+    // Fine recommits for V2 (the re-slice load landed).
+    (children[1].object.userData as { loadedViewVersion: number }).loadedViewVersion = 2;
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true);
+    expect(children[0].object.visible).toBe(false);
+  });
+
+  it('returns changed=true on the fallback (fine→coarse) and swap-up (coarse→fine) frames', () => {
+    let version = 1;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)]; // both fresh@1
+    reg.register(makeEntry(children, 0, '/g'));
+    expect(reg.evaluatePerFrame()).toBe(true); // swap up 0→1 (fine fresh)
+    expect(children[1].object.visible).toBe(true);
+    // Scrub to a new view-version: both stamps now lag → stale.
+    version = 2;
+    expect(reg.evaluatePerFrame()).toBe(true); // display drops fine→coarse
+    expect(children[0].object.visible).toBe(true);
+    // Fine recommits for V2 → swap back up.
+    (children[1].object.userData as { loadedViewVersion: number }).loadedViewVersion = 2;
+    expect(reg.evaluatePerFrame()).toBe(true); // coarse→fine
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it('falls back to the coarsest READY level (never blank) when no level is fresh', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 9);
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)]; // both stale for V9
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true); // coarsest ready shown
+    expect(children.filter((c) => c.object.visible).length).toBe(1); // exactly one, never blank
+  });
+
+  it('never evicts the DISPLAYED coarse-fresh level even though the aspiration is the fine level', () => {
+    // Pins the §4 fix: the eviction guard must protect ``displayedChildIndex``,
+    // not ``activeChildIndex``. Here display=coarse(0), aspiration=fine(1).
+    // Guarding the aspiration instead would free the on-screen coarse → blank.
+    const relCoarse = vi.fn();
+    const relFine = vi.fn();
+    const coarse = {
+      ...makeGsplatChild(0, 2),
+      ready: true,
+      release: relCoarse as () => void,
+      lastVisibleTick: 5,
+    };
+    const fine = {
+      ...makeGsplatChild(100, 1),
+      ready: true,
+      release: relFine as () => void,
+      lastVisibleTick: 5,
+    };
+    const children = [coarse, fine];
+    const reg = makeRegistry([0, 1, 2], 50, residentModel(children), () => 2);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 }); // aspiration = fine
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true); // coarse-fresh displayed
+    expect(relCoarse).not.toHaveBeenCalled(); // displayed level never freed
+    expect(relFine).toHaveBeenCalledTimes(1); // hidden aspiration is the candidate
+  });
+
+  it('a locked level that is stale still shows the coarse-fresh level until it commits', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 1)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true); // coarse-fresh while locked-fine reloads
+    (children[1].object.userData as { loadedViewVersion: number }).loadedViewVersion = 2;
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true); // locked fine shown once fresh
+  });
+
+  it('no-op when the desired level is already fresh (display == aspiration)', () => {
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const children = [makeGsplatChild(0, 2), makeGsplatChild(100, 2)]; // both fresh@2
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true); // finest shown, no fallback
+  });
+
+  it('no-op for non-gsplats LOD children (freshness tracked only for gsplats)', () => {
+    // Plain children (no nodeType:'gsplats') are always fresh even with a
+    // version wired — points/lines LOD groups are unaffected.
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 999);
+    const children = [makeChild(0), makeChild(100)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true);
+  });
+
+  it('treats every ready level as fresh when getViewVersion is not wired (pre-feature parity)', () => {
+    const reg = makeRegistry(); // no getViewVersion dep
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(children[1].object.visible).toBe(true); // finest shown (no freshness gating)
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Settle-gated reload of a stale fine level (B2 decoupling). A lazy fine level
+// that has left the per-slice sweep is reloaded by the REGISTRY — but only once
+// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_TICKS
+// frames), so active scrubbing shows only the cheap coarse level.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — settle-gated fine reload', () => {
+  /** A ready-but-stale lazy fine gsplats child with an ensureLoaded spy. */
+  function makeStaleLazyFine(minPixelSize: number, staleVersion: number, ensureLoaded: () => void) {
+    const child = makeGsplatChild(minPixelSize, staleVersion);
+    child.ready = true; // committed (just stale for the current version)
+    child.ensureLoaded = ensureLoaded;
+    return child;
+  }
+
+  it('does NOT reload the stale fine level while the version is still changing (scrubbing)', () => {
+    let version = 1;
+    const ensureLoaded = vi.fn();
+    const children = [makeGsplatChild(0, 1), makeStaleLazyFine(100, 1, ensureLoaded)];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    reg.register(makeEntry(children, 0, '/g'));
+    // Scrub every frame: the version keeps changing so it never settles.
+    for (let i = 0; i < 12; i++) {
+      version += 1;
+      reg.evaluatePerFrame();
+    }
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    // ...and the coarse fallback is what's displayed meanwhile.
+    expect(children[0].object.visible).toBe(true);
+    expect(children[1].object.visible).toBe(false);
+  });
+
+  it('reloads the stale fine level exactly once after the scrub settles', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeGsplatChild(0, 2), makeStaleLazyFine(100, 1, ensureLoaded)];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // version fixed at 2
+    reg.register(makeEntry(children, 0, '/g'));
+    // A few frames: not yet settled → no reload.
+    for (let i = 0; i < 4; i++) reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_TICKS ~ 8).
+    for (let i = 0; i < 10; i++) reg.evaluatePerFrame();
+    // Fired once; the loading guard prevents re-firing every subsequent frame.
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    // The coarse-fresh level stays displayed while the fine reloads.
+    expect(children[0].object.visible).toBe(true);
+  });
+
+  it('never reloads an eager (sweep-driven) coarse level — it has no ensureLoaded', () => {
+    // Both children stale + ready but NEITHER has ensureLoaded (eager levels):
+    // the registry must not attempt a reload (that would throw on undefined).
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    children.forEach((c) => (c.ready = true));
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry(children, 0, '/g'));
+    expect(() => {
+      for (let i = 0; i < 12; i++) reg.evaluatePerFrame();
+    }).not.toThrow();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Render-loop keep-alive while a lazy level loads (B2). The viewer is
+// on-demand and idles after ~2s; a deferred fine reload commits OUTSIDE the
+// per-slice sweep and can outlast the idle timeout, so the registry must keep
+// requesting renders while any child is loading or the swap-up never fires.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — render keep-alive while loading', () => {
+  it('requests a render every frame while a child is loading', () => {
+    const requestRender = vi.fn();
+    const loading = makeLazyChild(100, () => {});
+    loading.loading = true; // a deferred (re)load in flight
+    const children = [makeGsplatChild(0, 1), loading];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1, requestRender);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestRender).toHaveBeenCalledTimes(2); // kept alive each frame
+  });
+
+  it('does NOT request renders when nothing is loading (power-saving preserved)', () => {
+    const requestRender = vi.fn();
+    const children = [makeGsplatChild(0, 1), makeGsplatChild(100, 1)];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 1, requestRender);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(requestRender).not.toHaveBeenCalled();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Registry-driven progressive refinement (B2 finding 6). A lazy level backed
+// by a progressive (additive-laddered) loader is fresh but reports hasMoreLODs;
+// since lazy levels no longer ride the per-slice sweep, the registry must keep
+// re-firing ensureLoaded (settle-gated) to advance the ladder to completion.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
+  it('re-fires ensureLoaded while hasMoreLODs (fresh but incomplete), and stops when complete', () => {
+    let more = true;
+    const fine = makeGsplatChild(100, 2); // ready & fresh for version 2
+    fine.ready = true;
+    // Spy simulates a completed progressive pass (clears loading so the next
+    // settled frame can advance the ladder again).
+    const ensureLoaded = vi.fn(() => {
+      fine.loading = false;
+    });
+    fine.ensureLoaded = ensureLoaded;
+    fine.hasMoreLODs = () => more;
+    const children = [makeGsplatChild(0, 2), fine];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    reg.register(makeEntry(children, 0, '/g'));
+
+    // Settle (~8 frames) then several refinement passes.
+    for (let i = 0; i < 16; i++) reg.evaluatePerFrame();
+    expect(ensureLoaded.mock.calls.length).toBeGreaterThan(1); // ladder advancing
+    expect(fine.object.visible).toBe(true); // fresh progressive level stays displayed
+
+    // Ladder complete → no further passes.
+    more = false;
+    const before = ensureLoaded.mock.calls.length;
+    for (let i = 0; i < 6; i++) reg.evaluatePerFrame();
+    expect(ensureLoaded.mock.calls.length).toBe(before);
   });
 });

@@ -130,8 +130,11 @@ export async function loadLinesNodeExpensive(
     const derivedLines = ctx.deriveNodeViewState(node.path, attrs, {
       applyPartialExtendTolerance: false,
     });
+    // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
+    // deferred reload is stamped for the slice it actually loaded.
+    const loadedViewVersion = ctx.getViewVersion();
     const linesViewState: LinesViewState = derivedLines.skip
-      ? ctx.viewState
+      ? ctx.getLiveViewState()
       : derivedLines.viewState;
 
     const data = await loader.loadLines(linesViewState);
@@ -150,7 +153,7 @@ export async function loadLinesNodeExpensive(
     // policy, matching loadPointsNodeExpensive / loadGSplatsNodeExpensive's
     // early return.
     if (!ctx.isDatasetLive()) return;
-    if (staged) ctx.commitLinesGeometry(staged);
+    if (staged) ctx.commitLinesGeometry(staged, undefined, loadedViewVersion);
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
   } catch (error) {

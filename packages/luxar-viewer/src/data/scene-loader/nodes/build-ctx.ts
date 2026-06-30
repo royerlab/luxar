@@ -44,8 +44,25 @@ export interface NodeBuildCtx {
    * Snapshot of the orchestrator's `viewState` at the time the leaf is
    * invoked. Captured by value so a concurrent updateView mutating the
    * orchestrator's field doesn't corrupt the initial-load query region.
+   *
+   * NOTE: for a DEFERRED reload (a lazy lod_group level re-fired after the user
+   * scrubbed) this snapshot is stale — use `getLiveViewState()` /
+   * `deriveNodeViewState()` to load for the CURRENT slice.
    */
   viewState: ViewState;
+  /**
+   * The orchestrator's CURRENT view-update version (live, not the snapshot). A
+   * deferred / registry-driven reload captures this at derive-time and stamps
+   * the committed geometry with it (see the commit callbacks below) so the LOD
+   * registry's freshness check reflects the slice actually loaded.
+   */
+  getViewVersion(): number;
+  /**
+   * The orchestrator's CURRENT `viewState` (live, not the build-time snapshot).
+   * Used by the lazy/reload path so a level re-loaded after a scrub queries the
+   * current slice rather than the one captured when the ctx was built.
+   */
+  getLiveViewState(): ViewState;
   /** Factory-deps snapshot for `createX*Loader` helpers. */
   factoryDeps: LoaderFactoryDeps;
   /** Compose effective rendering attrs along the scene-graph ancestry. */
@@ -98,19 +115,35 @@ export interface NodeBuildCtx {
   releaseLazyLines(path: string): void;
 
   // Per-type commit callbacks — each leaf only uses the one for its type.
-  updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
+  // ``loadedViewVersion`` stamps the committed mesh for the LOD freshness check;
+  // omit it to default to the live ``_updateVersion`` (correct for the sweep),
+  // or pass the derive-time version from a deferred reload.
+  updatePointsGeometry(
+    path: string,
+    data: LoadedPointsData,
+    session?: UpdateSession,
+    loadedViewVersion?: number
+  ): void;
   processLinesData(
     path: string,
     data: LoadedLinesData,
     viewState: LinesViewState,
     session?: UpdateSession
   ): Promise<StagedLinesCommit | null>;
-  commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
+  commitLinesGeometry(
+    staged: StagedLinesCommit,
+    session?: UpdateSession,
+    loadedViewVersion?: number
+  ): void;
   processGSplatsData(
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<StagedGSplatsCommit | null>;
-  commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void;
+  commitGSplatsGeometry(
+    staged: StagedGSplatsCommit,
+    session?: UpdateSession,
+    loadedViewVersion?: number
+  ): void;
 }

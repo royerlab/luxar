@@ -310,6 +310,16 @@ export interface PointsUserData {
   /** Currently visible point count after nD slicing (updated on view change) */
   visiblePointCount?: number;
 
+  /**
+   * The ``SceneLoader`` view-update version this mesh's committed geometry was
+   * loaded for. Written at commit (``commit-points-geometry.ts`` via
+   * ``stampLoadedViewVersion``) and read by the LOD registry to tell whether a
+   * level is *fresh for the current view (slice/displayDims)* vs merely
+   * committed — a re-slice overwrites geometry in place without changing
+   * readiness. ``undefined`` ⇒ never committed ⇒ treated as stale.
+   */
+  loadedViewVersion?: number;
+
   /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
   pickId?: number;
 }

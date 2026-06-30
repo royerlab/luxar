@@ -138,12 +138,19 @@ export async function loadGSplatsNodeExpensive(
     const derivedGSplats = ctx.deriveNodeViewState(node.path, node.attrs, {
       applyPartialExtendTolerance: true,
     });
+    // Capture the version at DERIVE time so a deferred reload that finishes
+    // after a further scrub is stamped for the slice it actually loaded (the
+    // registry then re-reloads for the newer version) — not mis-stamped fresh.
+    const loadedViewVersion = ctx.getViewVersion();
+    // Use the LIVE view-state (not the build-time snapshot) for the
+    // extend_to_all skip-fallback so a deferred reload queries the current slice.
+    const live = ctx.getLiveViewState();
     const gsplatsViewState: GSplatsViewState = derivedGSplats.skip
       ? {
-          displayDims: ctx.viewState.displayDims,
-          slicePosition: ctx.viewState.slicePosition,
-          tolerance: ctx.viewState.tolerance,
-          dimensions: ctx.viewState.dimensions,
+          displayDims: live.displayDims,
+          slicePosition: live.slicePosition,
+          tolerance: live.tolerance,
+          dimensions: live.dimensions,
         }
       : derivedGSplats.viewState;
 
@@ -172,7 +179,9 @@ export async function loadGSplatsNodeExpensive(
       // write into a stale root group. Drop the commit silently — the
       // worker results are discarded, matching the abort-discard policy.
       if (!ctx.isDatasetLive()) return;
-      timeLodStageSync('lazy:commit', () => ctx.commitGSplatsGeometry(staged));
+      timeLodStageSync('lazy:commit', () =>
+        ctx.commitGSplatsGeometry(staged, undefined, loadedViewVersion)
+      );
     }
 
     log.success(
