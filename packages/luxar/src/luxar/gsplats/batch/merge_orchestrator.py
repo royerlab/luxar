@@ -79,7 +79,10 @@ def merge_batch_results(
             "the flat 3-level fan-in assumes a dense (t, c) grid and would crash on "
             "that gap (and reloads every box into memory, defeating content tiling "
             "on the large volumes it targets). Drop --flat to use the default "
-            "streaming partition merge, which skips empty slots correctly."
+            "streaming partition merge, which skips empty slots correctly — then, "
+            "if you genuinely need a single flat leaf (e.g. to feed `gsplat lod "
+            "--recipe multiscale`), run `luxar gsplat flatten` on the merged "
+            "partition."
         )
     if recipe is not None:
         from luxar.gsplats.lod.recipes import PER_PART_RECIPES
