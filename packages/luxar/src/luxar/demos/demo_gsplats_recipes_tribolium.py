@@ -277,14 +277,13 @@ def _paint_node(node: GSplatNode, arc: tuple[float, float]) -> GSplatNode:
         m = node.n_children
         shades = _level_shades(_arc_mid(arc), m)  # index 0 = coarsest … m-1 = finest
         children = []
-        for k, level in enumerate(node.children):  # k: 0 = finest … m-1 = coarsest
+        for k, level in enumerate(node.children):  # k: 0 = coarsest … m-1 = finest
             if isinstance(level, GSplatLeaf):
-                children.append(_recolor_leaf(level, shades[m - 1 - k]))
+                children.append(_recolor_leaf(level, shades[k]))
             else:
                 children.append(_paint_node(level, arc))
         return GSplatLodGroup(
             children=children,
-            default_level=node.default_level,
             meta=dict(node.meta),
         )
     if isinstance(node, GSplatLeaf):
@@ -368,7 +367,8 @@ def build_and_write(base: GSplatData, recipe: str, out_path: Path) -> dict:
                 n = result.n_children
                 structure = f"{n} BSP part{'s' if n != 1 else ''}, substitutive each"
             else:  # multiscale
-                fine = result.children[0]
+                # children are coarsest→finest: [coarse cap, fine partition].
+                fine = result.children[-1]
                 n_parts = fine.n_children if isinstance(fine, GSplatPartition) else 1
                 structure = f"coarse cap + {n_parts}-part fine branch"
             stats = {"splats": total_splats(result), "structure": structure}

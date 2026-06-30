@@ -75,7 +75,6 @@ Configuration settings, defaults, and validation functions.
 
 **Key Functions:**
 - `validate_chunk_bytes()` - Validate a chunk size **in bytes** against `MIN_CHUNK_BYTES`/`MAX_CHUNK_BYTES`
-- `validate_chunk_size()` - Deprecated alias of `validate_chunk_bytes()` (emits `DeprecationWarning`; unit is bytes, not elements)
 - `validate_compression_level()` - Validate compression level (1-9)
 - `estimate_memory_usage()` - Estimate memory for a points dataset
 - `check_dataset_size_warning()` - Check if dataset size warrants a warning
