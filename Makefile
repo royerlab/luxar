@@ -2391,11 +2391,34 @@ shell:  ## Enter Hatch development shell
 	$(HATCH) shell
 
 # Building and publishing
-build:  ## Build distribution packages
+# ------------------------
+# Releases are TAG-TRIGGERED: `make release` pushes a v<version> tag and
+# .github/workflows/publish.yml builds + publishes to PyPI via OIDC trusted
+# publishing on a clean Linux runner. Never publish from a dev machine — that
+# would ship a wheel with the wrong/missing viewer and a stray host launcher
+# binary, and bypass OIDC. See scripts/release.sh for the full preflight.
+.PHONY: build set-version release-check release publish publish-test
+
+build: build-viewer  ## Build wheel + sdist (builds the viewer first so it is bundled)
 	$(HATCH) build
 
-publish-test:  ## Publish to TestPyPI
-	$(HATCH) publish -r test
+set-version:  ## Set release version in code (DATE=YYYY.MM.DD, default today); commit via PR
+	python3 scripts/set_version.py $(DATE)
 
-publish:  ## Publish to PyPI
-	$(HATCH) publish
+release-check:  ## Dry-run release: run ALL preflight checks, tag/push nothing
+	bash scripts/release.sh --dry-run
+
+release:  ## Cut release: validate main + CI green, then tag v<version> and push (triggers PyPI publish)
+	bash scripts/release.sh
+
+publish publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
+	@echo "❌ 'make $@' is disabled. Luxar publishes via a tag-triggered GitHub"; \
+	echo "   Actions workflow using PyPI trusted publishing (OIDC) — not local uploads."; \
+	echo "   A local 'hatch publish' would ship a wheel with NO viewer and your host"; \
+	echo "   launcher binary baked in, and bypass OIDC entirely."; \
+	echo; \
+	echo "   To release:"; \
+	echo "     make set-version        # bump CalVer, then open a PR and merge to main"; \
+	echo "     make release-check      # dry-run preflight (safe)"; \
+	echo "     make release            # tag + push -> CI builds & publishes"; \
+	exit 1

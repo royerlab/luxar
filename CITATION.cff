@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use Luxar, please cite it as below."
+title: "Luxar: Gaussian splatting and interactive web visualization for multidimensional scientific data"
+abstract: >-
+  Luxar is an open-source, Python-first system that compiles arbitrary
+  n-dimensional scientific data — points, lines, and Gaussian splats — into
+  compact, spatially indexed Zarr archives served to a browser-based WebGL
+  viewer with HDR rendering, progressive streaming, and native n-dimensional
+  navigation. It includes a pipeline for fitting microscopy volumes to Gaussian
+  splats as a compact, continuous, GPU-renderable representation.
+type: software
+authors:
+  - family-names: Royer
+    given-names: "Loïc A."
+    orcid: "https://orcid.org/0000-0002-9991-9724"
+    affiliation: "Chan Zuckerberg Biohub, San Francisco"
+    email: loic.royer@czbiohub.org
+repository-code: "https://github.com/royerlab/luxar"
+url: "https://github.com/royerlab/luxar"
+license: BSD-3-Clause
+keywords:
+  - scientific-visualization
+  - gaussian-splatting
+  - microscopy
+  - n-dimensional
+  - webgl
+  - zarr
+# ── TODO at launch (once the bioRxiv preprint is posted) ─────────────────────
+#   * set `version:` to the released CalVer (e.g. 2026.06.29)
+#   * set `date-released:` to the release date (YYYY-MM-DD)
+#   * add the preprint as the preferred citation, e.g.:
+#       preferred-citation:
+#         type: article
+#         title: "Luxar: Gaussian splatting and interactive web visualization for multidimensional scientific data"
+#         authors:
+#           - family-names: Royer
+#             given-names: "Loïc A."
+#             orcid: "https://orcid.org/0000-0002-9991-9724"
+#         year: 2026
+#         doi: "10.1101/XXXXXX"          # bioRxiv DOI
+#         journal: "bioRxiv"

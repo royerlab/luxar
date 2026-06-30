@@ -1,0 +1,156 @@
+# Publish Luxar to PyPI via Trusted Publishing (GitHub Actions OIDC).
+#
+# Trigger: pushing a version tag (e.g. `v2026.06.29`). The tag MUST match the
+# package version in packages/luxar/src/luxar/__init__.py (CalVer `YYYY.MM.DD`,
+# zero-padded) or the build fails fast before anything is published. Cut releases
+# with `make release` (never `hatch publish` — see pyproject `[tool.hatch.publish]`).
+#
+# The wheel force-includes packages/luxar-viewer/dist (see [tool.hatch...
+# force-include] in pyproject.toml), so the viewer is built BEFORE `hatch build`.
+# Wheels are the supported artifact; the sdist is provenance-only (no viewer).
+# Native launchers are host-specific and intentionally NOT bundled — the wheel
+# stays py3-none-any and `luxar export --native` tells users to build them.
+#
+# Third-party actions are pinned by commit SHA (repo convention) for supply-chain
+# safety. One-time setup (already done): PyPI trusted publisher (owner=royerlab,
+# repo=luxar, workflow=publish.yml, env=pypi) + GitHub `pypi` environment
+# (restricted to `v*` tags). The TestPyPI dry-run path additionally needs a
+# TestPyPI trusted publisher + the `testpypi` environment.
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build only; publish to TestPyPI instead of PyPI"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust (for WASM build)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
+        with:
+          version: "v0.14.0" # pinned to match ci.yml (deterministic, not 'latest')
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' packages/luxar/src/luxar/__init__.py)"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "Package __version__ = $PKG_VERSION"
+          echo "Git tag (sans 'v')  = $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' does not match package version '$PKG_VERSION'. Bump __version__ (CalVer = release day) and re-tag."
+            exit 1
+          fi
+
+      - name: Build viewer (WASM + dist bundled into the wheel)
+        run: |
+          cd packages/luxar-viewer
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Sanity-check the viewer dist exists
+        run: |
+          test -f packages/luxar-viewer/dist/index.html \
+            || { echo "::error::viewer dist missing — wheel would ship a broken viewer"; exit 1; }
+
+      - name: Install build backend
+        run: python -m pip install --upgrade hatch
+
+      - name: Build wheel + sdist
+        run: hatch build
+
+      - name: Verify the viewer was bundled into the wheel
+        run: |
+          set -euo pipefail
+          WHEEL="$(ls dist/*.whl)"
+          echo "Inspecting $WHEEL"
+          python -c "import zipfile,sys; names=zipfile.ZipFile(sys.argv[1]).namelist(); \
+            assert any(n.startswith('luxar/_viewer_dist/') for n in names), 'viewer dist not in wheel'; \
+            print('OK: viewer dist bundled')" "$WHEEL"
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish for real version tags (not workflow_dispatch dry runs).
+    if: startsWith(github.ref, 'refs/tags/') && !inputs.dry_run
+    environment:
+      name: pypi
+      url: https://pypi.org/project/luxar/
+    permissions:
+      id-token: write # mandatory for trusted publishing (OIDC)
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0
+
+  publish-testpypi:
+    name: Publish to TestPyPI (dry run)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/luxar/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/

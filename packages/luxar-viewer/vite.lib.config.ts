@@ -59,7 +59,10 @@ export default defineConfig({
     // Workers loaded via `new Worker(new URL(...))` are emitted as separate
     // chunks under dist/lib/assets/. Same for WASM.
     minify: false, // Library consumers run their own minification.
-    sourcemap: true,
+    // No sourcemaps in the published package: the lib build exists only to be
+    // packed for npm, and the `.js.map` files were ~10 MB / two-thirds of the
+    // tarball. Consumers debug against their own bundler's output.
+    sourcemap: false,
   },
 
   resolve: {

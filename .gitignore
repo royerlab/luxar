@@ -28,6 +28,7 @@ cuda_build_info.json
 datasets/
 debug-view.png
 delme/
+lightsheet_overview/
 # Deprecated folders (no longer used)
 develop-eggs/
 dist/
