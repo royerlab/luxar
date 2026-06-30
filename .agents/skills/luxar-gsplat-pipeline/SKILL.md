@@ -14,7 +14,8 @@ description: >-
 # Luxar GSplat pipeline
 
 Luxar fits **Gaussian splats** to scientific volumes and serves them to a WebGL
-viewer. The standalone artifact is a `.gsplats.zarr` (format v3.0 — a node tree).
+viewer. The standalone artifact is a `.gsplats.zarr` (format v3.1 — a node tree;
+v3.0 files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
 GSplats need optional deps: `pip install "luxar[gsplats]"` (PyTorch, scipy). GPU
@@ -188,4 +189,4 @@ does (a) for you and writes a ready-to-serve scene.
   skill summarizes the common paths; the CLI is the source of truth.
 - The `lod` command **rejects an existing partition** — to add LOD to tiled output,
   use `fit --recipe` / `batch-fit merge --recipe` instead (per-part LOD as it streams).
-- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.0 node-tree format.
+- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.1 node-tree format.

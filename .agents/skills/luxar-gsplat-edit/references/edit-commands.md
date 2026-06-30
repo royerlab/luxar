@@ -55,7 +55,7 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 `normal` / `max` / `opaque`).
 
 ## migrate-format IN OUT
-Upgrade legacy layouts (v1.0 / v1.1 / v2.0 / substitutive dir) → v3.0.
+Upgrade legacy layouts (v1.0 / v1.1 / v2.0 / substitutive dir) → v3.1.
 `--overwrite`, `--lossless` (preserve float32 Cholesky), `--quiet`/`-q`.
 
 ---
