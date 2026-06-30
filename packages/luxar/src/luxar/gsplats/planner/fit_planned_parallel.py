@@ -2,7 +2,7 @@
 
 The local, single-GPU counterpart of the sequential :func:`fit_planned`. Each
 content-balanced box of a :class:`FitPlan` is fit by a separate
-``luxar gsplat plan ... --fit-box i`` worker process (own CUDA context, shared
+``luxar gsplat fit ... --tiling content --plan ... --plan-box i`` worker process (own CUDA context, shared
 GPU memory pool); up to ``jobs`` run concurrently. After all succeed, the
 per-box ``.gsplats.zarr`` outputs are reloaded and **concatenated** — boxes are
 spatially disjoint by construction (the BSP partition tiles the volume and only
@@ -47,7 +47,8 @@ def _default_worker_cmd_builder(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
 ) -> WorkerCmdBuilder:
-    """Build a ``luxar gsplat plan <in> <plan> --fit-box i -o out ...`` argv.
+    """Build a ``luxar gsplat fit <in> <out> --tiling content --plan <plan>
+    --plan-box i ...`` argv.
 
     The worker re-reads the existing ``plan_json`` (it does not re-scan/plan),
     rebuilds the fit config from ``--preset`` exactly as the parent did, fits the
@@ -60,13 +61,15 @@ def _default_worker_cmd_builder(
         cmd = [
             *argv0,
             "gsplat",
-            "plan",
+            "fit",
             str(input_path),
-            str(plan_json_path),
-            "--fit-box",
-            str(box_idx),
-            "--output",
             str(out_path),
+            "--tiling",
+            "content",
+            "--plan",
+            str(plan_json_path),
+            "--plan-box",
+            str(box_idx),
             "--preset",
             preset,
         ]
@@ -90,6 +93,7 @@ def fit_planned_parallel(
     tmp_dir: Path,
     worker_cmd_builder: WorkerCmdBuilder,
     keep_boxes: bool = False,
+    partition: bool = False,
     verbose: bool = True,
 ) -> "Any":
     """Fit every budgeted box via concurrent worker subprocesses, then merge.
@@ -174,9 +178,7 @@ def fit_planned_parallel(
     # a 0-splat box — a sibling ".empty" marker (the gsplats writer rejects empty
     # stores). Neither present after a clean exit is a silent spatial hole; a
     # present-but-unreadable store (e.g. OOM mid-save) is corrupt — both fail.
-    cs: list[np.ndarray] = []
-    amps: list[np.ndarray] = []
-    chols: list[np.ndarray] = []
+    regions: list[GSplatData] = []  # one core-kept GSplatData per non-empty box
     n_boxes_fit = 0
     missing: list[int] = []
     corrupt: list[tuple[int, str]] = []
@@ -188,9 +190,8 @@ def fit_planned_parallel(
             except Exception as exc:  # present but unreadable/partial store
                 corrupt.append((i, repr(exc)))
                 continue
-            cs.append(np.asarray(gd.centers, dtype=np.float32))
-            amps.append(np.asarray(gd.amplitudes, dtype=np.float32))
-            chols.append(np.asarray(gd.cholesky_factors, dtype=np.float32))
+            if gd.n_splats > 0:
+                regions.append(gd)
             n_boxes_fit += 1
         elif Path(str(p) + ".empty").exists():
             n_boxes_fit += 1  # ran, legitimately produced 0 splats
@@ -209,28 +210,36 @@ def fit_planned_parallel(
             f"{'; '.join(parts)}. Temp outputs kept at {tmp_dir} for inspection."
         )
 
-    if sum(int(c.shape[0]) for c in cs) == 0:
+    if not regions:
         raise ValueError("fit_planned_parallel produced no splats (all boxes empty?)")
 
     elapsed = time.perf_counter() - t0
-    merged = GSplatData(
-        centers=np.concatenate(cs).astype(np.float32),
-        amplitudes=np.concatenate(amps).astype(np.float32),
-        cholesky_factors=np.concatenate(chols).astype(np.float32),
-        stats={
-            "planned_fit": True,
-            "n_boxes": len(plan.boxes),
-            "n_boxes_fit": n_boxes_fit,
-            "overlap": int(plan.overlap),
-            "volume_shape": list(plan.volume_shape),
-            "parallel_jobs": int(jobs),
-            "elapsed_seconds": float(elapsed),
-        },
-    )
+    if partition:
+        # One part per box — boxes are core-disjoint, an exact spatial partition.
+        result: Any = GSplatData.partition_from_regions(regions)
+    else:
+        result = GSplatData(
+            centers=np.concatenate([r.centers for r in regions]).astype(np.float32),
+            amplitudes=np.concatenate([r.amplitudes for r in regions]).astype(
+                np.float32
+            ),
+            cholesky_factors=np.concatenate(
+                [r.cholesky_factors for r in regions]
+            ).astype(np.float32),
+            stats={
+                "planned_fit": True,
+                "n_boxes": len(plan.boxes),
+                "n_boxes_fit": n_boxes_fit,
+                "overlap": int(plan.overlap),
+                "volume_shape": list(plan.volume_shape),
+                "parallel_jobs": int(jobs),
+                "elapsed_seconds": float(elapsed),
+            },
+        )
 
     if not keep_boxes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-    return merged
+    return result
 
 
 def max_padded_box_voxels(plan: FitPlan) -> int:

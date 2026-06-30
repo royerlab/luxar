@@ -206,7 +206,7 @@ def fit_progressive_gaussian_splats(
     -----
     **GPU utilization**: Each pass fits only ``max_splats_per_pass`` splats,
     which may under-saturate the GPU compared to a single large fit.  When
-    using tiled fitting on a cluster (``luxar gsplat batch plan``), combine
+    using tiled fitting on a cluster (``luxar gsplat slurm-fit submit``), combine
     ``--progressive`` with ``--parallel`` to run multiple tiles concurrently
     on the same GPU and fill the utilization gap.
     """
