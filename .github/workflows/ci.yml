@@ -56,6 +56,16 @@ jobs:
         run: hatch run mypy packages/luxar/src/luxar/
 
       - name: Test with coverage
+        # Pin BLAS/torch to a single thread PER pytest-xdist worker. `-n auto`
+        # spawns one worker per core; without this each worker's numpy/torch
+        # also spawns one BLAS thread per core, so workers × cores threads
+        # thrash the runner's few CPUs and xdist delivers ~no speedup. One
+        # thread per worker lets xdist actually parallelize across the cores.
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: hatch run test-cov
 
   typescript-tests:
