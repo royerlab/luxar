@@ -76,12 +76,18 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
 
 /**
  * Build a deferred (lazy) ``LODGroupChild`` from an already cheap-attached
- * placeholder. Geometry-agnostic: the caller supplies the three callbacks that
- * differ per leaf type — ``runExpensive`` (fetch + commit), ``registerLoaded``
- * (join the scene-wide update sweep, only after the load lands), and an optional
- * ``releaseLoaded`` (return GPU buffers to the evictable pool). Shared between
- * the gsplats, points, and lines defer paths so the ready/failed/loading state
- * machine and the abort-discard error handling live in exactly one place.
+ * placeholder. Geometry-agnostic: the caller supplies ``runExpensive`` (fetch +
+ * commit) and an optional ``releaseLoaded`` (return GPU buffers to the evictable
+ * pool). Shared between the gsplats, points, and lines defer paths so the
+ * ready/failed/loading state machine and the abort-discard error handling live
+ * in exactly one place.
+ *
+ * **Lazy levels never join the per-slice update sweep.** ``runExpensive``
+ * commits independently and the registry — not the sweep — drives their reload
+ * on a slice change once the scrub settles (``LODGroupRegistry.maybeKickReload``).
+ * Keeping a fine level out of the sweep is what lets the cheap coarse (eager)
+ * level commit a new timepoint immediately instead of being gated behind the
+ * slow fine reload.
  */
 function attachLazyChild(
   placeholder: THREE.Object3D,
@@ -89,8 +95,8 @@ function attachLazyChild(
   minPixelSize: number,
   ctx: NodeBuildCtx,
   runExpensive: () => Promise<void>,
-  registerLoaded: () => void,
-  releaseLoaded?: () => void
+  releaseLoaded?: () => void,
+  hasMoreLODs?: () => boolean
 ): LODGroupChild {
   placeholder.visible = false;
   const entryChild: LODGroupChild = {
@@ -98,6 +104,10 @@ function attachLazyChild(
     minPixelSize,
     positionBounds: readPositionBounds(child.attrs),
     ready: false,
+    // Progressive (additive-laddered) levels report remaining LODs so the
+    // registry can settle-gate further ``ensureLoaded`` passes to completion;
+    // single-LOD levels omit it (no extra refinement).
+    hasMoreLODs,
   };
   entryChild.ensureLoaded = () => {
     // Fire-and-forget; fully self-contained error handling so a rejected
@@ -110,14 +120,12 @@ function attachLazyChild(
         // Liveness re-check: the dataset may have been switched/disposed while
         // this deferred load was in flight. The expensive halves skip their
         // commit when not live but return normally, so without this guard we
-        // would re-register the loader (possibly after dispose) and mark a
-        // geometry-less level ready. Drop silently — the abort-discard policy.
+        // would mark a geometry-less level ready. Drop silently — the
+        // abort-discard policy.
         if (!ctx.isDatasetLive()) return;
-        // Register only now that the level is loaded+committed, so it joins
-        // subsequent updateView sweeps. Registering earlier would pull this
-        // level into the scene-wide loader update regardless of selection —
-        // defeating laziness.
-        registerLoaded();
+        // NOTE: the level is deliberately NOT registered into the per-slice
+        // update sweep (see the function doc). It commits independently here;
+        // the registry reloads it on a settled slice change.
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
@@ -267,8 +275,8 @@ export async function loadLodGroupNode(
           minPixelSize,
           ctx,
           () => loadGSplatsNodeExpensive(lazyChild, ctx, loader),
-          () => ctx.registry.registerGSplatsLoader(lazyChild.path, loader),
-          () => ctx.releaseLazyGSplats(lazyChild.path)
+          () => ctx.releaseLazyGSplats(lazyChild.path),
+          () => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true
         );
       } else if (child.type === 'points') {
         const { placeholder, loader } = await loadPointsNodeCheap(
@@ -283,8 +291,8 @@ export async function loadLodGroupNode(
           minPixelSize,
           ctx,
           () => loadPointsNodeExpensive(lazyChild, ctx, loader),
-          () => ctx.registry.registerPointsLoader(lazyChild.path, loader),
-          () => ctx.releaseLazyPoints(lazyChild.path)
+          () => ctx.releaseLazyPoints(lazyChild.path),
+          () => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true
         );
       } else {
         // `canDefer` only admits gsplats/points/lines, so this is the lines
@@ -309,8 +317,8 @@ export async function loadLodGroupNode(
           minPixelSize,
           ctx,
           () => loadLinesNodeExpensive(lazyChild, ctx, loader),
-          () => ctx.registry.registerLinesLoader(lazyChild.path, loader),
-          () => ctx.releaseLazyLines(lazyChild.path)
+          () => ctx.releaseLazyLines(lazyChild.path),
+          () => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true
         );
       }
       registryChildren.push(entryChild);
@@ -356,18 +364,16 @@ export async function loadLodGroupNode(
       const placeholder = new THREE.Group();
       lodThreeGroup.add(placeholder);
       const lazyChild = child;
+      // No releaseLoaded: grouped subtrees have no leaf-style evictable buffer
+      // pool, so once loaded they stay resident until scene teardown (matching
+      // the prior behaviour, just deferred to first view). Nested leaf / lod
+      // loaders self-register during loadChildren, which runs only on activation.
       const entryChild = attachLazyChild(
         placeholder,
         lazyChild,
         minPixelSize,
         ctx,
-        () => loadChildren(lazyChild, placeholder, childLoc, ctx),
-        () => {
-          // Nested leaf / lod-group loaders self-register during loadChildren
-          // (which runs only on activation), so there's no separate loader to
-          // register here. Laziness holds because loadChildren is gated by the
-          // selector firing ensureLoaded, not run up front.
-        }
+        () => loadChildren(lazyChild, placeholder, childLoc, ctx)
       );
       registryChildren.push(entryChild);
       continue;

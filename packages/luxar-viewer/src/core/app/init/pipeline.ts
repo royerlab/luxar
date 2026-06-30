@@ -185,6 +185,17 @@ export async function runInitPipeline(
       // null pool (pre-construction / pooling disabled) reads as 0 bytes,
       // so the registry never evicts in that state.
       getResidentBytes: () => getSceneLoader('default')?.gpuBufferPool?.getResidentBytes() ?? 0,
+      // Current view-update version. Lets the registry detect when a level's
+      // committed geometry is stale for the current slice/displayDims (a
+      // re-slice reloads geometry in place without flipping readiness) and
+      // display a coarser FRESH level until the re-slice commits — the
+      // slice-aware coarse-while-reloading fallback. Routed through the current
+      // default loader (same pattern as the byte-budget getters above).
+      getViewVersion: () => getSceneLoader('default')?.currentViewVersion ?? 0,
+      // Keep the on-demand render loop alive while a lazy fine level reloads
+      // (it commits outside the per-slice sweep and can outlast the idle
+      // timeout), so the swap-up to the fresh level fires when it lands.
+      requestRender: () => animationController.startAnimation(),
     });
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {

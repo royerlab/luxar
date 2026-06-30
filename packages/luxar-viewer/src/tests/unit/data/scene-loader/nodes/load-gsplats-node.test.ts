@@ -107,6 +107,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     viewState,
     factoryDeps: {} as never,
     isDatasetLive: () => true,
+    getViewVersion: () => 1,
+    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -245,7 +247,31 @@ describe('loadGSplatsNode — happy path commit flow', () => {
     await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(ctx.spies.processGSplatsData).toHaveBeenCalledTimes(1);
-    expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledWith(staged);
+    expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledWith(staged, undefined, 1);
+  });
+
+  it('stamps the DERIVE-time view version, not the commit-time version (lazy race)', async () => {
+    // The decoupling exists so a deferred reload is stamped for the slice it was
+    // ISSUED for, even if the global view version advances during the slow load
+    // (a scrub mid-load). Bump the version INSIDE the awaited loadGSplats and
+    // assert the commit stamps the pre-await value (the slice actually loaded) —
+    // a mutant that captured ctx.getViewVersion() AFTER the await would stamp the
+    // newer version and mark stale-slice data fresh. (Points/Lines share the
+    // identical capture-before-await pattern.)
+    let version = 5;
+    const data = { splatCount: 7 } as LoadedGSplatsData;
+    const staged = { path: '/scene/g' } as unknown as StagedGSplatsCommit;
+    const loadGSplats = vi.fn().mockImplementation(async () => {
+      version = 6; // a scrub advanced the global version while loading
+      return data;
+    });
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(loadGSplats));
+    const ctx = makeCtx({ getViewVersion: () => version });
+    ctx.spies.processGSplatsData.mockResolvedValue(staged);
+
+    await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledWith(staged, undefined, 5);
   });
 
   it('skips commit when processGSplatsData returns null', async () => {
