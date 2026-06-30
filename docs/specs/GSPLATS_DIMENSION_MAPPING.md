@@ -222,11 +222,12 @@ gsplat_node/
   ├── .zattrs                   (metadata above)
   ├── centers                   (N, ndim) float32
   ├── amplitudes                (N,) or (1,) float32
-  ├── cholesky_factors          (N, k) or (1, k) float32, k=ndim*(ndim+1)/2
+  ├── cholesky_factors_diag     (N, d) or (1, d) float32, d=ndim (diagonal, scale-like terms)
+  ├── cholesky_factors_offdiag  (N, k-d) or (1, k-d) float32 (signed off-diagonal; omitted when ndim==1; k=ndim*(ndim+1)/2)
   └── colors                    (N, 3) or (1, 3) uint8/float32
 ```
 
-Arrays use scene dimensionality (after `dim_order` expansion), not the original data dimensionality.
+Arrays use scene dimensionality (after `dim_order` expansion), not the original data dimensionality. Since format **v3.1** the Cholesky factors are stored on disk split into `cholesky_factors_diag` (N, ndim) + `cholesky_factors_offdiag` (N, k-ndim) — each encoded/quantized independently — and recombined into the packed (N, k) `cholesky_factors` form immediately on read (Python reader and viewer loader), so nothing downstream of the storage boundary sees the split. (1D splats have no off-diagonal terms, so `cholesky_factors_offdiag` is omitted; legacy v3.0 files store a single packed `cholesky_factors`, read via presence-detect fallback.)
 
 ---
 

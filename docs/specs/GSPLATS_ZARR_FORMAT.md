@@ -119,7 +119,7 @@ A v3.x file is one of (each freely nestable):
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.0"`, `format_type:"gsplats_zarr"`, `timestamp`, and
+`format_version:"3.1"`, `format_type:"gsplats_zarr"`, `timestamp`, and
 `luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
 pyramid" shape expressed as a node tree.
 
@@ -137,7 +137,7 @@ fitted.gsplats.zarr/
 │                     # ordering_min/max/bits, chunk_size, amplitude_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, gamma, intensity, offset, blending_mode,
-│                     # format_version: "3.0", format_type: "gsplats_zarr",
+│                     # format_version: "3.1", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
 ├── centers                   # (N, d) float32, spatially ordered
@@ -158,7 +158,7 @@ fitted.gsplats.zarr/
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
-│                     # position_bounds, format_version: "3.0", …
+│                     # position_bounds, format_version: "3.1", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
@@ -177,7 +177,7 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "lod", selector: "pixel_size",
 │                     # default_level: <int>, display_type: "gsplats",
-│                     # position_bounds, format_version: "3.0", …
+│                     # position_bounds, format_version: "3.1", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
 │   ├── .zattrs       # min_pixel_size: 0.0, compression_factor, level_index, …
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
@@ -205,7 +205,7 @@ additive ladder) is valid as a child.
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
-│                     # max_elements: <int>, position_bounds, format_version: "3.0", …
+│                     # max_elements: <int>, position_bounds, format_version: "3.1", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
 │   ├── .zattrs       # position_bounds (per-part bounds for frustum culling)
 │   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
@@ -590,7 +590,7 @@ chunk_elements = TARGET_CHUNK_BYTES // bytes_per_row
 # 1D arrays (amplitudes)
 chunks = (chunk_elements,)
 
-# 2D arrays (centers, cholesky_factors, colors)
+# 2D arrays (centers, cholesky_factors_diag, cholesky_factors_offdiag, colors)
 chunks = (chunk_elements, n_cols)  # Keep all columns together
 ```
 
@@ -749,7 +749,7 @@ one into a scene is a graft of that subtree.
 **Purpose**: Persist fitted results as independent, directly-loadable files.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
-self-identifying header (`format_version:"3.0"`, `format_type:"gsplats_zarr"`,
+self-identifying header (`format_version:"3.1"`, `format_type:"gsplats_zarr"`,
 `timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
 
 **Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene

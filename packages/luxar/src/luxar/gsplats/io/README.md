@@ -12,7 +12,7 @@ This package provides functions to save and load fitted Gaussian splat results w
 - **Fitter-agnostic metadata** allowing different fitting implementations
 - **Node-tree LOD layout** (leaf / kind=lod / kind=partition, freely nestable);
   the trivial single-splat-set case is a bare leaf
-- **Legacy migration** (v1.0 / v1.1 / pre-v2.0 substitutive directory / v2.0 matrix → v3.0)
+- **Legacy migration** (v1.0 / v1.1 / pre-v2.0 substitutive directory / v2.0 matrix → v3.1)
 
 ## Main Functions
 
@@ -73,7 +73,7 @@ print(format_gsplats_info(info))
 # Fitting: 45.3s, 850 iterations (converged)
 ```
 
-`inspect_gsplats_zarr()` walks the v3.0 node tree to surface the primary
+`inspect_gsplats_zarr()` walks the node tree to surface the primary
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
 `amplitude_range`, `center_bounds`), plus tree-shape metadata
 (`n_additive_sublods`, `kind`, `n_children`) so multi-LOD and partitioned
@@ -160,7 +160,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `colors` | COLOR | `rgb_uint8` (SDR) or `float32` (HDR, auto-detected) |
 
 **COORDINATE centers always stay float32** for TypeScript/WebGL compatibility:
-float16 on coordinates is a precision footgun, so the v3.0 writer disables it
+float16 on coordinates is a precision footgun, so the writer disables it
 (there is no `float16_allowed` knob).
 
 **Encoding modes**:
@@ -371,28 +371,28 @@ print(f"Ordering: {info['ordering']}")
 print(f"Compression: {info['compression_ratio']}x")
 ```
 
-### Migrate a Legacy Dataset to v3.0
+### Migrate a Legacy Dataset to v3.1
 
 ```python
 from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
 
-# Detect the legacy shape: "v1.0", "v1.1", "substitutive_dir", "v2.0", or "v3.0"
+# Detect the legacy shape: "v1.0", "v1.1", "substitutive_dir", or "v2.0" (raises on a current v3.0/v3.1 file)
 print(detect_legacy_format("legacy.gsplats.zarr"))
 
-# Convert to a new v3.0 file (returns the detected source format)
+# Convert to a new v3.1 file (returns the detected source format)
 migrate_format("legacy.gsplats.zarr", "v3.gsplats.zarr", overwrite=True)
 ```
 
 Migration mappings:
-- **v1.0** (flat `/splats`) → v3.0 bare leaf
-- **v1.1** (`/splats/lod_<i>/`) → v3.0 additive ladder leaf
+- **v1.0** (flat `/splats`) → v3.1 bare leaf
+- **v1.1** (`/splats/lod_<i>/`) → v3.1 additive ladder leaf
 - **Substitutive directory** (`level_<i>.gsplats.zarr` + `manifest.json`) →
-  v3.0 `kind=lod` group
-- **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.0 node tree
+  v3.1 `kind=lod` group
+- **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.1 node tree
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 
 Migrated arrays are written with `ordering="none"` so element order is
-preserved (no Morton/Hilbert re-sort), but **encoding follows the v3.0 policy**:
+preserved (no Morton/Hilbert re-sort), but **encoding follows the current v3.1 policy**:
 under the default `EncodingMode.AUTO`, legacy float32 Cholesky factors are
 re-encoded as the split diagonal/off-diagonal arrays with near-lossless uint16
 per-column quantization. Pass `encoding_mode=EncodingMode.PRECISION`
@@ -406,17 +406,19 @@ is `luxar gsplat migrate-format`.
 
 - **`save_gsplats.py`**: `save_gsplats()` (bare leaf) and `write_gsplats_tree()`
   (any `GSplatNode`). Delegates to the shared walker
-  `io/_compiler/gsplat_tree.write_gsplat_node`; writes the v3.0 root header.
+  `io/_compiler/gsplat_tree.write_gsplat_node`; writes the v3.1 root header.
 - **`load_gsplats.py`**: Load function with automatic decoding. Reads the
-  v3.0 node tree via `io/_compiler/gsplat_tree.read_gsplat_node`, returning
-  a `GSplatData` bridged from the node tree. Raises on any
-  `format_version` other than `"3.0"`.
+  node tree via `io/_compiler/gsplat_tree.read_gsplat_node`, returning
+  a `GSplatData` bridged from the node tree. Raises on any `format_version`
+  not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`); the current writer
+  emits v3.1, and v3.0 single-array files are still read transparently.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
   `detect_legacy_format`). Converts v1.0 / v1.1 / pre-v2.0 substitutive
-  directory / v2.0 matrix files to v3.0. Carries embedded legacy reader
-  logic so the live loader stays v3.0-only.
+  directory / v2.0 matrix files to v3.1. Carries embedded legacy reader
+  logic so the live loader only handles the current node-tree format
+  (v3.0 / v3.1).
 - **`tests/`**: Comprehensive tests
 
 **Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience. `migrate.py` is not re-exported from the package `__init__`; it backs the `luxar gsplat migrate-format` CLI command.
@@ -466,7 +468,7 @@ The package includes comprehensive tests covering:
 
 **Migration tests** (`test_migrate_format.py`):
 - Legacy-format detection (v1.0, v1.1, v2.0, substitutive directory)
-- Round-trip migration to v3.0 node-tree layout
+- Round-trip migration to v3.1 node-tree layout
 
 Run tests:
 ```bash
@@ -492,7 +494,7 @@ Compression gains from:
 
 ## Related Documentation
 
-- **Format spec (v3.0)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
+- **Format spec (v3.1)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
 - **Encoding system**: `../../encoding/README.md` (semantic types, quantization)
 - **Scene embedding**: `../../core/README.md` (GSplats in scene graph)
 - **Parent package**: `../README.md` (Gaussian splatting algorithms)

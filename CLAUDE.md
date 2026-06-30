@@ -266,7 +266,7 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 # each card's free VRAM). Resumable: re-running skips tiles already on disk.
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
-luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe additive --n-lods 4  # per-part LOD at merge
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe additive --merge-n-lods 4  # per-part LOD at merge
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
@@ -351,7 +351,7 @@ luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,2
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive | pyramid)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v3.0 (a node tree —
+# to pick K* in a principled way. .gsplats.zarr is format v3.1 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
@@ -368,7 +368,7 @@ luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,2
 #                 picks its own level by its own on-screen size)
 #   substitutive  pure substitutive pyramid (synthesised levels)    — primitive
 #   pyramid       balanced substitutive × additive matrix           — primitive
-# Output is a standalone v3.0 .gsplats.zarr (loadable with `luxar gsplat info`);
+# Output is a standalone v3.1 .gsplats.zarr (loadable with `luxar gsplat info`);
 # graft it into a scene from Python via `add_gsplats_from_file` or `gsplat convert`.
 # (Replaces the former `lod additive`/`lod substitutive`/`lod pyramid` subcommands.)
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
@@ -416,7 +416,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --coarse
 # --extent-percentile 90, --extent-anisotropy/--no-extent-anisotropy, --base-pixel-size.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe substitutive --lod-method count
 
-# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.0
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix) → v3.1
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
