@@ -2095,8 +2095,15 @@ class TestSubmitRecipeValidation:
             ],
         )
         assert res.exit_code != 0
-        assert "--merge-compression-factor" in res.output
-        assert "not used" in res.output.lower()
+        # Strip ANSI: on CI (and any color-capable terminal) typer/Rich colorizes
+        # the error panel, inserting escape codes *inside* the option name
+        # (`\x1b[…m--merge\x1b[…m-compression-factor`), which breaks a naive
+        # contiguous-substring check. Local runs without color pass either way.
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", res.output)
+        assert "--merge-compression-factor" in clean
+        assert "not used" in clean.lower()
 
 
 class TestMergeRecipeAdditiveKnobs:
