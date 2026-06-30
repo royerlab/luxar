@@ -1,8 +1,12 @@
 {
-  "name": "luxar-viewer",
+  "name": "@royerlab/luxar-viewer",
   "version": "2025.8.3",
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "author": "Loic A. Royer and Luxar Contributors",
   "homepage": "https://github.com/royerlab/luxar/tree/main/packages/luxar-viewer",
   "repository": {
