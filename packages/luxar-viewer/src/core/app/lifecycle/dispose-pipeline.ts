@@ -17,6 +17,7 @@ import type { InputHandler } from '../../../input/input-handler';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { LayersPanel } from '../../../ui/layers';
+import type { ControlRail } from '../../../ui/control-rail';
 import type { ScaleBar } from '../../../ui/scale-bar';
 import type { ColormapLegend } from '../../../ui/colormap-legend';
 import type { OverlayManager } from '../../../ui/overlay-manager';
@@ -41,6 +42,7 @@ export interface DisposePipelinePorts {
   renderingControls: RenderingControls | undefined;
   recordingPanel: RecordingPanel | undefined;
   layersPanel: LayersPanel | undefined;
+  controlRail: ControlRail | undefined;
   // Overlays + picking (reset between dataset loads)
   scaleBar: ScaleBar | undefined;
   colormapLegend: ColormapLegend | undefined;
@@ -57,6 +59,7 @@ export interface DisposePipelinePorts {
   clearOverlayManager: () => void;
   clearRecordingPanel: () => void;
   clearLayersPanel: () => void;
+  clearControlRail: () => void;
   clearPickingSystem: () => void;
   clearLabelLoader: () => void;
   clearImageLabelLoader: () => void;
@@ -117,6 +120,10 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('recordingPanel', () => {
     ports.recordingPanel?.dispose();
     ports.clearRecordingPanel();
+  });
+  safeDispose('controlRail', () => {
+    ports.controlRail?.dispose();
+    ports.clearControlRail();
   });
   safeDispose('layersPanel', () => {
     ports.layersPanel?.dispose();

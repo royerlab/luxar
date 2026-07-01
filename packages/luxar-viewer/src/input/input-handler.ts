@@ -55,6 +55,10 @@ import {
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
+import type {
+  KeyBindingsCommands,
+  KeyBindingsPanelGetters,
+} from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
 import {
   toggleControlMode,
@@ -113,6 +117,12 @@ export class InputHandler {
 
   /** Optional reference to layers panel */
   private layersPanel?: LayersPanel;
+
+  /**
+   * The command + panel surface shared with the keyboard bindings.
+   * Built in {@link registerAllKeyBindings}; exposed via {@link getUiActions}.
+   */
+  private uiActions?: { commands: KeyBindingsCommands; panels: KeyBindingsPanelGetters };
 
   /** Optional reference to overlay manager */
   private overlayManager?: OverlayManager;
@@ -539,36 +549,53 @@ export class InputHandler {
    * @private
    */
   private registerAllKeyBindings(): void {
+    const panels: KeyBindingsPanelGetters = {
+      getScaleBar: () => this.scaleBar,
+      getColormapLegend: () => this.colormapLegend,
+      getOverlayManager: () => this.overlayManager,
+      getRecordingPanel: () => this.recordingPanel,
+      getLayersPanel: () => this.layersPanel,
+    };
+    const commands: KeyBindingsCommands = {
+      navigateDimension: (direction) => this.handleDimensionNavigation(direction),
+      selectDimension: (index) => this.selectDimension(index),
+      toggleHelp: () => this.toggleHelp(),
+      toggleDimensionSliders: () => this.toggleDimensionSliders(),
+      togglePerformanceStats: () => this.togglePerformanceStats(),
+      toggleRenderingControls: () => this.toggleRenderingControls(),
+      toggleControlMode: () => this.toggleControlMode(),
+      toggleInertialMode: () => this.toggleInertialMode(),
+      toggleCinematicMode: () => this.toggleCinematicMode(),
+      toggleFullscreen: () => this.toggleFullscreen(),
+      cycleDataMonitor: () => this.handleDataMonitorCycle(),
+      recenterCamera: () => this.recenterCamera(),
+      exportViewerState: () => this.exportViewerState(),
+      handleEscape: () => this.handleEscapeKey(),
+      shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
+    };
+    // Cache the same surface so on-screen affordances (the control rail)
+    // can trigger identical actions without duplicating logic.
+    this.uiActions = { commands, panels };
     registerAllKeyBindings({
       contextManager: this.contextManager,
       sceneManager: this.sceneManager,
       debugConsole: this.debugConsole,
       cleanups: this.eventListeners,
-      panels: {
-        getScaleBar: () => this.scaleBar,
-        getColormapLegend: () => this.colormapLegend,
-        getOverlayManager: () => this.overlayManager,
-        getRecordingPanel: () => this.recordingPanel,
-        getLayersPanel: () => this.layersPanel,
-      },
-      commands: {
-        navigateDimension: (direction) => this.handleDimensionNavigation(direction),
-        selectDimension: (index) => this.selectDimension(index),
-        toggleHelp: () => this.toggleHelp(),
-        toggleDimensionSliders: () => this.toggleDimensionSliders(),
-        togglePerformanceStats: () => this.togglePerformanceStats(),
-        toggleRenderingControls: () => this.toggleRenderingControls(),
-        toggleControlMode: () => this.toggleControlMode(),
-        toggleInertialMode: () => this.toggleInertialMode(),
-        toggleCinematicMode: () => this.toggleCinematicMode(),
-        toggleFullscreen: () => this.toggleFullscreen(),
-        cycleDataMonitor: () => this.handleDataMonitorCycle(),
-        recenterCamera: () => this.recenterCamera(),
-        exportViewerState: () => this.exportViewerState(),
-        handleEscape: () => this.handleEscapeKey(),
-        shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
-      },
+      panels,
+      commands,
     });
+  }
+
+  /**
+   * The command + panel surface the keyboard bindings dispatch into,
+   * exposed so on-screen affordances (e.g. the {@link ControlRail}) can
+   * trigger the exact same actions. Available after {@link init}.
+   */
+  getUiActions(): { commands: KeyBindingsCommands; panels: KeyBindingsPanelGetters } {
+    if (!this.uiActions) {
+      throw new Error('InputHandler.getUiActions() called before init()');
+    }
+    return this.uiActions;
   }
 
   /**

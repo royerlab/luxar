@@ -1,0 +1,174 @@
+/**
+ * Control rail — slim left-edge activity bar (see ui/control-rail.ts).
+ * Uses only --luxar-* design tokens so it themes across all four themes.
+ */
+
+.luxar-control-rail {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  z-index: var(--luxar-z-dropdown, 1000);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-full, 9999px);
+  box-shadow: var(--luxar-shadow-lg);
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.luxar-control-rail.is-awake,
+.luxar-control-rail:hover {
+  opacity: 1;
+}
+
+.luxar-control-rail__sep {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--luxar-border-default);
+}
+
+.luxar-control-rail__btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-full, 9999px);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-control-rail__btn:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.15));
+}
+
+.luxar-control-rail__btn.is-active {
+  color: var(--luxar-text-primary);
+  background: color-mix(in srgb, var(--luxar-highlight) 20%, transparent);
+}
+
+.luxar-control-rail__btn.is-active::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--luxar-highlight);
+}
+
+.luxar-control-rail__btn:focus-visible {
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 2px;
+}
+
+.luxar-control-rail__btn svg {
+  width: 19px;
+  height: 19px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-control-rail__tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base, 11px);
+  padding: 5px 9px;
+  border-radius: var(--luxar-radius-md, 8px);
+  border: 1px solid var(--luxar-border-strong);
+  box-shadow: var(--luxar-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.luxar-control-rail__btn:hover .luxar-control-rail__tip,
+.luxar-control-rail__btn:focus-visible .luxar-control-rail__tip {
+  opacity: 1;
+}
+
+.luxar-control-rail__tip kbd {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-text-secondary);
+  margin-left: 8px;
+}
+
+/* First-run hint bubble pointing at the rail. */
+.luxar-control-rail-hint {
+  position: absolute;
+  left: 64px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 232px;
+  padding: 12px 14px;
+  z-index: var(--luxar-z-popover, 3000);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg, 12px);
+  box-shadow: var(--luxar-shadow-xl);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-md, 12px);
+  line-height: 1.5;
+}
+
+.luxar-control-rail-hint b {
+  color: var(--luxar-text-primary);
+}
+
+.luxar-control-rail-hint kbd {
+  font-family: var(--luxar-font-mono);
+  background: var(--luxar-bg-tertiary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.luxar-control-rail-hint__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: none;
+  color: var(--luxar-text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.luxar-control-rail-hint::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: var(--luxar-bg-secondary);
+  border-left: 1px solid var(--luxar-border-default);
+  border-bottom: 1px solid var(--luxar-border-default);
+}

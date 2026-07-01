@@ -9,6 +9,7 @@ import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
+import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -37,6 +38,7 @@ export interface InitPipelineResult {
   renderingControls: RenderingControls;
   recordingPanel: RecordingPanel;
   layersPanel: LayersPanel;
+  controlRail: ControlRail;
   /** Resolved dataset URL — orchestrator routes to browser or load. */
   sceneSrc: string;
 }
@@ -334,6 +336,72 @@ export async function runInitPipeline(
   const layersPanel = factories.layersPanel(document.body, animationController);
   partial.layersPanel = layersPanel;
   inputHandler.setLayersPanel(layersPanel);
+
+  // Left activity rail — the always-visible, discoverable entry point to the
+  // otherwise keyboard-only panels. Each button fires the SAME command as its
+  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  const ui = inputHandler.getUiActions();
+  const railItems: ControlRailItem[] = [
+    {
+      id: 'help',
+      title: 'Help & shortcuts',
+      shortcut: 'H',
+      icon: RAIL_ICONS.help,
+      activate: () => ui.commands.toggleHelp(),
+      openSelector: '#luxar-help-overlay',
+    },
+    {
+      id: 'dims',
+      title: 'Dimensions',
+      shortcut: 'N',
+      icon: RAIL_ICONS.dims,
+      activate: () => ui.commands.toggleDimensionSliders(),
+      openSelector: '.luxar-dimension-sliders',
+    },
+    {
+      id: 'render',
+      title: 'Rendering',
+      shortcut: 'R',
+      icon: RAIL_ICONS.render,
+      activate: () => ui.commands.toggleRenderingControls(),
+      isActive: () => renderingControls.isVisible(),
+    },
+    {
+      id: 'layers',
+      title: 'Layers',
+      shortcut: 'L',
+      icon: RAIL_ICONS.layers,
+      activate: () => ui.panels.getLayersPanel()?.toggle(),
+      isActive: () => layersPanel.isVisible(),
+    },
+    {
+      id: 'perf',
+      title: 'Performance',
+      shortcut: 'P',
+      icon: RAIL_ICONS.perf,
+      activate: () => ui.commands.togglePerformanceStats(),
+      openSelector: '#luxar-stats',
+    },
+    {
+      id: 'data',
+      title: 'Datasets',
+      shortcut: 'O',
+      icon: RAIL_ICONS.data,
+      activate: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      openSelector: '.luxar-dataset-browser',
+      separatorBefore: true,
+    },
+    {
+      id: 'screenshot',
+      title: 'Screenshot',
+      shortcut: 'G',
+      icon: RAIL_ICONS.screenshot,
+      activate: () => ui.panels.getRecordingPanel()?.captureScreenshot(),
+      momentary: true,
+    },
+  ];
+  const controlRail = new ControlRail(railItems);
+  partial.controlRail = controlRail;
 
   // Start animation loop first to ensure background is rendered
   animationController.startAnimation();
