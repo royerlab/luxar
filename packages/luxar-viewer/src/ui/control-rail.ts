@@ -146,7 +146,9 @@ export class ControlRail {
     this.container.addEventListener('pointermove', this.onPointerMove);
     this.root.addEventListener('pointerenter', this.onPointerMove);
     // In fullscreen the rail hides and only reveals on hover; restore on exit.
+    // webkit* covers Safari < 16.4.
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', this.onFullscreenChange);
     // Close the flyout on outside click / Escape.
     document.addEventListener('pointerdown', this.onDocPointerDown, true);
     document.addEventListener('keydown', this.onDocKeyDown);
@@ -255,7 +257,9 @@ export class ControlRail {
   /** Reflect fullscreen state — the rail hides (hover-to-reveal) in fullscreen. */
   private syncFullscreen(): void {
     if (this.disposed) return;
-    this.root.classList.toggle('is-fullscreen', !!document.fullscreenElement);
+    const webkitEl = (document as Document & { webkitFullscreenElement?: Element | null })
+      .webkitFullscreenElement;
+    this.root.classList.toggle('is-fullscreen', !!(document.fullscreenElement || webkitEl));
     this.wake();
   }
 
@@ -406,6 +410,7 @@ export class ControlRail {
     this.closeFlyout();
     this.container.removeEventListener('pointermove', this.onPointerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
     document.removeEventListener('keydown', this.onDocKeyDown);
     this.container.classList.remove('luxar-has-control-rail');
