@@ -8,6 +8,9 @@ This example demonstrates:
   colormap names (or a custom ``(N, 3)`` LUT array).
 - How using ``scalars`` differs from supplying explicit ``colors`` — the
   viewer can change the colormap at runtime without re-uploading colors.
+- ``blending_mode="max"``: for self-overlapping geometry, brightest-wins
+  blending keeps each colormap's true hues, whereas the default additive
+  blending would sum the overlapping turns and wash them out to white.
 
 The scene contains three side-by-side spirals carrying the same scalar
 field (turn count along the spiral) but rendered with three different
@@ -74,6 +77,12 @@ def main() -> None:
                 colormap=colormap_name,
                 radii=0.06,
                 sharpness=0.5,
+                # "max" blending (brightest-wins) instead of the default
+                # "additive": the conical spiral self-overlaps, and additive
+                # SUMS every overlapping point, so the dense turns saturate to
+                # white and all three colormaps look identical. max() is
+                # order-independent and keeps each colormap's true hues.
+                blending_mode="max",
                 # layer=True surfaces the spiral in the layers panel so
                 # the user can toggle each colormap variant independently.
                 layer=True,
