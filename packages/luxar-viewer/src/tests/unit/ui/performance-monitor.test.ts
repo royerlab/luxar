@@ -1,10 +1,10 @@
 /**
  * Unit tests for PerformanceMonitor.
  *
- * The monitor renders a compact, theme-matched FPS / frame-time readout
- * (no stats.js) driven by the animation loop's `frame-start` / `frame-end`
- * bus events. Tests cover element setup, visibility gating of the bus
- * subscription, the memory-detail cycle, and disposal.
+ * A compact square readout (no stats.js) driven by the animation loop's
+ * `frame-start` / `frame-end` bus events. It shows one metric at a time and
+ * cycles FPS → ms → graph on click. Tests cover element setup, visibility
+ * gating of the bus subscription, the metric cycle, and disposal.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -16,6 +16,10 @@ function frame(): void {
   eventBus.emit('frame-end', {});
 }
 
+const el = () => document.body.querySelector<HTMLElement>('#luxar-stats')!;
+const num = () => document.body.querySelector('.luxar-perf__num')?.textContent ?? '';
+const unit = () => document.body.querySelector('.luxar-perf__unit')?.textContent ?? '';
+
 describe('PerformanceMonitor', () => {
   let monitor: PerformanceMonitor;
 
@@ -23,6 +27,9 @@ describe('PerformanceMonitor', () => {
     document.head.innerHTML = '';
     document.body.innerHTML = '';
     monitor = new PerformanceMonitor();
+    // The monitor no longer self-mounts (the rail docks its element); mount it
+    // here so the DOM-based assertions below can find it.
+    document.body.appendChild(monitor.element);
   });
 
   afterEach(() => {
@@ -30,95 +37,84 @@ describe('PerformanceMonitor', () => {
   });
 
   describe('setup', () => {
-    it('appends the readout element to the container', () => {
-      const el = document.body.querySelector('#luxar-stats');
-      expect(el).toBeTruthy();
-      expect(el!.classList.contains('luxar-perf')).toBe(true);
+    it('appends a square readout element with FPS as the default mode', () => {
+      expect(el()).toBeTruthy();
+      expect(el().classList.contains('luxar-perf')).toBe(true);
+      expect(el().dataset.mode).toBe('fps');
+      expect(unit()).toBe('fps');
     });
 
-    it('sets WCAG accessibility attributes', () => {
-      const el = document.body.querySelector('#luxar-stats')!;
-      expect(el.getAttribute('role')).toBe('status');
-      expect(el.getAttribute('aria-label')).toContain('Performance metrics');
+    it('sets accessibility attributes', () => {
+      expect(el().getAttribute('role')).toBe('status');
+      expect(el().getAttribute('aria-label')).toContain('Performance');
     });
 
-    it('starts hidden with placeholder text', () => {
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.display).toBe('none');
+    it('starts hidden', () => {
+      expect(el().style.display).toBe('none');
       expect(monitor.visible).toBe(false);
-      expect(el.querySelector('.luxar-perf__fps')?.textContent).toContain('fps');
     });
   });
 
   describe('visibility', () => {
-    it('show() sets visible and reveals the element', () => {
+    it('show() reveals and hide() hides', () => {
       monitor.show();
       expect(monitor.visible).toBe(true);
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.display).not.toBe('none');
-    });
-
-    it('hide() resets visibility and hides the element', () => {
-      monitor.show();
+      expect(el().style.display).not.toBe('none');
       monitor.hide();
       expect(monitor.visible).toBe(false);
-      expect(document.body.querySelector<HTMLElement>('#luxar-stats')!.style.display).toBe('none');
+      expect(el().style.display).toBe('none');
     });
 
-    it('show()/hide() are idempotent and toggle() flips', () => {
-      monitor.show();
+    it('toggle() flips, show()/hide() idempotent', () => {
+      monitor.toggle();
+      expect(monitor.visible).toBe(true);
       monitor.show();
       expect(monitor.visible).toBe(true);
-      monitor.toggle();
-      expect(monitor.visible).toBe(false);
+      monitor.hide();
       monitor.hide();
       expect(monitor.visible).toBe(false);
     });
   });
 
   describe('frame-timing subscription', () => {
-    const fpsText = () =>
-      document.body.querySelector('.luxar-perf__ms')?.textContent ?? '';
-
     it('does not update while hidden (no subscription)', () => {
-      const before = fpsText();
+      const before = num();
       frame();
-      expect(fpsText()).toBe(before); // untouched placeholder
+      expect(num()).toBe(before);
     });
 
     it('updates the readout from bus events while visible', () => {
       monitor.show();
       frame();
-      // The ms readout advances off its placeholder once a frame is measured.
-      expect(fpsText()).toMatch(/ms$/);
-      expect(fpsText()).not.toContain('––');
+      expect(num()).not.toBe('––');
     });
 
     it('hide() unsubscribes so later frames no longer update it', () => {
       monitor.show();
       frame();
-      const afterShow = fpsText();
+      const after = num();
       monitor.hide();
       frame();
-      expect(fpsText()).toBe(afterShow); // frozen after unsubscribe
+      expect(num()).toBe(after);
     });
   });
 
-  describe('cyclePanels (memory detail)', () => {
-    it('does nothing while hidden', () => {
+  describe('cyclePanels', () => {
+    it('cycles FPS → ms → graph → FPS', () => {
+      expect(el().dataset.mode).toBe('fps');
       monitor.cyclePanels();
-      const mem = document.body.querySelector<HTMLElement>('.luxar-perf__mem')!;
-      expect(mem.style.display).toBe('none');
+      expect(el().dataset.mode).toBe('ms');
+      expect(unit()).toBe('ms');
+      monitor.cyclePanels();
+      expect(el().dataset.mode).toBe('graph');
+      monitor.cyclePanels();
+      expect(el().dataset.mode).toBe('fps');
+      expect(unit()).toBe('fps');
     });
 
-    it('toggles the memory readout while visible', () => {
-      monitor.show();
-      const mem = document.body.querySelector<HTMLElement>('.luxar-perf__mem')!;
-      expect(mem.style.display).toBe('none');
-      monitor.cyclePanels();
-      expect(mem.style.display).not.toBe('none');
-      monitor.cyclePanels();
-      expect(mem.style.display).toBe('none');
+    it('cycles on click', () => {
+      el().click();
+      expect(el().dataset.mode).toBe('ms');
     });
   });
 
@@ -129,7 +125,7 @@ describe('PerformanceMonitor', () => {
     });
 
     it('is a no-op if the element is already detached', () => {
-      document.body.querySelector('#luxar-stats')!.remove();
+      el().remove();
       expect(() => monitor.dispose()).not.toThrow();
     });
   });

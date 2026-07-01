@@ -139,14 +139,15 @@ export async function runInitPipeline(
   // SceneManager flips this flag in its webglcontextlost/restored
   // handlers; the loop polls each frame.
   animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
-  // Keep the render loop ticking while the FPS readout is open so it stays
-  // live even when the scene would otherwise idle; released when closed.
+  // When the perf readout is shown, kick the loop once so it gets a live
+  // reading if the scene had idled — but do NOT force continuous rendering
+  // (that would defeat the idle-pause / battery saving). The FPS is live while
+  // the scene renders and freezes at the last value when it idles.
   const performanceMonitor = new PerformanceMonitor({
-    request: () => {
-      animationController.addPerFrameCallback('perf-monitor', () => {}, { continuous: true });
-      animationController.startAnimation(); // resume if the loop had idled
+    request: () => animationController.startAnimation(),
+    release: () => {
+      /* nothing to release — we never forced continuous rendering */
     },
-    release: () => animationController.removePerFrameCallback('perf-monitor'),
   });
   partial.performanceMonitor = performanceMonitor;
   const debugConsole = new DebugConsole();
@@ -383,14 +384,6 @@ export async function runInitPipeline(
       isActive: () => layersPanel.isVisible(),
     },
     {
-      id: 'perf',
-      title: 'Performance',
-      shortcut: 'P',
-      icon: RAIL_ICONS.perf,
-      activate: () => ui.commands.togglePerformanceStats(),
-      openSelector: '#luxar-stats',
-    },
-    {
       id: 'monitor',
       title: 'Data monitor',
       shortcut: 'M',
@@ -473,8 +466,19 @@ export async function runInitPipeline(
         },
       ],
     },
+    {
+      // The gauge toggles the perf readout docked below (rail footer). Placed
+      // just under the eye so the readout appears at the very bottom of the rail.
+      id: 'perf',
+      title: 'Performance',
+      shortcut: 'P',
+      icon: RAIL_ICONS.perf,
+      activate: () => ui.commands.togglePerformanceStats(),
+      isActive: () => performanceMonitor.visible,
+    },
   ];
-  const controlRail = new ControlRail(railItems);
+  // Dock the perf readout as the rail's footer; the gauge above toggles it.
+  const controlRail = new ControlRail(railItems, performanceMonitor.element);
   partial.controlRail = controlRail;
 
   // Start animation loop first to ensure background is rendered

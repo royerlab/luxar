@@ -90,7 +90,11 @@ export class ControlRail {
     if (e.key === 'Escape') this.closeFlyout();
   };
 
-  constructor(items: ControlRailItem[]) {
+  constructor(
+    items: ControlRailItem[],
+    /** Optional element docked at the rail's bottom (e.g. the perf readout). */
+    private readonly footer?: HTMLElement
+  ) {
     this.items = items;
     this.container = getViewerContainer();
 
@@ -107,6 +111,15 @@ export class ControlRail {
         this.root.appendChild(sep);
       }
       this.root.appendChild(this.buildButton(item));
+    }
+
+    // Docked footer (e.g. the performance readout): sits just below the last
+    // item; its own visibility is controlled by its owner (the Performance
+    // toggle). It stays put when the rail collapses (see the .is-collapsed
+    // row layout), appearing to the right of the collapse handle.
+    if (this.footer) {
+      this.footer.classList.add('luxar-control-rail__footer');
+      this.root.appendChild(this.footer);
     }
 
     // Collapse/expand handle — always visible so a collapsed rail can always

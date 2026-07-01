@@ -1,46 +1,71 @@
 /**
- * Performance readout (see ui/performance-monitor.ts) — a compact FPS / frame
- * time pill matched to the Luxar design tokens. Docked lower-left, near the
- * control rail (offset to clear it via control-rail.css).
+ * Performance readout (see ui/performance-monitor.ts) — a compact SQUARE that
+ * docks into the control rail as its footer (rail-button sized/looking). Shows
+ * one metric at a time (FPS / ms / graph), cycled on click. Its visibility is
+ * toggled by the rail's Performance (gauge) button / the P key.
  */
 
 .luxar-perf {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 6px 12px;
-  background: var(--luxar-bg-secondary);
-  backdrop-filter: var(--luxar-blur-md, blur(10px));
-  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
-  border: 1px solid var(--luxar-border-default);
-  border-radius: var(--luxar-radius-full, 9999px);
-  box-shadow: var(--luxar-shadow-lg);
-  font-family: var(--luxar-font-mono);
-  font-size: var(--luxar-text-base, 11px);
+  /* Same footprint as a rail button; the rail provides the surrounding chrome. */
+  width: 38px;
+  height: 38px;
+  place-items: center; /* active when display:grid (shown) */
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--luxar-radius-md, 8px);
   color: var(--luxar-text-secondary);
-  pointer-events: none; /* a readout, not interactive */
+  font-family: var(--luxar-font-mono);
+  cursor: pointer;
   user-select: none;
+  transition: var(--luxar-transition-fast, all 0.1s ease);
 }
 
-.luxar-perf__stat {
-  white-space: nowrap;
+.luxar-perf:hover {
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.15));
+}
+
+.luxar-perf__value {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+
+.luxar-perf__num {
+  font-size: var(--luxar-text-md, 12px);
+  font-weight: var(--luxar-font-semibold, 600);
+  color: var(--luxar-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
-.luxar-perf__fps {
-  color: var(--luxar-text-primary);
-  font-weight: var(--luxar-font-semibold, 600);
-}
-
-.luxar-perf__fps[data-level='good'] {
+.luxar-perf__num[data-level='good'] {
   color: var(--luxar-success, #4caf50);
 }
-.luxar-perf__fps[data-level='ok'] {
+.luxar-perf__num[data-level='ok'] {
   color: var(--luxar-warning, #ffc107);
 }
-.luxar-perf__fps[data-level='bad'] {
+.luxar-perf__num[data-level='bad'] {
   color: var(--luxar-error, #f44336);
+}
+
+.luxar-perf__unit {
+  margin-top: 1px;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-perf__graph {
+  display: none;
+  width: 100%;
+  height: 100%;
+}
+
+/* Graph mode: hide the numeric value, show the canvas. */
+.luxar-perf[data-mode='graph'] .luxar-perf__value {
+  display: none;
+}
+.luxar-perf[data-mode='graph'] .luxar-perf__graph {
+  display: block;
 }

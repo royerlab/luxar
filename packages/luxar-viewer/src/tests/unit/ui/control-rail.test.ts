@@ -213,6 +213,15 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
   });
 
+  it('docks a footer element (e.g. the perf readout) inside the rail', () => {
+    const footer = document.createElement('div');
+    footer.id = 'my-footer';
+    rail = new ControlRail(items(), footer);
+    const mounted = document.querySelector('.luxar-control-rail #my-footer');
+    expect(mounted).toBe(footer);
+    expect(footer.classList.contains('luxar-control-rail__footer')).toBe(true);
+  });
+
   it('dispose() removes all DOM and stops the refresh timer', () => {
     rail = new ControlRail(items());
     rail.dispose();

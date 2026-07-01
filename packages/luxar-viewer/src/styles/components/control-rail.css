@@ -38,6 +38,13 @@
 .luxar-control-rail.is-collapsed {
   transform: translateY(calc(50vh - 16px - 100%));
   opacity: 0.12;
+  /* Lay the handle + (optional) perf footer out horizontally. */
+  flex-direction: row;
+  align-items: center;
+}
+/* Keep the collapse handle to the LEFT of the perf footer when collapsed. */
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse {
+  order: -1;
 }
 .luxar-control-rail.is-collapsed.is-awake,
 .luxar-control-rail.is-collapsed:hover {
@@ -342,10 +349,6 @@
   left: 78px;
 }
 
-/* The performance readout docks lower-left too — shift it clear of the rail. */
-.luxar-has-control-rail #luxar-stats {
-  left: 78px;
-}
 
 .luxar-control-rail-hint::before {
   content: '';
