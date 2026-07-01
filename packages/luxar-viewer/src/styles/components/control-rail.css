@@ -13,14 +13,18 @@
   gap: 2px;
   padding: 6px;
   z-index: var(--luxar-z-dropdown, 1000);
+  /* Same material as the panels (help overlay, rendering controls, …). */
   background: var(--luxar-bg-secondary);
   backdrop-filter: var(--luxar-blur-md, blur(10px));
   -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
   border: 1px solid var(--luxar-border-default);
-  border-radius: var(--luxar-radius-full, 9999px);
+  border-radius: var(--luxar-radius-lg, 12px);
   box-shadow: var(--luxar-shadow-lg);
-  opacity: 0.5;
-  transition: opacity 0.3s ease;
+  opacity: 0.55;
+  transition:
+    opacity 0.3s ease,
+    gap 0.18s ease,
+    padding 0.18s ease;
 }
 
 .luxar-control-rail.is-awake,
@@ -44,7 +48,7 @@
   border: none;
   background: none;
   color: var(--luxar-text-muted);
-  border-radius: var(--luxar-radius-full, 9999px);
+  border-radius: var(--luxar-radius-md, 8px);
   cursor: pointer;
   transition: var(--luxar-transition-fast, all 0.1s ease);
 }
@@ -57,6 +61,31 @@
 .luxar-control-rail__btn.is-active {
   color: var(--luxar-text-primary);
   background: color-mix(in srgb, var(--luxar-highlight) 20%, transparent);
+}
+
+/* Collapse/expand handle: chevron points left when expanded, right when
+   collapsed (rotated). Separated from the panel buttons by a hairline. */
+.luxar-control-rail__collapse {
+  margin-top: 2px;
+  border-top: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md, 8px);
+  color: var(--luxar-text-secondary);
+}
+.luxar-control-rail__collapse svg {
+  transition: transform 0.2s ease;
+}
+
+/* Collapsed: only the handle remains — the rail shrinks to a small grip. */
+.luxar-control-rail.is-collapsed .luxar-control-rail__btn:not(.luxar-control-rail__collapse),
+.luxar-control-rail.is-collapsed .luxar-control-rail__sep {
+  display: none;
+}
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse {
+  margin-top: 0;
+  border-top: none;
+}
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse svg {
+  transform: rotate(180deg);
 }
 
 .luxar-control-rail__btn.is-active::after {
@@ -158,6 +187,20 @@
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
+}
+
+/* Left-anchored panels (rendering + recording controls, layers) open at
+   left: 20px — directly under the rail. Nudge them right so they sit *beside*
+   it. The rail keeps the same width whether expanded or collapsed (collapse
+   only changes its height), so the gutter applies in both states — this also
+   keeps the collapse handle clickable when a left panel is open.
+
+   !important because rendering-controls.ts / recording-panel.ts set `left`
+   inline; none of these panels are draggable, so overriding it is safe. Full
+   docking into a tray beside the rail is the planned follow-up. */
+.luxar-has-control-rail .luxar-gui,
+.luxar-has-control-rail .luxar-layers-panel {
+  left: 78px !important;
 }
 
 .luxar-control-rail-hint::before {

@@ -44,8 +44,13 @@ export interface ControlRailItem {
 }
 
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
+const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
 const REFRESH_MS = 400;
+
+/** Chevron used by the collapse/expand handle (rotated via CSS when collapsed). */
+const CHEVRON_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
 
 export class ControlRail {
   private readonly root: HTMLDivElement;
@@ -56,6 +61,7 @@ export class ControlRail {
   private idleTimer?: number;
   private refreshTimer?: number;
   private disposed = false;
+  private collapsed = false;
   private readonly onPointerMove = (): void => this.wake();
 
   constructor(items: ControlRailItem[]) {
@@ -77,7 +83,22 @@ export class ControlRail {
       this.root.appendChild(this.buildButton(item));
     }
 
+    // Collapse/expand handle — always visible so a collapsed rail can always
+    // be brought back (never re-hides discoverability).
+    this.root.appendChild(this.buildCollapseButton());
+
     this.container.appendChild(this.root);
+    // Marker class lets left-anchored panels offset to clear the rail.
+    this.container.classList.add('luxar-has-control-rail');
+
+    // Restore persisted collapsed state.
+    let startCollapsed = false;
+    try {
+      startCollapsed = localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1';
+    } catch {
+      /* ignore */
+    }
+    this.setCollapsed(startCollapsed, false);
 
     // Idle-dim behaviour.
     this.container.addEventListener('pointermove', this.onPointerMove);
@@ -88,7 +109,43 @@ export class ControlRail {
     this.refresh();
     this.refreshTimer = window.setInterval(() => this.refresh(), REFRESH_MS);
 
-    this.maybeShowHint();
+    if (!startCollapsed) this.maybeShowHint();
+  }
+
+  private buildCollapseButton(): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'luxar-control-rail__btn luxar-control-rail__collapse';
+    btn.setAttribute('aria-label', 'Collapse controls');
+    btn.innerHTML = CHEVRON_ICON;
+    const tip = document.createElement('span');
+    tip.className = 'luxar-control-rail__tip';
+    tip.setAttribute('role', 'tooltip');
+    tip.textContent = 'Hide controls';
+    btn.appendChild(tip);
+    btn.addEventListener('click', () => this.setCollapsed(!this.collapsed, true));
+    return btn;
+  }
+
+  /** Collapse to just the handle, or expand back to the full rail. */
+  setCollapsed(collapsed: boolean, persist = true): void {
+    this.collapsed = collapsed;
+    this.root.classList.toggle('is-collapsed', collapsed);
+    const handle = this.root.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse');
+    if (handle) {
+      handle.setAttribute('aria-label', collapsed ? 'Show controls' : 'Collapse controls');
+      const tip = handle.querySelector('.luxar-control-rail__tip');
+      if (tip) tip.textContent = collapsed ? 'Show controls' : 'Hide controls';
+    }
+    if (collapsed) this.dismissHint();
+    if (persist) {
+      try {
+        localStorage.setItem(COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+    }
+    this.wake();
   }
 
   private buildButton(item: ControlRailItem): HTMLButtonElement {
@@ -199,6 +256,7 @@ export class ControlRail {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.refreshTimer) window.clearInterval(this.refreshTimer);
     this.container.removeEventListener('pointermove', this.onPointerMove);
+    this.container.classList.remove('luxar-has-control-rail');
     this.hint?.remove();
     this.root.remove();
     this.buttons.clear();

@@ -42,14 +42,49 @@ afterEach(() => {
 describe('ControlRail', () => {
   it('renders one button per item with accessible label + shortcut', () => {
     rail = new ControlRail(items());
-    const btns = document.querySelectorAll<HTMLButtonElement>('.luxar-control-rail__btn');
-    expect(btns.length).toBe(3);
+    const itemBtns = document.querySelectorAll<HTMLButtonElement>('[data-rail-id]');
+    expect(itemBtns.length).toBe(3);
     const help = document.querySelector<HTMLButtonElement>('[data-rail-id="help"]');
     expect(help?.getAttribute('aria-label')).toBe('Help (H)');
     // toolbar semantics
     expect(document.querySelector('.luxar-control-rail')?.getAttribute('role')).toBe('toolbar');
     // separator inserted before the screenshot item
     expect(document.querySelectorAll('.luxar-control-rail__sep').length).toBe(1);
+    // always-present collapse handle (not an item — no data-rail-id)
+    expect(document.querySelector('.luxar-control-rail__collapse')).not.toBeNull();
+  });
+
+  it('collapses and expands via the handle, persisting the state', () => {
+    rail = new ControlRail(items());
+    const railEl = document.querySelector('.luxar-control-rail')!;
+    const handle = document.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse')!;
+    expect(railEl.classList.contains('is-collapsed')).toBe(false);
+
+    handle.click();
+    expect(railEl.classList.contains('is-collapsed')).toBe(true);
+    expect(localStorage.getItem('luxar-control-rail-collapsed')).toBe('1');
+    expect(handle.getAttribute('aria-label')).toBe('Show controls');
+
+    handle.click();
+    expect(railEl.classList.contains('is-collapsed')).toBe(false);
+    expect(localStorage.getItem('luxar-control-rail-collapsed')).toBe('0');
+  });
+
+  it('restores a persisted collapsed state on construction (and skips the hint)', () => {
+    localStorage.setItem('luxar-control-rail-collapsed', '1');
+    rail = new ControlRail(items());
+    expect(document.querySelector('.luxar-control-rail')?.classList.contains('is-collapsed')).toBe(
+      true
+    );
+    // No first-run hint while starting collapsed.
+    expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
+  });
+
+  it('adds a container marker class so panels can reserve the rail gutter', () => {
+    rail = new ControlRail(items());
+    expect(document.body.classList.contains('luxar-has-control-rail')).toBe(true);
+    rail.dispose();
+    expect(document.body.classList.contains('luxar-has-control-rail')).toBe(false);
   });
 
   it('invokes the item activate() on click and reflects it as the same command', () => {
