@@ -9,7 +9,8 @@
   /* Same footprint as a rail button; the rail provides the surrounding chrome. */
   width: 38px;
   height: 38px;
-  place-items: center; /* active when display:grid (shown) */
+  display: grid;
+  place-items: center;
   padding: 0;
   overflow: hidden;
   border-radius: var(--luxar-radius-md, 8px);
@@ -18,6 +19,10 @@
   cursor: pointer;
   user-select: none;
   transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-perf.is-hidden {
+  display: none;
 }
 
 .luxar-perf:hover {

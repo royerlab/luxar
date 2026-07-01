@@ -95,9 +95,9 @@ describe('ControlRail', () => {
   });
 
   it('marks an item active when isActive() is true', () => {
+    // The constructor's initial refresh() reflects state synchronously.
     const its = items([{}, { isActive: () => true }]);
     rail = new ControlRail(its);
-    vi.advanceTimersByTime(500); // let the refresh interval run
     expect(
       document.querySelector('[data-rail-id="render"]')?.classList.contains('is-active')
     ).toBe(true);
@@ -105,7 +105,6 @@ describe('ControlRail', () => {
 
   it('never marks a momentary item active', () => {
     rail = new ControlRail(items([{}, {}, { momentary: true, isActive: () => true }]));
-    vi.advanceTimersByTime(500);
     expect(
       document.querySelector('[data-rail-id="screenshot"]')?.classList.contains('is-active')
     ).toBe(false);
@@ -219,10 +218,9 @@ describe('ControlRail', () => {
     rail = new ControlRail(items(), footer);
     const mounted = document.querySelector('.luxar-control-rail #my-footer');
     expect(mounted).toBe(footer);
-    expect(footer.classList.contains('luxar-control-rail__footer')).toBe(true);
   });
 
-  it('dispose() removes all DOM and stops the refresh timer', () => {
+  it('dispose() removes all DOM and stops timers/listeners', () => {
     rail = new ControlRail(items());
     rail.dispose();
     expect(document.querySelector('.luxar-control-rail')).toBeNull();

@@ -5,7 +5,7 @@
 // click — the same information stats.js exposed, restyled to the Luxar tokens
 // and driven by the animation loop's `frame-start` / `frame-end` events.
 //
-// Public API (toggle / show / hide / visible / cyclePanels / dispose) and the
+// Public API (toggle / show / hide / visible / cycleMode / dispose) and the
 // `#luxar-stats` element id are preserved so the InputHandler (P key) and the
 // control rail toggle it unchanged.
 
@@ -58,7 +58,7 @@ export class PerformanceMonitor {
     el.setAttribute('aria-label', 'Performance metrics — click to cycle FPS, frame time, graph');
     el.title = 'Click to cycle: FPS · ms · graph';
     el.style.zIndex = String(config.ui.zIndex.statsMonitor);
-    el.style.display = 'none';
+    el.classList.add('is-hidden');
 
     const value = document.createElement('div');
     value.className = 'luxar-perf__value';
@@ -75,7 +75,7 @@ export class PerformanceMonitor {
     this.ctx2d = this.canvas.getContext('2d');
 
     el.append(value, this.canvas);
-    el.addEventListener('click', () => this.cyclePanels());
+    el.addEventListener('click', () => this.cycleMode());
 
     this.el = el;
   }
@@ -159,7 +159,7 @@ export class PerformanceMonitor {
   /** Toggle visibility. Subscribes to frame timing only while visible. */
   toggle(): void {
     this.isVisible = !this.isVisible;
-    this.el.style.display = this.isVisible ? 'grid' : 'none';
+    this.el.classList.toggle('is-hidden', !this.isVisible);
     if (this.isVisible) {
       this.subscribeToFrameTiming();
       this.keepAlive?.request();
@@ -182,7 +182,7 @@ export class PerformanceMonitor {
   }
 
   /** Cycle the displayed metric: FPS → ms → graph → FPS. */
-  cyclePanels(): void {
+  cycleMode(): void {
     const next = (MODES.indexOf(this.mode) + 1) % MODES.length;
     this.mode = MODES[next];
     this.el.dataset.mode = this.mode;

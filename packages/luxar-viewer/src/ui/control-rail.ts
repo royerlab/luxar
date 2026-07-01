@@ -65,7 +65,6 @@ const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
 /** Collapsed handle lingers a little longer, then fades to barely-visible. */
 const COLLAPSED_IDLE_MS = 5000;
-const REFRESH_MS = 400;
 
 /** Chevron used by the collapse/expand handle (rotated via CSS when collapsed). */
 const CHEVRON_ICON =
@@ -78,7 +77,7 @@ export class ControlRail {
   private readonly buttons = new Map<string, HTMLButtonElement>();
   private hint?: HTMLDivElement;
   private idleTimer?: number;
-  private refreshTimer?: number;
+  private refreshRaf?: number;
   private disposed = false;
   private collapsed = false;
   /** Open flyout descriptor + its DOM, or null when none is open. */
@@ -94,7 +93,12 @@ export class ControlRail {
   private readonly onDocPointerDown = (e: PointerEvent): void => this.maybeCloseFlyout(e);
   private readonly onDocKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') this.closeFlyout();
+    // Keyboard shortcuts (H, N, R, …) toggle panels — refresh active-state.
+    this.scheduleRefresh();
   };
+  // Any click may open/close a panel (a rail button, or a panel's own × button),
+  // so refresh active-state after the interaction settles.
+  private readonly onDocClick = (): void => this.scheduleRefresh();
 
   constructor(
     items: ControlRailItem[],
@@ -124,7 +128,6 @@ export class ControlRail {
     // toggle). It stays put when the rail collapses (see the .is-collapsed
     // row layout), appearing to the right of the collapse handle.
     if (this.footer) {
-      this.footer.classList.add('luxar-control-rail__footer');
       this.root.appendChild(this.footer);
     }
 
@@ -172,12 +175,13 @@ export class ControlRail {
     // Close the flyout on outside click / Escape.
     document.addEventListener('pointerdown', this.onDocPointerDown, true);
     document.addEventListener('keydown', this.onDocKeyDown);
+    // Refresh active-state on interactions that can toggle a panel (see onDoc*).
+    document.addEventListener('click', this.onDocClick);
     this.syncFullscreen();
     this.scheduleSleep();
 
-    // Reflect live panel open/closed state.
+    // Reflect live panel open/closed state (event-driven — see scheduleRefresh).
     this.refresh();
-    this.refreshTimer = window.setInterval(() => this.refresh(), REFRESH_MS);
 
     if (!startCollapsed) this.maybeShowHint();
   }
@@ -247,8 +251,7 @@ export class ControlRail {
       } catch {
         /* a panel toggle throwing must not break the rail */
       }
-      // The panel toggles synchronously-ish; reflect state on the next tick.
-      window.setTimeout(() => this.refresh(), 30);
+      // Active-state refresh is handled by the document-click listener.
     });
 
     this.buttons.set(item.id, btn);
@@ -281,6 +284,15 @@ export class ControlRail {
       .webkitFullscreenElement;
     this.root.classList.toggle('is-fullscreen', !!(document.fullscreenElement || webkitEl));
     this.wake();
+  }
+
+  /** Coalesce active-state refreshes to one per frame. */
+  private scheduleRefresh(): void {
+    if (this.disposed || this.refreshRaf !== undefined) return;
+    this.refreshRaf = requestAnimationFrame(() => {
+      this.refreshRaf = undefined;
+      this.refresh();
+    });
   }
 
   private refresh(): void {
@@ -364,13 +376,18 @@ export class ControlRail {
         } catch {
           /* ignore */
         }
-        window.setTimeout(() => this.refresh(), 30);
+        // Active-state refresh is handled by the document-click listener.
       });
       el.appendChild(chip);
     }
     this.root.appendChild(el);
     // Align the flyout's vertical centre with the opening button.
     el.style.top = `${btn.offsetTop + btn.offsetHeight / 2}px`;
+    // Flip the chip tooltips above when the flyout sits near the viewport bottom
+    // (the View button is low in the rail), so they don't clip off-screen.
+    if (el.getBoundingClientRect().bottom > window.innerHeight - 48) {
+      el.classList.add('luxar-control-rail__flyout--up');
+    }
     this.flyout = { item, el, btn };
     this.refresh();
     this.wake();
@@ -426,13 +443,14 @@ export class ControlRail {
     if (this.disposed) return;
     this.disposed = true;
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
-    if (this.refreshTimer) window.clearInterval(this.refreshTimer);
+    if (this.refreshRaf !== undefined) cancelAnimationFrame(this.refreshRaf);
     this.closeFlyout();
     this.container.removeEventListener('pointermove', this.onContainerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
     document.removeEventListener('keydown', this.onDocKeyDown);
+    document.removeEventListener('click', this.onDocClick);
     this.container.classList.remove('luxar-has-control-rail');
     this.hint?.remove();
     this.root.remove();

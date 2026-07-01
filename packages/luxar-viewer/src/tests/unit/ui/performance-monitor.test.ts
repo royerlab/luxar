@@ -50,7 +50,7 @@ describe('PerformanceMonitor', () => {
     });
 
     it('starts hidden', () => {
-      expect(el().style.display).toBe('none');
+      expect(el().classList.contains('is-hidden')).toBe(true);
       expect(monitor.visible).toBe(false);
     });
   });
@@ -59,10 +59,10 @@ describe('PerformanceMonitor', () => {
     it('show() reveals and hide() hides', () => {
       monitor.show();
       expect(monitor.visible).toBe(true);
-      expect(el().style.display).not.toBe('none');
+      expect(el().classList.contains('is-hidden')).toBe(false);
       monitor.hide();
       expect(monitor.visible).toBe(false);
-      expect(el().style.display).toBe('none');
+      expect(el().classList.contains('is-hidden')).toBe(true);
     });
 
     it('toggle() flips, show()/hide() idempotent', () => {
@@ -99,15 +99,15 @@ describe('PerformanceMonitor', () => {
     });
   });
 
-  describe('cyclePanels', () => {
+  describe('cycleMode', () => {
     it('cycles FPS → ms → graph → FPS', () => {
       expect(el().dataset.mode).toBe('fps');
-      monitor.cyclePanels();
+      monitor.cycleMode();
       expect(el().dataset.mode).toBe('ms');
       expect(unit()).toBe('ms');
-      monitor.cyclePanels();
+      monitor.cycleMode();
       expect(el().dataset.mode).toBe('graph');
-      monitor.cyclePanels();
+      monitor.cycleMode();
       expect(el().dataset.mode).toBe('fps');
       expect(unit()).toBe('fps');
     });

@@ -67,7 +67,7 @@ vi.mock('../../../ui/performance-monitor', () => ({
     show: vi.fn(),
     hide: vi.fn(),
     toggle: vi.fn(),
-    cyclePanels: vi.fn(),
+    cycleMode: vi.fn(),
     dispose: vi.fn(),
     visible: false,
   })),

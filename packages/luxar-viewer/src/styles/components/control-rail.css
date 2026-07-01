@@ -277,6 +277,12 @@
   opacity: 1;
 }
 
+/* When the flyout opens near the viewport bottom, flip chip tooltips above. */
+.luxar-control-rail__flyout--up .luxar-control-rail__chip-tip {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .luxar-control-rail__chip-tip kbd {
   font-family: var(--luxar-font-mono);
   color: var(--luxar-text-secondary);
