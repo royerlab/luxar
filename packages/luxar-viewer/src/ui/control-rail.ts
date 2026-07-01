@@ -20,6 +20,7 @@
  */
 
 import { getViewerContainer } from '../utils/viewer-container';
+import { isDocumentFullscreen } from '../utils/fullscreen';
 
 /** One button in the rail. */
 export interface ControlRailItem {
@@ -65,6 +66,15 @@ const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
 /** Collapsed handle lingers a little longer, then fades to barely-visible. */
 const COLLAPSED_IDLE_MS = 5000;
+
+/**
+ * How many rails currently mark `document.body`. The rail-clearance marker
+ * class is shared/global, so it's reference-counted: only the last rail to
+ * dispose removes it, otherwise tearing down one viewer instance would strip
+ * the offset from every other live instance's left-anchored panels.
+ */
+let bodyMarkerRefs = 0;
+const BODY_MARKER_CLASS = 'luxar-has-control-rail';
 
 /** Chevron used by the collapse/expand handle (rotated via CSS when collapsed). */
 const CHEVRON_ICON =
@@ -145,9 +155,12 @@ export class ControlRail {
     // detail === 0) keeps focus, so keyboard navigation is unaffected.
     // Delegated on the root so it also covers the collapse handle and flyout
     // chips (which bubble up here).
+    // `button, [tabindex]` — not just `button`: the docked perf readout is a
+    // focusable <div tabindex="0">, and leaving focus on it would swallow the
+    // next Space (fullscreen) just like a focused button does.
     this.root.addEventListener('click', (e) => {
       if (e.detail > 0) {
-        (e.target as HTMLElement | null)?.closest('button')?.blur();
+        (e.target as HTMLElement | null)?.closest<HTMLElement>('button, [tabindex]')?.blur();
       }
     });
 
@@ -157,7 +170,9 @@ export class ControlRail {
     // container, because some panels mount to body (layers, debug console)
     // while others mount into the container (gui) — an embedder with a scoped
     // (non-body) container would otherwise miss the body-mounted panels.
-    document.body.classList.add('luxar-has-control-rail');
+    // Reference-counted (see bodyMarkerRefs) so multiple instances share safely.
+    bodyMarkerRefs += 1;
+    document.body.classList.add(BODY_MARKER_CLASS);
 
     // Restore persisted collapsed state.
     let startCollapsed = false;
@@ -295,9 +310,7 @@ export class ControlRail {
   /** Reflect fullscreen state — the rail hides (hover-to-reveal) in fullscreen. */
   private syncFullscreen(): void {
     if (this.disposed) return;
-    const webkitEl = (document as Document & { webkitFullscreenElement?: Element | null })
-      .webkitFullscreenElement;
-    this.root.classList.toggle('is-fullscreen', !!(document.fullscreenElement || webkitEl));
+    this.root.classList.toggle('is-fullscreen', isDocumentFullscreen());
     this.wake();
   }
 
@@ -423,9 +436,15 @@ export class ControlRail {
 
   private closeFlyout(): void {
     if (!this.flyout) return;
-    this.flyout.btn.setAttribute('aria-expanded', 'false');
-    this.flyout.el.remove();
+    const { btn, el } = this.flyout;
+    btn.setAttribute('aria-expanded', 'false');
+    // If keyboard focus is inside the flyout (e.g. closing via Escape while a
+    // chip is focused), return it to the opener instead of dropping it to
+    // <body> — otherwise the user loses their place in the tab order.
+    const focusWasInside = el.contains(document.activeElement);
+    el.remove();
     this.flyout = undefined;
+    if (focusWasInside) btn.focus();
     this.refresh();
   }
 
@@ -480,7 +499,8 @@ export class ControlRail {
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
     document.removeEventListener('keydown', this.onDocKeyDown);
     document.removeEventListener('click', this.onDocClick);
-    document.body.classList.remove('luxar-has-control-rail');
+    bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
+    if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
     this.hint?.remove();
     this.root.remove();
     this.buttons.clear();

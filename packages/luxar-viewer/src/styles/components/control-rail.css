@@ -370,3 +370,17 @@
   border-left: 1px solid var(--luxar-border-default);
   border-bottom: 1px solid var(--luxar-border-default);
 }
+
+/* Respect a user's reduced-motion preference: drop the opacity/transform
+   transitions (incl. the ~50vh collapse slide) — the rail still functions,
+   it just snaps between states instead of animating (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-control-rail,
+  .luxar-control-rail__btn,
+  .luxar-control-rail__collapse svg,
+  .luxar-control-rail__tip,
+  .luxar-control-rail__chip,
+  .luxar-control-rail__chip-tip {
+    transition: none;
+  }
+}

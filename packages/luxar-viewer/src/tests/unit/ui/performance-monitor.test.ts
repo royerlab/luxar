@@ -45,7 +45,9 @@ describe('PerformanceMonitor', () => {
     });
 
     it('sets accessibility attributes', () => {
-      expect(el().getAttribute('role')).toBe('status');
+      // role=button (an operable control), NOT status — a status live region
+      // would announce the ~5x/sec FPS updates continuously to screen readers.
+      expect(el().getAttribute('role')).toBe('button');
       expect(el().getAttribute('aria-label')).toContain('Performance');
     });
 

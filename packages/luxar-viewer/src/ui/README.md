@@ -1129,7 +1129,7 @@ Constructor takes `DatasetBrowserConfig` with `container`, `onDatasetSelect` cal
 
 **Problem: Performance monitor inaccurate**
 
-- Ensure begin/end pairs match
+- Confirm the animation loop emits `frame-start` / `frame-end` bus events
 - Check for blocking operations
 - Verify RAF timing
 

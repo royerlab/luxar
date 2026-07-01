@@ -5,9 +5,10 @@
 // click — the same information stats.js exposed, restyled to the Luxar tokens
 // and driven by the animation loop's `frame-start` / `frame-end` events.
 //
-// The public API (toggle / show / hide / visible / cycleMode / dispose) is
-// unchanged, so the InputHandler (P key) and the control-rail gauge drive it as
-// before; the `#luxar-stats` element id is kept as a stable DOM hook.
+// The visibility API (toggle / show / hide / visible / dispose) and the
+// `#luxar-stats` element id are preserved from the stats.js-based original, so
+// the InputHandler (P key) and the control-rail gauge drive it unchanged;
+// cycleMode() (FPS/ms/graph) is new to the vendored readout.
 
 import { config } from '../config';
 import { eventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
@@ -54,7 +55,11 @@ export class PerformanceMonitor {
     el.id = 'luxar-stats';
     el.className = 'luxar-perf';
     el.dataset.mode = this.mode;
-    el.setAttribute('role', 'status');
+    // role=button, NOT status: the readout's numeric text is rewritten ~5x/sec
+    // while visible, and role=status is an aria-live=polite region — a screen
+    // reader would announce the flickering FPS continuously. As a button it's an
+    // operable control announced by its (stable) aria-label, not a live region.
+    el.setAttribute('role', 'button');
     // Keyboard-operable: the metric cycle must be reachable without a mouse
     // (WCAG 2.1.1). tabindex makes the readout focusable; Enter/Space cycle it.
     el.tabIndex = 0;

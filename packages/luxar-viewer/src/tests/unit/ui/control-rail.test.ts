@@ -300,6 +300,56 @@ describe('ControlRail', () => {
     expect(opener.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('returns focus to the opener when the flyout closes with a chip focused', () => {
+    const its: ControlRailItem[] = [
+      {
+        id: 'view',
+        title: 'View',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          { id: 'scalebar', title: 'Scale bar', icon: RAIL_ICONS.scalebar, activate: vi.fn(), isActive: () => false },
+        ],
+      },
+    ];
+    rail = new ControlRail(its);
+    const opener = document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!;
+    opener.click();
+    const chip = document.querySelector<HTMLButtonElement>('[data-toggle-id="scalebar"]')!;
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+    // Escape closes the flyout — focus must return to the opener, not <body>.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('blurs a focusable (non-button) footer on pointer click, keeping Space working', () => {
+    // The docked perf readout is a <div tabindex=0>; leaving focus on it would
+    // swallow Space=fullscreen exactly like a focused button does.
+    const footer = document.createElement('div');
+    footer.tabIndex = 0;
+    footer.id = 'perf-like';
+    rail = new ControlRail(items(), footer);
+    footer.focus();
+    expect(document.activeElement).toBe(footer);
+    footer.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(document.activeElement).not.toBe(footer);
+  });
+
+  it('reference-counts the document.body marker across instances', () => {
+    rail = new ControlRail(items()); // instance A (disposed in afterEach)
+    const b = new ControlRail(items()); // instance B
+    expect(document.body.classList.contains('luxar-has-control-rail')).toBe(true);
+    // Disposing B must NOT strip the marker while A is still alive.
+    b.dispose();
+    expect(document.body.classList.contains('luxar-has-control-rail')).toBe(true);
+    // Only when the last instance disposes does the marker go away.
+    rail.dispose();
+    rail = undefined;
+    expect(document.body.classList.contains('luxar-has-control-rail')).toBe(false);
+  });
+
   it('docks a footer element (e.g. the perf readout) inside the rail', () => {
     const footer = document.createElement('div');
     footer.id = 'my-footer';
