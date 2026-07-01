@@ -145,18 +145,25 @@ to ship after). Sequencing is at the bottom.
 - **R8 [LAUNCH] — UI discoverability** (see detailed item **#9**). The UI leans
   on hidden keyboard shortcuts; add visible affordances (buttons/menus/hints).
   Highest-leverage polish item for a public launch.
-- **R9 [LAUNCH] — Example-dataset bugs** (see detailed item **#23**).
-  Reproduced 2026-06-30: `transform` renders correctly (no bug —
-  already fixed); `scene_dimensions` navigation fixed (step sizes now match
-  data sampling so `[`/`]` lands on populated slices); the
-  `scalars_and_colormap` washout is a **symptom of #24** (additive blending
-  blows the self-overlapping spiral out to white), not a colormap bug.
+- **R9 [LAUNCH] — Example-dataset bugs** ✅ **DONE** (see detailed item **#23**).
+  Reproduced & resolved 2026-07-01: `transform` renders correctly (no bug —
+  already fixed); `scene_dimensions` nav fixed by aligning `step` to the data
+  sampling (#428, merged); `scalars_and_colormap` washout fixed with
+  `blending_mode="max"` (#430) — the washout was additive *summation* of the
+  self-overlapping spiral (order-independent, so NOT a #24 depth-sorting
+  issue), and `max` (brightest-wins) shows each colormap's true hues.
 - **R10 [LAUNCH] — Depth sorting for alpha blending** (see detailed item
   **#24**). Translucent geometry composites in submission order → view-dependent
   artifacts, visible in any splat/point demo.
-- **R11 [LAUNCH] — README/landing pass.** Refresh the gallery, ensure the
-  quick-start path works end-to-end on a fresh machine, and that `luxar demo`
-  is flawless (it's the first thing everyone runs).
+- **R11 [LAUNCH] — README/landing pass.** ✅ **Mostly done** (2026-07-01):
+  audited the quick-start end-to-end — `luxar demo` generates + renders
+  flawlessly (10k-pt Lorenz), every documented Python snippet runs, and all
+  gallery images + doc links resolve. Fixed 3 stale/confusing README spots
+  (#429): sharpness range (`0.5-10` → normalized `0-1`), `gsplat lod`
+  signature (→ `--recipe {…}`), and the redundant two-terminal "View it"
+  block (→ single `luxar serve … --viewer --open`). **Remaining:** verify a
+  truly-fresh-machine `make setup-dev`, and optionally regenerate the gallery
+  media (`make generate-readme-images/videos`).
 - **R12 [POST] — Theme layout consistency (#7)**, **Python-side panel visibility
   config (#8)** — nice-to-have, not launch-gating.
 
@@ -181,7 +188,9 @@ to ship after). Sequencing is at the bottom.
 
 ### D. Sequencing (suggested order, parallelizable across tracks)
 
-1. **Stabilize `main`** — R5 (merge/close branches) → R6 (hygiene) → CI green.
+1. ✅ **Stabilize `main`** — R5 (branches merged/drained) + R6 (hygiene:
+   `delme/`/`test-results/` are gitignored, won't ship) **done**; `main` clean,
+   no open feature branches, dependabot drained, release pipeline landed (#417).
 2. **Decide versioning & package** — R1 → R3 (PyPI dry-run / TestPyPI) in parallel
    with the day-one polish (R8/R9/R10/R11).
 3. **Post the preprint** — R13/R14/R16 land → bioRxiv → obtain DOI → R4 (wire
@@ -191,8 +200,11 @@ to ship after). Sequencing is at the bottom.
 5. **Post-launch backlog** — R12, R15, and the existing Rendering/LOD and
    Future/Exploratory items below.
 
-> Single biggest unblocking action: **R5 → R1** (clean `main`, then a real
-> version). Everything else can proceed in parallel once those two land.
+> Update 2026-07-01: R5/R6 (clean `main`) and the day-one polish R9/R11 have
+> landed; R10 (#24 depth sorting) is **deferred post-release**. The critical
+> path is now the **preprint** (R13/R14/R16 → bioRxiv → DOI → R4) and the
+> **release cut** (R1 version bump → R2 tag → R3/R3-npm go-live). R8 (UI
+> discoverability) is the main remaining day-one polish item.
 
 ---
 
@@ -216,10 +228,13 @@ to ship after). Sequencing is at the bottom.
     - ✅ `transform_example` — **no bug.** All cubes/axes + parent-child
       hierarchy load and place correctly; could not reproduce a defect
       (already fixed upstream).
-    - ⏭️ `scalars_and_colormap_example` — colormaps load and apply, but the
-      three spirals wash out to near-white and look identical. Root cause is
-      **additive/alpha blending** of the self-overlapping spiral, i.e. a
-      symptom of **#24 (depth sorting)** — tracked there, not a colormap bug.
+    - ✅ `scalars_and_colormap_example` — **FIXED** (#430). The three spirals
+      washed out to near-identical white because points default to
+      `blending_mode="additive"`, which *sums* the self-overlapping turns
+      toward white. This is order-independent (additive sum is commutative),
+      so it was NOT a #24 depth-sorting bug. Switched the demo to
+      `blending_mode="max"` (brightest-wins, order-independent) so each
+      colormap reads with its true hues.
 
 ## Rendering & Performance (MEDIUM Priority)
 
