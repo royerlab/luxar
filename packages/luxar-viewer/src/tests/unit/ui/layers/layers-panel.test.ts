@@ -487,6 +487,25 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     expect(findActiveLevelStatus(container)?.textContent).toBe('L2/2');
   });
 
+  it('readout shows the DISPLAYED level, not the aspiration, when they diverge (B2 finding 2)', () => {
+    // During a slice scrub the on-screen level (displayedChildIndex) is a
+    // coarser fresh level while activeChildIndex points at the stale fine level
+    // reloading. The badge must follow what is displayed. Fails if reverted to
+    // bare activeChildIndex (would render 'L3/3').
+    registryGetMock.mockReturnValue({
+      activeChildIndex: 2, // aspiration: fine level reloading
+      displayedChildIndex: 0, // on screen: coarse fresh fallback
+      children: [{}, {}, {}],
+      selectorMode: 'auto',
+    });
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
+    panel.show();
+    panel.layerState.select('/pyramid', 'single');
+
+    expect(findActiveLevelStatus(container)?.textContent).toBe('L1/3');
+  });
+
   it('dropdown options are 1-based labels with 0-based values', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeLodSceneGraph());

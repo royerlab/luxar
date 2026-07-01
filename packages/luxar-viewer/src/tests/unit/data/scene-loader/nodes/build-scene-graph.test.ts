@@ -318,6 +318,39 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
     expect(root.children?.every((c) => c.type === 'gsplats')).toBe(true);
   });
 
+  it('omits the fitting/ provenance sidecar from a bare kind=lod root', async () => {
+    // Regression: `save_gsplats` writes a `fitting/` provenance group (raw
+    // create_group, attrs = {timestamp}) as a sibling of the real child_<i>
+    // levels. It has neither `type` nor `kind`, so it must be skipped — not
+    // adopted as a phantom LOD child (which would default to min_pixel_size=0,
+    // sort last, and break the ascending ladder + fire a bogus warning).
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/child_0', kind: 'group' },
+      { path: '/child_1', kind: 'group' },
+      { path: '/fitting', kind: 'group' },
+      { path: '/fitting/config', kind: 'group' },
+    ]);
+    attrsByPath['/child_0'] = { type: 'gsplats', n_splats: 8, min_pixel_size: 0 };
+    attrsByPath['/child_1'] = { type: 'gsplats', n_splats: 100, min_pixel_size: 110.7 };
+    attrsByPath['/fitting'] = { timestamp: '2026-06-30T02:57:42Z' }; // no type, no kind
+    attrsByPath['/fitting/config'] = { iters: 8000 }; // nested sidecar — also skipped
+    const rootAttrs = {
+      type: 'group',
+      kind: 'lod',
+      selector: 'pixel_size',
+      default_level: 0,
+    } as unknown as ZarrSceneAttrs;
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+    expect(root.children?.map((c) => c.path)).toEqual(['/child_0', '/child_1']);
+    // `/fitting` is opened once (its attrs are read to classify it), then
+    // skipped; its subtree is marked internal so nested sidecars are skipped
+    // BEFORE being opened.
+    expect(openCalls).toContain('fitting');
+    expect(openCalls).not.toContain('fitting/config');
+  });
+
   it('a bare kind=partition root keeps its part_<i> as children', async () => {
     enumerateStoreMock.mockResolvedValue([
       { path: '/part_0', kind: 'group' },

@@ -81,7 +81,12 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
           out.set(entry.path, {
             kind: 'lod',
             levelCount: entry.children.length,
-            activeLevel: entry.activeChildIndex,
+            // Report the level actually ON SCREEN, not the selector's aspiration
+            // — during a slice scrub the registry shows a coarser fresh level
+            // (``displayedChildIndex``) while ``activeChildIndex`` points at the
+            // stale fine level being reloaded. ``?? activeChildIndex`` preserves
+            // pre-evaluation behaviour (the two are equal until the first frame).
+            activeLevel: entry.displayedChildIndex ?? entry.activeChildIndex,
             selector,
           });
         }

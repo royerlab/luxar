@@ -108,6 +108,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     viewState,
     factoryDeps,
     isDatasetLive: () => true,
+    getViewVersion: () => 1,
+    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -198,7 +200,7 @@ describe('loadPointsNode — happy path', () => {
     const result = await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(result).not.toBeNull();
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data);
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
   });
 });
 
@@ -229,7 +231,7 @@ describe('loadPointsNode — pointCount === 0 path', () => {
     expect(placeholder!.name).toBe('/scene/p');
     // Future updateView() / retry calls need the empty commit to seed
     // the geometry — so the helper commits even on pointCount=0.
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data);
+    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
   });
 });
 

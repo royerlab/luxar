@@ -943,7 +943,11 @@ export class LayersPanel {
       // is outside the frustum; flag it so a coarse level isn't read as a
       // selection bug.
       const suffix = entry.offScreen ? ' (off-screen)' : '';
-      return `L${entry.activeChildIndex + 1}/${entry.children.length}${suffix}`;
+      // Show the level on SCREEN (``displayedChildIndex``), not the selector's
+      // aspiration — during a slice scrub the displayed level is a coarser fresh
+      // one while ``activeChildIndex`` is the stale fine level reloading.
+      const shown = entry.displayedChildIndex ?? entry.activeChildIndex;
+      return `L${shown + 1}/${entry.children.length}${suffix}`;
     }
     if (this.isBroadcastPartition(primary)) {
       // Aggregate across EVERY nested lod_group, not just the first: under
@@ -958,7 +962,7 @@ export class LayersPanel {
       for (const p of paths) {
         const e = registry.get(p);
         if (!e || e.children.length === 0) continue;
-        const lvl = e.activeChildIndex + 1;
+        const lvl = (e.displayedChildIndex ?? e.activeChildIndex) + 1;
         if (lvl < min) min = lvl;
         if (lvl > max) max = lvl;
       }

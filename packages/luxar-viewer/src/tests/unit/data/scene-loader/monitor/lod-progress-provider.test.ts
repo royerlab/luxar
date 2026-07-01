@@ -85,6 +85,27 @@ describe('createLODProgressProvider', () => {
     });
   });
 
+  it('reports the DISPLAYED level, not the aspiration, when they diverge (B2 finding 1)', () => {
+    // During a slice scrub the registry shows a coarser fresh level
+    // (displayedChildIndex) while activeChildIndex points at the stale fine
+    // level being reloaded. The monitor must report what is ON SCREEN.
+    const registry = registryWith([
+      {
+        path: '/lod',
+        children: [{}, {}, {}] as LODGroupEntry['children'],
+        selectorMode: 'auto',
+        activeChildIndex: 2, // aspiration: fine level reloading
+        displayedChildIndex: 0, // on screen: coarse fresh fallback
+      },
+    ]);
+    const provider = createLODProgressProvider({
+      loaderMaps: [new Map(), new Map(), new Map()],
+      lodGroupRegistry: registry,
+    });
+    // Fails if the production read reverts to bare `entry.activeChildIndex` (→ 2).
+    expect(provider.getLODStates().get('/lod')?.activeLevel).toBe(0);
+  });
+
   it('labels a locked selector mode', () => {
     const registry = registryWith([
       {

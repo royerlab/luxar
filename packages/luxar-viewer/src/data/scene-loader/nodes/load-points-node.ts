@@ -137,9 +137,13 @@ export async function loadPointsNodeExpensive(
     const derived = ctx.deriveNodeViewState(node.path, node.attrs, {
       applyPartialExtendTolerance: true,
     });
+    // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
+    // deferred reload is stamped for the slice it actually loaded.
+    const loadedViewVersion = ctx.getViewVersion();
     // Full-extend on initial load: behave as if extend_to_all weren't set
-    // (load with the base view state) so the empty node still populates.
-    const pointsViewState: ViewState = derived.skip ? ctx.viewState : derived.viewState;
+    // (load with the base view state) so the empty node still populates. Use the
+    // LIVE view-state so a deferred reload queries the current slice.
+    const pointsViewState: ViewState = derived.skip ? ctx.getLiveViewState() : derived.viewState;
 
     const data = await (loader as PointsDataLoader).loadPoints(pointsViewState);
 
@@ -158,7 +162,7 @@ export async function loadPointsNodeExpensive(
 
     // Commit data into the placeholder via the same path future
     // updateView() / retry calls use.
-    ctx.updatePointsGeometry(node.path, data);
+    ctx.updatePointsGeometry(node.path, data, undefined, loadedViewVersion);
 
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
   } catch (error) {
