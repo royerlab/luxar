@@ -5,9 +5,9 @@
 // click — the same information stats.js exposed, restyled to the Luxar tokens
 // and driven by the animation loop's `frame-start` / `frame-end` events.
 //
-// Public API (toggle / show / hide / visible / cycleMode / dispose) and the
-// `#luxar-stats` element id are preserved so the InputHandler (P key) and the
-// control rail toggle it unchanged.
+// The public API (toggle / show / hide / visible / cycleMode / dispose) is
+// unchanged, so the InputHandler (P key) and the control-rail gauge drive it as
+// before; the `#luxar-stats` element id is kept as a stable DOM hook.
 
 import { config } from '../config';
 import { eventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';

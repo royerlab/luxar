@@ -103,6 +103,42 @@ describe('ControlRail', () => {
     ).toBe(true);
   });
 
+  it('re-evaluates active-state on document interaction (event-driven refresh)', () => {
+    // #3: active-state is refreshed on document click/keydown (rAF-debounced),
+    // NOT by polling — so it reflects a panel opened or CLOSED by any means,
+    // including a panel's own × button. Capture the rAF callback so we can flush
+    // it deterministically in the same order the real loop would.
+    const rafQueue: FrameRequestCallback[] = [];
+    const raf = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(((cb: FrameRequestCallback) => {
+        rafQueue.push(cb);
+        return 1;
+      }) as typeof requestAnimationFrame);
+    const flushRaf = (): void => rafQueue.shift()?.(0);
+
+    let open = false;
+    rail = new ControlRail(items([{}, { isActive: () => open }]));
+    const active = () =>
+      document.querySelector('[data-rail-id="render"]')?.classList.contains('is-active');
+    // Initial synchronous refresh: inactive.
+    expect(active()).toBe(false);
+
+    // Panel opens by some external means → a document click schedules a refresh.
+    open = true;
+    document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    flushRaf();
+    expect(active()).toBe(true);
+
+    // …and clears again when the panel is closed (e.g. via its own × button).
+    open = false;
+    document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    flushRaf();
+    expect(active()).toBe(false);
+
+    raf.mockRestore();
+  });
+
   it('never marks a momentary item active', () => {
     rail = new ControlRail(items([{}, {}, { momentary: true, isActive: () => true }]));
     expect(

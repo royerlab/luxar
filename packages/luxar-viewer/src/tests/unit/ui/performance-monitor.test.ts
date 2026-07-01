@@ -7,7 +7,7 @@
  * gating of the bus subscription, the metric cycle, and disposal.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PerformanceMonitor } from '../../../ui/performance-monitor';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 
@@ -73,6 +73,22 @@ describe('PerformanceMonitor', () => {
       monitor.hide();
       monitor.hide();
       expect(monitor.visible).toBe(false);
+    });
+
+    it('kicks the render loop via keepAlive on show and releases on hide', () => {
+      // The docked readout freezes when the scene idles; on show it kicks the
+      // loop once (request) so it gets a live reading, and releases on hide.
+      const request = vi.fn();
+      const release = vi.fn();
+      const m = new PerformanceMonitor({ request, release });
+      document.body.appendChild(m.element);
+      m.show();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      m.hide();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      m.dispose();
     });
   });
 
