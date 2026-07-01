@@ -114,6 +114,21 @@ The liquid glass theme uses an advanced SVG filter pipeline:
 
 Filter parameters are configurable: `blurRadius`, `refractionScale`, `chromaticStrength`, `specularIntensity`.
 
+### Opting a panel into the glass themes
+
+Both glass themes key off a **single marker class, `luxar-glass-surface`**. A panel
+opts in by adding that class to its root element at creation (e.g.
+`el.className = 'luxar-my-panel luxar-glass-surface'`). Three consumers read that
+one class — with no per-panel list to keep in sync:
+
+- `frosted-glass.css` — `[data-theme='frosted-glass'] .luxar-glass-surface { … }`
+- `liquid-glass.css` — the base / `::before` / `::after` glass layers
+- `glass-filters.ts` — `injectGlassRefractionLayers()` and the refraction
+  `MutationObserver` (via `GLASS_SURFACE_SELECTOR`)
+
+To make a new panel glass-aware, add the class at its creation site; nothing in
+the theme CSS or `glass-filters.ts` needs to change.
+
 ## Persistence
 
 User theme preference is stored in `localStorage` under the key `luxar.theme`

@@ -53,7 +53,7 @@ export function showError(message: string) {
   // Create error dialog with CSS classes
   const errorDiv = document.createElement('div');
   errorDiv.id = 'luxar-error-message';
-  errorDiv.className = 'luxar-error-dialog error-message'; // luxar-error-dialog for styling, error-message for E2E tests
+  errorDiv.className = 'luxar-error-dialog luxar-glass-surface error-message'; // luxar-error-dialog for styling, error-message for E2E tests
 
   // ARIA attributes for accessibility
   errorDiv.setAttribute('role', 'alertdialog');

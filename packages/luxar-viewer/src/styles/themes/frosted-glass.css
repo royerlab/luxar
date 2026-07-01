@@ -5,17 +5,10 @@
  * Unlike liquid-glass, frosted-glass uses heavy blur without SVG distortion filters.
  */
 
-/* Enable stacking context for backdrop-filter to work correctly */
-[data-theme='frosted-glass'] .luxar-help-overlay,
-[data-theme='frosted-glass'] .luxar-error-dialog,
-[data-theme='frosted-glass'] .luxar-dataset-browser,
-[data-theme='frosted-glass'] .luxar-debug-console,
-[data-theme='frosted-glass'] .luxar-data-monitor,
-[data-theme='frosted-glass'] .luxar-dimension-sliders,
-[data-theme='frosted-glass'] .luxar-layers-panel,
-[data-theme='frosted-glass'] .luxar-gui,
-[data-theme='frosted-glass'] .luxar-control-rail,
-[data-theme='frosted-glass'] .luxar-control-rail__flyout {
+/* Enable stacking context for backdrop-filter to work correctly.
+   Every glass-enabled panel carries `.luxar-glass-surface` (added at its
+   creation site) — see themes/glass-filters.ts for the single source of truth. */
+[data-theme='frosted-glass'] .luxar-glass-surface {
   isolation: isolate; /* Create stacking context for proper backdrop-filter */
   box-sizing: border-box; /* Ensure consistent sizing */
   backdrop-filter: var(--luxar-blur-md) saturate(1.5);

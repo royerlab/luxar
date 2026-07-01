@@ -248,7 +248,7 @@ export class DimensionSliders {
   private createSlidersContainer(): HTMLElement {
     const container = document.createElement('div');
     container.id = 'luxar-dimension-sliders';
-    container.className = 'luxar-dimension-sliders';
+    container.className = 'luxar-dimension-sliders luxar-glass-surface';
 
     this.container.appendChild(container);
     return container;

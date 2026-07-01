@@ -142,9 +142,9 @@ showing its shortcut.
   toggles (scale bar, colormap legend, overlays, cinematic) so the rail stays
   short.
 - **Docked footer** — hosts the Performance readout (see §4).
-- **Theme participation** — styled with `--luxar-*` tokens and registered in the
-  frosted-glass / liquid-glass theme override lists so it shares the panels'
-  material across all four themes.
+- **Theme participation** — styled with `--luxar-*` tokens and carries the
+  `luxar-glass-surface` marker class (like every other panel) so it shares the
+  panels' material across all four themes (see `themes/README.md`).
 - Focus-safe: blurs the button after a pointer click so canvas/body-gated
   shortcuts (e.g. Space = fullscreen) keep working; keyboard focus is preserved.
 

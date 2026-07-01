@@ -109,7 +109,7 @@ export class ControlRail {
     this.container = getViewerContainer();
 
     this.root = document.createElement('div');
-    this.root.className = 'luxar-control-rail is-awake';
+    this.root.className = 'luxar-control-rail luxar-glass-surface is-awake';
     this.root.setAttribute('role', 'toolbar');
     this.root.setAttribute('aria-label', 'Viewer controls');
     this.root.setAttribute('aria-orientation', 'vertical');
@@ -354,7 +354,7 @@ export class ControlRail {
   private openFlyout(item: ControlRailItem, btn: HTMLButtonElement): void {
     this.closeFlyout();
     const el = document.createElement('div');
-    el.className = 'luxar-control-rail__flyout';
+    el.className = 'luxar-control-rail__flyout luxar-glass-surface';
     el.setAttribute('role', 'menu');
     for (const t of item.flyout ?? []) {
       const chip = document.createElement('button');

@@ -12,17 +12,10 @@
  * Inspired by Apple's liquid glass and https://dev.to/kevinbism/recreating-apples-liquid-glass-effect-with-pure-css-3gpl
  */
 
-/* Base overrides for components that support the glass effect */
-[data-theme='liquid-glass'] .luxar-help-overlay,
-[data-theme='liquid-glass'] .luxar-error-dialog,
-[data-theme='liquid-glass'] .luxar-dataset-browser,
-[data-theme='liquid-glass'] .luxar-debug-console,
-[data-theme='liquid-glass'] .luxar-data-monitor,
-[data-theme='liquid-glass'] .luxar-dimension-sliders,
-[data-theme='liquid-glass'] .luxar-layers-panel,
-[data-theme='liquid-glass'] .luxar-gui,
-[data-theme='liquid-glass'] .luxar-control-rail,
-[data-theme='liquid-glass'] .luxar-control-rail__flyout {
+/* Base overrides for components that support the glass effect.
+   Every glass-enabled panel carries `.luxar-glass-surface` (added at its
+   creation site) — see themes/glass-filters.ts for the single source of truth. */
+[data-theme='liquid-glass'] .luxar-glass-surface {
   /* Create stacking context for layers */
   isolation: isolate;
 
@@ -65,16 +58,7 @@
    LAYER 2: Backdrop Blur + Refraction Layer (::before)
    Combines backdrop-filter with SVG refraction filter
    ========================================================================== */
-[data-theme='liquid-glass'] .luxar-help-overlay::before,
-[data-theme='liquid-glass'] .luxar-error-dialog::before,
-[data-theme='liquid-glass'] .luxar-dataset-browser::before,
-[data-theme='liquid-glass'] .luxar-debug-console::before,
-[data-theme='liquid-glass'] .luxar-data-monitor::before,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::before,
-[data-theme='liquid-glass'] .luxar-layers-panel::before,
-[data-theme='liquid-glass'] .luxar-gui::before,
-[data-theme='liquid-glass'] .luxar-control-rail::before,
-[data-theme='liquid-glass'] .luxar-control-rail__flyout::before {
+[data-theme='liquid-glass'] .luxar-glass-surface::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -95,16 +79,7 @@
    LAYER 2: Liquid Shine Layer (::after)
    Glossy highlights and edge glow - the "wet glass" look
    ========================================================================== */
-[data-theme='liquid-glass'] .luxar-help-overlay::after,
-[data-theme='liquid-glass'] .luxar-error-dialog::after,
-[data-theme='liquid-glass'] .luxar-dataset-browser::after,
-[data-theme='liquid-glass'] .luxar-debug-console::after,
-[data-theme='liquid-glass'] .luxar-data-monitor::after,
-[data-theme='liquid-glass'] .luxar-dimension-sliders::after,
-[data-theme='liquid-glass'] .luxar-layers-panel::after,
-[data-theme='liquid-glass'] .luxar-gui::after,
-[data-theme='liquid-glass'] .luxar-control-rail::after,
-[data-theme='liquid-glass'] .luxar-control-rail__flyout::after {
+[data-theme='liquid-glass'] .luxar-glass-surface::after {
   content: '';
   position: absolute;
   inset: 0;

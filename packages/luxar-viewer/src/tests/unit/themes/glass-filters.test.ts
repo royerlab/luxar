@@ -171,7 +171,9 @@ describe('glass-filters', () => {
       for (const selector of GLASS_PANEL_SELECTORS) {
         const className = selector.replace(/^\./, '');
         const panel = document.createElement('div');
-        panel.className = className;
+        // Real panels carry both their own class and the glass-surface marker;
+        // the injector keys off the marker (see glass-filters.ts).
+        panel.className = `${className} luxar-glass-surface`;
         document.body.appendChild(panel);
       }
 
@@ -188,7 +190,7 @@ describe('glass-filters', () => {
   describe('[G1f] injectGlassRefractionLayers skip-if-exists', () => {
     it('does not add a duplicate refraction layer on the second call', () => {
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       document.body.appendChild(panel);
 
       injectGlassRefractionLayers();
@@ -202,7 +204,7 @@ describe('glass-filters', () => {
   describe('[G1g] injectGlassRefractionLayers insert position', () => {
     it('inserts the refraction layer as the FIRST child of the panel, not the last', () => {
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       // Pre-existing children — refraction must go before them.
       const child1 = document.createElement('span');
       child1.id = 'pre-existing-1';
@@ -222,7 +224,7 @@ describe('glass-filters', () => {
 
     it('sets aria-hidden="true" on the injected refraction layer', () => {
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       document.body.appendChild(panel);
 
       injectGlassRefractionLayers();
@@ -238,7 +240,9 @@ describe('glass-filters', () => {
       for (const selector of GLASS_PANEL_SELECTORS) {
         const className = selector.replace(/^\./, '');
         const panel = document.createElement('div');
-        panel.className = className;
+        // Real panels carry both their own class and the glass-surface marker;
+        // the injector keys off the marker (see glass-filters.ts).
+        panel.className = `${className} luxar-glass-surface`;
         document.body.appendChild(panel);
       }
       injectGlassRefractionLayers();
@@ -275,7 +279,7 @@ describe('glass-filters', () => {
         .mockImplementation(((_cb: FrameRequestCallback) => 1) as typeof requestAnimationFrame);
 
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       document.body.appendChild(panel);
 
       // Wait a tick for any pending MutationObserver callbacks.
@@ -309,7 +313,7 @@ describe('glass-filters', () => {
 
       // Adding a glass panel INSIDE .luxar-viewer must trigger the observer.
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       viewer.appendChild(panel);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -339,7 +343,7 @@ describe('glass-filters', () => {
       const cleanup = setupGlassRefractionObserver();
 
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       container.appendChild(panel);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -364,7 +368,7 @@ describe('glass-filters', () => {
       const cleanup = setupGlassRefractionObserver();
 
       const panel = document.createElement('div');
-      panel.className = 'luxar-gui';
+      panel.className = 'luxar-gui luxar-glass-surface';
       document.body.appendChild(panel);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -410,7 +414,7 @@ describe('glass-filters', () => {
       const cleanup = setupGlassRefractionObserver();
 
       const panel = document.createElement('div');
-      panel.className = 'luxar-debug-console'; // a glass selector
+      panel.className = 'luxar-debug-console luxar-glass-surface'; // a glass surface
       document.body.appendChild(panel);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -440,7 +444,7 @@ describe('glass-filters', () => {
       const wrapper = document.createElement('div');
       wrapper.className = 'some-wrapper';
       const nestedGlass = document.createElement('div');
-      nestedGlass.className = 'luxar-help-overlay';
+      nestedGlass.className = 'luxar-help-overlay luxar-glass-surface';
       wrapper.appendChild(nestedGlass);
 
       // A single appendChild adds the WRAPPER node — the observer must

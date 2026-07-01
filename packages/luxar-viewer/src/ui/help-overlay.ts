@@ -28,7 +28,7 @@ export function showHelpOverlay() {
 
   const helpDiv = document.createElement('div');
   helpDiv.id = 'luxar-help-overlay';
-  helpDiv.className = 'luxar-help-overlay';
+  helpDiv.className = 'luxar-help-overlay luxar-glass-surface';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-modal', 'true');
   helpDiv.setAttribute('aria-labelledby', 'luxar-help-overlay-title');
