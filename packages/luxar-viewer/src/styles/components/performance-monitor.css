@@ -1,0 +1,46 @@
+/**
+ * Performance readout (see ui/performance-monitor.ts) — a compact FPS / frame
+ * time pill matched to the Luxar design tokens. Docked lower-left, near the
+ * control rail (offset to clear it via control-rail.css).
+ */
+
+.luxar-perf {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-full, 9999px);
+  box-shadow: var(--luxar-shadow-lg);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-base, 11px);
+  color: var(--luxar-text-secondary);
+  pointer-events: none; /* a readout, not interactive */
+  user-select: none;
+}
+
+.luxar-perf__stat {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.luxar-perf__fps {
+  color: var(--luxar-text-primary);
+  font-weight: var(--luxar-font-semibold, 600);
+}
+
+.luxar-perf__fps[data-level='good'] {
+  color: var(--luxar-success, #4caf50);
+}
+.luxar-perf__fps[data-level='ok'] {
+  color: var(--luxar-warning, #ffc107);
+}
+.luxar-perf__fps[data-level='bad'] {
+  color: var(--luxar-error, #f44336);
+}

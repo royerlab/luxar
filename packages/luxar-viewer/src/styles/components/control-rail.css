@@ -342,6 +342,11 @@
   left: 78px;
 }
 
+/* The performance readout docks lower-left too — shift it clear of the rail. */
+.luxar-has-control-rail #luxar-stats {
+  left: 78px;
+}
+
 .luxar-control-rail-hint::before {
   content: '';
   position: absolute;

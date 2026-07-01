@@ -139,7 +139,15 @@ export async function runInitPipeline(
   // SceneManager flips this flag in its webglcontextlost/restored
   // handlers; the loop polls each frame.
   animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
-  const performanceMonitor = new PerformanceMonitor();
+  // Keep the render loop ticking while the FPS readout is open so it stays
+  // live even when the scene would otherwise idle; released when closed.
+  const performanceMonitor = new PerformanceMonitor({
+    request: () => {
+      animationController.addPerFrameCallback('perf-monitor', () => {}, { continuous: true });
+      animationController.startAnimation(); // resume if the loop had idled
+    },
+    release: () => animationController.removePerFrameCallback('perf-monitor'),
+  });
   partial.performanceMonitor = performanceMonitor;
   const debugConsole = new DebugConsole();
   partial.debugConsole = debugConsole;

@@ -30,7 +30,7 @@
 @import './components/toast.css';
 @import './components/overlay-layer.css';
 /* Add additional component styles here as needed. */
-/* @import './components/performance-monitor.css'; */
+@import './components/performance-monitor.css';
 
 /* Custom GUI Library Styles (replaces lil-gui) */
 @import '../ui/gui/styles/gui.css';

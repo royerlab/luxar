@@ -81,6 +81,10 @@ vi.mock('../../../ui/debug-console', () => ({
     getIsVisible: vi.fn(() => false),
   })),
 }));
+vi.mock('../../../ui/control-rail', () => ({
+  ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
+  RAIL_ICONS: {},
+}));
 
 // Setup global mocks
 const mockAddEventListener = vi.fn();
@@ -179,6 +183,7 @@ describe('LuxarApp', () => {
 
     mockInputHandler = {
       init: vi.fn(),
+      getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
