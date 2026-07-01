@@ -33,14 +33,17 @@ def main():
     """Create a scene with explicit dimension definitions."""
     aprint("Creating scene with explicit dimensions...")
 
-    # Define scene dimensions with custom stepping
-    # IMPORTANT: Ranges must match where data actually exists
+    # Define scene dimensions with custom stepping.
+    # IMPORTANT: the step sizes are chosen to MATCH the spacing of the data
+    # below so that each keyboard [/] press lands exactly on a populated
+    # slice. If step were finer than the data sampling, navigation would
+    # step into empty slices and the view would go blank.
     dims = Dimensions(
         [
-            # Time dimension with 0.5s steps
-            Dimension("time", unit="s", range=(0, 10), step=0.5, display=False),
-            # Z dimension with fine 0.1um steps - range matches actual data
-            Dimension("z", unit="um", range=(-40, 40), step=0.1, display=False),
+            # Time dimension: data exists every 2.5 s, so step by 2.5 s.
+            Dimension("time", unit="s", range=(0, 10), step=2.5, display=False),
+            # Z dimension: data exists every 20 um, so step by 20 um.
+            Dimension("z", unit="um", range=(-40, 40), step=20.0, display=False),
             # X,Y dimensions displayed with default stepping
             Dimension("y", unit="um", range=(-100, 100), display=True),
             Dimension("x", unit="um", range=(-100, 100), display=True),
@@ -122,8 +125,9 @@ def main():
             ),
             observe=[
                 "Press <code>1</code> then <code>[</code>/<code>]</code>: time "
-                "steps by 0.5 s.",
-                "Press <code>2</code>: z navigates smoothly in 0.1 um steps.",
+                "steps by 2.5 s, landing on each populated frame.",
+                "Press <code>2</code> then <code>[</code>/<code>]</code>: z steps "
+                "by 20 um onto each data plane.",
                 "Points shrink at deeper z values.",
                 "Three colour channels are visible (R, G, B).",
             ],
@@ -146,12 +150,12 @@ def main():
         aprint("1. Start server: luxar serve scene_dimensions_example.luxar.zarr")
         aprint("2. Open viewer in browser")
         aprint("\nKeyboard controls:")
-        aprint("  - Press '1' to control time (steps of 0.5s)")
-        aprint("  - Press '2' to control z depth (steps of 0.1um)")
+        aprint("  - Press '1' to control time (steps of 2.5s)")
+        aprint("  - Press '2' to control z depth (steps of 20um)")
         aprint("  - Use '[' and ']' to navigate")
         aprint("\nExpected behavior:")
-        aprint("  - Time navigation jumps by 0.5s increments")
-        aprint("  - Z navigation moves smoothly by 0.1um")
+        aprint("  - Time navigation jumps by 2.5s onto each populated frame")
+        aprint("  - Z navigation jumps by 20um onto each data plane")
         aprint("  - Points get smaller at deeper z values")
         aprint("  - Three color channels visible (R, G, B)")
         aprint("=" * 70)
