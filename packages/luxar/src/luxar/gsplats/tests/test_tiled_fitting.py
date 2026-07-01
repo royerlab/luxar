@@ -377,6 +377,7 @@ class TestFitTiled:
 # ── Tiled + Progressive tests ──────────────────────────────
 
 
+@pytest.mark.slow  # ~50s: progressive tiled CPU fitting (CI runs `-m "not slow"`)
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
 class TestTiledProgressive:
     """Tests for tiled fitting with progressive=True.

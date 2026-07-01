@@ -7,10 +7,17 @@ The standalone `gsplat plan` command was folded into `fit --tiling content`
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+# Heavy end-to-end content-mode CPU fitting (~15 min for this module — the
+# dominant cost of the serial suite). Marked slow so CI's `-m "not slow"` pass
+# stays under the runner timeout; the full suite (incl. slow) runs locally
+# before every push.
+pytestmark = pytest.mark.slow
 
 runner = CliRunner()
 

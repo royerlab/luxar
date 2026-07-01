@@ -124,6 +124,66 @@ def test_invalid_method_raises() -> None:
         compute_additive_order(data, method="not_a_method")  # type: ignore[arg-type]
 
 
+# ── method='auto' size-adaptive resolution (perf guard) ────────────────────
+
+
+def test_resolve_additive_method_threshold() -> None:
+    """``auto`` picks greedy at/below the threshold and self_energy above it.
+
+    Mirrors substitutive LOD's ``_resolve_method``. Guards the perf fix: a
+    large additive part must NOT silently fall into greedy's O(N·nnz·logN)
+    lazy-heap path (which hung ~2 h on a 1.5 M-splat part).
+    """
+    from luxar.gsplats.lod.additive import (
+        _AUTO_ADDITIVE_MAX_N,
+        resolve_additive_method,
+    )
+
+    assert resolve_additive_method("auto", 1) == "greedy"
+    assert resolve_additive_method("auto", _AUTO_ADDITIVE_MAX_N) == "greedy"
+    assert resolve_additive_method("auto", _AUTO_ADDITIVE_MAX_N + 1) == "self_energy"
+    assert resolve_additive_method("auto", 10_000_000) == "self_energy"
+    # A concrete method always passes through unchanged (no override).
+    assert resolve_additive_method("greedy", 10_000_000) == "greedy"
+    assert resolve_additive_method("self_energy", 1) == "self_energy"
+
+
+def test_compute_additive_order_auto_resolves_to_greedy_at_small_n() -> None:
+    """At small N, ``auto`` produces the SAME ordering as explicit greedy."""
+    data = _make_random_gsplat(n=64, seed=3)
+    auto = compute_additive_order(data, method="auto")
+    greedy = compute_additive_order(data, method="greedy")
+    assert auto.tolist() == greedy.tolist()
+
+
+def test_compute_additive_order_auto_avoids_greedy_above_threshold(monkeypatch) -> None:
+    """Above the threshold, ``auto`` must route to self_energy — NOT greedy.
+
+    Proven by patching the threshold below N and asserting the Gram (built only
+    by greedy/spectral) is never touched. Pre-fix (no resolver) this raised on
+    an unknown method or ran greedy; either way this test fails without the fix.
+    """
+    import luxar.gsplats.lod.additive as additive_mod
+
+    monkeypatch.setattr(additive_mod, "_AUTO_ADDITIVE_MAX_N", 8)
+
+    called = {"gram": 0}
+    real_gram = additive_mod._build_sparse_gram
+
+    def _spy(*args, **kwargs):
+        called["gram"] += 1
+        return real_gram(*args, **kwargs)
+
+    monkeypatch.setattr(additive_mod, "_build_sparse_gram", _spy)
+
+    data = _make_random_gsplat(n=64, seed=5)  # 64 > patched threshold of 8
+    auto = additive_mod.compute_additive_order(data, method="auto")
+    self_energy = additive_mod.compute_additive_order(data, method="self_energy")
+    # Routed to the cheap O(N log N) score path — Gram never built.
+    assert called["gram"] == 0
+    assert auto.tolist() == self_energy.tolist()
+
+
 @pytest.mark.parametrize("method", METHODS)
 def test_order_empty_returns_empty(method: str) -> None:
     """[P5] N=0 boundary: every method returns an empty int64 array."""

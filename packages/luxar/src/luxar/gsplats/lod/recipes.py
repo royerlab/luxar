@@ -46,7 +46,11 @@ from typing import Callable, List, Literal, Optional, Union, get_args
 
 from luxar.core.group.partition import DEFAULT_MAX_ELEMENTS
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.lod.additive import BreakpointSpec, MethodName, make_additive_lod
+from luxar.gsplats.lod.additive import (
+    AutoOrMethod,
+    BreakpointSpec,
+    make_additive_lod,
+)
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
 from luxar.gsplats.lod.substitutive import make_substitutive_lod
 from luxar.gsplats.tree import (
@@ -96,7 +100,7 @@ class RecipeParams:
 
     # additive ladder (additive / partitioned / multiscale fine parts / pyramid)
     n_lods: int = 4
-    additive_method: MethodName = "greedy"
+    additive_method: AutoOrMethod = "auto"
     breakpoints: BreakpointSpec = "equal-count"
     truncation_sigmas: float = 3.0
     max_n_dense: int = 2000

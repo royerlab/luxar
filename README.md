@@ -482,6 +482,34 @@ See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scene
 
 ---
 
+## AI Agent Skills
+
+Luxar ships **Agent Skills** — reusable, model-invoked instructions that teach an AI
+coding agent (Claude Code, OpenAI Codex, Gemini CLI, Cursor, …) how to drive Luxar.
+They use the cross-tool [`SKILL.md`](https://agentskills.io) open standard, so the
+same skill works across compatible agents.
+
+They are committed to the repo, so **cloning is the only install step** — agents
+auto-discover them. The canonical copies live in [`.agents/skills/`](.agents/skills/)
+(the vendor-neutral path) and are symlinked into `.claude/skills/` so Claude Code
+finds them too.
+
+| Skill | What it teaches |
+|-------|-----------------|
+| [`luxar-visualization`](.agents/skills/luxar-visualization/SKILL.md) | Build a `.luxar.zarr` scene from a dataset — Points/Lines/GSplats, Dimensions, transforms, hierarchy, serve/export — grounded in the demos and examples. |
+| [`luxar-gsplat-pipeline`](.agents/skills/luxar-gsplat-pipeline/SKILL.md) | Fit Gaussian splats to an nD image: the `cal → fit → lod` pipeline, the full CLI option surface, tiling, the Python fitting API, and adding a gsplat node to a scene. |
+| [`luxar-hpc-batch-fit`](.agents/skills/luxar-hpc-batch-fit/SKILL.md) | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`), plus status/validate/merge/cancel and the GPU benchmark profile. |
+| [`luxar-gsplat-edit`](.agents/skills/luxar-gsplat-edit/SKILL.md) | Post-fit toolbox on a `.gsplats.zarr`: slice, transform, cull, filter, partition, merge, convert, migrate-format, and inspect (info/render/compare/view/napari). |
+| [`luxar-data-loading`](.agents/skills/luxar-data-loading/SKILL.md) | Load an nD image/volume (`.zarr`/OME-Zarr/`.tiff`/`.npy`/`.npz`) — channel/timepoint/array-key selection and `--axes` overrides, with the RAM/axes pitfalls. |
+| [`luxar-export`](.agents/skills/luxar-export/SKILL.md) | Package a scene for sharing — a standalone offline folder (viewer + data + `serve.py`) or a native macOS/Linux app bundle. |
+
+**Invoke** — Claude Code: `/<skill-name>` or automatically; Codex: `$<skill-name>`,
+`/skills`, or automatically. Implicit selection is driven by each skill's
+`description`. See [`.agents/skills/README.md`](.agents/skills/README.md) for the
+layout and how to add a new skill.
+
+---
+
 ## Documentation
 
 | Document | Description |
@@ -491,6 +519,7 @@ See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scene
 | [Zarr Format Spec](docs/guides/user/LUXAR_ZARR_FORMAT.md) | Complete data format specification |
 | [HDR Guide](docs/guides/user/HDR_GUIDE.md) | HDR color workflow |
 | [Gaussian Splatting](packages/luxar/src/luxar/gsplats/README.md) | n-Dimensional Gaussian fitting |
+| [Agent Skills](.agents/skills/README.md) | Cross-tool AI agent skills (Claude Code, Codex, …) shipped with Luxar |
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
 | [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
 | [Contributing](CONTRIBUTING.md) | How to contribute |

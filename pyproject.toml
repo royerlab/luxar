@@ -212,9 +212,15 @@ dependencies = [
     "drawsvg>=2.0.0",
 ]
 
+# `test` runs the FULL suite (incl. `slow`) — the authoritative pre-push gate,
+# run locally before every push. `test-cov` (what CI runs) deselects `slow` so
+# the 1-core GitHub runner stays well under the job timeout; the heavy CPU-fitting
+# tests (content-fit CLI, tiled/progressive fitting) still run locally and their
+# code stays covered by fast unit tests (coverage holds at ~85% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:packages/luxar/src/luxar}"
-test-cov = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 format = [
     "ruff format packages/luxar/src",
     "ruff check --fix packages/luxar/src"
@@ -256,8 +262,10 @@ dependencies = [
 python = ["3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.test.scripts]
+# `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,
+# coverage-checked). Use `run` locally for the complete pre-push run.
 run = "pytest {args:packages/luxar/src/luxar}"
-cov = "pytest --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
+cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
 # Publishing configuration
 # Luxar publishes ONLY via the tag-triggered GitHub Actions workflow

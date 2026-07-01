@@ -16,11 +16,11 @@ import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import (
-    BreakpointSpec,
-    make_additive_lod,
+    AutoOrMethod as AdditiveMethodName,
 )
 from luxar.gsplats.lod.additive import (
-    MethodName as AdditiveMethodName,
+    BreakpointSpec,
+    make_additive_lod,
 )
 from luxar.gsplats.lod.substitutive import (
     AutoOrMethod as SubstitutiveMethodName,
@@ -41,7 +41,7 @@ def make_lod_pyramid(
     device: Union[str, torch.device, None] = "auto",
     coarsen_dims: Optional[Sequence[int]] = None,
     n_additive_lods: int = 4,
-    additive_method: AdditiveMethodName = "greedy",
+    additive_method: AdditiveMethodName = "auto",
     breakpoints: BreakpointSpec = "equal-count",
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,

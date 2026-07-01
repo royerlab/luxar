@@ -22,6 +22,10 @@ from luxar.gsplats.fit_tiled_parallel import (
 )
 from luxar.gsplats.tiling import compute_tile_specs
 
+# Subprocess-pool tiled fitting (seconds per test). Slow → CI runs `-m "not
+# slow"`; the full suite runs locally pre-push.
+pytestmark = pytest.mark.slow
+
 # ── A fake worker: writes a deterministic tiny gsplats per tile ──────────────
 
 
