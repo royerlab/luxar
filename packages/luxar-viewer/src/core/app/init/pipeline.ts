@@ -383,12 +383,28 @@ export async function runInitPipeline(
       openSelector: '#luxar-stats',
     },
     {
+      id: 'monitor',
+      title: 'Data monitor',
+      shortcut: 'M',
+      icon: RAIL_ICONS.monitor,
+      activate: () => ui.commands.cycleDataMonitor(),
+      openSelector: '.luxar-data-monitor',
+    },
+    {
       id: 'data',
       title: 'Datasets',
       shortcut: 'O',
       icon: RAIL_ICONS.data,
       activate: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
       openSelector: '.luxar-dataset-browser',
+    },
+    {
+      id: 'recording',
+      title: 'Recording',
+      shortcut: 'T',
+      icon: RAIL_ICONS.recording,
+      activate: () => ui.panels.getRecordingPanel()?.toggle(),
+      isActive: () => recordingPanel.isVisible(),
       separatorBefore: true,
     },
     {
@@ -398,6 +414,15 @@ export async function runInitPipeline(
       icon: RAIL_ICONS.screenshot,
       activate: () => ui.panels.getRecordingPanel()?.captureScreenshot(),
       momentary: true,
+    },
+    {
+      id: 'logs',
+      title: 'Logs (console)',
+      shortcut: 'Ctrl+L',
+      icon: RAIL_ICONS.logs,
+      activate: () => debugConsole.toggle(),
+      isActive: () => debugConsole.getIsVisible(),
+      separatorBefore: true,
     },
   ];
   const controlRail = new ControlRail(railItems);
