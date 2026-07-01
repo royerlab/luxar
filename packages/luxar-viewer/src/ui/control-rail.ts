@@ -87,6 +87,14 @@ export class ControlRail {
     // be brought back (never re-hides discoverability).
     this.root.appendChild(this.buildCollapseButton());
 
+    // Don't steal keyboard focus from the canvas/body when the rail is
+    // clicked with the mouse — otherwise global shortcuts that are gated on
+    // canvas/body focus (e.g. Space = fullscreen) would stop working after
+    // any rail interaction. The click still fires; keyboard Tab focus (which
+    // doesn't go through mousedown) is unaffected, so the rail stays operable
+    // and focus-visible for keyboard users.
+    this.root.addEventListener('mousedown', (e) => e.preventDefault());
+
     this.container.appendChild(this.root);
     // Marker class lets left-anchored panels offset to clear the rail.
     this.container.classList.add('luxar-has-control-rail');

@@ -130,6 +130,22 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
   });
 
+  it('does not steal focus on mousedown (keeps global shortcuts working)', () => {
+    // Regression: clicking a rail button must not move document focus onto it,
+    // or canvas/body-gated shortcuts (Space = fullscreen) break. The component
+    // preventDefaults mousedown so the click fires without focusing the button.
+    rail = new ControlRail(items());
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="help"]')!;
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    btn.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    // The collapse handle is covered by the same delegated listener.
+    const handle = document.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse')!;
+    const ev2 = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    handle.dispatchEvent(ev2);
+    expect(ev2.defaultPrevented).toBe(true);
+  });
+
   it('dispose() removes all DOM and stops the refresh timer', () => {
     rail = new ControlRail(items());
     rail.dispose();
