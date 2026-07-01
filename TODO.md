@@ -146,8 +146,11 @@ to ship after). Sequencing is at the bottom.
   on hidden keyboard shortcuts; add visible affordances (buttons/menus/hints).
   Highest-leverage polish item for a public launch.
 - **R9 [LAUNCH] — Example-dataset bugs** (see detailed item **#23**).
-  `scalars_and_colormap`, `scene_dimensions`, `transform` examples surface
-  loader/viewer bugs — these are exactly what a first-time visitor runs.
+  Reproduced 2026-06-30: `transform` renders correctly (no bug —
+  already fixed); `scene_dimensions` navigation fixed (step sizes now match
+  data sampling so `[`/`]` lands on populated slices); the
+  `scalars_and_colormap` washout is a **symptom of #24** (additive blending
+  blows the self-overlapping spiral out to white), not a colormap bug.
 - **R10 [LAUNCH] — Depth sorting for alpha blending** (see detailed item
   **#24**). Translucent geometry composites in submission order → view-dependent
   artifacts, visible in any splat/point demo.
@@ -205,10 +208,18 @@ to ship after). Sequencing is at the bottom.
 
 ## Bugs
 
-23 - **Fix bugs surfaced by examples**: Several example datasets surface viewer/loader bugs that need fixing:
-    - `scalars_and_colormap_example.zarr`
-    - `scene_dimensions_example.zarr`
-    - `transform_example.zarr`
+23 - **Fix bugs surfaced by examples** (reproduced & triaged 2026-06-30):
+    - ✅ `scene_dimensions_example` — **FIXED.** `[`/`]` navigation emptied the
+      view because `step` (time 0.5 s, z 0.1 µm) was finer than the data
+      sampling (time every 2.5 s, z every 20 µm). Aligned the steps to the
+      data so every keypress lands on a populated slice.
+    - ✅ `transform_example` — **no bug.** All cubes/axes + parent-child
+      hierarchy load and place correctly; could not reproduce a defect
+      (already fixed upstream).
+    - ⏭️ `scalars_and_colormap_example` — colormaps load and apply, but the
+      three spirals wash out to near-white and look identical. Root cause is
+      **additive/alpha blending** of the self-overlapping spiral, i.e. a
+      symptom of **#24 (depth sorting)** — tracked there, not a colormap bug.
 
 ## Rendering & Performance (MEDIUM Priority)
 
