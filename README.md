@@ -91,10 +91,8 @@ with LuxarZarrCompiler("my_data.luxar.zarr") as compiler:
 
     scene.add_points("MyPoints", positions, colors=colors)
 
-# View it
-# Terminal 1: make viewer
-# Terminal 2: luxar serve my_data.luxar.zarr --viewer
-# Browser: http://localhost:5173/?src=http://localhost:8000
+# View it — one command starts the data server + viewer and opens the browser:
+# luxar serve my_data.luxar.zarr --viewer --open
 ```
 
 ### Using the CLI
@@ -171,7 +169,7 @@ scene.add_points(
     positions,           # (N, D) float32 - nD coordinates
     colors=colors,       # (N, 3) float32 - RGB (0-1, HDR supported)
     radii=radii,         # (N,) float32 - per-point size
-    sharpness=sharpness, # (N,) float32 - edge falloff (0.5-10)
+    sharpness=sharpness, # (N,) float32 - edge falloff (0-1, normalized)
     opacity=0.8,         # Global opacity
     blending_mode="additive"  # "normal", "additive", "max"
 )
@@ -466,7 +464,7 @@ luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + b
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
 luxar profiles                          # List network simulation profiles
-luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod {additive,substitutive,pyramid}, migrate-format, convert, render, merge, ...)
+luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod --recipe {flat,additive,partitioned,multiscale,mosaic,substitutive,pyramid}, migrate-format, convert, render, merge, ...)
 ```
 
 See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scenes.rst) for the full distribution story (folder export, native bundles, sharing across OSes, Gatekeeper handling).
