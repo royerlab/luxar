@@ -804,6 +804,7 @@ export class LuxarApp {
       pickingEvents: this.pickingEvents,
       sceneManager: this.sceneManager,
       animationController: this.animationController,
+      performanceMonitor: this.performanceMonitor,
       adaptiveDPRManager: this.adaptiveDPRManager,
       resolutionIndicator: this.resolutionIndicator,
       inputHandler: this.inputHandler,

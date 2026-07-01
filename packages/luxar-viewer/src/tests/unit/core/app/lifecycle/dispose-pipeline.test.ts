@@ -60,6 +60,7 @@ function makeDatasetBrowser() {
 interface Stubs {
   sceneManager: DisposableStub;
   animationController: DisposableStub;
+  performanceMonitor: DisposableStub;
   adaptiveDPRManager: DisposableStub;
   resolutionIndicator: DisposableStub;
   inputHandler: ReturnType<typeof makeInputHandler>;
@@ -94,6 +95,7 @@ function makeStubs(): Stubs {
   return {
     sceneManager: makeDisposable(),
     animationController: makeDisposable(),
+    performanceMonitor: makeDisposable(),
     adaptiveDPRManager: makeDisposable(),
     resolutionIndicator: makeDisposable(),
     inputHandler: makeInputHandler(),
@@ -132,6 +134,8 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     sceneManager: s.sceneManager as unknown as DisposePipelinePorts['sceneManager'],
     animationController:
       s.animationController as unknown as DisposePipelinePorts['animationController'],
+    performanceMonitor:
+      s.performanceMonitor as unknown as DisposePipelinePorts['performanceMonitor'],
     adaptiveDPRManager:
       s.adaptiveDPRManager as unknown as DisposePipelinePorts['adaptiveDPRManager'],
     resolutionIndicator:
@@ -189,6 +193,7 @@ describe('runDisposePipeline', () => {
 
       expect(s.sceneManager.dispose).toHaveBeenCalledOnce();
       expect(s.animationController.dispose).toHaveBeenCalledOnce();
+      expect(s.performanceMonitor.dispose).toHaveBeenCalledOnce();
       expect(s.adaptiveDPRManager.dispose).toHaveBeenCalledOnce();
       expect(s.resolutionIndicator.dispose).toHaveBeenCalledOnce();
       expect(s.inputHandler.dispose).toHaveBeenCalledOnce();
@@ -368,6 +373,7 @@ describe('runDisposePipeline', () => {
         pickingEvents: new EventGroup(),
         sceneManager: undefined,
         animationController: undefined,
+        performanceMonitor: undefined,
         adaptiveDPRManager: undefined,
         resolutionIndicator: undefined,
         inputHandler: undefined,

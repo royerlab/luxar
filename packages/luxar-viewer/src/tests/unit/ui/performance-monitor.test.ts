@@ -144,5 +144,26 @@ describe('PerformanceMonitor', () => {
       el().remove();
       expect(() => monitor.dispose()).not.toThrow();
     });
+
+    it('while visible: releases keepAlive, is idempotent, and survives later frames', () => {
+      // Regression (pre-existing leak): on app teardown a *visible* monitor must
+      // release its keepAlive + unsubscribe from the frame-timing bus, else it
+      // leaks across an embedder mount/unmount cycle. dispose() must also be
+      // idempotent (the rail may already have removed the docked element).
+      const request = vi.fn();
+      const release = vi.fn();
+      const m = new PerformanceMonitor({ request, release });
+      document.body.appendChild(m.element);
+      m.show();
+      frame();
+
+      m.dispose();
+      expect(release).toHaveBeenCalledTimes(1);
+      // Unsubscribed: a frame after dispose must not throw (no live handler).
+      expect(() => frame()).not.toThrow();
+      // Idempotent: a second dispose() must not release keepAlive again.
+      m.dispose();
+      expect(release).toHaveBeenCalledTimes(1);
+    });
   });
 });

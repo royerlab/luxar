@@ -11,6 +11,7 @@ import { resetViewerContainer } from '../../../utils/viewer-container';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
+import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { ResolutionIndicator } from '../../../ui/resolution-indicator';
 import type { InputHandler } from '../../../input/input-handler';
@@ -36,6 +37,7 @@ export interface DisposePipelinePorts {
   // Subsystems (heavy)
   sceneManager: SceneManager | undefined;
   animationController: AnimationController | undefined;
+  performanceMonitor: PerformanceMonitor | undefined;
   adaptiveDPRManager: AdaptiveDPRManager | undefined;
   resolutionIndicator: ResolutionIndicator | undefined;
   inputHandler: InputHandler | undefined;
@@ -94,6 +96,11 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
 
   // Stop animation first.
   safeDispose('animationController', () => ports.animationController?.dispose());
+  // Then the perf readout — it subscribes to the animation loop's
+  // frame-start/frame-end bus events, so tear it down right after the loop
+  // stops emitting them (otherwise a visible monitor leaks its bus
+  // subscription across an embedder's mount/unmount cycle).
+  safeDispose('performanceMonitor', () => ports.performanceMonitor?.dispose());
   safeDispose('adaptiveDPRManager', () => ports.adaptiveDPRManager?.dispose());
   safeDispose('resolutionIndicator', () => ports.resolutionIndicator?.dispose());
   safeDispose('scaleBar', () => {

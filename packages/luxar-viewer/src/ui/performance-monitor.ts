@@ -192,6 +192,9 @@ export class PerformanceMonitor {
   dispose(): void {
     this.unsubscribeFromFrameTiming();
     if (this.isVisible) this.keepAlive?.release();
+    // Idempotent: a second dispose() (or dispose after the rail already
+    // removed the docked element) must not release keepAlive twice or throw.
+    this.isVisible = false;
     this.el.remove();
   }
 
