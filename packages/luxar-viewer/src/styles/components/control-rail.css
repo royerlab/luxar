@@ -138,6 +138,13 @@
   opacity: 1;
 }
 
+/* When the button's panel is already open, its name is redundant — suppress
+   the tooltip so it doesn't linger over the on-screen panel. */
+.luxar-control-rail__btn.is-active:hover .luxar-control-rail__tip,
+.luxar-control-rail__btn.is-active:focus-visible .luxar-control-rail__tip {
+  opacity: 0;
+}
+
 .luxar-control-rail__tip kbd {
   font-family: var(--luxar-font-mono);
   color: var(--luxar-text-secondary);
