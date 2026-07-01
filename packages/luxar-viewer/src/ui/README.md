@@ -117,6 +117,40 @@ Coordination-heavy UI classes (`recording-panel.ts`, `data-loading-monitor.ts`, 
 
 ## Components
 
+### 0. Control Rail
+
+The always-visible discoverability affordance (`ui/control-rail.ts`) — a slim
+vertical activity rail docked to the left edge. Luxar's panels are otherwise
+keyboard-triggered, so the rail is the one visible entry point: one recognizable
+icon per panel (Help, Dimensions, Rendering, Layers, Performance, Data monitor,
+Datasets, Recording, Screenshot, Logs, View options), each with a hover tooltip
+showing its shortcut.
+
+**Design:**
+
+- **No behavioural drift** — each button fires the *exact same* command as its
+  keyboard shortcut, via `InputHandler.getUiActions()` (the command/panel surface
+  the key bindings dispatch into). The rail never re-implements panel logic.
+- **Live active-state** — a button highlights while its panel is open. Refreshed
+  event-driven (on document click / keydown, rAF-debounced), so it also clears
+  when a panel is closed via its own × button.
+- **Idle-dim** — recedes when the pointer is idle; wakes on movement (expanded)
+  or hover (collapsed / fullscreen).
+- **Collapse** — a chevron handle collapses the rail into the lower-left corner
+  (persisted); it reveals on hover only.
+- **View-options flyout** — one button opens a horizontal popover of overlay
+  toggles (scale bar, colormap legend, overlays, cinematic) so the rail stays
+  short.
+- **Docked footer** — hosts the Performance readout (see §4).
+- **Theme participation** — styled with `--luxar-*` tokens and registered in the
+  frosted-glass / liquid-glass theme override lists so it shares the panels'
+  material across all four themes.
+- Focus-safe: blurs the button after a pointer click so canvas/body-gated
+  shortcuts (e.g. Space = fullscreen) keep working; keyboard focus is preserved.
+
+Construct with `new ControlRail(items, footer?)`; the pipeline builds the items
+(wired to `getUiActions()`) and passes the perf readout's `.element` as `footer`.
+
 ### 1. Dimension Sliders
 
 Beautiful napari-inspired sliders for navigating through nD datasets.
@@ -347,21 +381,29 @@ interface DatasetBrowserConfig {
 
 ### 4. Performance Monitor
 
-Real-time performance statistics overlay built on stats.js.
+A compact, theme-matched square readout of frame performance. It **docks into
+the control rail** as its footer (rail-button sized), and its visibility is
+toggled by the rail's Performance (gauge) button or the `P` key.
 
-**Metrics Displayed (via stats.js panels):**
+**One metric at a time — click the square to cycle:**
 
-- FPS (frames per second) - green panel
-- Frame time (ms) - yellow panel
-- Memory usage (JS heap MB) - purple panel
+- **FPS** (frames per second, colour-coded green/amber/red)
+- **ms** (smoothed frame time)
+- **graph** (a small scrolling FPS history)
 
-**Keyboard Shortcut:** `P` to toggle visibility
+It is driven by the animation loop's `frame-start` / `frame-end` events on the
+cross-layer event bus (see `utils/cross-layer/event-bus`) — no `stats.js`
+dependency. While visible it subscribes to those events and computes FPS/frame
+time itself; when hidden it unsubscribes so it incurs no cost. To keep an
+initial reading when the scene is idle, showing it kicks the render loop once
+(via an injected `keepAlive`) **without** forcing continuous rendering — so FPS
+is live while the scene renders and freezes at the last value when it idles
+(preserving the idle-pause / battery saving).
 
-Panels can be cycled via `cyclePanels()` method. While visible, the
-monitor subscribes to the animation loop's `frame-start` / `frame-end`
-events on the cross-layer event bus (see `utils/cross-layer/event-bus`)
-to drive `stats.begin()` / `stats.end()`; when hidden it unsubscribes so
-stats.js incurs no cost.
+`PerformanceMonitor` exposes its DOM node via `.element` (the rail mounts it)
+rather than self-appending, and `cycleMode()` advances FPS → ms → graph.
+
+**Keyboard Shortcut:** `P` to toggle visibility.
 
 ### 5. Data Loading Monitor
 
@@ -1008,17 +1050,19 @@ emitter, so there is no `on()` / `setDimensions()` / `setValue()` API.
 
 ### PerformanceMonitor
 
-Constructed with no arguments. Frame timing is driven automatically via
-the `frame-start` / `frame-end` event bus while the panel is visible —
-there is no public `begin()` / `end()` to call from the render loop.
+Constructed with an optional `keepAlive` hook (`{ request, release }`). Frame
+timing is driven automatically via the `frame-start` / `frame-end` event bus
+while visible — there is no public `begin()` / `end()` to call. The widget is
+mounted by its owner (the control rail) via `.element`.
 
-| Method          | Description                           |
-| --------------- | ------------------------------------- |
-| `toggle()`      | Toggle visibility                     |
-| `show()/hide()` | Explicit show/hide                    |
-| `cyclePanels()` | Cycle FPS/MS/MB panels                |
-| `visible`       | Get current visibility state (getter) |
-| `dispose()`     | Clean up resources                    |
+| Method / property | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `element`         | The widget DOM node (getter) — caller mounts it  |
+| `toggle()`        | Toggle visibility                                |
+| `show()/hide()`   | Explicit show/hide                               |
+| `cycleMode()`     | Cycle the metric: FPS → ms → graph               |
+| `visible`         | Get current visibility state (getter)            |
+| `dispose()`       | Clean up resources                               |
 
 ### DatasetBrowser
 
