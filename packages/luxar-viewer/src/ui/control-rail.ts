@@ -46,6 +46,8 @@ export interface ControlRailItem {
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
 const COLLAPSED_STORAGE_KEY = 'luxar-control-rail-collapsed';
 const IDLE_MS = 2600;
+/** Collapsed handle lingers a little longer, then fades to barely-visible. */
+const COLLAPSED_IDLE_MS = 5000;
 const REFRESH_MS = 400;
 
 /** Chevron used by the collapse/expand handle (rotated via CSS when collapsed). */
@@ -63,6 +65,7 @@ export class ControlRail {
   private disposed = false;
   private collapsed = false;
   private readonly onPointerMove = (): void => this.wake();
+  private readonly onFullscreenChange = (): void => this.syncFullscreen();
 
   constructor(items: ControlRailItem[]) {
     this.items = items;
@@ -111,6 +114,9 @@ export class ControlRail {
     // Idle-dim behaviour.
     this.container.addEventListener('pointermove', this.onPointerMove);
     this.root.addEventListener('pointerenter', this.onPointerMove);
+    // In fullscreen the rail hides and only reveals on hover; restore on exit.
+    document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    this.syncFullscreen();
     this.scheduleSleep();
 
     // Reflect live panel open/closed state.
@@ -196,6 +202,7 @@ export class ControlRail {
 
   private scheduleSleep(): void {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
+    const delay = this.collapsed ? COLLAPSED_IDLE_MS : IDLE_MS;
     this.idleTimer = window.setTimeout(() => {
       // Stay awake while the pointer is over the rail itself.
       if (this.root.matches(':hover')) {
@@ -203,7 +210,14 @@ export class ControlRail {
         return;
       }
       this.root.classList.remove('is-awake');
-    }, IDLE_MS);
+    }, delay);
+  }
+
+  /** Reflect fullscreen state — the rail hides (hover-to-reveal) in fullscreen. */
+  private syncFullscreen(): void {
+    if (this.disposed) return;
+    this.root.classList.toggle('is-fullscreen', !!document.fullscreenElement);
+    this.wake();
   }
 
   private refresh(): void {
@@ -264,6 +278,7 @@ export class ControlRail {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.refreshTimer) window.clearInterval(this.refreshTimer);
     this.container.removeEventListener('pointermove', this.onPointerMove);
+    document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     this.container.classList.remove('luxar-has-control-rail');
     this.hint?.remove();
     this.root.remove();

@@ -488,6 +488,7 @@ export class LuxarApp {
       events: this.events,
       hasOpenBrowser: () => !!this.datasetBrowser,
       showBrowser: () => this.showDatasetBrowser(),
+      closeBrowser: () => this.datasetBrowser?.close(),
     });
   }
 
