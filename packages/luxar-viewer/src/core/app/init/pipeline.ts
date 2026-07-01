@@ -424,6 +424,46 @@ export async function runInitPipeline(
       isActive: () => debugConsole.getIsVisible(),
       separatorBefore: true,
     },
+    {
+      id: 'view',
+      title: 'View options',
+      icon: RAIL_ICONS.view,
+      activate: () => {}, // unused — opens the flyout below
+      separatorBefore: true,
+      flyout: [
+        {
+          id: 'scalebar',
+          title: 'Scale bar',
+          shortcut: 'B',
+          icon: RAIL_ICONS.scalebar,
+          activate: () => ui.panels.getScaleBar()?.toggle(),
+          openSelector: '.luxar-scale-bar',
+        },
+        {
+          id: 'legend',
+          title: 'Colormap legend',
+          shortcut: 'J',
+          icon: RAIL_ICONS.legend,
+          activate: () => ui.panels.getColormapLegend()?.toggle(),
+          openSelector: '.luxar-colormap-legend',
+        },
+        {
+          id: 'overlays',
+          title: 'Overlays',
+          shortcut: 'U',
+          icon: RAIL_ICONS.overlays,
+          activate: () => ui.panels.getOverlayManager()?.toggle(),
+          openSelector: '.luxar-overlay:not(.luxar-overlay--hidden)',
+        },
+        {
+          id: 'cinematic',
+          title: 'Cinematic mode',
+          shortcut: 'C',
+          icon: RAIL_ICONS.cinematic,
+          activate: () => ui.commands.toggleCinematicMode(),
+        },
+      ],
+    },
   ];
   const controlRail = new ControlRail(railItems);
   partial.controlRail = controlRail;

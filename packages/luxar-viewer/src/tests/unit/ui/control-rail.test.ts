@@ -146,6 +146,67 @@ describe('ControlRail', () => {
     expect(ev2.defaultPrevented).toBe(true);
   });
 
+  it('opens a flyout of compact toggles (with tooltip-below) and fires a toggle on chip click', () => {
+    const toggleFn = vi.fn();
+    const its: ControlRailItem[] = [
+      {
+        id: 'view',
+        title: 'View options',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          {
+            id: 'scalebar',
+            title: 'Scale bar',
+            shortcut: 'B',
+            icon: RAIL_ICONS.scalebar,
+            activate: toggleFn,
+            isActive: () => false,
+          },
+        ],
+      },
+    ];
+    rail = new ControlRail(its);
+    // Closed initially.
+    expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
+
+    // Click the flyout button → popover with a chip + a below-tooltip.
+    document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!.click();
+    const fly = document.querySelector('.luxar-control-rail__flyout');
+    expect(fly).not.toBeNull();
+    const chip = fly!.querySelector<HTMLButtonElement>('[data-toggle-id="scalebar"]')!;
+    expect(chip).not.toBeNull();
+    expect(chip.getAttribute('aria-label')).toBe('Scale bar (B)');
+    expect(chip.querySelector('.luxar-control-rail__chip-tip')).not.toBeNull();
+
+    // Clicking a chip fires its toggle and keeps the flyout open.
+    chip.click();
+    expect(toggleFn).toHaveBeenCalledOnce();
+    expect(document.querySelector('.luxar-control-rail__flyout')).not.toBeNull();
+
+    // Re-clicking the flyout button closes it.
+    document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!.click();
+    expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
+  });
+
+  it('closes the flyout on an outside pointerdown', () => {
+    rail = new ControlRail([
+      {
+        id: 'view',
+        title: 'View',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          { id: 't', title: 'T', icon: RAIL_ICONS.scalebar, activate: vi.fn(), isActive: () => false },
+        ],
+      },
+    ]);
+    document.querySelector<HTMLButtonElement>('[data-rail-id="view"]')!.click();
+    expect(document.querySelector('.luxar-control-rail__flyout')).not.toBeNull();
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
+  });
+
   it('dispose() removes all DOM and stops the refresh timer', () => {
     rail = new ControlRail(items());
     rail.dispose();

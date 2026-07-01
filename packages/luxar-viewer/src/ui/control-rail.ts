@@ -41,6 +41,23 @@ export interface ControlRailItem {
   momentary?: boolean;
   /** Insert a separator before this item. */
   separatorBefore?: boolean;
+  /**
+   * If set, this button opens a horizontal flyout of toggles instead of
+   * firing {@link activate}. The parent button shows active when the flyout
+   * is open or any toggle inside it is active.
+   */
+  flyout?: ControlRailToggle[];
+}
+
+/** A compact icon toggle shown inside a {@link ControlRailItem.flyout}. */
+export interface ControlRailToggle {
+  id: string;
+  title: string;
+  shortcut?: string;
+  icon: string;
+  activate: () => void;
+  openSelector?: string;
+  isActive?: () => boolean;
 }
 
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
@@ -64,8 +81,14 @@ export class ControlRail {
   private refreshTimer?: number;
   private disposed = false;
   private collapsed = false;
+  /** Open flyout descriptor + its DOM, or null when none is open. */
+  private flyout?: { item: ControlRailItem; el: HTMLDivElement; btn: HTMLButtonElement };
   private readonly onPointerMove = (): void => this.wake();
   private readonly onFullscreenChange = (): void => this.syncFullscreen();
+  private readonly onDocPointerDown = (e: PointerEvent): void => this.maybeCloseFlyout(e);
+  private readonly onDocKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') this.closeFlyout();
+  };
 
   constructor(items: ControlRailItem[]) {
     this.items = items;
@@ -116,6 +139,9 @@ export class ControlRail {
     this.root.addEventListener('pointerenter', this.onPointerMove);
     // In fullscreen the rail hides and only reveals on hover; restore on exit.
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
+    // Close the flyout on outside click / Escape.
+    document.addEventListener('pointerdown', this.onDocPointerDown, true);
+    document.addEventListener('keydown', this.onDocKeyDown);
     this.syncFullscreen();
     this.scheduleSleep();
 
@@ -144,6 +170,7 @@ export class ControlRail {
   /** Collapse to just the handle, or expand back to the full rail. */
   setCollapsed(collapsed: boolean, persist = true): void {
     this.collapsed = collapsed;
+    if (collapsed) this.closeFlyout();
     this.root.classList.toggle('is-collapsed', collapsed);
     const handle = this.root.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse');
     if (handle) {
@@ -181,6 +208,10 @@ export class ControlRail {
 
     btn.addEventListener('click', () => {
       this.dismissHint();
+      if (item.flyout) {
+        this.toggleFlyout(item, btn);
+        return;
+      }
       try {
         item.activate();
       } catch {
@@ -226,18 +257,105 @@ export class ControlRail {
       if (item.momentary) continue;
       const btn = this.buttons.get(item.id);
       if (!btn) continue;
-      let active = false;
-      if (item.isActive) {
-        try {
-          active = !!item.isActive();
-        } catch {
-          active = false;
-        }
-      } else if (item.openSelector) {
-        active = isPanelVisible(item.openSelector, this.container);
+      if (item.flyout) {
+        // A flyout button is "active" when its popover is open or any of its
+        // toggles are on; also refresh each chip's own state.
+        const anyOn = item.flyout.some((t) => this.isToggleActive(t));
+        btn.classList.toggle('is-active', anyOn || this.flyout?.item === item);
+        this.refreshFlyoutChips(item);
+        continue;
       }
-      btn.classList.toggle('is-active', active);
+      btn.classList.toggle('is-active', this.isItemActive(item));
     }
+  }
+
+  private isItemActive(item: ControlRailItem): boolean {
+    if (item.isActive) {
+      try {
+        return !!item.isActive();
+      } catch {
+        return false;
+      }
+    }
+    return item.openSelector ? isPanelVisible(item.openSelector, this.container) : false;
+  }
+
+  private isToggleActive(t: ControlRailToggle): boolean {
+    if (t.isActive) {
+      try {
+        return !!t.isActive();
+      } catch {
+        return false;
+      }
+    }
+    return t.openSelector ? isPanelVisible(t.openSelector, this.container) : false;
+  }
+
+  private refreshFlyoutChips(item: ControlRailItem): void {
+    if (this.flyout?.item !== item) return;
+    for (const t of item.flyout ?? []) {
+      const chip = this.flyout.el.querySelector<HTMLButtonElement>(`[data-toggle-id="${t.id}"]`);
+      chip?.classList.toggle('is-active', this.isToggleActive(t));
+    }
+  }
+
+  private toggleFlyout(item: ControlRailItem, btn: HTMLButtonElement): void {
+    if (this.flyout?.item === item) {
+      this.closeFlyout();
+    } else {
+      this.openFlyout(item, btn);
+    }
+  }
+
+  private openFlyout(item: ControlRailItem, btn: HTMLButtonElement): void {
+    this.closeFlyout();
+    const el = document.createElement('div');
+    el.className = 'luxar-control-rail__flyout';
+    el.setAttribute('role', 'menu');
+    for (const t of item.flyout ?? []) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'luxar-control-rail__chip';
+      chip.dataset.toggleId = t.id;
+      chip.setAttribute('aria-label', t.shortcut ? `${t.title} (${t.shortcut})` : t.title);
+      chip.innerHTML = t.icon;
+      const tip = document.createElement('span');
+      tip.className = 'luxar-control-rail__chip-tip';
+      tip.setAttribute('role', 'tooltip');
+      tip.innerHTML = t.shortcut
+        ? `${escapeHtml(t.title)}<kbd>${escapeHtml(t.shortcut)}</kbd>`
+        : escapeHtml(t.title);
+      chip.appendChild(tip);
+      chip.addEventListener('click', () => {
+        try {
+          t.activate();
+        } catch {
+          /* ignore */
+        }
+        window.setTimeout(() => this.refresh(), 30);
+      });
+      el.appendChild(chip);
+    }
+    this.root.appendChild(el);
+    // Align the flyout's vertical centre with the opening button.
+    el.style.top = `${btn.offsetTop + btn.offsetHeight / 2}px`;
+    this.flyout = { item, el, btn };
+    this.refresh();
+    this.wake();
+  }
+
+  private closeFlyout(): void {
+    if (!this.flyout) return;
+    this.flyout.el.remove();
+    this.flyout = undefined;
+    this.refresh();
+  }
+
+  private maybeCloseFlyout(e: PointerEvent): void {
+    if (!this.flyout) return;
+    const target = e.target as Node | null;
+    if (this.flyout.el.contains(target) || this.flyout.btn.contains(target)) return;
+    this.closeFlyout();
   }
 
   private maybeShowHint(): void {
@@ -277,8 +395,11 @@ export class ControlRail {
     this.disposed = true;
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.refreshTimer) window.clearInterval(this.refreshTimer);
+    this.closeFlyout();
     this.container.removeEventListener('pointermove', this.onPointerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    document.removeEventListener('pointerdown', this.onDocPointerDown, true);
+    document.removeEventListener('keydown', this.onDocKeyDown);
     this.container.classList.remove('luxar-has-control-rail');
     this.hint?.remove();
     this.root.remove();
@@ -322,4 +443,13 @@ export const RAIL_ICONS: Record<string, string> = {
   screenshot:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>',
   logs: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><line x1="13" y1="15" x2="17" y2="15"/></svg>',
+  view: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  scalebar:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="18" height="6" rx="1"/><path d="M7 9v3M11 9v4M15 9v3M19 9v4"/></svg>',
+  legend:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="5" height="16" rx="1"/><line x1="13" y1="6" x2="18" y2="6"/><line x1="13" y1="12" x2="18" y2="12"/><line x1="13" y1="18" x2="18" y2="18"/></svg>',
+  overlays:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1"/><rect x="9" y="9" width="11" height="11" rx="1"/></svg>',
+  cinematic:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l7-7"/><path d="M15 3l1.2 3.3L19.5 7.5l-3.3 1.2L15 12l-1.2-3.3L10.5 7.5l3.3-1.2z"/></svg>',
 };
