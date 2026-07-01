@@ -130,20 +130,26 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
   });
 
-  it('does not steal focus on mousedown (keeps global shortcuts working)', () => {
-    // Regression: clicking a rail button must not move document focus onto it,
-    // or canvas/body-gated shortcuts (Space = fullscreen) break. The component
-    // preventDefaults mousedown so the click fires without focusing the button.
+  it('returns focus to the body after a pointer click (keeps Space/global shortcuts working)', () => {
+    // Regression: a rail button that keeps focus after a mouse click swallows
+    // the next Space (canvas/body-gated fullscreen). The rail blurs the button
+    // after a *pointer* click (event.detail > 0) so focus returns to the body.
     rail = new ControlRail(items());
     const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="help"]')!;
-    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-    btn.dispatchEvent(ev);
-    expect(ev.defaultPrevented).toBe(true);
-    // The collapse handle is covered by the same delegated listener.
-    const handle = document.querySelector<HTMLButtonElement>('.luxar-control-rail__collapse')!;
-    const ev2 = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-    handle.dispatchEvent(ev2);
-    expect(ev2.defaultPrevented).toBe(true);
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(document.activeElement).not.toBe(btn);
+  });
+
+  it('keeps focus on keyboard activation (click with detail 0)', () => {
+    // Keyboard users (Enter/Space → click with detail === 0) must keep focus
+    // so rail navigation stays usable; only pointer clicks blur.
+    rail = new ControlRail(items());
+    const btn = document.querySelector<HTMLButtonElement>('[data-rail-id="help"]')!;
+    btn.focus();
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    expect(document.activeElement).toBe(btn);
   });
 
   it('opens a flyout of compact toggles (with tooltip-below) and fires a toggle on chip click', () => {

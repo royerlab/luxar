@@ -113,13 +113,21 @@ export class ControlRail {
     // be brought back (never re-hides discoverability).
     this.root.appendChild(this.buildCollapseButton());
 
-    // Don't steal keyboard focus from the canvas/body when the rail is
-    // clicked with the mouse — otherwise global shortcuts that are gated on
-    // canvas/body focus (e.g. Space = fullscreen) would stop working after
-    // any rail interaction. The click still fires; keyboard Tab focus (which
-    // doesn't go through mousedown) is unaffected, so the rail stays operable
-    // and focus-visible for keyboard users.
-    this.root.addEventListener('mousedown', (e) => e.preventDefault());
+    // Keep global, canvas/body-focus-gated shortcuts (e.g. Space = fullscreen)
+    // working after the rail is used with the mouse. Browsers focus a <button>
+    // on pointer press, so after a click the button would hold focus and
+    // swallow the next Space. preventDefault on mousedown is unreliable here
+    // (Chrome focuses on pointerdown, which fires first), so instead we blur
+    // the button after a *pointer* click (event.detail > 0) to return focus to
+    // the canvas/body. Keyboard activation (Enter/Space → click with
+    // detail === 0) keeps focus, so keyboard navigation is unaffected.
+    // Delegated on the root so it also covers the collapse handle and flyout
+    // chips (which bubble up here).
+    this.root.addEventListener('click', (e) => {
+      if (e.detail > 0) {
+        (e.target as HTMLElement | null)?.closest('button')?.blur();
+      }
+    });
 
     this.container.appendChild(this.root);
     // Marker class lets left-anchored panels offset to clear the rail.
