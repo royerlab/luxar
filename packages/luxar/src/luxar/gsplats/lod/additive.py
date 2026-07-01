@@ -57,6 +57,41 @@ _VALID_METHODS = (
     "random",
 )
 
+#: ``method`` accepted at the API/CLI boundary, including the size-adaptive
+#: ``"auto"`` sentinel resolved by :func:`resolve_additive_method`.
+AutoOrMethod = Literal[
+    "auto", "greedy", "self_energy", "mass", "amplitude", "spectral", "random"
+]
+_VALID_CHOICES: tuple[str, ...] = ("auto", *_VALID_METHODS)
+
+#: ``method="auto"`` resolves to ``greedy`` (the Minoux 1978 lazy-greedy
+#: submodular selection in :func:`_lazy_greedy` — provably (1-1/e)-optimal at
+#: every prefix) at or below this count, else ``self_energy`` (a cheap
+#: O(N log N) vectorized ranking). The dominant cost of the greedy/spectral path
+#: is NOT the lazy-heap pass (sub-second even at 20K) but :func:`_build_sparse_gram`,
+#: whose pure-Python per-pair loop is O(nnz) and scales with *overlap density*
+#: (avg neighbours per splat), not N alone — so a dense scientific volume can
+#: make even a modest part slow (this is what made a 1.5 M-splat part hang). N is
+#: only a crude proxy for nnz, so the threshold is set conservatively (mirrors
+#: substitutive LOD's ``_AUTO_GREEDY_MAX_N=5000``); above it ``self_energy`` never
+#: builds the Gram. Tunable. (NB: "Runnalls" is the *substitutive* Gaussian-
+#: mixture-reduction greedy — distinct from this additive Minoux lazy-greedy.)
+_AUTO_ADDITIVE_MAX_N = 5_000
+
+
+def resolve_additive_method(method: AutoOrMethod, n: int) -> MethodName:
+    """Resolve ``method`` for ``n`` splats, handling the ``"auto"`` sentinel.
+
+    ``auto`` → ``greedy`` when ``n <= _AUTO_ADDITIVE_MAX_N`` (high quality and
+    affordable at small N), else ``self_energy`` (avoids the O(nnz) sparse-Gram
+    build that greedy/spectral need, which blows up with overlap density on large
+    inputs). A concrete method passes through unchanged.
+    """
+    if method != "auto":
+        return method
+    return "greedy" if n <= _AUTO_ADDITIVE_MAX_N else "self_energy"
+
+
 BreakpointSpec = Union[Literal["equal-count"], Sequence[int], Sequence[float]]
 
 
@@ -311,7 +346,7 @@ def _residual_energy_curve(
 
 def compute_additive_order(
     data: GSplatData,
-    method: MethodName = "greedy",
+    method: AutoOrMethod = "auto",
     *,
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
@@ -325,8 +360,11 @@ def compute_additive_order(
         Fitted (single- or multi-LOD) gsplat dataset.  Operates on the
         flattened concatenation across LODs.
     method : str
-        One of ``greedy``, ``self_energy``, ``mass``, ``amplitude``,
-        ``spectral``, ``random``.  See module docstring for details.
+        One of ``auto``, ``greedy``, ``self_energy``, ``mass``,
+        ``amplitude``, ``spectral``, ``random``.  ``auto`` (the default)
+        resolves to ``greedy`` at small N and ``self_energy`` above
+        :data:`_AUTO_ADDITIVE_MAX_N` — see :func:`resolve_additive_method`.
+        See module docstring for details.
     truncation_sigmas : float
         Mahalanobis cutoff used for sparse-Gram pruning (default 3.0).
         Only relevant for ``greedy`` and ``spectral``.
@@ -342,14 +380,18 @@ def compute_additive_order(
     np.ndarray of shape (N,), dtype int64
         ``order[k]`` is the original index of the splat at rank $k$.
     """
-    if method not in _VALID_METHODS:
-        raise ValueError(f"method must be one of {_VALID_METHODS}, got {method!r}")
+    if method not in _VALID_CHOICES:
+        raise ValueError(f"method must be one of {_VALID_CHOICES}, got {method!r}")
 
     N = data.n_splats
     if N == 0:
         return np.empty(0, dtype=np.int64)
     if N == 1:
         return np.array([0], dtype=np.int64)
+
+    # Resolve the size-adaptive sentinel ONCE, before any (expensive) Gram
+    # build, so every downstream branch sees a concrete method.
+    method = resolve_additive_method(method, N)
 
     if method == "random":
         rng = np.random.default_rng(seed)
@@ -493,7 +535,7 @@ def make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
     *,
-    method: MethodName = "greedy",
+    method: AutoOrMethod = "auto",
     breakpoints: BreakpointSpec = "equal-count",
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
@@ -558,6 +600,12 @@ def make_additive_lod(
     # Build the new additive ladder on the chosen substitutive level
     target_view = data.at_substitutive(s_target).flattened()
     n = target_view.n_splats
+
+    # Resolve the size-adaptive sentinel ONCE, before the (expensive) Gram
+    # build below, so `needs_gram` and the recorded `lod_method` stat both
+    # see the concrete method. (compute_additive_order resolves it again
+    # harmlessly for the score-method path — it is idempotent.)
+    method = resolve_additive_method(method, n)
 
     if n == 0:
         new_sublods: list[AdditiveSubLOD] = [

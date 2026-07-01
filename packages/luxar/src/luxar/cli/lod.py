@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import typer
 from arbol import aprint, asection
 
 # Valid ordering methods for the additive (prefix-sum) axis.
 _VALID_ADDITIVE_METHODS = (
+    "auto",
     "greedy",
     "self_energy",
     "mass",
@@ -39,6 +40,16 @@ _VALID_SUBSTITUTIVE_METHODS = (
 )
 
 _VALID_PARTITION_RULES = ("median", "midpoint", "sah")
+
+#: Target splat count for the multiscale coarse cap when ``--compression-factor``
+#: is not given. The cap is a SINGLE substitutive level of ``ceil(N / K)`` splats,
+#: so a fixed default K scales badly: on a 23 M fit, the historical K=4/8 left a
+#: 2.9 M-splat cap (far too heavy to load first). Instead derive
+#: ``K = max(2, round(N / target))`` so the cap lands near this size regardless of
+#: N. ~256 K keeps the coarsest level light enough to stream instantly while still
+#: carrying enough detail to be a useful overview. Mirrors the N-aware
+#: ``max_elements`` default used for the partitioned branch.
+_MULTISCALE_CAP_TARGET = 256_000
 
 # Per-recipe relevance tokens. Each tuning option belongs to a token group; a
 # recipe only accepts options whose token is in its allowed set. ``--levels`` is
@@ -80,6 +91,53 @@ _ALLOWED_TOKENS = {
     "substitutive": frozenset({"substitutive", "levels", "lod_selector"}),
     "pyramid": frozenset({"additive", "substitutive", "levels", "lod_selector"}),
 }
+
+
+def reject_irrelevant_recipe_options(
+    recipe: Optional[str],
+    provided: Mapping[str, Any],
+    option_tokens: Mapping[str, str],
+    allowed_tokens: Mapping[str, "frozenset[str]"],
+    *,
+    hints: Optional[Mapping[str, str]] = None,
+    no_recipe_hint: str = "",
+) -> None:
+    """Raise ``typer.BadParameter`` for options irrelevant to ``recipe``.
+
+    Shared by ``gsplat lod`` and ``batch-fit merge`` so both reject — rather
+    than silently ignore — a recipe-specific knob. A flag is *provided* when its
+    value is not ``None``; it is *irrelevant* when its token
+    (``option_tokens[flag]``) is not in ``allowed_tokens[recipe]``. When
+    ``recipe is None`` (no recipe in effect) every recipe-specific knob is
+    irrelevant; the message is the neutral prefix plus ``no_recipe_hint`` — the
+    caller supplies the *why* (e.g. "no recipe given, pass --recipe ..." vs
+    "--no-recipe forces a recipe-less merge, drop these knobs"), since the helper
+    can't tell why the recipe is absent. ``hints`` maps a flag to an extra clause
+    appended when that flag is among the irrelevant ones (recipe-present case).
+    """
+    allowed: "frozenset[str]" = (
+        allowed_tokens.get(recipe, frozenset()) if recipe is not None else frozenset()
+    )
+    irrelevant = sorted(
+        flag
+        for flag, value in provided.items()
+        if value is not None and option_tokens[flag] not in allowed
+    )
+    if not irrelevant:
+        return
+    if recipe is None:
+        msg = f"option(s) {', '.join(irrelevant)} are recipe-specific but no recipe is in effect."
+        if no_recipe_hint:
+            msg += " " + no_recipe_hint
+    else:
+        msg = (
+            f"option(s) {', '.join(irrelevant)} are not used by --recipe {recipe}."
+        )
+        if hints:
+            for flag, clause in hints.items():
+                if flag in irrelevant:
+                    msg += " " + clause
+    raise typer.BadParameter(msg)
 
 
 def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
@@ -172,8 +230,9 @@ def lod_recipe(
         None,
         "--method",
         "-m",
-        help="Additive ordering: greedy (default) | self_energy | mass | "
-        "amplitude | spectral | random.",
+        help="Additive ordering: auto (default; greedy at small N, self_energy "
+        "for large N to avoid greedy's O(N·nnz·logN) blowup) | greedy | "
+        "self_energy | mass | amplitude | spectral | random.",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
@@ -210,7 +269,9 @@ def lod_recipe(
         "--compression-factor",
         "-K",
         min=2,
-        help="Substitutive per-level compression factor (default 4).",
+        help="Substitutive per-level compression factor (default 4; for "
+        "--recipe multiscale, auto-scaled from N to a ~256K coarse cap "
+        "when omitted).",
     ),
     levels: Optional[int] = typer.Option(
         None,
@@ -355,25 +416,26 @@ def lod_recipe(
             "--extent-percentile": extent_percentile,
             "--extent-anisotropy": extent_anisotropy,
         }
-        allowed = _ALLOWED_TOKENS[recipe]
-        irrelevant = [
-            flag
-            for flag, value in provided.items()
-            if value is not None and _OPTION_TOKENS[flag] not in allowed
-        ]
-        if irrelevant:
-            msg = (
-                f"option(s) {', '.join(sorted(irrelevant))} are not used by "
-                f"--recipe {recipe}."
+        # ``hints`` add a recipe-specific clause when a given flag is rejected:
+        #  - --method moved to --substitutive-method for the substitutive recipe;
+        #  - multiscale's coarse cap is single-level, so --levels has no meaning
+        #    there (size the cap with -K, auto-scaled by default).
+        hints: dict[str, str] = {}
+        if recipe == "substitutive":
+            hints["--method"] = (
+                "(for the substitutive algorithm use --substitutive-method)"
             )
-            # The substitutive *algorithm* moved to --substitutive-method; -m/--method
-            # now means the additive ordering. Point substitutive/pyramid users there.
-            if "--method" in irrelevant and recipe == "substitutive":
-                msg += " (for the substitutive algorithm use --substitutive-method)"
-            raise typer.BadParameter(msg)
+        if recipe == "multiscale":
+            hints["--levels"] = (
+                "(multiscale's coarse cap is single-level; size it with "
+                "--compression-factor/-K, auto-scaled by default)"
+            )
+        reject_irrelevant_recipe_options(
+            recipe, provided, _OPTION_TOKENS, _ALLOWED_TOKENS, hints=hints
+        )
 
         # ── validate values ──
-        method_norm = (method or "greedy").strip().replace("-", "_")
+        method_norm = (method or "auto").strip().replace("-", "_")
         if method_norm not in _VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
                 f"--method must be one of {list(_VALID_ADDITIVE_METHODS)}; got {method!r}"
@@ -417,7 +479,10 @@ def lod_recipe(
                 except ValueError as e:
                     raise typer.BadParameter(
                         f"recipe input must be a fitted / flat (matrix-shaped) "
-                        f".gsplats.zarr; could not load {input_path.name}: {e}"
+                        f".gsplats.zarr; could not load {input_path.name}: {e}. "
+                        f"If this is a kind=partition (e.g. a tiled `batch-fit "
+                        f"merge` output), collapse it to a single leaf first with "
+                        f"`luxar gsplat flatten {input_path.name} flat.gsplats.zarr`."
                     ) from e
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
 
@@ -446,6 +511,22 @@ def lod_recipe(
                     aprint(f"max_elements defaulting to {DEFAULT_MAX_ELEMENTS:,}")
                 else:
                     aprint(f"max_elements={eff_max_elements:,}")
+
+            # multiscale's coarse cap is a SINGLE substitutive level of ceil(N/K)
+            # splats. A fixed default K scales badly (K=8 on 23 M → a 2.9 M cap),
+            # so when --compression-factor is not given, size K to land the cap
+            # near _MULTISCALE_CAP_TARGET. Explicit -K always wins.
+            eff_compression_factor: Optional[int] = compression_factor
+            if recipe == "multiscale" and compression_factor is None:
+                eff_compression_factor = max(
+                    2, round(data.n_splats / _MULTISCALE_CAP_TARGET)
+                )
+                cap_n = -(-data.n_splats // eff_compression_factor)  # ceil
+                aprint(
+                    f"--compression-factor defaulting to {eff_compression_factor} "
+                    f"(coarse cap ~{cap_n:,} splats, target "
+                    f"~{_MULTISCALE_CAP_TARGET:,}); pass -K to override"
+                )
 
             if lod_method is not None and lod_method not in ("extent", "count"):
                 raise typer.BadParameter(
@@ -499,7 +580,9 @@ def lod_recipe(
                 max_elements=eff_max_elements,
                 partition_rule=rule,  # type: ignore[arg-type]
                 compression_factor=(
-                    compression_factor if compression_factor is not None else 4
+                    eff_compression_factor
+                    if eff_compression_factor is not None
+                    else 4
                 ),
                 levels=levels if levels is not None else 3,
                 substitutive_method=sub_norm,

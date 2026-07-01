@@ -81,6 +81,12 @@ def _params(**kw) -> RecipeParams:
 # ── shape per recipe ────────────────────────────────────────────────────
 
 
+def test_recipe_params_additive_method_defaults_to_auto():
+    """The additive ordering defaults to the size-adaptive ``auto`` so large
+    per-part ladders avoid greedy's O(N·nnz·logN) hang (the friction fix)."""
+    assert RecipeParams().additive_method == "auto"
+
+
 def test_all_recipe_names_build():
     data = _make_random_gsplat()
     for recipe in RECIPE_NAMES:
