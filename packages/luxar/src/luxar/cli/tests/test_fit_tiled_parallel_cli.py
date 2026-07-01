@@ -25,6 +25,10 @@ try:
 except ImportError:
     HAS_TORCH = False
 
+# End-to-end CLI tiled fitting (seconds per test). Slow → CI runs `-m "not
+# slow"`; the full suite runs locally pre-push.
+pytestmark = pytest.mark.slow
+
 runner = CliRunner()
 
 

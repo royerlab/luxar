@@ -33,6 +33,10 @@ import pytest
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 
+# Multi-pass progressive CPU fitting (tens of seconds per test). Slow → CI runs
+# `-m "not slow"`; the full suite runs locally pre-push.
+pytestmark = pytest.mark.slow
+
 
 def _make_synthetic_volume(shape=(32, 32), seed=42):
     """Create a synthetic volume with blobs at multiple scales."""

@@ -18,12 +18,13 @@ permissions:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    # 60 (was 45): the serial suite + coverage runs ~40 min on the slowest
-    # matrix interpreter (3.10) and grew with the differential-Cholesky
-    # quantizer (per-column work on every gsplat save), so 45 left no headroom
-    # and 3.10/3.11 hit the cap. pytest-xdist does NOT help here — GitHub's
-    # ubuntu-latest runner has 1 physical core, so `-n auto` spawns a single
-    # worker. 60 gives room.
+    # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
+    # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
+    # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
+    # coverage stays ~85% (≥ the 80% gate; slow tests' code is redundantly
+    # covered by fast unit tests). The FULL suite (incl. slow) is the local
+    # pre-push gate (`hatch run test`). pytest-xdist doesn't help on the 1-core
+    # runner. 60 min leaves generous headroom for the not-slow pass.
     timeout-minutes: 60
     strategy:
       matrix:
