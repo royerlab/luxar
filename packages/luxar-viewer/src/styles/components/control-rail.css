@@ -244,12 +244,13 @@
   stroke-linejoin: round;
 }
 
-/* Chip tooltip — appears BELOW the compact icon on hover. */
+/* Chip tooltip — appears BELOW the compact icon on hover. Left-aligned to the
+   chip so it extends rightward (never back over the rail / collapse handle,
+   which sit to the left of the flyout). */
 .luxar-control-rail__chip-tip {
   position: absolute;
   top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
   white-space: nowrap;
   background: var(--luxar-bg-secondary);
   color: var(--luxar-text-primary);

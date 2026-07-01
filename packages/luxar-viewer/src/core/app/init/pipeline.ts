@@ -461,6 +461,7 @@ export async function runInitPipeline(
           shortcut: 'C',
           icon: RAIL_ICONS.cinematic,
           activate: () => ui.commands.toggleCinematicMode(),
+          isActive: () => renderingControls.settings.cinematicMode,
         },
       ],
     },
