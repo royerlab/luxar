@@ -342,6 +342,12 @@ module = [
     "matplotlib.*",
     "colorcet",
     "colorcet.*",
+    # Optional `tracksdata` extra (luxar.gsplats.interop.tracksdata) and its
+    # polars dependency — not installed in the mypy/CI env.
+    "tracksdata",
+    "tracksdata.*",
+    "polars",
+    "polars.*",
 ]
 ignore_missing_imports = true
 
