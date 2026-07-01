@@ -30,6 +30,7 @@
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../ui/rendering-controls';
+import { isDocumentFullscreen } from './fullscreen-toggle';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControls;
@@ -76,11 +77,18 @@ export class WindowEventHandler {
     // zooms while the FOV also changes.
     window.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    // Safari < 16.4 exposes only the webkit-prefixed fullscreen API, so it
+    // fires `webkitfullscreenchange` (not `fullscreenchange`). Since
+    // toggleFullscreen() now enters fullscreen via `webkitRequestFullscreen`
+    // there, we must listen for the webkit event too — otherwise the canvas
+    // never gets resized to fill the viewport on those browsers.
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
     cleanups.push(
       () => window.removeEventListener('resize', onResize),
       () => window.removeEventListener('wheel', onWheel),
-      () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+      () => document.removeEventListener('fullscreenchange', onFullscreenChange),
+      () => document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
     );
   }
 
@@ -106,7 +114,8 @@ export class WindowEventHandler {
   private onFullscreenChange(): void {
     const canvas = this.sceneManager.renderer.domElement;
 
-    if (document.fullscreenElement) {
+    // Check both the standard and webkit fullscreen elements (Safari < 16.4).
+    if (isDocumentFullscreen()) {
       // Entering fullscreen — save the embedder's inline styles first, then
       // make the canvas fill the entire screen. Saving only on a clean
       // enter (savedCanvasStyle === null) avoids clobbering the saved value
