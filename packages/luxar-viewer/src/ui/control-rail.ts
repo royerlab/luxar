@@ -152,8 +152,12 @@ export class ControlRail {
     });
 
     this.container.appendChild(this.root);
-    // Marker class lets left-anchored panels offset to clear the rail.
-    this.container.classList.add('luxar-has-control-rail');
+    // Marker class lets left-anchored panels offset to clear the rail. Applied
+    // to document.body (the universal ancestor) rather than the viewer
+    // container, because some panels mount to body (layers, debug console)
+    // while others mount into the container (gui) — an embedder with a scoped
+    // (non-body) container would otherwise miss the body-mounted panels.
+    document.body.classList.add('luxar-has-control-rail');
 
     // Restore persisted collapsed state.
     let startCollapsed = false;
@@ -168,6 +172,11 @@ export class ControlRail {
     this.container.addEventListener('pointermove', this.onContainerMove);
     // Hovering the rail (incl. the collapsed handle) always wakes it.
     this.root.addEventListener('pointerenter', () => this.wake());
+    // Keyboard focus entering the rail must reveal it too — otherwise a Tab
+    // into the rail while it's idle-dimmed, collapsed, or (opacity:0) in
+    // fullscreen lands on an invisible control with an invisible focus ring
+    // (WCAG 2.4.7). scheduleSleep() keeps it awake while focus stays within.
+    this.root.addEventListener('focusin', () => this.wake());
     // In fullscreen the rail hides and only reveals on hover; restore on exit.
     // webkit* covers Safari < 16.4.
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
@@ -230,6 +239,11 @@ export class ControlRail {
     btn.dataset.railId = item.id;
     const label = item.shortcut ? `${item.title} (${item.shortcut})` : item.title;
     btn.setAttribute('aria-label', label);
+    if (item.flyout) {
+      // The button opens a popover group of toggles; advertise + track it.
+      btn.setAttribute('aria-haspopup', 'true');
+      btn.setAttribute('aria-expanded', 'false');
+    }
     btn.innerHTML = item.icon;
 
     const tip = document.createElement('span');
@@ -268,8 +282,9 @@ export class ControlRail {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     const delay = this.collapsed ? COLLAPSED_IDLE_MS : IDLE_MS;
     this.idleTimer = window.setTimeout(() => {
-      // Stay awake while the pointer is over the rail itself.
-      if (this.root.matches(':hover')) {
+      // Stay awake while the pointer is over the rail, or keyboard focus is
+      // within it (so a focused control never dims out from under the user).
+      if (this.root.matches(':hover') || this.root.matches(':focus-within')) {
         this.scheduleSleep();
         return;
       }
@@ -339,7 +354,10 @@ export class ControlRail {
     if (this.flyout?.item !== item) return;
     for (const t of item.flyout ?? []) {
       const chip = this.flyout.el.querySelector<HTMLButtonElement>(`[data-toggle-id="${t.id}"]`);
-      chip?.classList.toggle('is-active', this.isToggleActive(t));
+      if (!chip) continue;
+      const on = this.isToggleActive(t);
+      chip.classList.toggle('is-active', on);
+      chip.setAttribute('aria-pressed', String(on));
     }
   }
 
@@ -355,13 +373,22 @@ export class ControlRail {
     this.closeFlyout();
     const el = document.createElement('div');
     el.className = 'luxar-control-rail__flyout luxar-glass-surface';
-    el.setAttribute('role', 'menu');
+    el.setAttribute('role', 'group');
+    el.setAttribute('aria-label', `${item.title} options`);
+    // Pointer arrow as a real child (not ::before): the glass themes claim the
+    // ::before/::after pseudo-elements of every .luxar-glass-surface, which
+    // would otherwise clobber a pseudo-element arrow (liquid-glass regression).
+    const arrow = document.createElement('span');
+    arrow.className = 'luxar-control-rail__flyout-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    el.appendChild(arrow);
     for (const t of item.flyout ?? []) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'luxar-control-rail__chip';
       chip.dataset.toggleId = t.id;
       chip.setAttribute('aria-label', t.shortcut ? `${t.title} (${t.shortcut})` : t.title);
+      chip.setAttribute('aria-pressed', String(this.isToggleActive(t)));
       chip.innerHTML = t.icon;
       const tip = document.createElement('span');
       tip.className = 'luxar-control-rail__chip-tip';
@@ -388,6 +415,7 @@ export class ControlRail {
     if (el.getBoundingClientRect().bottom > window.innerHeight - 48) {
       el.classList.add('luxar-control-rail__flyout--up');
     }
+    btn.setAttribute('aria-expanded', 'true');
     this.flyout = { item, el, btn };
     this.refresh();
     this.wake();
@@ -395,6 +423,7 @@ export class ControlRail {
 
   private closeFlyout(): void {
     if (!this.flyout) return;
+    this.flyout.btn.setAttribute('aria-expanded', 'false');
     this.flyout.el.remove();
     this.flyout = undefined;
     this.refresh();
@@ -451,7 +480,7 @@ export class ControlRail {
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
     document.removeEventListener('keydown', this.onDocKeyDown);
     document.removeEventListener('click', this.onDocClick);
-    this.container.classList.remove('luxar-has-control-rail');
+    document.body.classList.remove('luxar-has-control-rail');
     this.hint?.remove();
     this.root.remove();
     this.buttons.clear();

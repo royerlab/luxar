@@ -55,8 +55,14 @@ export class PerformanceMonitor {
     el.className = 'luxar-perf';
     el.dataset.mode = this.mode;
     el.setAttribute('role', 'status');
-    el.setAttribute('aria-label', 'Performance metrics — click to cycle FPS, frame time, graph');
-    el.title = 'Click to cycle: FPS · ms · graph';
+    // Keyboard-operable: the metric cycle must be reachable without a mouse
+    // (WCAG 2.1.1). tabindex makes the readout focusable; Enter/Space cycle it.
+    el.tabIndex = 0;
+    el.setAttribute(
+      'aria-label',
+      'Performance metrics — press Enter or Space to cycle FPS, frame time, graph'
+    );
+    el.title = 'Click or press Enter to cycle: FPS · ms · graph';
     el.style.zIndex = String(config.ui.zIndex.statsMonitor);
     el.classList.add('is-hidden');
 
@@ -76,6 +82,12 @@ export class PerformanceMonitor {
 
     el.append(value, this.canvas);
     el.addEventListener('click', () => this.cycleMode());
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.cycleMode();
+      }
+    });
 
     this.el = el;
   }

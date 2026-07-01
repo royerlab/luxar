@@ -132,6 +132,15 @@ describe('PerformanceMonitor', () => {
       el().click();
       expect(el().dataset.mode).toBe('ms');
     });
+
+    it('is keyboard-operable: focusable and cycles on Enter/Space (WCAG 2.1.1)', () => {
+      expect(el().tabIndex).toBe(0);
+      expect(el().dataset.mode).toBe('fps');
+      el().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(el().dataset.mode).toBe('ms');
+      el().dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      expect(el().dataset.mode).toBe('graph');
+    });
   });
 
   describe('dispose', () => {

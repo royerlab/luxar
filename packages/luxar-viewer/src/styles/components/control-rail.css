@@ -197,8 +197,10 @@
   box-shadow: var(--luxar-shadow-xl);
 }
 
-.luxar-control-rail__flyout::before {
-  content: '';
+/* Pointer arrow — a real child element, NOT ::before. The glass themes
+   (liquid-glass) style .luxar-glass-surface::before/::after, which would
+   otherwise clobber a pseudo-element arrow on the flyout. */
+.luxar-control-rail__flyout-arrow {
   position: absolute;
   left: -7px;
   top: 50%;

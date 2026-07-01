@@ -248,6 +248,58 @@ describe('ControlRail', () => {
     expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
   });
 
+  it('reveals on keyboard focus (focusin wakes the rail — WCAG 2.4.7)', () => {
+    // A Tab into the rail while it is idle-dimmed / collapsed / (opacity:0)
+    // in fullscreen must reveal it, else focus lands on an invisible control.
+    rail = new ControlRail(items());
+    const railEl = document.querySelector('.luxar-control-rail')!;
+    railEl.classList.remove('is-awake');
+    document
+      .querySelector<HTMLButtonElement>('[data-rail-id="help"]')!
+      .dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(railEl.classList.contains('is-awake')).toBe(true);
+  });
+
+  it('flyout exposes a correct ARIA popover pattern + a real arrow element', () => {
+    const its: ControlRailItem[] = [
+      {
+        id: 'view',
+        title: 'View options',
+        icon: RAIL_ICONS.view,
+        activate: vi.fn(),
+        flyout: [
+          {
+            id: 'scalebar',
+            title: 'Scale bar',
+            shortcut: 'B',
+            icon: RAIL_ICONS.scalebar,
+            activate: vi.fn(),
+            isActive: () => false,
+          },
+        ],
+      },
+    ];
+    rail = new ControlRail(its);
+    const opener = document.querySelector('[data-rail-id="view"]')!;
+    // Opener advertises the popover and its collapsed state.
+    expect(opener.getAttribute('aria-haspopup')).toBe('true');
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+
+    (opener as HTMLButtonElement).click();
+    expect(opener.getAttribute('aria-expanded')).toBe('true');
+    const fly = document.querySelector('.luxar-control-rail__flyout')!;
+    // role=group (a set of toggles), not an incomplete role=menu.
+    expect(fly.getAttribute('role')).toBe('group');
+    // Arrow is a real child element (not ::before, which the glass themes claim).
+    expect(fly.querySelector('.luxar-control-rail__flyout-arrow')).not.toBeNull();
+    // Chips are toggle buttons with aria-pressed reflecting state.
+    const chip = fly.querySelector('[data-toggle-id="scalebar"]')!;
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
+
+    (opener as HTMLButtonElement).click();
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('docks a footer element (e.g. the perf readout) inside the rail', () => {
     const footer = document.createElement('div');
     footer.id = 'my-footer';
