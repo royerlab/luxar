@@ -83,7 +83,13 @@ export class ControlRail {
   private collapsed = false;
   /** Open flyout descriptor + its DOM, or null when none is open. */
   private flyout?: { item: ControlRailItem; el: HTMLDivElement; btn: HTMLButtonElement };
-  private readonly onPointerMove = (): void => this.wake();
+  // Pointer movement anywhere wakes the (expanded) rail so it brightens while
+  // the user is active. When collapsed or in fullscreen the rail is meant to
+  // stay out of the way, so it reveals on *hover* only — not on any move.
+  private readonly onContainerMove = (): void => {
+    if (this.collapsed || this.root.classList.contains('is-fullscreen')) return;
+    this.wake();
+  };
   private readonly onFullscreenChange = (): void => this.syncFullscreen();
   private readonly onDocPointerDown = (e: PointerEvent): void => this.maybeCloseFlyout(e);
   private readonly onDocKeyDown = (e: KeyboardEvent): void => {
@@ -156,8 +162,9 @@ export class ControlRail {
     this.setCollapsed(startCollapsed, false);
 
     // Idle-dim behaviour.
-    this.container.addEventListener('pointermove', this.onPointerMove);
-    this.root.addEventListener('pointerenter', this.onPointerMove);
+    this.container.addEventListener('pointermove', this.onContainerMove);
+    // Hovering the rail (incl. the collapsed handle) always wakes it.
+    this.root.addEventListener('pointerenter', () => this.wake());
     // In fullscreen the rail hides and only reveals on hover; restore on exit.
     // webkit* covers Safari < 16.4.
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
@@ -421,7 +428,7 @@ export class ControlRail {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.refreshTimer) window.clearInterval(this.refreshTimer);
     this.closeFlyout();
-    this.container.removeEventListener('pointermove', this.onPointerMove);
+    this.container.removeEventListener('pointermove', this.onContainerMove);
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
