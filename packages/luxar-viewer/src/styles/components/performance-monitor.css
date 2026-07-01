@@ -74,3 +74,11 @@
 .luxar-perf[data-mode='graph'] .luxar-perf__graph {
   display: block;
 }
+
+/* Honour reduced-motion — the readout docks inside the rail but `transition` is
+   not inherited, so it needs its own guard (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-perf {
+    transition: none;
+  }
+}

@@ -165,14 +165,6 @@ export class ControlRail {
     });
 
     this.container.appendChild(this.root);
-    // Marker class lets left-anchored panels offset to clear the rail. Applied
-    // to document.body (the universal ancestor) rather than the viewer
-    // container, because some panels mount to body (layers, debug console)
-    // while others mount into the container (gui) — an embedder with a scoped
-    // (non-body) container would otherwise miss the body-mounted panels.
-    // Reference-counted (see bodyMarkerRefs) so multiple instances share safely.
-    bodyMarkerRefs += 1;
-    document.body.classList.add(BODY_MARKER_CLASS);
 
     // Restore persisted collapsed state.
     let startCollapsed = false;
@@ -208,6 +200,16 @@ export class ControlRail {
     this.refresh();
 
     if (!startCollapsed) this.maybeShowHint();
+
+    // Marker class lets left-anchored panels offset to clear the rail. Applied
+    // to document.body (the universal ancestor) rather than the viewer container,
+    // because some panels mount to body (layers, debug console) while others
+    // mount into the container (gui) — an embedder with a scoped (non-body)
+    // container would otherwise miss the body-mounted panels. Reference-counted
+    // (bodyMarkerRefs) so multiple instances share safely. Done LAST so a throw
+    // anywhere above cannot leak a ref (the instance is never returned/disposed).
+    bodyMarkerRefs += 1;
+    document.body.classList.add(BODY_MARKER_CLASS);
   }
 
   private buildCollapseButton(): HTMLButtonElement {
@@ -466,6 +468,9 @@ export class ControlRail {
 
     const hint = document.createElement('div');
     hint.className = 'luxar-control-rail-hint';
+    // Announce the one-time hint to assistive tech. It's injected once and never
+    // updated, so role=status (a polite live region) reads it once without spam.
+    hint.setAttribute('role', 'status');
     hint.innerHTML =
       '<button class="luxar-control-rail-hint__close" type="button" aria-label="Dismiss">&times;</button>' +
       '<b>New here?</b><br>Hover these controls, or press <kbd>H</kbd> — dimensions, rendering, layers &amp; more.';

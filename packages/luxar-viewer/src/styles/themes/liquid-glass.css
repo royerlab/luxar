@@ -31,6 +31,14 @@
   border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
+/* The flyout's pointer arrow is painted with --luxar-bg-secondary, but in this
+   theme the flyout body is transparent + a dark ::after tint (no matching
+   token), so the arrow would read as a pale mismatched nub. Hide it — the
+   flyout sits flush against the rail, so the pointer is non-essential here. */
+[data-theme='liquid-glass'] .luxar-control-rail__flyout-arrow {
+  display: none;
+}
+
 /* ==========================================================================
    LAYER 1: Refraction Layer (Real DOM Element)
    Provides a gradient background that the SVG filter can process
