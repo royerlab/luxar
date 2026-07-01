@@ -244,6 +244,8 @@ const GLASS_PANEL_SELECTORS = [
   '.luxar-dimension-sliders',
   '.luxar-layers-panel',
   '.luxar-gui',
+  '.luxar-control-rail',
+  '.luxar-control-rail__flyout',
 ];
 
 /**

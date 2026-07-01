@@ -20,7 +20,9 @@
 [data-theme='liquid-glass'] .luxar-data-monitor,
 [data-theme='liquid-glass'] .luxar-dimension-sliders,
 [data-theme='liquid-glass'] .luxar-layers-panel,
-[data-theme='liquid-glass'] .luxar-gui {
+[data-theme='liquid-glass'] .luxar-gui,
+[data-theme='liquid-glass'] .luxar-control-rail,
+[data-theme='liquid-glass'] .luxar-control-rail__flyout {
   /* Create stacking context for layers */
   isolation: isolate;
 
@@ -70,7 +72,9 @@
 [data-theme='liquid-glass'] .luxar-data-monitor::before,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::before,
 [data-theme='liquid-glass'] .luxar-layers-panel::before,
-[data-theme='liquid-glass'] .luxar-gui::before {
+[data-theme='liquid-glass'] .luxar-gui::before,
+[data-theme='liquid-glass'] .luxar-control-rail::before,
+[data-theme='liquid-glass'] .luxar-control-rail__flyout::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -98,7 +102,9 @@
 [data-theme='liquid-glass'] .luxar-data-monitor::after,
 [data-theme='liquid-glass'] .luxar-dimension-sliders::after,
 [data-theme='liquid-glass'] .luxar-layers-panel::after,
-[data-theme='liquid-glass'] .luxar-gui::after {
+[data-theme='liquid-glass'] .luxar-gui::after,
+[data-theme='liquid-glass'] .luxar-control-rail::after,
+[data-theme='liquid-glass'] .luxar-control-rail__flyout::after {
   content: '';
   position: absolute;
   inset: 0;

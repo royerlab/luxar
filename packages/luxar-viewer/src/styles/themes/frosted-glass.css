@@ -13,7 +13,9 @@
 [data-theme='frosted-glass'] .luxar-data-monitor,
 [data-theme='frosted-glass'] .luxar-dimension-sliders,
 [data-theme='frosted-glass'] .luxar-layers-panel,
-[data-theme='frosted-glass'] .luxar-gui {
+[data-theme='frosted-glass'] .luxar-gui,
+[data-theme='frosted-glass'] .luxar-control-rail,
+[data-theme='frosted-glass'] .luxar-control-rail__flyout {
   isolation: isolate; /* Create stacking context for proper backdrop-filter */
   box-sizing: border-box; /* Ensure consistent sizing */
   backdrop-filter: var(--luxar-blur-md) saturate(1.5);
