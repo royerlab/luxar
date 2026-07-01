@@ -88,7 +88,7 @@ make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
     *,
-    method: str = "greedy",       # see "Methods" below
+    method: str = "auto",         # see "Methods" below
     breakpoints = "equal-count",   # or list[int] | list[float]
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
@@ -99,7 +99,7 @@ make_additive_lod(
 ```python
 compute_additive_order(
     data: GSplatData,
-    method: str = "greedy",
+    method: str = "auto",
     *,
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
@@ -117,11 +117,17 @@ compute_additive_order(
 | `self_energy` | sort by $\|\phi_i\|^2 \propto a_i^2 |\Sigma_i|^{1/2}$ desc | $O(N\log N)$  | sometimes         | no                  |
 | `spectral`    | sort by $|u_1[i]|$ desc                                   | sparse Gram   | no                | no                  |
 | `greedy`      | matching pursuit; sparse / dense fallback                 | sparse Gram   | yes               | yes ($1-1/e$)       |
+| `auto`        | size-adaptive: `greedy` if `N ≤ 5000` else `self_energy`  | (see chosen)  | (see chosen)      | (see chosen)        |
 
-`greedy` is the recommended default. Empirically (`additive_lod`
-Experiment C) `self_energy` trails greedy by 2–10% AUC on real Luxar
-datasets and is the best `O(N\log N)` fallback for very large `N` where
-sparse-Gram construction becomes the bottleneck.
+`auto` is the default. It resolves (via `resolve_additive_method`) to `greedy`
+for `N ≤ _AUTO_ADDITIVE_MAX_N` (= 5000) and to `self_energy` above it. Rationale:
+`greedy`/`spectral` need a sparse Gram, whose construction (`_build_sparse_gram`,
+a pure-Python per-pair loop) is `O(nnz)` and scales with *overlap density* (avg
+neighbours per splat), not `N` alone — so it becomes the bottleneck on large or
+dense fits (the lazy-greedy heap pass itself is cheap). Empirically (`additive_lod`
+Experiment C) `self_energy` trails greedy by only 2–10% AUC on real Luxar datasets
+and is the right `O(N log N)` choice above the threshold. Pass an explicit method
+to override `auto`; `greedy` remains the quality reference at small `N`.
 
 ## Breakpoints
 
@@ -156,10 +162,12 @@ The reference Luxar dataset benchmarks from `additive_lod` Experiment C:
 
 ## Limits
 
-- Pure NumPy / SciPy. No GPU acceleration. Greedy on $N \gtrsim 10^6$ is
-  not recommended; use `method="self_energy"` instead.
-- Auto-fallback to `self_energy` is **not** enabled. Method choice is
-  explicit so failure modes are loud.
+- Pure NumPy / SciPy. No GPU acceleration. Greedy on large/dense fits is
+  expensive (the `O(nnz)` sparse-Gram build) — the default `method="auto"`
+  switches to `self_energy` above `N = 5000` to avoid it.
+- `method="auto"` (the default) IS a size-adaptive fallback: `greedy` at small
+  `N`, `self_energy` above the threshold (see "Methods"). Pass an explicit
+  method to pin one and keep the choice loud.
 - Output is written as a v3.1 `.gsplats.zarr` node tree (v3.0 still readable): a leaf with
   `additive_<i>/` subgroups for an additive ladder, or a `kind=lod` group
   of children for a substitutive hierarchy. See

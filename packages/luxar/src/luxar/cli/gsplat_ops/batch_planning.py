@@ -157,11 +157,36 @@ def resolve_merge_recipe_args(merge: MergeConfig) -> dict:
     """Validate the per-part merge recipe + knobs into the manifest dict.
 
     Fail-fast (before any expensive planning / fitting): rejects an unsupported
-    recipe and cross-recipe knobs, and validates method/breakpoint/lod-method
+    recipe, cross-recipe knobs, and merge knobs given WITHOUT a ``--merge-recipe``
+    (previously silently dropped), and validates method/breakpoint/lod-method
     spellings — mirroring ``fit --recipe`` and ``gsplat lod``. Returns ``{}`` when
-    no recipe is requested. Raises :class:`typer.BadParameter` on any problem.
+    no recipe and no knobs are requested. Raises :class:`typer.BadParameter` on
+    any problem.
     """
     if merge.recipe is None:
+        # A merge knob without a recipe is a silent no-op — reject it loudly so
+        # the user adds --merge-recipe (mirrors `batch-fit merge`'s runtime check).
+        orphaned = [
+            flag
+            for flag, val in {
+                "--merge-n-lods": merge.n_lods,
+                "--merge-additive-method": merge.additive_method,
+                "--merge-breakpoints": merge.breakpoints,
+                "--merge-compression-factor": merge.compression_factor,
+                "--merge-levels": merge.levels,
+                "--merge-substitutive-method": merge.substitutive_method,
+                "--merge-coarsen-dims": merge.coarsen_dims,
+                "--merge-lod-method": merge.lod_method,
+            }.items()
+            if val is not None
+        ]
+        if orphaned:
+            raise typer.BadParameter(
+                f"option(s) {', '.join(sorted(orphaned))} require a "
+                f"--merge-recipe but none was given; pass --merge-recipe "
+                f"additive|substitutive (without one the merge writes bare-leaf "
+                f"parts, so these knobs would be ignored)."
+            )
         return {}
 
     from luxar.gsplats.lod.recipes import PER_PART_RECIPES

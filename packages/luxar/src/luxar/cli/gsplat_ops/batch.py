@@ -316,7 +316,7 @@ def batch_submit(
         None,
         "--merge-additive-method",
         help="Additive ladder method for --merge-recipe additive "
-        "(greedy | self_energy).",
+        "(auto (default) | greedy | self_energy).",
         rich_help_panel="Merge LOD",
     ),
     merge_breakpoints: Optional[str] = typer.Option(
@@ -1677,6 +1677,28 @@ def batch_cancel_cmd(
         raise typer.Exit(1)
 
 
+# Per-part merge recipes accept only ``additive`` / ``substitutive`` (the
+# composed topologies are reached via `gsplat flatten` → `gsplat lod`). These
+# mirror lod.py's ``_OPTION_TOKENS`` / ``_ALLOWED_TOKENS`` so the merge path
+# rejects — rather than silently ignores — a knob irrelevant to (or given
+# without) a recipe. ``--coarsen-dims`` / ``--lod-method`` belong to the
+# substitutive (mosaic) per-part lod group.
+_MERGE_OPTION_TOKENS = {
+    "--n-lods": "additive",
+    "--additive-method": "additive",
+    "--breakpoints": "additive",
+    "--compression-factor": "substitutive",
+    "--levels": "substitutive",
+    "--substitutive-method": "substitutive",
+    "--coarsen-dims": "substitutive",
+    "--lod-method": "substitutive",
+}
+_MERGE_ALLOWED_TOKENS = {
+    "additive": frozenset({"additive"}),
+    "substitutive": frozenset({"substitutive"}),
+}
+
+
 def _build_merge_recipe_params(
     stored: dict,
     *,
@@ -1797,13 +1819,23 @@ def batch_merge_cmd(
             "recorded at plan time. Mutually exclusive with --flat."
         ),
     ),
+    no_recipe: bool = typer.Option(
+        False,
+        "--no-recipe",
+        help=(
+            "Force a recipe-less merge (bare-leaf parts), overriding any "
+            "merge_recipe recorded at plan time. Use this to merge without LOD "
+            "when the manifest defaulted to a recipe."
+        ),
+    ),
     n_lods: Optional[int] = typer.Option(
         None, "--n-lods", help="Additive ladder depth (additive recipe)."
     ),
     additive_method: Optional[str] = typer.Option(
         None,
         "--additive-method",
-        help="Additive ladder method: greedy (default) or self_energy (additive recipe).",
+        help="Additive ladder method: auto (default) | greedy | self_energy "
+        "(additive recipe).",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
@@ -1859,6 +1891,8 @@ def batch_merge_cmd(
 
         luxar gsplat batch-fit merge output_dir/ --recipe substitutive -K 4 -L 3
 
+        luxar gsplat batch-fit merge output_dir/ --no-recipe   # override a manifest recipe
+
         luxar gsplat batch-fit merge output_dir/ --channel-colors "#ff0080,#00ff00"
     """
     try:
@@ -1875,12 +1909,76 @@ def batch_merge_cmd(
         if color_source:
             colors = [parse_hex_color(c.strip()) for c in color_source.split(",")]
 
+        from luxar.cli.lod import reject_irrelevant_recipe_options
+        from luxar.gsplats.lod.recipes import PER_PART_RECIPES
+
+        # ── usage validation (up front, before the streaming writer runs) ──
+        if recipe is not None and no_recipe:
+            raise typer.BadParameter(
+                "--recipe and --no-recipe are mutually exclusive."
+            )
+        if flat and recipe is not None:
+            raise typer.BadParameter(
+                "--flat and --recipe are mutually exclusive; --flat concatenates "
+                "all tiles into a single bare leaf (no per-part LOD)."
+            )
+
         # Resolve the per-part recipe + its knobs, CLI overriding the values
         # recorded at plan time (manifest.merge_recipe / merge_recipe_args).
+        # --no-recipe (or --flat) forces a recipe-less merge regardless of the
+        # manifest default.
         # NOTE: the uniform+per-part-LOD warning now fires inside
         # merge_batch_results (the library boundary), so every caller — this CLI,
         # the Slurm merge job, and any direct API use — gets it exactly once.
-        eff_recipe = recipe or manifest.merge_recipe
+        eff_recipe = None if (no_recipe or flat) else (recipe or manifest.merge_recipe)
+
+        # Validate the effective recipe NAME before the knob-relevance check —
+        # mirrors `gsplat lod`'s RECIPE_NAMES guard (cli/lod.py). Without this an
+        # unknown recipe (a typo like `--recipe addative`, or a stale manifest
+        # value) reaches reject_irrelevant_recipe_options, whose allowed-token
+        # lookup returns empty and misreports a VALID knob as "not used by
+        # --recipe addative" — hiding the real error (the recipe name).
+        if eff_recipe is not None and eff_recipe not in PER_PART_RECIPES:
+            raise typer.BadParameter(
+                f"unknown per-part recipe {eff_recipe!r}; choose from "
+                f"{', '.join(sorted(PER_PART_RECIPES))}"
+                + (" (recorded at plan time in the manifest)" if recipe is None else "")
+            )
+
+        # Reject recipe knobs that are irrelevant to (or given without) the
+        # effective recipe — previously such knobs were silently dropped. The
+        # no-recipe hint depends on WHY there's no recipe: a forced recipe-less
+        # merge (--no-recipe/--flat) must not tell the user to "pass --recipe"
+        # (it would contradict the flag they just typed).
+        if no_recipe or flat:
+            forced = "--no-recipe" if no_recipe else "--flat"
+            no_recipe_hint = (
+                f"{forced} forces a recipe-less (bare-leaf) merge — drop these "
+                f"knobs, or drop {forced} and pass --recipe additive|substitutive "
+                f"for per-part LOD."
+            )
+        else:
+            no_recipe_hint = (
+                "Pass --recipe additive|substitutive (without one the merge "
+                "writes bare-leaf parts, so these knobs would be ignored)."
+            )
+        reject_irrelevant_recipe_options(
+            eff_recipe,
+            {
+                "--n-lods": n_lods,
+                "--additive-method": additive_method,
+                "--breakpoints": breakpoints,
+                "--compression-factor": compression_factor,
+                "--levels": levels,
+                "--substitutive-method": substitutive_method,
+                "--coarsen-dims": coarsen_dims,
+                "--lod-method": lod_method,
+            },
+            _MERGE_OPTION_TOKENS,
+            _MERGE_ALLOWED_TOKENS,
+            no_recipe_hint=no_recipe_hint,
+        )
+
         recipe_params = None
         if eff_recipe is not None:
             recipe_params = _build_merge_recipe_params(

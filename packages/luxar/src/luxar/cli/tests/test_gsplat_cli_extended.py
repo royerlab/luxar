@@ -3075,6 +3075,184 @@ class TestLODCommand:
         assert not out.exists()
         assert "Traceback" not in self._io(result)
 
+    def test_multiscale_default_compression_factor_is_n_aware(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        """multiscale's default K scales with N (was a fixed 4 → a 2.9M cap on
+        large fits). Patch the cap target so K = round(N/target) is unambiguous
+        and distinct from the old fixed default, then assert it's logged + used.
+        """
+        import luxar.cli.lod as lod_mod
+
+        # 32 splats / target 4 → K = 8 (the old fixed default was 4).
+        monkeypatch.setattr(lod_mod, "_MULTISCALE_CAP_TARGET", 4)
+        out = tmp_path / "ms.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "multiscale",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale failed: {self._io(result)}"
+        io = self._io(result)
+        assert "compression-factor defaulting to 8" in io, io
+        assert out.exists()
+
+    def test_multiscale_explicit_compression_factor_wins(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """An explicit -K is never overridden by the N-aware default."""
+        out = tmp_path / "msk.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "-K",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, f"multiscale -K failed: {self._io(result)}"
+        # The auto-default message must NOT fire when -K is given.
+        assert "compression-factor defaulting" not in self._io(result)
+        # Strong check: the explicit K=3 must actually SHAPE the coarse cap, not
+        # merely suppress the default message. medium_gsplats has N=32, so the
+        # single-level cap holds ceil(32/3)=11 representatives (vs ceil(32/2)=16
+        # under the default K=2). A regression that parses but drops the explicit
+        # K would leave 16 here and pass the message check above — this catches it.
+        import math
+
+        import zarr
+
+        from luxar.gsplats.tree import GSplatLodGroup
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+        root = zarr.open_group(str(out), mode="r")
+        node = read_gsplat_node(root, root)
+        assert isinstance(node, GSplatLodGroup)  # multiscale → kind=lod root
+        coarse_cap = node.children[0]  # coarsest→finest in memory
+        assert coarse_cap.n_splats == math.ceil(32 / 3) == 11, (
+            f"coarse cap has {coarse_cap.n_splats} splats; expected ceil(32/3)=11 "
+            f"(K=3 not applied — got the default-K=2 value 16?)"
+        )
+
+    def test_multiscale_levels_rejected_with_helpful_message(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """--levels has no meaning for multiscale (single-level cap); the error
+        must steer the user to -K rather than just 'not used by'."""
+        out = tmp_path / "msl.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "multiscale",
+                "--levels",
+                "3",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+        assert "single-level" in self._io(result)
+
+
+class TestFlattenCommand:
+    """`gsplat flatten` collapses any tree (esp. a kind=partition) into a single
+    flat leaf — the bridge from a tiled `batch-fit merge` output to `gsplat lod`."""
+
+    def _make_partition(self, runner: CliRunner, src: Path, out: Path) -> int:
+        """Build a kind=partition file from `src`; return the original count."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        result = runner.invoke(
+            app, ["gsplat", "partition", str(src), str(out), "--parts", "3"]
+        )
+        assert result.exit_code == 0, f"partition failed: {result.stdout}"
+        return GSplatData.load(src).n_splats
+
+    def test_flatten_partition_roundtrip(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A partition (which GSplatData.load refuses) flattens to a matrix-shaped
+        leaf with the splat count conserved and loadable by GSplatData.load."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        part = tmp_path / "part.gsplats.zarr"
+        n0 = self._make_partition(runner, medium_gsplats, part)
+
+        # Pre-fix sanity: the partition genuinely can't be loaded flat.
+        with pytest.raises(ValueError):
+            GSplatData.load(part)
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)])
+        assert result.exit_code == 0, f"flatten failed: {result.stdout}"
+        assert flat.exists()
+
+        loaded = GSplatData.load(flat)
+        assert loaded.n_splats == n0  # count conserved
+        assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
+
+    def test_flatten_then_multiscale_lod(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The end-to-end unblock: partition → flatten → `lod --recipe multiscale`
+        (which rejects a partition directly)."""
+        part = tmp_path / "part.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, part)
+
+        # `lod` on the partition directly must fail and point at `flatten`.
+        bad = tmp_path / "bad.gsplats.zarr"
+        rej = runner.invoke(
+            app, ["gsplat", "lod", str(part), str(bad), "--recipe", "multiscale"]
+        )
+        assert rej.exit_code != 0
+        assert "flatten" in (rej.stdout + (rej.stderr or ""))
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        assert (
+            runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)]).exit_code
+            == 0
+        )
+        out = tmp_path / "ms.gsplats.zarr"
+        ok = runner.invoke(
+            app, ["gsplat", "lod", str(flat), str(out), "--recipe", "multiscale"]
+        )
+        assert ok.exit_code == 0, f"lod after flatten failed: {ok.stdout}"
+        assert out.exists()
+
+    def test_flatten_overwrite_guard(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Without --overwrite an existing output is refused."""
+        part = tmp_path / "part.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, part)
+        flat = tmp_path / "flat.gsplats.zarr"
+        assert (
+            runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)]).exit_code
+            == 0
+        )
+        again = runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)])
+        assert again.exit_code != 0
+        # With --overwrite it succeeds.
+        ok = runner.invoke(
+            app, ["gsplat", "flatten", str(part), str(flat), "--overwrite"]
+        )
+        assert ok.exit_code == 0
+
 
 class TestMigrateFormatCommand:
     """`luxar gsplat migrate-format` end-to-end CLI tests.

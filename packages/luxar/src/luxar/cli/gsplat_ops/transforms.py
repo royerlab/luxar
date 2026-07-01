@@ -627,6 +627,105 @@ def partition_dataset(
         raise typer.Exit(1)
 
 
+def flatten_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (any shape: leaf, lod, partition)"
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (a single flat, matrix-shaped leaf)"
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite the output if it already exists."
+    ),
+) -> None:
+    """Collapse any gsplat tree into a single flat (matrix-shaped) leaf.
+
+    Concatenates the **default-rendered** splats of every spatial part — a
+    partition renders all parts; a kind=lod group renders only its finest
+    (default) level, so coarse LOD representatives are not double-counted — into
+    one flat ``.gsplats.zarr``. This is the bridge from a tiled ``kind=partition``
+    (e.g. a ``batch-fit merge`` output, which ``gsplat lod`` and the composed
+    recipes can't load directly) to a matrix-shaped input the recipe builders
+    accept.
+
+    A leaf or matrix-shaped lod group flattens to its full finest splat set; a
+    partition (or partitioned/mosaic topology) is merged across all parts.
+
+    Examples:
+        # Tiled batch-fit merge → flat → multiscale LOD
+        luxar gsplat flatten merged.gsplats.zarr flat.gsplats.zarr
+        luxar gsplat lod flat.gsplats.zarr out.gsplats.zarr --recipe multiscale
+    """
+    try:
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import iter_default_leaves
+
+        if output_path.exists() and not overwrite:
+            aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
+            raise typer.Exit(1)
+
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+
+        with asection(f"Flattening: {input_path.name}"):
+            with asection("Loading tree"):
+                node, stats = load_gsplat_node(input_path, include_stats=True)
+
+            # One flat GSplatData per default-rendered leaf (finest level only,
+            # all parts). `.flattened()` collapses each leaf's additive ladder to
+            # a single full set so `concatenate` (which requires a matching
+            # substitutive depth) merges them cleanly.
+            parts = [
+                GSplatData.from_tree(leaf).flattened()
+                for leaf in iter_default_leaves(node)
+            ]
+            if not parts:
+                aprint("❌ Error: input tree has no leaves")
+                raise typer.Exit(1)
+
+            flat = GSplatData.concatenate(parts)
+            # concatenate() builds a fresh stats dict from the first input; keep
+            # the root-level provenance/fitting stats from the source tree.
+            if stats:
+                flat = GSplatData.from_additive_sublods(
+                    list(flat.additive_sublods), stats=stats
+                )
+            aprint(
+                f"Flattened {len(parts)} leaf/leaves → {flat.n_splats:,} splats "
+                f"({flat.ndim}D, single matrix-shaped leaf)"
+            )
+
+            with asection(f"Saving to {output_path.name}"):
+                if output_path.exists() and overwrite:
+                    import shutil
+
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
+                    else:
+                        output_path.unlink()
+                flat.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,
+                )
+                aprint(f"  Saved flat file: {output_path} ({flat.n_splats:,} splats)")
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        aprint(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
 def _parse_slices(s: str, ndim: int) -> list[slice]:
     """Parse numpy-style range string into list of slices.
 
@@ -1244,3 +1343,4 @@ def register_transforms_commands(app: typer.Typer) -> None:
     app.command("filter")(filter_dataset)
     app.command("slice")(slice_dataset)
     app.command("partition")(partition_dataset)
+    app.command("flatten")(flatten_dataset)

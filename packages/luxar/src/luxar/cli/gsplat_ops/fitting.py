@@ -215,7 +215,7 @@ def _build_fit_recipe_params(
             f"(they configure --recipe {other}). Remove them or switch recipe."
         )
 
-    add_norm = (additive_method or "greedy").strip().replace("-", "_")
+    add_norm = (additive_method or "auto").strip().replace("-", "_")
     if add_norm not in _VALID_ADDITIVE_METHODS:
         raise typer.BadParameter(
             f"--additive-method must be one of {list(_VALID_ADDITIVE_METHODS)}; "
@@ -454,7 +454,8 @@ def fit_volume(
         None,
         "-m",
         "--additive-method",
-        help="[--recipe additive] greedy (default, (1-1/e)-optimal) or "
+        help="[--recipe additive] auto (default: greedy at small N, "
+        "self_energy for large parts) | greedy ((1-1/e)-optimal) | "
         "self_energy (cheap O(N log N) for very large parts).",
         rich_help_panel="Per-part LOD",
     ),
