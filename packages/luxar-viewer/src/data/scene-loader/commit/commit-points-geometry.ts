@@ -38,6 +38,7 @@ import {
   writeInterleavedAttribute,
 } from '../../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../../types/points';
+import { stampLoadedViewVersion } from './stamp-view-version';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -66,7 +67,8 @@ export function commitPointsGeometry(
   rootGroup: THREE.Group | null,
   gpuBufferPool: GPUBufferPool | null,
   nodeFactory: NodeFactory,
-  session?: UpdateSession
+  session: UpdateSession | undefined,
+  loadedViewVersion: number
 ): void {
   if (!rootGroup) return;
 
@@ -86,6 +88,8 @@ export function commitPointsGeometry(
 
   // Type guard already passed in the early-return above.
   points.userData.visiblePointCount = data.pointCount;
+  // Slice-aware LOD freshness stamp (see commit-gsplats-geometry.ts).
+  stampLoadedViewVersion(points.userData, loadedViewVersion);
 
   // World-space radius footprint, shared by every commit path so the
   // boundingBox carries the rendered disc extent (the three-geometry

@@ -53,13 +53,13 @@ beforeEach(() => {
 describe('commitPointsGeometry', () => {
   it('no-ops when rootGroup is null', () => {
     expect(() =>
-      commitPointsGeometry('/p', makeData(5), null, null, mockNodeFactory)
+      commitPointsGeometry('/p', makeData(5), null, null, mockNodeFactory, undefined, 0)
     ).not.toThrow();
   });
 
   it('no-ops when no points node with the given path exists', () => {
     expect(() =>
-      commitPointsGeometry('/missing', makeData(5), new THREE.Group(), null, mockNodeFactory)
+      commitPointsGeometry('/missing', makeData(5), new THREE.Group(), null, mockNodeFactory, undefined, 0)
     ).not.toThrow();
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
   });
@@ -75,7 +75,7 @@ describe('commitPointsGeometry', () => {
     // existing 0-count geometry takes the dispose+recreate branch (the in-place
     // branch requires pointCount > 0). Pin the actual dispatch AND assert no crash.
     expect(() =>
-      commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory)
+      commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory, undefined, 0)
     ).not.toThrow();
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(0);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
@@ -96,11 +96,19 @@ describe('commitPointsGeometry', () => {
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
 
-    commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory);
+    commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory, undefined, 0);
     expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledTimes(1);
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
+  });
+
+  it('stamps loadedViewVersion onto the mesh user-data (three-geometry symmetry)', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 9);
+    expect((points.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
   });
 
   it('falls back to dispose+create when pool disabled and counts differ', () => {
@@ -111,7 +119,7 @@ describe('commitPointsGeometry', () => {
     const disposeSpy = vi.spyOn(oldGeom, 'dispose');
 
     // Existing geometry has 0 positions; new data has 3 → counts differ.
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
   });
@@ -136,7 +144,7 @@ describe('commitPointsGeometry', () => {
     points.geometry = geom;
     root.add(points);
 
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory);
+    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
     // No dispose / no recreate → in-place path.
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
     // The same geometry instance is preserved.
@@ -169,7 +177,7 @@ describe('commitPointsGeometry', () => {
     points.geometry = geom;
     root.add(points);
 
-    commitPointsGeometry('/p', makeData(3, /*withRadii=*/ true), root, null, mockNodeFactory);
+    commitPointsGeometry('/p', makeData(3, /*withRadii=*/ true), root, null, mockNodeFactory, undefined, 0);
 
     expect(points.geometry).toBe(geom);
     expect(geom.boundingBox).not.toBeNull();

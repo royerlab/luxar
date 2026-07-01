@@ -91,6 +91,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     viewState,
     factoryDeps: {} as never,
     isDatasetLive: () => true,
+    getViewVersion: () => 1,
+    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -171,7 +173,7 @@ describe('loadLinesNode — happy path', () => {
 
     expect(placeholder).not.toBeNull();
     expect(ctx.spies.processLinesData).toHaveBeenCalledWith('/scene/l', data, ctx.viewState);
-    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(staged);
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(staged, undefined, 1);
   });
 });
 

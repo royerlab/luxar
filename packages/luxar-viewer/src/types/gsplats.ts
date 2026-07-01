@@ -285,6 +285,17 @@ export interface GSplatsUserData {
   /** Currently visible splat count after nD slicing (updated on view change) */
   visibleSplatCount?: number;
 
+  /**
+   * The ``SceneLoader._updateVersion`` this mesh's committed geometry was
+   * loaded for. Written by ``commitGSplatsGeometry`` on every commit and read
+   * by the LOD registry (``lod-group-registry.ts``) to decide whether a level
+   * is *fresh for the current view (slice/displayDims) version* — distinct from
+   * ``ready`` (geometry committed), since a re-slice overwrites geometry in
+   * place without changing readiness. ``undefined`` ⇒ never committed ⇒ treated
+   * as stale (the registry falls back to a coarser fresh level, never blank).
+   */
+  loadedViewVersion?: number;
+
   /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
   pickId?: number;
 }

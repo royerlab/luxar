@@ -115,6 +115,14 @@ docs = [
     "sphinx-rtd-theme>=1.3.0",
     "myst-parser>=2.0.0"
 ]
+# Bridge fitted Gaussian splats into the Royer-lab tracking ecosystem
+# (luxar.gsplats.interop.tracksdata). tracksdata is a clean PyPI dependency —
+# the >=...rc lower bound lets pip resolve the current pre-release. napari is for
+# the optional demo viewer. Keep this publish-safe: no git/direct references.
+tracksdata = [
+    "tracksdata>=0.1.0rc5",
+    "napari[pyqt6]>=0.4.18",
+]
 
 # CLI entry point
 [project.scripts]
@@ -334,6 +342,12 @@ module = [
     "matplotlib.*",
     "colorcet",
     "colorcet.*",
+    # Optional `tracksdata` extra (luxar.gsplats.interop.tracksdata) and its
+    # polars dependency — not installed in the mypy/CI env.
+    "tracksdata",
+    "tracksdata.*",
+    "polars",
+    "polars.*",
 ]
 ignore_missing_imports = true
 

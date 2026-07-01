@@ -43,6 +43,16 @@ import * as THREE from 'three';
 import { type BoundingBox, transformBoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
 import type { LODGroupSelectorMode } from '../types/lod-group';
+import { coarsestFreshIndex, isFresh, isReady, SettleTracker } from './lod-freshness';
+
+/**
+ * Frames the view-update version must hold steady before the registry reloads a
+ * stale fine level (the settle debounce — see `maybeKickReload`). While the
+ * user is actively scrubbing (version changes every frame) only the cheap
+ * coarse level shows; the fine level reloads once they pause for ~this many
+ * frames. ~8 frames ≈ 130 ms at 60 fps.
+ */
+const FINE_RELOAD_SETTLE_TICKS = 8;
 
 /** Asymmetric hysteresis on the "downgrade to coarser" direction. */
 const HYSTERESIS_RATIO = 0.1;
@@ -119,11 +129,17 @@ export interface LODGroupChild {
    * swap).
    */
   lastVisibleTick?: number;
-}
-
-/** A child is renderable iff its geometry is committed. Absent flag ⇒ ready. */
-function isReady(child: LODGroupChild): boolean {
-  return child.ready !== false;
+  /**
+   * For a lazy level backed by a PROGRESSIVE loader (a substitutive level whose
+   * geometry is itself an additive ladder, e.g. the `pyramid` recipe): reports
+   * whether more additive LODs remain to stream for the current view. The
+   * registry treats "ready & fresh but hasMoreLODs" like a not-yet-final state
+   * and re-fires `ensureLoaded` (settle-gated) to advance the ladder until it
+   * completes — driving progressive refinement entirely from the registry, since
+   * lazy levels no longer ride the per-slice sweep. Absent / `() => false` on a
+   * single-LOD level (the common case) ⇒ no extra refinement passes.
+   */
+  hasMoreLODs?: () => boolean;
 }
 
 /** One LOD-group entry tracked by the registry. */
@@ -141,8 +157,24 @@ export interface LODGroupEntry {
   selectorMode: LODGroupSelectorMode;
   /** Initial active level, used when nothing else has selected yet. */
   defaultLevel: number;
-  /** Index into ``children`` of the currently-visible child. */
+  /**
+   * Index into ``children`` of the screen-DESIRED level (the aspiration). This
+   * is the hysteresis anchor and the level the auto-selector wants on screen.
+   * It is NOT necessarily what is displayed: when its committed geometry is
+   * stale for the current view version, the registry shows a coarser fresh
+   * level (``displayedChildIndex``) until the aspiration commits.
+   */
   activeChildIndex: number;
+  /**
+   * Index into ``children`` of the level ACTUALLY visible this frame. Equals
+   * ``activeChildIndex`` in steady state; during a re-slice it transiently
+   * points at the coarsest fresh level while the aspiration reloads. A per-frame
+   * transient written by ``evaluateEntry`` and read by
+   * ``enforceResidentByteBudget`` (same synchronous ``evaluatePerFrame`` pass)
+   * so eviction never releases the on-screen level. ``undefined`` before the
+   * first evaluation ⇒ treated as ``activeChildIndex``.
+   */
+  displayedChildIndex?: number;
   /**
    * Whether the auto-selector is currently holding this group at its
    * coarsest-ready level because its world bounds are outside the camera
@@ -218,6 +250,26 @@ export interface LODGroupRegistryDeps {
    * retention), the default for unit tests.
    */
   getResidentBytes?: () => number;
+  /**
+   * Current view-update version (``SceneLoader.currentViewVersion``). Used for
+   * the slice-aware fallback: a gsplats level whose committed geometry was
+   * stamped with an older version still shows a previous slice/displayDims, so
+   * the registry treats it as stale and displays the coarsest level that IS
+   * fresh until the re-slice commits. Omitted ⇒ no freshness tracking (every
+   * ready level is treated as fresh — identical to the pre-feature behaviour;
+   * the default for unit tests that don't exercise scrubbing).
+   */
+  getViewVersion?: () => number;
+  /**
+   * Keep the render loop alive (the viewer is on-demand and idles after ~2s).
+   * Called each frame while a lazy level is loading so a deferred fine reload
+   * — which commits OUTSIDE the per-slice sweep and can take longer than the
+   * idle timeout — still triggers the per-frame swap-up to the fresh level when
+   * it lands, instead of waiting for the next user interaction. Wired to
+   * ``AnimationController.startAnimation`` (resets the idle timeout). Omitted ⇒
+   * no-op (unit tests don't run a loop).
+   */
+  requestRender?: () => void;
 }
 
 /**
@@ -396,6 +448,13 @@ export class LODGroupRegistry {
    */
   private warnedNoReadyChild: Set<string> = new Set();
 
+  /**
+   * Tracks when the global view-update version last changed (in ticks) so the
+   * selector can defer a stale fine level's reload until the scrub settles —
+   * the debounce behind ``maybeKickReload``. See ``scene/lod-freshness.ts``.
+   */
+  private settleTracker = new SettleTracker();
+
   constructor(private deps: LODGroupRegistryDeps) {}
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
@@ -419,6 +478,10 @@ export class LODGroupRegistry {
       const child = entry.children[i];
       child.object.visible = i === entry.activeChildIndex && isReady(child);
     }
+    // The initially-shown level is the active default; ``evaluateEntry`` may
+    // transiently move the displayed level to a coarser fresh one during a
+    // re-slice, but it starts equal to the aspiration.
+    entry.displayedChildIndex = entry.activeChildIndex;
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
@@ -519,12 +582,35 @@ export class LODGroupRegistry {
     FRUSTUM_MATRIX_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     FRUSTUM_SCRATCH.setFromProjectionMatrix(FRUSTUM_MATRIX_SCRATCH);
 
+    // Track whether the (global) view version has settled, to gate deferred
+    // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
+    // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
+    const version = this.deps.getViewVersion?.();
+    if (version != null) this.settleTracker.observe(version, this.tick);
+    const settled = version == null || this.settleTracker.isSettled(this.tick, FINE_RELOAD_SETTLE_TICKS);
+
     let changed = false;
+    let anyLoading = false;
     for (const entry of this.entries.values()) {
-      if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH)) {
+      if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;
       }
+      // A lazy level loading (initial or a settled fine reload) commits
+      // asynchronously OUTSIDE the per-slice sweep. Keep the on-demand render
+      // loop alive so the per-frame swap-up to the fresh level fires when the
+      // load lands, rather than waiting for the next user interaction. Plain
+      // loop (not ``.some``) to preserve this file's no-per-frame-allocation
+      // hot-path invariant.
+      if (!anyLoading) {
+        for (const c of entry.children) {
+          if (c.loading) {
+            anyLoading = true;
+            break;
+          }
+        }
+      }
     }
+    if (anyLoading) this.deps.requestRender?.();
     // Bound resident LOD geometry against the shared GPU-pool byte budget
     // (one VRAM authority). Retention keeps loaded levels resident so
     // re-shows are free; this LRU-evicts only hidden levels when over budget —
@@ -534,13 +620,14 @@ export class LODGroupRegistry {
     return changed;
   }
 
-  /** Returns ``true`` if this entry's active child changed. */
+  /** Returns ``true`` if this entry's displayed child changed. */
   private evaluateEntry(
     entry: LODGroupEntry,
     camera: THREE.Camera,
     viewport: { width: number; height: number },
     displayDims: readonly number[],
-    frustum: THREE.Frustum
+    frustum: THREE.Frustum,
+    settled: boolean
   ): boolean {
     // Pick the desired child index.
     let desired: number;
@@ -579,56 +666,101 @@ export class LODGroupRegistry {
       }
     }
 
-    let changed = false;
+    // ── Advance the aspiration (``activeChildIndex``) toward ``desired`` ──
+    // The aspiration is the hysteresis anchor and only moves onto a READY level;
+    // a not-ready desired kicks its deferred loader and we keep aspiring to the
+    // current level until it commits. Visibility is NOT touched here — the
+    // display-resolution pass below is the single owner of ``object.visible``.
     if (desired !== entry.activeChildIndex) {
       const target = entry.children[desired];
       if (isReady(target)) {
-        // Atomic swap: hide outgoing, show incoming. No release here —
-        // retention keeps the outgoing level resident so swapping back is
-        // a sub-millisecond visibility toggle, not a reload. Memory is
-        // bounded by the byte-budget LRU (``enforceResidentByteBudget``),
-        // not by releasing on every swap.
-        entry.children[entry.activeChildIndex].object.visible = false;
-        target.object.visible = true;
         entry.activeChildIndex = desired;
-        changed = true;
       } else {
-        // Lazy gate: desired level not committed yet — kick its deferred
-        // loader (guarded, with failure cooldown) and keep the current
-        // level visible. A later frame performs the swap once the thunk
-        // sets ``ready=true``.
         this.maybeKickLoad(target);
       }
     }
+    // Self-heal a NOT-ready aspiration (eager default failed to attach, or a
+    // fallback pinned a not-ready lazy level) so the group can never be stuck.
+    // A ready-but-STALE aspiration is deliberately NOT kicked here:
+    // ``maybeKickLoad`` early-returns on ready children, and a stale level's
+    // re-slice reload is driven by the scene-loader update sweep (every
+    // registered child loader re-queries on a view change), not by the registry
+    // — we just wait for that commit to re-stamp it fresh.
+    const aspiration = entry.children[entry.activeChildIndex];
+    if (aspiration && !isReady(aspiration)) this.maybeKickLoad(aspiration);
 
-    // Reconcile the active child every frame. The registry — not the
-    // loader — guarantees the active level ends up loaded and visible:
-    //   * ready  → ensure it is shown (a ``desired === active`` frame skips
-    //     the swap block above, so a freshly-ready active child would
-    //     otherwise stay hidden) and stamp it most-recently-used.
-    //   * not ready → self-heal by kicking its load (covers a fallback that
-    //     pinned a not-ready lazy level as active when the eager default
-    //     failed to attach — otherwise that group renders blank forever).
-    const active = entry.children[entry.activeChildIndex];
-    if (active) {
-      if (isReady(active)) {
-        if (!active.object.visible) {
-          active.object.visible = true;
-          changed = true;
-        }
-        active.lastVisibleTick = this.tick;
-      } else {
-        this.maybeKickLoad(active);
-      }
+    // ── Slice-aware DISPLAY resolution ──
+    // Show the aspiration when its committed geometry is fresh for the current
+    // view version; while it is stale (a time/displayDims scrub reloaded it in
+    // place without flipping ``ready``) show the coarsest FRESH level so the new
+    // slice appears immediately at low detail, then swap up once the aspiration
+    // recommits. ``getViewVersion`` undefined ⇒ freshness untracked ⇒
+    // display == aspiration (identical to the pre-feature behaviour).
+    const version = this.deps.getViewVersion?.();
+    const aspirationReady = !!aspiration && isReady(aspiration);
+    const aspirationFresh = version == null || isFresh(aspiration, version);
+    let displayIdx: number;
+    if (aspirationReady && aspirationFresh) {
+      // Aspiration is committed and fresh (or freshness untracked) → show it.
+      displayIdx = entry.activeChildIndex;
+    } else if (version != null) {
+      // Stale or not-yet-ready aspiration, freshness tracked → display the
+      // coarsest fresh level (the slice-aware fallback; falls back to the
+      // coarsest ready level if none is fresh yet, so it never goes blank).
+      displayIdx = this.coarsestFreshOrReadyIndex(entry, version);
+    } else {
+      // Freshness untracked and the aspiration isn't ready (a lazy level still
+      // loading): keep the previously-displayed level if it's still ready,
+      // otherwise show nothing until the load commits — the legacy behaviour.
+      const prev = entry.displayedChildIndex ?? -1;
+      displayIdx = prev >= 0 && isReady(entry.children[prev]) ? prev : -1;
     }
 
-    // Stamp any already-ready child that has never been shown so it ages
-    // into the eviction LRU. Without this, a lazy level that finished
-    // loading but was never swapped-to (camera moved away mid-load) keeps
+    // ── Settle-gated reload / progressive refinement of the lazy aspiration ──
+    // A lazy level no longer joins the per-slice sweep (see load-lod-group-node.ts),
+    // so the registry drives its (re)loading HERE, settle-gated: during active
+    // scrubbing (version changing every frame) nothing fires, so only the cheap
+    // coarse level (still sweep-driven) shows the new slice; once the user pauses
+    // we (a) reload a STALE level for the new slice, and (b) advance a PROGRESSIVE
+    // level that is fresh but still has additive LODs to stream — both by
+    // re-firing the same ``ensureLoaded``, until the level is ready, fresh, AND
+    // complete. Eager (coarse) levels have no ``ensureLoaded`` and stay
+    // sweep-driven, so this only ever targets lazy levels.
+    const needsReloadOrRefine =
+      aspirationReady && (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
+    if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
+      this.maybeKickReload(aspiration!);
+    }
+
+    // ── Apply visibility (single owner) ──
+    // At most one child visible (``displayIdx``, and only if it is READY — never
+    // force-show a not-ready placeholder). ``changed`` flips when the SHOWN
+    // level changes so ``evaluatePerFrame`` refreshes the monitor's visible
+    // tally, which counts the displayed level, not the aspiration.
+    let changed = false;
+    for (let i = 0; i < entry.children.length; i++) {
+      const child = entry.children[i];
+      const shouldShow = i === displayIdx && isReady(child);
+      if (child.object.visible !== shouldShow) {
+        child.object.visible = shouldShow;
+        if (shouldShow) changed = true; // a new level became visible
+      }
+    }
+    // Mark the on-screen level most-recently-used and record it for the eviction
+    // pass, which must never release the level currently displayed. Only update
+    // when a ready level is actually shown — otherwise keep the last shown index
+    // so eviction still protects whatever the user last saw.
+    const shown = displayIdx >= 0 ? entry.children[displayIdx] : undefined;
+    if (shown && isReady(shown)) {
+      shown.lastVisibleTick = this.tick;
+      entry.displayedChildIndex = displayIdx;
+    }
+
+    // Stamp any already-ready child that has never been shown so it ages into
+    // the eviction LRU. Without this, a lazy level that finished loading but was
+    // never displayed (camera/slice moved away mid-load) keeps
     // ``lastVisibleTick == null`` and is permanently exempt from eviction,
-    // leaking VRAM. Stamping "became ready" as a use sorts a just-loaded
-    // level as most-recent (preserving the 1-frame swap-gap guard) while a
-    // never-shown level ages out normally.
+    // leaking VRAM.
     for (const child of entry.children) {
       if (isReady(child) && child.lastVisibleTick == null) {
         child.lastVisibleTick = this.tick;
@@ -722,6 +854,18 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Coarsest child that is ready AND fresh for ``version``, falling back to the
+   * coarsest READY level when none is fresh yet (the ≤1-frame window right after
+   * a re-slice) so the group shows stale-but-ready geometry rather than going
+   * blank. Thin wrapper over the pure ``coarsestFreshIndex`` (lod-freshness.ts)
+   * + ``coarsestReadyIndex``.
+   */
+  private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
+    const fresh = coarsestFreshIndex(entry.children, version);
+    return fresh >= 0 ? fresh : this.coarsestReadyIndex(entry);
+  }
+
+  /**
    * Index of the coarsest currently-ready child. Children are stored
    * coarsest→finest, so the first ready index is the coarsest available
    * (resident) level. Used by the off-screen gate to hold a culled group on
@@ -767,7 +911,39 @@ export class LODGroupRegistry {
    * eviction candidate).
    */
   private maybeKickLoad(child: LODGroupChild): void {
-    if (isReady(child) || !child.ensureLoaded || child.loading) return;
+    if (isReady(child)) return; // not-ready-only: a ready level needs no initial load
+    this.kickDeferredLoad(child);
+  }
+
+  /**
+   * Reload a READY-but-STALE lazy fine level for the current view — the sibling
+   * of ``maybeKickLoad`` for a child whose geometry is committed but reflects an
+   * older slice/displayDims version. A fine level leaves the per-slice sweep
+   * once loaded (see ``load-lod-group-node.ts``), so the registry — not the
+   * sweep — drives its reload, gated on settle by the caller. Re-fires
+   * ``ensureLoaded``, which re-runs the expensive loader (overwrites the
+   * geometry in place, commits independently, re-stamps ``loadedViewVersion``
+   * fresh). Unlike ``maybeKickLoad`` it does NOT early-return on ``isReady`` —
+   * refreshing a ready level is the whole point. The stale level stays hidden
+   * behind the coarse fallback meanwhile (the display pass), so this never
+   * blanks the screen, and the shared ``loading``/cooldown guards make
+   * re-calling it every settled frame safe.
+   */
+  private maybeKickReload(child: LODGroupChild): void {
+    this.kickDeferredLoad(child);
+  }
+
+  /**
+   * Shared lazy-load gate for ``maybeKickLoad`` (initial load of a not-ready
+   * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
+   * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
+   * freshly-failed child is stamped with the current tick; once
+   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
+   * retries — recovering a level that failed on reload (after a successful load
+   * + byte-eviction), which the old "failed until released" behaviour left stuck.
+   */
+  private kickDeferredLoad(child: LODGroupChild): void {
+    if (!child.ensureLoaded || child.loading) return;
     if (child.failed) {
       if (child.failedTick == null) {
         // First frame we observe the failure — start the cooldown clock.
@@ -836,10 +1012,20 @@ export class LODGroupRegistry {
         distance = BOX_CENTER_SCRATCH.distanceTo(CAMERA_POS_SCRATCH);
       }
       const children = entry.children;
+      // Never evict the level currently DISPLAYED (which, during a re-slice, can
+      // be a coarser fresh level rather than the aspiration ``activeChildIndex``)
+      // — releasing it would blank the on-screen group. ``displayedChildIndex``
+      // is written by ``evaluateEntry`` earlier in this same per-frame pass.
+      const displayed = entry.displayedChildIndex ?? entry.activeChildIndex;
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
         if (!isReady(child)) continue;
-        if (i !== entry.activeChildIndex && child.release && child.lastVisibleTick != null) {
+        // Skip a child mid-(re)load: ``release()`` resets ``loading=false`` and
+        // ``ready=false``, so evicting one whose deferred reload is in flight
+        // would let the registry kick a SECOND concurrent ``ensureLoaded`` for
+        // the same loader. The not-ready guard above misses it because a stale
+        // RELOAD keeps ``ready=true`` while ``loading=true``.
+        if (i !== displayed && !child.loading && child.release && child.lastVisibleTick != null) {
           evictable.push({ child, offscreen, distance });
         }
       }

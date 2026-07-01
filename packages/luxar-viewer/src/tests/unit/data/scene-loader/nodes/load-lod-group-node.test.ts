@@ -205,6 +205,8 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
+    getViewVersion: () => 1,
+    getLiveViewState: () => ({ displayDims: [0, 1, 2], slicePosition: [], tolerance: [] }),
     factoryDeps: {} as never,
     isDatasetLive: () => true,
     releaseLazyGSplats: vi.fn(),
@@ -725,7 +727,11 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     expect(typeof pts.ensureLoaded).toBe('function');
   });
 
-  it('ensureLoaded loads the points level and registers the points loader', async () => {
+  it('ensureLoaded loads the points level WITHOUT joining the per-slice sweep (decoupled)', async () => {
+    // Decoupling (B2): a lazy fine level commits independently in its expensive
+    // loader and is NOT registered into the per-slice sweep — so the cheap
+    // coarse level can commit a new timepoint without being gated behind it.
+    // The registry reloads the fine level on a settled slice change instead.
     attachStubChildren();
     const reg = makeReg();
     const ctx = makeCtx(reg);
@@ -741,10 +747,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     await vi.waitFor(() => expect(pts.ready).toBe(true));
 
     expect(loadPointsNodeExpensiveMock).toHaveBeenCalledTimes(1);
-    expect(ctx.registry.registerPointsLoader).toHaveBeenCalledWith(
-      '/lod/child_1',
-      expect.anything()
-    );
+    expect(ctx.registry.registerPointsLoader).not.toHaveBeenCalled();
     expect(pts.loading).toBe(false);
   });
 
@@ -826,7 +829,9 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     expect(reg.get('/lod')!.children[1].ready).toBe(false);
   });
 
-  it('ensureLoaded loads the lines level and registers the lines loader', async () => {
+  it('ensureLoaded loads the lines level WITHOUT joining the per-slice sweep (decoupled)', async () => {
+    // See the points peer above — lazy fine levels commit independently and are
+    // not registered into the per-slice sweep (the coarse/fine commit decoupling).
     attachStubChildren();
     const reg = makeReg();
     const ctx = makeCtx(reg);
@@ -840,10 +845,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     ln.ensureLoaded!();
     await vi.waitFor(() => expect(ln.ready).toBe(true));
     expect(loadLinesNodeExpensiveMock).toHaveBeenCalledTimes(1);
-    expect(ctx.registry.registerLinesLoader).toHaveBeenCalledWith(
-      '/lod/child_1',
-      expect.anything()
-    );
+    expect(ctx.registry.registerLinesLoader).not.toHaveBeenCalled();
     expect(ln.loading).toBe(false);
   });
 

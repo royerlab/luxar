@@ -1,0 +1,95 @@
+/**
+ * Pure, dependency-free LOD freshness + settle helpers used by the
+ * `LODGroupRegistry` selector. Kept out of `lod-group-registry.ts` (which is
+ * already large and THREE/camera-bound) so this logic is unit-testable in
+ * isolation — every function here is pure over plain inputs (a child stub +
+ * numbers), no THREE, no camera, no mocking.
+ *
+ * **Freshness** distinguishes a level whose committed geometry reflects the
+ * CURRENT view (slice / displayDims) version from one that is merely "ready"
+ * (geometry committed) but stale — a re-slice overwrites geometry in place
+ * without flipping readiness, so the registry needs the per-mesh
+ * `loadedViewVersion` stamp (written at commit by `stamp-view-version.ts`) to
+ * know which level to actually display. Freshness is tracked for the three leaf
+ * geometry types (gsplats / points / lines); nested groups carry no per-slice
+ * staleness and are always "fresh".
+ *
+ * **Settle** is the debounce that drives deferred reloads: while the view
+ * version changes every frame (active scrub) we want to show only the cheap
+ * coarse level; once it has been stable for a few frames we reload the fine
+ * level. `SettleTracker` answers "has the version been stable for N ticks?".
+ *
+ * @module scene/lod-freshness
+ */
+
+/** Minimal structural shape this module reads off a registry child. */
+export interface FreshnessChild {
+  /** ``false`` ⇒ geometry not committed yet. Absent/``true`` ⇒ committed. */
+  ready?: boolean;
+  /** The leaf THREE node; its ``userData`` carries the freshness stamp. */
+  object: { userData?: { nodeType?: string; loadedViewVersion?: number } };
+}
+
+/** Leaf geometry types whose meshes are stamped with ``loadedViewVersion``. */
+const FRESHNESS_TRACKED_TYPES: ReadonlySet<string> = new Set(['gsplats', 'points', 'lines']);
+
+/** A child is renderable iff its geometry is committed. Absent flag ⇒ ready. */
+export function isReady(child: { ready?: boolean }): boolean {
+  return child.ready !== false;
+}
+
+/**
+ * Whether `child` is ready AND fresh for view-version `version`. Freshness is
+ * tracked only for the three stamped leaf types; a ready non-leaf child (nested
+ * group / partition wrapper) has no per-slice staleness and is always fresh —
+ * so the slice-aware fallback is a no-op for those. A ready leaf whose stamp is
+ * absent/older than `version` is stale (its geometry reflects a previous slice).
+ */
+export function isFresh(child: FreshnessChild | undefined, version: number): boolean {
+  if (!child || !isReady(child)) return false;
+  const ud = child.object.userData;
+  if (ud && FRESHNESS_TRACKED_TYPES.has(ud.nodeType ?? '')) {
+    return ud.loadedViewVersion === version;
+  }
+  return true; // nested groups / unstamped leaves: no per-slice staleness
+}
+
+/**
+ * Index of the coarsest child that is ready AND fresh for `version`, or `-1`
+ * when none is fresh yet (the ≤1-frame window right after a re-slice, before
+ * even the coarse level recommits). Children are stored coarsest→finest, so the
+ * first match is the coarsest. The caller falls back to the coarsest READY
+ * level on `-1` so the group shows stale-but-ready geometry rather than blank.
+ */
+export function coarsestFreshIndex(
+  children: readonly FreshnessChild[],
+  version: number
+): number {
+  for (let i = 0; i < children.length; i++) {
+    if (isFresh(children[i], version)) return i;
+  }
+  return -1;
+}
+
+/**
+ * Tracks when the (global) view-update version last changed, in registry ticks,
+ * so the selector can tell whether the view has "settled" (stopped scrubbing).
+ * Single instance per registry — the version is global (one `getViewVersion`).
+ */
+export class SettleTracker {
+  private lastVersion = Number.NaN;
+  private lastChangeTick = 0;
+
+  /** Record the current version at `tick`; resets the settle clock on change. */
+  observe(version: number, tick: number): void {
+    if (version !== this.lastVersion) {
+      this.lastVersion = version;
+      this.lastChangeTick = tick;
+    }
+  }
+
+  /** True once the version has been unchanged for ≥ `settleTicks` frames. */
+  isSettled(tick: number, settleTicks: number): boolean {
+    return tick - this.lastChangeTick >= settleTicks;
+  }
+}
