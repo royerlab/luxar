@@ -17,6 +17,7 @@
 
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
+import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { DimensionSliders } from '../../../ui/dimension-sliders';
@@ -194,7 +195,10 @@ export class PanelCoordinator {
       this.refs.recordingPanel.stopVideoRecording();
       return;
     }
-    if (!document.fullscreenElement) {
+    // Use the cross-browser check: on Safari <16.4 fullscreen is entered via
+    // the webkit API, so `document.fullscreenElement` alone is null and Escape
+    // would wrongly closeAll() while also natively exiting fullscreen.
+    if (!isDocumentFullscreen()) {
       this.closeAll();
     }
   }

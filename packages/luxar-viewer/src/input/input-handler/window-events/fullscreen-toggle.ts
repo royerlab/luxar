@@ -8,6 +8,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import type { SceneManager } from '../../../scene/scene-manager';
 
 export interface FullscreenCtx {
@@ -18,15 +19,8 @@ export interface FullscreenCtx {
 interface WebkitFullscreenElement extends HTMLElement {
   webkitRequestFullscreen?: () => Promise<void> | void;
 }
-interface WebkitFullscreenDocument extends Document {
-  webkitFullscreenElement?: Element | null;
+interface WebkitExitFullscreenDocument extends Document {
   webkitExitFullscreen?: () => Promise<void> | void;
-}
-
-/** True when any element is currently fullscreen (standard or webkit). */
-export function isDocumentFullscreen(): boolean {
-  const d = document as WebkitFullscreenDocument;
-  return !!(document.fullscreenElement || d.webkitFullscreenElement);
 }
 
 function requestFullscreen(el: HTMLElement): Promise<void> | void {
@@ -35,7 +29,7 @@ function requestFullscreen(el: HTMLElement): Promise<void> | void {
 }
 
 function exitFullscreen(): Promise<void> | void {
-  const d = document as WebkitFullscreenDocument;
+  const d = document as WebkitExitFullscreenDocument;
   return document.exitFullscreen ? document.exitFullscreen() : d.webkitExitFullscreen?.();
 }
 

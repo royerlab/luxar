@@ -30,7 +30,7 @@
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../ui/rendering-controls';
-import { isDocumentFullscreen } from './fullscreen-toggle';
+import { isDocumentFullscreen } from '../../../utils/fullscreen';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControls;

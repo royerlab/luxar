@@ -13,6 +13,7 @@
 
 import { log, Modules } from '../../../utils/log';
 import { type LuxarCamera, updateCameraAspect } from '../../../utils/camera-utils';
+import { isDocumentFullscreen } from '../../../utils/fullscreen';
 import type { PostProcessingManager } from '../../../rendering';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
 import { getActivePixelRatio, syncPostProcessingDPRScale } from './dpr-policy';
@@ -84,7 +85,7 @@ export class ResizeOrchestrator {
   }
 
   private doResize(width: number, height: number, ctx: ResizeCtx): void {
-    if (document.fullscreenElement) {
+    if (isDocumentFullscreen()) {
       log.success(Modules.SCENE_MANAGER, `Using fullscreen dimensions: ${width}x${height}`);
     } else {
       log.success(Modules.SCENE_MANAGER, `Using windowed dimensions: ${width}x${height}`);
