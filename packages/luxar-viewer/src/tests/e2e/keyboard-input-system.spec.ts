@@ -229,7 +229,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
       return {
         help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
-        performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
+        performance: !!document.querySelector('#luxar-stats'),
       };
     });
 
@@ -244,7 +244,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
       return {
         help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
-        performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
+        performance: !!document.querySelector('#luxar-stats'),
       };
     });
 
