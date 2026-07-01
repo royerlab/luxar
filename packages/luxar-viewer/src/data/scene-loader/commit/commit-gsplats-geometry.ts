@@ -19,6 +19,7 @@ import { log, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
+import { stampLoadedViewVersion } from './stamp-view-version';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
@@ -48,7 +49,8 @@ export function commitGSplatsGeometry(
   staged: StagedGSplatsCommit,
   rootGroup: THREE.Group | null,
   gpuBufferPool: GPUBufferPool | null,
-  session?: UpdateSession
+  session: UpdateSession | undefined,
+  loadedViewVersion: number
 ): void {
   if (!rootGroup) return;
 
@@ -96,6 +98,11 @@ export function commitGSplatsGeometry(
 
     if (mesh.userData) {
       (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
+      // Stamp the view-version this geometry was loaded for so the LOD registry
+      // can distinguish "fresh for the current slice" from merely "ready" (a
+      // re-slice overwrites the buffers in place above without flipping any
+      // readiness flag). Shared with the points/lines commits via the helper.
+      stampLoadedViewVersion(mesh.userData as GSplatsUserData, loadedViewVersion);
     }
 
     if (processed.splatCount === 0) {

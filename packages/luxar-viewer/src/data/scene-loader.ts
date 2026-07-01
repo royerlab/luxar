@@ -311,6 +311,17 @@ export class SceneLoader {
     return this._gpuBufferPool;
   }
 
+  /**
+   * Monotonic view-update version (bumped at the start of every ``updateView``).
+   * The LOD registry reads this to decide whether a level's committed geometry
+   * is fresh for the CURRENT view — a mesh stamped with an older version (its
+   * data still reflects a previous slice/displayDims) is treated as stale so the
+   * registry can show a coarser fresh level until the re-slice commits.
+   */
+  get currentViewVersion(): number {
+    return this._updateVersion;
+  }
+
   constructor(
     config: LoaderConfig = {},
     id?: string,
@@ -861,8 +872,12 @@ export class SceneLoader {
    * "Update Buffers" child entry under the per-node profiler session
    * (parity with Points and GSplats).
    */
-  private commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void {
-    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session);
+  private commitLinesGeometry(
+    staged: StagedLinesCommit,
+    session?: UpdateSession,
+    loadedViewVersion: number = this._updateVersion
+  ): void {
+    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
   }
 
   /**
@@ -894,8 +909,12 @@ export class SceneLoader {
    * "Update Buffers" child entry under the per-node profiler session
    * (parity with Points and Lines).
    */
-  private commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void {
-    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session);
+  private commitGSplatsGeometry(
+    staged: StagedGSplatsCommit,
+    session?: UpdateSession,
+    loadedViewVersion: number = this._updateVersion
+  ): void {
+    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session, loadedViewVersion);
   }
 
   /**
@@ -938,13 +957,22 @@ export class SceneLoader {
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
-      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
+      // Live accessors (not the snapshot) so a deferred / registry-driven reload
+      // loads + stamps for the CURRENT slice, not the one captured at ctx-build.
+      getViewVersion: () => this._updateVersion,
+      getLiveViewState: () => this.viewState,
+      // Commit callbacks forward an explicit loadedViewVersion so the lazy /
+      // reload path can stamp its DERIVE-time version (see updatePointsGeometry).
+      updatePointsGeometry: (path, data, session, loadedViewVersion) =>
+        this.updatePointsGeometry(path, data, session, loadedViewVersion),
       processLinesData: (path, data, viewState, session) =>
         this.processLinesData(path, data, viewState, session),
-      commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+      commitLinesGeometry: (staged, session, loadedViewVersion) =>
+        this.commitLinesGeometry(staged, session, loadedViewVersion),
       processGSplatsData: (path, data, viewState, session) =>
         this.processGSplatsData(path, data, viewState, session),
-      commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+      commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
+        this.commitGSplatsGeometry(staged, session, loadedViewVersion),
     };
   }
 
@@ -978,7 +1006,15 @@ export class SceneLoader {
   private updatePointsGeometry(
     path: string,
     data: LoadedPointsData,
-    session?: UpdateSession
+    session?: UpdateSession,
+    // The view-version this geometry was loaded for, stamped onto the mesh for
+    // the LOD slice-aware fallback. Defaults to the current ``_updateVersion``:
+    // correct for the per-slice sweep (stable within an abort-guarded
+    // updateView). The lazy/reload path passes its DERIVE-time version
+    // explicitly so a load that finishes after a further scrub is stamped for
+    // the slice it actually loaded (the registry then re-reloads for the newer
+    // version) rather than being mis-stamped fresh.
+    loadedViewVersion: number = this._updateVersion
   ): void {
     commitPointsGeometryHelper(
       path,
@@ -986,7 +1022,8 @@ export class SceneLoader {
       this.rootGroup,
       this._gpuBufferPool,
       this.nodeFactory,
-      session
+      session,
+      loadedViewVersion
     );
   }
 
