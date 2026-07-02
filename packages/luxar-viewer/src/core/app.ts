@@ -29,6 +29,7 @@ import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
+import type { ControlRail } from '../ui/control-rail';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { OverlayManager } from '../ui/overlay-manager';
@@ -75,6 +76,7 @@ export class LuxarApp {
   private colormapLegend?: ColormapLegend;
   private recordingPanel?: RecordingPanel;
   private layersPanel?: LayersPanel;
+  private controlRail?: ControlRail;
   private overlayManager?: OverlayManager;
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
@@ -210,6 +212,7 @@ export class LuxarApp {
       if (partial.renderingControls) this.renderingControls = partial.renderingControls;
       if (partial.recordingPanel) this.recordingPanel = partial.recordingPanel;
       if (partial.layersPanel) this.layersPanel = partial.layersPanel;
+      if (partial.controlRail) this.controlRail = partial.controlRail;
     };
 
     try {
@@ -485,6 +488,7 @@ export class LuxarApp {
       events: this.events,
       hasOpenBrowser: () => !!this.datasetBrowser,
       showBrowser: () => this.showDatasetBrowser(),
+      closeBrowser: () => this.datasetBrowser?.close(),
     });
   }
 
@@ -800,12 +804,14 @@ export class LuxarApp {
       pickingEvents: this.pickingEvents,
       sceneManager: this.sceneManager,
       animationController: this.animationController,
+      performanceMonitor: this.performanceMonitor,
       adaptiveDPRManager: this.adaptiveDPRManager,
       resolutionIndicator: this.resolutionIndicator,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
       recordingPanel: this.recordingPanel,
       layersPanel: this.layersPanel,
+      controlRail: this.controlRail,
       scaleBar: this.scaleBar,
       colormapLegend: this.colormapLegend,
       overlayManager: this.overlayManager,
@@ -827,6 +833,9 @@ export class LuxarApp {
       },
       clearLayersPanel: () => {
         this.layersPanel = undefined;
+      },
+      clearControlRail: () => {
+        this.controlRail = undefined;
       },
       clearPickingSystem: () => {
         this.pickingSystem = undefined;

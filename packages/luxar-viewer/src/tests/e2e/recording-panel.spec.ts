@@ -144,6 +144,23 @@ test.describe('Recording Panel', () => {
     await page.keyboard.press('t');
     await waitForNextRender(page);
 
+    // The panel now defaults to Video mode, where the action button starts a
+    // recording (confirmation dialog) rather than downloading a still. Select
+    // Image mode first so the button captures a screenshot.
+    await page.evaluate(() => {
+      const panel = document.querySelector('.luxar-gui.luxar-recording-panel');
+      const selects = Array.from(panel?.querySelectorAll('select') ?? []);
+      for (const select of selects) {
+        const options = Array.from(select.options) as HTMLOptionElement[];
+        const imageOption = options.find((o: HTMLOptionElement) => o.text === 'Image');
+        if (imageOption) {
+          select.value = imageOption.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+    });
+    await waitForNextRender(page);
+
     // Set up download listener
     const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
 

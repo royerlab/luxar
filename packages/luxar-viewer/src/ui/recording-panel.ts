@@ -61,7 +61,7 @@ import type {
 export class RecordingPanel {
   private gui: GUI;
   private visible: boolean = false;
-  private mode: RecordingMode = 'image';
+  private mode: RecordingMode = 'video';
   private options: RecordingOptions = {
     outputFormat: 'webp',
     imageQuality: 0.92,

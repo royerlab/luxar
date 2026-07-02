@@ -3,10 +3,9 @@
  *
  * `installBrowserShortcut` wires a window `open-dataset-browser` listener
  * through the supplied EventGroup. Contract:
- *   - Fires `showBrowser` when no browser is currently open
- *     (`hasOpenBrowser()` returns false).
- *   - SKIPS `showBrowser` when a browser is already open. This guards
- *     against double-opening that would stack modals over each other.
+ *   - TOGGLES the browser: fires `showBrowser` when none is open, and
+ *     `closeBrowser` when one already is (so the dataset control behaves
+ *     like every other panel toggle).
  *   - The hasOpenBrowser predicate is a LIVE accessor — checked every
  *     time the event fires, not snapshotted at install.
  *   - Disposing the EventGroup unregisters the listener.
@@ -20,11 +19,16 @@ describe('installBrowserShortcut', () => {
   let events: EventGroup;
   let hasOpenBrowser: ReturnType<typeof vi.fn<() => boolean>>;
   let showBrowser: ReturnType<typeof vi.fn<() => void>>;
+  let closeBrowser: ReturnType<typeof vi.fn<() => void>>;
+
+  const install = () =>
+    installBrowserShortcut({ events, hasOpenBrowser, showBrowser, closeBrowser });
 
   beforeEach(() => {
     events = new EventGroup();
     hasOpenBrowser = vi.fn<() => boolean>().mockReturnValue(false);
     showBrowser = vi.fn<() => void>();
+    closeBrowser = vi.fn<() => void>();
   });
 
   afterEach(() => {
@@ -32,86 +36,67 @@ describe('installBrowserShortcut', () => {
   });
 
   it('fires showBrowser when the event fires and no browser is open', () => {
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
-
+    install();
     window.dispatchEvent(new Event('open-dataset-browser'));
-
     expect(showBrowser).toHaveBeenCalledOnce();
+    expect(closeBrowser).not.toHaveBeenCalled();
     expect(hasOpenBrowser).toHaveBeenCalledOnce();
   });
 
-  it('skips showBrowser when the predicate says a browser is already open', () => {
+  it('fires closeBrowser when a browser is already open (toggle)', () => {
     hasOpenBrowser.mockReturnValue(true);
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
-
+    install();
     window.dispatchEvent(new Event('open-dataset-browser'));
-
     expect(hasOpenBrowser).toHaveBeenCalledOnce();
+    expect(closeBrowser).toHaveBeenCalledOnce();
     expect(showBrowser).not.toHaveBeenCalled();
   });
 
-  it('uses a LIVE predicate — toggling hasOpenBrowser between events changes behavior', () => {
-    // Critical guarantee: the closure reads `hasOpenBrowser()` at event
-    // time, not at install time. Otherwise a "browser closed" state
-    // change wouldn't let the next event open a fresh one.
+  it('uses a LIVE predicate — toggling hasOpenBrowser between events flips open/close', () => {
     let isOpen = false;
     const pred = vi.fn<() => boolean>(() => isOpen);
-    installBrowserShortcut({ events, hasOpenBrowser: pred, showBrowser });
+    installBrowserShortcut({ events, hasOpenBrowser: pred, showBrowser, closeBrowser });
 
-    // First event: browser is closed → show.
+    // closed → open
     window.dispatchEvent(new Event('open-dataset-browser'));
     expect(showBrowser).toHaveBeenCalledTimes(1);
+    expect(closeBrowser).toHaveBeenCalledTimes(0);
 
-    // Simulate that the modal is now open.
+    // now open → close
     isOpen = true;
     window.dispatchEvent(new Event('open-dataset-browser'));
-    expect(showBrowser).toHaveBeenCalledTimes(1); // unchanged: skipped
+    expect(showBrowser).toHaveBeenCalledTimes(1);
+    expect(closeBrowser).toHaveBeenCalledTimes(1);
 
-    // Simulate that the modal closed again.
+    // closed again → open
     isOpen = false;
     window.dispatchEvent(new Event('open-dataset-browser'));
     expect(showBrowser).toHaveBeenCalledTimes(2);
+    expect(closeBrowser).toHaveBeenCalledTimes(1);
   });
 
   it('disposing the EventGroup unregisters the listener', () => {
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
+    install();
     events.dispose();
-
     window.dispatchEvent(new Event('open-dataset-browser'));
-
     expect(hasOpenBrowser).not.toHaveBeenCalled();
     expect(showBrowser).not.toHaveBeenCalled();
+    expect(closeBrowser).not.toHaveBeenCalled();
   });
 
   it('does not respond to unrelated window events', () => {
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
-
+    install();
     window.dispatchEvent(new Event('focus'));
     window.dispatchEvent(new Event('resize'));
     window.dispatchEvent(new Event('blur'));
-
     expect(hasOpenBrowser).not.toHaveBeenCalled();
     expect(showBrowser).not.toHaveBeenCalled();
+    expect(closeBrowser).not.toHaveBeenCalled();
   });
 
-  it('multiple events fire showBrowser each time when no browser is open', () => {
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
-
+  it('the toggle callbacks are invoked with no arguments', () => {
+    install();
     window.dispatchEvent(new Event('open-dataset-browser'));
-    window.dispatchEvent(new Event('open-dataset-browser'));
-    window.dispatchEvent(new Event('open-dataset-browser'));
-
-    expect(showBrowser).toHaveBeenCalledTimes(3);
-  });
-
-  it('the showBrowser callback is invoked with no arguments', () => {
-    installBrowserShortcut({ events, hasOpenBrowser, showBrowser });
-
-    window.dispatchEvent(new Event('open-dataset-browser'));
-
-    // Listener wraps showBrowser in an arrow that drops its event arg
-    // (`() => ports.showBrowser()`). Asserting `()` rules out a future
-    // change that accidentally forwards the Event.
     expect(showBrowser).toHaveBeenCalledExactlyOnceWith();
   });
 });

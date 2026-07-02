@@ -65,6 +65,7 @@ import { createPostProcessing } from './scene-manager/render-pipeline/post-proce
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import { computePixelRatioOverride } from './scene-manager/viewport/dpr-policy';
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
+import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
 
 /**
@@ -820,7 +821,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * **Fullscreen-first**: while any fullscreen is active the canvas is styled
    * to fill the screen (`100vw/100vh`, see
    * `window-event-handler.onFullscreenChange`, which keys off the same
-   * `document.fullscreenElement` check), so its DOM parent — an embed
+   * `isDocumentFullscreen()` check — standard + webkit), so its DOM parent — an embed
    * container — no longer reflects its displayed size. Measure the window.
    *
    * **Parent-first** otherwise: Three.js stamps inline `width`/`height` px
@@ -832,7 +833,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * zero (detached canvas, jsdom).
    */
   private measureViewport(): { width: number; height: number } {
-    if (typeof document !== 'undefined' && document.fullscreenElement) {
+    if (typeof document !== 'undefined' && isDocumentFullscreen()) {
       return { width: window.innerWidth, height: window.innerHeight };
     }
     const canvas = this.renderer.domElement;

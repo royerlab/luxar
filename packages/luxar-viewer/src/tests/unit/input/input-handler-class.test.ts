@@ -79,7 +79,7 @@ function makePerformanceMonitorStub(): PerformanceMonitor {
     show: vi.fn(),
     hide: vi.fn(),
     toggle: vi.fn(),
-    cyclePanels: vi.fn(),
+    cycleMode: vi.fn(),
     visible: false,
     dispose: vi.fn(),
   } as unknown as PerformanceMonitor;

@@ -232,19 +232,16 @@ export function removeGlassFilters(): void {
 }
 
 /**
- * CSS selectors for glass-enabled panels
- * These elements will receive the real DOM refraction layer
+ * Single marker class for glass-enabled surfaces.
+ *
+ * Any panel that opts into the glass themes adds `luxar-glass-surface` to its
+ * root element (see the `ui/*` panel constructors). The theme CSS
+ * (`frosted-glass.css` / `liquid-glass.css`) and this refraction injector all
+ * key off this one class — there is no per-panel list to keep in sync across
+ * the three files. To make a new panel glass-aware, add the class at its
+ * creation site; nothing here changes.
  */
-const GLASS_PANEL_SELECTORS = [
-  '.luxar-help-overlay',
-  '.luxar-error-dialog',
-  '.luxar-dataset-browser',
-  '.luxar-debug-console',
-  '.luxar-data-monitor',
-  '.luxar-dimension-sliders',
-  '.luxar-layers-panel',
-  '.luxar-gui',
-];
+const GLASS_SURFACE_SELECTOR = '.luxar-glass-surface';
 
 /**
  * Inject real DOM elements for the glass refraction layer
@@ -255,22 +252,20 @@ const GLASS_PANEL_SELECTORS = [
  * Must be called after the glass panels are created in the DOM.
  */
 export function injectGlassRefractionLayers(): void {
-  GLASS_PANEL_SELECTORS.forEach((selector) => {
-    const panels = document.querySelectorAll(selector);
-    panels.forEach((panel) => {
-      // Skip if already has a refraction layer
-      if (panel.querySelector('.luxar-glass-refraction')) {
-        return;
-      }
+  const panels = document.querySelectorAll(GLASS_SURFACE_SELECTOR);
+  panels.forEach((panel) => {
+    // Skip if already has a refraction layer
+    if (panel.querySelector('.luxar-glass-refraction')) {
+      return;
+    }
 
-      // Create the refraction layer element
-      const refractionLayer = document.createElement('div');
-      refractionLayer.className = 'luxar-glass-refraction';
-      refractionLayer.setAttribute('aria-hidden', 'true');
+    // Create the refraction layer element
+    const refractionLayer = document.createElement('div');
+    refractionLayer.className = 'luxar-glass-refraction';
+    refractionLayer.setAttribute('aria-hidden', 'true');
 
-      // Insert as first child so it's behind all content
-      panel.insertBefore(refractionLayer, panel.firstChild);
-    });
+    // Insert as first child so it's behind all content
+    panel.insertBefore(refractionLayer, panel.firstChild);
   });
 }
 
@@ -294,14 +289,14 @@ export function setupGlassRefractionObserver(): () => void {
 
     for (const mutation of mutations) {
       if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-        // Check if any added nodes match our glass panel selectors
+        // Check if any added node is (or contains) a glass surface.
         mutation.addedNodes.forEach((node) => {
           if (node instanceof HTMLElement) {
-            for (const selector of GLASS_PANEL_SELECTORS) {
-              if (node.matches(selector) || node.querySelector(selector)) {
-                shouldInject = true;
-                break;
-              }
+            if (
+              node.matches(GLASS_SURFACE_SELECTOR) ||
+              node.querySelector(GLASS_SURFACE_SELECTOR)
+            ) {
+              shouldInject = true;
             }
           }
         });

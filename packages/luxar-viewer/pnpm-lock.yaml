@@ -42,9 +42,6 @@ importers:
       '@types/node':
         specifier: ^25.9.3
         version: 25.9.3
-      '@types/stats.js':
-        specifier: ^0.17.4
-        version: 0.17.4
       '@types/three':
         specifier: ~0.184.0
         version: 0.184.1
@@ -84,9 +81,6 @@ importers:
       prettier:
         specifier: ^3.8.3
         version: 3.8.3
-      stats.js:
-        specifier: ^0.17.0
-        version: 0.17.0
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
@@ -1710,9 +1704,6 @@ packages:
 
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
-
-  stats.js@0.17.0:
-    resolution: {integrity: sha512-hNKz8phvYLPEcRkeG1rsGmV5ChMjKDAWU7/OJJdDErPBNChQXxCo3WZurGpnWc6gZhAzEPFad1aVgyOANH1sMw==}
 
   std-env@4.1.0:
     resolution: {integrity: sha512-Rq7ybcX2RuC55r9oaPVEW7/xu3tj8u4GeBYHBWCychFtzMIr86A7e3PPEBPT37sHStKX3+TiX/Fr/ACmJLVlLQ==}
@@ -3528,8 +3519,6 @@ snapshots:
   source-map-js@1.2.1: {}
 
   stackback@0.0.2: {}
-
-  stats.js@0.17.0: {}
 
   std-env@4.1.0: {}
 

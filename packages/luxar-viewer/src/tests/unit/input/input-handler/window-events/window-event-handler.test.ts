@@ -59,13 +59,14 @@ describe('WindowEventHandler', () => {
   });
 
   describe('attach + cleanup lifecycle', () => {
-    it('appends three cleanup thunks to the provided array', () => {
+    it('appends four cleanup thunks to the provided array (resize, wheel, fullscreen×2)', () => {
       const { sceneManager } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       const cleanups: (() => void)[] = [];
       handler.attach(cleanups);
-      expect(cleanups.length).toBe(3);
+      // resize + wheel + standard fullscreenchange + webkitfullscreenchange.
+      expect(cleanups.length).toBe(4);
       cleanups.forEach((c) => expect(typeof c).toBe('function'));
     });
 
@@ -236,6 +237,34 @@ describe('WindowEventHandler', () => {
       expect(canvas.style.position).toBe('fixed');
       expect(canvas.style.top).toBe('0px'); // jsdom normalizes "0" → "0px"
       expect(canvas.style.left).toBe('0px');
+    });
+
+    it('entering webkit fullscreen (Safari <16.4) also fills the viewport', () => {
+      // Regression: toggleFullscreen() enters via webkitRequestFullscreen on
+      // Safari <16.4, which fires `webkitfullscreenchange` and sets
+      // `webkitFullscreenElement` (not the standard ones). The handler must
+      // still resize the canvas — else the viewer stays windowed in a black
+      // fullscreen page.
+      const { sceneManager, canvas } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      Object.defineProperty(document, 'webkitFullscreenElement', {
+        configurable: true,
+        get: () => document.body,
+      });
+      try {
+        document.dispatchEvent(new Event('webkitfullscreenchange'));
+        expect(canvas.style.width).toBe('100vw');
+        expect(canvas.style.height).toBe('100vh');
+        expect(canvas.style.position).toBe('fixed');
+      } finally {
+        Object.defineProperty(document, 'webkitFullscreenElement', {
+          configurable: true,
+          get: () => null,
+        });
+      }
     });
 
     it('exiting fullscreen drops the entire style attribute', () => {

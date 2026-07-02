@@ -1,0 +1,386 @@
+/**
+ * Control rail — slim left-edge activity bar (see ui/control-rail.ts).
+ * Uses only --luxar-* design tokens so it themes across all four themes.
+ */
+
+.luxar-control-rail {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  z-index: var(--luxar-z-dropdown, 1000);
+  /* Same material as the panels (help overlay, rendering controls, …). */
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg, 12px);
+  box-shadow: var(--luxar-shadow-lg);
+  opacity: 0.55;
+  transition:
+    opacity 0.3s ease,
+    transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
+    gap 0.18s ease,
+    padding 0.18s ease;
+}
+
+.luxar-control-rail.is-awake,
+.luxar-control-rail:hover {
+  opacity: 1;
+}
+
+/* Collapsed: slide the handle down into the lower-left corner and let it fade
+   to barely-visible when idle (it wakes on hover / pointer movement). */
+.luxar-control-rail.is-collapsed {
+  transform: translateY(calc(50vh - 16px - 100%));
+  opacity: 0.12;
+  /* Lay the handle + (optional) perf footer out horizontally. */
+  flex-direction: row;
+  align-items: center;
+}
+/* Keep the collapse handle to the LEFT of the perf footer when collapsed. */
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse {
+  order: -1;
+}
+.luxar-control-rail.is-collapsed.is-awake,
+.luxar-control-rail.is-collapsed:hover {
+  opacity: 1;
+}
+
+/* Fullscreen: get out of the way entirely — reveal only on hover / movement,
+   and restore automatically on exit (the class is removed). */
+.luxar-control-rail.is-fullscreen {
+  opacity: 0;
+}
+.luxar-control-rail.is-fullscreen.is-awake,
+.luxar-control-rail.is-fullscreen:hover {
+  opacity: 1;
+}
+
+.luxar-control-rail__sep {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--luxar-border-default);
+}
+
+.luxar-control-rail__btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-md, 8px);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-control-rail__btn:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.15));
+}
+
+.luxar-control-rail__btn.is-active {
+  color: var(--luxar-text-primary);
+  background: color-mix(in srgb, var(--luxar-highlight) 20%, transparent);
+}
+
+/* Collapse/expand handle: chevron points left when expanded, right when
+   collapsed (rotated). Separated from the panel buttons by a hairline. */
+.luxar-control-rail__collapse {
+  margin-top: 2px;
+  border-top: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md, 8px);
+  color: var(--luxar-text-secondary);
+}
+.luxar-control-rail__collapse svg {
+  transition: transform 0.2s ease;
+}
+
+/* Collapsed: only the handle remains — the rail shrinks to a small grip. */
+.luxar-control-rail.is-collapsed .luxar-control-rail__btn:not(.luxar-control-rail__collapse),
+.luxar-control-rail.is-collapsed .luxar-control-rail__sep {
+  display: none;
+}
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse {
+  margin-top: 0;
+  border-top: none;
+}
+.luxar-control-rail.is-collapsed .luxar-control-rail__collapse svg {
+  transform: rotate(180deg);
+}
+
+.luxar-control-rail__btn.is-active::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--luxar-highlight);
+}
+
+.luxar-control-rail__btn:focus-visible {
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 2px;
+}
+
+.luxar-control-rail__btn svg {
+  width: 19px;
+  height: 19px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-control-rail__tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base, 11px);
+  padding: 5px 9px;
+  border-radius: var(--luxar-radius-md, 8px);
+  border: 1px solid var(--luxar-border-strong);
+  box-shadow: var(--luxar-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.luxar-control-rail__btn:hover .luxar-control-rail__tip,
+.luxar-control-rail__btn:focus-visible .luxar-control-rail__tip {
+  opacity: 1;
+}
+
+/* When the button's panel is already open, its name is redundant — suppress
+   the tooltip so it doesn't linger over the on-screen panel. */
+.luxar-control-rail__btn.is-active:hover .luxar-control-rail__tip,
+.luxar-control-rail__btn.is-active:focus-visible .luxar-control-rail__tip {
+  opacity: 0;
+}
+
+.luxar-control-rail__tip kbd {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-text-secondary);
+  margin-left: 8px;
+}
+
+/* Horizontal flyout popover (View options → overlay toggles). */
+.luxar-control-rail__flyout {
+  position: absolute;
+  left: calc(100% + 10px);
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  z-index: var(--luxar-z-popover, 3000);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg, 12px);
+  box-shadow: var(--luxar-shadow-xl);
+}
+
+/* Pointer arrow — a real child element, NOT ::before. The glass themes
+   (liquid-glass) style .luxar-glass-surface::before/::after, which would
+   otherwise clobber a pseudo-element arrow on the flyout. */
+.luxar-control-rail__flyout-arrow {
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: var(--luxar-bg-secondary);
+  border-left: 1px solid var(--luxar-border-default);
+  border-bottom: 1px solid var(--luxar-border-default);
+}
+
+.luxar-control-rail__chip {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-md, 8px);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast, all 0.1s ease);
+}
+
+.luxar-control-rail__chip:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover, rgba(255, 255, 255, 0.15));
+}
+
+.luxar-control-rail__chip.is-active {
+  color: var(--luxar-text-primary);
+  background: color-mix(in srgb, var(--luxar-highlight) 20%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 45%, transparent);
+}
+
+.luxar-control-rail__chip:focus-visible {
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 2px;
+}
+
+.luxar-control-rail__chip svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Chip tooltip — appears BELOW the compact icon on hover. Left-aligned to the
+   chip so it extends rightward (never back over the rail / collapse handle,
+   which sit to the left of the flyout). */
+.luxar-control-rail__chip-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  white-space: nowrap;
+  background: var(--luxar-bg-secondary);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-base, 11px);
+  padding: 5px 9px;
+  border-radius: var(--luxar-radius-md, 8px);
+  border: 1px solid var(--luxar-border-strong);
+  box-shadow: var(--luxar-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.luxar-control-rail__chip:hover .luxar-control-rail__chip-tip,
+.luxar-control-rail__chip:focus-visible .luxar-control-rail__chip-tip {
+  opacity: 1;
+}
+
+/* When the flyout opens near the viewport bottom, flip chip tooltips above. */
+.luxar-control-rail__flyout--up .luxar-control-rail__chip-tip {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+.luxar-control-rail__chip-tip kbd {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-text-secondary);
+  margin-left: 8px;
+}
+
+/* First-run hint bubble pointing at the rail. */
+.luxar-control-rail-hint {
+  position: absolute;
+  left: 64px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 232px;
+  padding: 12px 14px;
+  z-index: var(--luxar-z-popover, 3000);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md, blur(10px));
+  -webkit-backdrop-filter: var(--luxar-blur-md, blur(10px));
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-lg, 12px);
+  box-shadow: var(--luxar-shadow-xl);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-md, 12px);
+  line-height: 1.5;
+}
+
+.luxar-control-rail-hint b {
+  color: var(--luxar-text-primary);
+}
+
+.luxar-control-rail-hint kbd {
+  font-family: var(--luxar-font-mono);
+  background: var(--luxar-bg-tertiary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.luxar-control-rail-hint__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: none;
+  color: var(--luxar-text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Left-anchored panels (rendering + recording controls, layers) open at
+   left: 20px — directly under the rail. Nudge them right so they sit *beside*
+   it. The rail keeps the same width whether expanded or collapsed (collapse
+   only changes its height), so the gutter applies in both states — this also
+   keeps the collapse handle clickable when a left panel is open.
+
+   !important because rendering-controls.ts / recording-panel.ts set `left`
+   inline; none of these panels are draggable, so overriding it is safe. Full
+   docking into a tray beside the rail is the planned follow-up. */
+.luxar-has-control-rail .luxar-gui,
+.luxar-has-control-rail .luxar-layers-panel {
+  left: 78px !important;
+}
+
+/* The debug console (logs) defaults to the lower-left and IS draggable, so
+   only shift its default position (no !important) — the inline `left` it sets
+   while dragging still wins, keeping it movable. */
+.luxar-has-control-rail .luxar-debug-console {
+  left: 78px;
+}
+
+
+.luxar-control-rail-hint::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  background: var(--luxar-bg-secondary);
+  border-left: 1px solid var(--luxar-border-default);
+  border-bottom: 1px solid var(--luxar-border-default);
+}
+
+/* Respect a user's reduced-motion preference: drop the opacity/transform
+   transitions (incl. the ~50vh collapse slide) — the rail still functions,
+   it just snaps between states instead of animating (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-control-rail,
+  .luxar-control-rail__btn,
+  .luxar-control-rail__collapse svg,
+  .luxar-control-rail__tip,
+  .luxar-control-rail__chip,
+  .luxar-control-rail__chip-tip {
+    transition: none;
+  }
+}

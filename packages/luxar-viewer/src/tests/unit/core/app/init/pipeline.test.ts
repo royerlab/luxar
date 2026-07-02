@@ -66,6 +66,9 @@ function makeInputHandlerStub() {
     setRenderingControls: vi.fn(),
     setRecordingPanel: vi.fn(),
     setLayersPanel: vi.fn(),
+    // The control rail reads this to wire its buttons to the same commands the
+    // keyboard uses; the closures are only invoked on click (never in tests).
+    getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
   };
 }
 
@@ -77,6 +80,12 @@ vi.mock('../../../../../scene/animation/animation-controller', () => ({
 }));
 vi.mock('../../../../../ui/performance-monitor', () => ({
   PerformanceMonitor: vi.fn().mockImplementation(() => ({ kind: 'perf-monitor' })),
+}));
+// Mock the rail so the pipeline test doesn't build a real one (which would
+// attach document listeners / a rAF loop that outlive the test).
+vi.mock('../../../../../ui/control-rail', () => ({
+  ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
+  RAIL_ICONS: {},
 }));
 vi.mock('../../../../../ui/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({ kind: 'debug-console' })),

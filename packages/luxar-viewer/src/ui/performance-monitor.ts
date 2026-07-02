@@ -1,212 +1,233 @@
-// Performance monitoring for the Luxar scene player using Stats.js
+// Performance monitoring for the Luxar scene player.
 //
-// This module provides real-time performance metrics using the industry-standard
-// stats.js library. It tracks FPS, frame time, and memory usage with minimal
-// performance overhead.
+// A compact, square readout (rail-button sized, theme-matched) that shows one
+// metric at a time and cycles FPS → frame time (ms) → a scrolling graph on
+// click — the same information stats.js exposed, restyled to the Luxar tokens
+// and driven by the animation loop's `frame-start` / `frame-end` events.
+//
+// The visibility API (toggle / show / hide / visible / dispose) and the
+// `#luxar-stats` element id are preserved from the stats.js-based original, so
+// the InputHandler (P key) and the control-rail gauge drive it unchanged;
+// cycleMode() (FPS/ms/graph) is new to the vendored readout.
 
-import Stats from 'stats.js';
 import { config } from '../config';
 import { eventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
-import { getViewerContainer } from '../utils/viewer-container';
 
-/**
- * PerformanceMonitor manages real-time performance statistics display
- *
- * Features:
- * - FPS monitoring (frames per second)
- * - Frame time tracking (milliseconds per frame)
- * - Memory usage monitoring (JavaScript heap size)
- * - Toggle visibility with keyboard shortcuts
- * - Accessibility support with ARIA labels
- */
+/** DOM refresh cadence (ms) — decoupled from frame rate. */
+const RENDER_INTERVAL_MS = 200;
+/** Rolling window for the FPS average (ms). */
+const FPS_WINDOW_MS = 500;
+/** Samples kept for the scrolling graph. */
+const HISTORY = 48;
+
+type PerfMode = 'fps' | 'ms' | 'graph';
+const MODES: PerfMode[] = ['fps', 'ms', 'graph'];
+
+export interface PerfKeepAlive {
+  request: () => void;
+  release: () => void;
+}
+
 export class PerformanceMonitor {
-  /** The stats.js instance that handles all performance measurements */
-  private stats: Stats;
+  private readonly el: HTMLDivElement;
+  private readonly numEl: HTMLSpanElement;
+  private readonly unitEl: HTMLSpanElement;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx2d: CanvasRenderingContext2D | null;
 
-  /** Current visibility state of the performance panel */
   private isVisible = false;
+  private mode: PerfMode = 'fps';
 
-  /**
-   * Bus subscriptions for frame-start / frame-end timing. Set when
-   * the panel is visible, cleared when hidden so stats.js incurs no
-   * cost while the user can't see the readout.
-   */
   private frameStartUnsubscribe: Unsubscribe | null = null;
   private frameEndUnsubscribe: Unsubscribe | null = null;
 
-  constructor() {
-    // Initialize stats.js - this is a lightweight library that measures
-    // performance metrics with minimal impact on the application
-    this.stats = new Stats();
-    this.setupStats();
+  // Timing state.
+  private frameT0 = 0;
+  private msEma = 0;
+  private frameCount = 0;
+  private windowStart = 0;
+  private fps = 0;
+  private lastRender = 0;
+  private readonly fpsHistory: number[] = [];
+
+  constructor(private readonly keepAlive?: PerfKeepAlive) {
+    const el = document.createElement('div');
+    el.id = 'luxar-stats';
+    el.className = 'luxar-perf';
+    el.dataset.mode = this.mode;
+    // role=button, NOT status: the readout's numeric text is rewritten ~5x/sec
+    // while visible, and role=status is an aria-live=polite region — a screen
+    // reader would announce the flickering FPS continuously. As a button it's an
+    // operable control announced by its (stable) aria-label, not a live region.
+    el.setAttribute('role', 'button');
+    // Keyboard-operable: the metric cycle must be reachable without a mouse
+    // (WCAG 2.1.1). tabindex makes the readout focusable; Enter/Space cycle it.
+    el.tabIndex = 0;
+    el.setAttribute(
+      'aria-label',
+      'Performance metrics — press Enter or Space to cycle FPS, frame time, graph'
+    );
+    el.title = 'Click or press Enter to cycle: FPS · ms · graph';
+    el.style.zIndex = String(config.ui.zIndex.statsMonitor);
+    el.classList.add('is-hidden');
+
+    const value = document.createElement('div');
+    value.className = 'luxar-perf__value';
+    this.numEl = document.createElement('span');
+    this.numEl.className = 'luxar-perf__num';
+    this.unitEl = document.createElement('span');
+    this.unitEl.className = 'luxar-perf__unit';
+    this.numEl.textContent = '––';
+    this.unitEl.textContent = 'fps';
+    value.append(this.numEl, this.unitEl);
+
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'luxar-perf__graph';
+    this.ctx2d = this.canvas.getContext('2d');
+
+    el.append(value, this.canvas);
+    el.addEventListener('click', () => this.cycleMode());
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.cycleMode();
+      }
+    });
+
+    this.el = el;
   }
 
-  /**
-   * Setup the stats panel with custom styling and accessibility features
-   *
-   * This configures the stats.js panel for optimal visibility and usability:
-   * - Positions it in a non-intrusive location (bottom-left corner)
-   * - Sets appropriate z-index to appear above other UI elements
-   * - Adds WCAG-compliant accessibility attributes
-   * - Hides by default to avoid visual clutter
-   */
-  private setupStats(): void {
-    // Configure stats display - start with FPS panel (most commonly used)
-    // Panel types: 0=FPS (green), 1=Frame Time ms (yellow), 2=Memory MB (purple)
-    this.stats.showPanel(0);
+  /** The widget element — the caller mounts it (e.g. docked in the control rail). */
+  get element(): HTMLElement {
+    return this.el;
+  }
 
-    // Get the DOM element that stats.js creates internally. The library
-    // does not set an id or class on this element, so we tag it ourselves
-    // — the injected <style> block below scopes its rules via this id.
-    const statsElement = this.stats.dom;
-    statsElement.id = 'luxar-stats';
+  private readonly onFrameStart = (): void => {
+    this.frameT0 = performance.now();
+  };
 
-    // Position the panel in bottom-left corner with fixed positioning
-    // This ensures it stays visible during camera movements and zoom
-    statsElement.style.position = 'fixed';
-    statsElement.style.bottom = '20px'; // Match dimension slider bottom margin
-    statsElement.style.left = '20px'; // Standard margin from edge
-    statsElement.style.top = 'auto'; // Ensure no top positioning
-    statsElement.style.right = 'auto'; // Ensure no right positioning
-    statsElement.style.width = 'auto'; // Use natural width
-    statsElement.style.height = 'auto'; // Use natural height
+  private readonly onFrameEnd = (): void => {
+    const now = performance.now();
+    const dt = now - this.frameT0;
+    this.msEma = this.msEma ? this.msEma * 0.9 + dt * 0.1 : dt;
 
-    // Set z-index from config for consistent layering
-    statsElement.style.zIndex = String(config.ui.zIndex.statsMonitor);
-
-    // Slightly transparent to reduce visual impact while maintaining readability
-    statsElement.style.opacity = '0.9';
-
-    // Hidden by default - only shown when user explicitly requests it
-    statsElement.style.display = 'none';
-
-    // Remove focus outlines to prevent blue selection box
-    statsElement.style.outline = 'none';
-
-    // Suppress focus outlines and text-selection on the stats panel and
-    // its (canvas) children. The selectors are scoped to #luxar-stats
-    // (set above) so they cannot leak into the host page.
-    if (!document.getElementById('luxar-stats-custom-styles')) {
-      const style = document.createElement('style');
-      style.id = 'luxar-stats-custom-styles';
-      style.textContent = `
-        #luxar-stats { outline: none !important; }
-        #luxar-stats * {
-          outline: none !important;
-          user-select: none !important;
-        }
-        #luxar-stats canvas { outline: none !important; }
-      `;
-      document.head.appendChild(style);
+    if (!this.windowStart) this.windowStart = now;
+    this.frameCount++;
+    const elapsed = now - this.windowStart;
+    if (elapsed >= FPS_WINDOW_MS) {
+      this.fps = (this.frameCount * 1000) / elapsed;
+      this.frameCount = 0;
+      this.windowStart = now;
+      this.fpsHistory.push(this.fps);
+      if (this.fpsHistory.length > HISTORY) this.fpsHistory.shift();
     }
 
-    // Add WCAG 2.1 accessibility attributes for screen readers
-    // 'status' role indicates this contains status information that updates
-    statsElement.setAttribute('role', 'status');
-    statsElement.setAttribute(
-      'aria-label',
-      'Performance metrics: FPS, frame time, and memory usage'
-    );
+    if (now - this.lastRender >= RENDER_INTERVAL_MS) {
+      this.render();
+      this.lastRender = now;
+    }
+  };
 
-    // Remove tabindex to prevent focus and blue outline
-    // statsElement.setAttribute('tabindex', '0');
-
-    // Inject into DOM - stats.js needs this to be in the document to function
-    getViewerContainer().appendChild(statsElement);
+  private render(): void {
+    if (this.mode === 'graph') {
+      this.drawGraph();
+      return;
+    }
+    if (this.mode === 'fps') {
+      const fps = Math.round(this.fps);
+      this.numEl.textContent = `${fps}`;
+      this.numEl.dataset.level = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
+      this.unitEl.textContent = 'fps';
+    } else {
+      this.numEl.textContent = this.msEma.toFixed(1);
+      delete this.numEl.dataset.level;
+      this.unitEl.textContent = 'ms';
+    }
   }
 
-  /**
-   * Subscribe to frame-start / frame-end on the event bus so stats.js
-   * gets driven by the animation loop. Idempotent — subsequent calls
-   * are no-ops.
-   */
+  private drawGraph(): void {
+    const ctx = this.ctx2d;
+    if (!ctx) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = this.canvas.clientWidth || 42;
+    const h = this.canvas.clientHeight || 42;
+    if (this.canvas.width !== w * dpr || this.canvas.height !== h * dpr) {
+      this.canvas.width = w * dpr;
+      this.canvas.height = h * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const hist = this.fpsHistory;
+    if (hist.length === 0) return;
+    const max = Math.max(60, ...hist);
+    const style = getComputedStyle(this.el);
+    const accent = style.getPropertyValue('--luxar-highlight').trim() || '#00a0ff';
+    const barW = w / HISTORY;
+    ctx.fillStyle = accent;
+    for (let i = 0; i < hist.length; i++) {
+      const v = hist[i] / max;
+      const bh = Math.max(1, v * (h - 2));
+      const x = (HISTORY - hist.length + i) * barW;
+      ctx.fillRect(x, h - bh, Math.max(1, barW - 0.5), bh);
+    }
+  }
+
+  /** Toggle visibility. Subscribes to frame timing only while visible. */
+  toggle(): void {
+    this.isVisible = !this.isVisible;
+    this.el.classList.toggle('is-hidden', !this.isVisible);
+    if (this.isVisible) {
+      this.subscribeToFrameTiming();
+      this.keepAlive?.request();
+    } else {
+      this.unsubscribeFromFrameTiming();
+      this.keepAlive?.release();
+    }
+  }
+
+  show(): void {
+    if (!this.isVisible) this.toggle();
+  }
+
+  hide(): void {
+    if (this.isVisible) this.toggle();
+  }
+
+  get visible(): boolean {
+    return this.isVisible;
+  }
+
+  /** Cycle the displayed metric: FPS → ms → graph → FPS. */
+  cycleMode(): void {
+    const next = (MODES.indexOf(this.mode) + 1) % MODES.length;
+    this.mode = MODES[next];
+    this.el.dataset.mode = this.mode;
+    this.render();
+  }
+
+  dispose(): void {
+    this.unsubscribeFromFrameTiming();
+    if (this.isVisible) this.keepAlive?.release();
+    // Idempotent: a second dispose() (or dispose after the rail already
+    // removed the docked element) must not release keepAlive twice or throw.
+    this.isVisible = false;
+    this.el.remove();
+  }
+
   private subscribeToFrameTiming(): void {
     if (this.frameStartUnsubscribe) return;
-    this.frameStartUnsubscribe = eventBus.on('frame-start', () => {
-      this.stats.begin();
-    });
-    this.frameEndUnsubscribe = eventBus.on('frame-end', () => {
-      this.stats.end();
-    });
+    this.windowStart = 0;
+    this.frameCount = 0;
+    this.lastRender = 0;
+    this.frameStartUnsubscribe = eventBus.on('frame-start', this.onFrameStart);
+    this.frameEndUnsubscribe = eventBus.on('frame-end', this.onFrameEnd);
   }
 
-  /** Drop the bus subscriptions. Idempotent. */
   private unsubscribeFromFrameTiming(): void {
     this.frameStartUnsubscribe?.();
     this.frameEndUnsubscribe?.();
     this.frameStartUnsubscribe = null;
     this.frameEndUnsubscribe = null;
-  }
-
-  /**
-   * Toggle stats visibility. When shown, the panel subscribes to the
-   * animation loop's frame-start / frame-end events; when hidden it
-   * unsubscribes so stats.js incurs no cost.
-   */
-  toggle(): void {
-    this.isVisible = !this.isVisible;
-    this.stats.dom.style.display = this.isVisible ? 'block' : 'none';
-
-    if (this.isVisible) {
-      this.subscribeToFrameTiming();
-    } else {
-      this.unsubscribeFromFrameTiming();
-    }
-
-    // Don't focus to avoid blue outline
-    // if (this.isVisible) {
-    //   this.stats.dom.focus();
-    // }
-  }
-
-  /**
-   * Show performance stats
-   */
-  show(): void {
-    if (!this.isVisible) {
-      this.toggle();
-    }
-  }
-
-  /**
-   * Hide performance stats
-   */
-  hide(): void {
-    if (this.isVisible) {
-      this.toggle();
-    }
-  }
-
-  /**
-   * Get current visibility state
-   */
-  get visible(): boolean {
-    return this.isVisible;
-  }
-
-  /**
-   * Cycle through different stats panels (FPS -> MS -> MB -> back to FPS)
-   */
-  cyclePanels(): void {
-    if (this.isVisible) {
-      const currentPanel = (this.stats.dom as HTMLElement & { panel?: number }).panel ?? 0;
-      const nextPanel = (currentPanel + 1) % 3; // 0: fps, 1: ms, 2: mb
-      this.stats.showPanel(nextPanel);
-    }
-  }
-
-  /**
-   * Clean up resources
-   */
-  dispose(): void {
-    this.unsubscribeFromFrameTiming();
-    if (this.stats.dom.parentNode) {
-      this.stats.dom.parentNode.removeChild(this.stats.dom);
-    }
-    // Clean up the injected style element
-    const styleEl = document.getElementById('luxar-stats-custom-styles');
-    if (styleEl) {
-      styleEl.remove();
-    }
   }
 }
