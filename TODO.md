@@ -142,9 +142,15 @@ to ship after). Sequencing is at the bottom.
 
 ### B. First-impression polish — what a visitor sees on day one
 
-- **R8 [LAUNCH] — UI discoverability** (see detailed item **#9**). The UI leans
-  on hidden keyboard shortcuts; add visible affordances (buttons/menus/hints).
-  Highest-leverage polish item for a public launch.
+- **R8 [LAUNCH] — UI discoverability** ✅ **DONE** (2026-07-01, #432; see detailed
+  item **#9**). Shipped an always-visible left **control rail** (Concept A slice 1):
+  one icon per panel wired to the *same* commands as the keyboard shortcuts (via
+  `InputHandler.getUiActions()` — can't drift), a vendored FPS/ms/graph perf
+  readout (drops `stats.js`), event-driven active-state, collapse/idle-dim/first-run
+  hint, and full theming via a single `.luxar-glass-surface` marker. Hardened over
+  4 adversarial deep-double-check rounds (~40 fixes w/ regression tests: webkit
+  fullscreen across all consumers, a11y, embedder ref-count, dataset toggle);
+  CI green. Follow-up: full panel-docking trays (Concept A slice 2).
 - **R9 [LAUNCH] — Example-dataset bugs** ✅ **DONE** (see detailed item **#23**).
   Reproduced & resolved 2026-07-01: `transform` renders correctly (no bug —
   already fixed); `scene_dimensions` nav fixed by aligning `step` to the data
@@ -200,11 +206,11 @@ to ship after). Sequencing is at the bottom.
 5. **Post-launch backlog** — R12, R15, and the existing Rendering/LOD and
    Future/Exploratory items below.
 
-> Update 2026-07-01: R5/R6 (clean `main`) and the day-one polish R9/R11 have
-> landed; R10 (#24 depth sorting) is **deferred post-release**. The critical
-> path is now the **preprint** (R13/R14/R16 → bioRxiv → DOI → R4) and the
-> **release cut** (R1 version bump → R2 tag → R3/R3-npm go-live). R8 (UI
-> discoverability) is the main remaining day-one polish item.
+> Update 2026-07-01: R5/R6 (clean `main`) and the day-one polish R8/R9/R11 have
+> landed (R8 control rail merged #432); R10 (#24 depth sorting) is **deferred
+> post-release**. The critical path is now the **preprint** (R13/R14/R16 →
+> bioRxiv → DOI → R4) and the **release cut** (R1 version bump → R2 tag →
+> R3/R3-npm go-live).
 
 ---
 
@@ -216,7 +222,7 @@ to ship after). Sequencing is at the bottom.
 
 8 - **Panel visibility configuration**: Allow configuring which panels are visible (Logs, Rendering Controls, Data Monitor, Dimensions, etc.) from the Python side. Optionally lock panel visibility to enforce a particular look and prevent user modifications.
 
-9 - **UI ergonomics**: The current UI relies heavily on hidden keyboard shortcuts to reveal panels, which is poor discoverability. Improve with visible affordances (buttons, menus, or indicators).
+9 - ~~**UI ergonomics**~~: **DONE** (#432, R8). Always-visible left **control rail** — one icon per panel (Help/Dimensions/Rendering/Layers/Data monitor/Datasets/Recording/Screenshot/Logs/View options/Performance), each firing the same command as its shortcut, with tooltips, event-driven active-state, collapse, idle-dim, first-run hint, and full theme integration. Next slice: panels dock into a tray beside the rail (Concept A step 2).
 
 ## Bugs
 
