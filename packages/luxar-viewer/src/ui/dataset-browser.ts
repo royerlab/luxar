@@ -163,7 +163,7 @@ export class DatasetBrowser {
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
     panel.id = 'luxar-dataset-browser';
-    panel.className = 'luxar-dataset-browser dataset-browser'; // luxar-dataset-browser for styling, dataset-browser for E2E tests
+    panel.className = 'luxar-dataset-browser luxar-glass-surface dataset-browser'; // luxar-dataset-browser for styling, dataset-browser for E2E tests
 
     // ARIA attributes for accessibility
     panel.setAttribute('role', 'dialog');

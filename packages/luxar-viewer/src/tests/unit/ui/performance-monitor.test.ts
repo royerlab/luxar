@@ -1,38 +1,24 @@
 /**
- * Unit tests for PerformanceMonitor
+ * Unit tests for PerformanceMonitor.
  *
- * Mocks stats.js (a class with begin/end/showPanel/dom). Verifies the
- * monitor's setup of the host element (id, role, ARIA, position),
- * begin/end gating by visibility, panel cycling, show/hide/toggle, and
- * disposal cleanup of the injected style block.
+ * A compact square readout (no stats.js) driven by the animation loop's
+ * `frame-start` / `frame-end` bus events. It shows one metric at a time and
+ * cycles FPS → ms → graph on click. Tests cover element setup, visibility
+ * gating of the bus subscription, the metric cycle, and disposal.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-
-interface MockStatsDom extends HTMLElement {
-  panel?: number;
-}
-
-interface MockStatsLike {
-  dom: MockStatsDom;
-  showPanel: ReturnType<typeof vi.fn>;
-  begin: ReturnType<typeof vi.fn>;
-  end: ReturnType<typeof vi.fn>;
-}
-
-vi.mock('stats.js', () => {
-  class MockStats implements MockStatsLike {
-    dom: MockStatsDom = document.createElement('div') as MockStatsDom;
-    showPanel = vi.fn((id: number) => {
-      this.dom.panel = id;
-    });
-    begin = vi.fn();
-    end = vi.fn();
-  }
-  return { default: MockStats };
-});
-
 import { PerformanceMonitor } from '../../../ui/performance-monitor';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
+
+function frame(): void {
+  eventBus.emit('frame-start', {});
+  eventBus.emit('frame-end', {});
+}
+
+const el = () => document.body.querySelector<HTMLElement>('#luxar-stats')!;
+const num = () => document.body.querySelector('.luxar-perf__num')?.textContent ?? '';
+const unit = () => document.body.querySelector('.luxar-perf__unit')?.textContent ?? '';
 
 describe('PerformanceMonitor', () => {
   let monitor: PerformanceMonitor;
@@ -41,6 +27,9 @@ describe('PerformanceMonitor', () => {
     document.head.innerHTML = '';
     document.body.innerHTML = '';
     monitor = new PerformanceMonitor();
+    // The monitor no longer self-mounts (the rail docks its element); mount it
+    // here so the DOM-based assertions below can find it.
+    document.body.appendChild(monitor.element);
   });
 
   afterEach(() => {
@@ -48,160 +37,144 @@ describe('PerformanceMonitor', () => {
   });
 
   describe('setup', () => {
-    it('appends the stats element to body', () => {
-      const el = document.body.querySelector('#luxar-stats');
-      expect(el).toBeTruthy();
+    it('appends a square readout element with FPS as the default mode', () => {
+      expect(el()).toBeTruthy();
+      expect(el().classList.contains('luxar-perf')).toBe(true);
+      expect(el().dataset.mode).toBe('fps');
+      expect(unit()).toBe('fps');
     });
 
-    it('sets WCAG accessibility attributes', () => {
-      const el = document.body.querySelector('#luxar-stats')!;
-      expect(el.getAttribute('role')).toBe('status');
-      expect(el.getAttribute('aria-label')).toContain('Performance metrics');
+    it('sets accessibility attributes', () => {
+      // role=button (an operable control), NOT status — a status live region
+      // would announce the ~5x/sec FPS updates continuously to screen readers.
+      expect(el().getAttribute('role')).toBe('button');
+      expect(el().getAttribute('aria-label')).toContain('Performance');
     });
 
     it('starts hidden', () => {
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.display).toBe('none');
+      expect(el().classList.contains('is-hidden')).toBe(true);
       expect(monitor.visible).toBe(false);
-    });
-
-    it('positions panel in bottom-left with fixed positioning', () => {
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.position).toBe('fixed');
-      expect(el.style.bottom).toBe('20px');
-      expect(el.style.left).toBe('20px');
-    });
-
-    it('injects scoped style block once for the panel', () => {
-      const styleEls = document.head.querySelectorAll('#luxar-stats-custom-styles');
-      expect(styleEls.length).toBe(1);
-    });
-
-    it('does not duplicate the style block on a second instance', () => {
-      const m2 = new PerformanceMonitor();
-      try {
-        const styleEls = document.head.querySelectorAll('#luxar-stats-custom-styles');
-        expect(styleEls.length).toBe(1);
-      } finally {
-        m2.dispose();
-      }
     });
   });
 
   describe('visibility', () => {
-    it('show() sets visible and reveals the element', () => {
+    it('show() reveals and hide() hides', () => {
       monitor.show();
       expect(monitor.visible).toBe(true);
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.display).toBe('block');
-    });
-
-    it('hide() resets visibility and hides the element', () => {
-      monitor.show();
+      expect(el().classList.contains('is-hidden')).toBe(false);
       monitor.hide();
       expect(monitor.visible).toBe(false);
-      const el = document.body.querySelector<HTMLElement>('#luxar-stats')!;
-      expect(el.style.display).toBe('none');
+      expect(el().classList.contains('is-hidden')).toBe(true);
     });
 
-    it('show() is idempotent', () => {
-      monitor.show();
+    it('toggle() flips, show()/hide() idempotent', () => {
+      monitor.toggle();
+      expect(monitor.visible).toBe(true);
       monitor.show();
       expect(monitor.visible).toBe(true);
-    });
-
-    it('hide() is idempotent', () => {
+      monitor.hide();
       monitor.hide();
       expect(monitor.visible).toBe(false);
     });
 
-    it('toggle() flips visibility', () => {
-      monitor.toggle();
-      expect(monitor.visible).toBe(true);
-      monitor.toggle();
-      expect(monitor.visible).toBe(false);
+    it('kicks the render loop via keepAlive on show and releases on hide', () => {
+      // The docked readout freezes when the scene idles; on show it kicks the
+      // loop once (request) so it gets a live reading, and releases on hide.
+      const request = vi.fn();
+      const release = vi.fn();
+      const m = new PerformanceMonitor({ request, release });
+      document.body.appendChild(m.element);
+      m.show();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      m.hide();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      m.dispose();
     });
   });
 
-  describe('frame-timing subscriptions', () => {
-    it('does not forward bus events to stats while hidden (no subscription)', async () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
-      eventBus.emit('frame-start', {});
-      eventBus.emit('frame-end', {});
-      expect(stats.begin).not.toHaveBeenCalled();
-      expect(stats.end).not.toHaveBeenCalled();
+  describe('frame-timing subscription', () => {
+    it('does not update while hidden (no subscription)', () => {
+      const before = num();
+      frame();
+      expect(num()).toBe(before);
     });
 
-    it('forwards bus events to stats.begin/end while visible', async () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
+    it('updates the readout from bus events while visible', () => {
       monitor.show();
-      eventBus.emit('frame-start', {});
-      eventBus.emit('frame-end', {});
-      expect(stats.begin).toHaveBeenCalledTimes(1);
-      expect(stats.end).toHaveBeenCalledTimes(1);
+      frame();
+      expect(num()).not.toBe('––');
     });
 
-    it('hide() unsubscribes so subsequent bus events stop driving stats', async () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      const { eventBus } = await import('../../../utils/cross-layer/event-bus');
+    it('hide() unsubscribes so later frames no longer update it', () => {
       monitor.show();
-      eventBus.emit('frame-start', {});
-      eventBus.emit('frame-end', {});
+      frame();
+      const after = num();
       monitor.hide();
-      eventBus.emit('frame-start', {});
-      eventBus.emit('frame-end', {});
-      expect(stats.begin).toHaveBeenCalledTimes(1);
-      expect(stats.end).toHaveBeenCalledTimes(1);
+      frame();
+      expect(num()).toBe(after);
     });
   });
 
-  describe('cyclePanels', () => {
-    it('does nothing while hidden', () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      monitor.cyclePanels();
-      // Constructor calls showPanel(0); cycle while hidden adds nothing
-      expect(stats.showPanel).toHaveBeenCalledTimes(1);
+  describe('cycleMode', () => {
+    it('cycles FPS → ms → graph → FPS', () => {
+      expect(el().dataset.mode).toBe('fps');
+      monitor.cycleMode();
+      expect(el().dataset.mode).toBe('ms');
+      expect(unit()).toBe('ms');
+      monitor.cycleMode();
+      expect(el().dataset.mode).toBe('graph');
+      monitor.cycleMode();
+      expect(el().dataset.mode).toBe('fps');
+      expect(unit()).toBe('fps');
     });
 
-    it('cycles 0 → 1 → 2 → 0 while visible', () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      monitor.show();
-      // Setup already chose panel 0 in constructor; first cycle goes to 1
-      monitor.cyclePanels();
-      expect(stats.showPanel).toHaveBeenLastCalledWith(1);
-      monitor.cyclePanels();
-      expect(stats.showPanel).toHaveBeenLastCalledWith(2);
-      monitor.cyclePanels();
-      expect(stats.showPanel).toHaveBeenLastCalledWith(0);
+    it('cycles on click', () => {
+      el().click();
+      expect(el().dataset.mode).toBe('ms');
     });
 
-    it('treats missing panel index as 0', () => {
-      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      stats.dom.panel = undefined;
-      monitor.show();
-      monitor.cyclePanels();
-      expect(stats.showPanel).toHaveBeenLastCalledWith(1);
+    it('is keyboard-operable: focusable and cycles on Enter/Space (WCAG 2.1.1)', () => {
+      expect(el().tabIndex).toBe(0);
+      expect(el().dataset.mode).toBe('fps');
+      el().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(el().dataset.mode).toBe('ms');
+      el().dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      expect(el().dataset.mode).toBe('graph');
     });
   });
 
   describe('dispose', () => {
-    it('removes the stats element from DOM', () => {
+    it('removes the element from the DOM', () => {
       monitor.dispose();
       expect(document.body.querySelector('#luxar-stats')).toBeNull();
     });
 
-    it('removes the injected style block', () => {
-      monitor.dispose();
-      expect(document.head.querySelector('#luxar-stats-custom-styles')).toBeNull();
+    it('is a no-op if the element is already detached', () => {
+      el().remove();
+      expect(() => monitor.dispose()).not.toThrow();
     });
 
-    it('is a no-op if element is already detached', () => {
-      const el = document.body.querySelector('#luxar-stats')!;
-      el.remove();
-      // Should not throw
-      monitor.dispose();
+    it('while visible: releases keepAlive, is idempotent, and survives later frames', () => {
+      // Regression (pre-existing leak): on app teardown a *visible* monitor must
+      // release its keepAlive + unsubscribe from the frame-timing bus, else it
+      // leaks across an embedder mount/unmount cycle. dispose() must also be
+      // idempotent (the rail may already have removed the docked element).
+      const request = vi.fn();
+      const release = vi.fn();
+      const m = new PerformanceMonitor({ request, release });
+      document.body.appendChild(m.element);
+      m.show();
+      frame();
+
+      m.dispose();
+      expect(release).toHaveBeenCalledTimes(1);
+      // Unsubscribed: a frame after dispose must not throw (no live handler).
+      expect(() => frame()).not.toThrow();
+      // Idempotent: a second dispose() must not release keepAlive again.
+      m.dispose();
+      expect(release).toHaveBeenCalledTimes(1);
     });
   });
 });

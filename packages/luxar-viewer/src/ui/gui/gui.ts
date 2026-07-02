@@ -84,7 +84,7 @@ export class GUI extends Folder {
    */
   private createRootElement(): HTMLElement {
     const root = document.createElement('div');
-    root.className = 'luxar-gui';
+    root.className = 'luxar-gui luxar-glass-surface';
     root.style.width = `${this.guiOptions.width}px`;
 
     // Scrollable inner container (separates scroll from glass container)

@@ -9,6 +9,7 @@ import { DimensionSliders } from '../../../ui/dimension-sliders';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
+import { ControlRail, RAIL_ICONS, type ControlRailItem } from '../../../ui/control-rail';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -37,6 +38,7 @@ export interface InitPipelineResult {
   renderingControls: RenderingControls;
   recordingPanel: RecordingPanel;
   layersPanel: LayersPanel;
+  controlRail: ControlRail;
   /** Resolved dataset URL — orchestrator routes to browser or load. */
   sceneSrc: string;
 }
@@ -137,7 +139,16 @@ export async function runInitPipeline(
   // SceneManager flips this flag in its webglcontextlost/restored
   // handlers; the loop polls each frame.
   animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
-  const performanceMonitor = new PerformanceMonitor();
+  // When the perf readout is shown, kick the loop once so it gets a live
+  // reading if the scene had idled — but do NOT force continuous rendering
+  // (that would defeat the idle-pause / battery saving). The FPS is live while
+  // the scene renders and freezes at the last value when it idles.
+  const performanceMonitor = new PerformanceMonitor({
+    request: () => animationController.startAnimation(),
+    release: () => {
+      /* nothing to release — we never forced continuous rendering */
+    },
+  });
   partial.performanceMonitor = performanceMonitor;
   const debugConsole = new DebugConsole();
   partial.debugConsole = debugConsole;
@@ -334,6 +345,141 @@ export async function runInitPipeline(
   const layersPanel = factories.layersPanel(document.body, animationController);
   partial.layersPanel = layersPanel;
   inputHandler.setLayersPanel(layersPanel);
+
+  // Left activity rail — the always-visible, discoverable entry point to the
+  // otherwise keyboard-only panels. Each button fires the SAME command as its
+  // shortcut (via inputHandler.getUiActions()), so behaviour never drifts.
+  const ui = inputHandler.getUiActions();
+  const railItems: ControlRailItem[] = [
+    {
+      id: 'help',
+      title: 'Help & shortcuts',
+      shortcut: 'H',
+      icon: RAIL_ICONS.help,
+      activate: () => ui.commands.toggleHelp(),
+      openSelector: '#luxar-help-overlay',
+    },
+    {
+      id: 'dims',
+      title: 'Dimensions',
+      shortcut: 'N',
+      icon: RAIL_ICONS.dims,
+      activate: () => ui.commands.toggleDimensionSliders(),
+      openSelector: '.luxar-dimension-sliders',
+    },
+    {
+      id: 'render',
+      title: 'Rendering',
+      shortcut: 'R',
+      icon: RAIL_ICONS.render,
+      activate: () => ui.commands.toggleRenderingControls(),
+      isActive: () => renderingControls.isVisible(),
+    },
+    {
+      id: 'layers',
+      title: 'Layers',
+      shortcut: 'L',
+      icon: RAIL_ICONS.layers,
+      activate: () => ui.panels.getLayersPanel()?.toggle(),
+      isActive: () => layersPanel.isVisible(),
+    },
+    {
+      id: 'monitor',
+      title: 'Data monitor',
+      shortcut: 'M',
+      icon: RAIL_ICONS.monitor,
+      activate: () => ui.commands.cycleDataMonitor(),
+      openSelector: '.luxar-data-monitor',
+    },
+    {
+      id: 'data',
+      title: 'Datasets',
+      shortcut: 'O',
+      icon: RAIL_ICONS.data,
+      activate: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
+      openSelector: '.luxar-dataset-browser',
+    },
+    {
+      id: 'recording',
+      title: 'Recording',
+      shortcut: 'T',
+      icon: RAIL_ICONS.recording,
+      activate: () => ui.panels.getRecordingPanel()?.toggle(),
+      isActive: () => recordingPanel.isVisible(),
+      separatorBefore: true,
+    },
+    {
+      id: 'screenshot',
+      title: 'Screenshot',
+      shortcut: 'G',
+      icon: RAIL_ICONS.screenshot,
+      activate: () => ui.panels.getRecordingPanel()?.captureScreenshot(),
+      momentary: true,
+    },
+    {
+      id: 'logs',
+      title: 'Logs (console)',
+      shortcut: 'Ctrl+L',
+      icon: RAIL_ICONS.logs,
+      activate: () => debugConsole.toggle(),
+      isActive: () => debugConsole.getIsVisible(),
+      separatorBefore: true,
+    },
+    {
+      id: 'view',
+      title: 'View options',
+      icon: RAIL_ICONS.view,
+      activate: () => {}, // unused — opens the flyout below
+      separatorBefore: true,
+      flyout: [
+        {
+          id: 'scalebar',
+          title: 'Scale bar',
+          shortcut: 'B',
+          icon: RAIL_ICONS.scalebar,
+          activate: () => ui.panels.getScaleBar()?.toggle(),
+          openSelector: '.luxar-scale-bar',
+        },
+        {
+          id: 'legend',
+          title: 'Colormap legend',
+          shortcut: 'J',
+          icon: RAIL_ICONS.legend,
+          activate: () => ui.panels.getColormapLegend()?.toggle(),
+          openSelector: '.luxar-colormap-legend',
+        },
+        {
+          id: 'overlays',
+          title: 'Overlays',
+          shortcut: 'U',
+          icon: RAIL_ICONS.overlays,
+          activate: () => ui.panels.getOverlayManager()?.toggle(),
+          openSelector: '.luxar-overlay:not(.luxar-overlay--hidden)',
+        },
+        {
+          id: 'cinematic',
+          title: 'Cinematic mode',
+          shortcut: 'C',
+          icon: RAIL_ICONS.cinematic,
+          activate: () => ui.commands.toggleCinematicMode(),
+          isActive: () => renderingControls.settings.cinematicMode,
+        },
+      ],
+    },
+    {
+      // The gauge toggles the perf readout docked below (rail footer). Placed
+      // just under the eye so the readout appears at the very bottom of the rail.
+      id: 'perf',
+      title: 'Performance',
+      shortcut: 'P',
+      icon: RAIL_ICONS.perf,
+      activate: () => ui.commands.togglePerformanceStats(),
+      isActive: () => performanceMonitor.visible,
+    },
+  ];
+  // Dock the perf readout as the rail's footer; the gauge above toggles it.
+  const controlRail = new ControlRail(railItems, performanceMonitor.element);
+  partial.controlRail = controlRail;
 
   // Start animation loop first to ensure background is rendered
   animationController.startAnimation();

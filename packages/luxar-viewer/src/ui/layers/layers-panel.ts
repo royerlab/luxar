@@ -338,7 +338,7 @@ export class LayersPanel {
   private buildPanel(): void {
     // Panel container
     const panel = document.createElement('div');
-    panel.className = 'luxar-layers-panel';
+    panel.className = 'luxar-layers-panel luxar-glass-surface';
     panel.style.zIndex = String(config.ui.zIndex.layersPanel);
     panel.style.display = 'none'; // Hidden by default
     this.panelEl = panel;

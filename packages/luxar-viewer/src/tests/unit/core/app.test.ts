@@ -67,7 +67,7 @@ vi.mock('../../../ui/performance-monitor', () => ({
     show: vi.fn(),
     hide: vi.fn(),
     toggle: vi.fn(),
-    cyclePanels: vi.fn(),
+    cycleMode: vi.fn(),
     dispose: vi.fn(),
     visible: false,
   })),
@@ -80,6 +80,10 @@ vi.mock('../../../ui/debug-console', () => ({
     dispose: vi.fn(),
     getIsVisible: vi.fn(() => false),
   })),
+}));
+vi.mock('../../../ui/control-rail', () => ({
+  ControlRail: vi.fn().mockImplementation(() => ({ setCollapsed: vi.fn(), dispose: vi.fn() })),
+  RAIL_ICONS: {},
 }));
 
 // Setup global mocks
@@ -179,6 +183,7 @@ describe('LuxarApp', () => {
 
     mockInputHandler = {
       init: vi.fn(),
+      getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),

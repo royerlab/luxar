@@ -60,12 +60,14 @@ function makeDatasetBrowser() {
 interface Stubs {
   sceneManager: DisposableStub;
   animationController: DisposableStub;
+  performanceMonitor: DisposableStub;
   adaptiveDPRManager: DisposableStub;
   resolutionIndicator: DisposableStub;
   inputHandler: ReturnType<typeof makeInputHandler>;
   renderingControls: DisposableStub;
   recordingPanel: ReturnType<typeof makeRecordingPanel>;
   layersPanel: DisposableStub;
+  controlRail: DisposableStub;
   scaleBar: DisposableStub;
   colormapLegend: DisposableStub;
   overlayManager: DisposableStub;
@@ -81,6 +83,7 @@ interface Stubs {
     overlayManager: ReturnType<typeof vi.fn>;
     recordingPanel: ReturnType<typeof vi.fn>;
     layersPanel: ReturnType<typeof vi.fn>;
+    controlRail: ReturnType<typeof vi.fn>;
     pickingSystem: ReturnType<typeof vi.fn>;
     labelLoader: ReturnType<typeof vi.fn>;
     imageLabelLoader: ReturnType<typeof vi.fn>;
@@ -92,12 +95,14 @@ function makeStubs(): Stubs {
   return {
     sceneManager: makeDisposable(),
     animationController: makeDisposable(),
+    performanceMonitor: makeDisposable(),
     adaptiveDPRManager: makeDisposable(),
     resolutionIndicator: makeDisposable(),
     inputHandler: makeInputHandler(),
     renderingControls: makeDisposable(),
     recordingPanel: makeRecordingPanel(),
     layersPanel: makeDisposable(),
+    controlRail: makeDisposable(),
     scaleBar: makeDisposable(),
     colormapLegend: makeDisposable(),
     overlayManager: makeDisposable(),
@@ -113,6 +118,7 @@ function makeStubs(): Stubs {
       overlayManager: vi.fn(),
       recordingPanel: vi.fn(),
       layersPanel: vi.fn(),
+      controlRail: vi.fn(),
       pickingSystem: vi.fn(),
       labelLoader: vi.fn(),
       imageLabelLoader: vi.fn(),
@@ -128,6 +134,8 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     sceneManager: s.sceneManager as unknown as DisposePipelinePorts['sceneManager'],
     animationController:
       s.animationController as unknown as DisposePipelinePorts['animationController'],
+    performanceMonitor:
+      s.performanceMonitor as unknown as DisposePipelinePorts['performanceMonitor'],
     adaptiveDPRManager:
       s.adaptiveDPRManager as unknown as DisposePipelinePorts['adaptiveDPRManager'],
     resolutionIndicator:
@@ -136,6 +144,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     renderingControls: s.renderingControls as unknown as DisposePipelinePorts['renderingControls'],
     recordingPanel: s.recordingPanel as unknown as DisposePipelinePorts['recordingPanel'],
     layersPanel: s.layersPanel as unknown as DisposePipelinePorts['layersPanel'],
+    controlRail: s.controlRail as unknown as DisposePipelinePorts['controlRail'],
     scaleBar: s.scaleBar as unknown as DisposePipelinePorts['scaleBar'],
     colormapLegend: s.colormapLegend as unknown as DisposePipelinePorts['colormapLegend'],
     overlayManager: s.overlayManager as unknown as DisposePipelinePorts['overlayManager'],
@@ -150,6 +159,7 @@ function makePorts(s: Stubs): DisposePipelinePorts {
     clearOverlayManager: s.clears.overlayManager as unknown as () => void,
     clearRecordingPanel: s.clears.recordingPanel as unknown as () => void,
     clearLayersPanel: s.clears.layersPanel as unknown as () => void,
+    clearControlRail: s.clears.controlRail as unknown as () => void,
     clearPickingSystem: s.clears.pickingSystem as unknown as () => void,
     clearLabelLoader: s.clears.labelLoader as unknown as () => void,
     clearImageLabelLoader: s.clears.imageLabelLoader as unknown as () => void,
@@ -183,6 +193,7 @@ describe('runDisposePipeline', () => {
 
       expect(s.sceneManager.dispose).toHaveBeenCalledOnce();
       expect(s.animationController.dispose).toHaveBeenCalledOnce();
+      expect(s.performanceMonitor.dispose).toHaveBeenCalledOnce();
       expect(s.adaptiveDPRManager.dispose).toHaveBeenCalledOnce();
       expect(s.resolutionIndicator.dispose).toHaveBeenCalledOnce();
       expect(s.inputHandler.dispose).toHaveBeenCalledOnce();
@@ -362,12 +373,14 @@ describe('runDisposePipeline', () => {
         pickingEvents: new EventGroup(),
         sceneManager: undefined,
         animationController: undefined,
+        performanceMonitor: undefined,
         adaptiveDPRManager: undefined,
         resolutionIndicator: undefined,
         inputHandler: undefined,
         renderingControls: undefined,
         recordingPanel: undefined,
         layersPanel: undefined,
+        controlRail: undefined,
         scaleBar: undefined,
         colormapLegend: undefined,
         overlayManager: undefined,
@@ -380,6 +393,7 @@ describe('runDisposePipeline', () => {
         clearOverlayManager: vi.fn(),
         clearRecordingPanel: vi.fn(),
         clearLayersPanel: vi.fn(),
+        clearControlRail: vi.fn(),
         clearPickingSystem: vi.fn(),
         clearLabelLoader: vi.fn(),
         clearImageLabelLoader: vi.fn(),

@@ -9,11 +9,17 @@ export interface BrowserShortcutPorts {
   events: EventGroup;
   hasOpenBrowser: () => boolean;
   showBrowser: () => void;
+  closeBrowser: () => void;
 }
 
 export function installBrowserShortcut(ports: BrowserShortcutPorts): void {
+  // Toggle: the `open-dataset-browser` event now opens the modal if it's
+  // closed and closes it if it's already open, so the dataset control (rail
+  // button + `O` key) behaves like every other panel toggle.
   ports.events.on(window, 'open-dataset-browser', () => {
-    if (!ports.hasOpenBrowser()) {
+    if (ports.hasOpenBrowser()) {
+      ports.closeBrowser();
+    } else {
       ports.showBrowser();
     }
   });

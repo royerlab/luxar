@@ -19,7 +19,9 @@ describe('GUI', () => {
       gui = new GUI();
 
       expect(gui.domElement).toBeInstanceOf(HTMLElement);
-      expect(gui.domElement.className).toBe('luxar-gui');
+      // Carries the base class + the glass-surface marker (shared theme hook).
+      expect(gui.domElement.classList.contains('luxar-gui')).toBe(true);
+      expect(gui.domElement.classList.contains('luxar-glass-surface')).toBe(true);
     });
 
     it('should apply title option', () => {

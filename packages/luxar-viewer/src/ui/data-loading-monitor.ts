@@ -934,8 +934,8 @@ export class DataLoadingMonitor {
   private updatePanelClasses(): void {
     if (!this.panel) return;
 
-    // Base class
-    const classes = ['luxar-data-monitor'];
+    // Base class (+ glass-surface marker so it themes with the glass themes)
+    const classes = ['luxar-data-monitor', 'luxar-glass-surface'];
 
     // Position class
     classes.push(`luxar-data-monitor--${this.config.position}`);

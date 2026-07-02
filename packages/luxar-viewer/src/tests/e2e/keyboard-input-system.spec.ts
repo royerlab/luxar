@@ -229,7 +229,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
       return {
         help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
-        performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
+        performance: !!document.querySelector('#luxar-stats'),
       };
     });
 
@@ -244,7 +244,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
       return {
         help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
-        performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
+        performance: !!document.querySelector('#luxar-stats'),
       };
     });
 
@@ -292,10 +292,9 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Check initial stats visibility
     const initialVisible = await page.evaluate(() => {
-      const stats = document.querySelector(
-        '[role="status"][aria-label*="Performance"]'
-      ) as HTMLElement;
-      return stats && stats.style.display !== 'none';
+      const stats = document.querySelector('#luxar-stats') as HTMLElement | null;
+      // Visibility is driven by the `is-hidden` class (not inline display).
+      return !!stats && !stats.classList.contains('is-hidden');
     });
 
     // Toggle stats
@@ -303,10 +302,9 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     await waitForNextRender(page);
 
     const afterToggle = await page.evaluate(() => {
-      const stats = document.querySelector(
-        '[role="status"][aria-label*="Performance"]'
-      ) as HTMLElement;
-      return stats && stats.style.display !== 'none';
+      const stats = document.querySelector('#luxar-stats') as HTMLElement | null;
+      // Visibility is driven by the `is-hidden` class (not inline display).
+      return !!stats && !stats.classList.contains('is-hidden');
     });
 
     // Should have toggled
@@ -317,10 +315,9 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
     await waitForNextRender(page);
 
     const afterSecondToggle = await page.evaluate(() => {
-      const stats = document.querySelector(
-        '[role="status"][aria-label*="Performance"]'
-      ) as HTMLElement;
-      return stats && stats.style.display !== 'none';
+      const stats = document.querySelector('#luxar-stats') as HTMLElement | null;
+      // Visibility is driven by the `is-hidden` class (not inline display).
+      return !!stats && !stats.classList.contains('is-hidden');
     });
 
     // Should be back to initial state

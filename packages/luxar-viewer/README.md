@@ -561,27 +561,30 @@ renderingControls: {
 
 ### Performance Monitoring
 
-Built-in performance monitoring in `src/ui/performance-monitor.ts` wraps [stats.js](https://github.com/mrdoob/stats.js/) and provides:
+Built-in performance monitoring in `src/ui/performance-monitor.ts` is a compact,
+theme-matched readout (no third-party dependency) that docks into the control
+rail. It shows one metric at a time and cycles on click/Enter:
 
 ```typescript
-// PerformanceMonitor wraps stats.js for FPS, frame time, and memory tracking
-const monitor = new PerformanceMonitor(); // no args; injects its own DOM panel
+// A vendored square readout; the control rail docks its `.element`.
+const monitor = new PerformanceMonitor();
 
 // Visibility control — measurement is driven by the animation loop's
 // `frame-start` / `frame-end` events on the event bus. The monitor only
-// subscribes while visible, so stats.js incurs no cost when hidden.
-monitor.show(); // Show the stats panel (subscribes to frame timing)
-monitor.hide(); // Hide the stats panel (unsubscribes)
-monitor.toggle(); // Toggle visibility
-monitor.cyclePanels(); // Rotate FPS -> frame time -> memory
+// subscribes while visible, so it incurs no cost when hidden.
+monitor.show(); // Show (subscribes to frame timing)
+monitor.hide(); // Hide (unsubscribes)
+monitor.toggle(); // Toggle visibility (bound to the P key / rail gauge)
+monitor.cycleMode(); // Cycle the metric: FPS -> frame time (ms) -> graph
 monitor.visible; // boolean getter for current visibility
+monitor.element; // the widget element (mounted by the control rail)
 ```
 
-- **Real-time FPS**: Continuously updated frame rate display (panel 0)
-- **Frame timing**: Milliseconds per frame (panel 1)
-- **Memory usage**: JavaScript heap size monitoring (panel 2)
-- **Panel cycling**: `cyclePanels()` rotates through FPS, frame time, and memory views
-- **Idle optimization**: Only subscribes to frame timing while visible to avoid overhead
+- **Real-time FPS**: rolling frame-rate average
+- **Frame timing**: milliseconds per frame (EMA)
+- **History graph**: a scrolling FPS sparkline
+- **Metric cycling**: `cycleMode()` rotates FPS -> ms -> graph
+- **Idle optimization**: only subscribes to frame timing while visible
 
 ## 🎯 Performance Tips
 
