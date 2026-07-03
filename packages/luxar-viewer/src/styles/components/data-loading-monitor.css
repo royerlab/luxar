@@ -787,6 +787,18 @@
   align-items: center;
 }
 
+/* Substitutive-level rows: the level currently rendered gets a subtle
+   highlight; levels present in the file but not rendered are dimmed.
+   Classes are toggled live by the monitor as the LOD selector switches. */
+.luxar-scene-graph__node-row--active-level {
+  background: rgba(120, 170, 255, 0.12);
+  border-radius: var(--luxar-radius-sm);
+}
+
+.luxar-scene-graph__node-row--inactive-level {
+  opacity: 0.55;
+}
+
 .luxar-scene-graph__toggle {
   width: 16px;
   font-size: var(--luxar-text-xs);
@@ -845,11 +857,6 @@
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-disabled);
   padding: 0 var(--luxar-spacing-2) var(--luxar-spacing-1);
-}
-
-.luxar-scene-graph__loading {
-  font-size: var(--luxar-text-xs);
-  margin-left: var(--luxar-spacing-2);
 }
 
 .luxar-scene-graph__empty {

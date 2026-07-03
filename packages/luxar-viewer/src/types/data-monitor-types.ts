@@ -463,8 +463,12 @@ export interface SceneGraphNode {
   type: SceneGraphNodeType;
   /** Number of points (for points nodes) */
   pointCount?: number;
+  /** Number of visible points after nD slicing (for points nodes) */
+  visiblePointCount?: number;
   /** Number of segments (for lines nodes) */
   segmentCount?: number;
+  /** Number of visible segments after nD slicing (for lines nodes) */
+  visibleSegmentCount?: number;
   /** Number of vertices (for lines nodes) */
   vertexCount?: number;
   /** Number of splats (for gsplats nodes) */
@@ -496,8 +500,6 @@ export interface SceneGraphNode {
    * {@link LODProgressProvider}.
    */
   additiveSublods?: number;
-  /** Whether this node is currently loading */
-  isLoading?: boolean;
   /** Whether this node has a spatial index */
   hasSpatialIndex?: boolean;
   /** Child nodes */

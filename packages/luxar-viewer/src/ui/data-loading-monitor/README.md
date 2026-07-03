@@ -98,6 +98,25 @@ which returns `luxar-color--{success|warning|error|info|muted|dimmed|primary}`.
   rebuild. Dataset totals for substitutive `kind=lod` groups count the
   finest level only (alternatives, not cumulative); the K level loaders
   collapse to one logical layer in `getGlobalStats`.
+- **Additive-chip glyphs**: `LOD x/N` = detail levels loaded of total;
+  `●` = last refinement pass fully cache-resident, `◌` = still streaming
+  from the network; `⏳` = refinement in progress; `LOD –/N` = the node
+  has N additive levels but no live streaming loader (typically an
+  inactive substitutive level). Every glyph is spelled out in the chip's
+  `title` tooltip.
+- **Active substitutive level rows** are highlighted (and inactive levels
+  dimmed) via `data-level-of`/`data-level-index` attributes that the
+  per-tick patcher re-marks from the group's `activeLevel` — the tree
+  shows _what renders_, not just what the file contains.
+- **Per-node visible counts** arrive via
+  `updateVisibleCountsByPath` (pushed by the SceneLoader's
+  visible-counts walk, keyed by mesh `name` = scene-graph path) and are
+  merged into the tree nodes so badge tooltips read
+  "N elements (M visible after slicing)" — symmetric across points /
+  lines / gsplats. The walk prunes non-visible subtrees, so nodes whose
+  path is absent from the latest map (hidden layer, switched-away
+  substitutive level) have their count cleared back to unknown — the
+  suffix disappears rather than showing a stale number.
 - **Timing panel expand/collapse state is module-level** on purpose so
   it survives full DOM repaints triggered by tab switches.
 - **All user-supplied strings flow through `utils/escape-html`** before

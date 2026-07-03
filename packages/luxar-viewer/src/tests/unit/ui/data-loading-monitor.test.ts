@@ -13,7 +13,13 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../types/data-monitor-types';
+import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates';
+import type {
+  MonitorEvent,
+  LoaderMonitor,
+  LoaderMetrics,
+  LODProgressState,
+} from '../../../types/data-monitor-types';
 
 // Mock DOM environment
 beforeEach(() => {
@@ -1195,6 +1201,135 @@ describe('DataLoadingMonitor', () => {
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(200000);
       expect(stats.visiblePoints).toBe(50000);
+    });
+
+    it('clears per-node visible counts for paths absent from the latest walk', () => {
+      // The SceneLoader's visible-counts walk prunes non-visible subtrees,
+      // so a hidden layer or switched-away substitutive level simply stops
+      // appearing in the pushed map. Its previously merged count must be
+      // cleared (back to unknown) — not left as a stale
+      // "(N visible after slicing)" tooltip forever.
+      const sceneGraph = {
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/points1',
+            name: 'points1',
+            type: 'points' as const,
+            pointCount: 1000,
+            children: [],
+          },
+          {
+            path: '/splats1',
+            name: 'splats1',
+            type: 'gsplats' as const,
+            splatCount: 2000,
+            children: [],
+          },
+        ],
+      };
+      monitor.setSceneGraph(sceneGraph);
+
+      const sync = () =>
+        (monitor as unknown as { syncVisibleCountsIntoTree(): void }).syncVisibleCountsIntoTree();
+
+      // First walk: both layers rendered with partial visibility.
+      monitor.updateVisibleCountsByPath(
+        new Map([
+          ['/points1', 250],
+          ['/splats1', 700],
+        ])
+      );
+      sync();
+      const root = monitor.getSceneGraph().root!;
+      const points = root.children[0];
+      const splats = root.children[1];
+      expect(points.visiblePointCount).toBe(250);
+      expect(splats.visibleSplatCount).toBe(700);
+      expect(nodeStatsContent(points)!.title).toContain('250 visible after slicing');
+      expect(nodeStatsContent(splats)!.title).toContain('700 visible after slicing');
+
+      // Second walk: the gsplats layer was hidden (pruned from the walk).
+      // Its count must read as unknown (no suffix), not the stale 700.
+      monitor.updateVisibleCountsByPath(new Map([['/points1', 100]]));
+      sync();
+      expect(points.visiblePointCount).toBe(100);
+      expect(splats.visibleSplatCount).toBeUndefined();
+      expect(nodeStatsContent(points)!.title).toContain('100 visible after slicing');
+      expect(nodeStatsContent(splats)!.title).not.toContain('visible');
+    });
+
+    it('re-marks active/inactive substitutive level rows per tick (shared activeLevelRole derivation)', () => {
+      // The per-tick patcher must derive each level row's role exactly like
+      // the initial render (both call templates.ts's exported
+      // activeLevelRole) and flip the marks in place when the LOD selector
+      // switches levels between structural rebuilds.
+      monitor.show();
+      monitor.expand(); // Detailed view — the overview tab hosts the tree
+
+      monitor.setSceneGraph({
+        path: '/',
+        name: 'Scene',
+        type: 'scene' as const,
+        children: [
+          {
+            path: '/lod',
+            name: 'lod',
+            type: 'group' as const,
+            kind: 'lod' as const,
+            lodGroupChildCount: 2,
+            children: [
+              {
+                path: '/lod/l0',
+                name: 'l0',
+                type: 'gsplats' as const,
+                splatCount: 100,
+                children: [],
+              },
+              {
+                path: '/lod/l1',
+                name: 'l1',
+                type: 'gsplats' as const,
+                splatCount: 400,
+                children: [],
+              },
+            ],
+          },
+        ],
+      });
+      monitor.toggleNodeExpansion('/lod'); // Render the level rows
+
+      const states = new Map<string, LODProgressState>([
+        ['/lod', { kind: 'lod', levelCount: 2, activeLevel: 0 }],
+      ]);
+      monitor.setLODProgressProvider({ getLODStates: () => states });
+      const tick = () => (monitor as unknown as { onPollingTick(): void }).onPollingTick();
+
+      const activeClass = 'luxar-scene-graph__node-row--active-level';
+      const inactiveClass = 'luxar-scene-graph__node-row--inactive-level';
+      const rows = () =>
+        Array.from(container.querySelectorAll('[data-level-of="/lod"]')) as HTMLElement[];
+
+      tick();
+      let levelRows = rows();
+      expect(levelRows.length).toBe(2);
+      expect(levelRows[0].classList.contains(activeClass)).toBe(true);
+      expect(levelRows[1].classList.contains(inactiveClass)).toBe(true);
+      expect(levelRows[0].title).toContain('active substitutive level');
+
+      // Selector switches to the fine level — no structural rebuild, the
+      // patcher must flip both rows' classes and tooltips.
+      states.set('/lod', { kind: 'lod', levelCount: 2, activeLevel: 1 });
+      tick();
+      levelRows = rows();
+      expect(levelRows[0].classList.contains(activeClass)).toBe(false);
+      expect(levelRows[0].classList.contains(inactiveClass)).toBe(true);
+      expect(levelRows[1].classList.contains(activeClass)).toBe(true);
+      expect(levelRows[1].classList.contains(inactiveClass)).toBe(false);
+      expect(levelRows[0].title).toContain('inactive substitutive level');
+      expect(levelRows[1].title).toContain('active substitutive level');
     });
 
     it('should report visible points in getGlobalStats across multiple nodes', () => {

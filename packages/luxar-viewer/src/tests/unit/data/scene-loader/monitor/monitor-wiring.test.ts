@@ -44,6 +44,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     updateVisiblePoints: vi.fn(),
     updateVisibleSegments: vi.fn(),
     updateVisibleSplats: vi.fn(),
+    updateVisibleCountsByPath: vi.fn(),
     show: vi.fn(),
     hide: vi.fn(),
     toggle: vi.fn(),
