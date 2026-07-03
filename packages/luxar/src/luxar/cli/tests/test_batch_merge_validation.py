@@ -101,7 +101,7 @@ class TestResolveMergeRecipeArgs:
             resolve_merge_recipe_args,
         )
 
-        args = resolve_merge_recipe_args(MergeConfig(recipe="additive", n_lods=6))
+        args = resolve_merge_recipe_args(MergeConfig(recipe="stream", n_lods=6))
         assert args == {"n-lods": "6"}
 
     def test_cross_recipe_knob_still_rejected(self) -> None:
@@ -112,8 +112,41 @@ class TestResolveMergeRecipeArgs:
 
         with pytest.raises(typer.BadParameter):
             resolve_merge_recipe_args(
-                MergeConfig(recipe="additive", compression_factor=4)
+                MergeConfig(recipe="stream", compression_factor=4)
             )
+
+
+class TestMergePipelineProvenance:
+    """The merge's pipeline/ provenance must record the RECIPE separately from
+    the reduction MECHANISM (lod_kind). A recipe name must never land in
+    lod_kind — before the rename they coincided (additive/substitutive), which
+    masked the conflation."""
+
+    def test_recipe_and_lod_kind_are_distinct(self) -> None:
+        from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+
+        s = _recipe_pipeline_info("stream", None)
+        assert s["recipe"] == "stream" and s["lod_kind"] == "additive"
+        lv = _recipe_pipeline_info("levels", None)
+        assert lv["recipe"] == "levels" and lv["lod_kind"] == "substitutive"
+        # lod_kind is a mechanism word the viewer/migrator understand, NEVER a
+        # recipe name.
+        assert lv["lod_kind"] != "levels" and s["lod_kind"] != "stream"
+
+    def test_legacy_manifest_recipe_translates_in_provenance(self) -> None:
+        from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+
+        # A pre-rename manifest value flows in; provenance records the CURRENT
+        # recipe name + the mechanism.
+        info = _recipe_pipeline_info("substitutive", None)
+        assert info["recipe"] == "levels" and info["lod_kind"] == "substitutive"
+        info = _recipe_pipeline_info("additive", None)
+        assert info["recipe"] == "stream" and info["lod_kind"] == "additive"
+
+    def test_no_recipe_writes_no_provenance(self) -> None:
+        from luxar.gsplats.batch.merge_orchestrator import _recipe_pipeline_info
+
+        assert _recipe_pipeline_info(None, None) is None
 
 
 class TestMergeStreamingKnobs:
@@ -127,7 +160,7 @@ class TestMergeStreamingKnobs:
         )
 
         args = resolve_merge_recipe_args(
-            MergeConfig(recipe="additive", target_ms=200.0), merged_ndim=4
+            MergeConfig(recipe="stream", target_ms=200.0), merged_ndim=4
         )
         bp = args["breakpoints"]
         assert bp.startswith("stream:")
@@ -150,7 +183,7 @@ class TestMergeStreamingKnobs:
         )
 
         args = resolve_merge_recipe_args(
-            MergeConfig(recipe="additive", target_ms=200.0), merged_ndim=3
+            MergeConfig(recipe="stream", target_ms=200.0), merged_ndim=3
         )
         # 200 ms @ 25 Mbps @ analytic 30 B (3D) → 625000/30 = 20833.
         assert args["breakpoints"] == "stream:20833"
@@ -164,7 +197,7 @@ class TestMergeStreamingKnobs:
         )
 
         args = resolve_merge_recipe_args(
-            MergeConfig(recipe="additive", target_ms=200.0),
+            MergeConfig(recipe="stream", target_ms=200.0),
             merged_ndim=4,
             merged_has_colors=True,
         )
@@ -179,9 +212,7 @@ class TestMergeStreamingKnobs:
 
         with pytest.raises(typer.BadParameter) as exc:
             resolve_merge_recipe_args(
-                MergeConfig(
-                    recipe="additive", target_ms=200.0, breakpoints="equal-count"
-                )
+                MergeConfig(recipe="stream", target_ms=200.0, breakpoints="equal-count")
             )
         # The plan-time surface must name the --merge-* spellings.
         assert "--merge-target-ms" in str(exc.value)
@@ -194,9 +225,7 @@ class TestMergeStreamingKnobs:
         )
 
         with pytest.raises(typer.BadParameter) as exc:
-            resolve_merge_recipe_args(
-                MergeConfig(recipe="additive", bandwidth_mbps=50.0)
-            )
+            resolve_merge_recipe_args(MergeConfig(recipe="stream", bandwidth_mbps=50.0))
         assert "--merge-bandwidth-mbps" in str(exc.value)
         assert "--merge-target-ms" in str(exc.value)
 
@@ -216,9 +245,7 @@ class TestMergeStreamingKnobs:
         )
 
         with pytest.raises(typer.BadParameter):
-            resolve_merge_recipe_args(
-                MergeConfig(recipe="substitutive", target_ms=200.0)
-            )
+            resolve_merge_recipe_args(MergeConfig(recipe="levels", target_ms=200.0))
 
     def test_merge_cli_target_ms_without_recipe_rejected(self, tmp_path: Path) -> None:
         """The `batch-fit merge` CLI rejects --target-ms without a recipe."""
@@ -294,7 +321,7 @@ class TestBatchMergeCliValidation:
         _write_manifest(tmp_path, merge_recipe=None)
         res = runner.invoke(
             app_gsplat,
-            ["batch-fit", "merge", str(tmp_path), "--flat", "--recipe", "additive"],
+            ["batch-fit", "merge", str(tmp_path), "--flat", "--recipe", "stream"],
         )
         assert res.exit_code != 0
         assert "concatenates all tiles into a single bare leaf" in _io(res)
@@ -308,7 +335,7 @@ class TestBatchMergeCliValidation:
                 "merge",
                 str(tmp_path),
                 "--recipe",
-                "additive",
+                "stream",
                 "--no-recipe",
             ],
         )
@@ -450,7 +477,7 @@ class TestPlanTimeStreamingSizing:
             tmp_path,
             (2, 8, 8, 8),
             ["t", "z", "y", "x"],
-            MergeConfig(recipe="additive", target_ms=200.0),
+            MergeConfig(recipe="stream", target_ms=200.0),
         )
         # merged ndim = 3 spatial + stacked-timepoint axis = 4 → 45 B → 13889:
         # exactly what `batch-fit merge --target-ms 200` derives from the
@@ -464,7 +491,7 @@ class TestPlanTimeStreamingSizing:
             tmp_path,
             (1, 8, 8, 8),
             ["t", "z", "y", "x"],
-            MergeConfig(recipe="additive", target_ms=200.0),
+            MergeConfig(recipe="stream", target_ms=200.0),
         )
         # No stacked axis → merged ndim 3 → 30 B → 20833 (pre-fix: 13889).
         assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
@@ -477,7 +504,7 @@ class TestPlanTimeStreamingSizing:
             (2, 2, 8, 8, 8),
             ["t", "c", "z", "y", "x"],
             MergeConfig(
-                recipe="additive",
+                recipe="stream",
                 target_ms=200.0,
                 channel_colors="#ff0080,#00ff00",
             ),

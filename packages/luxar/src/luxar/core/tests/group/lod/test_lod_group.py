@@ -4,7 +4,7 @@ These cover the type-neutral machinery shared by Points, Lines, and GSplats:
 
 - The standalone builder (``add_lod_group``): node creation, attr round-trip,
   child enumeration, and ``validate_lod_group()`` failure modes.
-- The auto-derivation heuristic (``derive_min_pixel_sizes``): monotonicity
+- The auto-derivation heuristic (``coverage_fractions``): monotonicity
   and the √-of-ratio scaling.
 - Construction-time validation: unsupported selector, negative default_level.
 - Display-type resolution (``resolve_display_type`` / ``compute_lod_display_type``),
@@ -30,13 +30,10 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
-    BASE_PIXEL_SIZE,
-    DEFAULT_TARGET_PIXEL_SIZE,
     compute_lod_display_type,
-    derive_min_pixel_sizes,
-    extent_min_pixel_sizes,
-    lod_thresholds,
+    coverage_fractions,
     resolve_display_type,
+    resolve_substitutive_axis,
     validate_lod_group,
 )
 from luxar.io.compiler import LuxarZarrCompiler
@@ -63,14 +60,14 @@ class TestAddLodGroup:
             lod = scene.add_lod_group("multires")
             assert isinstance(lod, Group)
             assert lod.attrs["kind"] == "lod"
-            assert lod.attrs["selector"] == "pixel_size"
+            assert lod.attrs["selector"] == "coverage"
             assert lod.attrs["default_level"] == 0
 
         store = zarr.open(str(output_path), mode="r")
         attrs = store["multires"].attrs
         assert attrs["type"] == "group"
         assert attrs["kind"] == "lod"
-        assert attrs["selector"] == "pixel_size"
+        assert attrs["selector"] == "coverage"
         assert attrs["default_level"] == 0
 
     def test_add_lod_group_with_explicit_default_level(self, tmp_path) -> None:
@@ -84,10 +81,10 @@ class TestAddLodGroup:
         store = zarr.open(str(output_path), mode="r")
         assert store["multires"].attrs["default_level"] == 2
 
-    def test_add_lod_group_children_are_subgroups_with_min_pixel_size(
+    def test_add_lod_group_children_are_subgroups_with_coverage_fraction(
         self, tmp_path
     ) -> None:
-        """Children added via inherited add_* methods carry min_pixel_size."""
+        """Children added via inherited add_* methods carry coverage_fraction."""
         output_path = tmp_path / "test.luxar.zarr"
 
         with LuxarZarrCompiler(output_path) as compiler:
@@ -98,14 +95,14 @@ class TestAddLodGroup:
                 centers=_CENTERS,
                 amplitudes=1.0,
                 cholesky_factors=_CHOL,
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
             )
             lod.add_gsplats(
                 "fine",
                 centers=_CENTERS,
                 amplitudes=1.0,
                 cholesky_factors=_CHOL,
-                min_pixel_size=100.0,
+                coverage_fraction=1.0,
             )
 
         store = zarr.open(str(output_path), mode="r")
@@ -114,8 +111,8 @@ class TestAddLodGroup:
         assert grp.attrs["kind"] == "lod"
         assert sorted(grp.keys()) == ["coarse", "fine"]
         assert grp["coarse"].attrs["type"] == "gsplats"
-        assert grp["coarse"].attrs["min_pixel_size"] == 0.0
-        assert grp["fine"].attrs["min_pixel_size"] == 100.0
+        assert grp["coarse"].attrs["coverage_fraction"] == 0.0
+        assert grp["fine"].attrs["coverage_fraction"] == 1.0
 
     def test_add_lod_group_can_nest_under_a_group(self, tmp_path) -> None:
         """kind=lod groups can sit beneath a normal Group container."""
@@ -143,7 +140,7 @@ class TestLODGroupValidation:
     def test_unknown_selector_rejected(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="selector must be 'pixel_size'"):
+            with pytest.raises(ValueError, match="selector must be 'coverage'"):
                 scene.add_lod_group("multires", selector="distance")
 
     def test_negative_default_level_rejected(self, tmp_path) -> None:
@@ -159,15 +156,15 @@ class TestLODGroupValidation:
             with pytest.raises(ValueError, match="has no children"):
                 validate_lod_group(lod)
 
-    def test_validate_missing_min_pixel_size_raises(self, tmp_path) -> None:
+    def test_validate_missing_coverage_fraction_raises(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
-            # Child added without min_pixel_size — validator should catch it.
+            # Child added without coverage_fraction — validator should catch it.
             lod.add_gsplats(
                 "c0", centers=_CENTERS, amplitudes=1.0, cholesky_factors=_CHOL
             )
-            with pytest.raises(ValueError, match="missing 'min_pixel_size'"):
+            with pytest.raises(ValueError, match="missing 'coverage_fraction'"):
                 validate_lod_group(lod)
 
     def test_validate_non_monotonic_raises(self, tmp_path) -> None:
@@ -179,14 +176,14 @@ class TestLODGroupValidation:
                 centers=_CENTERS,
                 amplitudes=1.0,
                 cholesky_factors=_CHOL,
-                min_pixel_size=50.0,
+                coverage_fraction=0.5,
             )
             lod.add_gsplats(
                 "c1",
                 centers=_CENTERS,
                 amplitudes=1.0,
                 cholesky_factors=_CHOL,
-                min_pixel_size=10.0,  # < previous — invalid
+                coverage_fraction=0.1,  # < previous — invalid
             )
             with pytest.raises(ValueError, match="strictly greater"):
                 validate_lod_group(lod)
@@ -195,20 +192,20 @@ class TestLODGroupValidation:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
-            for i, mps in enumerate([0.0, 10.0, 50.0]):
+            for i, cf in enumerate([0.0, 0.5, 1.0]):
                 lod.add_gsplats(
                     f"c{i}",
                     centers=_CENTERS,
                     amplitudes=1.0,
                     cholesky_factors=_CHOL,
-                    min_pixel_size=mps,
+                    coverage_fraction=cf,
                 )
             # Should not raise.
             validate_lod_group(lod)
-            assert [float(c.attrs["min_pixel_size"]) for c in lod.children] == [
+            assert [float(c.attrs["coverage_fraction"]) for c in lod.children] == [
                 0.0,
-                10.0,
-                50.0,
+                0.5,
+                1.0,
             ]
 
     def test_validate_rejects_default_level_out_of_range(self, tmp_path) -> None:
@@ -221,13 +218,13 @@ class TestLODGroupValidation:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires", default_level=99)
-            for i, mps in enumerate([0.0, 10.0]):
+            for i, cf in enumerate([0.0, 1.0]):
                 lod.add_gsplats(
                     f"c{i}",
                     centers=_CENTERS,
                     amplitudes=1.0,
                     cholesky_factors=_CHOL,
-                    min_pixel_size=mps,
+                    coverage_fraction=cf,
                 )
             with pytest.raises(ValueError, match="default_level=99"):
                 validate_lod_group(lod)
@@ -238,187 +235,118 @@ class TestLODGroupValidation:
 # ────────────────────────────────────────────────────────────────────────
 
 
-class TestDeriveMinPixelSizes:
-    """The √(N_finer / N_coarsest) auto-derivation."""
+class TestCoverageFractions:
+    """The ``sqrt(N_i / N_finest)`` viewport-relative auto-derivation."""
 
     def test_coarsest_is_zero(self) -> None:
-        assert derive_min_pixel_sizes([100, 400, 1600])[0] == 0.0
+        assert coverage_fractions([100, 400, 1600])[0] == 0.0
+
+    def test_finest_is_one(self) -> None:
+        assert coverage_fractions([100, 400, 1600])[-1] == 1.0
 
     def test_sqrt_of_ratio_scaling(self) -> None:
-        # 4× more elements → 2× the threshold (relative to BASE_PIXEL_SIZE)
-        thresholds = derive_min_pixel_sizes([100, 400, 1600])
-        assert thresholds[1] == BASE_PIXEL_SIZE * 2.0
-        assert thresholds[2] == BASE_PIXEL_SIZE * 4.0
+        # coverage_i = sqrt(N_i / N_finest): 400/1600 → 0.5, 1600/1600 → 1.0.
+        fractions = coverage_fractions([100, 400, 1600])
+        assert fractions[1] == pytest.approx(0.5)
+        assert fractions[2] == pytest.approx(1.0)
+
+    def test_validated_numeric_example(self) -> None:
+        got = coverage_fractions([89894, 359865, 1443108, 5801956, 23368376])
+        assert got == pytest.approx(
+            [0.0, 0.12409535876820393, 0.24850501137866587, 0.4982794191730524, 1.0]
+        )
+
+    def test_two_level_ladder_is_zero_one(self) -> None:
+        # Any two-level ladder → [0.0, 1.0] (sqrt(N/N) == 1).
+        assert coverage_fractions([100, 400]) == pytest.approx([0.0, 1.0])
+        assert coverage_fractions([50, 200]) == pytest.approx([0.0, 1.0])
 
     def test_strict_monotonicity_enforced(self) -> None:
         # Even when input is non-increasing, output stays monotonic via the
-        # relative ×1.1 bump (not a fixed +1 px).
-        thresholds = derive_min_pixel_sizes([100, 100, 100])
-        for i in range(1, len(thresholds)):
-            assert thresholds[i] > thresholds[i - 1]
+        # relative ÷1.1 downward nudge of the coarser entries (never above 1.0).
+        fractions = coverage_fractions([100, 100, 100])
+        for i in range(1, len(fractions)):
+            assert fractions[i] > fractions[i - 1]
+        assert all(0.0 <= f <= 1.0 for f in fractions)
 
-    def test_relative_nudge_is_proportional(self) -> None:
-        # Equal-count levels separate by ×1.1, so the bump scales with the
-        # threshold magnitude rather than a meaningless fixed pixel.
-        thresholds = derive_min_pixel_sizes([100, 100, 100])
-        # child1 = bps * sqrt(1) = BASE_PIXEL_SIZE; child2 = child1 * 1.1.
-        assert thresholds[1] == BASE_PIXEL_SIZE
-        assert thresholds[2] == pytest.approx(BASE_PIXEL_SIZE * 1.1)
+    def test_relative_nudge_is_proportional_and_downward(self) -> None:
+        # Equal-count levels separate by ÷1.1 applied to the EARLIER (coarser)
+        # entry, so the finest stays anchored at exactly 1.0 and nothing ever
+        # exceeds it (the old upward ×1.1 bump produced 1.1 > 1.0 here).
+        fractions = coverage_fractions([100, 100, 100])
+        # child2 (finest) = sqrt(100/100) = 1.0; child1 = child2 / 1.1.
+        assert fractions[1] == pytest.approx(1.0 / 1.1)
+        assert fractions[2] == pytest.approx(1.0)
 
-    def test_base_pixel_size_override(self) -> None:
-        # Overriding the anchor scales every non-zero threshold linearly.
-        default = derive_min_pixel_sizes([100, 400, 1600])
-        scaled = derive_min_pixel_sizes([100, 400, 1600], base_pixel_size=25.0)
-        assert scaled[0] == 0.0
-        assert scaled[1] == pytest.approx(default[1] * 2.5)
-        assert scaled[2] == pytest.approx(default[2] * 2.5)
+    def test_equal_count_tail_stays_within_unit_interval(self) -> None:
+        # Regression: counts [10, 1000, 1000] used to derive [0.0, 1.0, 1.1] —
+        # the upward bump violated the [0, 1]/finest==1.0 contract (and the
+        # explicit-input validators reject 1.1). Duplicates must resolve by
+        # nudging the coarser entry DOWN instead.
+        fractions = coverage_fractions([10, 1000, 1000])
+        assert fractions[0] == 0.0
+        assert fractions[-1] == 1.0
+        assert fractions[1] == pytest.approx(1.0 / 1.1)
+        assert all(fractions[i] > fractions[i - 1] for i in range(1, len(fractions)))
+        assert all(0.0 <= f <= 1.0 for f in fractions)
 
-    def test_base_pixel_size_must_be_positive(self) -> None:
-        with pytest.raises(ValueError, match="positive"):
-            derive_min_pixel_sizes([100, 400], base_pixel_size=0.0)
+    def test_non_monotone_counts_capped_at_finest_anchor(self) -> None:
+        # A count ladder that DECREASES toward the finest (sqrt ratio > 1 for
+        # an intermediate level) is capped back under the 1.0 anchor.
+        fractions = coverage_fractions([100, 1000, 10])
+        assert fractions == pytest.approx([0.0, 1.0 / 1.1, 1.0])
+
+    def test_derived_values_round_trip_explicit_validator(self) -> None:
+        # The derived fractions must be accepted verbatim by the explicit
+        # coverage_fractions= validator (strict-ascending, within [0, 1]) —
+        # including for the degenerate ladders the guard has to repair.
+        for counts in (
+            [10, 1000, 1000],  # equal-count tail (used to derive 1.1)
+            [100, 100, 100],  # all-equal
+            [10, 0, 20],  # zero-count intermediate
+            [100, 1000, 10],  # non-monotone (derives > 1 pre-cap)
+            [1, 1000, 1_000_000],  # extreme ratio
+        ):
+            derived = coverage_fractions(counts)
+            resolved = resolve_substitutive_axis(
+                {"coverage_fractions": derived}, "Points"
+            )
+            assert resolved is not None
+            assert resolved["coverage_fractions"] == pytest.approx(derived), counts
 
     def test_extreme_count_ratio_monotonic(self) -> None:
         # 1 → 1,000,000 elements must still yield strictly increasing finite
-        # thresholds (no overflow / non-monotonic artefacts).
-        thresholds = derive_min_pixel_sizes([1, 1000, 1_000_000])
-        for i in range(1, len(thresholds)):
-            assert thresholds[i] > thresholds[i - 1]
-        assert all(t == t for t in thresholds)  # no NaN
+        # fractions (no overflow / non-monotonic artefacts).
+        fractions = coverage_fractions([1, 1000, 1_000_000])
+        for i in range(1, len(fractions)):
+            assert fractions[i] > fractions[i - 1]
+        assert all(np.isfinite(f) for f in fractions)  # no NaN
+
+    def test_single_level_is_just_the_floor(self) -> None:
+        assert coverage_fractions([42]) == [0.0]
 
     def test_empty_input_rejected(self) -> None:
         with pytest.raises(ValueError, match="non-empty"):
-            derive_min_pixel_sizes([])
+            coverage_fractions([])
 
-    def test_zero_coarsest_rejected(self) -> None:
-        # An empty coarsest level can't anchor the ratio denominator; the error
+    def test_zero_finest_rejected(self) -> None:
+        # An empty finest level can't anchor the ratio denominator; the error
         # is actionable (names the likely cause: an all-non-positive-amplitude
         # reduction that culled every representative).
-        with pytest.raises(ValueError, match="(?i)coarsest.*empty|0 elements"):
-            derive_min_pixel_sizes([0, 10])
+        with pytest.raises(ValueError, match="(?i)finest.*empty|0 elements"):
+            coverage_fractions([10, 0])
 
     def test_intermediate_zero_count_does_not_raise(self) -> None:
-        # A zero-count INTERMEDIATE level derives to a 0 threshold equal to the
-        # 0.0 coarsest floor; the ×1.1 relative bump is a no-op at 0, so the
-        # monotonicity guard must fall back to an absolute floor instead of
-        # raising. Pre-fix this raised ValueError (0*1.1 == 0, assert failed).
-        th = derive_min_pixel_sizes([10, 0, 20])
-        assert th[0] == 0.0
-        assert all(th[i] > th[i - 1] for i in range(1, len(th))), th
-        assert all(np.isfinite(t) for t in th)
-
-
-class TestExtentMinPixelSizes:
-    """The physically-anchored ``T·W/r`` (extent) method."""
-
-    def test_formula_and_floor(self) -> None:
-        # threshold_0 = 0 (coarsest floor); threshold_i = T·W/r_i. Coarsest
-        # extent (index 0) is unused. extents coarsest→finest (descending r).
-        th = extent_min_pixel_sizes([10.0, 5.0, 2.0], node_extent=100.0,
-                                    base_pixel_size=1.5)
-        assert th[0] == 0.0
-        assert th[1] == pytest.approx(1.5 * 100.0 / 5.0)  # 30
-        assert th[2] == pytest.approx(1.5 * 100.0 / 2.0)  # 75
-
-    def test_ascending_because_radius_descends(self) -> None:
-        th = extent_min_pixel_sizes([8.0, 4.0, 1.0], node_extent=50.0)
-        assert all(th[i] > th[i - 1] for i in range(1, len(th)))
-
-    def test_default_target_pixel_size(self) -> None:
-        th = extent_min_pixel_sizes([4.0, 2.0], node_extent=10.0)
-        assert th[1] == pytest.approx(DEFAULT_TARGET_PIXEL_SIZE * 10.0 / 2.0)
-
-    def test_smaller_element_switches_later(self) -> None:
-        # Halving the fine element's radius doubles its threshold (it stays the
-        # right LOD until twice as zoomed-in) — the physical-anchor property.
-        big = extent_min_pixel_sizes([10.0, 4.0], node_extent=100.0)[1]
-        small = extent_min_pixel_sizes([10.0, 2.0], node_extent=100.0)[1]
-        assert small == pytest.approx(2.0 * big)
-
-    def test_non_monotone_extents_guarded(self) -> None:
-        # A finer level with a *larger* radius (non-physical) still yields strictly
-        # ascending thresholds via the ×1.1 monotonicity guard.
-        th = extent_min_pixel_sizes([5.0, 6.0, 1.0], node_extent=100.0)
-        assert all(th[i] > th[i - 1] for i in range(1, len(th)))
-
-    def test_zero_extent_clamped(self) -> None:
-        # A degenerate zero-radius level must not divide-by-zero; it gets a huge
-        # (eps-clamped) finite threshold above the 0.0 floor.
-        th = extent_min_pixel_sizes([10.0, 0.0], node_extent=100.0)
-        assert np.isfinite(th[1]) and th[1] > th[0]
-
-    def test_zero_extent_intermediate_stays_monotonic(self) -> None:
-        # A zero-radius INTERMEDIATE level gets the huge eps-clamped threshold,
-        # which would leave the finer (smaller) threshold below it — the guard
-        # must then bump the finer one above it so the sequence is strictly
-        # ascending end-to-end (no out-of-order threshold the selector skips).
-        th = extent_min_pixel_sizes([5.0, 0.0, 2.0], node_extent=100.0)
-        assert th[0] == 0.0
-        assert all(th[i] > th[i - 1] for i in range(1, len(th))), th
-        assert all(np.isfinite(t) for t in th)
-
-    def test_node_extent_must_be_positive(self) -> None:
-        with pytest.raises(ValueError, match="node_extent"):
-            extent_min_pixel_sizes([10.0, 5.0], node_extent=0.0)
-
-    def test_single_level_is_just_the_floor(self) -> None:
-        # Boundary: one level → only the 0.0 coarsest floor (no finer threshold).
-        assert extent_min_pixel_sizes([3.0], node_extent=100.0) == [0.0]
-
-    def test_empty_extents_rejected(self) -> None:
-        with pytest.raises(ValueError, match="non-empty"):
-            extent_min_pixel_sizes([], node_extent=100.0)
-
-
-class TestLodThresholdsSelector:
-    """The ``lod_thresholds`` method selector + graceful fallback."""
-
-    def test_extent_is_default_uses_extents(self) -> None:
-        got = lod_thresholds(
-            element_counts=[100, 400],
-            element_extents=[8.0, 2.0],
-            node_extent=100.0,
-        )
-        assert got == pytest.approx(extent_min_pixel_sizes([8.0, 2.0], 100.0))
-
-    def test_count_method_reproduces_sqrt(self) -> None:
-        got = lod_thresholds("count", element_counts=[100, 400, 1600])
-        assert got == pytest.approx(derive_min_pixel_sizes([100, 400, 1600]))
-
-    def test_extent_falls_back_to_count_without_extents(self) -> None:
-        # No extents/node_extent available → transparently use the count method.
-        got = lod_thresholds("extent", element_counts=[100, 400])
-        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
-
-    def test_extent_falls_back_when_node_extent_missing(self) -> None:
-        got = lod_thresholds(
-            "extent", element_counts=[100, 400], element_extents=[8.0, 2.0],
-            node_extent=None,
-        )
-        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
-
-    def test_extent_falls_back_when_node_extent_nonpositive(self) -> None:
-        # Degenerate node (coincident centers → W=0): fall back to count, don't crash.
-        got = lod_thresholds(
-            "extent", element_counts=[100, 400], element_extents=[8.0, 2.0],
-            node_extent=0.0,
-        )
-        assert got == pytest.approx(derive_min_pixel_sizes([100, 400]))
-
-    def test_extent_falls_back_when_finer_extent_nonpositive(self) -> None:
-        # A finer level with a non-positive (degenerate/empty) extent must NOT
-        # poison the ladder with a spurious huge threshold — fall back to count.
-        # The coarsest extent (index 0) is unused, so a 0 there is fine.
-        got = lod_thresholds(
-            "extent", element_counts=[100, 400, 1600],
-            element_extents=[8.0, 0.0, 2.0], node_extent=100.0,
-        )
-        assert got == pytest.approx(derive_min_pixel_sizes([100, 400, 1600]))
-        # ...but a 0 coarsest extent is exempt (still uses extent for the rest).
-        ok = lod_thresholds(
-            "extent", element_counts=[100, 400], element_extents=[0.0, 2.0],
-            node_extent=100.0,
-        )
-        assert ok == pytest.approx(extent_min_pixel_sizes([0.0, 2.0], 100.0))
+        # A zero-count INTERMEDIATE level derives to a 0 fraction equal to the
+        # 0.0 coarsest floor; the downward nudge bottoms out at 0 there, so the
+        # guard lifts the zero entry onto a geometric ramp strictly between the
+        # 0.0 floor and the next positive threshold instead of raising.
+        cf = coverage_fractions([10, 0, 20])
+        assert cf[0] == 0.0
+        assert cf[-1] == 1.0
+        assert all(cf[i] > cf[i - 1] for i in range(1, len(cf))), cf
+        assert all(0.0 <= f <= 1.0 for f in cf), cf
+        assert all(np.isfinite(f) for f in cf)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -442,7 +370,7 @@ class TestDisplayTypeResolution:
             lod.add_points(
                 "pts",
                 np.zeros((3, 3), dtype=np.float32),
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
             )
             assert resolve_display_type(lod.children[0]) == "points"
 
@@ -463,14 +391,14 @@ class TestDisplayTypeResolution:
             lod.add_points(
                 "coarse",
                 np.zeros((3, 3), dtype=np.float32),
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
             )
             lod.add_gsplats(
                 "fine",
                 centers=_CENTERS,
                 amplitudes=1.0,
                 cholesky_factors=_CHOL,
-                min_pixel_size=100.0,
+                coverage_fraction=1.0,
             )
             # No homogeneity check fires — the group validates fine...
             validate_lod_group(lod)
@@ -532,7 +460,8 @@ class TestCoarsenDimsGsplats:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=_dims_4d())
             scene.add_gsplats_from_data(
-                "splats", _stacked_4d_gsplatdata(),
+                "splats",
+                _stacked_4d_gsplatdata(),
                 lod_group=dict(compression_factor=4, levels=3, device="cpu"),
             )
         store = zarr.open(str(out), mode="r")
@@ -543,9 +472,11 @@ class TestCoarsenDimsGsplats:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=_dims_4d())
             scene.add_gsplats_from_data(
-                "splats", _stacked_4d_gsplatdata(n_per=800),
-                lod_group=dict(compression_factor=4, levels=3, device="cpu",
-                               coarsen_dims="all"),
+                "splats",
+                _stacked_4d_gsplatdata(n_per=800),
+                lod_group=dict(
+                    compression_factor=4, levels=3, device="cpu", coarsen_dims="all"
+                ),
             )
         store = zarr.open(str(out), mode="r")
         assert _gsplat_coarse_purity(store, "splats") > 0.05
@@ -555,9 +486,11 @@ class TestCoarsenDimsGsplats:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=_dims_4d())
             scene.add_gsplats_from_data(
-                "splats", _stacked_4d_gsplatdata(),
-                lod_group=dict(compression_factor=4, levels=2, device="cpu",
-                               coarsen_dims=[1, 2, 3]),
+                "splats",
+                _stacked_4d_gsplatdata(),
+                lod_group=dict(
+                    compression_factor=4, levels=2, device="cpu", coarsen_dims=[1, 2, 3]
+                ),
             )
         store = zarr.open(str(out), mode="r")
         assert _gsplat_coarse_purity(store, "splats") < 1e-4
@@ -569,37 +502,51 @@ class TestResolveCoarsenDimsResolver:
     @staticmethod
     def _scene(dims):
         import types
+
         return types.SimpleNamespace(_dimensions=dims)
 
     def test_auto_default_groups_by_non_displayed(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
+
         r = resolve_coarsen_dims(self._scene(_dims_4d()), 4, None)
         assert r == (1, 2, 3)  # displayed dims; barrier = dim 0
 
     def test_pure_3d_returns_none(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
-        assert resolve_coarsen_dims(self._scene(Dimensions.default_3d()), 3, None) is None
+
+        assert (
+            resolve_coarsen_dims(self._scene(Dimensions.default_3d()), 3, None) is None
+        )
 
     def test_all_sentinel_returns_none(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
+
         assert resolve_coarsen_dims(self._scene(_dims_4d()), 4, "all") is None
 
     def test_names_resolve_when_aligned(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
-        assert resolve_coarsen_dims(self._scene(_dims_4d()), 4, ["x", "y", "z"]) == (1, 2, 3)
+
+        assert resolve_coarsen_dims(self._scene(_dims_4d()), 4, ["x", "y", "z"]) == (
+            1,
+            2,
+            3,
+        )
 
     def test_name_on_unaligned_raises(self):
         # n_cols (3) != scene ndim (4): a name could map to the wrong column.
         from luxar.core.group.lod.group import resolve_coarsen_dims
+
         with pytest.raises(ValueError, match="aligned"):
             resolve_coarsen_dims(self._scene(_dims_4d()), 3, ["x"])
 
     def test_display_sentinel_on_unaligned_raises(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
+
         with pytest.raises(ValueError, match="aligned"):
             resolve_coarsen_dims(self._scene(_dims_4d()), 3, "display")
 
     def test_out_of_range_index_raises(self):
         from luxar.core.group.lod.group import resolve_coarsen_dims
+
         with pytest.raises(ValueError, match="out of range"):
             resolve_coarsen_dims(self._scene(_dims_4d()), 4, [9])

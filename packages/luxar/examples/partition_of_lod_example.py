@@ -108,16 +108,16 @@ def main() -> None:
             # ``partition=False`` opts each LOD level out of the compiler's
             # auto-partition heuristic. Without it the ~24k-point ``lod_fine``
             # leaf exceeds ``auto_partition_max_elements`` and gets wrapped in
-            # a kind=partition group — which *drops* the ``min_pixel_size``
+            # a kind=partition group — which *drops* the ``coverage_fraction``
             # threshold, leaving both levels at 0 and breaking the
             # view-driven (auto) LOD selector. Keeping them as plain leaves
-            # preserves the coarse(0)→fine(200px) threshold ladder.
+            # preserves the coarse(0.0)→fine(1.0) threshold ladder.
             part.add_points(
                 "lod_coarse",
                 half[::8],
                 colors=half_colors[::8],
                 radii=0.10,
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
                 partition=False,
             )
             part.add_points(
@@ -125,7 +125,7 @@ def main() -> None:
                 half,
                 colors=half_colors,
                 radii=0.05,
-                min_pixel_size=200.0,
+                coverage_fraction=1.0,
                 partition=False,
             )
 

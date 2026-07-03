@@ -1,7 +1,6 @@
 """Tests for PR δ small refinements:
 
 - compiler-side ``display_type`` back-fill on kind=lod groups.
-- ``base_pixel_size`` knob (on ``add_lod_group`` AND ``lod_group=dict()``).
 - ``energy:`` breakpoints + ``salience_kind='energy'`` on Points + Lines.
 """
 
@@ -12,10 +11,6 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
-from luxar.core.group.lod.group import (
-    BASE_PIXEL_SIZE,
-    derive_min_pixel_sizes,
-)
 from luxar.core.group.lod.lines import (
     _compute_lines_energy,
     make_additive_lod_lines,
@@ -44,8 +39,8 @@ class TestDisplayTypeBackfill:
             # All children are points → expected display_type is 'points'.
             pos_coarse = np.random.RandomState(0).rand(50, 3).astype(np.float32)
             pos_fine = np.random.RandomState(1).rand(500, 3).astype(np.float32)
-            lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
-            lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
+            lod.add_points("level_0", pos_coarse, coverage_fraction=0.0)
+            lod.add_points("level_1", pos_fine, coverage_fraction=1.0)
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["hand_built"].attrs["display_type"] == "points"
@@ -56,7 +51,7 @@ class TestDisplayTypeBackfill:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("with_explicit", display_type="custom_marker")
             pos = np.random.RandomState(0).rand(50, 3).astype(np.float32)
-            lod.add_points("level_0", pos, min_pixel_size=0.0)
+            lod.add_points("level_0", pos, coverage_fraction=0.0)
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["with_explicit"].attrs["display_type"] == "custom_marker", (
@@ -80,8 +75,8 @@ class TestPositionBoundsBackfill:
             pos_coarse = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
             # Fine child: larger bbox extending the union.
             pos_fine = np.array([[-2.0, 0.0, 0.0], [5.0, 4.0, 3.0]], dtype=np.float32)
-            lod.add_points("level_0", pos_coarse, min_pixel_size=0.0)
-            lod.add_points("level_1", pos_fine, min_pixel_size=50.0)
+            lod.add_points("level_0", pos_coarse, coverage_fraction=0.0)
+            lod.add_points("level_1", pos_fine, coverage_fraction=1.0)
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         pb = store["ladder"].attrs["position_bounds"]
@@ -103,20 +98,20 @@ class TestPositionBoundsBackfill:
             outer.add_points(
                 "leaf_coarse",
                 np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32),
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
             )
             # Outer level 1: a NESTED kind=lod group whose leaves span
             # (-3..3, -3..3, -3..3).
-            inner = outer.add_lod_group("nested_fine", min_pixel_size=50.0)
+            inner = outer.add_lod_group("nested_fine", coverage_fraction=1.0)
             inner.add_points(
                 "deep_coarse",
                 np.array([[-3.0, -3.0, -3.0], [0.0, 0.0, 0.0]], dtype=np.float32),
-                min_pixel_size=0.0,
+                coverage_fraction=0.0,
             )
             inner.add_points(
                 "deep_fine",
                 np.array([[0.0, 0.0, 0.0], [3.0, 3.0, 3.0]], dtype=np.float32),
-                min_pixel_size=100.0,
+                coverage_fraction=1.0,
             )
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
@@ -141,53 +136,12 @@ class TestPositionBoundsBackfill:
                 },
             )
             pos = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
-            lod.add_points("level_0", pos, min_pixel_size=0.0)
+            lod.add_points("level_0", pos, coverage_fraction=0.0)
 
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         pb = store["with_explicit_pb"].attrs["position_bounds"]
         assert pb["min"] == [-100.0, -100.0, -100.0]
         assert pb["max"] == [100.0, 100.0, 100.0]
-
-
-# ────────────────────────────────────────────────────────────────────────
-# 2. base_pixel_size knob
-# ────────────────────────────────────────────────────────────────────────
-
-
-class TestBasePixelSizeKnob:
-    def test_derive_uses_default_when_unset(self):
-        # Default BASE_PIXEL_SIZE = 10.0; thresholds = [0, 10*sqrt(4)=20].
-        thresholds = derive_min_pixel_sizes([100, 400])
-        assert thresholds[0] == 0.0
-        assert thresholds[1] == pytest.approx(BASE_PIXEL_SIZE * 2.0)
-
-    def test_derive_uses_override(self):
-        thresholds = derive_min_pixel_sizes([100, 400], base_pixel_size=20.0)
-        # Override = 20 → thresholds = [0, 20*sqrt(4)=40].
-        assert thresholds[1] == pytest.approx(40.0)
-
-    def test_derive_rejects_non_positive(self):
-        with pytest.raises(ValueError, match="base_pixel_size"):
-            derive_min_pixel_sizes([100, 200], base_pixel_size=0.0)
-        with pytest.raises(ValueError, match="base_pixel_size"):
-            derive_min_pixel_sizes([100, 200], base_pixel_size=-5.0)
-
-    def test_add_lod_group_kwarg_stored_on_attrs(self, tmp_path):
-        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lod_group("custom_bps", base_pixel_size=25.0)
-        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
-        assert store["custom_bps"].attrs["base_pixel_size"] == 25.0
-
-    def test_add_lod_group_rejects_non_positive(self, tmp_path):
-        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="base_pixel_size"):
-                scene.add_lod_group("bad", base_pixel_size=0.0)
-
-    # Resolver semantics (None/dict/base_pixel_size/min_pixel_sizes/compute) are
-    # covered against real GSplatData in test_gsplats.py::
-    # TestResolveSubstitutiveAxisGsplats.
 
 
 # ────────────────────────────────────────────────────────────────────────

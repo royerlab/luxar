@@ -20,7 +20,7 @@ Three node types compose freely (and nest arbitrarily):
 The classes are intentionally small, pure, and immutable (frozen dataclasses) so
 they are trivially unit-testable in isolation. Per-node metadata (LOD provenance
 such as ``compression_factor`` / ``parent_method`` / ``level_index``, the
-view-driven ``min_pixel_size`` selector threshold, per-node ``stats``) lives in a
+view-driven ``coverage_fraction`` selector threshold, per-node ``stats``) lives in a
 free-form ``meta`` dict on each node — mirroring the zarr ``.zattrs`` a node
 carries on disk.
 
@@ -73,7 +73,7 @@ class GSplatLeaf:
         Free-form per-node metadata (the node's zarr ``.zattrs``). Recognised
         optional keys include ``compression_factor`` / ``parent_method`` /
         ``level_index`` (LOD provenance when this leaf is a substitutive level),
-        ``min_pixel_size`` (selector threshold when a child of a lod group),
+        ``coverage_fraction`` (selector threshold when a child of a lod group),
         and ``stats``.
     """
 
@@ -266,47 +266,6 @@ def center_bounds(node: GSplatNode) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     )
 
 
-def node_extent_diagonal(node: GSplatNode) -> Optional[float]:
-    """World bbox diagonal ``W`` of a subtree's centers (``None`` if empty).
-
-    This is the scale the viewer's pixel-size selector projects (the group's
-    bounding box), so it anchors the extent-based ``min_pixel_size`` thresholds
-    (see ``core.group.lod.group.extent_min_pixel_sizes``).
-    """
-    bounds = center_bounds(node)
-    if bounds is None:
-        return None
-    lo, hi = bounds
-    return float(np.linalg.norm(hi - lo))
-
-
-def level_percentile_radius(
-    sublods: "List[AdditiveSubLOD]",
-    percentile: float = 90.0,
-    anisotropy: bool = True,
-) -> float:
-    """``percentile``-th element radius over a level's splats (world units).
-
-    Concatenates the level's additive sub-LODs and takes the percentile of
-    ``principal_radii`` — the element-size summary that anchors extent-based LOD
-    switching. Returns ``0.0`` for an empty level (callers/guards handle it).
-    """
-    parts = [s.principal_radii(anisotropy) for s in sublods if s.n_splats]
-    if not parts:
-        return 0.0
-    return float(np.percentile(np.concatenate(parts), percentile))
-
-
-def node_percentile_radius(
-    node: GSplatNode,
-    percentile: float = 90.0,
-    anisotropy: bool = True,
-) -> float:
-    """``percentile``-th element radius over **all** splats in a subtree."""
-    sublods = [sub for leaf in iter_leaves(node) for sub in leaf.additive_sublods]
-    return level_percentile_radius(sublods, percentile, anisotropy)
-
-
 # ────────────────────────────────────────────────────────────────────────
 # Structure-preserving map + default-selection global statistics
 # ────────────────────────────────────────────────────────────────────────
@@ -347,13 +306,13 @@ def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
     """Rebuild the tree with ``key`` removed from **every** node's ``meta``.
 
     Unlike :func:`map_leaves` (which copies group ``meta`` verbatim), this scrubs
-    a key from leaves AND group nodes. Its use is dropping the extent-derived
-    ``min_pixel_size`` LOD-switch threshold after a geometry transform: a stale
-    threshold on a *group* node (a ``multiscale`` partition child, or a
+    a key from leaves AND group nodes. Its use is dropping the ``coverage_fraction``
+    LOD-switch threshold after a geometry transform so the writer re-derives it: a
+    stale threshold on a *group* node (a ``multiscale`` partition child, or a
     ``mosaic`` per-part lod group) is otherwise re-applied verbatim by the
-    serializer, so the viewer's coarse↔fine switch would fire at the wrong
-    on-screen size. With the key gone the writer re-derives it from the
-    transformed extents (the same single-sourced ``lod_thresholds`` derivation).
+    serializer. (Coverage fractions are count-ratios, hence invariant to
+    scale/rotate/translate — so this re-derives the same value; it is retained as a
+    safety net for transforms that also re-ladder and change per-level counts.)
     """
     new_meta = {k: v for k, v in node.meta.items() if k != key}
     if isinstance(node, GSplatLeaf):
@@ -463,7 +422,7 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
     The lightweight inverse of :func:`substitutive_levels_from_tree`: a single
     level → a bare :class:`GSplatLeaf`; multiple levels → a :class:`GSplatLodGroup`
     reversed to coarsest-first (matching disk). This is what ``GSplatData`` stores
-    as its ground-truth node on construction — cheap, with no ``min_pixel_size``
+    as its ground-truth node on construction — cheap, with no ``coverage_fraction``
     derivation (the view-driven thresholds are a serialize-time concern, stamped
     by :func:`tree_from_substitutive_levels` / re-derived by the writer).
     """
@@ -479,11 +438,6 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
 
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
-    *,
-    lod_method: str = "extent",
-    extent_percentile: float = 90.0,
-    extent_anisotropy: bool = True,
-    base_pixel_size: Optional[float] = None,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
@@ -497,54 +451,34 @@ def tree_from_substitutive_levels(
       serializer), a separate concept.
 
     Each child of a multi-level lod group is back-filled with a derived
-    ``min_pixel_size`` selector threshold, so a standalone substitutive
-    ``.gsplats.zarr`` selects levels correctly in the viewer rather than being
-    stuck at the finest level. ``lod_method`` (``"extent"`` default — the
-    physically-anchored ``T·W/r`` method, with ``extent_percentile`` /
-    ``extent_anisotropy`` tuning the per-level radius and ``base_pixel_size`` the
-    target-px anchor; or ``"count"`` for the legacy √N proxy) selects the
-    derivation — the same single-sourced one the scene path uses.
+    ``coverage_fraction`` selector threshold (``sqrt(N_i/N_finest)`` — the
+    viewport-relative fraction the viewer multiplies by the viewport diagonal), so
+    a standalone substitutive ``.gsplats.zarr`` selects levels correctly in the
+    viewer rather than being stuck at the finest level. This is the same
+    single-sourced :func:`~luxar.core.group.lod.group.coverage_fractions`
+    derivation the scene path uses.
 
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
     """
-    # Validate the method name eagerly: ``lod_thresholds`` treats any non-"extent"
-    # string as "count" (it falls back), so a typo like "Extent"/"sqrt" would
-    # SILENTLY pick the wrong derivation. Reject it here — the single user-facing
-    # chokepoint for substitutive gsplats (save / recipes / .tree all route through
-    # this). The CLI validates too; the #4 writers pass a hardcoded literal.
-    if lod_method not in ("extent", "count"):
-        raise ValueError(f"lod_method must be 'extent' or 'count', got {lod_method!r}")
     node = node_from_substitutive_levels(levels)
     if isinstance(node, GSplatLeaf):
         return node
 
-    # Back-fill per-child min_pixel_size. The derivation is single-sourced in
-    # core (coarsest child = 0.0, ascending); ``lod_thresholds`` falls back to the
-    # √N ``count`` method if extents/W are unavailable. Children, counts, extents,
-    # and thresholds are now all coarsest-first — a straight 1:1 mapping.
-    from luxar.core.group.lod.group import lod_thresholds
+    # Back-fill per-child coverage_fraction. The derivation is single-sourced in
+    # core (coarsest child = 0.0, finest = 1.0, ascending) and uses only per-level
+    # splat-count ratios. Children and counts are both coarsest-first — a straight
+    # 1:1 mapping.
+    from luxar.core.group.lod.group import coverage_fractions
 
     levels_coarsest_first = list(reversed(levels))
     counts_coarsest_first = [
         sum(sub.n_splats for sub in lvl.additive_sublods)
         for lvl in levels_coarsest_first
     ]
-    extents_coarsest_first = [
-        level_percentile_radius(
-            list(lvl.additive_sublods), extent_percentile, extent_anisotropy
-        )
-        for lvl in levels_coarsest_first
-    ]
-    thresholds_coarsest_first = lod_thresholds(
-        lod_method,  # type: ignore[arg-type]
-        element_counts=counts_coarsest_first,
-        element_extents=extents_coarsest_first,
-        node_extent=node_extent_diagonal(node),
-        base_pixel_size=base_pixel_size,
-    )
-    for leaf, threshold in zip(node.children, thresholds_coarsest_first):
-        leaf.meta.setdefault("min_pixel_size", threshold)
+    fractions_coarsest_first = coverage_fractions(counts_coarsest_first)
+    for leaf, fraction in zip(node.children, fractions_coarsest_first):
+        leaf.meta.setdefault("coverage_fraction", fraction)
 
     return node
 

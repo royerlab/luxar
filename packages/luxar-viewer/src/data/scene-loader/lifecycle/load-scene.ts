@@ -233,10 +233,12 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
 
   // A stale standalone .gsplats.zarr opened directly won't render correctly —
-  // surface a migrate hint rather than failing silently. v3.0 and v3.1 are both
-  // current (v3.1 splits the Cholesky factors into diag + offdiag); keep this in
+  // surface a migrate hint rather than failing silently. v3.0–v3.2 are all
+  // readable (v3.1 splits the Cholesky factors into diag + offdiag; v3.2
+  // renames the lod selector attrs to coverage_fraction — v3.0/3.1 stores with
+  // the legacy attrs are auto-adapted by load-lod-group-node); keep this in
   // sync with Python's SUPPORTED_FORMAT_VERSIONS (gsplats/io/save_gsplats.py).
-  const SUPPORTED_GSPLATS_FORMAT_VERSIONS = ['3.0', '3.1'];
+  const SUPPORTED_GSPLATS_FORMAT_VERSIONS = ['3.0', '3.1', '3.2'];
   const fmtType = (sceneAttrs as Record<string, unknown>)?.format_type;
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
   if (

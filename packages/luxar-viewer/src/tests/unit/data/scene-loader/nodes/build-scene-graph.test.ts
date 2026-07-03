@@ -306,7 +306,7 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
     const rootAttrs = {
       type: 'group',
       kind: 'lod',
-      selector: 'pixel_size',
+      selector: 'coverage',
       default_level: 1,
     } as unknown as ZarrSceneAttrs;
 
@@ -322,7 +322,7 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
     // Regression: `save_gsplats` writes a `fitting/` provenance group (raw
     // create_group, attrs = {timestamp}) as a sibling of the real child_<i>
     // levels. It has neither `type` nor `kind`, so it must be skipped — not
-    // adopted as a phantom LOD child (which would default to min_pixel_size=0,
+    // adopted as a phantom LOD child (which would default to coverage_fraction=0,
     // sort last, and break the ascending ladder + fire a bogus warning).
     enumerateStoreMock.mockResolvedValue([
       { path: '/child_0', kind: 'group' },
@@ -330,14 +330,14 @@ describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => 
       { path: '/fitting', kind: 'group' },
       { path: '/fitting/config', kind: 'group' },
     ]);
-    attrsByPath['/child_0'] = { type: 'gsplats', n_splats: 8, min_pixel_size: 0 };
-    attrsByPath['/child_1'] = { type: 'gsplats', n_splats: 100, min_pixel_size: 110.7 };
+    attrsByPath['/child_0'] = { type: 'gsplats', n_splats: 8, coverage_fraction: 0 };
+    attrsByPath['/child_1'] = { type: 'gsplats', n_splats: 100, coverage_fraction: 1.0 };
     attrsByPath['/fitting'] = { timestamp: '2026-06-30T02:57:42Z' }; // no type, no kind
     attrsByPath['/fitting/config'] = { iters: 8000 }; // nested sidecar — also skipped
     const rootAttrs = {
       type: 'group',
       kind: 'lod',
-      selector: 'pixel_size',
+      selector: 'coverage',
       default_level: 0,
     } as unknown as ZarrSceneAttrs;
 

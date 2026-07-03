@@ -30,11 +30,7 @@ def add_gsplats_as_lod_group_impl(
     *,
     name: str,
     result: "GSplatData",
-    explicit_min_pixel_sizes: Optional[List[float]],
-    base_pixel_size: Optional[float] = None,
-    lod_method: str = "extent",
-    extent_percentile: float = 90.0,
-    extent_anisotropy: bool = True,
+    explicit_coverage_fractions: Optional[List[float]],
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
@@ -50,7 +46,7 @@ def add_gsplats_as_lod_group_impl(
     land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
     (truncation_radius, extend_to_all, colormap) ride into each child.
     """
-    from ..lod.group import lod_thresholds
+    from ..lod.group import coverage_fractions
 
     # Substitutive convention: index 0 = finest, n-1 = coarsest. The
     # LOD group needs coarsest first.
@@ -59,58 +55,24 @@ def add_gsplats_as_lod_group_impl(
 
     # Per-level total splat count (sum across each level's additive
     # ladder) — used both for logging and for auto-deriving
-    # min_pixel_sizes when the user didn't supply them.
+    # coverage_fractions when the user didn't supply them.
     splat_counts: List[int] = [
         sum(sub.n_splats for sub in result.substitutive_levels[s].additive_sublods)
         for s in order
     ]
 
-    if explicit_min_pixel_sizes is not None:
-        if len(explicit_min_pixel_sizes) != n_sub:
+    if explicit_coverage_fractions is not None:
+        if len(explicit_coverage_fractions) != n_sub:
             raise ValueError(
-                f"min_pixel_sizes has {len(explicit_min_pixel_sizes)} "
+                f"coverage_fractions has {len(explicit_coverage_fractions)} "
                 f"entries but the lod_group has {n_sub} substitutive levels"
             )
-        min_pixel_sizes = list(explicit_min_pixel_sizes)
+        coverage_vals = list(explicit_coverage_fractions)
     else:
-        # Auto-derive (coarsest-first). Default to the physically-anchored
-        # ``extent`` method (W / r, anisotropy-aware p-percentile element
-        # radius per level); ``lod_thresholds`` falls back to the legacy √N
-        # ``count`` method if extents/W are unavailable.
-        level_radii = [
-            float(
-                np.percentile(
-                    result.at_substitutive(s).principal_radii(extent_anisotropy),
-                    extent_percentile,
-                )
-            )
-            for s in order
-        ]
-        # Node extent W = world bbox diagonal over the UNION of all levels'
-        # centers — matching the viewer's group bbox and the standalone writer's
-        # ``center_bounds`` (so scene and standalone thresholds stay identical).
-        mins, maxs = [], []
-        for s in order:
-            c = result.at_substitutive(s).centers
-            if c.shape[0] > 0:
-                mins.append(c.min(axis=0))
-                maxs.append(c.max(axis=0))
-        node_extent = (
-            float(
-                np.linalg.norm(
-                    np.max(maxs, axis=0) - np.min(mins, axis=0)
-                )
-            )
-            if mins
-            else None
-        )
-        min_pixel_sizes = lod_thresholds(
-            lod_method,  # type: ignore[arg-type]
-            element_counts=splat_counts,
-            element_extents=level_radii,
-            node_extent=node_extent,
-            base_pixel_size=base_pixel_size,
-        )
+        # Auto-derive (coarsest-first) as viewport-relative coverage fractions
+        # ``sqrt(N_i/N_finest)`` — count ratios only, so no per-level radius or
+        # world-extent is needed; the viewer anchors the finest at fills-screen.
+        coverage_vals = coverage_fractions(splat_counts)
 
     # Separate compositing attrs (go on the kind=lod Group) from
     # per-leaf gsplats attrs (go on each child). Anything not in the
@@ -122,33 +84,26 @@ def add_gsplats_as_lod_group_impl(
     # Keep it on each child so the user's intent survives.
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    # Defense in depth: ``add_gsplats_from_data`` rejects min_pixel_size
+    # Defense in depth: ``add_gsplats_from_data`` rejects coverage_fraction
     # at entry, but if this method is invoked through a different path
     # (e.g. internal recursion) we still need to strip it — the loop
     # below passes a derived value as an explicit kwarg, and a duplicate
     # in ``**child_attrs`` would raise TypeError.
-    child_attrs.pop("min_pixel_size", None)
+    child_attrs.pop("coverage_fraction", None)
 
     parent_node = parent or group
     # All children in this branch are gsplats leaves, so the user-facing
     # ``display_type`` is unambiguously "gsplats". Set it here so the
     # on-disk attrs are self-describing.
     lod_attrs.setdefault("display_type", "gsplats")
-    # default_level (the viewer's INITIAL level, before the pixel-size selector
+    # default_level (the viewer's INITIAL level, before the coverage selector
     # runs) is left at add_lod_group's default of 0 = the COARSEST child
     # (child_0). This is a progressive-load hint: the scene appears instantly at
     # low detail, then refines. It is intentionally decoupled from the data-model
     # default_substitutive (the finest level the accessors return) — defaulting
     # the viewer to the finest would eager-load every lod group at full
     # resolution and render "backwards" (matches gsplat_tree.write_gsplat_node).
-    # Persist the base_pixel_size override on the wrapper (when set)
-    # so downstream consumers can identify a non-default ladder
-    # without re-deriving from min_pixel_sizes.
-    lod_group_node = parent_node.add_lod_group(
-        name,
-        base_pixel_size=base_pixel_size,
-        **lod_attrs,
-    )
+    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
 
     aprint(
         f"Adding multi-resolution gsplats node '{name}' as kind=lod "
@@ -171,7 +126,7 @@ def add_gsplats_as_lod_group_impl(
             fill_sigma=fill_sigma,
             lod_group=None,
             additive_lod=None,
-            min_pixel_size=min_pixel_sizes[child_idx],
+            coverage_fraction=coverage_vals[child_idx],
             **child_attrs,
         )
 

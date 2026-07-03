@@ -176,8 +176,8 @@ def test_content_fit_parallel_jobs(tmp_path):
     assert _kind(out) == "GSplatPartition"
 
 
-def test_content_fit_recipe_additive_gives_partition_of_ladders(tmp_path):
-    """`fit --tiling content --recipe additive` → a kind=partition whose every
+def test_content_fit_recipe_stream_gives_partition_of_ladders(tmp_path):
+    """`fit --tiling content --recipe stream` → a kind=partition whose every
     box-part carries its own additive ladder (per-part LOD at fit time)."""
     from luxar.gsplats.tree import GSplatLeaf, iter_leaves
 
@@ -192,7 +192,7 @@ def test_content_fit_recipe_additive_gives_partition_of_ladders(tmp_path):
             *_CONTENT,
             *_CPU,
             "--recipe",
-            "additive",
+            "stream",
             "--n-lods",
             "2",
         ],
@@ -220,7 +220,7 @@ def test_content_fit_recipe_rejects_flat(tmp_path):
             *_CONTENT,
             *_CPU,
             "--recipe",
-            "additive",
+            "stream",
             "--flat",
         ],
     )

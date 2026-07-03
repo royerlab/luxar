@@ -103,8 +103,8 @@ export async function buildSceneGraph(
     // partition groups additionally carry `kind`; a raw `create_group` sidecar
     // has neither. Without this skip, a sidecar sibling of a standalone
     // `kind=lod` / `kind=partition` root is adopted as a phantom LOD/partition
-    // child — it has no `min_pixel_size` (the selector defaults it to 0) and no
-    // `child_index` (so it sorts last), corrupting the ascending `min_pixel_size`
+    // child — it has no `coverage_fraction` (the selector defaults it to 0) and no
+    // `child_index` (so it sorts last), corrupting the ascending `coverage_fraction`
     // ladder and firing a spurious "thresholds not strictly ascending" warning
     // that misblames the producer. Mark the subtree internal so any nested
     // metadata (e.g. `fitting/config`) is skipped too. (The `/overlays` skip

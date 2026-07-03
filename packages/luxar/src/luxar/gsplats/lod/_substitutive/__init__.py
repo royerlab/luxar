@@ -1,11 +1,13 @@
 """Private support subpackage for :mod:`luxar.gsplats.lod.substitutive`.
 
 The substitutive-LOD orchestrator (``substitutive.py``) delegates the
-three partition algorithms to sibling modules here:
+partition algorithms and the post-merge refinement to sibling modules here:
 
 - :mod:`.warm_start` — Morton (Z-order) space-filling-curve partition.
 - :mod:`.kmeans_lloyd` — vectorised cost-increment Lloyd refinement.
 - :mod:`.greedy` — bottom-up Runnalls hierarchical merge (lazy-heap).
+- :mod:`.refine` — L2 mixture-to-mixture refit of a merged level
+  (``refine="l2"``; trusted-checkpoint Adam on the closed-form mixture L²).
 
 Named with a leading underscore because a module ``substitutive.py`` and
 a package ``substitutive/`` cannot coexist in one directory in CPython;

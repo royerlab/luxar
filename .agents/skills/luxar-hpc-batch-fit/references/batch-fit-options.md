@@ -43,11 +43,13 @@ timepoint instead. Tuning: `--saturation-exponent` (0.44), `--saturation-cap`,
 | `--array-key` | array within the zarr store, e.g. `h2afva/fused` |
 
 ## Shared per-part LOD at merge time (baked into the merge job)
-`--merge-recipe` (`additive` → partitioned topology; `substitutive` → mosaic; default
+`--merge-recipe` (`stream` → tiles topology; `levels` → adaptive; default
 bare-leaf parts) + `--merge-n-lods`, `--merge-additive-method`, `--merge-breakpoints`,
 `--merge-compression-factor`, `--merge-levels`, `--merge-substitutive-method`,
-`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier),
-`--merge-lod-method`. `--channel-colors "#ff0080,#00ff00"` for per-channel merge.
+`--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier).
+`--channel-colors "#ff0080,#00ff00"` for per-channel merge. LOD switch thresholds
+are auto-derived (`coverage_fraction`, no knob — the `--merge-lod-method` flag
+has been removed).
 
 Every subcommand: `--dry-run` shows the plan without submitting/fitting.
 
@@ -103,11 +105,11 @@ Default = memory-safe `kind=partition` (one part per spatial tile, streamed).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--flat` | off | legacy single flat leaf (loads all tiles); mutually exclusive with `--recipe` |
-| `--recipe` | plan default | per-part LOD: `additive` (partitioned) / `substitutive` (mosaic) |
+| `--recipe` | plan default | per-part LOD: `stream` (tiles) / `levels` (adaptive) |
 | `--force` | off | re-merge even if outputs exist |
 | `--channel-colors` | manifest | override per-channel colors |
-| `--n-lods` / `--additive-method` / `--breakpoints` | — | [additive] knobs |
-| `-K`/`--compression-factor`, `-L`/`--levels`, `--substitutive-method`, `--coarsen-dims`, `--lod-method` | — | [substitutive] knobs |
+| `--n-lods` / `--additive-method` / `--breakpoints` | — | [stream] knobs |
+| `-K`/`--compression-factor`, `-L`/`--levels`, `--substitutive-method`, `--coarsen-dims` | — | [levels] knobs |
 
 NOTE: at the `merge` command the knobs are bare (`--n-lods`, `-K`, `-L`); the
 `--merge-*`-prefixed forms are only on `submit`/`run`.

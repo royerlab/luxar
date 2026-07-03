@@ -300,7 +300,7 @@ def batch_submit(
         "--merge-recipe",
         help=(
             "Per-part LOD recipe applied to each spatial tile-part by the merge "
-            "job: 'additive' (partitioned topology) or 'substitutive' (mosaic). "
+            "job: 'stream' (tiles topology) or 'levels' (adaptive). "
             "Default: bare-leaf parts. The merge sbatch script invokes "
             "`batch-fit merge --recipe <r>` with the knobs below."
         ),
@@ -315,14 +315,14 @@ def batch_submit(
     merge_additive_method: Optional[str] = typer.Option(
         None,
         "--merge-additive-method",
-        help="Additive ladder method for --merge-recipe additive "
+        help="Additive ladder method for --merge-recipe stream "
         "(auto (default) | greedy | self_energy).",
         rich_help_panel="Merge LOD",
     ),
     merge_breakpoints: Optional[str] = typer.Option(
         None,
         "--merge-breakpoints",
-        help="Additive ladder breakpoints for --merge-recipe additive "
+        help="Additive ladder breakpoints for --merge-recipe stream "
         "('equal-count' | 'stream:C' | 'counts:...' | 'energy:...').",
         rich_help_panel="Merge LOD",
     ),
@@ -330,7 +330,7 @@ def batch_submit(
         None,
         "--merge-target-ms",
         min=1.0,
-        help="[--merge-recipe additive] streaming sizing: derive 'stream:<c>' "
+        help="[--merge-recipe stream] streaming sizing: derive 'stream:<c>' "
         "breakpoints so each part's first additive chunk downloads in ~this "
         "many ms at --merge-bandwidth-mbps. Mutually exclusive with "
         "--merge-breakpoints.",
@@ -372,15 +372,9 @@ def batch_submit(
     merge_coarsen_dims: Optional[str] = typer.Option(
         None,
         "--merge-coarsen-dims",
-        help="Comma-separated center-column indices --merge-recipe substitutive "
+        help="Comma-separated center-column indices --merge-recipe levels "
         "may coarsen over (the rest stay hard barriers). Default: spatial dims "
         "only (the stacked-timepoint axis is a barrier).",
-        rich_help_panel="Merge LOD",
-    ),
-    merge_lod_method: Optional[str] = typer.Option(
-        None,
-        "--merge-lod-method",
-        help="LOD switch threshold for --merge-recipe substitutive (extent | count).",
         rich_help_panel="Merge LOD",
     ),
     # Dataset structure override
@@ -604,7 +598,6 @@ def batch_submit(
             levels=merge_levels,
             substitutive_method=merge_substitutive_method,
             coarsen_dims=merge_coarsen_dims,
-            lod_method=merge_lod_method,
         )
 
         # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
@@ -1147,8 +1140,8 @@ def batch_run(
     merge_recipe: Optional[str] = typer.Option(
         None,
         "--merge-recipe",
-        help="Per-part LOD recipe applied to each tile-part at merge: 'additive' "
-        "(partitioned) or 'substitutive' (mosaic). Default: bare-leaf parts.",
+        help="Per-part LOD recipe applied to each tile-part at merge: 'stream' "
+        "(tiles) or 'levels' (adaptive). Default: bare-leaf parts.",
         rich_help_panel="Merge LOD",
     ),
     merge_n_lods: Optional[int] = typer.Option(
@@ -1180,9 +1173,6 @@ def batch_run(
     ),
     merge_coarsen_dims: Optional[str] = typer.Option(
         None, "--merge-coarsen-dims", rich_help_panel="Merge LOD"
-    ),
-    merge_lod_method: Optional[str] = typer.Option(
-        None, "--merge-lod-method", rich_help_panel="Merge LOD"
     ),
     # Dataset structure / selection
     axes: Optional[str] = typer.Option(
@@ -1217,7 +1207,7 @@ def batch_run(
         luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256
 
         luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json \\
-            --gpus auto --merge-recipe additive --n-lods 4 -K...
+            --gpus auto --merge-recipe stream --n-lods 4 -K...
 
         luxar gsplat batch-fit run vol.zarr out/ --gpus cpu   # CPU fallback
     """
@@ -1310,7 +1300,6 @@ def batch_run(
             levels=merge_levels,
             substitutive_method=merge_substitutive_method,
             coarsen_dims=merge_coarsen_dims,
-            lod_method=merge_lod_method,
         )
 
         # Merge-recipe knobs (incl. --merge-target-ms sizing) are resolved
@@ -1721,8 +1710,8 @@ def batch_cancel_cmd(
 # composed topologies are reached via `gsplat flatten` → `gsplat lod`). These
 # mirror lod.py's ``_OPTION_TOKENS`` / ``_ALLOWED_TOKENS`` so the merge path
 # rejects — rather than silently ignores — a knob irrelevant to (or given
-# without) a recipe. ``--coarsen-dims`` / ``--lod-method`` belong to the
-# substitutive (mosaic) per-part lod group.
+# without) a recipe. ``--coarsen-dims`` belongs to the substitutive (mosaic)
+# per-part lod group.
 _MERGE_OPTION_TOKENS = {
     "--n-lods": "additive",
     "--additive-method": "additive",
@@ -1734,11 +1723,10 @@ _MERGE_OPTION_TOKENS = {
     "--levels": "substitutive",
     "--substitutive-method": "substitutive",
     "--coarsen-dims": "substitutive",
-    "--lod-method": "substitutive",
 }
 _MERGE_ALLOWED_TOKENS = {
-    "additive": frozenset({"additive"}),
-    "substitutive": frozenset({"substitutive"}),
+    "stream": frozenset({"additive"}),
+    "levels": frozenset({"substitutive"}),
 }
 
 
@@ -1752,7 +1740,6 @@ def _build_merge_recipe_params(
     levels: Optional[int] = None,
     substitutive_method: Optional[str] = None,
     coarsen_dims: Optional[str] = None,
-    lod_method: Optional[str] = None,
 ) -> "RecipeParams":
     """Build a ``RecipeParams`` for the per-part merge recipe.
 
@@ -1760,8 +1747,13 @@ def _build_merge_recipe_params(
     (``manifest.merge_recipe_args``, string-valued), then the ``RecipeParams``
     default. ``coarsen_dims`` is parsed from a comma string to a tuple of ints;
     leaving it unset lets the merge default it per part (spatial dims only). The
-    additive knobs (``additive_method`` / ``breakpoints`` / ``lod_method``) bring
+    additive knobs (``additive_method`` / ``breakpoints``) bring
     the merge recipe to parity with ``fit --recipe`` and ``gsplat lod``.
+
+    NOTE: the L2 refine knobs (``refine`` / ``refine_iters`` on ``RecipeParams``)
+    are deliberately NOT exposed at the merge yet — per-part refits across
+    hundreds of tiles need their own perf validation first; the RecipeParams
+    defaults ("none") keep the merge byte-identical to before.
     """
     from luxar.cli.lod import (
         _VALID_ADDITIVE_METHODS,
@@ -1800,13 +1792,6 @@ def _build_merge_recipe_params(
     bp = _resolve("breakpoints", breakpoints, str)
     if bp is not None:
         overrides["breakpoints"] = _parse_lod_breakpoints(bp)
-    lm = _resolve("lod-method", lod_method, str)
-    if lm is not None:
-        if lm not in ("extent", "count"):
-            raise typer.BadParameter(
-                f"--lod-method must be 'extent' or 'count'; got {lm!r}"
-            )
-        overrides["lod_method"] = lm
     cf = _resolve("compression-factor", compression_factor, int)
     if cf is not None:
         overrides["compression_factor"] = cf
@@ -1896,8 +1881,8 @@ def batch_merge_cmd(
         "--recipe",
         help=(
             "Per-part LOD recipe applied to each spatial tile-part as it streams: "
-            "'additive' (each part a prefix-sum ladder → partitioned topology) or "
-            "'substitutive' (each part its own coarse↔fine lod group → mosaic). "
+            "'stream' (each part a prefix-sum ladder → tiles topology) or "
+            "'levels' (each part its own coarse↔fine lod group → adaptive). "
             "Default: bare-leaf parts (no per-part LOD). Closes the tiled-data LOD "
             "gap without re-loading the whole volume. Falls back to the recipe "
             "recorded at plan time. Mutually exclusive with --flat."
@@ -1913,25 +1898,25 @@ def batch_merge_cmd(
         ),
     ),
     n_lods: Optional[int] = typer.Option(
-        None, "--n-lods", help="Additive ladder depth (additive recipe)."
+        None, "--n-lods", help="Additive ladder depth (stream recipe)."
     ),
     additive_method: Optional[str] = typer.Option(
         None,
         "--additive-method",
         help="Additive ladder method: auto (default) | greedy | self_energy "
-        "(additive recipe).",
+        "(stream recipe).",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
         "--breakpoints",
         help="Additive ladder breakpoints: 'equal-count' (default), 'stream:C', "
-        "'counts:...' or 'energy:...' (additive recipe).",
+        "'counts:...' or 'energy:...' (stream recipe).",
     ),
     target_ms: Optional[float] = typer.Option(
         None,
         "--target-ms",
         min=1.0,
-        help="[additive recipe] streaming sizing: derive 'stream:<c>' "
+        help="[stream recipe] streaming sizing: derive 'stream:<c>' "
         "breakpoints so each part's first additive chunk downloads in ~this "
         "many ms at --bandwidth-mbps. Mutually exclusive with --breakpoints.",
     ),
@@ -1952,7 +1937,7 @@ def batch_merge_cmd(
         None, "-K", "--compression-factor", help="Substitutive reduction factor."
     ),
     levels: Optional[int] = typer.Option(
-        None, "-L", "--levels", help="Substitutive level count (substitutive recipe)."
+        None, "-L", "--levels", help="Substitutive level count (levels recipe)."
     ),
     substitutive_method: Optional[str] = typer.Option(
         None, "--substitutive-method", help="Substitutive coarsening method."
@@ -1965,11 +1950,6 @@ def batch_merge_cmd(
             "merge over; the rest become hard barriers. Default: spatial dims only "
             "(stacked-timepoint axis is a barrier)."
         ),
-    ),
-    lod_method: Optional[str] = typer.Option(
-        None,
-        "--lod-method",
-        help="LOD switch threshold (substitutive recipe): extent (default) or count.",
     ),
 ) -> None:
     """Run the merge step for a completed batch job.
@@ -1992,9 +1972,9 @@ def batch_merge_cmd(
 
         luxar gsplat batch-fit merge output_dir/ --flat
 
-        luxar gsplat batch-fit merge output_dir/ --recipe additive --n-lods 6
+        luxar gsplat batch-fit merge output_dir/ --recipe stream --n-lods 6
 
-        luxar gsplat batch-fit merge output_dir/ --recipe substitutive -K 4 -L 3
+        luxar gsplat batch-fit merge output_dir/ --recipe levels -K 4 -L 3
 
         luxar gsplat batch-fit merge output_dir/ --no-recipe   # override a manifest recipe
 
@@ -2033,7 +2013,25 @@ def batch_merge_cmd(
         # NOTE: the uniform+per-part-LOD warning now fires inside
         # merge_batch_results (the library boundary), so every caller — this CLI,
         # the Slurm merge job, and any direct API use — gets it exactly once.
-        eff_recipe = None if (no_recipe or flat) else (recipe or manifest.merge_recipe)
+        from luxar.gsplats.lod.recipes import (
+            LEGACY_RECIPE_NAMES,
+            canonical_recipe_name,
+        )
+
+        if recipe in LEGACY_RECIPE_NAMES:
+            raise typer.BadParameter(
+                f"recipe {recipe!r} was renamed to "
+                f"{LEGACY_RECIPE_NAMES[recipe]!r}; use --recipe "
+                f"{LEGACY_RECIPE_NAMES[recipe]}."
+            )
+        # Manifests written before the rename carry legacy spellings —
+        # translate those silently (data compat, not CLI compat).
+        manifest_recipe = (
+            canonical_recipe_name(manifest.merge_recipe)
+            if manifest.merge_recipe
+            else None
+        )
+        eff_recipe = None if (no_recipe or flat) else (recipe or manifest_recipe)
 
         # Validate the effective recipe NAME before the knob-relevance check —
         # mirrors `gsplat lod`'s RECIPE_NAMES guard (cli/lod.py). Without this an
@@ -2057,12 +2055,12 @@ def batch_merge_cmd(
             forced = "--no-recipe" if no_recipe else "--flat"
             no_recipe_hint = (
                 f"{forced} forces a recipe-less (bare-leaf) merge — drop these "
-                f"knobs, or drop {forced} and pass --recipe additive|substitutive "
+                f"knobs, or drop {forced} and pass --recipe stream|levels "
                 f"for per-part LOD."
             )
         else:
             no_recipe_hint = (
-                "Pass --recipe additive|substitutive (without one the merge "
+                "Pass --recipe stream|levels (without one the merge "
                 "writes bare-leaf parts, so these knobs would be ignored)."
             )
         reject_irrelevant_recipe_options(
@@ -2078,7 +2076,6 @@ def batch_merge_cmd(
                 "--levels": levels,
                 "--substitutive-method": substitutive_method,
                 "--coarsen-dims": coarsen_dims,
-                "--lod-method": lod_method,
             },
             _MERGE_OPTION_TOKENS,
             _MERGE_ALLOWED_TOKENS,
@@ -2134,7 +2131,6 @@ def batch_merge_cmd(
                 levels=levels,
                 substitutive_method=substitutive_method,
                 coarsen_dims=coarsen_dims,
-                lod_method=lod_method,
             )
 
         with asection(f"Merging batch results: {output_dir}"):

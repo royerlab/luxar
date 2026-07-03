@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 3.1.0
-**Last Updated**: 2026-06-28
+**Version**: 3.2.0
+**Last Updated**: 2026-07-03
 
 ## Purpose
 
@@ -99,14 +99,19 @@ The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N
 
 ## Format Versions
 
-The current format is **v3.1**, a node tree (§ "On-disk grammar"). It differs
+The current format is **v3.2**, a node tree (§ "On-disk grammar"). It differs
+from **v3.1** only in the `kind=lod` selector attrs: the group `selector` value
+`pixel_size` and the per-child `min_pixel_size` (absolute pixels) are renamed
+to `coverage` / `coverage_fraction` (viewport-relative `sqrt(N_i/N_finest)` in
+`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`). **v3.1** differs
 from **v3.0** only in storing the Cholesky factors as two arrays
 (`cholesky_factors_diag` + `cholesky_factors_offdiag`) instead of a single packed
-`cholesky_factors`; v3.0 files are still read transparently. Earlier versions
+`cholesky_factors`. v3.0 / v3.1 files are still read transparently (the web
+viewer auto-adapts the legacy lod selector attrs, with a warning); upgrade them
+with ``luxar gsplat migrate-format`` — which also converts the earlier versions
 (v1.0 single-LOD; v1.1 additive multi-LOD; the pre-v2.0 substitutive directory +
-manifest.json; and the interim v2.0 `substitutive_<s>/additive_<a>/` matrix) are
-no longer read by the runtime — convert legacy files with
-``luxar gsplat migrate-format <input> <output.gsplats.zarr>``.
+manifest.json; and the interim v2.0 `substitutive_<s>/additive_<a>/` matrix)
+that are no longer read by the runtime.
 
 A v3.x file is one of (each freely nestable):
 
@@ -114,12 +119,12 @@ A v3.x file is one of (each freely nestable):
 |------------------|--------------------------------------------------------------------|
 | single leaf      | `centers`/`amplitudes`/`cholesky_factors_diag`(+`_offdiag`)(/`colors`) at the root |
 | additive ladder  | `additive_<i>/` sub-LOD subgroups + `n_additive_sublods`           |
-| substitutive lod | `type=group, kind=lod`; `child_<i>/` coarsest→finest + `min_pixel_size` |
+| substitutive lod | `type=group, kind=lod`; `child_<i>/` coarsest→finest + `coverage_fraction` |
 | full pyramid     | a `kind=lod` group whose `child_<i>/` are additive-ladder leaves   |
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.1"`, `format_type:"gsplats_zarr"`, `timestamp`, and
+`format_version:"3.2"`, `format_type:"gsplats_zarr"`, `timestamp`, and
 `luxar_gsplats_version`. The historical `[N, M_i]` matrix is just the "full
 pyramid" shape expressed as a node tree.
 
@@ -137,7 +142,7 @@ fitted.gsplats.zarr/
 │                     # ordering_min/max/bits, chunk_size, amplitude_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, gamma, intensity, offset, blending_mode,
-│                     # format_version: "3.1", format_type: "gsplats_zarr",
+│                     # format_version: "3.2", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
 ├── centers                   # (N, d) float32, spatially ordered
@@ -149,6 +154,8 @@ fitted.gsplats.zarr/
 ├── fitting/          # Optimization info (optional)
 │   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …
 │   └── config/.zattrs  # Fitter hyperparameters
+├── pipeline/         # Reduction/topology stats (optional)
+│   └── .zattrs       # lod_kind, method, compression_factor, coverage_inflation, refine, …
 └── provenance/       # Image lineage (optional)
     └── .zattrs       # source_file, shape, dtype, normalization
 ```
@@ -158,7 +165,7 @@ fitted.gsplats.zarr/
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
-│                     # position_bounds, format_version: "3.1", …
+│                     # position_bounds, format_version: "3.2", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
@@ -175,17 +182,17 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "lod", selector: "pixel_size",
+├── .zattrs           # type: "group", kind: "lod", selector: "coverage",
 │                     # default_level: <int>, display_type: "gsplats",
-│                     # position_bounds, format_version: "3.1", …
+│                     # position_bounds, format_version: "3.2", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
-│   ├── .zattrs       # min_pixel_size: 0.0, compression_factor, level_index, …
+│   ├── .zattrs       # coverage_fraction: 0.0, compression_factor, level_index, …
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
-│   ├── .zattrs       # min_pixel_size: <threshold>, …
+│   ├── .zattrs       # coverage_fraction: <0..1>, …
 │   └── …
-└── child_{N-1}/      # Finest child (highest min_pixel_size threshold)
+└── child_{N-1}/      # Finest child (coverage_fraction: 1.0)
     └── …
 ```
 
@@ -196,16 +203,24 @@ with no reversal. The on-disk `default_level` is `0` (the coarsest child) — th
 viewer's progressive-load hint (render cheap first, then refine). This is a
 distinct concept from the data-model default (the finest level the `.centers`
 accessor returns); they are deliberately decoupled, so the writer stamps
-`default_level: 0` independently. Each child carries `min_pixel_size`; the
-coarsest child conventionally has `min_pixel_size: 0`. Any node shape (bare leaf,
-additive ladder) is valid as a child.
+`default_level: 0` independently. Each child carries `coverage_fraction`, a
+dimensionless value in `[0, 1]` computed as `sqrt(N_i / N_finest)` (`N_i` =
+level i's total splat count) and strictly ascending coarsest→finest; the
+coarsest child is always `0.0` and the finest is always `1.0`. Being a count
+ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
+time axis inflates every level's count equally and cancels out). At render
+time the viewer multiplies `coverage_fraction` by the viewport diagonal (times
+a fill-factor constant) to get a pixel threshold, so the finest level activates
+when the object fills the screen and coarser levels step in as it shrinks —
+identically on any monitor/viewport. Any node shape (bare leaf, additive
+ladder) is valid as a child.
 
 ### Shape 4 — spatial partition (`kind=partition` group)
 
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
-│                     # max_elements: <int>, position_bounds, format_version: "3.1", …
+│                     # max_elements: <int>, position_bounds, format_version: "3.2", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
 │   ├── .zattrs       # position_bounds (per-part bounds for frustum culling)
 │   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
@@ -245,7 +260,7 @@ the self-identifying file header (stamped by `write_gsplats_tree`):
 
 ```json
 {
-  "format_version": "3.1",
+  "format_version": "3.2",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "X.Y.Z",
@@ -331,6 +346,33 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 `fitter_name` and custom config. Readers should:
 1. Always read common fields from `fitting/.zattrs`
 2. Only interpret `fitting/config/.zattrs` if they recognize the `fitter_name`
+
+### Pipeline Group Attributes (Optional)
+
+The `pipeline/` group records the reduction/topology provenance of a dataset —
+every top-level `stats` key that is neither a fitting metric, the fitter
+config, provenance, nor a header key stamped by the loader. Written by the
+same single-sourced splitter (`split_fitting_info`) all writers use, so a
+substitutive/pyramid/recipe build round-trips its parameters:
+
+```json
+{
+  "lod_kind": "substitutive",
+  "method": "kmeans_lloyd",
+  "compression_factor": 4,
+  "coverage_inflation": 3.0,
+  "refine": "l2",
+  "refine_iters": 120,
+  "coarsen_dims": null,
+  "n_substitutive_levels": 4
+}
+```
+
+Values are JSON-attr-safe (numpy scalars coerced; non-serializable values
+dropped at write). Readers merge these into `stats` on
+`load(include_stats=True)`; on key collision the `fitting/` and header keys
+take precedence. Per-node `level_stats` attrs (e.g. a substitutive level's
+`refine_stats` block) may likewise carry JSON-safe **nested dicts**.
 
 ### Provenance Group Attributes (Optional)
 
@@ -749,7 +791,7 @@ one into a scene is a graft of that subtree.
 **Purpose**: Persist fitted results as independent, directly-loadable files.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
-self-identifying header (`format_version:"3.1"`, `format_type:"gsplats_zarr"`,
+self-identifying header (`format_version:"3.2"`, `format_type:"gsplats_zarr"`,
 `timestamp`, `luxar_gsplats_version`) and optional `fitting/` / `provenance/`.
 
 **Direct viewer load**: `?src=<file>.gsplats.zarr` loads the file as a scene
@@ -875,6 +917,17 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **v3.2.0** (2026-07-03): `kind=lod` selector attrs renamed to coverage semantics
+  - Group `selector: "pixel_size"` → `"coverage"`; per-child `min_pixel_size`
+    (absolute pixel threshold) → `coverage_fraction` (viewport-relative
+    `sqrt(N_i/N_finest)` in `[0, 1]`, strictly ascending coarsest→finest,
+    finest `1.0`) — device-independent LOD switching.
+  - v3.0 / v3.1 stores that still carry the legacy attrs remain loadable: the
+    Python re-save derives fresh `coverage_fraction` thresholds, and the web
+    viewer auto-adapts the legacy ladder (normalizing `min_pixel_size` by its
+    finest value) with a warning. `luxar gsplat migrate-format` upgrades such
+    stores in one step (detected as `v3.x-lod-pixel-size`).
 
 - **v3.1.0** (2026-06-29): Differential Cholesky quantization (on top of the split)
   - The split diagonal / off-diagonal arrays are now **differentially quantized**

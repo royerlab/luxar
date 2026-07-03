@@ -662,7 +662,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
-    from ..lod.group import lod_thresholds
+    from ..lod.group import coverage_fractions
 
     # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
     # interpolates the scalar per bead then maps it through the LUT (matching the
@@ -721,10 +721,21 @@ def add_lines_substitutive_lod_wrapper_impl(
             "synthesise coarse levels; writing a flat Lines node."
         )
         return add_lines_impl(
-            group, name=name, vertices=vert_arr, widths=widths, colors=colors,
-            sharpness=sharpness, scalars=scalars, labels=labels,
-            image_labels=image_labels, indices=indices, line_type=line_type,
-            parent=parent, extend_to_all=extend_to_all, partition=False, **attrs,
+            group,
+            name=name,
+            vertices=vert_arr,
+            widths=widths,
+            colors=colors,
+            sharpness=sharpness,
+            scalars=scalars,
+            labels=labels,
+            image_labels=image_labels,
+            indices=indices,
+            line_type=line_type,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            partition=False,
+            **attrs,
         )
 
     coarse_first = list(reversed(coarse))  # coarsest first
@@ -734,43 +745,23 @@ def add_lines_substitutive_lod_wrapper_impl(
     # gives the real Lines node the highest switch threshold (a vertex count is
     # a different, much smaller scale and would collapse the top thresholds).
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
-    explicit = spec.get("min_pixel_sizes")
+    explicit = spec.get("coverage_fractions")
     if explicit is not None:
         if len(explicit) != len(counts):
             raise ValueError(
-                f"min_pixel_sizes has {len(explicit)} entries but the LOD ladder "
+                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
                 f"has {len(counts)} levels ({len(coarse_first)} gsplat + 1 lines)"
             )
-        min_pixel_sizes = list(explicit)
+        coverage_vals = list(explicit)
     else:
-        # Per-level element radius (world units), coarsest→finest. The finest
-        # level is the lines rendered as ``lifted`` beads (gsplats), so use its
-        # principal_radii — consistent with the coarse gsplat levels.
-        pct = float(spec["extent_percentile"])
-        aniso = bool(spec["extent_anisotropy"])
-        extents = [
-            float(np.percentile(c.principal_radii(aniso), pct)) for c in coarse_first
-        ] + [float(np.percentile(lifted.principal_radii(aniso), pct))]
-        # Node extent W from the FINEST level's vertices. Equal by construction
-        # to the gsplat path's union-over-levels bbox (coarse representatives are
-        # convex/weighted-mean combinations of the finest centers → inside the
-        # finest bbox; union == finest, verified 0.0 difference). Cheaper and
-        # keeps the three geometries self-calibrated together — see points.py.
-        lo, hi = vert_arr.min(axis=0), vert_arr.max(axis=0)
-        node_extent = (
-            float(np.linalg.norm(hi - lo)) if vert_arr.shape[0] else None
-        )
-        min_pixel_sizes = lod_thresholds(
-            str(spec["lod_method"]),  # type: ignore[arg-type]
-            element_counts=counts,
-            element_extents=extents,
-            node_extent=node_extent,
-            base_pixel_size=spec.get("base_pixel_size"),
-        )
+        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
+        # the viewer anchors the finest at fills-screen). No per-level radius or
+        # world-extent needed.
+        coverage_vals = coverage_fractions(counts)
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    child_attrs.pop("min_pixel_size", None)
+    child_attrs.pop("coverage_fraction", None)
     lod_attrs.setdefault("display_type", "lines")  # finest child is lines
     # Coarse gsplat children carry baked per-splat colours, so they must NOT also
     # receive `colormap` (gsplats reject colors+colormap); it stays on the finest
@@ -782,9 +773,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + lines "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
     )
-    lod_group_node = parent_node.add_lod_group(
-        name, base_pixel_size=spec.get("base_pixel_size"), **lod_attrs
-    )
+    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
 
     # Coarse gsplat children (coarsest first). vert_arr already dim_order-applied.
     for idx, lvl_data in enumerate(coarse_first):
@@ -796,7 +785,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             fill=None,
             lod_group=None,
             additive_lod=None,
-            min_pixel_size=min_pixel_sizes[idx],
+            coverage_fraction=coverage_vals[idx],
             **gsplat_child_attrs,
         )
 
@@ -818,7 +807,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         additive_lod=None,
         substitutive_lod=None,
         partition=False,
-        min_pixel_size=min_pixel_sizes[-1],
+        coverage_fraction=coverage_vals[-1],
         **child_attrs,
     )
 

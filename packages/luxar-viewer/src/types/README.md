@@ -435,17 +435,17 @@ Two `Group` node variants carry a `kind` discriminant and dedicated metadata/gua
 
 ### LOD Groups (`lod-group.ts`)
 
-A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime based on the projected bbox diagonal in pixels and each child's `min_pixel_size` threshold. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
+A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime based on the projected bbox diagonal in pixels and each child's `coverage_fraction` threshold — a dimensionless, viewport-relative fraction in `[0, 1]` that the viewer multiplies by the current viewport diagonal to get the pixel comparison. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
 
 ```typescript
 import { type LODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
 
 // The loader matches the shape inline (attrs.type === 'group' && attrs.kind === 'lod');
-// attrs.selector is 'pixel_size'; attrs.display_type is the user-facing label;
+// attrs.selector is 'coverage'; attrs.display_type is the user-facing label;
 // attrs.default_level seeds the manual-override widget (0-based, coarsest-first).
 ```
 
-- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'pixel_size', display_type?, default_level?, ... }`. Each child carries a `min_pixel_size` threshold (a `number`), strictly monotonic increasing coarsest→finest; the selector picks the finest child whose threshold is satisfied.
+- **`LODGroupMetadata`** -- `{ type: 'group', kind: 'lod', selector: 'coverage', display_type?, default_level?, ... }`. Each child carries a `coverage_fraction` threshold (a `number` in `[0, 1]`), strictly monotonic increasing coarsest→finest (coarsest 0.0, finest 1.0); the selector picks the finest child whose threshold is satisfied.
 - **`LODGroupSelectorMode`** -- runtime selector state: `'auto'` (view-driven, the default) or `{ lockLevel: number }` (user-locked child index, 0-based coarsest→finest).
 
 ### Partition Groups (`partition-group.ts`)

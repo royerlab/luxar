@@ -218,8 +218,7 @@ class _SplatArrayMixin:
     def principal_radii(self, anisotropy: bool = True) -> np.ndarray:
         """Per-splat element radius (world units) at the truncation boundary.
 
-        This is the extent that governs on-screen resolvability for LOD switching
-        (see ``core.group.lod.group.extent_min_pixel_sizes``): the Gaussian is
+        Used by ``gsplat filter`` (eccentricity / volume). The Gaussian is
         truncated at ``truncation_radius`` sigmas, so the radius is
         ``truncation_radius * semi_axis``.
 
@@ -433,7 +432,7 @@ class GSplatData(_SplatArrayMixin):
 
         if _node is not None:
             # Internal: store a pre-built matrix-shaped node verbatim (preserves
-            # authored meta such as min_pixel_size — e.g. straight off disk).
+            # authored meta such as coverage_fraction — e.g. straight off disk).
             self._node: "GSplatNode" = _node
         elif substitutive_levels is not None:
             # 2-D construction: full substitutive × additive matrix (finest-first).
@@ -496,9 +495,7 @@ class GSplatData(_SplatArrayMixin):
             self.centers = np.concatenate(
                 [lod.centers for lod in finest_sublods], axis=0
             )
-            self.amplitudes = np.concatenate(
-                [lod.amplitudes for lod in finest_sublods]
-            )
+            self.amplitudes = np.concatenate([lod.amplitudes for lod in finest_sublods])
             self.cholesky_factors = np.concatenate(
                 [lod.cholesky_factors for lod in finest_sublods], axis=0
             )
@@ -754,7 +751,6 @@ class GSplatData(_SplatArrayMixin):
             stats=dict(self.stats),
         )
 
-
     # ── Node-tree bridge (v3.0 unified representation) ──────
 
     @property
@@ -767,7 +763,7 @@ class GSplatData(_SplatArrayMixin):
         :class:`~luxar.gsplats.tree.GSplatLeaf` (one substitutive level) or a
         :class:`~luxar.gsplats.tree.GSplatLodGroup` of leaves (multiple levels,
         coarsest first). Per-level provenance rides in each leaf's ``meta``. The
-        view-driven ``min_pixel_size`` thresholds are derived at serialize time
+        view-driven ``coverage_fraction`` thresholds are derived at serialize time
         (see :meth:`save` / the writer), not stored here.
         """
         return self._node
@@ -795,7 +791,7 @@ class GSplatData(_SplatArrayMixin):
                 "equivalent — consume the tree directly)"
             )
         # Store the node verbatim as the ground truth — preserves its authored
-        # meta (e.g. min_pixel_size straight off disk) and avoids a needless
+        # meta (e.g. coverage_fraction straight off disk) and avoids a needless
         # matrix round-trip. The matrix views derive finest-first on access.
         return cls(_node=node, stats=stats)
 
@@ -1895,10 +1891,6 @@ class GSplatData(_SplatArrayMixin):
         compress: Optional[Literal["zip", "tar.gz"]] = None,
         compressor: Any = _USE_DEFAULT_COMPRESSOR,
         zip_deflate: bool = False,
-        lod_method: str = "extent",
-        extent_percentile: float = 90.0,
-        extent_anisotropy: bool = True,
-        base_pixel_size: Optional[float] = None,
     ) -> None:
         """Save splats to .gsplats.zarr format.
 
@@ -1912,12 +1904,12 @@ class GSplatData(_SplatArrayMixin):
             compress: Optional compression format ("zip" or "tar.gz"). Creates compressed archive.
             zip_deflate: Use DEFLATE compression for the outer zip (default: STORED).
                 Useful when metadata overhead matters, e.g. for Git LFS storage.
-            lod_method / extent_percentile / extent_anisotropy / base_pixel_size:
-                LOD switching-threshold knobs for a multi-substitutive dataset (the
-                per-level ``min_pixel_size`` of the kind=lod group). ``lod_method``
-                ="extent" (default) anchors the switch in element size (``T·W/r``);
-                "count" is the legacy √N proxy. Inert for a single-level dataset.
-                See ``core.group.lod.group.lod_thresholds``.
+
+        For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
+        switch thresholds (``sqrt(N_i/N_finest)``) are derived automatically — the
+        viewer anchors the finest at fills-screen via the live viewport, so there
+        is no per-dataset threshold knob. See
+        ``core.group.lod.group.coverage_fractions``.
 
         Colors are written via the shared COLOR helper, which auto-detects SDR vs
         HDR (values > 1) — there is no explicit ``color_mode`` knob.
@@ -1942,27 +1934,22 @@ class GSplatData(_SplatArrayMixin):
         if compressor is _USE_DEFAULT_COMPRESSOR:
             compressor = DEFAULT_COMP
 
-        # Extract fitting/provenance groups from stats (single-sourced helper).
-        fitting_info, fitting_config, provenance_info = split_fitting_info(
-            self.stats,
-            include_fitting_info=include_fitting_info,
-            include_provenance=include_provenance,
+        # Extract fitting/provenance/pipeline groups from stats (single-sourced).
+        fitting_info, fitting_config, provenance_info, pipeline_info = (
+            split_fitting_info(
+                self.stats,
+                include_fitting_info=include_fitting_info,
+                include_provenance=include_provenance,
+            )
         )
 
         # One authoring path: serialize this dataset's node tree to v3.0 via the
         # shared walker (the same machinery the scene compiler uses for leaves).
-        # Build the tree with the chosen LOD-threshold knobs (multi-substitutive
-        # → a kind=lod group whose per-level min_pixel_size is derived here); a
-        # single level is a bare leaf and the knobs are inert.
+        # Multi-substitutive → a kind=lod group whose per-level coverage_fraction is
+        # derived here (sqrt(N_i/N_finest)); a single level is a bare leaf.
         from luxar.gsplats.tree import tree_from_substitutive_levels
 
-        tree = tree_from_substitutive_levels(
-            self.substitutive_levels,
-            lod_method=lod_method,
-            extent_percentile=extent_percentile,
-            extent_anisotropy=extent_anisotropy,
-            base_pixel_size=base_pixel_size,
-        )
+        tree = tree_from_substitutive_levels(self.substitutive_levels)
         write_gsplats_tree(
             path,
             tree,
@@ -1971,6 +1958,7 @@ class GSplatData(_SplatArrayMixin):
             fitting_info=fitting_info,
             fitting_config=fitting_config,
             provenance_info=provenance_info,
+            pipeline_info=pipeline_info,
             description=description,
             compress=compress,
             compressor=compressor,

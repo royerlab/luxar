@@ -386,16 +386,16 @@ substitutive × additive matrix).
    luxar gsplat cal volume.tiff cal.json --device cuda
    luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 
-   # additive — a streaming prefix ladder
-   luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe additive --n-lods 4
+   # stream — a streaming prefix ladder
+   luxar gsplat lod fitted.gsplats.zarr scene.gsplats.zarr --recipe stream --n-lods 4
 
-   # partitioned / multiscale — the large-data topologies
-   luxar gsplat lod fitted.gsplats.zarr part.gsplats.zarr --recipe partitioned --max-elements 250000
-   luxar gsplat lod fitted.gsplats.zarr ms.gsplats.zarr --recipe multiscale --compression-factor 8
+   # tiles / overview — the large-data topologies
+   luxar gsplat lod fitted.gsplats.zarr part.gsplats.zarr --recipe tiles --max-elements 250000
+   luxar gsplat lod fitted.gsplats.zarr ms.gsplats.zarr --recipe overview --compression-factor 8
 
-   # substitutive / pyramid primitives
-   luxar gsplat lod fitted.gsplats.zarr substitutive.gsplats.zarr --recipe substitutive -L 3 -K 4
-   luxar gsplat lod fitted.gsplats.zarr pyramid.gsplats.zarr --recipe pyramid -K 4 -L 3 --n-lods 4
+   # levels — synthesised representative levels
+   luxar gsplat lod fitted.gsplats.zarr levels.gsplats.zarr --recipe levels -L 3 -K 4
+   luxar gsplat lod fitted.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
 Programmatically:
 

@@ -658,9 +658,9 @@ def flatten_dataset(
     partition (or partitioned/mosaic topology) is merged across all parts.
 
     Examples:
-        # Tiled batch-fit merge → flat → multiscale LOD
+        # Tiled batch-fit merge → flat → overview LOD
         luxar gsplat flatten merged.gsplats.zarr flat.gsplats.zarr
-        luxar gsplat lod flat.gsplats.zarr out.gsplats.zarr --recipe multiscale
+        luxar gsplat lod flat.gsplats.zarr out.gsplats.zarr --recipe overview
     """
     try:
         from luxar.gsplats.gsplat_data import GSplatData
@@ -792,10 +792,10 @@ def additive_dataset(
     """Give every leaf of a gsplat tree an additive (streaming) LOD ladder.
 
     Walks the tree structure-preservingly — substitutive ``kind=lod`` levels,
-    ``kind=partition`` parts, mosaic/multiscale groups all keep their shape —
+    ``kind=partition`` parts, adaptive/overview groups all keep their shape —
     and rebuilds each leaf with an additive prefix-sum ladder, WITHOUT
     recomputing the (expensive, GPU-built) substitutive/partition structure.
-    The per-leaf counterpart of ``gsplat lod --recipe additive`` (which needs
+    The per-leaf counterpart of ``gsplat lod --recipe stream`` (which needs
     a flat input), and the inverse companion of ``gsplat flatten``.
 
     Breakpoints are sized per leaf: ``--target-ms``/``--bandwidth-mbps`` derive
@@ -884,7 +884,7 @@ def additive_dataset(
             # Explicit counts: are clamped PER LEAF below (parts/levels differ
             # in N), but the spec must still fit the dataset as a whole — a
             # largest count exceeding the union N is a typo and aborts loudly
-            # (mirrors a direct whole-dataset `lod --recipe additive` build).
+            # (mirrors a direct whole-dataset `lod --recipe stream` build).
             try:
                 validate_counts_breakpoints(bp, total_stored)
             except ValueError as e:
@@ -938,7 +938,7 @@ def additive_dataset(
                     # (lod_n_lods/lod_cutpoints/lod_breakpoints_kind) — a blind
                     # `meta=dict(leaf.meta)` would restore the SOURCE leaf's
                     # stale ladder stats when re-laddering. Source-only keys
-                    # (e.g. a stamped `min_pixel_size`) are preserved;
+                    # (e.g. a stamped `coverage_fraction`) are preserved;
                     # per-key, `stats` merges so source-only stat entries
                     # survive but ladder keys take the fresh values.
                     merged = {**leaf.meta, **new_leaf.meta}
@@ -962,8 +962,8 @@ def additive_dataset(
                         shutil.rmtree(output_path)
                     else:
                         output_path.unlink()
-                fitting_info, fitting_config, provenance_info = split_fitting_info(
-                    stats or {}, include_fitting_info=True
+                fitting_info, fitting_config, provenance_info, pipeline_info = (
+                    split_fitting_info(stats or {}, include_fitting_info=True)
                 )
                 write_gsplats_tree(
                     output_path,
@@ -973,6 +973,7 @@ def additive_dataset(
                     fitting_info=fitting_info,
                     fitting_config=fitting_config,
                     provenance_info=provenance_info,
+                    pipeline_info=pipeline_info,
                 )
                 aprint(
                     f"  Saved laddered tree: {output_path} "
@@ -1214,7 +1215,10 @@ def transform_dataset(
 
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
-        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.io.save_gsplats import (
+            split_fitting_info,
+            write_gsplats_tree,
+        )
         from luxar.gsplats.tree import (
             amplitude_weighted_centroid,
             center_bounds,
@@ -1355,7 +1359,7 @@ def transform_dataset(
                     def _fn(leaf: "GSplatLeaf") -> "GSplatNode":
                         # GSplatData.transform/translate/... rebuild a fresh leaf with
                         # empty meta; restore the source leaf's provenance verbatim.
-                        # A stale extent-derived min_pixel_size is scrubbed AFTER all
+                        # The coverage_fraction threshold is scrubbed AFTER all
                         # transforms (from leaf AND group nodes) — see below.
                         new_leaf = op(GSplatData.from_tree(leaf)).tree
                         return replace(new_leaf, meta=dict(leaf.meta))
@@ -1408,12 +1412,14 @@ def transform_dataset(
                             node = map_leaves(
                                 node, _leaf_op(lambda gd: gd.scale_intensity(factor))
                             )
-                # A geometry transform (scale/rotate/translate/center) invalidates
-                # the extent-derived min_pixel_size LOD-switch threshold on EVERY
-                # node — leaves AND group nodes (a multiscale partition child, a
-                # mosaic per-part lod group). Scrub it from the whole tree so the
-                # writer re-derives it from the transformed extents; intensity-only
-                # transforms leave it intact (the extents are unchanged).
+                # Scrub the coverage_fraction LOD-switch threshold from EVERY node
+                # (leaves AND group nodes — a multiscale partition child, a mosaic
+                # per-part lod group) after a geometry transform so the writer
+                # re-derives it. coverage_fraction is a per-level COUNT ratio, hence
+                # invariant to scale/rotate/translate/center — so this re-derives the
+                # identical value; it is kept as a safety net for transforms that also
+                # re-ladder and change per-level counts. Intensity-only transforms
+                # leave it intact regardless.
                 geometry_changed = (
                     scale_matrix is not None
                     or rot_matrix is not None
@@ -1423,7 +1429,7 @@ def transform_dataset(
                 if geometry_changed:
                     from luxar.gsplats.tree import without_meta_key
 
-                    node = without_meta_key(node, "min_pixel_size")
+                    node = without_meta_key(node, "coverage_fraction")
                 result_node = node
 
             # Summary
@@ -1441,7 +1447,9 @@ def transform_dataset(
             # Save (color SDR/HDR is auto-detected by the writer). The flat path
             # keeps GSplatData.save (carries fitting provenance, unchanged); the
             # tree path uses the v3.0 tree writer so a partition stays a partition
-            # on disk.
+            # on disk — threading the loaded stats through split_fitting_info so
+            # the fitting/ / provenance/ / pipeline/ groups round-trip exactly
+            # like the flat path (they used to be silently stripped here).
             with asection(f"Saving to {output_path.name}"):
                 if matrix_shaped:
                     data.save(
@@ -1451,11 +1459,18 @@ def transform_dataset(
                         compress=compress,
                     )
                 else:
+                    fitting_info, fitting_config, provenance_info, pipeline_info = (
+                        split_fitting_info(stats or {}, include_fitting_info=True)
+                    )
                     write_gsplats_tree(
                         output_path,
                         result_node,
                         encoding_mode=encoding_mode_obj,
                         compress=compress,
+                        fitting_info=fitting_info,
+                        fitting_config=fitting_config,
+                        provenance_info=provenance_info,
+                        pipeline_info=pipeline_info,
                     )
                 aprint(f"Saved: {output_path}")
 

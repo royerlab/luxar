@@ -205,14 +205,14 @@ def test_grafted_lod_uses_coarsest_default_level():
         assert g["child_0"].attrs["n_splats"] == 10
 
 
-def test_grafted_multiscale_stamps_min_pixel_size_on_partition_child():
+def test_grafted_multiscale_stamps_coverage_fraction_on_partition_child():
     """Grafting a ``multiscale`` recipe (kind=lod over a kind=partition fine
-    branch) must stamp the per-child ``min_pixel_size`` selector threshold on the
+    branch) must stamp the per-child ``coverage_fraction`` selector threshold on the
     PARTITION child — not only on the coarse leaf. Without it the viewer has no
     threshold to gate the fine branch on, so the lod can never switch off it and
     is stuck rendering the fine partition ("multiscale stuck at level 1" bug).
 
-    Regression: ``graft_gsplat_node`` popped min_pixel_size for all non-leaf
+    Regression: ``graft_gsplat_node`` popped coverage_fraction for all non-leaf
     nodes but only re-applied it to the lod/partition WRAPPER for leaves; the
     partition wrapper got None. The standalone writer always stamped it, so the
     bug only bit the scene-graft path (add_gsplats_from_file / gsplat convert)."""
@@ -231,7 +231,7 @@ def test_grafted_multiscale_stamps_min_pixel_size_on_partition_child():
     )
     ms = build_recipe(
         data,
-        "multiscale",
+        "overview",
         RecipeParams(max_elements=120, compression_factor=4, n_lods=3, device="cpu"),
     )
     assert isinstance(ms, GSplatLodGroup)
@@ -243,7 +243,7 @@ def test_grafted_multiscale_stamps_min_pixel_size_on_partition_child():
         # the graft has to match).
         std_g = zarr.open_group(str(std), mode="r")
         assert std_g["child_1"].attrs["kind"] == "partition"
-        assert std_g["child_1"].attrs["min_pixel_size"] is not None
+        assert std_g["child_1"].attrs["coverage_fraction"] is not None
 
         scene_path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(scene_path) as c:
@@ -255,17 +255,17 @@ def test_grafted_multiscale_stamps_min_pixel_size_on_partition_child():
         # child_1 = fine partition branch, which MUST carry a positive threshold.
         # (A gsplats leaf writes no ``kind`` attr; only group nodes do.)
         assert g["child_0"].attrs.get("kind", "leaf") == "leaf"
-        assert g["child_0"].attrs["min_pixel_size"] == 0.0
+        assert g["child_0"].attrs["coverage_fraction"] == 0.0
         assert g["child_1"].attrs["kind"] == "partition"
-        fine_mps = g["child_1"].attrs["min_pixel_size"]
-        assert fine_mps is not None, "partition child lost its min_pixel_size"
-        # thresholds must be strictly ascending coarsest -> finest for the
+        fine_cov = g["child_1"].attrs["coverage_fraction"]
+        assert fine_cov is not None, "partition child lost its coverage_fraction"
+        # fractions must be strictly ascending coarsest -> finest for the
         # selector to switch (0 -> positive).
-        assert fine_mps > g["child_0"].attrs["min_pixel_size"]
-        # the graft must match the standalone writer's threshold exactly.
-        assert fine_mps == std_g["child_1"].attrs["min_pixel_size"]
-        # the threshold rides on the partition WRAPPER, not its parts.
-        assert "min_pixel_size" not in g["child_1"]["part_0"].attrs
+        assert fine_cov > g["child_0"].attrs["coverage_fraction"]
+        # the graft must match the standalone writer's fraction exactly.
+        assert fine_cov == std_g["child_1"].attrs["coverage_fraction"]
+        # the fraction rides on the partition WRAPPER, not its parts.
+        assert "coverage_fraction" not in g["child_1"]["part_0"].attrs
 
 
 def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():

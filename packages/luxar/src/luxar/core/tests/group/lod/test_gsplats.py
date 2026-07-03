@@ -6,7 +6,7 @@ Covers ``resolve_substitutive_axis_gsplats`` (the ``lod_group=`` kwarg) and
 ``resolve_additive_axis_lines`` (tested in ``test_points.py`` / ``test_lines.py``).
 
 The geometry-agnostic kind=lod ``Group`` machinery (builder, validation,
-``derive_min_pixel_sizes``, display-type resolution) is exercised in
+``coverage_fractions``, display-type resolution) is exercised in
 ``test_lod_group.py``. End-to-end ``add_gsplats_from_data(lod_group=...)``
 round-trips live in ``luxar.core.tests.group.test_group``.
 """
@@ -57,57 +57,51 @@ def pyramid() -> GSplatData:
 
 class TestResolveSubstitutiveAxisGsplats:
     def test_none_is_passthrough(self, flat) -> None:
-        data, mps, bps, opts = resolve_substitutive_axis_gsplats(flat, None)
+        data, cov = resolve_substitutive_axis_gsplats(flat, None)
         assert data is flat
-        assert mps is None
-        assert bps is None
-        # extent knobs default: physically-anchored, p90, anisotropy-aware.
-        assert opts == {
-            "lod_method": "extent",
-            "extent_percentile": 90.0,
-            "extent_anisotropy": True,
-        }
+        assert cov is None
 
     def test_true_requires_multi_substitutive(self, flat) -> None:
         with pytest.raises(ValueError, match="n_substitutive"):
             resolve_substitutive_axis_gsplats(flat, True)
 
     def test_true_passes_pyramid_through(self, pyramid) -> None:
-        data, mps, bps, _ = resolve_substitutive_axis_gsplats(pyramid, True)
+        data, cov = resolve_substitutive_axis_gsplats(pyramid, True)
         assert data.n_substitutive == pyramid.n_substitutive
-        assert mps is None and bps is None
+        assert cov is None
 
     def test_false_collapses_to_finest(self, pyramid) -> None:
         assert pyramid.n_substitutive > 1
-        data, _, _, _ = resolve_substitutive_axis_gsplats(pyramid, False)
+        data, _ = resolve_substitutive_axis_gsplats(pyramid, False)
         assert data.n_substitutive == 1
 
     def test_false_single_level_noop(self, flat) -> None:
-        data, _, _, _ = resolve_substitutive_axis_gsplats(flat, False)
+        data, _ = resolve_substitutive_axis_gsplats(flat, False)
         assert data is flat
 
-    def test_dict_explicit_min_pixel_sizes(self, pyramid) -> None:
-        data, mps, bps, _ = resolve_substitutive_axis_gsplats(
-            pyramid, {"min_pixel_sizes": [0.0, 10.0, 50.0]}
+    def test_dict_explicit_coverage_fractions(self, pyramid) -> None:
+        data, cov = resolve_substitutive_axis_gsplats(
+            pyramid, {"coverage_fractions": [0.0, 0.2, 1.0]}
         )
-        assert mps == [0.0, 10.0, 50.0]
-        assert bps is None
+        assert cov == [0.0, 0.2, 1.0]
 
-    def test_dict_non_monotonic_min_pixel_sizes_raises(self, pyramid) -> None:
+    def test_dict_non_monotonic_coverage_fractions_raises(self, pyramid) -> None:
         with pytest.raises(ValueError, match="strictly increasing"):
             resolve_substitutive_axis_gsplats(
-                pyramid, {"min_pixel_sizes": [0.0, 50.0, 10.0]}
+                pyramid, {"coverage_fractions": [0.0, 0.5, 0.1]}
             )
 
-    def test_dict_base_pixel_size(self, pyramid) -> None:
-        _, _, bps, _ = resolve_substitutive_axis_gsplats(
-            pyramid, {"base_pixel_size": 25.0}
-        )
-        assert bps == 25.0
+    def test_dict_coverage_fractions_out_of_range_raises(self, pyramid) -> None:
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            resolve_substitutive_axis_gsplats(
+                pyramid, {"coverage_fractions": [0.0, 2.0]}
+            )
 
-    def test_dict_base_pixel_size_non_positive_raises(self, pyramid) -> None:
-        with pytest.raises(ValueError, match="positive"):
-            resolve_substitutive_axis_gsplats(pyramid, {"base_pixel_size": 0.0})
+    def test_dict_empty_coverage_fractions_raises_clean_error(self, pyramid) -> None:
+        # Empty explicit list → actionable ValueError, not an IndexError from the
+        # [0]/[-1] range check (regression: deep-double-check).
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_substitutive_axis_gsplats(pyramid, {"coverage_fractions": []})
 
     def test_dict_stored_pyramid_rejects_compute_kwargs(self, pyramid) -> None:
         # Compute kwargs on an already-built pyramid (without recompute) must
@@ -116,7 +110,7 @@ class TestResolveSubstitutiveAxisGsplats:
             resolve_substitutive_axis_gsplats(pyramid, {"levels": 2})
 
     def test_dict_computes_on_single_level(self, flat) -> None:
-        data, _, _, _ = resolve_substitutive_axis_gsplats(
+        data, _ = resolve_substitutive_axis_gsplats(
             flat, {"levels": 2, "device": "cpu"}
         )
         assert data.n_substitutive >= 2

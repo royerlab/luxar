@@ -211,9 +211,9 @@ def test_tiled_parallel_matches_sequential(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
-def test_tiled_recipe_additive_gives_partition_of_ladders(tmp_path: Path) -> None:
-    """`fit --tiling uniform --recipe additive` → a kind=partition whose parts
-    each carry their own additive ladder (the 'partitioned' topology), built at
+def test_tiled_recipe_stream_gives_partition_of_ladders(tmp_path: Path) -> None:
+    """`fit --tiling uniform --recipe stream` → a kind=partition whose parts
+    each carry their own additive ladder (the 'tiles' topology), built at
     fit time without a separate `gsplat lod` pass."""
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
     from luxar.gsplats.tree import GSplatLeaf, iter_leaves
@@ -237,7 +237,7 @@ def test_tiled_recipe_additive_gives_partition_of_ladders(tmp_path: Path) -> Non
             "-j",
             "2",
             "--recipe",
-            "additive",
+            "stream",
             "--n-lods",
             "2",
             "--seeds",
@@ -277,7 +277,7 @@ def test_recipe_rejects_flat(tmp_path: Path) -> None:
             "--tile-size",
             "24",
             "--recipe",
-            "additive",
+            "stream",
             "--flat",
             "--device",
             "cpu",
@@ -304,7 +304,7 @@ def test_recipe_rejects_tiling_none(tmp_path: Path) -> None:
             "--tiling",
             "none",
             "--recipe",
-            "additive",
+            "stream",
             "--device",
             "cpu",
         ],
@@ -316,14 +316,14 @@ def test_recipe_rejects_tiling_none(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
-    """--recipe additive must reject substitutive-only knobs (and vice-versa) —
+    """--recipe stream must reject substitutive-only knobs (and vice-versa) —
     mirroring `gsplat lod`, which errors on irrelevant options rather than
     silently dropping them. No fit is performed (validation fails first)."""
     vol = tmp_path / "vol.npy"
     _make_volume(vol)
     out = tmp_path / "x.gsplats.zarr"
 
-    # additive recipe + a substitutive-only knob → rejected
+    # stream recipe + a substitutive-only knob → rejected
     res = runner.invoke(
         app,
         [
@@ -336,7 +336,7 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
             "--tile-size",
             "24",
             "--recipe",
-            "additive",
+            "stream",
             "--compression-factor",
             "8",
             "--device",
@@ -360,7 +360,7 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
             "--tile-size",
             "24",
             "--recipe",
-            "substitutive",
+            "levels",
             "--n-lods",
             "5",
             "--device",
@@ -393,7 +393,7 @@ def test_recipe_short_flags_parse(tmp_path: Path) -> None:
             "--overlap",
             "4",
             "-r",
-            "additive",
+            "stream",
             "-K",
             "8",
             "--device",

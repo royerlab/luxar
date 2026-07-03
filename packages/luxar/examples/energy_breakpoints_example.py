@@ -16,8 +16,9 @@ Demonstrates the LOD refinements landed in PR #321:
    the LOD level captures: L0 holds the elements that together carry
    ≥50% of total energy, L1 → 90%, L2 → 99%, L3 → the long tail.
 
-3. **``base_pixel_size=``** — tune the default 10-px LOD-switching
-   threshold on ``add_lod_group`` and on ``lod_group=dict()``.
+3. **``coverage_fraction=``** — a hand-built ``add_lod_group`` where each
+   child sets its own viewport-relative switch threshold (0.0 coarsest →
+   1.0 finest); the finest child shows when the object fills the screen.
 
 4. **Compiler-side ``display_type`` back-fill** — explicit-builder
    lod_groups without an authored ``display_type`` get one filled in
@@ -35,8 +36,8 @@ Educational value:
   rather than count.
 - Compare against a sibling layer using the default size-only salience:
   the largest elements paint first regardless of brightness.
-- Tweak ``base_pixel_size=`` in code and re-run to see how the LOD
-  ladder's switching thresholds change.
+- Tweak the per-child ``coverage_fraction=`` values in code and re-run to
+  see how the LOD ladder's switching thresholds change.
 
 PR δ (#321) — LOD refinements + energy breakpoints.
 """
@@ -129,21 +130,21 @@ def main() -> None:
             additive_lod=dict(method="salience"),  # salience_kind='size'
         )
 
-        # === 3. Hand-built lod_group with a custom base_pixel_size ===
-        # The default 10-px LOD-switching threshold is too eager for
-        # very small radii; bumping base_pixel_size raises the bar so
-        # the finer level only kicks in when we're zoomed in further.
-        # Also exercises the display_type back-fill: we never set
-        # `display_type=`, but the layers panel still reads "points"
-        # because the compiler fills it from the finest child.
-        custom = scene.add_lod_group("custom_lod", base_pixel_size=30.0, layer=True)
+        # === 3. Hand-built lod_group with explicit coverage_fraction thresholds ===
+        # Each child sets its own viewport-relative switch threshold: the coarse
+        # subset is the always-eligible floor (0.0) and the fine level only takes
+        # over as the object approaches filling the screen (1.0). Also exercises
+        # the display_type back-fill: we never set `display_type=`, but the layers
+        # panel still reads "points" because the compiler fills it from the finest
+        # child.
+        custom = scene.add_lod_group("custom_lod", layer=True)
         # Coarse subset = every 16th point.
         custom.add_points(
             "lod_coarse",
             positions[::16],
             colors=colors[::16],
             radii=radii[::16] * 1.5,
-            min_pixel_size=0.0,
+            coverage_fraction=0.0,
         )
         # Fine = everything.
         custom.add_points(
@@ -151,7 +152,7 @@ def main() -> None:
             positions,
             colors=colors,
             radii=radii,
-            min_pixel_size=120.0,
+            coverage_fraction=1.0,
         )
 
         add_explainer(
@@ -167,7 +168,7 @@ def main() -> None:
                 "On 'energy_ordered' the bright coloured stars paint first, then dust fills in.",
                 "'size_ordered' paints largest-first regardless of colour.",
                 "'custom_lod' reports type 'points' (display_type back-fill).",
-                "Higher base_pixel_size on custom_lod keeps the coarse subset visible longer.",
+                "custom_lod's fine level (coverage_fraction=1.0) shows only near fills-screen.",
             ],
             observe_label="Look for",
         )
@@ -176,7 +177,7 @@ def main() -> None:
             "Created three points layers:\n"
             "  - energy_ordered: salience_kind='energy' + energy: breakpoints\n"
             "  - size_ordered: default salience (size only)\n"
-            "  - custom_lod: 2-level kind=lod with base_pixel_size=30 + "
+            "  - custom_lod: 2-level kind=lod with explicit coverage_fraction + "
             "no authored display_type"
         )
 
@@ -190,8 +191,8 @@ def main() -> None:
         "  → 'size_ordered' paints big-first regardless of color.\n"
         "  → 'custom_lod' should report type 'points' on its badge —\n"
         "     proof of the compiler-side display_type back-fill.\n"
-        "  → 'custom_lod's base_pixel_size attr = 30 lifts the switch\n"
-        "     threshold; zoom to see the coarse subset persist longer."
+        "  → 'custom_lod's fine level (coverage_fraction=1.0) only shows\n"
+        "     near fills-screen; zoom out to see the coarse subset take over."
     )
 
 

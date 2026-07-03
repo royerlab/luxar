@@ -34,11 +34,19 @@ def _segments(n_seg, seed=0):
 def _build(tmp_path, *, n_seg=1500, line_type="segments", levels=2, widths=0.8, **kw):
     out = tmp_path / "t.luxar.zarr"
     verts = _segments(n_seg)
-    colors = np.random.default_rng(1).uniform(0, 1, (verts.shape[0], 3)).astype(np.float32)
+    colors = (
+        np.random.default_rng(1).uniform(0, 1, (verts.shape[0], 3)).astype(np.float32)
+    )
     with LuxarZarrCompiler(out) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_lines("curves", verts, widths, colors=colors, line_type=line_type,
-                        substitutive_lod=dict(levels=levels, device="cpu", seed=0, **kw))
+        scene.add_lines(
+            "curves",
+            verts,
+            widths,
+            colors=colors,
+            line_type=line_type,
+            substitutive_lod=dict(levels=levels, device="cpu", seed=0, **kw),
+        )
     return zarr.open(str(out), mode="r")["curves"], verts.shape[0]
 
 
@@ -47,23 +55,25 @@ class TestResolveSubstitutiveAxisLines:
         assert resolve_substitutive_axis_lines(None) is None
         assert resolve_substitutive_axis_lines(False) is None
         r = resolve_substitutive_axis_lines(True)
-        assert r["compression_factor"] == 4 and r["levels"] == 3 and r["method"] == "auto"
-        assert resolve_substitutive_axis_lines(dict(K=8, n_lods=2))["compression_factor"] == 8
+        assert (
+            r["compression_factor"] == 4 and r["levels"] == 3 and r["method"] == "auto"
+        )
+        assert (
+            resolve_substitutive_axis_lines(dict(K=8, n_lods=2))["compression_factor"]
+            == 8
+        )
 
     def test_unknown_key_mentions_lines(self) -> None:
         with pytest.raises(ValueError, match="Lines"):
             resolve_substitutive_axis_lines(dict(bogus=1))
 
-    def test_non_ascending_min_pixel_sizes_raises(self) -> None:
+    def test_non_ascending_coverage_fractions_raises(self) -> None:
         with pytest.raises(ValueError, match="strictly increasing"):
-            resolve_substitutive_axis_lines(dict(min_pixel_sizes=[0.0, 50.0, 10.0]))
+            resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 0.5, 0.1]))
 
-    def test_base_pixel_size(self) -> None:
-        assert resolve_substitutive_axis_lines(dict(base_pixel_size=25.0))[
-            "base_pixel_size"
-        ] == 25.0
-        with pytest.raises(ValueError, match="base_pixel_size"):
-            resolve_substitutive_axis_lines(dict(base_pixel_size=0.0))
+    def test_coverage_fractions_out_of_range_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 2.0]))
 
 
 class TestAddLinesSubstitutiveLod:
@@ -71,7 +81,7 @@ class TestAddLinesSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
-        assert grp.attrs["selector"] == "pixel_size"
+        assert grp.attrs["selector"] == "coverage"
         assert grp.attrs["default_level"] == 0
 
     def test_finest_is_lines_coarse_are_gsplats(self, tmp_path) -> None:
@@ -82,11 +92,12 @@ class TestAddLinesSubstitutiveLod:
         assert types[:2] == ["gsplats", "gsplats"]
         assert types[2] == "lines"
 
-    def test_min_pixel_size_monotone_coarsest_zero(self, tmp_path) -> None:
+    def test_coverage_fraction_monotone_coarsest_zero(self, tmp_path) -> None:
         grp, _ = _build(tmp_path, levels=2)
-        mps = [float(grp[f"child_{i}"].attrs["min_pixel_size"]) for i in range(3)]
-        assert mps[0] == 0.0
-        assert all(mps[i] < mps[i + 1] for i in range(len(mps) - 1))
+        cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(3)]
+        assert cf[0] == 0.0
+        assert cf[-1] == 1.0
+        assert all(cf[i] < cf[i + 1] for i in range(len(cf) - 1))
 
     def test_finest_carries_all_vertices(self, tmp_path) -> None:
         grp, n_verts = _build(tmp_path, levels=2)
@@ -112,8 +123,14 @@ class TestSubstitutiveLinesGuards:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="mutually exclusive"):
-                scene.add_lines("c", verts, 1.0, line_type="segments",
-                                additive_lod=True, substitutive_lod=True)
+                scene.add_lines(
+                    "c",
+                    verts,
+                    1.0,
+                    line_type="segments",
+                    additive_lod=True,
+                    substitutive_lod=True,
+                )
 
     def test_mutually_exclusive_with_partition(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
@@ -121,18 +138,32 @@ class TestSubstitutiveLinesGuards:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="partition.*substitutive_lod"):
-                scene.add_lines("c", verts, 1.0, line_type="segments",
-                                partition=True, substitutive_lod=True)
+                scene.add_lines(
+                    "c",
+                    verts,
+                    1.0,
+                    line_type="segments",
+                    partition=True,
+                    substitutive_lod=True,
+                )
 
     def test_scalars_plus_colormap_bakes_colors(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts = _segments(1500)
-        scalars = np.random.default_rng(0).uniform(0, 1, verts.shape[0]).astype(np.float32)
+        scalars = (
+            np.random.default_rng(0).uniform(0, 1, verts.shape[0]).astype(np.float32)
+        )
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines("c", verts, 0.8, scalars=scalars, colormap="viridis",
-                            line_type="segments",
-                            substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_lines(
+                "c",
+                verts,
+                0.8,
+                scalars=scalars,
+                colormap="viridis",
+                line_type="segments",
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["c"]
         assert grp.attrs["kind"] == "lod" and grp.attrs["display_type"] == "lines"
         assert grp["child_0"].attrs["type"] == "gsplats"
@@ -144,12 +175,20 @@ class TestSubstitutiveLinesGuards:
     def test_scalars_without_colormap_raises(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts = _segments(50)
-        scalars = np.random.default_rng(0).uniform(0, 1, verts.shape[0]).astype(np.float32)
+        scalars = (
+            np.random.default_rng(0).uniform(0, 1, verts.shape[0]).astype(np.float32)
+        )
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="colormap"):
-                scene.add_lines("c", verts, 1.0, scalars=scalars, line_type="segments",
-                                substitutive_lod=True)
+                scene.add_lines(
+                    "c",
+                    verts,
+                    1.0,
+                    scalars=scalars,
+                    line_type="segments",
+                    substitutive_lod=True,
+                )
 
     def test_uniform_scalar_plus_colormap_works(self, tmp_path) -> None:
         # A scalar-valued (uniform) `scalars` must broadcast, not crash.
@@ -157,13 +196,21 @@ class TestSubstitutiveLinesGuards:
         verts = _segments(1500)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines("c", verts, 0.8, scalars=0.5, colormap="viridis",
-                            line_type="segments",
-                            substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_lines(
+                "c",
+                verts,
+                0.8,
+                scalars=0.5,
+                colormap="viridis",
+                line_type="segments",
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["c"]
         assert grp.attrs["kind"] == "lod"
 
-    def test_edgeless_input_delegates_to_flat_not_substitutive_crash(self, tmp_path) -> None:
+    def test_edgeless_input_delegates_to_flat_not_substitutive_crash(
+        self, tmp_path
+    ) -> None:
         # A 1-vertex polyline is genuinely invalid (a flat add_lines rejects it
         # too). The substitutive builder must DELEGATE to the flat path and raise
         # the SAME normal validation error — not a cryptic substitutive-internal
@@ -174,25 +221,31 @@ class TestSubstitutiveLinesGuards:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             with pytest.raises(ValueError, match="at least 2 vertices"):
-                scene.add_lines("c", verts, 1.0, line_type="polyline",
-                                substitutive_lod=dict(levels=2, device="cpu"))
+                scene.add_lines(
+                    "c",
+                    verts,
+                    1.0,
+                    line_type="polyline",
+                    substitutive_lod=dict(levels=2, device="cpu"),
+                )
 
     def test_finest_count_uses_bead_currency(self, tmp_path) -> None:
-        # The finest (lines) threshold must be derived from the lifted bead count,
-        # giving it the LARGEST threshold — not n_vertices (a different scale that
-        # would collapse the top thresholds). Assert the finest threshold exceeds
-        # what an n_vertices-based ladder would produce.
-        from luxar.core.group.lod.group import derive_min_pixel_sizes
+        # The coverage fractions normalise by the lifted BEAD count, not
+        # n_vertices. Because the bead count exceeds n_vertices, the intermediate
+        # coarse gsplat child gets a SMALLER fraction than a (wrong) vertex-currency
+        # ladder would produce — keeping every fraction in [0, 1] with the lines
+        # node anchored at the 1.0 top.
+        from luxar.core.group.lod.group import coverage_fractions
 
         grp, n_verts = _build(tmp_path, levels=2)
         n = len(sorted(k for k in grp.keys() if k.startswith("child_")))
-        finest_mps = float(grp[f"child_{n - 1}"].attrs["min_pixel_size"])
-        coarse_counts = [
-            int(grp[f"child_{i}"].attrs["n_splats"]) for i in range(n - 1)
-        ]
-        # An n_vertices-based ladder (the wrong currency) would give this finest:
-        wrong = derive_min_pixel_sizes(coarse_counts + [n_verts])[-1]
-        assert finest_mps > wrong
+        coarse_counts = [int(grp[f"child_{i}"].attrs["n_splats"]) for i in range(n - 1)]
+        # Intermediate coarse gsplat child (index 1): its actual bead-currency fraction.
+        actual = float(grp["child_1"].attrs["coverage_fraction"])
+        # An n_vertices-based ladder (the wrong currency) would give a LARGER fraction.
+        wrong = coverage_fractions(coarse_counts + [n_verts])[1]
+        assert actual < wrong
+        assert float(grp[f"child_{n - 1}"].attrs["coverage_fraction"]) == 1.0
 
 
 class TestSubstitutiveLinesConservationAndSymmetry:
@@ -204,8 +257,9 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         # render-light (sum a * sigma_geo^3) equals the finest (lifted bead)
         # level's. Tested in-memory to avoid the writer's amplitude quantisation.
         verts = _segments(2000, seed=3)
-        lifted = lift_lines_to_gsplats(verts, 0.8, line_type="segments",
-                                       truncation_radius=3.0)
+        lifted = lift_lines_to_gsplats(
+            verts, 0.8, line_type="segments", truncation_radius=3.0
+        )
         target = render_light(lifted)
         coarse = coarse_substitutive_levels(
             lifted, compression_factor=4, levels=3, device="cpu", seed=0
@@ -223,8 +277,14 @@ class TestSubstitutiveLinesConservationAndSymmetry:
             verts = _segments(1500)
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-                scene.add_lines("c", verts, 0.8, line_type="segments", opacity=op,
-                                substitutive_lod=dict(levels=2, device="cpu", seed=0))
+                scene.add_lines(
+                    "c",
+                    verts,
+                    0.8,
+                    line_type="segments",
+                    opacity=op,
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                )
             return zarr.open(str(out), mode="r")["c"]
 
         g_half, g_full = build(0.5), build(1.0)
@@ -232,13 +292,14 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         a_half = np.asarray(g_half["child_0"]["amplitudes"])
         a_full = np.asarray(g_full["child_0"]["amplitudes"])
         np.testing.assert_array_equal(a_half, a_full)
-        assert (g_half["child_0"].attrs["amplitude_range"]["max"]
-                == pytest.approx(g_full["child_0"].attrs["amplitude_range"]["max"]))
+        assert g_half["child_0"].attrs["amplitude_range"]["max"] == pytest.approx(
+            g_full["child_0"].attrs["amplitude_range"]["max"]
+        )
 
-    def test_explicit_min_pixel_sizes_override(self, tmp_path) -> None:
-        grp, _ = _build(tmp_path, levels=2, min_pixel_sizes=[0.0, 25.0, 100.0])
-        mps = [float(grp[f"child_{i}"].attrs["min_pixel_size"]) for i in range(3)]
-        assert mps == [0.0, 25.0, 100.0]
+    def test_explicit_coverage_fractions_override(self, tmp_path) -> None:
+        grp, _ = _build(tmp_path, levels=2, coverage_fractions=[0.0, 0.25, 1.0])
+        cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(3)]
+        assert cf == [0.0, 0.25, 1.0]
 
     def test_uint8_colors_render_sdr_on_coarse_levels(self, tmp_path) -> None:
         # Lines mirror of the CRITICAL points regression: uint8 line colours must
@@ -255,13 +316,20 @@ class TestSubstitutiveLinesConservationAndSymmetry:
             warnings.simplefilter("always")
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-                scene.add_lines("c", verts, 0.8, colors=colors_u8,
-                                line_type="segments",
-                                substitutive_lod=dict(levels=2, device="cpu", seed=0))
+                scene.add_lines(
+                    "c",
+                    verts,
+                    0.8,
+                    colors=colors_u8,
+                    line_type="segments",
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                )
             hdr = [w for w in caught if "HDR" in str(w.message)]
         grp = zarr.open(str(out), mode="r")["c"]
         assert np.asarray(grp["child_0"]["colors"]).dtype == np.uint8
-        assert not hdr, f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        assert not hdr, (
+            f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        )
 
     def test_image_labels_forwarded_to_finest_lines_child(self, tmp_path) -> None:
         # image_labels must NOT be dropped on the substitutive path; they ride to
@@ -270,9 +338,14 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         verts = _segments(1500)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines("c", verts, 0.8, line_type="segments",
-                            image_labels=[b"x"] * verts.shape[0],
-                            substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_lines(
+                "c",
+                verts,
+                0.8,
+                line_type="segments",
+                image_labels=[b"x"] * verts.shape[0],
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["c"]
         children = sorted(k for k in grp.keys() if k.startswith("child_"))
         finest = grp[children[-1]]
@@ -286,8 +359,13 @@ class TestSubstitutiveLinesConservationAndSymmetry:
         verts = _segments(6)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines("c", verts, 0.8, line_type="segments",
-                            substitutive_lod=dict(levels=2, device="cpu", seed=0))
+            scene.add_lines(
+                "c",
+                verts,
+                0.8,
+                line_type="segments",
+                substitutive_lod=dict(levels=2, device="cpu", seed=0),
+            )
         grp = zarr.open(str(out), mode="r")["c"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
@@ -314,8 +392,11 @@ class TestCoarsenDimsLines:
         verts = np.vstack(parts).astype(np.float32)
         dims = Dimensions(
             [
-                Dimension("coloring", categories=[str(g) for g in range(n_groups)],
-                          display=False),
+                Dimension(
+                    "coloring",
+                    categories=[str(g) for g in range(n_groups)],
+                    display=False,
+                ),
                 Dimension("x", display=True),
                 Dimension("y", display=True),
                 Dimension("z", display=True),
@@ -326,7 +407,10 @@ class TestCoarsenDimsLines:
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=dims)
             scene.add_lines(
-                "curves", verts, 0.8, line_type="segments",
+                "curves",
+                verts,
+                0.8,
+                line_type="segments",
                 substitutive_lod=dict(levels=3, device="cpu", **kw),
             )
         return zarr.open(str(out), mode="r")["curves"]
@@ -348,5 +432,6 @@ class TestCoarsenDimsLines:
         assert self._purity(grp) > 0.05
 
     def test_resolver_passthrough(self) -> None:
-        assert resolve_substitutive_axis_lines(
-            dict(coarsen_dims=["x", "y", "z"]))["coarsen_dims"] == ["x", "y", "z"]
+        assert resolve_substitutive_axis_lines(dict(coarsen_dims=["x", "y", "z"]))[
+            "coarsen_dims"
+        ] == ["x", "y", "z"]

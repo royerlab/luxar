@@ -3,7 +3,7 @@
  *
  * Strategy: the lod_group loader is mostly a thin wrapper that
  * recurses children through ``loadSceneNodes`` and pushes the
- * resulting THREE nodes + per-child attrs (``min_pixel_size``,
+ * resulting THREE nodes + per-child attrs (``coverage_fraction``,
  * ``position_bounds``) into the :class:`LODGroupRegistry`. We mock
  * ``loadSceneNodes`` to attach a stub mesh per child, then assert on
  * what landed in the registry.
@@ -83,7 +83,7 @@ beforeEach(() => {
 
 function makeChildNode(
   path: string,
-  minPixelSize: number,
+  coverageFraction: number,
   positionBounds: { min: number[]; max: number[] } | undefined = {
     min: [0, 0, 0],
     max: [1, 1, 1],
@@ -94,7 +94,7 @@ function makeChildNode(
     type: 'gsplats',
     attrs: {
       type: 'gsplats',
-      min_pixel_size: minPixelSize,
+      coverage_fraction: coverageFraction,
       ...(positionBounds ? { position_bounds: positionBounds } : {}),
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
@@ -105,7 +105,7 @@ function makeChildNode(
 /** A ``points`` leaf child (the finest level of a points-substitutive ladder). */
 function makePointsChildNode(
   path: string,
-  minPixelSize: number,
+  coverageFraction: number,
   positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
 ): SceneNode {
   return {
@@ -113,7 +113,7 @@ function makePointsChildNode(
     type: 'points',
     attrs: {
       type: 'points',
-      min_pixel_size: minPixelSize,
+      coverage_fraction: coverageFraction,
       position_bounds: positionBounds,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
@@ -124,7 +124,7 @@ function makePointsChildNode(
 /** A ``lines`` leaf child (the finest level of a lines-substitutive ladder). */
 function makeLinesChildNode(
   path: string,
-  minPixelSize: number,
+  coverageFraction: number,
   positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
 ): SceneNode {
   return {
@@ -132,7 +132,7 @@ function makeLinesChildNode(
     type: 'lines',
     attrs: {
       type: 'lines',
-      min_pixel_size: minPixelSize,
+      coverage_fraction: coverageFraction,
       position_bounds: positionBounds,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
@@ -147,7 +147,7 @@ function makeLinesChildNode(
  */
 function makeGroupChildNode(
   path: string,
-  minPixelSize: number,
+  coverageFraction: number,
   displayType: 'gsplats' | 'points' | 'lines' = 'gsplats',
   kind: 'partition' | 'lod' = 'partition',
   positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
@@ -159,7 +159,7 @@ function makeGroupChildNode(
       type: 'group',
       kind,
       display_type: displayType,
-      min_pixel_size: minPixelSize,
+      coverage_fraction: coverageFraction,
       position_bounds: positionBounds,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
@@ -178,7 +178,7 @@ function makeLodGroupNode(
       type: 'group',
       kind: 'lod',
       display_type: 'gsplats',
-      selector: 'pixel_size',
+      selector: 'coverage',
       ...extraAttrs,
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
@@ -258,8 +258,8 @@ describe('loadLodGroupNode — registry registration', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0, { min: [0, 0, 0], max: [1, 1, 1] }),
-        makeChildNode('/lod/child_1', 100, { min: [0, 0, 0], max: [2, 2, 2] }),
-        makeChildNode('/lod/child_2', 500, { min: [0, 0, 0], max: [4, 4, 4] }),
+        makeChildNode('/lod/child_1', 0.5, { min: [0, 0, 0], max: [2, 2, 2] }),
+        makeChildNode('/lod/child_2', 1.0, { min: [0, 0, 0], max: [4, 4, 4] }),
       ],
       { default_level: 0 }
     );
@@ -269,7 +269,7 @@ describe('loadLodGroupNode — registry registration', () => {
     expect(reg.size()).toBe(1);
     const entry = reg.get('/lod')!;
     expect(entry.children).toHaveLength(3);
-    expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+    expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5, 1.0]);
     expect(entry.children[1].positionBounds).toEqual({
       min: [0, 0, 0],
       max: [2, 2, 2],
@@ -288,7 +288,7 @@ describe('loadLodGroupNode — registry registration', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 99 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -311,12 +311,12 @@ describe('loadLodGroupNode — registry registration', () => {
 
     const node = makeLodGroupNode([
       makeChildNode('/lod/child_0', 0),
-      makeChildNode('/lod/child_1', 100),
+      makeChildNode('/lod/child_1', 0.5),
     ]);
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
     const entry = reg.get('/lod')!;
     expect(entry.children).toHaveLength(2);
-    expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100]);
+    expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5]);
   });
 
   it('falls back to center_bounds when position_bounds is absent', async () => {
@@ -334,7 +334,7 @@ describe('loadLodGroupNode — registry registration', () => {
         type: 'gsplats',
         attrs: {
           type: 'gsplats',
-          min_pixel_size: 0,
+          coverage_fraction: 0,
           center_bounds: { min: [1, 1, 1], max: [3, 3, 3] },
         } as SceneNode['attrs'],
         hasSpatialIndex: false,
@@ -370,8 +370,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0),
-        makeChildNode('/lod/child_1', 100),
-        makeChildNode('/lod/child_2', 500),
+        makeChildNode('/lod/child_1', 0.5),
+        makeChildNode('/lod/child_2', 1.0),
       ],
       { default_level: 0 }
     );
@@ -398,7 +398,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 0 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -427,10 +427,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       // child_0 = eager leaf (default); child_1 = a kind=partition group.
       const node = makeLodGroupNode(
-        [
-          makeChildNode('/lod/child_0', 0),
-          makeGroupChildNode('/lod/child_1', 100, displayType),
-        ],
+        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5, displayType)],
         { default_level: 0 }
       );
       await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -439,7 +436,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(entry.children).toHaveLength(2);
       const groupChild = entry.children[1];
       // Registered with its threshold/bounds, but NOT loaded.
-      expect(groupChild.minPixelSize).toBe(100);
+      expect(groupChild.coverageFraction).toBe(0.5);
       expect(groupChild.positionBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 1] });
       expect(groupChild.ready).toBe(false);
       expect(typeof groupChild.ensureLoaded).toBe('function');
@@ -462,9 +459,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
     }
   );
 
-  it('re-sorts children to ascending min_pixel_size (and warns) when the order is wrong', async () => {
+  it('re-sorts children to ascending coverage_fraction (and warns) when the order is wrong', async () => {
     // Defense-in-depth for malformed / hand-authored scenes: the selector assumes
-    // ascending thresholds. Given out-of-order thresholds (0, 500, 100), the loader
+    // ascending thresholds. Given out-of-order thresholds (0, 1.0, 0.5), the loader
     // must repair to ascending so the selector works, keep the eager default active,
     // and warn so the producer bug is surfaced.
     attachStubChildren();
@@ -475,8 +472,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
       const node = makeLodGroupNode(
         [
           makeChildNode('/lod/child_0', 0), // eager default + coarsest
-          makeChildNode('/lod/child_1', 500),
-          makeChildNode('/lod/child_2', 100), // out of order (< 500)
+          makeChildNode('/lod/child_1', 1.0),
+          makeChildNode('/lod/child_2', 0.5), // out of order (< 1.0)
         ],
         { default_level: 0 }
       );
@@ -484,13 +481,13 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       const entry = reg.get('/lod')!;
       // Repaired to strictly ascending so pickChildWithHysteresis is well-defined.
-      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
-      // The eager default (mps=0) is still the active level after the re-sort.
-      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5, 1.0]);
+      // The eager default (coverage_fraction=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].coverageFraction).toBe(0);
       // The violation was surfaced.
-      expect(
-        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
-      ).toBe(true);
+      expect(warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))).toBe(
+        true
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -505,17 +502,17 @@ describe('loadLodGroupNode — lazy level loading', () => {
       const node = makeLodGroupNode(
         [
           makeChildNode('/lod/child_0', 0),
-          makeChildNode('/lod/child_1', 100),
-          makeChildNode('/lod/child_2', 500),
+          makeChildNode('/lod/child_1', 0.5),
+          makeChildNode('/lod/child_2', 1.0),
         ],
         { default_level: 0 }
       );
       await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
-      expect(reg.get('/lod')!.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
-      expect(
-        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
-      ).toBe(false);
+      expect(reg.get('/lod')!.children.map((c) => c.coverageFraction)).toEqual([0, 0.5, 1.0]);
+      expect(warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))).toBe(
+        false
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -534,16 +531,16 @@ describe('loadLodGroupNode — lazy level loading', () => {
       const node = makeLodGroupNode(
         [
           makeChildNode('/lod/child_0', 0),
-          makeChildNode('/lod/child_1', 100),
-          makeChildNode('/lod/child_2', 100), // equal to previous → not strictly ascending
+          makeChildNode('/lod/child_1', 0.5),
+          makeChildNode('/lod/child_2', 0.5), // equal to previous → not strictly ascending
         ],
         { default_level: 0 }
       );
       await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
-      expect(
-        warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))
-      ).toBe(true);
+      expect(warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))).toBe(
+        true
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -559,13 +556,13 @@ describe('loadLodGroupNode — lazy level loading', () => {
     try {
       const reg = makeReg();
       const ctx = makeCtx(reg);
-      // child_0 leaf (eager default, mps=0); child_1 a deferred PARTITION group
-      // (mps=500); child_2 leaf (mps=100) — out of order (0, 500, 100).
+      // child_0 leaf (eager default, coverage_fraction=0); child_1 a deferred
+      // PARTITION group (cf=1.0); child_2 leaf (cf=0.5) — out of order (0, 1.0, 0.5).
       const node = makeLodGroupNode(
         [
           makeChildNode('/lod/child_0', 0),
-          makeGroupChildNode('/lod/child_1', 500),
-          makeChildNode('/lod/child_2', 100),
+          makeGroupChildNode('/lod/child_1', 1.0),
+          makeChildNode('/lod/child_2', 0.5),
         ],
         { default_level: 0 }
       );
@@ -573,25 +570,25 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       const entry = reg.get('/lod')!;
       // Re-sorted ascending; the deferred group child lands at its threshold slot.
-      expect(entry.children.map((c) => c.minPixelSize)).toEqual([0, 100, 500]);
+      expect(entry.children.map((c) => c.coverageFraction)).toEqual([0, 0.5, 1.0]);
       const groupChild = entry.children[2];
-      expect(groupChild.minPixelSize).toBe(500);
+      expect(groupChild.coverageFraction).toBe(1.0);
       // Sort must NOT have loaded or lost the deferred state of the group child.
       expect(groupChild.ready).toBe(false);
       expect(typeof groupChild.ensureLoaded).toBe('function');
       expect(groupChild.release).toBeUndefined();
-      // The eager default (mps=0) is still the active level after the re-sort.
-      expect(entry.children[entry.activeChildIndex].minPixelSize).toBe(0);
+      // The eager default (coverage_fraction=0) is still the active level after the re-sort.
+      expect(entry.children[entry.activeChildIndex].coverageFraction).toBe(0);
       // The group child was NOT eager-loaded at init...
-      expect(
-        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
-      ).not.toContain('/lod/child_1');
+      expect(loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)).not.toContain(
+        '/lod/child_1'
+      );
       // ...but loads its subtree on activation (post-sort object identity intact).
       groupChild.ensureLoaded!();
       await vi.waitFor(() => expect(groupChild.ready).toBe(true));
-      expect(
-        loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)
-      ).toContain('/lod/child_1');
+      expect(loadSceneNodesMock.mock.calls.map((c) => (c[0] as SceneNode).path)).toContain(
+        '/lod/child_1'
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -603,7 +600,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 0 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -630,7 +627,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 0 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -656,7 +653,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 0 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -671,7 +668,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
       { default_level: 0 }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -707,8 +704,8 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0), // coarsest gsplat (default/eager)
-        makeChildNode('/lod/child_1', 100), // mid gsplat
-        makePointsChildNode('/lod/child_2', 500), // finest = points
+        makeChildNode('/lod/child_1', 0.5), // mid gsplat
+        makePointsChildNode('/lod/child_2', 1.0), // finest = points
       ],
       { default_level: 0, display_type: 'points' }
     );
@@ -737,7 +734,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'points' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -757,7 +754,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'points' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -777,7 +774,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     const ctx = makeCtx(reg);
 
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makePointsChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'points' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -817,7 +814,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0), // coarsest gsplat (default/eager)
-        makeLinesChildNode('/lod/child_1', 100), // finest = lines
+        makeLinesChildNode('/lod/child_1', 0.5), // finest = lines
       ],
       { default_level: 0, display_type: 'lines' }
     );
@@ -836,7 +833,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const reg = makeReg();
     const ctx = makeCtx(reg);
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'lines' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -854,7 +851,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const reg = makeReg();
     const ctx = makeCtx(reg);
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'lines' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -877,7 +874,7 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const reg = makeReg();
     const ctx = makeCtx(reg);
     const node = makeLodGroupNode(
-      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 100)],
+      [makeChildNode('/lod/child_0', 0), makeLinesChildNode('/lod/child_1', 0.5)],
       { default_level: 0, display_type: 'lines' }
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
@@ -888,6 +885,139 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     await vi.waitFor(() => expect(ln.loading).toBe(false));
     expect(ctx.registry.registerLinesLoader).not.toHaveBeenCalled();
     expect(ln.ready).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Legacy (pre-v3.2) selector attrs: min_pixel_size → derived coverage
+// ────────────────────────────────────────────────────────────────────────
+
+describe('loadLodGroupNode — legacy min_pixel_size adaptation', () => {
+  function makeReg(): LODGroupRegistry {
+    return new LODGroupRegistry({
+      getCamera: () => new THREE.Camera(),
+      getViewportSize: () => ({ width: 100, height: 100 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+  }
+
+  /** A pre-v3.2 child: carries ``min_pixel_size``, no ``coverage_fraction``. */
+  function makeLegacyChildNode(path: string, minPixelSize: number): SceneNode {
+    return {
+      path,
+      type: 'gsplats',
+      attrs: {
+        type: 'gsplats',
+        min_pixel_size: minPixelSize,
+        position_bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      } as SceneNode['attrs'],
+      hasSpatialIndex: false,
+      children: [],
+    };
+  }
+
+  it('derives coverage fractions from legacy min_pixel_size (normalized by finest) and warns once', async () => {
+    // A pre-v3.2 dataset (selector='pixel_size', per-child min_pixel_size).
+    // Silently defaulting every threshold to 0 would pin the selector to the
+    // FINEST child (eager full-res download, progressive LOD defeated) — the
+    // loader must instead derive coverage fractions by normalizing the legacy
+    // pixel ladder by its finest value: [100, 200, 400] → [0.25, 0.5, 1.0].
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [
+          makeLegacyChildNode('/lod/child_0', 100),
+          makeLegacyChildNode('/lod/child_1', 200),
+          makeLegacyChildNode('/lod/child_2', 400),
+        ],
+        { selector: 'pixel_size', default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const entry = reg.get('/lod')!;
+      expect(entry.children.map((c) => c.coverageFraction)).toEqual([0.25, 0.5, 1.0]);
+      // The eager default (coarsest) is still the active level.
+      expect(entry.activeChildIndex).toBe(0);
+      // One clear adaptation warning naming the migration path…
+      const adaptWarnings = warnSpy.mock.calls.filter((c) =>
+        String(c[1]).includes('migrate-format')
+      );
+      expect(adaptWarnings).toHaveLength(1);
+      expect(String(adaptWarnings[0][1])).toContain('min_pixel_size');
+      // …and NOT the misleading producer-blaming order warning (the derived
+      // ladder is strictly ascending, so the defense-in-depth check passes).
+      expect(warnSpy.mock.calls.some((c) => String(c[1]).includes('not strictly ascending'))).toBe(
+        false
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('prefers an authored coverage_fraction over min_pixel_size in a mixed ladder', async () => {
+    attachStubChildren();
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      // child_1 was re-authored with the current attr; the two legacy siblings
+      // still normalize by the finest LEGACY value (400 → finest 1.0).
+      const node = makeLodGroupNode(
+        [
+          makeLegacyChildNode('/lod/child_0', 100),
+          makeChildNode('/lod/child_1', 0.5),
+          makeLegacyChildNode('/lod/child_2', 400),
+        ],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      expect(reg.get('/lod')!.children.map((c) => c.coverageFraction)).toEqual([0.25, 0.5, 1.0]);
+      expect(warnSpy.mock.calls.some((c) => String(c[1]).includes('migrate-format'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('logs an actionable error (naming migrate-format) when children carry no threshold at all', async () => {
+    // Neither coverage_fraction nor min_pixel_size: a malformed producer
+    // output. Previously this silently defaulted to 0 and then mis-blamed the
+    // producer with only a 'not strictly ascending' warning.
+    attachStubChildren();
+    const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const bareChild = (path: string): SceneNode => ({
+        path,
+        type: 'gsplats',
+        attrs: {
+          type: 'gsplats',
+          position_bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [],
+      });
+      const node = makeLodGroupNode([bareChild('/lod/child_0'), bareChild('/lod/child_1')], {
+        default_level: 0,
+      });
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      // Still registers (renders something) with the 0-defaults…
+      expect(reg.get('/lod')!.children.map((c) => c.coverageFraction)).toEqual([0, 0]);
+      // …but the failure is loud and actionable.
+      const errors = errorSpy.mock.calls.filter((c) => String(c[1]).includes('migrate-format'));
+      expect(errors).toHaveLength(1);
+      expect(String(errors[0][1])).toContain('/lod/child_0');
+      expect(String(errors[0][1])).toContain('/lod/child_1');
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -903,8 +1033,8 @@ describe('loadLodGroupNode — without a registry', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0),
-        makeChildNode('/lod/child_1', 100),
-        makeChildNode('/lod/child_2', 500),
+        makeChildNode('/lod/child_1', 0.5),
+        makeChildNode('/lod/child_2', 1.0),
       ],
       { default_level: 1 }
     );
@@ -935,8 +1065,8 @@ describe('loadLodGroupNode — without a registry', () => {
     const node = makeLodGroupNode(
       [
         makeChildNode('/lod/child_0', 0),
-        makeChildNode('/lod/child_1', 100),
-        makeChildNode('/lod/child_2', 500),
+        makeChildNode('/lod/child_1', 0.5),
+        makeChildNode('/lod/child_2', 1.0),
       ],
       { default_level: 1 }
     );
@@ -981,8 +1111,8 @@ describe('loadLodGroupNode — transient visibility', () => {
     const ctx = makeCtx(/* no registry — exercises the fallback path */);
     const node = makeLodGroupNode([
       makeChildNode('/lod/child_0', 0),
-      makeChildNode('/lod/child_1', 100),
-      makeChildNode('/lod/child_2', 500),
+      makeChildNode('/lod/child_1', 0.5),
+      makeChildNode('/lod/child_2', 1.0),
     ]);
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 

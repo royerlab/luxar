@@ -9,8 +9,9 @@ standalone leaves are byte-identical to scene leaves.
 This module is the thin standalone wrapper: it builds the zarr store (handling
 optional ``.zip`` / ``.tar.gz`` compression), writes the self-identifying root
 header (``format_version`` = :data:`FORMAT_VERSION`), hands
-the node tree to the shared walker, attaches optional ``fitting/`` / ``provenance/``
-groups, and consolidates metadata.
+the node tree to the shared walker, attaches optional ``fitting/`` /
+``provenance/`` / ``pipeline/`` groups (``pipeline/`` = reduction/topology
+stats; see :func:`split_fitting_info`), and consolidates metadata.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 from luxar.encoding import EncodingMode
 from luxar.io._compiler.gsplat_tree import (
+    json_safe_value,
     make_dataset_ctx,
     make_ordering_ctx,
     write_gsplat_node,
@@ -46,15 +48,22 @@ except ImportError:
     GSPLATS_VERSION: str = "unknown"  # type: ignore[no-redef]
 
 #: On-disk format version for the node-tree ``.gsplats.zarr`` layout.
+#: v3.2 renames the ``kind=lod`` selector attrs: the group ``selector`` value
+#: ``pixel_size`` → ``coverage`` and the per-child ``min_pixel_size`` (absolute
+#: pixels) → ``coverage_fraction`` (viewport-relative ``sqrt(N_i/N_finest)`` in
+#: [0,1], strictly ascending coarsest→finest, finest == 1.0).
 #: v3.1 splits the Cholesky factors into ``cholesky_factors_diag`` (N, d) +
 #: ``cholesky_factors_offdiag`` (N, k-d) so each can be encoded independently;
 #: v3.0 stored a single packed ``cholesky_factors`` array.
-FORMAT_VERSION = "3.1"
+FORMAT_VERSION = "3.2"
 
-#: Node-tree format versions the readers accept. v3.0 is still read
+#: Node-tree format versions the readers accept. v3.0 / v3.1 are still read
 #: transparently: the loaders fall back to the single packed Cholesky array
-#: when the split (``cholesky_factors_diag``) is absent.
-SUPPORTED_FORMAT_VERSIONS = ("3.0", "3.1")
+#: when the split (``cholesky_factors_diag``) is absent, and a re-save derives
+#: fresh ``coverage_fraction`` thresholds (the legacy ``min_pixel_size`` lod
+#: attrs are ignored on read). The web viewer auto-adapts the legacy lod attrs
+#: too, but warns — upgrade old stores with ``luxar gsplat migrate-format``.
+SUPPORTED_FORMAT_VERSIONS = ("3.0", "3.1", "3.2")
 
 #: ``stats`` keys lifted into the ``fitting/`` group on save (quality metrics,
 #: culling/filtering provenance). Single-sourced here so every writer (``GSplatData.save``
@@ -87,22 +96,55 @@ _FITTING_INFO_KEYS = (
 )
 
 
+#: ``stats`` keys stamped by the loader from the store header, never persisted
+#: as pipeline stats (they would shadow the real header on the next save).
+_HEADER_STATS_KEYS = (
+    "format_version",
+    "luxar_gsplats_version",
+    "timestamp",
+    "description",
+)
+
+#: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable
+#: reduction/topology provenance: napari-movie capture buffers (``movie_frames``
+#: is set to ``None`` on *every* default fit — see ``fitting/results.py`` — so
+#: without this exclusion every plain fit would emit a spurious ``pipeline/``
+#: group, and a captured movie would leak the input volume shape). Kept out of
+#: ``pipeline_info`` so a plain fit writes no ``pipeline/`` group at all.
+_PIPELINE_EXCLUDE_KEYS = (
+    "movie_frames",
+    "movie_shape",
+)
+
+
 def split_fitting_info(
     stats: Optional[Dict[str, Any]],
     *,
     include_fitting_info: bool = True,
     include_provenance: bool = False,
 ) -> tuple[
-    Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]
+    Optional[Dict[str, Any]],
+    Optional[Dict[str, Any]],
+    Optional[Dict[str, Any]],
+    Optional[Dict[str, Any]],
 ]:
-    """Split a ``stats`` dict into ``(fitting_info, fitting_config, provenance_info)``.
+    """Split a ``stats`` dict into ``(fitting_info, fitting_config,
+    provenance_info, pipeline_info)``.
 
     Mirrors the extraction done by :meth:`GSplatData.save` so the standalone
     node-tree writers (e.g. the ``lod --recipe`` composed recipes, which have no
-    flat ``GSplatData``) attach the same ``fitting/`` / ``provenance/`` groups.
+    flat ``GSplatData``) attach the same ``fitting/`` / ``provenance/`` /
+    ``pipeline/`` groups.
+
+    ``pipeline_info`` is everything the first three buckets do NOT consume —
+    the reduction/topology provenance (``lod_kind``, ``method``,
+    ``compression_factor``, ``coverage_inflation``, ``refine``, ...) that was
+    historically dropped on save (a silent lossy round-trip). Header keys the
+    loader stamps itself (:data:`_HEADER_STATS_KEYS`), private ``_``-prefixed
+    scratch keys, and non-JSON-serializable values are excluded.
     """
     if not stats:
-        return None, None, None
+        return None, None, None, None
     fitting_info: Optional[Dict[str, Any]] = None
     fitting_config: Optional[Dict[str, Any]] = None
     provenance_info: Optional[Dict[str, Any]] = None
@@ -112,7 +154,20 @@ def split_fitting_info(
             fitting_config = stats["config"]
     if include_provenance and "provenance" in stats:
         provenance_info = stats["provenance"]
-    return fitting_info, fitting_config, provenance_info
+    pipeline_info: Dict[str, Any] = {}
+    for key, value in stats.items():
+        if (
+            key in _FITTING_INFO_KEYS
+            or key in _HEADER_STATS_KEYS
+            or key in _PIPELINE_EXCLUDE_KEYS
+            or key in ("config", "provenance")
+            or key.startswith("_")
+        ):
+            continue
+        ok, converted = json_safe_value(value)
+        if ok:
+            pipeline_info[key] = converted
+    return fitting_info, fitting_config, provenance_info, pipeline_info or None
 
 
 def _resolve_zarr_path(
@@ -170,6 +225,7 @@ def write_gsplats_tree(
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
+    pipeline_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
@@ -180,7 +236,9 @@ def write_gsplats_tree(
     The node *is* the file root: the shared walker stamps the root group with the
     node's own attrs (``type``/``kind`` + ``position_bounds``), and this wrapper
     adds the self-identifying header (``format_version`` = :data:`FORMAT_VERSION`)
-    plus optional ``fitting/`` / ``provenance/``.
+    plus optional ``fitting/`` / ``provenance/`` / ``pipeline/`` groups
+    (``pipeline/`` carries the reduction/topology stats — see
+    :func:`split_fitting_info`).
     """
     path = Path(path)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
@@ -223,6 +281,11 @@ def write_gsplats_tree(
             fitting_group.create_group("config").attrs.update(fitting_config)
     if provenance_info is not None:
         root.create_group("provenance").attrs.update(provenance_info)
+    if pipeline_info:
+        # Reduction/topology stats (lod_kind, method, compression_factor,
+        # coverage_inflation, refine, ...) — everything split_fitting_info's
+        # other buckets do not consume. Optional group: absent for plain fits.
+        root.create_group("pipeline").attrs.update(pipeline_info)
 
     zarr.consolidate_metadata(store)
 
@@ -240,6 +303,7 @@ def write_partition_streaming(
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
+    pipeline_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
 ) -> int:
@@ -328,6 +392,8 @@ def write_partition_streaming(
             fitting_group.create_group("config").attrs.update(fitting_config)
     if provenance_info is not None:
         root.create_group("provenance").attrs.update(provenance_info)
+    if pipeline_info:
+        root.create_group("pipeline").attrs.update(pipeline_info)
 
     zarr.consolidate_metadata(store)
     return n_written
